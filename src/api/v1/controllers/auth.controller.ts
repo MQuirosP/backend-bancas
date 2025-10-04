@@ -3,6 +3,7 @@ import { AuthService } from '../services/auth.service';
 import { logger } from '../../../core/logger';
 import prisma from '../../../core/prismaClient';
 import { ActivityType } from '@prisma/client';
+import { success, created } from '../../../utils/responses';
 
 export const AuthController = {
   async register(req: Request, res: Response) {
@@ -25,7 +26,7 @@ export const AuthController = {
       },
     });
 
-    res.status(201).json({
+    return created(res, {
       message: 'User registered successfully',
       user: { id: user.id, email: user.email, role: user.role },
     });
@@ -34,7 +35,6 @@ export const AuthController = {
   async login(req: Request, res: Response) {
     const tokens = await AuthService.login(req.body);
 
-    // obtener usuario para log y actividad
     const user = await prisma.user.findUnique({ where: { email: req.body.email } });
 
     if (user) {
@@ -56,19 +56,19 @@ export const AuthController = {
       });
     }
 
-    res.json(tokens);
+    return success(res, tokens);
   },
 
   async refresh(req: Request, res: Response) {
     const { refreshToken } = req.body;
     const tokens = await AuthService.refresh(refreshToken);
-    res.json(tokens);
+    return success(res, tokens);
   },
 
   async logout(req: Request, res: Response) {
     const { refreshToken } = req.body;
     await AuthService.logout(refreshToken);
-    res.json({ message: 'Logged out successfully' });
+    return success(res, { message: 'Logged out successfully' });
   },
 
   async me(req: Request, res: Response) {
@@ -78,6 +78,6 @@ export const AuthController = {
       select: { id: true, email: true, name: true, role: true },
     });
 
-    res.json(user);
+    return success(res, user);
   },
 };

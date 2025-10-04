@@ -1,8 +1,10 @@
+// src/api/v1/controllers/user.controller.ts
 import { Request, Response } from 'express';
 import { ActivityType, Role } from '@prisma/client';
 import UserService from '../services/user.service';
 import ActivityService from '../../../core/activity.service';
 import logger from '../../../core/logger';
+import { success, created } from '../../../utils/responses';
 
 export const UserController = {
   async create(req: Request, res: Response) {
@@ -28,12 +30,12 @@ export const UserController = {
       layer: 'controller',
     });
 
-    return res.status(201).json({ data: user });
+    return created(res, user);
   },
 
   async getById(req: Request, res: Response) {
     const user = await UserService.getById(req.params.id);
-    return res.json({ data: user });
+    return success(res, user);
   },
 
   async list(req: Request, res: Response) {
@@ -43,7 +45,7 @@ export const UserController = {
       role: (req.query.role as Role) ?? undefined,
       isDeleted: typeof req.query.isDeleted === 'string' ? req.query.isDeleted === 'true' : undefined,
     });
-    return res.json({ data, meta });
+    return success(res, data, meta);
   },
 
   async update(req: Request, res: Response) {
@@ -82,7 +84,7 @@ export const UserController = {
       });
     }
 
-    return res.json({ data: user });
+    return success(res, user);
   },
 
   async remove(req: Request, res: Response) {
@@ -108,7 +110,7 @@ export const UserController = {
       layer: 'controller',
     });
 
-    return res.json({ data: user });
+    return success(res, user);
   },
 
   async restore(req: Request, res: Response) {
@@ -134,7 +136,7 @@ export const UserController = {
       layer: 'controller',
     });
 
-    return res.json({ data: user });
+    return success(res, user);
   },
 };
 
