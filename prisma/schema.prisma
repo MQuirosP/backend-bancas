@@ -141,6 +141,8 @@ model User {
   password  String // Almacenada como hash (bcrypt)
   role      Role    @default(VENTANA)
 
+  refreshTokens RefreshToken[] // Tokens de refresco asociados al usuario
+
   ventana        Ventana?      @relation(fields: [ventanaId], references: [id])
   ticketsCreated Ticket[]
   activities     ActivityLog[]
@@ -336,4 +338,17 @@ model UserMultiplierOverride {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) // Identificador único del token
+  userId    String // ID del usuario asociado
+  token     String   @unique // Cadena del token de refresco (debe ser única)
+  revoked   Boolean  @default(false) // Indica si el token fue revocado
+  expiresAt DateTime // Fecha y hora de expiración
+
+  user User @relation(fields: [userId], references: [id]) // Relación con el modelo User
+
+  createdAt DateTime @default(now()) // Fecha de creación
+  updatedAt DateTime @updatedAt // Fecha de última modificación (automática)
 }
