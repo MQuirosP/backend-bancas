@@ -7,27 +7,49 @@ import prisma from '../core/prismaClient';
 const server = http.createServer(app);
 
 server.listen(config.port, () => {
-  logger.info({ port: config.port }, 'Server listening');
+  logger.info({
+    layer: 'server',
+    action: 'SERVER_LISTEN',
+    requestId: null,
+    payload: { port: config.port },
+  });
 });
 
-// graceful shutdown
-const shutdown = async (signal: string) => {
-  logger.info({ signal }, 'Shutting down');
+// Graceful shutdown
+const gracefulShutdown = async (signal: string) => {
+  logger.info({
+    layer: 'server',
+    action: 'SHUTDOWN_INITIATED',
+    payload: { signal },
+  });
+
   server.close(async (err) => {
     if (err) {
-      logger.error({ err }, 'Error closing server');
+      logger.error({
+        layer: 'server',
+        action: 'SERVER_CLOSE_ERROR',
+        meta: { error: (err as Error).message },
+      });
       process.exit(1);
     }
+
     try {
       await prisma.$disconnect();
-      logger.info('Prisma disconnected');
+      logger.info({
+        layer: 'server',
+        action: 'PRISMA_DISCONNECTED',
+      });
       process.exit(0);
     } catch (e) {
-      logger.error({ e }, 'Error during prisma disconnect');
+      logger.error({
+        layer: 'server',
+        action: 'PRISMA_DISCONNECT_ERROR',
+        meta: { error: (e as Error).message },
+      });
       process.exit(1);
     }
   });
 };
 
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
