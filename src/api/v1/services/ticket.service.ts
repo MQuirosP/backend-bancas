@@ -3,15 +3,37 @@ import { ActivityType, TicketStatus } from '@prisma/client';
 import ActivityService from '../../../core/activity.service';
 import logger from '../../../core/logger';
 import { AppError } from '../../../core/errors';
+import { sumDecimals, toDecimal } from '../../../utils/decimal';
+
+// Tipos explícitos para jugadas y tickets
+export interface JugadaInput {
+  number: string;
+  amount: number | string;
+  multiplierId: string;
+  finalMultiplierX: number | string;
+}
+
+export interface CreateTicketInput {
+  loteriaId: string;
+  ventanaId: string;
+  jugadas: JugadaInput[];
+}
 
 export const TicketService = {
   /**
    * Crea un nuevo ticket con sus jugadas
    */
-  async create(data: any, userId: string, requestId?: string) {
-    const { loteriaId, ventanaId, totalAmount, jugadas } = data;
+  async create(data: CreateTicketInput, userId: string, requestId?: string) {
+    const { loteriaId, ventanaId, jugadas } = data;
 
-    // Generar número secuencial del ticket
+    if (!jugadas || jugadas.length === 0) {
+      throw new AppError('At least one jugada is required', 400);
+    }
+
+    // Calcular monto total de jugadas usando Decimal seguro
+    const totalAmount = sumDecimals(jugadas.map((j: JugadaInput) => toDecimal(j.amount)));
+
+    // Generar número secuencial del ticket (atomic operation)
     const counter = await prisma.ticketCounter.findFirst();
     let nextNumber = 1;
 
@@ -28,15 +50,23 @@ export const TicketService = {
       nextNumber = created.currentNumber;
     }
 
+    // Crear ticket con jugadas
     const ticket = await prisma.ticket.create({
       data: {
         ticketNumber: nextNumber,
         loteriaId,
         ventanaId,
         vendedorId: userId,
-        totalAmount,
+        totalAmount: totalAmount.toNumber(),
         status: TicketStatus.ACTIVE,
-        jugadas: { create: jugadas },
+        jugadas: {
+          create: jugadas.map((j: JugadaInput) => ({
+            number: j.number,
+            amount: toDecimal(j.amount).toNumber(),
+            multiplierId: j.multiplierId,
+            finalMultiplierX: toDecimal(j.finalMultiplierX).toNumber(),
+          })),
+        },
       },
       include: { jugadas: true },
     });
@@ -47,7 +77,10 @@ export const TicketService = {
       action: ActivityType.TICKET_CREATE,
       targetType: 'TICKET',
       targetId: ticket.id,
-      details: { ticketNumber: ticket.ticketNumber, totalAmount },
+      details: {
+        ticketNumber: ticket.ticketNumber,
+        totalAmount: totalAmount.toString(),
+      },
       requestId,
       layer: 'service',
     });
@@ -57,7 +90,7 @@ export const TicketService = {
       action: 'TICKET_CREATE',
       userId,
       requestId,
-      payload: { ticketId: ticket.id, totalAmount },
+      payload: { ticketId: ticket.id, totalAmount: totalAmount.toString() },
     });
 
     return ticket;
