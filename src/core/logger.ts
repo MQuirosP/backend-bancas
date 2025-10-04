@@ -1,13 +1,23 @@
 import pino from "pino";
+import { config } from "../config";
 
-const logger = pino({
-    level: process.env.LOG_LEVEL || "info",
-    transport: {
+const baseOptions: pino.LoggerOptions = {
+  level: config.logLevel ?? "info",
+};
+
+const transport =
+  config.nodeEnv !== "production"
+    ? {
         target: "pino-pretty",
         options: {
-            colorize: true,
+          singleLine: true,
+          colorize: true,
+          translateTime: "SYS:standard",
+          ignore: "pid,hostname",
         },
-    },
-});
+      }
+    : undefined;
+
+const logger = pino({ ...baseOptions, transport } as any);
 
 export default logger;

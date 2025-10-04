@@ -9,4 +9,5 @@ export interface AuthUser {
 
 export interface RequestWithUser extends Request {
     user?: AuthUser;
+    requestId?: string;
 }

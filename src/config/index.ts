@@ -1,28 +1,27 @@
+// src/config/index.ts
 import 'dotenv/config';
-import { parse } from 'path';
-import { z } from 'zod';
+import dotenvSafe from 'dotenv-safe';
+import path from 'path';
+import { EnvSchema } from './env.schema';
 
-const envSchema = z.object({
-    NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-    PORT: z.string().optional(),
-    DATABASE_URL: z.string().min(1),
-    JWT_SECRET: z.string().min(1),
-    CORS_ORIGIN: z.string().optional(),
-    LOG_LEVEL: z.string().optional(),
+dotenvSafe.config({
+  example: path.resolve(process.cwd(), '.env.example'),
+  allowEmptyValues: false,
 });
 
-const parsed = envSchema.safeParse(process.env);
+const parsed = EnvSchema.safeParse(process.env);
 
 if (!parsed.success) {
-    console.error('Invalid environment variables:', parsed.error.issues);
-    throw new Error('Invalid environment variables');
+  // usa .issues de Zod en lugar de .format()
+  console.error('Invalid environment variables:', parsed.error.issues);
+  process.exit(1);
 }
 
 export const config = {
-    nodeEnv: parsed.data.NODE_ENV,
-    port: parsed.data.PORT || Number(parsed.data.PORT) || 3000,
-    databaseUrl: parsed.data.DATABASE_URL,
-    jwtSecret: parsed.data.JWT_SECRET,
-    corsOrigin: parsed.data.CORS_ORIGIN || '*',
-    logLevel: parsed.data.LOG_LEVEL || 'info',
-}
+  nodeEnv: parsed.data.NODE_ENV,
+  port: parsed.data.PORT ? Number(parsed.data.PORT) : 4000,
+  databaseUrl: parsed.data.DATABASE_URL,
+  jwtSecret: parsed.data.JWT_SECRET,
+  corsOrigin: parsed.data.CORS_ORIGIN ?? '*',
+  logLevel: parsed.data.LOG_LEVEL ?? 'info',
+};
