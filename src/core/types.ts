@@ -11,3 +11,10 @@ export interface RequestWithUser extends Request {
     user?: AuthUser;
     requestId?: string;
 }
+
+export interface AuthenticatedRequest extends Request {
+  user?: {
+    id: string;
+    role: string;
+  };
+}

@@ -8,10 +8,10 @@ import { config } from '../config';
 import logger from '../core/logger';
 import { requestIdMiddleware } from '../middlewares/requestId.middleware';
 import { rateLimitMiddleware } from '../middlewares/rateLimit.middleware';
-// import apiV1Router from '../api/v1/routes'; // import the router (index.ts)
 import { errorHandler } from '../middlewares/error.middleware';
 import { corsMiddleware } from '../middlewares/cors.middleware';
 import { attachRequestLogger } from '../middlewares/attachLogger.middleware';
+import { apiV1Router } from '../api/v1/routes';
 
 const app = express();
 
@@ -30,7 +30,7 @@ if (config.nodeEnv !== 'production') {
 }
 
 // routes
-// app.use('/api/v1', apiV1Router);
+app.use('/api/v1', apiV1Router);
 
 // health
 app.get('/healthz', (_req, res) => res.status(200).json({ status: 'ok' }));

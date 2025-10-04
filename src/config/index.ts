@@ -21,7 +21,10 @@ export const config = {
   nodeEnv: parsed.data.NODE_ENV,
   port: parsed.data.PORT ? Number(parsed.data.PORT) : 4000,
   databaseUrl: parsed.data.DATABASE_URL,
-  jwtSecret: parsed.data.JWT_SECRET,
+  jwtAccessSecret: parsed.data.JWT_ACCESS_SECRET,
+  jwtRefreshSecret: parsed.data.JWT_REFRESH_SECRET,
+  jwtAccessExpires: parsed.data.JWT_ACCESS_EXPIRES,
+  jwtRefreshExpires: parsed.data.JWT_REFRESH_EXPIRES,
   corsOrigin: parsed.data.CORS_ORIGIN ?? '*',
   logLevel: parsed.data.LOG_LEVEL ?? 'info',
 };
