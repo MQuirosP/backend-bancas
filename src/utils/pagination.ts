@@ -1,17 +1,16 @@
-import { Prisma } from '@prisma/client';
+// src/utils/pagination.ts
 
 /**
- * Parámetros base para cualquier paginación
+ * Parámetros de entrada para paginación
  */
 export interface PaginationParams {
-  page?: number;
-  pageSize?: number;
-  maxPageSize?: number;
-  cursor?: string | null; // Cursor para scroll infinito
+  page?: number;       // página 1..N
+  pageSize?: number;   // tamaño de página solicitado
+  maxPageSize?: number; // límite duro de seguridad (default 100)
 }
 
 /**
- * Metadatos estandarizados para respuestas paginadas
+ * Metadatos estándar de respuesta paginada
  */
 export interface PaginationMeta {
   total: number;
@@ -20,36 +19,60 @@ export interface PaginationMeta {
   totalPages: number;
   hasNextPage: boolean;
   hasPrevPage: boolean;
-  nextCursor?: string | null;
-  prevCursor?: string | null;
 }
 
 /**
- * Asegura que los valores de paginación sean válidos y seguros
+ * Resultado paginado genérico
  */
-const sanitizePagination = (params: PaginationParams) => {
-  const safePage = Number.isFinite(params.page) && params.page! > 0 ? Math.floor(params.page!) : 1;
-  const safePageSize =
-    Number.isFinite(params.pageSize) && params.pageSize! > 0
-      ? Math.min(Math.floor(params.pageSize!), params.maxPageSize ?? 100)
+export interface PaginatedResult<T> {
+  data: T[];
+  meta: PaginationMeta;
+}
+
+/**
+ * Sanea y normaliza parámetros de paginación con límites de seguridad.
+ * Evita DoS por pageSize enorme, páginas negativas, NaN, etc.
+ */
+const sanitizePagination = (params?: PaginationParams) => {
+  const pageRaw = params?.page;
+  const pageSizeRaw = params?.pageSize;
+  const maxPageSize = params?.maxPageSize ?? 100;
+
+  const safePage =
+    typeof pageRaw === 'number' && isFinite(pageRaw) && pageRaw > 0
+      ? Math.floor(pageRaw)
+      : 1;
+
+  const safePageSizeBase =
+    typeof pageSizeRaw === 'number' && isFinite(pageSizeRaw) && pageSizeRaw > 0
+      ? Math.floor(pageSizeRaw)
       : 10;
 
-  return { page: safePage, pageSize: safePageSize };
+  const safePageSize = Math.min(safePageSizeBase, maxPageSize);
+
+  return { page: safePage, pageSize: safePageSize, maxPageSize };
 };
 
 /**
- * Construye metadatos confiables para respuesta paginada
+ * Devuelve skip/take calculados a partir de la paginación saneada.
+ * La dejamos pública por si algún servicio la requiere directamente.
+ */
+export const getSkipTake = (page = 1, pageSize = 10) => {
+  const p = Math.max(1, Math.floor(page));
+  const s = Math.max(1, Math.floor(pageSize));
+  return { skip: (p - 1) * s, take: s };
+};
+
+/**
+ * Construye metadatos consistentes y completos.
  */
 export const buildMeta = (
   total: number,
-  page: number,
-  pageSize: number,
-  nextCursor?: string | null,
-  prevCursor?: string | null
+  page = 1,
+  pageSize = 10
 ): PaginationMeta => {
   const totalPages = Math.max(Math.ceil(total / pageSize), 1);
   const safePage = Math.min(Math.max(page, 1), totalPages);
-
   return {
     total,
     page: safePage,
@@ -57,86 +80,95 @@ export const buildMeta = (
     totalPages,
     hasNextPage: safePage < totalPages,
     hasPrevPage: safePage > 1,
-    nextCursor: nextCursor ?? null,
-    prevCursor: prevCursor ?? null,
   };
 };
 
 /**
- * Paginación con offset clásica (skip/take)
+ * Paginación por OFFSET (skip/take) — la más común en paneles y CRUD.
+ * Genérica y segura, acepta cualquier modelo Prisma-like con findMany/count.
  */
-export const paginateOffset = async <T>(
+export async function paginateOffset<T>(
   model: {
     findMany: (args: any) => Promise<T[]>;
     count: (args?: any) => Promise<number>;
   },
-  options: {
+  options?: {
     where?: Record<string, any>;
     include?: Record<string, any>;
     select?: Record<string, any>;
     orderBy?: Record<string, any>;
-    page?: number;
-    pageSize?: number;
-    maxPageSize?: number;
+    pagination?: PaginationParams;
   }
-): Promise<{ data: T[]; meta: PaginationMeta }> => {
-  const { page, pageSize } = sanitizePagination(options);
-  const skip = (page - 1) * pageSize;
+): Promise<PaginatedResult<T>> {
+  const { page, pageSize } = sanitizePagination(options?.pagination);
+  const { skip, take } = getSkipTake(page, pageSize);
 
   const [data, total] = await Promise.all([
     model.findMany({
-      where: options.where,
-      include: options.include,
-      select: options.select,
-      orderBy: options.orderBy ?? { createdAt: 'desc' },
+      where: options?.where,
+      include: options?.include,
+      select: options?.select,
+      orderBy: options?.orderBy ?? { createdAt: 'desc' }, // todos tus modelos tienen createdAt
       skip,
-      take: pageSize,
+      take,
     }),
-    model.count({ where: options.where }),
+    model.count({ where: options?.where }),
   ]);
 
-  const meta = buildMeta(total, page, pageSize);
-  return { data, meta };
-};
+  return { data, meta: buildMeta(total, page, pageSize) };
+}
 
 /**
- * Paginación basada en cursor (ideal para grandes volúmenes)
+ * Paginación por CURSOR — ideal para listas muy largas (infinite scroll).
+ * Requiere un campo cursor estable (por defecto 'id').
  */
-export const paginateCursor = async <T>(
+export async function paginateCursor<T extends Record<string, any>>(
   model: {
-    findMany: (args: any) => Promise<T[]>;
+    findMany: (args: Record<string, any>) => Promise<T[]>;
   },
-  options: {
+  options?: {
     where?: Record<string, any>;
     include?: Record<string, any>;
     select?: Record<string, any>;
     orderBy?: Record<string, any>;
+    cursor?: { field?: string; value?: string } | null; // { field: 'id', value: 'uuid' }
     pageSize?: number;
     maxPageSize?: number;
-    cursor?: { id: string } | null;
   }
-): Promise<{ data: T[]; meta: PaginationMeta }> => {
-  const safePageSize = Math.min(options.pageSize ?? 10, options.maxPageSize ?? 100);
+): Promise<{ data: T[]; meta: PaginationMeta & { nextCursor: string | null } }> {
+  const maxPage = options?.maxPageSize ?? 100;
+  const sizeRaw = options?.pageSize ?? 10;
+  const pageSize = Math.min(Math.max(Math.floor(sizeRaw), 1), maxPage);
 
-  const data = await model.findMany({
-    where: options.where,
-    include: options.include,
-    select: options.select,
-    orderBy: options.orderBy ?? { createdAt: 'desc' },
-    cursor: options.cursor ?? undefined,
-    skip: options.cursor ? 1 : 0, // Evita duplicar el último registro del batch anterior
-    take: safePageSize + 1, // Un registro extra para saber si hay siguiente página
-  });
+  const cursorField = options?.cursor?.field ?? 'id';
+  const cursorValue = options?.cursor?.value;
 
-  const hasNextPage = data.length > safePageSize;
-  const dataSlice = hasNextPage ? data.slice(0, safePageSize) : data;
+  const query: Record<string, any> = {
+    where: options?.where,
+    include: options?.include,
+    select: options?.select,
+    orderBy: options?.orderBy ?? { createdAt: 'desc' },
+    take: pageSize + 1, // +1 para detectar si hay siguiente página
+  };
 
-  const nextCursor = hasNextPage
-    ? (dataSlice[dataSlice.length - 1] as any)?.id ?? null
-    : null;
-  const prevCursor = options.cursor ? (dataSlice[0] as any)?.id ?? null : null;
+  if (cursorValue) {
+    query.cursor = { [cursorField]: cursorValue };
+    query.skip = 1; // evita incluir el registro del cursor en el siguiente batch
+  }
 
-  const meta = buildMeta(0, 1, safePageSize, nextCursor, prevCursor);
+  const rows = await model.findMany(query);
 
-  return { data: dataSlice, meta };
-};
+  const hasNextPage = rows.length > pageSize;
+  const data = hasNextPage ? rows.slice(0, pageSize) : rows;
+
+  const nextCursor = hasNextPage ? (data[data.length - 1]?.[cursorField] as string) ?? null : null;
+
+  // En cursor-based no calculamos total (costoso). Meta parcial pero útil.
+  const meta = {
+    ...buildMeta(0, 1, pageSize),
+    hasNextPage,
+    hasPrevPage: Boolean(cursorValue), // si hay cursor, asumimos que venías de una página previa
+  };
+
+  return { data, meta: { ...meta, nextCursor } };
+}

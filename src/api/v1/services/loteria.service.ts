@@ -3,6 +3,7 @@ import { ActivityType, Prisma } from '@prisma/client';
 import ActivityService from '../../../core/activity.service';
 import logger from '../../../core/logger';
 import { AppError } from '../../../core/errors';
+import { paginateOffset } from '../../../utils/pagination';
 
 export const LoteriaService = {
   async create(data: { name: string; rulesJson?: Record<string, any> }, userId: string, requestId?: string) {
@@ -57,30 +58,33 @@ export const LoteriaService = {
     return loteria;
   },
 
-  async list(params: { page?: number; pageSize?: number; isDeleted?: boolean }) {
-    const page = params.page ?? 1;
-    const pageSize = params.pageSize ?? 10;
-    const skip = (page - 1) * pageSize;
+  async list({
+    page = 1,
+    pageSize = 10,
+    isDeleted,
+  }: {
+    page?: number;
+    pageSize?: number;
+    isDeleted?: boolean;
+  }) {
+    const where: Record<string, any> = {};
+    if (typeof isDeleted === 'boolean') where.isDeleted = isDeleted;
 
-    const [data, total] = await Promise.all([
-      prisma.loteria.findMany({
-        where: { isDeleted: params.isDeleted ?? false },
-        skip,
-        take: pageSize,
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.loteria.count({ where: { isDeleted: params.isDeleted ?? false } }),
-    ]);
-
-    return {
-      data,
-      meta: {
-        total,
-        page,
-        pageSize,
-        totalPages: Math.ceil(total / pageSize),
+    const result = await paginateOffset(prisma.loteria, {
+      where,
+      select: {
+        id: true,
+        name: true,
+        rulesJson: true,
+        isDeleted: true,
+        createdAt: true,
+        updatedAt: true,
       },
-    };
+      orderBy: { createdAt: 'desc' },
+      pagination: { page, pageSize },
+    });
+
+    return result;
   },
 
   async update(id: string, data: Partial<{ name: string; rulesJson: Record<string, any> }>, userId: string, requestId?: string) {

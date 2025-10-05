@@ -4,6 +4,7 @@ import ActivityService from '../../../core/activity.service';
 import logger from '../../../core/logger';
 import { AppError } from '../../../core/errors';
 import { sumDecimals, toDecimal } from '../../../utils/decimal';
+import { paginateOffset } from '../../../utils/pagination';
 
 // Tipos explícitos para jugadas y tickets
 export interface JugadaInput {
@@ -111,27 +112,33 @@ export const TicketService = {
   /**
    * Lista de tickets con paginación
    */
-  async list({ page = 1, pageSize = 10 }: { page?: number; pageSize?: number }) {
-    const skip = (page - 1) * pageSize;
-    const [data, total] = await Promise.all([
-      prisma.ticket.findMany({
-        skip,
-        take: pageSize,
-        include: { loteria: true, ventana: true },
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.ticket.count(),
-    ]);
+  async list({
+    page = 1,
+    pageSize = 10,
+    isDeleted,
+    status,
+  }: {
+    page?: number;
+    pageSize?: number;
+    isDeleted?: boolean;
+    status?: string;
+  }) {
+    const where: Record<string, any> = {};
+    if (typeof isDeleted === 'boolean') where.isDeleted = isDeleted;
+    if (status) where.status = status;
 
-    return {
-      data,
-      meta: {
-        total,
-        page,
-        pageSize,
-        totalPages: Math.ceil(total / pageSize),
+    const result = await paginateOffset(prisma.ticket, {
+      where,
+      include: {
+        loteria: true,
+        ventana: true,
+        vendedor: { select: { id: true, name: true, email: true } },
       },
-    };
+      orderBy: { createdAt: 'desc' },
+      pagination: { page, pageSize },
+    });
+
+    return result;
   },
 
   /**

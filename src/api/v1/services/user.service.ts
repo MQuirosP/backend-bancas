@@ -3,6 +3,7 @@ import prisma from '../../../core/prismaClient';
 import { AppError } from '../../../core/errors';
 import { CreateUserDTO, ListUsersQuery, UpdateUserDTO } from '../dto/user.dto';
 import { Role } from '@prisma/client';
+import { paginateOffset } from '../../../utils/pagination';
 
 export const UserService = {
   async create(dto: CreateUserDTO) {
@@ -34,34 +35,34 @@ export const UserService = {
     return user;
   },
 
-  async list(query: ListUsersQuery) {
-    const page = query.page ?? 1;
-    const pageSize = query.pageSize ?? 20;
+  async list(params: {
+    page?: number;
+    pageSize?: number;
+    role?: string;
+    isDeleted?: boolean;
+  }) {
+    const { page, pageSize, role, isDeleted } = params;
 
-    const where: any = {};
-    if (typeof query.isDeleted === 'boolean') where.isDeleted = query.isDeleted;
-    if (query.role) where.role = query.role as Role;
+    const where: Record<string, any> = {};
+    if (role) where.role = role;
+    if (typeof isDeleted === 'boolean') where.isDeleted = isDeleted;
 
-    const [data, total] = await Promise.all([
-      prisma.user.findMany({
-        where,
-        select: { id: true, name: true, email: true, role: true, ventanaId: true, isDeleted: true, createdAt: true },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      prisma.user.count({ where }),
-    ]);
-
-    return {
-      data,
-      meta: {
-        page,
-        pageSize,
-        total,
-        totalPages: Math.ceil(total / pageSize),
+    const result = await paginateOffset(prisma.user, {
+      where,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        isDeleted: true,
+        createdAt: true,
+        updatedAt: true,
       },
-    };
+      orderBy: { createdAt: 'desc' },
+      pagination: { page, pageSize },
+    });
+
+    return result;
   },
 
   async update(id: string, dto: UpdateUserDTO) {
