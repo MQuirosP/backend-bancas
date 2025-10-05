@@ -10,6 +10,13 @@ export const protect = (
   _res: Response,
   next: NextFunction
 ) => {
+  // 🔧 Opción temporal: permitir solicitudes sin token si está habilitado en .env
+  if (process.env.DISABLE_AUTH === "true") {
+    req.user = { id: "DEV_USER_ID", role: Role.ADMIN }; // simulamos un usuario
+    console.warn("⚠️ [AUTH DISABLED] Autenticación temporalmente deshabilitada.");
+    return next();
+  }
+
   const header = req.headers.authorization;
   if (!header || !header.startsWith("Bearer ")) {
     throw new AppError("Unauthorized", 401);
