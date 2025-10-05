@@ -90,8 +90,12 @@ model Banca {
   id                 String @id @default(uuid())
   name               String @unique
   code               String @unique
-  defaultMinBet      Float  @default(1.00)
+  defaultMinBet      Float  @default(100.00)
   globalMaxPerNumber Int? // Límite máximo global por número
+
+  address   String? // Dirección física (opcional)
+  phone     String? // Teléfono de contacto (opcional)
+  email     String? // Correo de contacto (opcional)
 
   ventanas        Ventana[]
   loteriaSettings BancaLoteriaSetting[]
@@ -115,6 +119,10 @@ model Ventana {
   name              String
   code              String @unique
   commissionMarginX Float // Margen operativo asignado (ej. 10x)
+
+  address   String? // Dirección física (opcional)
+  phone     String? // Teléfono de contacto (opcional)
+  email     String? // Correo de contacto (opcional)
 
   banca   Banca    @relation(fields: [bancaId], references: [id])
   users   User[]
