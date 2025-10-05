@@ -13,7 +13,7 @@ export const VentanaService = {
     const existing = await VentanaRepository.findByCode(data.code);
     if (existing) throw new AppError("El código de la ventana ya existe", 400);
 
-    // 👇 ahora delega en el repo (que ya hace banca.connect)
+    // delega en el repo (que ya hace banca.connect)
     const ventana = await VentanaRepository.create(data);
 
     await ActivityService.log({
