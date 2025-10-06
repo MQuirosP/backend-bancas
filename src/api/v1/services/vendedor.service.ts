@@ -4,7 +4,7 @@ import ActivityService from "../../../core/activity.service";
 import VendedorRepository from "../../../repositories/vendedor.repository";
 import { ActivityType, Role } from "@prisma/client";
 import { CreateVendedorInput, UpdateVendedorInput } from "../dto/vendedor.dto";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 
 type CurrentUser = { id: string; role: Role; ventanaId?: string | null };
 
