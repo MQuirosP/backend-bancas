@@ -1,20 +1,20 @@
 # 🏦 Banca Management Backend
 
 > **Proyecto backend modular y escalable** para la gestión integral de bancas de lotería.  
-> Desarrollado con **TypeScript, Express y Prisma ORM**, bajo arquitectura modular, con trazabilidad completa mediante `ActivityLog`.
+> Desarrollado con **TypeScript, Express y Prisma ORM**, bajo arquitectura por capas y trazabilidad completa vía `ActivityLog`.
 
 ---
 
 ## 🚀 Tecnologías Base
 
 | Componente | Tecnología |
-|-------------|-------------|
+|-----------|------------|
 | **Runtime** | Node.js (TypeScript strict) |
 | **Framework HTTP** | Express.js |
 | **ORM** | Prisma Client (PostgreSQL) |
-| **Autenticación** | JWT clásico (Access + Refresh) |
+| **Autenticación** | JWT (Access + Refresh) |
 | **Validación** | Zod |
-| **Logger** | Winston + middleware `attachLogger` |
+| **Logger** | Pino (`src/core/logger.ts`) + middleware `attachLogger` |
 | **Configuración** | dotenv-safe |
 | **Rate Limiting** | express-rate-limit |
 | **Auditoría** | Modelo `ActivityLog` integrado |
@@ -24,7 +24,6 @@
 ## 🧩 Estructura del Proyecto
 
 ```bash
-
 src/
 ├── api/
 │   └── v1/
@@ -33,8 +32,8 @@ src/
 │       ├── routes/
 │       ├── services/
 │       └── validators/
-├── core/
 ├── config/
+├── core/
 ├── middlewares/
 ├── repositories/
 ├── server/
@@ -42,28 +41,28 @@ src/
 └── workers/
 ```
 
-Cada capa tiene una responsabilidad clara:
+### Responsabilidades por capa
 
-| Capa | Responsabilidad |
-|------|------------------|
-| **Controller** | Orquesta la petición HTTP |
-| **Service** | Contiene la lógica de negocio |
-| **Repository** | Abstrae operaciones de datos con Prisma |
-| **Middleware** | Seguridad, validación, logging |
+| Capa | Rol |
+|------|-----|
+| **Controllers** | Orquestan la petición HTTP y formatean la respuesta |
+| **Services** | Lógica de negocio y validaciones de dominio |
+| **Repositories** | Acceso a datos con Prisma (sin lógica de dominio) |
+| **Middlewares** | Seguridad, validación, logging, rate limit |
 | **Core** | Componentes críticos (logger, errores, Prisma, auditoría) |
 
 ---
 
 ## 🔐 Autenticación
 
-- **JWT Access Token** (válido pocos minutos)
-- **Refresh Token** persistente (revocable, registrado en DB)
-- Middleware `protect` para rutas seguras
-- Modelo `RefreshToken` con expiración y estado `revoked`
+- **Access Token** de corta duración y **Refresh Token** persistente (revocable).
+- `RefreshToken` se almacena en DB con `revoked` y `expiresAt`.
+- Middleware `protect` para proteger rutas.
+- **Flag de desarrollo**: `DISABLE_AUTH=true` permite simular un usuario ADMIN temporalmente.
 
-Rutas:
+### Rutas
 
-```bash
+```http
 POST /api/v1/auth/register
 POST /api/v1/auth/login
 POST /api/v1/auth/refresh
@@ -73,66 +72,98 @@ GET  /api/v1/auth/me
 
 ---
 
-## 👥 Usuarios
+## 👤 Roles y Jerarquía
 
-CRUD completo con soft-delete y roles basados en el enum `Role` (`ADMIN`, `VENTANA`, `VENDEDOR`).
+- **Banca** → gestiona límites y configuración global.
+- **Ventana** → sucursal/punto de venta, subordinada a Banca.
+- **Vendedor** → opera ventas, subordinado a Ventana.
 
-Registro de actividad automática en `ActivityLog`:
-
-- `USER_CREATE`
-- `USER_UPDATE`
-- `USER_DELETE`
-- `USER_ROLE_CHANGE`
-- `USER_RESTORE`
+Enum `Role`: `ADMIN`, `VENTANA`, `VENDEDOR`.
 
 ---
 
-## 🎫 Tiquetes
+## 🏢 Bancas & 🪟 Ventanas
 
-Generación y gestión de tiquetes de venta.
+- **Banca**: `defaultMinBet` (💰 default **100**) y `globalMaxPerNumber` (🔒 default **5000**).  
+  Campos de contacto: `address`, `phone`, `email`.
+- **Ventana**: `commissionMarginX` y contacto (`address`, `phone`, `email`).
 
-- **Generador secuencial** con `TicketCounter`
-- Cada tiquete contiene múltiples jugadas (`jugadas`)
-- Soporte de cancelación con trazabilidad
-- Log de actividad (`TICKET_CREATE`, `TICKET_CANCEL`)
-
----
-
-## 🎲 Loterías
-
-Administración de las loterías disponibles:
-
-- CRUD completo (`LOTERIA_CREATE`, `LOTERIA_UPDATE`, etc.)
-- Campo `rulesJson` con reglas configurables por banca
-- Soft-delete y restauración
+Soft-delete y trazabilidad en ambos modelos. La Banca **no** tiene márgenes propios de venta, **gestiona** los márgenes/comisiones de Ventanas/Vendedores.
 
 ---
 
-## 📊 Paginación Dinámica
+## 🎲 Loterías & 🧭 Sorteos
 
-Utilidad genérica en `src/utils/pagination.ts` con dos modos:
+- **Lotería** con `rulesJson` y relación 1:N con **Sorteo**.
+- **Sorteo** (enum `SorteoStatus`: `SCHEDULED | OPEN | EVALUATED | CLOSED`):  
+  - `OPEN` → permite vender Tickets.  
+  - `EVALUATED` → registra `winningNumber` y marca jugadas ganadoras (payout = amount × finalMultiplierX).  
+  - Soft-delete + auditoría (`SORTEO_CREATE`, `SORTEO_CLOSE`, `SORTEO_EVALUATE`, `SYSTEM_ACTION`).
 
-1. **Offset Pagination** (paginación tradicional)
-2. **Cursor Pagination** (infinite scroll)
+### Rutas Sorteos
 
-Incluye:
+```http
+# Admin-only (require ADMIN)
+POST   /api/v1/sorteos
+PUT    /api/v1/sorteos/:id
+PATCH  /api/v1/sorteos/:id/open
+PATCH  /api/v1/sorteos/:id/close
+PATCH  /api/v1/sorteos/:id/evaluate
+DELETE /api/v1/sorteos/:id
 
-- Sanitización de `page` y `pageSize`
-- Límite duro `maxPageSize`
-- Metadatos estándar:
+# Lectura
+GET    /api/v1/sorteos
+GET    /api/v1/sorteos/:id
+```
 
-  ```json
-  {
-    "total": 120,
-    "page": 2,
-    "pageSize": 10,
-    "totalPages": 12,
-    "hasNextPage": true,
-    "hasPrevPage": true
-  }
-  ```
+---
 
-Ejemplo de uso:
+## 🎫 Tickets
+
+- **Ticket pertenece SIEMPRE a un Sorteo** (`sorteoId` requerido al crear).
+- **Generador secuencial** con `TicketCounter` atómico (fila única `id="DEFAULT"` + `upsert`).
+- `finalMultiplierX` se calcula desde **DB** usando `LoteriaMultiplier.valueX` activo y de la misma lotería (ignora valores del cliente).
+- Validaciones de negocio en `TicketService.create`:
+  - **Mínimo por jugada**: `Banca.defaultMinBet` (default 100).
+  - **Límite global por número**: `Banca.globalMaxPerNumber` (default 5000) **por Banca y Sorteo**:
+    - Suma lo ya vendido en el sorteo + lo que intenta vender el ticket.
+- Cancelación con soft-delete y `TICKET_CANCEL` en `ActivityLog`.
+
+### Rutas Tickets
+
+```http
+POST   /api/v1/tickets           # requiere { loteriaId, sorteoId, ventanaId, jugadas[] }
+GET    /api/v1/tickets/:id
+GET    /api/v1/tickets           # paginación offset
+PATCH  /api/v1/tickets/:id/cancel
+```
+
+---
+
+## 🔢 Multipliers & Restricciones
+
+- **LoteriaMultiplier**: define `valueX` y puede estar limitado por fecha/sorteo.
+- **UserMultiplierOverride**: ajustes por usuario/lotería (reservado para futuras reglas).
+- **RestrictionRule**: topes por banca/ventana/usuario/número; **además** se hace cumplir `globalMaxPerNumber`.
+
+---
+
+## 📦 Paginación
+
+Utilidad de **offset pagination** (`src/utils/pagination.ts`) con metadatos estándar:
+
+```json
+{
+  "total": 120,
+  "page": 2,
+  "pageSize": 10,
+  "totalPages": 12,
+  "hasNextPage": true,
+  "hasPrevPage": true
+}
+```
+
+Uso:
 
 ```ts
 const { data, meta } = await paginateOffset(prisma.ticket, {
@@ -145,15 +176,15 @@ const { data, meta } = await paginateOffset(prisma.ticket, {
 
 ## 🧾 Auditoría Centralizada
 
-Modelo `ActivityLog` registra automáticamente cada acción relevante del sistema.
+`ActivityService.log` registra acciones relevantes (create/update/close/evaluate/soft-delete) con `details` **JSON-safe**.
 
 ```ts
 await ActivityService.log({
   userId,
-  action: ActivityType.USER_UPDATE,
-  targetType: 'USER',
-  targetId: user.id,
-  details: { updatedFields: ['email'] },
+  action: ActivityType.TICKET_CREATE,
+  targetType: 'TICKET',
+  targetId: ticket.id,
+  details: { ticketNumber: 123, totalAmount: "1500.00" }, // Prisma.InputJsonObject
 });
 ```
 
@@ -161,65 +192,76 @@ await ActivityService.log({
 
 ## ⚙️ Configuración de entorno (.env)
 
-Archivo `.env` basado en `.env.example`  
-> ⚠️ **Nunca subir `.env` real al repositorio.**
-
-Variables principales:
+> ⚠️ Nunca subir un `.env` real al repo. Usa `.env.example` como base.
 
 ```bash
-DATABASE_URL=postgresql://user:pass@localhost:5432/bancas
+# Server
 PORT=4000
+NODE_ENV=development
+CORS_ORIGIN=http://localhost:5173
+LOG_LEVEL=info
+DISABLE_AUTH=false   # true solo en desarrollo
+
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/bancas
+
+# JWT
 JWT_ACCESS_SECRET=your-access-secret
 JWT_REFRESH_SECRET=your-refresh-secret
-JWT_ACCESS_EXPIRES=15m
-JWT_REFRESH_EXPIRES=7d
+JWT_ACCESS_EXPIRES_IN=15m     # 👈 alineado con config/env.schema.ts
+JWT_REFRESH_EXPIRES_IN=7d     # 👈 alineado con config/env.schema.ts
+
+# Rate limit (opcional)
 RATE_LIMIT_WINDOW=60000
 RATE_LIMIT_MAX=100
 ```
 
 ---
 
-## 🧠 Scripts principales
+## 🧰 Scripts principales
 
 ```bash
-# Iniciar en desarrollo
+# Desarrollo
 npm run dev
 
-# Migrar base de datos
+# Build
+npm run build
+
+# Prisma
 npx prisma migrate dev
-
-# Generar cliente Prisma
 npx prisma generate
+npm run prisma:seed        # si tienes seed
 
-# Ejecutar seed
-npx ts-node prisma/seed.ts
+# Deploy migrations en producción/CI
+npm run prisma:deploy
 ```
 
 ---
 
-## 🧰 Convenciones de commit
+## 🔒 Dependencias clave
 
-Usamos [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
-
-Ejemplos:
-
-```bash
-feat(api): add user role management with activity log
-fix(core): correct JWT refresh token validation
-docs: update README with authentication section
-```
+- `@prisma/client` / `prisma`
+- `express`, `express-async-errors`, `express-rate-limit`
+- `zod`
+- `jsonwebtoken`
+- `bcryptjs` (✅ usar este)  
+  > Si antes usabas `bcrypt`, elimina `@types/bcrypt` y mantén `@types/bcryptjs`.
+- `pino` + `pino-pretty`
+- `dotenv-safe`
+- Utilidades: `decimal.js`, `morgan`, `helmet`, `cors`
 
 ---
 
 ## 🧱 Fases de desarrollo
 
 | Fase | Descripción | Estado |
-|------|--------------|--------|
-| **1. Usuarios + Auth + Logs** | Implementado con validaciones y roles | ✅ |
-| **2. Tickets + Loterías + Auditoría total** | Listado, creación y cancelación de tiquetes | ✅ |
-| **3. Multipliers + Restricciones + Configuración** | Config. avanzada por banca | 🔜 |
-| **4. Integración con banca y ventana** | Lógica multi-sucursal | 🔜 |
-| **5. Refactor + Testing + Docs finales** | Documentación y pruebas | ⏳ |
+|------|-------------|--------|
+| **1. Usuarios + Auth + Logs** | Validaciones y roles + auditoría | ✅ |
+| **2. Tickets + Loterías** | Creación, listado y cancelación | ✅ |
+| **3. Sorteos** | Ciclo (create/open/close/evaluate) + auditoría | ✅ |
+| **4. Límites y Reglas** | `defaultMinBet` y `globalMaxPerNumber` efectivos | ✅ |
+| **5. Overrides/Restricciones** | Reglas avanzadas por usuario/ventana | 🔜 |
+| **6. Refactor + Testing + Docs finales** | Pruebas y documentación extendida | ⏳ |
 
 ---
 
@@ -227,11 +269,25 @@ docs: update README with authentication section
 
 **Mario Quirós P.**  
 Desarrollador Backend (Trainee)  
-Repositorio: [github.com/MQuirosP](https://github.com/MQuirosP)
+Repo: <https://github.com/MQuirosP>
 
 ---
 
 ## 🧭 Licencia
 
 Este proyecto está bajo la licencia **MIT**.  
-Consulta el archivo `LICENSE` para más detalles.
+Consulta `LICENSE` para más detalles.
+
+---
+
+### Commit sugerido (en inglés)
+
+```bash
+docs(readme): update architecture, draws integration and env config
+
+- Document Ticket <-> Sorteo relation (sorteoId required)
+- Add banca limits (defaultMinBet/globalMaxPerNumber) enforcement
+- Switch logger to Pino in docs
+- Align JWT_*_EXPIRES_IN in environment section
+- Clarify atomic TicketCounter with single-row upsert
+```
