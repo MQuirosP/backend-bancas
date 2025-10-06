@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const createTicketSchema = z.object({
   loteriaId: z.uuid(),
+  sorteoId: z.uuid(),
   ventanaId: z.uuid(),
   jugadas: z.array(
     z.object({

@@ -6,6 +6,7 @@ import loteriaRoutes from './loteria.routes';
 import ventanaRoutes from './ventana.routes';
 import bancaRoutes from './banca.routes';
 import vendedorRoutes from './vendedor.routes';
+import sorteoRoutes from './sorteo.routes';
 
 const router = Router();
 
@@ -16,5 +17,6 @@ router.use('/loterias', loteriaRoutes);
 router.use("/ventanas", ventanaRoutes);
 router.use('/bancas', bancaRoutes);
 router.use("/vendedores", vendedorRoutes);
+router.use("/sorteos", sorteoRoutes);
 
 export const apiV1Router = router;

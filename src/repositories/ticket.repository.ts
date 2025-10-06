@@ -5,6 +5,7 @@ import { AppError } from '../core/errors';
 
 type CreateTicketInput = {
   loteriaId: string;
+  sorteoId: string; // 👈 nuevo
   ventanaId: string;
   totalAmount: number;
   jugadas: Array<{
@@ -16,36 +17,23 @@ type CreateTicketInput = {
 };
 
 export const TicketRepository = {
-  /**
-   * Crea ticket + jugadas con incremento secuencial de ticketNumber en una transacción.
-   * Mantiene mismo comportamiento que tu service actual pero encapsulado en repo.
-   */
   async create(data: CreateTicketInput, userId: string) {
-    const { loteriaId, ventanaId, totalAmount, jugadas } = data;
+    const { loteriaId, sorteoId, ventanaId, totalAmount, jugadas } = data;
 
     const ticket = await prisma.$transaction(async (tx) => {
-      // obtener/crear contador y calcular siguiente número
-      const existing = await tx.ticketCounter.findFirst();
-      let nextNumber = 1;
+      // ✅ atómico con upsert + id fijo "DEFAULT"
+      const counter = await tx.ticketCounter.upsert({
+        where: { id: 'DEFAULT' },
+        update: { currentNumber: { increment: 1 }, lastUpdate: new Date() },
+        create: { id: 'DEFAULT', currentNumber: 1 },
+      });
+      const nextNumber = counter.currentNumber;
 
-      if (existing) {
-        const updated = await tx.ticketCounter.update({
-          where: { id: existing.id },
-          data: { currentNumber: { increment: 1 }, lastUpdate: new Date() },
-        });
-        nextNumber = updated.currentNumber;
-      } else {
-        const created = await tx.ticketCounter.create({
-          data: { currentNumber: 1 },
-        });
-        nextNumber = created.currentNumber;
-      }
-
-      // crear ticket y jugadas
       const createdTicket = await tx.ticket.create({
         data: {
           ticketNumber: nextNumber,
           loteriaId,
+          sorteoId,         // 👈 nuevo
           ventanaId,
           vendedorId: userId,
           totalAmount,
@@ -54,8 +42,9 @@ export const TicketRepository = {
             create: jugadas.map((j) => ({
               number: j.number,
               amount: j.amount,
-              multiplierId: j.multiplierId,
               finalMultiplierX: j.finalMultiplierX,
+              // mantenemos multiplierId requerido como usas en tu schema
+              multiplier: { connect: { id: j.multiplierId } },
             })),
           },
         },
@@ -77,7 +66,7 @@ export const TicketRepository = {
   async getById(id: string) {
     const ticket = await prisma.ticket.findUnique({
       where: { id },
-      include: { jugadas: true, loteria: true, ventana: true, vendedor: true },
+      include: { jugadas: true, loteria: true, sorteo: true, ventana: true, vendedor: true }, // 👈 añadí sorteo
     });
     return ticket;
   },
@@ -89,7 +78,7 @@ export const TicketRepository = {
       prisma.ticket.findMany({
         skip,
         take: pageSize,
-        include: { loteria: true, ventana: true, vendedor: true },
+        include: { loteria: true, sorteo: true, ventana: true, vendedor: true }, // 👈 añadí sorteo
         orderBy: { createdAt: 'desc' },
       }),
       prisma.ticket.count(),
@@ -109,7 +98,7 @@ export const TicketRepository = {
         deletedAt: new Date(),
         deletedBy: userId,
         deletedReason: 'Cancelled by user',
-        status: TicketStatus.EVALUATED,
+        status: TicketStatus.EVALUATED, // conservamos tu convención
         isActive: false,
       },
       include: { jugadas: true },

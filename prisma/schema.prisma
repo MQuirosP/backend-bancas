@@ -25,6 +25,13 @@ enum TicketStatus {
   EVALUATED // Sorteo realizado, jugadas evaluadas
 }
 
+enum SorteoStatus {
+  SCHEDULED
+  OPEN
+  EVALUATED
+  CLOSED
+}
+
 enum ActivityType {
   // Autenticación y sesión
   LOGIN
@@ -177,6 +184,7 @@ model Loteria {
   id        String @id @default(uuid())
   name      String @unique
   rulesJson Json? // Reglas dinámicas (horarios, tipos de apuesta, etc.)
+  sorteos   Sorteo[]
 
   tickets         Ticket[]
   loteriaSettings BancaLoteriaSetting[]
@@ -224,7 +232,7 @@ model BancaLoteriaSetting {
 // Contador secuencial de tiquetes (CRÍTICO - Manejado por SQL Function)
 model TicketCounter {
   id            String   @id @default(uuid())
-  currentNumber Int      @default(1)
+  currentNumber Int      @default(0)
   lastUpdate    DateTime @default(now())
 }
 
@@ -235,12 +243,14 @@ model Ticket {
   loteriaId    String
   ventanaId    String
   vendedorId   String
+  sorteoId    String? // Se asigna cuando se abre el sorteo
   totalAmount  Float
   status       TicketStatus @default(ACTIVE)
 
   loteria  Loteria  @relation(fields: [loteriaId], references: [id])
   ventana  Ventana  @relation(fields: [ventanaId], references: [id])
   vendedor User     @relation(fields: [vendedorId], references: [id])
+  sorteo   Sorteo?   @relation(fields: [sorteoId], references: [id])
   jugadas  Jugada[]
 
   isWinner Boolean @default(false) // Se actualiza si alguna jugada fue premiada
@@ -254,6 +264,8 @@ model Ticket {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([sorteoId])
 }
 
 // Jugada dentro de un Tiquete
@@ -279,6 +291,28 @@ model Jugada {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Sorteo {
+  id          String       @id @default(uuid())
+  loteriaId   String
+  scheduledAt DateTime     // Fecha/hora programada
+  status      SorteoStatus @default(SCHEDULED)
+  winningNumber String?     // Número ganador cuando se evalúa
+
+  loteria Loteria @relation(fields: [loteriaId], references: [id])
+  tickets Ticket[]
+
+  // Soft-Delete Fields (consistente con el resto)
+  isDeleted     Boolean   @default(false)
+  deletedAt     DateTime?
+  deletedBy     String?
+  deletedReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([loteriaId, scheduledAt])
 }
 
 // ----------------------------------------------------
