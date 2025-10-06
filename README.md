@@ -267,7 +267,7 @@ npm run prisma:deploy
 ## 👨‍💻 Autor
 
 **Mario Quirós P.**  
-Desarrollador Backend (Trainee)  
+Desarrollador Backend (Jr)  
 Repo: <https://github.com/MQuirosP>
 
 ---
