@@ -244,8 +244,7 @@ npm run prisma:deploy
 - `express`, `express-async-errors`, `express-rate-limit`
 - `zod`
 - `jsonwebtoken`
-- `bcryptjs` (✅ usar este)  
-  > Si antes usabas `bcrypt`, elimina `@types/bcrypt` y mantén `@types/bcryptjs`.
+- `bcryptjs`
 - `pino` + `pino-pretty`
 - `dotenv-safe`
 - Utilidades: `decimal.js`, `morgan`, `helmet`, `cors`
@@ -279,15 +278,3 @@ Este proyecto está bajo la licencia **MIT**.
 Consulta `LICENSE` para más detalles.
 
 ---
-
-### Commit sugerido (en inglés)
-
-```bash
-docs(readme): update architecture, draws integration and env config
-
-- Document Ticket <-> Sorteo relation (sorteoId required)
-- Add banca limits (defaultMinBet/globalMaxPerNumber) enforcement
-- Switch logger to Pino in docs
-- Align JWT_*_EXPIRES_IN in environment section
-- Clarify atomic TicketCounter with single-row upsert
-```
