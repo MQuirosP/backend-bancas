@@ -5,6 +5,7 @@ import { config } from '../../../config';
 import { RegisterDTO, LoginDTO, TokenPair } from '../dto/auth.dto';
 import { AppError } from '../../../core/errors';
 import { v4 as uuidv4 } from 'uuid';
+import { comparePassword, hashPassword } from '../../../utils/crypto';
 
 const ACCESS_SECRET = config.jwtAccessSecret;
 const REFRESH_SECRET = config.jwtRefreshSecret;
@@ -16,7 +17,7 @@ export const AuthService = {
       throw new AppError('Email is already in use', 409);
     }
 
-    const hashed = await bcrypt.hash(data.password, 10);
+    const hashed = await hashPassword(data.password);
 
     const user = await prisma.user.create({
       data: {
@@ -36,7 +37,7 @@ export const AuthService = {
       throw new AppError('Invalid credentials', 401);
     }
 
-    const match = await bcrypt.compare(data.password, user.password);
+    const match = await comparePassword(data.password, user.password);
     if (!match) {
       throw new AppError('Invalid credentials', 401);
     }

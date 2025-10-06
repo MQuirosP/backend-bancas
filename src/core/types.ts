@@ -13,8 +13,5 @@ export interface RequestWithUser extends Request {
 }
 
 export interface AuthenticatedRequest extends Request {
-  user?: {
-    id: string;
-    role: Role;
-  };
+  user?: AuthUser;
 }

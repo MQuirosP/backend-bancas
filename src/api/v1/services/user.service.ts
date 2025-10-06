@@ -4,13 +4,14 @@ import { AppError } from '../../../core/errors';
 import { CreateUserDTO, ListUsersQuery, UpdateUserDTO } from '../dto/user.dto';
 import { Role } from '@prisma/client';
 import { paginateOffset } from '../../../utils/pagination';
+import { hashPassword } from '../../../utils/crypto';
 
 export const UserService = {
   async create(dto: CreateUserDTO) {
     const exists = await prisma.user.findUnique({ where: { email: dto.email } });
     if (exists) throw new AppError('Email already in use', 409);
 
-    const hashed = await bcrypt.hash(dto.password, 10);
+    const hashed = await hashPassword(dto.password);
 
     const user = await prisma.user.create({
       data: {
@@ -68,7 +69,7 @@ export const UserService = {
   async update(id: string, dto: UpdateUserDTO) {
     const toUpdate: any = { ...dto };
     if (dto.password) {
-      toUpdate.password = await bcrypt.hash(dto.password, 10);
+      toUpdate.password = await hashPassword(dto.password);
     }
 
     const user = await prisma.user.update({

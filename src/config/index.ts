@@ -23,8 +23,8 @@ export const config = {
   databaseUrl: parsed.data.DATABASE_URL,
   jwtAccessSecret: parsed.data.JWT_ACCESS_SECRET,
   jwtRefreshSecret: parsed.data.JWT_REFRESH_SECRET,
-  jwtAccessExpires: parsed.data.JWT_ACCESS_EXPIRES,
-  jwtRefreshExpires: parsed.data.JWT_REFRESH_EXPIRES,
+  jwtAccessExpires: parsed.data.JWT_ACCESS_EXPIRES_IN,
+  jwtRefreshExpires: parsed.data.JWT_REFRESH_EXPIRES_IN,
   corsOrigin: parsed.data.CORS_ORIGIN ?? '*',
   logLevel: parsed.data.LOG_LEVEL ?? 'info',
 };

@@ -25,7 +25,11 @@ export const protect = (
   const token = header.split(" ")[1];
   try {
     const decoded = jwt.verify(token, config.jwtAccessSecret) as any;
-    req.user = { id: decoded.sub, role: decoded.role };
+    const role = decoded.role as Role;
+    if (!decoded.sub || !role) {
+      throw new AppError("Invalid token", 401);
+    }
+    req.user = { id: decoded.sub, role };
     next();
   } catch {
     throw new AppError("Invalid token", 401);
