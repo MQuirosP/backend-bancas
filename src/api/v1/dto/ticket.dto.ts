@@ -1,8 +1,6 @@
-// import { created } from './../../../utils/responses'; // ← sobra, lo removemos
-
 export interface CreateTicketDTO {
   loteriaId: string;
-  sorteoId: string;  // 👈 nuevo
+  sorteoId: string;
   ventanaId: string;
   jugadas: {
     number: string;
@@ -17,7 +15,7 @@ export interface TicketResponseDTO {
   totalAmount: number;
   status: string;
   loteriaId: string;
-  sorteoId: string;  // 👈 nuevo
+  sorteoId: string;
   ventanaId: string;
   vendedorId: string;
   createdAt: Date;

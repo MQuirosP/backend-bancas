@@ -231,7 +231,7 @@ model BancaLoteriaSetting {
 
 // Contador secuencial de tiquetes (CRÍTICO - Manejado por SQL Function)
 model TicketCounter {
-  id            String   @id @default(uuid())
+  id            String   @id @default("DEFAULT")
   currentNumber Int      @default(0)
   lastUpdate    DateTime @default(now())
 }
@@ -243,7 +243,7 @@ model Ticket {
   loteriaId    String
   ventanaId    String
   vendedorId   String
-  sorteoId    String? // Se asigna cuando se abre el sorteo
+  sorteoId    String // Se asigna cuando se abre el sorteo
   totalAmount  Float
   status       TicketStatus @default(ACTIVE)
 

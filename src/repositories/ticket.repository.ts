@@ -21,7 +21,6 @@ export const TicketRepository = {
     const { loteriaId, sorteoId, ventanaId, totalAmount, jugadas } = data;
 
     const ticket = await prisma.$transaction(async (tx) => {
-      // ✅ atómico con upsert + id fijo "DEFAULT"
       const counter = await tx.ticketCounter.upsert({
         where: { id: 'DEFAULT' },
         update: { currentNumber: { increment: 1 }, lastUpdate: new Date() },
@@ -33,7 +32,7 @@ export const TicketRepository = {
         data: {
           ticketNumber: nextNumber,
           loteriaId,
-          sorteoId,         // 👈 nuevo
+          sorteoId,
           ventanaId,
           vendedorId: userId,
           totalAmount,

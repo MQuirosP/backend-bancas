@@ -1,4 +1,3 @@
-// src/config/index.ts
 import 'dotenv/config';
 import dotenvSafe from 'dotenv-safe';
 import path from 'path';
