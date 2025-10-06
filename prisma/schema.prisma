@@ -98,7 +98,7 @@ model Banca {
   name               String @unique
   code               String @unique
   defaultMinBet      Float  @default(100.00)
-  globalMaxPerNumber Int? // Límite máximo global por número
+  globalMaxPerNumber Int    @default(5000) // Límite máximo global por número
 
   address   String? // Dirección física (opcional)
   phone     String? // Teléfono de contacto (opcional)
@@ -250,7 +250,7 @@ model Ticket {
   loteria  Loteria  @relation(fields: [loteriaId], references: [id])
   ventana  Ventana  @relation(fields: [ventanaId], references: [id])
   vendedor User     @relation(fields: [vendedorId], references: [id])
-  sorteo   Sorteo?   @relation(fields: [sorteoId], references: [id])
+  sorteo   Sorteo   @relation(fields: [sorteoId], references: [id])
   jugadas  Jugada[]
 
   isWinner Boolean @default(false) // Se actualiza si alguna jugada fue premiada
@@ -276,7 +276,7 @@ model Jugada {
   amount           Float // Monto apostado
   multiplierId     String // Referencia al multiplicador aplicado
   finalMultiplierX Float // Multiplicador final aplicado al momento de la venta (CRÍTICO)
-  multiplier       LoteriaMultiplier? @relation(fields: [multiplierId], references: [id]) // Valor del multiplicador (ej. 90, 2, 3)
+  multiplier       LoteriaMultiplier @relation(fields: [multiplierId], references: [id]) // Valor del multiplicador (ej. 90, 2, 3)
 
   isWinner Boolean @default(false) // Se actualiza si la jugada coincide con el número ganador
   payout   Float? // Se actualiza solo si la jugada coincide con el número ganador
