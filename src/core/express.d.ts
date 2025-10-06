@@ -1,5 +1,6 @@
 import type pino from 'pino';
 import 'express-serve-static-core';
+import { Role } from "@prisma/client";
 
 declare module 'express-serve-static-core' {
   interface Request {
@@ -14,3 +15,17 @@ declare module 'express-serve-static-core' {
     requestId?: string;
   }
 }
+
+declare global {
+  namespace Express {
+    interface User {
+      id: string;
+      role: Role;
+      ventanaId?: string | null;
+    }
+    interface Request {
+      user?: User;
+    }
+  }
+}
+export {};
