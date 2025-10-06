@@ -88,4 +88,18 @@ export const VentanaService = {
     if (!ventana || ventana.isDeleted) throw new AppError("Ventana no encontrada", 404);
     return ventana;
   },
+
+  async restore(id: string, userId: string, reason?: string) {
+    const ventana = await VentanaRepository.restore(id);
+
+    await ActivityService.log({
+      userId,
+      action: ActivityType.VENTANA_RESTORE,
+      targetType: "VENTANA",
+      targetId: id,
+      details: { reason },
+    });
+
+    return ventana;
+  },
 };

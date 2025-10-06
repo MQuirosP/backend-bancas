@@ -78,6 +78,31 @@ const BancaRepository = {
 
     return { data, total };
   },
+
+  async restore(id: string) {
+    const existing = await prisma.banca.findUnique({ where: { id } });
+    if (!existing) throw new AppError("Banca no encontrada", 404);
+    if (!existing.isDeleted) {
+      logger.info({ layer: "repository", action: "BANCA_RESTORE_IDEMPOTENT", payload: { bancaId: id } });
+      return existing; // idempotente
+    }
+
+    // Evita romper unicidad al restaurar
+    const [dupCode, dupName] = await Promise.all([
+      prisma.banca.findFirst({ where: { id: { not: id }, code: existing.code, isDeleted: false } }),
+      prisma.banca.findFirst({ where: { id: { not: id }, name: existing.name, isDeleted: false } }),
+    ]);
+    if (dupCode) throw new AppError("Cannot restore: another active Banca with the same code exists.", 409);
+    if (dupName) throw new AppError("Cannot restore: another active Banca with the same name exists.", 409);
+
+    const banca = await prisma.banca.update({
+      where: { id },
+      data: { isDeleted: false, deletedAt: null, deletedBy: null, deletedReason: null },
+    });
+
+    logger.info({ layer: "repository", action: "BANCA_RESTORE_DB", payload: { bancaId: id } });
+    return banca;
+  },
 };
 
 export default BancaRepository;

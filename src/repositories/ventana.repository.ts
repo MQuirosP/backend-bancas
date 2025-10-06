@@ -104,6 +104,37 @@ const VentanaRepository = {
     ]);
     return { data, total };
   },
+
+  async restore(id: string) {
+    const existing = await prisma.ventana.findUnique({
+      where: { id },
+      include: { banca: true },
+    });
+    if (!existing) throw new AppError("Ventana no encontrada", 404);
+    if (!existing.isDeleted) {
+      logger.info({ layer: "repository", action: "VENTANA_RESTORE_IDEMPOTENT", payload: { ventanaId: id } });
+      return existing; // idempotente
+    }
+
+    // La Banca debe existir y estar activa para restaurar la Ventana
+    if (!existing.banca || existing.banca.isDeleted) {
+      throw new AppError("Cannot restore Ventana: parent Banca is deleted or missing. Restore Banca first.", 409);
+    }
+
+    // Evita romper unicidad de code al restaurar
+    const dupCode = await prisma.ventana.findFirst({
+      where: { id: { not: id }, code: existing.code, isDeleted: false },
+    });
+    if (dupCode) throw new AppError("Cannot restore: another active Ventana with the same code exists.", 409);
+
+    const ventana = await prisma.ventana.update({
+      where: { id },
+      data: { isDeleted: false, deletedAt: null, deletedBy: null, deletedReason: null },
+    });
+
+    logger.info({ layer: "repository", action: "VENTANA_RESTORE_DB", payload: { ventanaId: id } });
+    return ventana;
+  },
 };
 
 export default VentanaRepository;

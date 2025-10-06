@@ -95,4 +95,18 @@ export const BancaService = {
     if (!banca || banca.isDeleted) throw new AppError("Banca no encontrada", 404);
     return banca;
   },
+
+  async restore(id: string, userId: string, reason?: string) {
+    const banca = await BancaRepository.restore(id);
+
+    await ActivityService.log({
+      userId,
+      action: ActivityType.BANCA_RESTORE,
+      targetType: "BANCA",
+      targetId: id,
+      details: { reason },
+    });
+
+    return banca;
+  },
 };

@@ -34,4 +34,11 @@ export const VentanaController = {
     const ventana = await VentanaService.findById(id);
     res.json({ success: true, data: ventana });
   },
+
+  async restore(req: AuthenticatedRequest, res: Response) {
+    const { id } = req.params;
+    const { reason } = req.body; // opcional, solo para auditoría
+    const ventana = await VentanaService.restore(id, req.user!.id, reason);
+    res.json({ success: true, data: ventana });
+  },
 };

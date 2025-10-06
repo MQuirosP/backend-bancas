@@ -33,4 +33,11 @@ export const BancaController = {
     const banca = await BancaService.findById(id);
     res.json({ success: true, data: banca });
   },
+
+   async restore(req: AuthenticatedRequest, res: Response) {
+    const { id } = req.params;
+    const { reason } = req.body; // opcional, solo para auditoría
+    const banca = await BancaService.restore(id, req.user!.id, reason);
+    res.json({ success: true, data: banca });
+  },
 };

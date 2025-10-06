@@ -21,6 +21,9 @@ router.post("/", requireAdmin, validateCreateBanca, BancaController.create);
 router.put("/:id", requireAdmin, validateUpdateBanca, BancaController.update);
 router.delete("/:id", requireAdmin, BancaController.delete);
 
+// Restore
+router.patch("/:id/restore", requireAdmin, BancaController.restore);
+
 // Lectura para usuarios autenticados
 router.get("/", BancaController.findAll);
 router.get("/:id", BancaController.findById);
