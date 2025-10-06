@@ -208,8 +208,8 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/bancas
 # JWT
 JWT_ACCESS_SECRET=your-access-secret
 JWT_REFRESH_SECRET=your-refresh-secret
-JWT_ACCESS_EXPIRES_IN=15m     # 👈 alineado con config/env.schema.ts
-JWT_REFRESH_EXPIRES_IN=7d     # 👈 alineado con config/env.schema.ts
+JWT_ACCESS_EXPIRES_IN=15m     
+JWT_REFRESH_EXPIRES_IN=7d     
 
 # Rate limit (opcional)
 RATE_LIMIT_WINDOW=60000
