@@ -23,6 +23,8 @@ enum Role {
 enum TicketStatus {
   ACTIVE // Tiquete vendido, esperando sorteo
   EVALUATED // Sorteo realizado, jugadas evaluadas
+  CANCELLED // Tiquete cancelado antes del sorteo
+  RESTORED // Tiquete restaurado después de ser cancelado
 }
 
 enum SorteoStatus {
