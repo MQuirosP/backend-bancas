@@ -77,6 +77,7 @@ const VentanaRepository = {
         deletedAt: new Date(),
         deletedBy: userId,
         deletedReason: reason || "No reason provided",
+        isActive: false,
       },
     });
     logger.info({
@@ -123,7 +124,7 @@ const VentanaRepository = {
 
     // Evita romper unicidad de code al restaurar
     const dupCode = await prisma.ventana.findFirst({
-      where: { id: { not: id }, code: existing.code, isDeleted: false },
+      where: { id: { not: id }, code: existing.code, isDeleted: false, isActive: true },
     });
     if (dupCode) throw new AppError("Cannot restore: another active Ventana with the same code exists.", 409);
 

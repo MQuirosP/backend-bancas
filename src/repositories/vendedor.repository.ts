@@ -65,7 +65,7 @@ const VendedorRepository = {
 
     const user = await prisma.user.update({
       where: { id },
-      data: { isDeleted: true, deletedAt: new Date(), deletedBy: actorUserId, deletedReason: reason },
+      data: { isDeleted: true, deletedAt: new Date(), deletedBy: actorUserId, isActive: false, deletedReason: reason },
     });
 
     logger.warn({ layer: "repository", action: "VENDEDOR_SOFT_DELETE_DB", payload: { userId: id, reason } });
@@ -95,7 +95,7 @@ const VendedorRepository = {
 
     // email único (contra activos)
     const dupEmail = await prisma.user.findFirst({
-      where: { id: { not: id }, email: existing.email, isDeleted: false },
+      where: { id: { not: id }, email: existing.email, isDeleted: false, isActive: true },
     });
     if (dupEmail) throw new AppError("Cannot restore: another active user with the same email exists.", 409);
 

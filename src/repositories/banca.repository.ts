@@ -56,7 +56,7 @@ const BancaRepository = {
 
     const banca = await prisma.banca.update({
       where: { id },
-      data: { isDeleted: true, deletedAt: new Date(), deletedBy: userId, deletedReason: reason },
+      data: { isDeleted: true, deletedAt: new Date(), deletedBy: userId, isActive: false, deletedReason: reason },
     });
 
     logger.warn({ layer: "repository", action: "BANCA_SOFT_DELETE_DB", payload: { bancaId: id, reason } });
@@ -97,7 +97,7 @@ const BancaRepository = {
 
     const banca = await prisma.banca.update({
       where: { id },
-      data: { isDeleted: false, deletedAt: null, deletedBy: null, deletedReason: null },
+      data: { isDeleted: false, deletedAt: null, deletedBy: null, isActive: true, deletedReason: null },
     });
 
     logger.info({ layer: "repository", action: "BANCA_RESTORE_DB", payload: { bancaId: id } });

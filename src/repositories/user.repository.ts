@@ -12,7 +12,7 @@ export const UserRepository = {
   create: (data: { name: string; email: string; password: string; role: Role; ventanaId?: string | null }) =>
     prisma.user.create({ data }),
 
-  update: (id: string, data: Partial<{ name: string; email: string; password: string; role: Role; ventanaId?: string | null; isDeleted: boolean }>) =>
+  update: (id: string, data: Partial<{ name: string; email: string; password: string; role: Role; ventanaId?: string | null; isDeleted: boolean, isActive: boolean }>) =>
     prisma.user.update({ where: { id }, data }),
 
   list: (args: {
