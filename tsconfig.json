@@ -12,7 +12,11 @@
     "resolveJsonModule": true,
     "sourceMap": true,
     "declaration": true,
-    "noImplicitAny": true
+    "noImplicitAny": true,
+
+    // 👇 Agregamos esto
+    "typeRoots": ["./src/core", "./node_modules/@types"],
+    "types": ["node", "express"]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

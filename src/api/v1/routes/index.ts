@@ -7,6 +7,7 @@ import ventanaRoutes from './ventana.routes';
 import bancaRoutes from './banca.routes';
 import vendedorRoutes from './vendedor.routes';
 import sorteoRoutes from './sorteo.routes';
+import multiplierOverrideRoutes from './multiplierOverride.routes';
 
 const router = Router();
 
@@ -18,5 +19,6 @@ router.use("/ventanas", ventanaRoutes);
 router.use('/bancas', bancaRoutes);
 router.use("/vendedores", vendedorRoutes);
 router.use("/sorteos", sorteoRoutes);
+router.use("/multiplierOverride", multiplierOverrideRoutes)
 
 export const apiV1Router = router;
