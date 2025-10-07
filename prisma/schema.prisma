@@ -380,13 +380,22 @@ model UserMultiplierOverride {
   id              String @id @default(uuid())
   userId          String
   loteriaId       String
+  multiplierType  String // Ej. "Base", "Reventado Roja", "Reventado Verde"
   baseMultiplierX Float // Ej. 85x, 90x
 
   user    User    @relation(fields: [userId], references: [id])
   loteria Loteria @relation(fields: [loteriaId], references: [id])
 
+  // Soft-Delete Fields
+  isDeleted     Boolean   @default(false)
+  deletedAt     DateTime?
+  deletedBy     String?
+  deletedReason String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([userId, loteriaId, multiplierType])
 }
 
 model RefreshToken {
