@@ -5,6 +5,7 @@ import { Prisma, SorteoStatus } from "@prisma/client";
 import { CreateSorteoDTO, UpdateSorteoDTO } from "../api/v1/dto/sorteo.dto";
 
 const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
+  name: d.name,
   scheduledAt: d.scheduledAt instanceof Date ? d.scheduledAt : new Date(d.scheduledAt),
   loteria: { connect: { id: d.loteriaId } },
 });

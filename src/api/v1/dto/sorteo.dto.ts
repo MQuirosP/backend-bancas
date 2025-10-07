@@ -1,4 +1,5 @@
 export interface CreateSorteoDTO {
+  name: string;
   loteriaId: string;
   scheduledAt: Date | string; // aceptamos ISO string; el validator la convierte a Date
 }
