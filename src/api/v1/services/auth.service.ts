@@ -25,6 +25,7 @@ export const AuthService = {
         email: data.email,
         password: hashed,
         role: data.role ?? 'VENTANA',
+        ventanaId: data.ventanaId
       },
     });
 

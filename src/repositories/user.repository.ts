@@ -9,10 +9,10 @@ export const UserRepository = {
   findByEmail: (email: string) =>
     prisma.user.findUnique({ where: { email } }),
 
-  create: (data: { name: string; email: string; password: string; role: Role; ventanaId?: string | null }) =>
+  create: (data: { name: string; email: string; password: string; role: Role; ventanaId: string }) =>
     prisma.user.create({ data }),
 
-  update: (id: string, data: Partial<{ name: string; email: string; password: string; role: Role; ventanaId?: string | null; isDeleted: boolean, isActive: boolean }>) =>
+  update: (id: string, data: Partial<{ name: string; email: string; password: string; role: Role; ventanaId: string; isDeleted: boolean, isActive: boolean }>) =>
     prisma.user.update({ where: { id }, data }),
 
   list: (args: {

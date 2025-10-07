@@ -5,7 +5,7 @@ export interface CreateUserDTO {
   email: string;
   password: string;
   role?: Role;
-  ventanaId?: string | null;
+  ventanaId: string;
 }
 
 export interface UpdateUserDTO {

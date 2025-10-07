@@ -3,6 +3,7 @@ export interface RegisterDTO {
     email: string,
     password: string,
     role?: 'ADMIN' | 'VENTANA' | 'VENDEDOR',
+    ventanaId: string,
 }
 
 export interface LoginDTO {
