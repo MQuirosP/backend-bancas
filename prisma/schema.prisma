@@ -154,7 +154,7 @@ model Ventana {
 // Usuarios del sistema (Admin, Ventana, Vendedor)
 model User {
   id        String  @id @default(uuid())
-  ventanaId String // VENDEDOR/VENTANA pertenece a una Ventana
+  ventanaId String? // VENDEDOR/VENTANA pertenece a una Ventana
   name      String
   email     String  @unique
   password  String // Almacenada como hash (bcrypt)
@@ -163,7 +163,7 @@ model User {
 
   refreshTokens RefreshToken[] // Tokens de refresco asociados al usuario
 
-  ventana        Ventana      @relation(fields: [ventanaId], references: [id])
+  ventana        Ventana?      @relation(fields: [ventanaId], references: [id])
   ticketsCreated Ticket[]
   activities     ActivityLog[]
 
