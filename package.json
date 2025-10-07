@@ -9,7 +9,8 @@
     "build": "tsc",
     "prisma:migrate": "prisma migrate dev --name init",
     "prisma:seed": "ts-node prisma/seed.ts",
-    "prisma:deploy": "prisma migrate deploy"
+    "prisma:deploy": "prisma migrate deploy",
+    "test": "jest --runInBand --detectOpenHandles"
   },
   "dependencies": {
     "@prisma/client": "^6.16.3",

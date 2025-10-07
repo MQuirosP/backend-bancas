@@ -4,3 +4,5 @@ node_modules/
 .vscode/
 **/.vscode/
 .DS_Store
+tests/tickets/concurrency.test.ts
+jest.config.ts

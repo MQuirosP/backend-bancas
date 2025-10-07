@@ -97,6 +97,7 @@ model Banca {
   id                 String @id @default(uuid())
   name               String @unique
   code               String @unique
+  isActive           Boolean @default(true) // Si la banca está operativa
   defaultMinBet      Float  @default(100.00)
   globalMaxPerNumber Int    @default(5000) // Límite máximo global por número
 
@@ -125,6 +126,7 @@ model Ventana {
   bancaId           String
   name              String
   code              String @unique
+  isActive          Boolean @default(true) // Si la ventana está operativa
   commissionMarginX Float // Margen operativo asignado (ej. 10x)
 
   address   String? // Dirección física (opcional)
@@ -155,6 +157,7 @@ model User {
   email     String  @unique
   password  String // Almacenada como hash (bcrypt)
   role      Role    @default(VENTANA)
+  isActive  Boolean @default(true) // Si el usuario puede iniciar sesión
 
   refreshTokens RefreshToken[] // Tokens de refresco asociados al usuario
 
@@ -183,6 +186,7 @@ model User {
 model Loteria {
   id        String @id @default(uuid())
   name      String @unique
+  isActive  Boolean @default(true) // Si la lotería está disponible para venta
   rulesJson Json? // Reglas dinámicas (horarios, tipos de apuesta, etc.)
   sorteos   Sorteo[]
 
@@ -295,6 +299,7 @@ model Jugada {
 
 model Sorteo {
   id          String       @id @default(uuid())
+  name        String       @unique
   loteriaId   String
   scheduledAt DateTime     // Fecha/hora programada
   status      SorteoStatus @default(SCHEDULED)
@@ -389,7 +394,7 @@ model RefreshToken {
   revoked   Boolean  @default(false) // Indica si el token fue revocado
   expiresAt DateTime // Fecha y hora de expiración
 
-  user User @relation(fields: [userId], references: [id]) // Relación con el modelo User
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade) // Relación con el modelo User
 
   createdAt DateTime @default(now()) // Fecha de creación
   updatedAt DateTime @updatedAt // Fecha de última modificación (automática)
