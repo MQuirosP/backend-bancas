@@ -20,9 +20,9 @@ export const MultiplierOverrideRepository = {
     return prisma.userMultiplierOverride.findUnique({ where: { id } });
   },
 
-  async findByUserAndLoteria(userId: string, loteriaId: string) {
+  async findByUserAndLoteria(userId: string, loteriaId: string, multiplierType: string) {
     return prisma.userMultiplierOverride.findFirst({
-      where: { userId, loteriaId },
+      where: { userId, loteriaId, multiplierType },
     });
   },
 

@@ -1,4 +1,3 @@
-// src/api/v1/services/sorteo.service.ts
 import { ActivityType, Prisma, SorteoStatus, TicketStatus } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";

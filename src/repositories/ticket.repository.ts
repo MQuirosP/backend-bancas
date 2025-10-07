@@ -31,13 +31,11 @@ export const TicketRepository = {
 
     // 👇 toda la transacción se maneja con retry automático (deadlock-safe)
     const ticket = await withTransactionRetry(async (tx) => {
-      // 1️⃣ Bloquear y actualizar contador atómicamente
-      const counter = await tx.ticketCounter.upsert({
-        where: { id: "DEFAULT" },
-        update: { currentNumber: { increment: 1 }, lastUpdate: new Date() },
-        create: { id: "DEFAULT", currentNumber: 1 },
-      });
-      const nextNumber = counter.currentNumber;
+      // 1️⃣ Obtener número secuencial mediante secuencia nativa Postgres
+      const [result] = await tx.$queryRawUnsafe<{ nextval: number }[]>(`
+      SELECT nextval('ticket_number_seq')
+    `);
+      const nextNumber = result.nextval;
 
       // 2️⃣ Revalidar límite diario dentro de la transacción
       const { _sum } = await tx.ticket.aggregate({
@@ -58,31 +56,38 @@ export const TicketRepository = {
       }
 
       // 3️⃣ Validar existencia de claves foráneas requeridas (defensivo)
-      const [existsLoteria, existsSorteo, ventana, existsUser] =
-        await Promise.all([
-          tx.loteria.findUnique({
-            where: { id: loteriaId },
-            select: { id: true },
-          }),
-          tx.sorteo.findUnique({
-            where: { id: sorteoId },
-            select: { id: true },
-          }),
-          tx.ventana.findUnique({
-            where: { id: ventanaId },
-            select: { id: true, bancaId: true },
-          }),
-          tx.user.findUnique({ where: { id: userId }, select: { id: true } }),
-        ]);
+      const [existsLoteria, sorteo, ventana, existsUser] = await Promise.all([
+        tx.loteria.findUnique({
+          where: { id: loteriaId },
+          select: { id: true },
+        }),
+        tx.sorteo.findUnique({
+          where: { id: sorteoId },
+          select: { id: true, status: true },
+        }),
+        tx.ventana.findUnique({
+          where: { id: ventanaId },
+          select: { id: true, bancaId: true },
+        }),
+        tx.user.findUnique({ where: { id: userId }, select: { id: true } }),
+      ]);
 
       if (!existsUser)
         throw new AppError("Seller (vendedor) not found", 404, "FK_VIOLATION");
       if (!existsLoteria)
         throw new AppError("Lotería not found", 404, "FK_VIOLATION");
-      if (!existsSorteo)
-        throw new AppError("Sorteo not found", 404, "FK_VIOLATION");
+      if (!sorteo) throw new AppError("Sorteo not found", 404, "FK_VIOLATION");
       if (!ventana)
         throw new AppError("Ventana not found", 404, "FK_VIOLATION");
+
+      // 3️⃣.1 No permitir venta si sorteo no está abierto
+      if (sorteo.status !== "OPEN") {
+        throw new AppError(
+          "No se pueden crear tickets para sorteos no abiertos",
+          400,
+          "SORTEO_NOT_OPEN"
+        );
+      }
 
       // 3️⃣.5 Pipeline de RestrictionRule (User > Ventana > Banca)
       const now = new Date();
@@ -123,7 +128,6 @@ export const TicketRepository = {
       if (applicable.length > 0) {
         const rule = applicable[0];
 
-        // Si la regla aplica a un número específico
         if (rule.number) {
           const sumForNumber = jugadas
             .filter((j) => j.number === rule.number)
@@ -141,7 +145,6 @@ export const TicketRepository = {
               400
             );
         } else {
-          // Regla general
           if (rule.maxAmount) {
             const maxBet = Math.max(...jugadas.map((j) => j.amount));
             if (maxBet > rule.maxAmount)
@@ -168,6 +171,7 @@ export const TicketRepository = {
           vendedorId: userId,
           totalAmount,
           status: TicketStatus.ACTIVE,
+          isActive: true,
           jugadas: {
             create: jugadas.map((j) => ({
               number: j.number,
@@ -202,7 +206,7 @@ export const TicketRepository = {
         logger.warn({
           layer: "activityLog",
           action: "ASYNC_FAIL",
-          payload: err.message,
+          payload: { message: err.message },
         })
       );
 
@@ -218,9 +222,20 @@ export const TicketRepository = {
       },
     });
 
+    logger.debug({
+      layer: "repository",
+      action: "TICKET_DEBUG",
+      payload: {
+        loteriaId,
+        sorteoId,
+        ventanaId,
+        vendedorId: userId,
+        jugadas,
+      },
+    });
+
     return ticket;
   },
-
   async getById(id: string) {
     return prisma.ticket.findUnique({
       where: { id },
@@ -234,46 +249,145 @@ export const TicketRepository = {
     });
   },
 
-  async list(page = 1, pageSize = 10) {
+  async list(
+    page = 1,
+    pageSize = 10,
+    filters: {
+      status?: TicketStatus;
+      isDeleted?: boolean;
+      sorteoId?: string;
+    } = {}
+  ) {
     const skip = (page - 1) * pageSize;
+
+    // 1️⃣ Construir condiciones dinámicas
+    const where: any = {
+      ...(filters.status ? { status: filters.status } : {}),
+      ...(typeof filters.isDeleted === "boolean"
+        ? { isDeleted: filters.isDeleted }
+        : { isDeleted: false }),
+      ...(filters.sorteoId ? { sorteoId: filters.sorteoId } : {}),
+    };
+
+    // 2️⃣ Obtener datos y total en paralelo
     const [data, total] = await Promise.all([
       prisma.ticket.findMany({
+        where,
         skip,
         take: pageSize,
         include: {
-          loteria: true,
-          sorteo: true,
-          ventana: true,
-          vendedor: true,
+          loteria: { select: { id: true, name: true } },
+          sorteo: { select: { id: true, name: true, status: true } },
+          ventana: { select: { id: true, name: true } },
+          vendedor: { select: { id: true, name: true, role: true } },
+          jugadas: true,
         },
         orderBy: { createdAt: "desc" },
       }),
-      prisma.ticket.count(),
+      prisma.ticket.count({ where }),
     ]);
-    return { data, total };
+
+    // 3️⃣ Calcular metadatos de paginación
+    const totalPages = Math.ceil(total / pageSize);
+
+    const meta = {
+      total,
+      page,
+      pageSize,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1,
+    };
+
+    // 4️⃣ Logging informativo
+    logger.info({
+      layer: "repository",
+      action: "TICKET_LIST",
+      payload: { filters, page, pageSize, total },
+    });
+
+    return { data, meta };
   },
-
   async cancel(id: string, userId: string) {
-    const existing = await prisma.ticket.findUnique({ where: { id } });
-    if (!existing) throw new AppError("Ticket not found", 404);
+    // 1️⃣ Verificar existencia del ticket
+    const existing = await prisma.ticket.findUnique({
+      where: { id },
+      include: { sorteo: true },
+    });
 
+    if (!existing) {
+      throw new AppError("Ticket not found", 404, "NOT_FOUND");
+    }
+
+    // 2️⃣ Validar que no esté evaluado o cerrado
+    if (existing.status === TicketStatus.EVALUATED) {
+      throw new AppError(
+        "Cannot cancel an evaluated ticket",
+        400,
+        "INVALID_STATE"
+      );
+    }
+
+    // 3️⃣ Validar sorteo (no permitir cancelar si el sorteo ya está cerrado o evaluado)
+    if (
+      existing.sorteo.status === "CLOSED" ||
+      existing.sorteo.status === "EVALUATED"
+    ) {
+      throw new AppError(
+        "Cannot cancel ticket from closed or evaluated sorteo",
+        400,
+        "SORTEO_LOCKED"
+      );
+    }
+
+    // 4️⃣ Actualizar ticket (soft delete + inactivar)
     const ticket = await prisma.ticket.update({
       where: { id },
       data: {
         isDeleted: true,
+        isActive: false,
         deletedAt: new Date(),
         deletedBy: userId,
         deletedReason: "Cancelled by user",
         status: TicketStatus.CANCELLED,
-        isActive: false,
+        updatedAt: new Date(),
       },
       include: { jugadas: true },
     });
 
+    // 5️⃣ Registrar en ActivityLog
+    prisma.activityLog
+      .create({
+        data: {
+          userId,
+          action: "TICKET_CANCEL",
+          targetType: "TICKET",
+          targetId: ticket.id,
+          details: {
+            ticketNumber: ticket.ticketNumber,
+            totalAmount: ticket.totalAmount,
+            cancelledAt: ticket.deletedAt,
+          },
+        },
+      })
+      .catch((err) =>
+        logger.warn({
+          layer: "activityLog",
+          action: "ASYNC_FAIL",
+          payload: { message: err.message },
+        })
+      );
+
+    // 6️⃣ Logging global
     logger.warn({
       layer: "repository",
       action: "TICKET_CANCEL_DB",
-      payload: { ticketId: id },
+      payload: {
+        ticketId: id,
+        userId,
+        sorteoId: existing.sorteoId,
+        totalAmount: ticket.totalAmount,
+      },
     });
 
     return ticket;

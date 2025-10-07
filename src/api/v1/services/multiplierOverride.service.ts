@@ -42,7 +42,7 @@ export const MultiplierOverrideService = {
     await this.assertCanManage(actor, dto.userId);
 
     // evitar duplicados (userId+loteriaId únicos de facto)
-    const existing = await MultiplierOverrideRepository.findByUserAndLoteria(dto.userId, dto.loteriaId);
+    const existing = await MultiplierOverrideRepository.findByUserAndLoteria(dto.userId, dto.loteriaId, dto.multiplierType);
     if (existing) {
       throw new AppError("Override already exists for this user and lottery", 409);
     }
