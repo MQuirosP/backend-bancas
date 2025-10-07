@@ -88,7 +88,8 @@ Enum `Role`: `ADMIN`, `VENTANA`, `VENDEDOR`.
   Campos de contacto: `address`, `phone`, `email`.
 - **Ventana**: `commissionMarginX` y contacto (`address`, `phone`, `email`).
 
-Soft-delete y trazabilidad en ambos modelos. La Banca **no** tiene márgenes propios de venta, **gestiona** los márgenes/comisiones de Ventanas/Vendedores.
+Soft-delete y trazabilidad en ambos modelos.  
+La Banca **no** tiene márgenes propios de venta, **gestiona** los márgenes/comisiones de Ventanas/Vendedores.
 
 ---
 
@@ -97,7 +98,7 @@ Soft-delete y trazabilidad en ambos modelos. La Banca **no** tiene márgenes pro
 - **Lotería** con `rulesJson` y relación 1:N con **Sorteo**.
 - **Sorteo** (enum `SorteoStatus`: `SCHEDULED | OPEN | EVALUATED | CLOSED`):  
   - `OPEN` → permite vender Tickets.  
-  - `EVALUATED` → registra `winningNumber` y marca jugadas ganadoras (payout = amount × finalMultiplierX).  
+  - `EVALUATED` → registra `winningNumber` y marca jugadas ganadoras (`payout = amount × finalMultiplierX`).  
   - Soft-delete + auditoría (`SORTEO_CREATE`, `SORTEO_CLOSE`, `SORTEO_EVALUATE`, `SYSTEM_ACTION`).
 
 ### Rutas Sorteos
@@ -121,12 +122,12 @@ GET    /api/v1/sorteos/:id
 ## 🎫 Tickets
 
 - **Ticket pertenece SIEMPRE a un Sorteo** (`sorteoId` requerido al crear).
-- **Generador secuencial** con `TicketCounter` atómico (fila única `id="DEFAULT"` + `upsert`).
-- `finalMultiplierX` se calcula desde **DB** usando `LoteriaMultiplier.valueX` activo y de la misma lotería (ignora valores del cliente).
+- **Generador secuencial** con `TicketCounter` atómico (`id="DEFAULT"` + `upsert`).
+- `finalMultiplierX` se calcula **en servidor** desde `LoteriaMultiplier.valueX` (no desde cliente).
 - Validaciones de negocio en `TicketService.create`:
   - **Mínimo por jugada**: `Banca.defaultMinBet` (default 100).
-  - **Límite global por número**: `Banca.globalMaxPerNumber` (default 5000) **por Banca y Sorteo**:
-    - Suma lo ya vendido en el sorteo + lo que intenta vender el ticket.
+  - **Límite global por número**: `Banca.globalMaxPerNumber` (default 5000).
+  - Se valida dentro de una `prisma.$transaction` para evitar overselling.
 - Cancelación con soft-delete y `TICKET_CANCEL` en `ActivityLog`.
 
 ### Rutas Tickets
@@ -143,8 +144,22 @@ PATCH  /api/v1/tickets/:id/cancel
 ## 🔢 Multipliers & Restricciones
 
 - **LoteriaMultiplier**: define `valueX` y puede estar limitado por fecha/sorteo.
-- **UserMultiplierOverride**: ajustes por usuario/lotería (reservado para futuras reglas).
-- **RestrictionRule**: topes por banca/ventana/usuario/número; **además** se hace cumplir `globalMaxPerNumber`.
+- **UserMultiplierOverride** *(nuevo módulo)*:
+  - Multiplicadores personalizados por usuario y lotería.
+  - CRUD con roles `ADMIN` y `VENTANA`.
+  - Auditado en `ActivityLog`.
+  - Validaciones `Zod` en `multiplierOverride.dto.ts`.
+- **RestrictionRule**: topes por banca/ventana/usuario/número.
+
+---
+
+## ⚖️ Concurrencia y transacciones
+
+Sistema transaccional seguro con reintentos automáticos (`withTransactionRetry`):  
+
+- Detecta errores Prisma `P2034` / deadlocks.  
+- Registra `RETRY`, `FAIL` y `SUCCESS` en logs transaccionales.  
+- Evita overselling bajo carga concurrente alta.
 
 ---
 
@@ -176,7 +191,7 @@ const { data, meta } = await paginateOffset(prisma.ticket, {
 
 ## 🧾 Auditoría Centralizada
 
-`ActivityService.log` registra acciones relevantes (create/update/close/evaluate/soft-delete) con `details` **JSON-safe**.
+`ActivityService.log` registra acciones relevantes (create/update/close/evaluate/soft-delete) con `details` JSON-safe.
 
 ```ts
 await ActivityService.log({
@@ -184,7 +199,7 @@ await ActivityService.log({
   action: ActivityType.TICKET_CREATE,
   targetType: 'TICKET',
   targetId: ticket.id,
-  details: { ticketNumber: 123, totalAmount: "1500.00" }, // Prisma.InputJsonObject
+  details: { ticketNumber: 123, totalAmount: "1500.00" },
 });
 ```
 
@@ -200,7 +215,7 @@ PORT=4000
 NODE_ENV=development
 CORS_ORIGIN=http://localhost:5173
 LOG_LEVEL=info
-DISABLE_AUTH=false   # true solo en desarrollo
+DISABLE_AUTH=false
 
 # Database
 DATABASE_URL=postgresql://user:pass@localhost:5432/bancas
@@ -208,8 +223,8 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/bancas
 # JWT
 JWT_ACCESS_SECRET=your-access-secret
 JWT_REFRESH_SECRET=your-refresh-secret
-JWT_ACCESS_EXPIRES_IN=15m     
-JWT_REFRESH_EXPIRES_IN=7d     
+JWT_ACCESS_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
 
 # Rate limit (opcional)
 RATE_LIMIT_WINDOW=60000
@@ -230,24 +245,11 @@ npm run build
 # Prisma
 npx prisma migrate dev
 npx prisma generate
-npm run prisma:seed        # si tienes seed
+npm run prisma:seed
 
-# Deploy migrations en producción/CI
+# Deploy migrations
 npm run prisma:deploy
 ```
-
----
-
-## 🔒 Dependencias clave
-
-- `@prisma/client` / `prisma`
-- `express`, `express-async-errors`, `express-rate-limit`
-- `zod`
-- `jsonwebtoken`
-- `bcryptjs`
-- `pino` + `pino-pretty`
-- `dotenv-safe`
-- Utilidades: `decimal.js`, `morgan`, `helmet`, `cors`
 
 ---
 
@@ -258,17 +260,18 @@ npm run prisma:deploy
 | **1. Usuarios + Auth + Logs** | Validaciones y roles + auditoría | ✅ |
 | **2. Tickets + Loterías** | Creación, listado y cancelación | ✅ |
 | **3. Sorteos** | Ciclo (create/open/close/evaluate) + auditoría | ✅ |
-| **4. Límites y Reglas** | `defaultMinBet` y `globalMaxPerNumber` efectivos | ✅ |
-| **5. Overrides/Restricciones** | Reglas avanzadas por usuario/ventana | 🔜 |
-| **6. Refactor + Testing + Docs finales** | Pruebas y documentación extendida | ⏳ |
+| **4. Límites y Reglas** | Reglas globales y RestrictionRule | ✅ |
+| **5. Overrides/Multipliers** | Multiplicadores por usuario y lotería | ✅ |
+| **6. Pruebas + Docs + CI/CD** | Unit tests, Swagger, Docker | 🔜 |
 
 ---
 
 ## 👨‍💻 Autor
 
 **Mario Quirós P.**  
-Desarrollador Backend (Jr)  
-Repo: <https://github.com/MQuirosP>
+Desarrollador Backend (Trainee)  
+📧 [mquirosp78@gmail.com](mailto:mquirosp78@gmail.com)  
+🌐 [github.com/MQuirosP](https://github.com/MQuirosP)
 
 ---
 
