@@ -53,6 +53,7 @@ enum ActivityType {
   SORTEO_EVALUATE
   SORTEO_CLOSE
   SORTEO_REOPEN
+  SORTEO_UPDATE
 
   // Configuración de loterías
   LOTERIA_CREATE

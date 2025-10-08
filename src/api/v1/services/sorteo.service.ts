@@ -1,4 +1,9 @@
-import { ActivityType, Prisma, SorteoStatus, TicketStatus } from "@prisma/client";
+import {
+  ActivityType,
+  Prisma,
+  SorteoStatus,
+  TicketStatus,
+} from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import ActivityService from "../../../core/activity.service";
@@ -10,22 +15,23 @@ const FINAL_STATES: ReadonlyArray<SorteoStatus> = [
   SorteoStatus.CLOSED,
 ];
 
-const EVALUABLE_STATES: ReadonlyArray<SorteoStatus> = [
-  SorteoStatus.OPEN,
-  SorteoStatus.CLOSED,
-];
+const EVALUABLE_STATES: ReadonlyArray<SorteoStatus> = [SorteoStatus.OPEN];
 
 export const SorteoService = {
   async create(data: CreateSorteoDTO, userId: string) {
-    const loteria = await prisma.loteria.findUnique({ where: { id: data.loteriaId } });
-    if (!loteria || loteria.isDeleted) throw new AppError("Lotería no encontrada", 404);
+    const loteria = await prisma.loteria.findUnique({
+      where: { id: data.loteriaId },
+    });
+    if (!loteria || loteria.isDeleted)
+      throw new AppError("Lotería no encontrada", 404);
 
     const s = await SorteoRepository.create(data);
 
     const details: Prisma.InputJsonObject = {
       loteriaId: data.loteriaId,
-      scheduledAt: (
-        data.scheduledAt instanceof Date ? data.scheduledAt : new Date(data.scheduledAt)
+      scheduledAt: (data.scheduledAt instanceof Date
+        ? data.scheduledAt
+        : new Date(data.scheduledAt)
       ).toISOString(),
     };
 
@@ -42,10 +48,14 @@ export const SorteoService = {
 
   async update(id: string, data: UpdateSorteoDTO, userId: string) {
     const existing = await SorteoRepository.findById(id);
-    if (!existing || existing.isDeleted) throw new AppError("Sorteo no encontrado", 404);
+    if (!existing || existing.isDeleted)
+      throw new AppError("Sorteo no encontrado", 404);
 
     if (FINAL_STATES.includes(existing.status)) {
-      throw new AppError("No se puede editar un sorteo evaluado o cerrado", 409);
+      throw new AppError(
+        "No se puede editar un sorteo evaluado o cerrado",
+        409
+      );
     }
 
     const s = await SorteoRepository.update(id, data);
@@ -53,7 +63,9 @@ export const SorteoService = {
     const details: Record<string, any> = {};
     if (data.scheduledAt) {
       details.scheduledAt = (
-        data.scheduledAt instanceof Date ? data.scheduledAt : new Date(data.scheduledAt)
+        data.scheduledAt instanceof Date
+          ? data.scheduledAt
+          : new Date(data.scheduledAt)
       ).toISOString();
     }
     if (data.status) details.status = data.status;
@@ -61,7 +73,7 @@ export const SorteoService = {
 
     await ActivityService.log({
       userId,
-      action: ActivityType.SYSTEM_ACTION, // no existe SORTEO_UPDATE
+      action: ActivityType.SORTEO_UPDATE, // no existe SORTEO_UPDATE
       targetType: "SORTEO",
       targetId: id,
       details,
@@ -72,7 +84,8 @@ export const SorteoService = {
 
   async open(id: string, userId: string) {
     const existing = await SorteoRepository.findById(id);
-    if (!existing || existing.isDeleted) throw new AppError("Sorteo no encontrado", 404);
+    if (!existing || existing.isDeleted)
+      throw new AppError("Sorteo no encontrado", 404);
     if (existing.status !== SorteoStatus.SCHEDULED) {
       throw new AppError("Solo se puede abrir desde SCHEDULED", 409);
     }
@@ -97,7 +110,8 @@ export const SorteoService = {
 
   async close(id: string, userId: string) {
     const existing = await SorteoRepository.findById(id);
-    if (!existing || existing.isDeleted) throw new AppError("Sorteo no encontrado", 404);
+    if (!existing || existing.isDeleted)
+      throw new AppError("Sorteo no encontrado", 404);
     if (existing.status !== SorteoStatus.OPEN) {
       throw new AppError("Solo se puede cerrar desde OPEN", 409);
     }
@@ -122,7 +136,8 @@ export const SorteoService = {
 
   async evaluate(id: string, winningNumber: string, userId: string) {
     const existing = await SorteoRepository.findById(id);
-    if (!existing || existing.isDeleted) throw new AppError("Sorteo no encontrado", 404);
+    if (!existing || existing.isDeleted)
+      throw new AppError("Sorteo no encontrado", 404);
     if (!EVALUABLE_STATES.includes(existing.status)) {
       throw new AppError("Solo se puede evaluar desde OPEN o CLOSED", 409);
     }
@@ -136,25 +151,31 @@ export const SorteoService = {
     await prisma.$transaction(async (tx) => {
       for (const t of tickets) {
         let isWinner = false;
-        for (const j of t.jugadas) {
+        const jugadasUpdates = t.jugadas.map(async (j) => {
           if (j.number === winningNumber) {
             isWinner = true;
             const payout = j.amount * j.finalMultiplierX;
-            await tx.jugada.update({
+            return tx.jugada.update({
               where: { id: j.id },
               data: { isWinner: true, payout },
             });
           }
-        }
+        });
+        await Promise.all(jugadasUpdates);
+
         await tx.ticket.update({
           where: { id: t.id },
           data: { isWinner, status: TicketStatus.EVALUATED, isActive: false },
         });
-        if (isWinner) winners++; // 👈 faltaba
+        if (isWinner) winners++;
       }
     });
 
-    const s = await SorteoRepository.evaluate(id, winningNumber);
+    // ✅ Solo actualizar el estado y número ganador del sorteo
+    const s = await prisma.sorteo.update({
+      where: { id },
+      data: { status: SorteoStatus.EVALUATED, winningNumber },
+    });
 
     const details: Prisma.InputJsonObject = { winningNumber, winners };
 
@@ -193,7 +214,14 @@ export const SorteoService = {
     const totalPages = Math.ceil(total / ps);
     return {
       data,
-      meta: { total, page: p, pageSize: ps, totalPages, hasNextPage: p < totalPages, hasPrevPage: p > 1 },
+      meta: {
+        total,
+        page: p,
+        pageSize: ps,
+        totalPages,
+        hasNextPage: p < totalPages,
+        hasPrevPage: p > 1,
+      },
     };
   },
 
