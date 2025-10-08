@@ -45,6 +45,8 @@ enum ActivityType {
   TICKET_CANCEL
   TICKET_EVALUATE
   TICKET_RESTORE
+  TICKET_PAY
+  TICKET_PAYMENT_REVERSE
   JUGADA_EVALUATE
   JUGADA_RESTORE
 
@@ -179,6 +181,8 @@ model User {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  TicketPayment TicketPayment[]
 }
 
 // ----------------------------------------------------
@@ -273,7 +277,36 @@ model Ticket {
   updatedAt DateTime @updatedAt
 
   @@index([sorteoId])
+  TicketPayment TicketPayment[]
 }
+
+model TicketPayment {
+  id          String   @id @default(uuid())
+  ticketId    String
+  amountPaid  Float
+  paidById    String
+  paymentDate DateTime @default(now())
+  method      String?  // efectivo, transferencia, etc.
+  notes       String?
+
+  isPartial   Boolean @default(false)
+  remainingAmount   Float?  // solo si es pago parcial
+
+  idempotencyKey  String? @unique  //evita pagos duplicados
+
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+  paidBy User   @relation(fields: [paidById], references: [id])
+
+  isReversed Boolean   @default(false)
+  reversedAt DateTime?
+  reversedBy String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([ticketId, isReversed]) // evita doble pago
+}
+
 
 // Jugada dentro de un Tiquete
 model Jugada {
