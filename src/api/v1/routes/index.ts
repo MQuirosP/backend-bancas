@@ -8,6 +8,7 @@ import bancaRoutes from './banca.routes';
 import vendedorRoutes from './vendedor.routes';
 import sorteoRoutes from './sorteo.routes';
 import multiplierOverrideRoutes from './multiplierOverride.routes';
+import restrictionRule from './restrictionRule.routes'
 
 const router = Router();
 
@@ -20,5 +21,6 @@ router.use('/bancas', bancaRoutes);
 router.use("/vendedores", vendedorRoutes);
 router.use("/sorteos", sorteoRoutes);
 router.use("/multiplierOverride", multiplierOverrideRoutes)
+router.use("/restrictionRule", restrictionRule)
 
 export const apiV1Router = router;
