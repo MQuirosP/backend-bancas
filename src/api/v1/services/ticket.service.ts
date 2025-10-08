@@ -3,13 +3,60 @@ import TicketRepository from "../../../repositories/ticket.repository";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
 import { AppError } from "../../../core/errors";
+import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 
 export const TicketService = {
   /**
-   * Crear ticket (coordinando repositorio + auditoría)
+   * Crear ticket (con validación de restricciones)
    */
   async create(data: any, userId: string, requestId?: string) {
     try {
+      // =======================================================
+      // 1. Validación jerárquica antes de crear el ticket
+      // =======================================================
+      const { bancaId, ventanaId } = data; // asegúrate que vengan del body
+      const jugadas = data.jugadas || [];
+
+      const at = new Date();
+
+      // Validar límites por jugada
+      for (const j of jugadas) {
+        const limits = await RestrictionRuleRepository.getEffectiveLimits({
+          bancaId,
+          ventanaId,
+          userId,
+          number: j.number,
+          at,
+        });
+
+        if (limits.maxAmount !== null && j.amount > limits.maxAmount) {
+          throw new AppError(
+            `Límite por jugada excedido para número ${j.number}. Máximo permitido: ${limits.maxAmount}`,
+            400
+          );
+        }
+      }
+
+      // Validar límite total por ticket
+      const total = jugadas.reduce((acc: number, j: any) => acc + j.amount, 0);
+      const totalLimits = await RestrictionRuleRepository.getEffectiveLimits({
+        bancaId,
+        ventanaId,
+        userId,
+        number: null,
+        at,
+      });
+
+      if (totalLimits.maxTotal !== null && total > totalLimits.maxTotal) {
+        throw new AppError(
+          `Límite total por ticket excedido. Máximo permitido: ${totalLimits.maxTotal}`,
+          400
+        );
+      }
+
+      // =======================================================
+      // 2. Crear ticket (coordinando repositorio + auditoría)
+      // =======================================================
       const ticket = await TicketRepository.create(data, userId);
 
       await ActivityService.log({
