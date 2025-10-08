@@ -31,11 +31,51 @@ export const TicketRepository = {
 
     // 👇 toda la transacción se maneja con retry automático (deadlock-safe)
     const ticket = await withTransactionRetry(async (tx) => {
-      // 1️⃣ Obtener número secuencial mediante secuencia nativa Postgres
-      const [result] = await tx.$queryRawUnsafe<{ nextval: number }[]>(`
-      SELECT nextval('ticket_number_seq')
-    `);
-      const nextNumber = result.nextval;
+      // 1️⃣ Obtener número secuencial (Supabase o local)
+      let nextNumber: number | null = null;
+
+      try {
+        // 🔹 Intentar usar la función PL/pgSQL de Supabase
+        const [res] = await tx.$queryRawUnsafe<
+          { generate_ticket_number: number }[]
+        >(`SELECT generate_ticket_number()`);
+        nextNumber = res?.generate_ticket_number ?? null;
+      } catch (err: any) {
+        // 🔹 Si la función no existe, fallback local usando TicketCounter
+        logger.warn({
+          layer: "ticketRepository",
+          action: "SEQ_FALLBACK",
+          payload: { message: err.message },
+        });
+
+        await tx.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "TicketCounter" (
+          id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+          "currentNumber" bigint NOT NULL DEFAULT 0
+        );
+      `);
+
+        await tx.$executeRawUnsafe(`
+        INSERT INTO "TicketCounter" ("id", "currentNumber")
+        VALUES (uuid_generate_v4(), 0)
+        ON CONFLICT DO NOTHING;
+      `);
+
+        const [res2] = await tx.$queryRawUnsafe<{ currentNumber: number }[]>(`
+        UPDATE "TicketCounter"
+        SET "currentNumber" = "currentNumber" + 1
+        RETURNING "currentNumber"
+      `);
+        nextNumber = res2.currentNumber;
+      }
+
+      if (!nextNumber) {
+        throw new AppError(
+          "Failed to generate ticket number",
+          500,
+          "SEQ_ERROR"
+        );
+      }
 
       // 2️⃣ Revalidar límite diario dentro de la transacción
       const { _sum } = await tx.ticket.aggregate({
@@ -236,6 +276,7 @@ export const TicketRepository = {
 
     return ticket;
   },
+
   async getById(id: string) {
     return prisma.ticket.findUnique({
       where: { id },
