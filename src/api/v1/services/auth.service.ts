@@ -12,7 +12,7 @@ const REFRESH_SECRET = config.jwtRefreshSecret;
 
 export const AuthService = {
   async register(data: RegisterDTO) {
-    const existing = await prisma.user.findUnique({ where: { email: data.email } });
+    const existing = await prisma.user.findUnique({ where: { username: data.username } });
     if (existing) {
       throw new AppError('Email is already in use', 409);
     }
