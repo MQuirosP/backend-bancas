@@ -4,7 +4,7 @@
   "description": "Backend para Plataforma de Lotería con Node.js, Express, Prisma y Supabase.",
   "main": "index.ts",
   "scripts": {
-    "start": "ts-node src/index.ts",
+    "start": "node dist/index.js",
     "dev": "nodemon src/index.ts",
     "build": "tsc",
     "prisma:migrate": "prisma migrate dev --name init",
