@@ -6,6 +6,7 @@ import { Prisma, Role } from "@prisma/client";
 type VendedorCreateParams = {
   ventanaId: string;
   name: string;
+  username: string;
   email: string;
   passwordHash: string;
 };
@@ -23,6 +24,7 @@ const VendedorRepository = {
       data: {
         name: data.name,
         email: data.email,
+        username: data.username,
         password: data.passwordHash,
         role: Role.VENDEDOR,
         ventana: { connect: { id: data.ventanaId } },

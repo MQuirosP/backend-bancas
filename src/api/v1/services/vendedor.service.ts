@@ -40,6 +40,7 @@ export const VendedorService = {
     const user = await VendedorRepository.create({
       ventanaId: data.ventanaId,
       name: data.name,
+      username: data.username,
       email: data.email,
       passwordHash,
     });
