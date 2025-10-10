@@ -14,4 +14,6 @@ export interface UpdateSorteoDTO {
 
 export interface EvaluateSorteoDTO {
   winningNumber: string;
+  extraOutcomeCode?: string | null;
+  extraMultiplierId?: string | null
 }

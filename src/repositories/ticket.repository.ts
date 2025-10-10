@@ -10,10 +10,12 @@ type CreateTicketInput = {
   ventanaId: string;
   totalAmount: number;
   jugadas: Array<{
+    type: "NUMERO" | "REVENTADO";
     number: string;
+    reventadoNumber?: string | null; // requerido si type=REVENTADO (igual a number)
     amount: number;
-    multiplierId: string;
-    finalMultiplierX: number;
+    multiplierId: string; // para NUMERO es el real; para REVENTADO será sobreescrito
+    finalMultiplierX: number; // para REVENTADO = 0 en la venta
   }>;
 };
 
@@ -23,6 +25,27 @@ function isSameLocalDay(a: Date, b: Date) {
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate()
   );
+}
+
+async function ensureReventadoPlaceholder(tx: any, loteriaId: string) {
+  const name = "REVENTADO (dynamic)";
+  let mul = await tx.loteriaMultiplier.findFirst({
+    where: { loteriaId, name },
+    select: { id: true },
+  });
+  if (!mul) {
+    mul = await tx.loteriaMultiplier.create({
+      data: {
+        loteriaId,
+        name,
+        valueX: 0,
+        isActive: true,
+        kind: "REVENTADO",
+      },
+      select: { id: true },
+    });
+  }
+  return mul.id;
 }
 
 export const TicketRepository = {
@@ -129,7 +152,7 @@ export const TicketRepository = {
         );
       }
 
-      // 3️⃣.5 Pipeline de RestrictionRule (User > Ventana > Banca)
+      // 3️⃣.5 Pipeline de RestrictionRule (User > Ventana > Banca) — igual al tuyo
       const now = new Date();
       const bancaId = ventana.bancaId;
 
@@ -201,7 +224,45 @@ export const TicketRepository = {
         }
       }
 
-      // 4️⃣ Crear ticket y jugadas
+      // 🔹 A) ¿hay jugadas REVENTADO?
+      const hasReventado = jugadas.some((j) => j.type === "REVENTADO");
+
+      // 🔹 B) Garantizar placeholder REVENTADO dentro de la MISMA transacción
+      const reventadoPlaceholderId = hasReventado
+        ? await ensureReventadoPlaceholder(tx, loteriaId)
+        : null;
+
+      // 🔹 C) Normalizar jugadas para persistir (NUMERO queda igual; REVENTADO usa placeholder y X=0)
+      const preparedJugadas = jugadas.map((j) => {
+        if (j.type === "REVENTADO") {
+          if (!j.reventadoNumber || j.reventadoNumber !== j.number) {
+            throw new AppError(
+              "REVENTADO must reference the same number (reventadoNumber === number)",
+              400,
+              "INVALID_REVENTADO_LINK"
+            );
+          }
+          return {
+            type: "REVENTADO" as const,
+            number: j.number,
+            reventadoNumber: j.reventadoNumber,
+            amount: j.amount,
+            finalMultiplierX: 0, // NO se usa para reventado
+            multiplierId: reventadoPlaceholderId!, // FK “dummy” estable
+          };
+        }
+        // NUMERO normal: usa multiplierId/X resueltos antes (service)
+        return {
+          type: "NUMERO" as const,
+          number: j.number,
+          reventadoNumber: null,
+          amount: j.amount,
+          finalMultiplierX: j.finalMultiplierX, // congelado en venta
+          multiplierId: j.multiplierId, // real (base/override)
+        };
+      });
+
+      // 4️⃣ Crear ticket y jugadas (persistiendo type/reventadoNumber)
       const createdTicket = await tx.ticket.create({
         data: {
           ticketNumber: nextNumber,
@@ -213,11 +274,13 @@ export const TicketRepository = {
           status: TicketStatus.ACTIVE,
           isActive: true,
           jugadas: {
-            create: jugadas.map((j) => ({
+            create: preparedJugadas.map((j) => ({
+              type: j.type,
               number: j.number,
+              reventadoNumber: j.reventadoNumber,
               amount: j.amount,
               finalMultiplierX: j.finalMultiplierX,
-              multiplier: { connect: { id: j.multiplierId } },
+              multiplier: { connect: { id: j.multiplierId } }, // relación nombrada ok
             })),
           },
         },
@@ -250,7 +313,7 @@ export const TicketRepository = {
         })
       );
 
-    // 6️⃣ Log global
+    // 6️⃣ Logging global
     logger.info({
       layer: "repository",
       action: "TICKET_CREATE_TX",

@@ -24,19 +24,38 @@ export const SorteoController = {
   },
 
   async evaluate(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.evaluate(req.params.id, req.body.winningNumber, req.user!.id);
+    const { winningNumber } = req.body ?? {};
+    if (!winningNumber || typeof winningNumber !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: "winningNumber is required (string)",
+      });
+    }
+    const s = await SorteoService.evaluate(
+      req.params.id,
+      req.body,
+      req.user!.id
+    );
     res.json({ success: true, data: s });
   },
 
   async delete(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.remove(req.params.id, req.user!.id, req.body?.reason);
+    const s = await SorteoService.remove(
+      req.params.id,
+      req.user!.id,
+      req.body?.reason
+    );
     res.json({ success: true, data: s });
   },
 
   async list(req: AuthenticatedRequest, res: Response) {
-    const loteriaId = req.query.loteriaId ? String(req.query.loteriaId) : undefined;
+    const loteriaId = req.query.loteriaId
+      ? String(req.query.loteriaId)
+      : undefined;
     const page = req.query.page ? Number(req.query.page) : undefined;
-    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
+    const pageSize = req.query.pageSize
+      ? Number(req.query.pageSize)
+      : undefined;
     const result = await SorteoService.list(loteriaId, page, pageSize);
     res.json({ success: true, data: result.data, meta: result.meta });
   },

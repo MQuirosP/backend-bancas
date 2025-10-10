@@ -8,7 +8,11 @@ import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import ActivityService from "../../../core/activity.service";
 import SorteoRepository from "../../../repositories/sorteo.repository";
-import { CreateSorteoDTO, UpdateSorteoDTO } from "../dto/sorteo.dto";
+import {
+  CreateSorteoDTO,
+  EvaluateSorteoDTO,
+  UpdateSorteoDTO,
+} from "../dto/sorteo.dto";
 
 const FINAL_STATES: ReadonlyArray<SorteoStatus> = [
   SorteoStatus.EVALUATED,
@@ -134,7 +138,18 @@ export const SorteoService = {
     return s;
   },
 
-  async evaluate(id: string, winningNumber: string, userId: string) {
+  async evaluate(id: string, body: EvaluateSorteoDTO, userId: string) {
+    const {
+      winningNumber,
+      extraOutcomeCode = null,
+      extraMultiplierId = null,
+    } = body;
+
+    if (!winningNumber || winningNumber.length === 0) {
+      throw new AppError("winningNumber es requerido", 400);
+    }
+
+    // 1) Cargar sorteo y validar estado
     const existing = await SorteoRepository.findById(id);
     if (!existing || existing.isDeleted)
       throw new AppError("Sorteo no encontrado", 404);
@@ -142,51 +157,153 @@ export const SorteoService = {
       throw new AppError("Solo se puede evaluar desde OPEN o CLOSED", 409);
     }
 
-    const tickets = await prisma.ticket.findMany({
-      where: { sorteoId: id, isDeleted: false },
-      include: { jugadas: true },
-    });
+    // 2) Si viene extraMultiplierId, resolver X (y validar que pertenece a la misma lotería)
+    let extraX: number | null = null;
+    if (extraMultiplierId) {
+      const mul = await prisma.loteriaMultiplier.findUnique({
+        where: { id: extraMultiplierId },
+        select: { id: true, valueX: true, isActive: true, loteriaId: true },
+      });
+      if (!mul || !mul.isActive) {
+        throw new AppError("extraMultiplierId inválido o inactivo", 400);
+      }
+      if (mul.loteriaId !== existing.loteriaId) {
+        throw new AppError(
+          "extraMultiplierId no pertenece a la lotería del sorteo",
+          400
+        );
+      }
+      extraX = mul.valueX;
+    }
 
-    let winners = 0;
-    await prisma.$transaction(async (tx) => {
-      for (const t of tickets) {
-        let isWinner = false;
-        const jugadasUpdates = t.jugadas.map(async (j) => {
-          if (j.number === winningNumber) {
-            isWinner = true;
-            const payout = j.amount * j.finalMultiplierX;
-            return tx.jugada.update({
-              where: { id: j.id },
-              data: { isWinner: true, payout },
-            });
-          }
+    // 3) Transacción: snapshot + pagos + marcar tickets
+    const evaluationResult = await prisma.$transaction(async (tx) => {
+      // 3.1) Snapshot en el sorteo
+      await tx.sorteo.update({
+        where: { id },
+        data: {
+          status: SorteoStatus.EVALUATED,
+          winningNumber,
+          extraOutcomeCode,
+          extraMultiplierId,
+          extraMultiplierX: extraX,
+        },
+      });
+
+      // 3.2) Pagar NUMERO (ganan las jugadas con number === winningNumber)
+      const numeroWinners = await tx.jugada.findMany({
+        where: {
+          ticket: { sorteoId: id },
+          type: "NUMERO",
+          number: winningNumber,
+          isDeleted: false,
+        },
+        select: {
+          id: true,
+          amount: true,
+          finalMultiplierX: true,
+          ticketId: true,
+        },
+      });
+
+      for (const j of numeroWinners) {
+        const payout = j.amount * j.finalMultiplierX;
+        await tx.jugada.update({
+          where: { id: j.id },
+          data: { isWinner: true, payout },
         });
-        await Promise.all(jugadasUpdates);
+      }
 
+      // 3.3) Pagar REVENTADO (solo si hay extraX > 0 y coincide el número)
+      let reventadoWinners: { id: string; amount: number; ticketId: string }[] =
+        [];
+      if (extraX != null && extraX > 0) {
+        reventadoWinners = await tx.jugada.findMany({
+          where: {
+            ticket: { sorteoId: id },
+            type: "REVENTADO",
+            reventadoNumber: winningNumber,
+            isDeleted: false,
+          },
+          select: { id: true, amount: true, ticketId: true },
+        });
+
+        for (const j of reventadoWinners) {
+          const payout = j.amount * extraX;
+          await tx.jugada.update({
+            where: { id: j.id },
+            data: {
+              isWinner: true,
+              settledMultiplierId: extraMultiplierId,
+              settledMultiplierX: extraX,
+              payout,
+            },
+          });
+        }
+      }
+
+      // 3.4) Marcar tickets (EVALUATED / inactive / isWinner si alguna jugada ganó)
+      const winningTicketIds = new Set<string>([
+        ...numeroWinners.map((j) => j.ticketId),
+        ...reventadoWinners.map((j) => j.ticketId),
+      ]);
+
+      const tickets = await tx.ticket.findMany({
+        where: { sorteoId: id, isDeleted: false },
+        select: { id: true },
+      });
+
+      let winners = 0;
+      for (const t of tickets) {
+        const tIsWinner = winningTicketIds.has(t.id);
+        if (tIsWinner) winners++;
         await tx.ticket.update({
           where: { id: t.id },
-          data: { isWinner, status: TicketStatus.EVALUATED, isActive: false },
+          data: {
+            status: TicketStatus.EVALUATED,
+            isActive: false,
+            isWinner: tIsWinner,
+          },
         });
-        if (isWinner) winners++;
       }
+
+      // 3.5) Auditoría en la misma tx (opcional; si prefieres, fuera)
+      await tx.activityLog.create({
+        data: {
+          userId,
+          action: ActivityType.SORTEO_EVALUATE,
+          targetType: "SORTEO",
+          targetId: id,
+          details: {
+            winningNumber,
+            extraOutcomeCode,
+            extraMultiplierId,
+            extraMultiplierX: extraX,
+            winners,
+          } as Prisma.InputJsonObject,
+        },
+      });
+
+      return { winners, extraMultiplierX: extraX };
     });
 
-    // ✅ Solo actualizar el estado y número ganador del sorteo
-    const s = await prisma.sorteo.update({
-      where: { id },
-      data: { status: SorteoStatus.EVALUATED, winningNumber },
-    });
-
-    const details: Prisma.InputJsonObject = { winningNumber, winners };
-
+    // 4) Log adicional fuera de la tx
     await ActivityService.log({
       userId,
       action: ActivityType.SORTEO_EVALUATE,
       targetType: "SORTEO",
       targetId: id,
-      details,
+      details: {
+        winningNumber,
+        extraOutcomeCode,
+        extraMultiplierId,
+        extraMultiplierX: evaluationResult.extraMultiplierX,
+        winners: evaluationResult.winners,
+      },
     });
 
+    // 5) Devuelve el sorteo ya evaluado (opcional; puedes devolver result simple)
+    const s = await prisma.sorteo.findUnique({ where: { id } });
     return s;
   },
 
