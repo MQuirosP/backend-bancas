@@ -1,14 +1,37 @@
+// src/repositories/sorteo.repository.ts
 import prisma from "../core/prismaClient";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
-import { Prisma, SorteoStatus, TicketStatus } from "@prisma/client";
+import { Prisma, SorteoStatus } from "@prisma/client";
 import { CreateSorteoDTO, UpdateSorteoDTO } from "../api/v1/dto/sorteo.dto";
+
+// ⬇️ helper para validar y obtener X del multiplier extra
+async function resolveExtraMultiplierX(
+  extraMultiplierId: string,
+  loteriaId: string,
+  tx = prisma
+) {
+  const mul = await tx.loteriaMultiplier.findUnique({
+    where: { id: extraMultiplierId },
+    select: { id: true, valueX: true, isActive: true, loteriaId: true },
+  });
+  if (!mul || !mul.isActive)
+    throw new AppError("extraMultiplierId inválido o inactivo", 400);
+  if (mul.loteriaId !== loteriaId) {
+    throw new AppError(
+      "extraMultiplierId no pertenece a la lotería del sorteo",
+      400
+    );
+  }
+  return mul.valueX;
+}
 
 const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
   name: d.name,
   scheduledAt:
     d.scheduledAt instanceof Date ? d.scheduledAt : new Date(d.scheduledAt),
   loteria: { connect: { id: d.loteriaId } },
+  // extraOutcomeCode, extraMultiplierId/X se quedan nulos al crear
 });
 
 const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
@@ -17,8 +40,17 @@ const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
       ? d.scheduledAt
       : new Date(d.scheduledAt)
     : undefined,
-  status: d.status ?? undefined, // ✅ sin `as any`
+  status: d.status ?? undefined,
   winningNumber: d.winningNumber,
+  extraOutcomeCode: (d as any).extraOutcomeCode ?? undefined,
+
+  // ✅ usar relación en vez de extraMultiplierId
+  ...(typeof (d as any).extraMultiplierId === "string"
+    ? { extraMultiplier: { connect: { id: (d as any).extraMultiplierId } } }
+    : (d as any).extraMultiplierId === null
+      ? { extraMultiplier: { disconnect: true } }
+      : {}),
+  // ⚠️ extraMultiplierX se “snapshotea” en evaluate, no aquí.
 });
 
 const SorteoRepository = {
@@ -35,7 +67,10 @@ const SorteoRepository = {
   findById(id: string) {
     return prisma.sorteo.findUnique({
       where: { id },
-      include: { loteria: true },
+      include: {
+        loteria: true,
+        extraMultiplier: { select: { id: true, name: true, valueX: true } }, // ⬅️ útil para inspección
+      },
     });
   },
 
@@ -55,19 +90,16 @@ const SorteoRepository = {
   async open(id: string) {
     const current = await prisma.sorteo.findUnique({ where: { id } });
     if (!current) throw new AppError("Sorteo no encontrado", 404);
-
     if (current.status !== SorteoStatus.SCHEDULED) {
       throw new AppError(
         `Solo se pueden abrir sorteos en estado SCHEDULED (actual: ${current.status})`,
         400
       );
     }
-
     const s = await prisma.sorteo.update({
       where: { id },
       data: { status: SorteoStatus.OPEN },
     });
-
     logger.info({
       layer: "repository",
       action: "SORTEO_OPEN_DB",
@@ -79,7 +111,6 @@ const SorteoRepository = {
   async close(id: string) {
     const current = await prisma.sorteo.findUnique({ where: { id } });
     if (!current) throw new AppError("Sorteo no encontrado", 404);
-
     if (
       current.status !== SorteoStatus.OPEN &&
       current.status !== SorteoStatus.EVALUATED
@@ -89,22 +120,17 @@ const SorteoRepository = {
         400
       );
     }
-
-    // ✅ Cerrar sorteo y desactivar tickets (isActive = false) en una transacción
     const s = await prisma.$transaction(async (tx) => {
       const closed = await tx.sorteo.update({
         where: { id },
         data: { status: SorteoStatus.CLOSED },
       });
-
       await tx.ticket.updateMany({
         where: { sorteoId: id, isDeleted: false },
         data: { isActive: false },
       });
-
       return closed;
     });
-
     logger.info({
       layer: "repository",
       action: "SORTEO_CLOSE_DB",
@@ -113,17 +139,66 @@ const SorteoRepository = {
     return s;
   },
 
-  async evaluate(id: string, winningNumber: string) {
-    // Solo actualiza el estado del sorteo y guarda el número ganador
+  // ⬇️ evaluate ahora acepta body con reventado y snapshot X
+  async evaluate(
+    id: string,
+    body: {
+      winningNumber: string;
+      extraOutcomeCode?: string | null;
+      extraMultiplierId?: string | null;
+    }
+  ) {
+    const {
+      winningNumber,
+      extraOutcomeCode = null,
+      extraMultiplierId = null,
+    } = body;
+
+    const existing = await prisma.sorteo.findUnique({
+      where: { id },
+      select: { id: true, loteriaId: true, status: true },
+    });
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+    if (
+      existing.status === SorteoStatus.EVALUATED ||
+      existing.status === SorteoStatus.CLOSED
+    ) {
+      throw new AppError("Sorteo ya evaluado/cerrado", 400);
+    }
+
+    // si viene multiplier extra, validar y obtener X
+    let extraX: number | null = null;
+    if (extraMultiplierId) {
+      extraX = await resolveExtraMultiplierX(
+        extraMultiplierId,
+        existing.loteriaId,
+        prisma
+      );
+    }
+
     const s = await prisma.sorteo.update({
       where: { id },
-      data: { status: SorteoStatus.EVALUATED, winningNumber },
+      data: {
+        status: SorteoStatus.EVALUATED,
+        winningNumber,
+        extraOutcomeCode,
+        // ✅ relación con connect/disconnect
+        ...(extraMultiplierId
+          ? { extraMultiplier: { connect: { id: extraMultiplierId } } }
+          : { extraMultiplier: { disconnect: true } }),
+        extraMultiplierX: extraX, // snapshot del valor X
+      },
     });
 
     logger.info({
       layer: "repository",
       action: "SORTEO_EVALUATE_DB",
-      payload: { sorteoId: id, winningNumber },
+      payload: {
+        sorteoId: id,
+        winningNumber,
+        extraMultiplierId,
+        extraMultiplierX: extraX,
+      },
     });
     return s;
   },
@@ -141,6 +216,9 @@ const SorteoRepository = {
         skip,
         take: pageSize,
         orderBy: { scheduledAt: "desc" },
+        include: {
+          extraMultiplier: { select: { id: true, name: true, valueX: true } },
+        }, // útil en listados
       }),
       prisma.sorteo.count({ where }),
     ]);

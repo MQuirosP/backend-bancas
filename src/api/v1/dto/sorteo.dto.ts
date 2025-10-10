@@ -10,6 +10,7 @@ export interface UpdateSorteoDTO {
   scheduledAt?: Date | string;
   status?: SorteoStatusDTO;
   winningNumber?: string;
+  extraMultiplierId?: string;
 }
 
 export interface EvaluateSorteoDTO {
