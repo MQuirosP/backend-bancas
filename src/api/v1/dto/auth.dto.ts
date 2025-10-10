@@ -1,12 +1,13 @@
 export interface RegisterDTO {
     name: string,
     email: string,
+    username: string,
     password: string,
     role?: 'ADMIN' | 'VENTANA' | 'VENDEDOR',
 }
 
 export interface LoginDTO {
-    email: string,
+    username: string,
     password: string,
 }
 

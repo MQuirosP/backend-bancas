@@ -6,10 +6,10 @@ export const UserRepository = {
   findById: (id: string) =>
     prisma.user.findUnique({ where: { id } }),
 
-  findByEmail: (email: string) =>
-    prisma.user.findUnique({ where: { email } }),
+  findByEmail: (username: string) =>
+    prisma.user.findUnique({ where: { username } }),
 
-  create: (data: { name: string; email: string; password: string; role: Role; ventanaId: string }) =>
+  create: (data: { name: string; email: string; username: string, password: string; role: Role; ventanaId: string }) =>
     prisma.user.create({ data }),
 
   update: (id: string, data: Partial<{ name: string; email: string; password: string; role: Role; ventanaId: string; isDeleted: boolean, isActive: boolean }>) =>

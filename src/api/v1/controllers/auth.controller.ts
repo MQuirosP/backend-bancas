@@ -28,21 +28,21 @@ export const AuthController = {
 
     return created(res, {
       message: 'User registered successfully',
-      user: { id: user.id, email: user.email, role: user.role },
+      user: { id: user.id, email: user.email, username: user.username, role: user.role },
     });
   },
 
   async login(req: Request, res: Response) {
     const tokens = await AuthService.login(req.body);
 
-    const user = await prisma.user.findUnique({ where: { email: req.body.email } });
+    const user = await prisma.user.findUnique({ where: { username: req.body.username } });
 
     if (user) {
       logger.info({
         layer: 'controller',
         action: ActivityType.LOGIN,
         userId: user.id,
-        payload: { email: user.email },
+        payload: { username: user.username },
       });
 
       await prisma.activityLog.create({
@@ -75,7 +75,7 @@ export const AuthController = {
     const userId = (req as any).user?.id;
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, name: true, role: true },
+      select: { id: true, email: true, username: true, name: true, role: true },
     });
 
     return success(res, user);

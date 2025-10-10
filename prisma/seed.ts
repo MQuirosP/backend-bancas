@@ -3,6 +3,7 @@ import prisma from '../src/core/prismaClient';
 
 async function main() {
   const adminEmail = 'admin@system.local';
+  const username = 'admin.sys.root';
   const existing = await prisma.user.findUnique({ where: { email: adminEmail } });
 
   if (!existing) {
@@ -11,6 +12,7 @@ async function main() {
       data: {
         name: 'System Admin',
         email: adminEmail,
+        username: username,
         password: hashed,
         role: 'ADMIN',
       },

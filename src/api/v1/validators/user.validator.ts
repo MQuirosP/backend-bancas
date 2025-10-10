@@ -6,10 +6,11 @@ import { z } from "zod";
 export const createUserSchema = z
   .object({
     name: z.string().min(2, "Name is too short"),
-    email: z.string().email("Invalid email"),
+    email: z.email("Invalid email").optional(),
+    username: z.string().min(6).max(12),
     password: z.string().min(6, "Password must be at least 6 characters"),
     role: z.enum(["ADMIN", "VENTANA", "VENDEDOR"]),
-    ventanaId: z.string().uuid("Invalid ventanaId").optional(),
+    ventanaId: z.uuid("Invalid ventanaId").optional(),
   })
   .refine(
     (data) => data.role === "ADMIN" || !!data.ventanaId,
@@ -24,7 +25,8 @@ export const createUserSchema = z
 // ------------------------------------------------------
 export const updateUserSchema = z.object({
   name: z.string().min(2, "Name is too short").optional(),
-  email: z.string().email("Invalid email").optional(),
+  email: z.email("Invalid email").optional(),
+  username: z.string().min(6).max(12),
   password: z.string().min(6, "Password must be at least 6 characters").optional(),
   role: z.enum(["ADMIN", "VENTANA", "VENDEDOR"]).optional(),
   ventanaId: z.string().uuid("Invalid ventanaId").nullable().optional(),

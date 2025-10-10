@@ -17,11 +17,12 @@ export const UserService = {
       data: {
         name: dto.name,
         email: dto.email,
+        username: dto.username,
         password: hashed,
         role: dto.role ?? 'VENTANA',
         ventanaId: dto.ventanaId ?? null,
       },
-      select: { id: true, name: true, email: true, role: true, ventanaId: true, isDeleted: true, createdAt: true },
+      select: { id: true, name: true, username: true, email: true, role: true, ventanaId: true, isDeleted: true, createdAt: true },
     });
 
     return user;

@@ -17,7 +17,7 @@ export const UserController = {
       layer: 'controller',
       action: 'USER_CREATE',
       userId: actorId,
-      payload: { createdUserId: user.id, email: user.email, role: user.role },
+      payload: { createdUserId: user.id, username: user.username, email: user.email, role: user.role },
     });
 
     await ActivityService.log({

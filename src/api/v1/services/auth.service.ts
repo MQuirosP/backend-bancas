@@ -23,6 +23,7 @@ export const AuthService = {
       data: {
         name: data.name,
         email: data.email,
+        username: data.username,
         password: hashed,
         role: data.role ?? 'VENTANA',
       },
@@ -32,7 +33,7 @@ export const AuthService = {
   },
 
   async login(data: LoginDTO): Promise<TokenPair> {
-    const user = await prisma.user.findUnique({ where: { email: data.email } });
+    const user = await prisma.user.findUnique({ where: { username: data.username } });
     if (!user) {
       throw new AppError('Invalid credentials', 401);
     }

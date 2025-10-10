@@ -2,7 +2,8 @@ import { Role } from '@prisma/client';
 
 export interface CreateUserDTO {
   name: string;
-  email: string;
+  email?: string;
+  username: string;
   password: string;
   role?: Role;
   ventanaId: string;
