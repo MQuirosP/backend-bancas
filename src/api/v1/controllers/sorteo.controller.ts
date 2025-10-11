@@ -24,9 +24,27 @@ export const SorteoController = {
   },
 
   async evaluate(req: AuthenticatedRequest, res: Response) {
+    // body ya pasó por validateEvaluateSorteo; reforzamos saneo y nullables
+    const {
+      winningNumber,
+      extraMultiplierId = null,
+      extraOutcomeCode = null,
+    } = req.body;
+
+    // en caso de que llegue algo raro en headers
+    if (
+      req.headers["content-type"] &&
+      !String(req.headers["content-type"]).includes("application/json")
+    ) {
+      return res
+        .status(415)
+        .json({ success: false, error: "Unsupported Media Type" });
+    }
+
+    const safeBody = { winningNumber, extraOutcomeCode, extraMultiplierId };
     const s = await SorteoService.evaluate(
       req.params.id,
-      req.body,
+      safeBody,
       req.user!.id
     );
     res.json({ success: true, data: s });

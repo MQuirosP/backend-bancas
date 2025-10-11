@@ -30,6 +30,12 @@ export const evaluateSorteoSchema = z.object({
   extraOutcomeCode: z.string().trim().min(1).max(50).nullable().optional(),
 });
 
+export const validateIdParam = (req: Request, _res: Response, next: NextFunction) => {
+  const r = z.uuid().safeParse(req.params.id);
+  if (!r.success) throw new AppError("Parámetro id inválido (uuid)", 400);
+  next();
+};
+
 export const validateCreateSorteo = (req: Request, _res: Response, next: NextFunction) => {
   const r = createSorteoSchema.safeParse(req.body);
   if (!r.success) throw new AppError(r.error.issues.map(i => i.message).join(", "), 400);
