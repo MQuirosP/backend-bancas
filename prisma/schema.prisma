@@ -63,6 +63,7 @@ enum ActivityType {
   // Sorteos y adjudicación
   SORTEO_CREATE
   SORTEO_EVALUATE
+  SORTEO_OPEN
   SORTEO_CLOSE
   SORTEO_REOPEN
   SORTEO_UPDATE
@@ -288,9 +289,9 @@ model Ticket {
   updatedAt     DateTime        @updatedAt
   TicketPayment TicketPayment[]
 
-  @@unique([ticketNumber])  // unicidad fuerte en DB
+  @@unique([ticketNumber]) // unicidad fuerte en DB
   @@index([sorteoId])
-  @@index([vendedorId, createdAt])  // para acelerar agregados diarios
+  @@index([vendedorId, createdAt]) // para acelerar agregados diarios
 }
 
 model TicketPayment {

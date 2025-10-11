@@ -24,13 +24,6 @@ export const SorteoController = {
   },
 
   async evaluate(req: AuthenticatedRequest, res: Response) {
-    const { winningNumber } = req.body ?? {};
-    if (!winningNumber || typeof winningNumber !== "string") {
-      return res.status(400).json({
-        success: false,
-        error: "winningNumber is required (string)",
-      });
-    }
     const s = await SorteoService.evaluate(
       req.params.id,
       req.body,

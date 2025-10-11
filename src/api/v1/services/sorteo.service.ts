@@ -77,7 +77,7 @@ export const SorteoService = {
 
     await ActivityService.log({
       userId,
-      action: ActivityType.SORTEO_UPDATE, // no existe SORTEO_UPDATE
+      action: ActivityType.SORTEO_UPDATE,
       targetType: "SORTEO",
       targetId: id,
       details,
@@ -103,7 +103,7 @@ export const SorteoService = {
 
     await ActivityService.log({
       userId,
-      action: ActivityType.SYSTEM_ACTION,
+      action: ActivityType.SORTEO_OPEN,
       targetType: "SORTEO",
       targetId: id,
       details,
@@ -154,7 +154,7 @@ export const SorteoService = {
     if (!existing || existing.isDeleted)
       throw new AppError("Sorteo no encontrado", 404);
     if (!EVALUABLE_STATES.includes(existing.status)) {
-      throw new AppError("Solo se puede evaluar desde OPEN o CLOSED", 409);
+      throw new AppError("Solo se puede evaluar desde OPEN", 409); // ✅ mensaje consistente
     }
 
     // 2) Si viene extraMultiplierId, resolver X (y validar que pertenece a la misma lotería)
@@ -178,14 +178,16 @@ export const SorteoService = {
 
     // 3) Transacción: snapshot + pagos + marcar tickets
     const evaluationResult = await prisma.$transaction(async (tx) => {
-      // 3.1) Snapshot en el sorteo
+      // 3.1) Snapshot en el sorteo (usar relación connect/disconnect para consistencia)
       await tx.sorteo.update({
         where: { id },
         data: {
           status: SorteoStatus.EVALUATED,
           winningNumber,
           extraOutcomeCode,
-          extraMultiplierId,
+          ...(extraMultiplierId
+            ? { extraMultiplier: { connect: { id: extraMultiplierId } } }
+            : { extraMultiplier: { disconnect: true } }),
           extraMultiplierX: extraX,
         },
       });
@@ -234,7 +236,7 @@ export const SorteoService = {
             where: { id: j.id },
             data: {
               isWinner: true,
-              settledMultiplierId: extraMultiplierId,
+              settledMultiplierId: extraMultiplierId ?? undefined,
               settledMultiplierX: extraX,
               payout,
             },
@@ -267,7 +269,7 @@ export const SorteoService = {
         });
       }
 
-      // 3.5) Auditoría en la misma tx (opcional; si prefieres, fuera)
+      // 3.5) Auditoría en la misma tx
       await tx.activityLog.create({
         data: {
           userId,
@@ -302,7 +304,7 @@ export const SorteoService = {
       },
     });
 
-    // 5) Devuelve el sorteo ya evaluado (opcional; puedes devolver result simple)
+    // 5) Devuelve el sorteo ya evaluado
     const s = await prisma.sorteo.findUnique({ where: { id } });
     return s;
   },
