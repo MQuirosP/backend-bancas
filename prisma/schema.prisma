@@ -288,7 +288,9 @@ model Ticket {
   updatedAt     DateTime        @updatedAt
   TicketPayment TicketPayment[]
 
+  @@unique([ticketNumber])  // unicidad fuerte en DB
   @@index([sorteoId])
+  @@index([vendedorId, createdAt])  // para acelerar agregados diarios
 }
 
 model TicketPayment {

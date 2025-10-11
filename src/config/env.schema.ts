@@ -11,4 +11,5 @@ export const EnvSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
   CORS_ORIGIN: z.string().optional(),
   LOG_LEVEL: z.string().optional(),
+  SALES_DAILY_MAX: z.string().optional(),
 });

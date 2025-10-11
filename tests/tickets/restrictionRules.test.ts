@@ -1,6 +1,7 @@
+// tests/tickets/restrictionRules.test.ts
 import prisma from "../../src/core/prismaClient";
 import TicketRepository from "../../src/repositories/ticket.repository";
-import { Role } from "@prisma/client";
+import { Role, SorteoStatus } from "@prisma/client";
 import { resetDatabase } from "./helpers/resetDatabase";
 
 jest.setTimeout(20000);
@@ -11,18 +12,19 @@ describe("🎯 RestrictionRule pipeline", () => {
   const ventanaId = "ventana-rule";
   const loteriaId = "loteria-rule";
   const sorteoId = "sorteo-rule";
-  const multiplierId = "multiplier-rule";
+  const baseMultiplierId = "multiplier-base"; // ← importante: debe llamarse "Base"
 
   beforeAll(async () => {
     await resetDatabase();
 
-    // 🔹 Crear usuario requerido por RestrictionRule
+    // 👤 Usuario vendedor (con username requerido)
     await prisma.user.upsert({
       where: { id: userId },
       update: {},
       create: {
         id: userId,
         email: "rule@test.com",
+        username: "rule.vendedor",
         name: "Vendedor Restricciones",
         password: "hashedpassword",
         role: Role.VENDEDOR,
@@ -30,7 +32,7 @@ describe("🎯 RestrictionRule pipeline", () => {
       },
     });
 
-    // 🔹 Crear banca, ventana y dependencias mínimas
+    // 🏦 Banca
     await prisma.banca.create({
       data: {
         id: bancaId,
@@ -40,6 +42,7 @@ describe("🎯 RestrictionRule pipeline", () => {
       },
     });
 
+    // 🪟 Ventana
     await prisma.ventana.create({
       data: {
         id: ventanaId,
@@ -51,27 +54,40 @@ describe("🎯 RestrictionRule pipeline", () => {
       },
     });
 
+    // 🎟️ Lotería
     await prisma.loteria.create({
       data: { id: loteriaId, name: "Lotería Prueba", isActive: true },
     });
 
+    // ⚙️ BancaLoteriaSetting (repo resuelve BaseX dentro de la TX)
+    await prisma.bancaLoteriaSetting.create({
+      data: {
+        bancaId,
+        loteriaId,
+        baseMultiplierX: 2, // X efectivo si no hay override de usuario
+      },
+    });
+
+    // ✖️ LoteriaMultiplier "Base" (el repo lo busca por name="Base")
+    await prisma.loteriaMultiplier.create({
+      data: {
+        id: baseMultiplierId,
+        name: "Base",
+        valueX: 2,
+        loteriaId,
+        isActive: true,
+        kind: "NUMERO",
+      },
+    });
+
+    // 🗓️ Sorteo ABIERTO (requerido por el repo)
     await prisma.sorteo.create({
       data: {
         id: sorteoId,
         name: "Sorteo Test",
         loteriaId,
         scheduledAt: new Date(),
-        status: "OPEN", // ✅ Correcto para venta
-      },
-    });
-
-    await prisma.loteriaMultiplier.create({
-      data: {
-        id: multiplierId,
-        name: "x2",
-        valueX: 2,
-        loteriaId,
-        isActive: true,
+        status: SorteoStatus.OPEN,
       },
     });
   });
@@ -81,23 +97,33 @@ describe("🎯 RestrictionRule pipeline", () => {
   });
 
   it("should block ticket exceeding maxTotal for user", async () => {
-    // 🔹 Crear la regla de restricción para este usuario
+    // 🔒 Regla que limita el total por ticket para este usuario
     await prisma.restrictionRule.create({
-      data: { userId, maxTotal: 200 },
+      data: {
+        userId,
+        maxTotal: 200, // límite por ticket
+      },
     });
 
+    // Payload que excede el límite (300 > 200)
     const baseTicket = {
       loteriaId,
       sorteoId,
       ventanaId,
-      totalAmount: 300, // excede el límite
+      totalAmount: 300, // mantén coherente con la suma de jugadas
       jugadas: [
-        { number: "22", amount: 300, multiplierId, finalMultiplierX: 2 },
+        {
+          type: "NUMERO" as const,
+          number: "22",
+          amount: 300,
+          multiplierId: baseMultiplierId, // el repo lo sobreescribe a "Base" igualmente
+          finalMultiplierX: 2,            // el repo congela X efectivo interno
+        },
       ],
     };
 
-    await expect(TicketRepository.create(baseTicket, userId)).rejects.toThrow(
-      /exceeded/i
+    await expect(TicketRepository.create(baseTicket as any, userId)).rejects.toThrow(
+      /exceeded|excedido|maxTotal/i
     );
   });
 });

@@ -5,7 +5,8 @@ export interface CreateTicketDTO {
   jugadas: {
     number: string;
     amount: number;
-    multiplierId: string; // lo dejamos requerido como en tu repo
+    type?: "NUMERO" | "REVENTADO";
+    reventadoNumber?: string | null;
   }[];
 }
 

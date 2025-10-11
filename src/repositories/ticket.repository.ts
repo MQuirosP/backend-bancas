@@ -8,14 +8,14 @@ type CreateTicketInput = {
   loteriaId: string;
   sorteoId: string;
   ventanaId: string;
-  totalAmount: number;
+  totalAmount?: number; // ignorado; el backend calcula el total
   jugadas: Array<{
     type: "NUMERO" | "REVENTADO";
     number: string;
     reventadoNumber?: string | null; // requerido si type=REVENTADO (igual a number)
     amount: number;
-    multiplierId: string; // para NUMERO es el real; para REVENTADO será sobreescrito
-    finalMultiplierX: number; // para REVENTADO = 0 en la venta
+    multiplierId?: string; // resuelto en repo para NUMERO; placeholder para REVENTADO
+    finalMultiplierX?: number; // resuelto en repo para NUMERO; 0 para REVENTADO
   }>;
 };
 
@@ -50,48 +50,22 @@ async function ensureReventadoPlaceholder(tx: any, loteriaId: string) {
 
 export const TicketRepository = {
   async create(data: CreateTicketInput, userId: string) {
-    const { loteriaId, sorteoId, ventanaId, totalAmount, jugadas } = data;
+    const { loteriaId, sorteoId, ventanaId, jugadas } = data;
 
     // 👇 toda la transacción se maneja con retry automático (deadlock-safe)
     const ticket = await withTransactionRetry(async (tx) => {
-      // 1️⃣ Obtener número secuencial (Supabase o local)
-      let nextNumber: number | null = null;
-
-      try {
-        // 🔹 Intentar usar la función PL/pgSQL de Supabase
-        const [res] = await tx.$queryRawUnsafe<
-          { generate_ticket_number: number }[]
-        >(`SELECT generate_ticket_number()`);
-        nextNumber = res?.generate_ticket_number ?? null;
-      } catch (err: any) {
-        // 🔹 Si la función no existe, fallback local usando TicketCounter
-        logger.warn({
-          layer: "ticketRepository",
-          action: "SEQ_FALLBACK",
-          payload: { message: err.message },
-        });
-
-        await tx.$executeRawUnsafe(`
-        CREATE TABLE IF NOT EXISTS "TicketCounter" (
-          id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-          "currentNumber" bigint NOT NULL DEFAULT 0
-        );
-      `);
-
-        await tx.$executeRawUnsafe(`
-        INSERT INTO "TicketCounter" ("id", "currentNumber")
-        VALUES (uuid_generate_v4(), 0)
-        ON CONFLICT DO NOTHING;
-      `);
-
-        const [res2] = await tx.$queryRawUnsafe<{ currentNumber: number }[]>(`
-        UPDATE "TicketCounter"
-        SET "currentNumber" = "currentNumber" + 1
-        RETURNING "currentNumber"
-      `);
-        nextNumber = res2.currentNumber;
-      }
-
+      // 1️⃣ Obtener número secuencial (Supabase o secuencia local)
+      // 1️⃣ Obtener número secuencial (función si existe, si no secuencia local)
+      const [seqRow] = await tx.$queryRawUnsafe<
+        { next_number: string | number }[]
+      >(`
+  SELECT CASE
+    WHEN to_regprocedure('generate_ticket_number()') IS NOT NULL
+      THEN generate_ticket_number()
+    ELSE nextval('ticket_number_seq')
+  END AS next_number
+`);
+      const nextNumber = Number(seqRow?.next_number ?? 0);
       if (!nextNumber) {
         throw new AppError(
           "Failed to generate ticket number",
@@ -100,25 +74,7 @@ export const TicketRepository = {
         );
       }
 
-      // 2️⃣ Revalidar límite diario dentro de la transacción
-      const { _sum } = await tx.ticket.aggregate({
-        _sum: { totalAmount: true },
-        where: {
-          vendedorId: userId,
-          createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
-        },
-      });
-      const dailyTotal = _sum.totalAmount ?? 0;
-      const MAX_DAILY_TOTAL = 1000;
-      if (dailyTotal + totalAmount > MAX_DAILY_TOTAL) {
-        throw new AppError(
-          "Daily sales limit exceeded",
-          400,
-          "LIMIT_VIOLATION"
-        );
-      }
-
-      // 3️⃣ Validar existencia de claves foráneas requeridas (defensivo)
+      // 2️⃣ Validar existencia de claves foráneas requeridas (defensivo)
       const [existsLoteria, sorteo, ventana, existsUser] = await Promise.all([
         tx.loteria.findUnique({
           where: { id: loteriaId },
@@ -143,7 +99,7 @@ export const TicketRepository = {
       if (!ventana)
         throw new AppError("Ventana not found", 404, "FK_VIOLATION");
 
-      // 3️⃣.1 No permitir venta si sorteo no está abierto
+      // 2️⃣.1 No permitir venta si sorteo no está abierto
       if (sorteo.status !== "OPEN") {
         throw new AppError(
           "No se pueden crear tickets para sorteos no abiertos",
@@ -152,10 +108,46 @@ export const TicketRepository = {
         );
       }
 
-      // 3️⃣.5 Pipeline de RestrictionRule (User > Ventana > Banca) — igual al tuyo
-      const now = new Date();
+      // 3️⃣ Resolver X efectivo y multiplierId "Base" dentro de la TX
       const bancaId = ventana.bancaId;
 
+      const bls = await tx.bancaLoteriaSetting.findUnique({
+        where: { bancaId_loteriaId: { bancaId, loteriaId } },
+        select: { baseMultiplierX: true },
+      });
+      if (bls?.baseMultiplierX === undefined || bls?.baseMultiplierX === null) {
+        throw new AppError(
+          `Missing baseMultiplierX for bancaId=${bancaId} & loteriaId=${loteriaId}`,
+          400
+        );
+      }
+
+      const uo = await tx.userMultiplierOverride.findUnique({
+        where: {
+          userId_loteriaId_multiplierType: {
+            userId,
+            loteriaId,
+            multiplierType: "Base",
+          },
+        },
+        select: { baseMultiplierX: true },
+      });
+      const effectiveBaseX = (uo?.baseMultiplierX ??
+        bls.baseMultiplierX) as number;
+
+      const baseMultiplierRow = await tx.loteriaMultiplier.findFirst({
+        where: { loteriaId, isActive: true, name: "Base" },
+        select: { id: true },
+      });
+      if (!baseMultiplierRow) {
+        throw new AppError(
+          `LoteriaMultiplier "Base" not found for loteriaId=${loteriaId}. Seed it first.`,
+          400
+        );
+      }
+
+      // 4️⃣ Pipeline de RestrictionRule (User > Ventana > Banca)
+      const now = new Date();
       const candidateRules = await tx.restrictionRule.findMany({
         where: {
           isDeleted: false,
@@ -188,51 +180,13 @@ export const TicketRepository = {
         .sort((a, b) => b.score - a.score)
         .map((x) => x.r);
 
-      if (applicable.length > 0) {
-        const rule = applicable[0];
-
-        if (rule.number) {
-          const sumForNumber = jugadas
-            .filter((j) => j.number === rule.number)
-            .reduce((acc, j) => acc + j.amount, 0);
-
-          if (rule.maxAmount && sumForNumber > rule.maxAmount)
-            throw new AppError(
-              `Number ${rule.number} exceeded maxAmount (${rule.maxAmount})`,
-              400
-            );
-
-          if (rule.maxTotal && totalAmount > rule.maxTotal)
-            throw new AppError(
-              `Ticket total exceeded maxTotal (${rule.maxTotal})`,
-              400
-            );
-        } else {
-          if (rule.maxAmount) {
-            const maxBet = Math.max(...jugadas.map((j) => j.amount));
-            if (maxBet > rule.maxAmount)
-              throw new AppError(
-                `Bet amount exceeded maxAmount (${rule.maxAmount})`,
-                400
-              );
-          }
-          if (rule.maxTotal && totalAmount > rule.maxTotal)
-            throw new AppError(
-              `Ticket total exceeded maxTotal (${rule.maxTotal})`,
-              400
-            );
-        }
-      }
-
-      // 🔹 A) ¿hay jugadas REVENTADO?
+      // 5️⃣ Asegurar placeholder REVENTADO dentro de la misma TX
       const hasReventado = jugadas.some((j) => j.type === "REVENTADO");
-
-      // 🔹 B) Garantizar placeholder REVENTADO dentro de la MISMA transacción
       const reventadoPlaceholderId = hasReventado
         ? await ensureReventadoPlaceholder(tx, loteriaId)
         : null;
 
-      // 🔹 C) Normalizar jugadas para persistir (NUMERO queda igual; REVENTADO usa placeholder y X=0)
+      // 6️⃣ Normalizar jugadas y calcular total en servidor
       const preparedJugadas = jugadas.map((j) => {
         if (j.type === "REVENTADO") {
           if (!j.reventadoNumber || j.reventadoNumber !== j.number) {
@@ -247,22 +201,82 @@ export const TicketRepository = {
             number: j.number,
             reventadoNumber: j.reventadoNumber,
             amount: j.amount,
-            finalMultiplierX: 0, // NO se usa para reventado
+            finalMultiplierX: 0,
             multiplierId: reventadoPlaceholderId!, // FK “dummy” estable
           };
         }
-        // NUMERO normal: usa multiplierId/X resueltos antes (service)
+        // NUMERO
         return {
           type: "NUMERO" as const,
           number: j.number,
           reventadoNumber: null,
           amount: j.amount,
-          finalMultiplierX: j.finalMultiplierX, // congelado en venta
-          multiplierId: j.multiplierId, // real (base/override)
+          finalMultiplierX: effectiveBaseX, // congelado en venta
+          multiplierId: baseMultiplierRow.id, // multiplier Base
         };
       });
 
-      // 4️⃣ Crear ticket y jugadas (persistiendo type/reventadoNumber)
+      const totalAmountTx = preparedJugadas.reduce(
+        (acc, j) => acc + j.amount,
+        0
+      );
+
+      // 7️⃣ Límite diario (usa total calculado en servidor)
+      const { _sum } = await tx.ticket.aggregate({
+        _sum: { totalAmount: true },
+        where: {
+          vendedorId: userId,
+          createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+        },
+      });
+      const dailyTotal = _sum.totalAmount ?? 0;
+      const MAX_DAILY_TOTAL = Number(process.env.SALES_DAILY_MAX ?? 1000);
+
+      if (dailyTotal + totalAmountTx > MAX_DAILY_TOTAL) {
+        throw new AppError(
+          "Daily sales limit exceeded",
+          400,
+          "LIMIT_VIOLATION"
+        );
+      }
+
+      // 8️⃣ Reglas por ticket / número aplicando preparedJugadas + totalAmountTx
+      if (applicable.length > 0) {
+        const rule = applicable[0];
+        if (rule.number) {
+          const sumForNumber = preparedJugadas
+            .filter((j) => j.number === rule.number)
+            .reduce((acc, j) => acc + j.amount, 0);
+
+          if (rule.maxAmount && sumForNumber > rule.maxAmount)
+            throw new AppError(
+              `Number ${rule.number} exceeded maxAmount (${rule.maxAmount})`,
+              400
+            );
+
+          if (rule.maxTotal && totalAmountTx > rule.maxTotal)
+            throw new AppError(
+              `Ticket total exceeded maxTotal (${rule.maxTotal})`,
+              400
+            );
+        } else {
+          if (rule.maxAmount) {
+            const maxBet = Math.max(...preparedJugadas.map((j) => j.amount));
+            if (maxBet > rule.maxAmount)
+              throw new AppError(
+                `Bet amount exceeded maxAmount (${rule.maxAmount})`,
+                400
+              );
+          }
+          if (rule.maxTotal && totalAmountTx > rule.maxTotal)
+            throw new AppError(
+              `Ticket total exceeded maxTotal (${rule.maxTotal})`,
+              400
+            );
+        }
+      }
+
+      // 9️⃣ Crear ticket y jugadas
       const createdTicket = await tx.ticket.create({
         data: {
           ticketNumber: nextNumber,
@@ -270,7 +284,7 @@ export const TicketRepository = {
           sorteoId,
           ventanaId,
           vendedorId: userId,
-          totalAmount,
+          totalAmount: totalAmountTx,
           status: TicketStatus.ACTIVE,
           isActive: true,
           jugadas: {
@@ -290,7 +304,7 @@ export const TicketRepository = {
       return createdTicket;
     });
 
-    // 5️⃣ Registrar ActivityLog fuera de la transacción (no bloqueante)
+    // 🔟 Registrar ActivityLog fuera de la transacción (no bloqueante)
     prisma.activityLog
       .create({
         data: {
@@ -313,7 +327,7 @@ export const TicketRepository = {
         })
       );
 
-    // 6️⃣ Logging global
+    // 🔁 Logging global
     logger.info({
       layer: "repository",
       action: "TICKET_CREATE_TX",
@@ -412,89 +426,92 @@ export const TicketRepository = {
 
     return { data, meta };
   },
+
   async cancel(id: string, userId: string) {
-    // 1️⃣ Verificar existencia del ticket
-    const existing = await prisma.ticket.findUnique({
-      where: { id },
-      include: { sorteo: true },
-    });
+    // Cancelación segura en una sola transacción
+    return await prisma.$transaction(async (tx) => {
+      // 1️⃣ Verificar existencia y estado
+      const existing = await tx.ticket.findUnique({
+        where: { id },
+        include: { sorteo: true },
+      });
 
-    if (!existing) {
-      throw new AppError("Ticket not found", 404, "NOT_FOUND");
-    }
+      if (!existing) {
+        throw new AppError("Ticket not found", 404, "NOT_FOUND");
+      }
 
-    // 2️⃣ Validar que no esté evaluado o cerrado
-    if (existing.status === TicketStatus.EVALUATED) {
-      throw new AppError(
-        "Cannot cancel an evaluated ticket",
-        400,
-        "INVALID_STATE"
-      );
-    }
+      if (existing.status === TicketStatus.EVALUATED) {
+        throw new AppError(
+          "Cannot cancel an evaluated ticket",
+          400,
+          "INVALID_STATE"
+        );
+      }
 
-    // 3️⃣ Validar sorteo (no permitir cancelar si el sorteo ya está cerrado o evaluado)
-    if (
-      existing.sorteo.status === "CLOSED" ||
-      existing.sorteo.status === "EVALUATED"
-    ) {
-      throw new AppError(
-        "Cannot cancel ticket from closed or evaluated sorteo",
-        400,
-        "SORTEO_LOCKED"
-      );
-    }
+      // 2️⃣ Validar sorteo (no permitir cancelar si el sorteo ya está cerrado o evaluado)
+      if (
+        existing.sorteo.status === "CLOSED" ||
+        existing.sorteo.status === "EVALUATED"
+      ) {
+        throw new AppError(
+          "Cannot cancel ticket from closed or evaluated sorteo",
+          400,
+          "SORTEO_LOCKED"
+        );
+      }
 
-    // 4️⃣ Actualizar ticket (soft delete + inactivar)
-    const ticket = await prisma.ticket.update({
-      where: { id },
-      data: {
-        isDeleted: true,
-        isActive: false,
-        deletedAt: new Date(),
-        deletedBy: userId,
-        deletedReason: "Cancelled by user",
-        status: TicketStatus.CANCELLED,
-        updatedAt: new Date(),
-      },
-      include: { jugadas: true },
-    });
-
-    // 5️⃣ Registrar en ActivityLog
-    prisma.activityLog
-      .create({
+      // 3️⃣ Actualizar ticket (soft delete + inactivar)
+      const ticket = await tx.ticket.update({
+        where: { id },
         data: {
-          userId,
-          action: "TICKET_CANCEL",
-          targetType: "TICKET",
-          targetId: ticket.id,
-          details: {
-            ticketNumber: ticket.ticketNumber,
-            totalAmount: ticket.totalAmount,
-            cancelledAt: ticket.deletedAt,
-          },
+          isDeleted: true,
+          isActive: false,
+          deletedAt: new Date(),
+          deletedBy: userId,
+          deletedReason: "Cancelled by user",
+          status: TicketStatus.CANCELLED,
+          updatedAt: new Date(),
         },
-      })
-      .catch((err) =>
-        logger.warn({
-          layer: "activityLog",
-          action: "ASYNC_FAIL",
-          payload: { message: err.message },
+        include: { jugadas: true },
+      });
+
+      // 4️⃣ Registrar en ActivityLog (async, fuera de la TX)
+      prisma.activityLog
+        .create({
+          data: {
+            userId,
+            action: "TICKET_CANCEL",
+            targetType: "TICKET",
+            targetId: ticket.id,
+            details: {
+              ticketNumber: ticket.ticketNumber,
+              totalAmount: ticket.totalAmount,
+              cancelledAt: ticket.deletedAt,
+            },
+          },
         })
-      );
+        .catch((err) =>
+          logger.warn({
+            layer: "activityLog",
+            action: "ASYNC_FAIL",
+            payload: { message: err.message },
+          })
+        );
 
-    // 6️⃣ Logging global
-    logger.warn({
-      layer: "repository",
-      action: "TICKET_CANCEL_DB",
-      payload: {
-        ticketId: id,
-        userId,
-        sorteoId: existing.sorteoId,
-        totalAmount: ticket.totalAmount,
-      },
+      // 5️⃣ Logging global
+      logger.warn({
+        layer: "repository",
+        action: "TICKET_CANCEL_DB",
+        payload: {
+          ticketId: id,
+          userId,
+          sorteoId: existing.sorteoId,
+          totalAmount: ticket.totalAmount,
+        },
+      });
+
+      return ticket;
     });
-
-    return ticket;
   },
 };
 

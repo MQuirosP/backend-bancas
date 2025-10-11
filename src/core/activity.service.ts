@@ -7,14 +7,33 @@ export type ActivityPayload = {
   action: ActivityType;
   targetType?: string | null;
   targetId?: string | null;
-  details?: Prisma.InputJsonValue | null;
+  details?: Prisma.InputJsonValue | null; // <- aceptamos null aquí
   requestId?: string | null;
   layer?: string; // 'controller' | 'service' | 'repository' | etc
 };
 
+function normalizeDetails(details: ActivityPayload['details']) {
+  // Prisma exige: InputJsonValue | NullableJsonNullValueInput | undefined
+  // Mapeo:
+  //  - undefined => undefined (no manda el campo)
+  //  - null      => Prisma.JsonNull (NULL real)
+  //  - otro      => tal cual
+  if (details === undefined) return undefined;
+  if (details === null) return Prisma.JsonNull;
+  return details;
+}
+
 export const ActivityService = {
   async log(payload: ActivityPayload) {
-    const { userId = null, action, targetType = null, targetId = null, details = null, requestId = null, layer = 'activity-service' } = payload;
+    const {
+      userId = null,
+      action,
+      targetType = null,
+      targetId = null,
+      details = null,
+      requestId = null,
+      layer = 'activity-service',
+    } = payload;
 
     try {
       await prisma.activityLog.create({
@@ -23,7 +42,7 @@ export const ActivityService = {
           action,
           targetType,
           targetId,
-          details: details ?? undefined,
+          details: normalizeDetails(details),
         },
       });
     } catch (err) {
@@ -32,7 +51,9 @@ export const ActivityService = {
         action: 'SYSTEM_ACTION',
         userId,
         requestId,
-        payload: { failedToPersistActivity: { action, targetType, targetId, details } },
+        payload: {
+          failedToPersistActivity: { action, targetType, targetId, details },
+        },
         meta: { error: (err as Error).message },
       });
       return;
@@ -47,11 +68,26 @@ export const ActivityService = {
     });
   },
 
-  async logWithTx(tx: typeof prisma, payload: ActivityPayload) {
-    const { userId = null, action, targetType = null, targetId = null, details = null, requestId = null, layer = 'activity-service' } = payload;
+  async logWithTx(tx: Prisma.TransactionClient, payload: ActivityPayload) {
+    const {
+      userId = null,
+      action,
+      targetType = null,
+      targetId = null,
+      details = null,
+      requestId = null,
+      layer = 'activity-service',
+    } = payload;
+
     try {
-      await (tx as any).activityLog.create({
-        data: { userId, action, targetType, targetId, details },
+      await tx.activityLog.create({
+        data: {
+          userId,
+          action,
+          targetType,
+          targetId,
+          details: normalizeDetails(details),
+        },
       });
     } catch (err) {
       logger.error({
@@ -59,7 +95,9 @@ export const ActivityService = {
         action: 'SYSTEM_ACTION',
         userId,
         requestId,
-        payload: { failedToPersistActivity: { action, targetType, targetId, details } },
+        payload: {
+          failedToPersistActivity: { action, targetType, targetId, details },
+        },
         meta: { error: (err as Error).message },
       });
       return;

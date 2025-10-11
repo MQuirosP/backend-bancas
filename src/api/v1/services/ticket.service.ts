@@ -11,216 +11,105 @@ export const TicketService = {
    * Crear ticket (con validación de restricciones)
    */
   async create(data: any, userId: string, requestId?: string) {
-  try {
-    // =======================================================
-    // 0. Normalización de entrada y verificaciones previas
-    // =======================================================
-    const { bancaId, ventanaId, loteriaId, sorteoId } = data;
-    if (!bancaId || !ventanaId || !loteriaId || !sorteoId) {
-      throw new AppError("Missing bancaId/ventanaId/loteriaId/sorteoId", 400);
-    }
+    try {
+      const { ventanaId, loteriaId, sorteoId } = data;
+      if (!ventanaId || !loteriaId || !sorteoId) {
+        throw new AppError("Missing ventanaId/loteriaId/sorteoId", 400);
+      }
 
-    const jugadasIn: Array<{
-      type?: "NUMERO" | "REVENTADO";
-      number: string;
-      reventadoNumber?: string | null;
-      amount: number;
-      multiplierId?: string;        // será completado abajo
-      finalMultiplierX?: number;    // será completado abajo
-    }> = Array.isArray(data.jugadas) ? data.jugadas : [];
+      const jugadasIn: Array<{
+        type?: "NUMERO" | "REVENTADO";
+        number: string;
+        reventadoNumber?: string | null;
+        amount: number;
+      }> = Array.isArray(data.jugadas) ? data.jugadas : [];
+      if (jugadasIn.length === 0) {
+        throw new AppError("At least one jugada is required", 400);
+      }
 
-    if (jugadasIn.length === 0) {
-      throw new AppError("At least one jugada is required", 400);
-    }
-
-    // =======================================================
-    // 1. Reglas de pairing y coherencia REVENTADO
-    //    - REVENTADO sólo válido si existe NUMERO del mismo número
-    //    - reventadoNumber debe ser igual a number
-    // =======================================================
-    const numerosEnTicket = new Set(
-      jugadasIn.filter(j => (j.type ?? "NUMERO") === "NUMERO").map(j => j.number)
-    );
-
-    for (const j of jugadasIn) {
-      const type = j.type ?? "NUMERO";
-      if (type === "REVENTADO") {
-        if (!j.reventadoNumber || j.reventadoNumber !== j.number) {
-          throw new AppError(
-            `REVENTADO must reference the same number (reventadoNumber === number) for ${j.number}`,
-            400
-          );
-        }
-        if (!numerosEnTicket.has(j.number)) {
-          throw new AppError(
-            `A NUMERO bet for ${j.number} must exist to allow REVENTADO`,
-            400
-          );
+      // Coherencia mínima REVENTADO (pairing con NUMERO y mismo número)
+      const numeros = new Set(
+        jugadasIn
+          .filter((j) => (j.type ?? "NUMERO") === "NUMERO")
+          .map((j) => j.number)
+      );
+      for (const j of jugadasIn) {
+        const type = j.type ?? "NUMERO";
+        if (type === "REVENTADO") {
+          if (!j.reventadoNumber || j.reventadoNumber !== j.number) {
+            throw new AppError(
+              `REVENTADO must reference the same number (reventadoNumber === number) for ${j.number}`,
+              400
+            );
+          }
+          if (!numeros.has(j.number)) {
+            throw new AppError(
+              `A NUMERO bet for ${j.number} must exist to allow REVENTADO`,
+              400
+            );
+          }
         }
       }
-    }
 
-    // =======================================================
-    // 2. Validación jerárquica de restricciones (como tenías)
-    // =======================================================
-    const at = new Date();
+      // El total lo calcula el repo; aquí solo pasamos las jugadas tal cual
+      const ticket = await TicketRepository.create(
+        {
+          loteriaId,
+          sorteoId,
+          ventanaId,
+          // totalAmount y multiplierId/finalMultiplierX se resuelven en repo/tx
+          totalAmount: 0,
+          jugadas: jugadasIn.map((j) => ({
+            type: (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO",
+            number: j.number,
+            reventadoNumber:
+              j.reventadoNumber ?? (j.type === "REVENTADO" ? j.number : null),
+            amount: j.amount,
+            multiplierId: "", // placeholder, repo lo resolverá
+            finalMultiplierX: 0, // repo congelará valor efectivo para NUMERO
+          })),
+        } as any,
+        userId
+      );
 
-    // por jugada
-    for (const j of jugadasIn) {
-      const limits = await RestrictionRuleRepository.getEffectiveLimits({
-        bancaId,
-        ventanaId,
+      await ActivityService.log({
         userId,
-        number: j.number,
-        at,
+        action: ActivityType.TICKET_CREATE,
+        targetType: "TICKET",
+        targetId: ticket.id,
+        details: {
+          ticketNumber: ticket.ticketNumber,
+          totalAmount: ticket.totalAmount,
+          jugadas: ticket.jugadas.length,
+        },
+        requestId,
+        layer: "service",
       });
 
-      if (limits.maxAmount !== null && j.amount > limits.maxAmount) {
-        throw new AppError(
-          `Límite por jugada excedido para número ${j.number}. Máximo permitido: ${limits.maxAmount}`,
-          400
-        );
-      }
-    }
-
-    // total por ticket
-    const total = jugadasIn.reduce((acc: number, j: any) => acc + j.amount, 0);
-    const totalLimits = await RestrictionRuleRepository.getEffectiveLimits({
-      bancaId,
-      ventanaId,
-      userId,
-      number: null,
-      at,
-    });
-
-    if (totalLimits.maxTotal !== null && total > totalLimits.maxTotal) {
-      throw new AppError(
-        `Límite total por ticket excedido. Máximo permitido: ${totalLimits.maxTotal}`,
-        400
-      );
-    }
-
-    // =======================================================
-    // 3. Resolver X efectivo y multiplierId para NUMERO
-    //    - finalMultiplierX = override(user) ?? base(banca-loteria)
-    //    - multiplierId = LoteriaMultiplier(name="Base") activo
-    //    - REVENTADO: finalMultiplierX=0 y multiplierId dummy (repo lo sobrescribe)
-    // =======================================================
-    // base banca-loteria
-    const bls = await prisma.bancaLoteriaSetting.findUnique({
-      where: { bancaId_loteriaId: { bancaId, loteriaId } },
-      select: { baseMultiplierX: true },
-    });
-    if (!bls?.baseMultiplierX && bls?.baseMultiplierX !== 0) {
-      throw new AppError(
-        `Missing baseMultiplierX for bancaId=${bancaId} & loteriaId=${loteriaId}`,
-        400
-      );
-    }
-
-    // override user (opcional)
-    const uo = await prisma.userMultiplierOverride.findUnique({
-      where: {
-        userId_loteriaId_multiplierType: {
-          userId,
-          loteriaId,
-          multiplierType: "Base",
+      logger.info({
+        layer: "service",
+        action: "TICKET_CREATE",
+        userId,
+        requestId,
+        payload: {
+          ticketId: ticket.id,
+          totalAmount: ticket.totalAmount,
+          jugadas: ticket.jugadas.length,
         },
-      },
-      select: { baseMultiplierX: true },
-    });
+      });
 
-    const effectiveBaseX = (uo?.baseMultiplierX ?? bls.baseMultiplierX)!;
-
-    // multiplier "Base" para conectar en NUMERO
-    const baseMultiplierRow = await prisma.loteriaMultiplier.findFirst({
-      where: { loteriaId, isActive: true, name: "Base" },
-      select: { id: true },
-    });
-    if (!baseMultiplierRow) {
-      throw new AppError(
-        `LoteriaMultiplier "Base" not found for loteriaId=${loteriaId}. Seed it first.`,
-        400
-      );
+      return ticket;
+    } catch (err: any) {
+      logger.error({
+        layer: "service",
+        action: "TICKET_CREATE_FAIL",
+        userId,
+        requestId,
+        payload: { message: err.message },
+      });
+      throw err;
     }
-
-    // preparar jugadas con los campos requeridos por el repo
-    const jugadasPrepared = jugadasIn.map((j) => {
-      const type = j.type ?? "NUMERO";
-      if (type === "NUMERO") {
-        return {
-          type: "NUMERO" as const,
-          number: j.number,
-          reventadoNumber: null,
-          amount: j.amount,
-          multiplierId: baseMultiplierRow.id,
-          finalMultiplierX: effectiveBaseX,
-        };
-      } else {
-        // REVENTADO: X se fija en evaluación; el repo pondrá placeholder al multiplierId
-        return {
-          type: "REVENTADO" as const,
-          number: j.number,
-          reventadoNumber: j.reventadoNumber ?? j.number,
-          amount: j.amount,
-          multiplierId: "DYNAMIC",  // dummy; será ignorado y sustituido en el repo
-          finalMultiplierX: 0,
-        };
-      }
-    });
-
-    // =======================================================
-    // 4. Crear ticket (repo maneja secuencia, restricciones extra y tx)
-    // =======================================================
-    const payloadForRepo = {
-      bancaId,
-      ventanaId,
-      loteriaId,
-      sorteoId,
-      totalAmount: total,
-      jugadas: jugadasPrepared,
-    };
-
-    const ticket = await TicketRepository.create(payloadForRepo as any, userId);
-
-    await ActivityService.log({
-      userId,
-      action: ActivityType.TICKET_CREATE,
-      targetType: "TICKET",
-      targetId: ticket.id,
-      details: {
-        ticketNumber: ticket.ticketNumber,
-        totalAmount: ticket.totalAmount,
-        jugadas: ticket.jugadas.length,
-      },
-      requestId,
-      layer: "service",
-    });
-
-    logger.info({
-      layer: "service",
-      action: "TICKET_CREATE",
-      userId,
-      requestId,
-      payload: {
-        ticketId: ticket.id,
-        totalAmount: ticket.totalAmount,
-        jugadas: ticket.jugadas.length,
-      },
-    });
-
-    return ticket;
-  } catch (err: any) {
-    logger.error({
-      layer: "service",
-      action: "TICKET_CREATE_FAIL",
-      userId,
-      requestId,
-      payload: { message: err.message },
-    });
-    throw err;
-  }
-},
+  },
 
   /**
    * Obtener ticket por ID
