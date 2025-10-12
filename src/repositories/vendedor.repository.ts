@@ -4,10 +4,10 @@ import { AppError } from "../core/errors";
 import { Prisma, Role } from "@prisma/client";
 
 type VendedorCreateParams = {
-  ventanaId: string;
+  ventanaId?: string;
   name: string;
   username: string;
-  email: string;
+  email?: string;
   passwordHash: string;
 };
 
