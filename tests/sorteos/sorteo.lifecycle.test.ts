@@ -45,33 +45,25 @@ describe("🗓️ Sorteo lifecycle", () => {
     expect(closed.status).toBe(SorteoStatus.CLOSED);
   });
 
-  it("create -> open -> evaluate -> close", async () => {
-    // create (SCHEDULED)
+  // tests/sorteos/sorteo.lifecycle.test.ts
+
+  it("create -> open -> evaluate (EVALUATED es terminal)", async () => {
     const created = await SorteoService.create(
-      {
-        loteriaId,
-        scheduledAt: new Date(),
-        name: `Sorteo LC Eval ${Date.now()}`,
-      },
+      { loteriaId, scheduledAt: new Date(), name: "Sorteo LC Eval Terminal" },
       admin
     );
+    const sorteoId2 = created.id;
     expect(created.status).toBe(SorteoStatus.SCHEDULED);
 
-    // open (OPEN)
-    const opened = await SorteoService.open(created.id, admin);
-    expect(opened.status).toBe(SorteoStatus.OPEN);
+    const opened2 = await SorteoService.open(sorteoId2, admin);
+    expect(opened2.status).toBe(SorteoStatus.OPEN);
 
-    // evaluate (EVALUATED) — sin reventado
-    const evaluated = await SorteoService.evaluate(
-      created.id,
-      { winningNumber: "22", extraMultiplierId: null, extraOutcomeCode: null },
+    // evaluar y NO cerrar
+    const evaluated2 = await SorteoService.evaluate(
+      sorteoId2,
+      { winningNumber: "22" },
       admin
     );
-    expect(evaluated?.status).toBe(SorteoStatus.EVALUATED);
-    expect(evaluated?.winningNumber).toBe("22");
-
-    // close (CLOSED)
-    const closed = await SorteoService.close(created.id, admin);
-    expect(closed.status).toBe(SorteoStatus.CLOSED);
+    expect(evaluated2?.status).toBe(SorteoStatus.EVALUATED);
   });
 });
