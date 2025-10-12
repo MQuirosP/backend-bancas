@@ -1,4 +1,3 @@
-import bcrypt from 'bcryptjs';
 import prisma from '../../../core/prismaClient';
 import { AppError } from '../../../core/errors';
 import { CreateUserDTO, ListUsersQuery, UpdateUserDTO } from '../dto/user.dto';
@@ -8,7 +7,10 @@ import { hashPassword } from '../../../utils/crypto';
 
 export const UserService = {
   async create(dto: CreateUserDTO) {
-    const exists = await prisma.user.findUnique({ where: { email: dto.email } });
+    const username = dto.username.trim();
+    const email = dto.email?.trim() ?? null;
+
+    const exists = await prisma.user.findUnique({ where: { username }, select: { id: true } });
     if (exists) throw new AppError('Email already in use', 409);
 
     const hashed = await hashPassword(dto.password);
@@ -16,8 +18,8 @@ export const UserService = {
     const user = await prisma.user.create({
       data: {
         name: dto.name,
-        email: dto.email,
-        username: dto.username,
+        email: email,
+        username,
         password: hashed,
         role: dto.role ?? 'VENTANA',
         ventanaId: dto.ventanaId ?? null,

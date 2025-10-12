@@ -1,4 +1,3 @@
-// src/api/v1/controllers/user.controller.ts
 import { Request, Response } from 'express';
 import { ActivityType, Role } from '@prisma/client';
 import UserService from '../services/user.service';

@@ -5,12 +5,13 @@ import { z } from "zod";
 // ------------------------------------------------------
 export const createUserSchema = z
   .object({
+    ventanaId: z.uuid("Invalid ventanaId").optional(),
+    username: z.string().trim().min(3).max(50),
     name: z.string().min(2, "Name is too short"),
-    email: z.email("Invalid email").optional(),
-    username: z.string().min(6).max(12),
+    email: z.email("Invalid email").trim().optional(),
     password: z.string().min(6, "Password must be at least 6 characters"),
     role: z.enum(["ADMIN", "VENTANA", "VENDEDOR"]),
-    ventanaId: z.uuid("Invalid ventanaId").optional(),
+    isActive: z.boolean().optional(),
   })
   .refine(
     (data) => data.role === "ADMIN" || !!data.ventanaId,
@@ -26,11 +27,12 @@ export const createUserSchema = z
 export const updateUserSchema = z.object({
   name: z.string().min(2, "Name is too short").optional(),
   email: z.email("Invalid email").optional(),
-  username: z.string().min(6).max(12),
+  username: z.string().min(6).max(12).optional(),
   password: z.string().min(6, "Password must be at least 6 characters").optional(),
   role: z.enum(["ADMIN", "VENTANA", "VENDEDOR"]).optional(),
-  ventanaId: z.string().uuid("Invalid ventanaId").nullable().optional(),
-});
+  ventanaId: z.uuid("Invalid ventanaId").nullable().optional(),
+  isActive: z.boolean().optional(),
+}).strict();
 
 // ------------------------------------------------------
 // LIST QUERY
