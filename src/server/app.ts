@@ -12,6 +12,7 @@ import { errorHandler } from '../middlewares/error.middleware';
 import { corsMiddleware } from '../middlewares/cors.middleware';
 import { attachRequestLogger } from '../middlewares/attachLogger.middleware';
 import { apiV1Router } from '../api/v1/routes';
+import { requireJson } from '../middlewares/contentTypeJson.middleware';
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.use(attachRequestLogger);      // sets req.logger child bound to requestId
 app.use(helmet());
 app.use(corsMiddleware);
 app.use(express.json({ limit: '200kb' }));
+app.use(requireJson);
 app.use(express.urlencoded({ extended: true }));
 app.use(rateLimitMiddleware);
 

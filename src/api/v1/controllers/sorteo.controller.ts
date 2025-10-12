@@ -24,29 +24,8 @@ export const SorteoController = {
   },
 
   async evaluate(req: AuthenticatedRequest, res: Response) {
-    // body ya pasó por validateEvaluateSorteo; reforzamos saneo y nullables
-    const {
-      winningNumber,
-      extraMultiplierId = null,
-      extraOutcomeCode = null,
-    } = req.body;
-
-    // en caso de que llegue algo raro en headers
-    if (
-      req.headers["content-type"] &&
-      !String(req.headers["content-type"]).includes("application/json")
-    ) {
-      return res
-        .status(415)
-        .json({ success: false, error: "Unsupported Media Type" });
-    }
-
-    const safeBody = { winningNumber, extraOutcomeCode, extraMultiplierId };
-    const s = await SorteoService.evaluate(
-      req.params.id,
-      safeBody,
-      req.user!.id
-    );
+    // Body ya validado por validateEvaluateSorteo
+    const s = await SorteoService.evaluate(req.params.id, req.body, req.user!.id);
     res.json({ success: true, data: s });
   },
 
@@ -64,9 +43,7 @@ export const SorteoController = {
       ? String(req.query.loteriaId)
       : undefined;
     const page = req.query.page ? Number(req.query.page) : undefined;
-    const pageSize = req.query.pageSize
-      ? Number(req.query.pageSize)
-      : undefined;
+    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
     const result = await SorteoService.list(loteriaId, page, pageSize);
     res.json({ success: true, data: result.data, meta: result.meta });
   },
