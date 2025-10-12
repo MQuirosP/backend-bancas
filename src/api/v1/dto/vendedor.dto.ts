@@ -16,6 +16,7 @@ export const UpdateVendedorDto = z.object({
   name: z.string().min(2, "El nombre es obligatorio").optional(),
   email: z.string().trim().toLowerCase().regex(EMAIL_RE, "Formato de correo inválido").optional(),
   password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").optional(),
+  isActive: z.boolean().optional(),
 });
 
 export type CreateVendedorInput = z.infer<typeof CreateVendedorDto>;
