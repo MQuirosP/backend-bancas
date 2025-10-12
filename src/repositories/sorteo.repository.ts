@@ -35,22 +35,17 @@ const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
 });
 
 const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
+  // ✅ ÚNICAMENTE se permite reprogramar la fecha/hora
   scheduledAt: d.scheduledAt
-    ? d.scheduledAt instanceof Date
-      ? d.scheduledAt
-      : new Date(d.scheduledAt)
+    ? (d.scheduledAt instanceof Date ? d.scheduledAt : new Date(d.scheduledAt))
     : undefined,
-  status: d.status ?? undefined,
-  winningNumber: d.winningNumber,
-  extraOutcomeCode: (d as any).extraOutcomeCode ?? undefined,
 
-  // ✅ usar relación en vez de extraMultiplierId
-  ...(typeof (d as any).extraMultiplierId === "string"
-    ? { extraMultiplier: { connect: { id: (d as any).extraMultiplierId } } }
-    : (d as any).extraMultiplierId === null
-      ? { extraMultiplier: { disconnect: true } }
-      : {}),
-  // ⚠️ extraMultiplierX se “snapshotea” en evaluate, no aquí.
+  // No se permite tocar:
+  // - status
+  // - winningNumber
+  // - extraOutcomeCode
+  // - extraMultiplier (connect/disconnect)
+  // Esos campos se gestionan solo en PATCH /:id/evaluate
 });
 
 const SorteoRepository = {

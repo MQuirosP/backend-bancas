@@ -28,4 +28,11 @@ export const config = {
     ? parsed.data.CORS_ORIGIN.split(",").map((o) => o.trim())
     : "*",
   logLevel: parsed.data.LOG_LEVEL ?? 'info',
+
+  tx: {
+    maxRetries: parsed.data.TX_MAX_RETRIES,
+    backoffMinMs: parsed.data.TX_BACKOFF_MIN_MS,
+    backoffMaxMs: parsed.data.TX_BACKOFF_MAX_MS,
+    isolationLevel: "Serializable" as const,
+  }
 };

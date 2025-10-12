@@ -12,4 +12,9 @@ export const EnvSchema = z.object({
   CORS_ORIGIN: z.string().optional(),
   LOG_LEVEL: z.string().optional(),
   SALES_DAILY_MAX: z.string().optional(),
+
+  // Control de reintentos de transacciones
+  TX_MAX_RETRIES: z.coerce.number().int().min(0).default(3),
+  TX_BACKOFF_MIN_MS: z.coerce.number().int().min(0).default(250),
+  TX_BACKOFF_MAX_MS: z.coerce.number().int().min(0).default(600),
 });

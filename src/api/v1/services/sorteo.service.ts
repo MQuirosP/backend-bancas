@@ -14,12 +14,12 @@ import {
   UpdateSorteoDTO,
 } from "../dto/sorteo.dto";
 
-const FINAL_STATES: ReadonlyArray<SorteoStatus> = [
+const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
   SorteoStatus.CLOSED,
-];
+]);
 
-const EVALUABLE_STATES: ReadonlyArray<SorteoStatus> = [SorteoStatus.OPEN];
+const EVALUABLE_STATES = new Set<SorteoStatus>([SorteoStatus.OPEN]);
 
 export const SorteoService = {
   async create(data: CreateSorteoDTO, userId: string) {
@@ -54,15 +54,19 @@ export const SorteoService = {
     const existing = await SorteoRepository.findById(id);
     if (!existing || existing.isDeleted)
       throw new AppError("Sorteo no encontrado", 404);
-
-    if (FINAL_STATES.includes(existing.status)) {
+    if (
+      FINAL_STATES.has(existing.status)
+    ) {
       throw new AppError(
         "No se puede editar un sorteo evaluado o cerrado",
         409
       );
     }
 
-    const s = await SorteoRepository.update(id, data);
+    // ⬇️ solo pasamos lo permitido por el schema (p. ej. scheduledAt)
+    const s = await SorteoRepository.update(id, {
+      scheduledAt: data.scheduledAt,
+    } as UpdateSorteoDTO);
 
     const details: Record<string, any> = {};
     if (data.scheduledAt) {
@@ -72,8 +76,6 @@ export const SorteoService = {
           : new Date(data.scheduledAt)
       ).toISOString();
     }
-    if (data.status) details.status = data.status;
-    if (data.winningNumber) details.winningNumber = data.winningNumber;
 
     await ActivityService.log({
       userId,
@@ -153,7 +155,7 @@ export const SorteoService = {
     const existing = await SorteoRepository.findById(id);
     if (!existing || existing.isDeleted)
       throw new AppError("Sorteo no encontrado", 404);
-    if (!EVALUABLE_STATES.includes(existing.status)) {
+    if (!EVALUABLE_STATES.has(existing.status)) {
       throw new AppError("Solo se puede evaluar desde OPEN", 409); // ✅ mensaje consistente
     }
 

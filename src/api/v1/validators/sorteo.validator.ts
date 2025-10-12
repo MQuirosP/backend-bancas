@@ -16,10 +16,10 @@ export const createSorteoSchema = z.object({
 // - extraMultiplierId: uuid para conectar, null para desconectar, omitido = no tocar
 export const updateSorteoSchema = z.object({
   scheduledAt: z.coerce.date().optional(),
-  status: z.enum(["SCHEDULED", "OPEN", "EVALUATED", "CLOSED"]).optional(),
-  winningNumber: twoDigit.optional(),
-  extraOutcomeCode: z.string().trim().min(1).max(50).nullable().optional(),
-  extraMultiplierId: z.string().uuid().nullable().optional(),
+  // status: z.enum(["SCHEDULED", "OPEN", "EVALUATED", "CLOSED"]).optional(),
+  // winningNumber: twoDigit.optional(),
+  // extraOutcomeCode: z.string().trim().min(1).max(50).nullable().optional(),
+  // extraMultiplierId: z.uuid().nullable().optional(),
 });
 
 // EVALUATE: body completo (winningNumber obligatorio, reventado opcional)

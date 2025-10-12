@@ -2,7 +2,7 @@ import prisma from "../core/prismaClient";
 import { TicketStatus } from "@prisma/client";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
-import { withTransactionRetry } from "../utils/withTransactionRetry";
+import { withTransactionRetry } from "../core/withTransactionRetry";
 
 type CreateTicketInput = {
   loteriaId: string;

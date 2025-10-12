@@ -13,12 +13,22 @@ describe("🗓️ Sorteo lifecycle", () => {
   beforeAll(async () => {
     await resetDatabase();
     await prisma.user.create({
-      data: { id: admin, username: "admin", name: "Admin", password: "hashed", role: Role.ADMIN },
+      data: {
+        id: admin,
+        username: "admin",
+        name: "Admin",
+        password: "hashed",
+        role: Role.ADMIN,
+      },
     });
-    await prisma.loteria.create({ data: { id: loteriaId, name: "Lotería LC" } });
+    await prisma.loteria.create({
+      data: { id: loteriaId, name: "Lotería LC" },
+    });
   });
 
-  afterAll(async () => { await prisma.$disconnect(); });
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
 
   it("create -> open -> close", async () => {
     const created = await SorteoService.create(
@@ -32,6 +42,36 @@ describe("🗓️ Sorteo lifecycle", () => {
     expect(opened.status).toBe(SorteoStatus.OPEN);
 
     const closed = await SorteoService.close(sorteoId, admin);
+    expect(closed.status).toBe(SorteoStatus.CLOSED);
+  });
+
+  it("create -> open -> evaluate -> close", async () => {
+    // create (SCHEDULED)
+    const created = await SorteoService.create(
+      {
+        loteriaId,
+        scheduledAt: new Date(),
+        name: `Sorteo LC Eval ${Date.now()}`,
+      },
+      admin
+    );
+    expect(created.status).toBe(SorteoStatus.SCHEDULED);
+
+    // open (OPEN)
+    const opened = await SorteoService.open(created.id, admin);
+    expect(opened.status).toBe(SorteoStatus.OPEN);
+
+    // evaluate (EVALUATED) — sin reventado
+    const evaluated = await SorteoService.evaluate(
+      created.id,
+      { winningNumber: "22", extraMultiplierId: null, extraOutcomeCode: null },
+      admin
+    );
+    expect(evaluated?.status).toBe(SorteoStatus.EVALUATED);
+    expect(evaluated?.winningNumber).toBe("22");
+
+    // close (CLOSED)
+    const closed = await SorteoService.close(created.id, admin);
     expect(closed.status).toBe(SorteoStatus.CLOSED);
   });
 });
