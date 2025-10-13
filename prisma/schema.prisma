@@ -327,20 +327,17 @@ model Jugada {
   ticketId         String
   number           String
   amount           Float
-  multiplierId     String
+  multiplierId     String?
   finalMultiplierX Float
 
   // NOMBRA la relación de venta (sale-time)
-  multiplier LoteriaMultiplier @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
+  multiplier LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
 
   // --- Reventado (evaluación) ---
   type                BetType @default(NUMERO)
   reventadoNumber     String?
-  settledMultiplierX  Float?
-  settledMultiplierId String?
 
   // NOMBRA la relación de liquidación (settlement)
-  settledMultiplier LoteriaMultiplier? @relation("JugadaMultiplierSettled", fields: [settledMultiplierId], references: [id])
 
   isWinner Boolean @default(false)
   payout   Float?
@@ -359,7 +356,6 @@ model Jugada {
   @@index([ticketId])
   @@index([type])
   @@index([reventadoNumber])
-  @@index([settledMultiplierId])
 }
 
 model Sorteo {
@@ -442,7 +438,6 @@ model LoteriaMultiplier {
 
   // BACK-RELATIONS con nombres que coinciden
   jugadasAtSale  Jugada[] @relation("JugadaMultiplierAtSale")
-  jugadasSettled Jugada[] @relation("JugadaMultiplierSettled")
 
   appliedInSorteos Sorteo[] @relation("SorteoExtraMultiplier")
 

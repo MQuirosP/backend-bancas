@@ -124,7 +124,7 @@ describe("🎲 Sorteo evaluate flow", () => {
     // evaluate con número 12 y extraMultiplierId (paga reventado)
     const s = await SorteoService.evaluate(
       sorteoId,
-      { winningNumber: "12", extraMultiplierId, extraOutcomeCode: "EX1" },
+      { winningNumber: "12", extraMultiplierId },
       userAdmin
     );
 
@@ -142,7 +142,6 @@ describe("🎲 Sorteo evaluate flow", () => {
         number: true,
         amount: true,
         finalMultiplierX: true,
-        settledMultiplierX: true,
         isWinner: true,
         payout: true,
       },
@@ -161,7 +160,7 @@ describe("🎲 Sorteo evaluate flow", () => {
 
     // REVENTADO: payout = amount * extraX (5)
     expect(reventado.isWinner).toBe(true);
-    expect(reventado.settledMultiplierX).toBe(5);
+    expect(reventado.finalMultiplierX).toBe(5);
     expect(reventado.payout).toBeCloseTo(3 * 5, 5);
   });
 });

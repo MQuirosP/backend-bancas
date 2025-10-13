@@ -27,26 +27,26 @@ function isSameLocalDay(a: Date, b: Date) {
   );
 }
 
-async function ensureReventadoPlaceholder(tx: any, loteriaId: string) {
-  const name = "REVENTADO (dynamic)";
-  let mul = await tx.loteriaMultiplier.findFirst({
-    where: { loteriaId, name },
-    select: { id: true },
-  });
-  if (!mul) {
-    mul = await tx.loteriaMultiplier.create({
-      data: {
-        loteriaId,
-        name,
-        valueX: 0,
-        isActive: true,
-        kind: "REVENTADO",
-      },
-      select: { id: true },
-    });
-  }
-  return mul.id;
-}
+// async function ensureReventadoPlaceholder(tx: any, loteriaId: string) {
+//   const name = "REVENTADO (dynamic)";
+//   let mul = await tx.loteriaMultiplier.findFirst({
+//     where: { loteriaId, name },
+//     select: { id: true },
+//   });
+//   if (!mul) {
+//     mul = await tx.loteriaMultiplier.create({
+//       data: {
+//         loteriaId,
+//         name,
+//         valueX: 0,
+//         isActive: true,
+//         kind: "REVENTADO",
+//       },
+//       select: { id: true },
+//     });
+//   }
+//   return mul.id;
+// }
 
 async function resolveBaseMultiplierX(
   tx: Prisma.TransactionClient,
@@ -239,11 +239,11 @@ export const TicketRepository = {
         .sort((a, b) => b.score - a.score)
         .map((x) => x.r);
 
-      // 5️⃣ Asegurar placeholder REVENTADO dentro de la misma TX
-      const hasReventado = jugadas.some((j) => j.type === "REVENTADO");
-      const reventadoPlaceholderId = hasReventado
-        ? await ensureReventadoPlaceholder(tx, loteriaId)
-        : null;
+      // // 5️⃣ Asegurar placeholder REVENTADO dentro de la misma TX
+      // const hasReventado = jugadas.some((j) => j.type === "REVENTADO");
+      // const reventadoPlaceholderId = hasReventado
+      //   ? await ensureReventadoPlaceholder(tx, loteriaId)
+      //   : null;
 
       // 6️⃣ Normalizar jugadas y calcular total en servidor
       const preparedJugadas = jugadas.map((j) => {
@@ -261,7 +261,7 @@ export const TicketRepository = {
             reventadoNumber: j.reventadoNumber,
             amount: j.amount,
             finalMultiplierX: 0,
-            multiplierId: reventadoPlaceholderId!, // FK “dummy” estable
+            multiplierId: null, // FK “dummy” estable
           };
         }
         // NUMERO
@@ -350,10 +350,13 @@ export const TicketRepository = {
             create: preparedJugadas.map((j) => ({
               type: j.type,
               number: j.number,
-              reventadoNumber: j.reventadoNumber,
+              reventadoNumber: j.reventadoNumber ?? null,
               amount: j.amount,
               finalMultiplierX: j.finalMultiplierX,
-              multiplier: { connect: { id: j.multiplierId } }, // relación nombrada ok
+              ...(j.multiplierId
+                ? { multiplier: { connect: { id: j.multiplierId }}}
+              : {})
+              // multiplier: { connect: { id: j.multiplierId } }, // relación nombrada ok
             })),
           },
         },

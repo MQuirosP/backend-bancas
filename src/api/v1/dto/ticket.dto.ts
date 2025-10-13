@@ -7,6 +7,8 @@ export interface CreateTicketDTO {
     amount: number;
     type?: "NUMERO" | "REVENTADO";
     reventadoNumber?: string | null;
+    multiplierId?: string;  // solo permitido si type = NUMERO
+    finalMultiplierX?: number;  // ignorado por el cliente
   }[];
 }
 
