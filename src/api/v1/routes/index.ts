@@ -8,8 +8,9 @@ import bancaRoutes from './banca.routes';
 import vendedorRoutes from './vendedor.routes';
 import sorteoRoutes from './sorteo.routes';
 import multiplierOverrideRoutes from './multiplierOverride.routes';
-import restrictionRule from './restrictionRule.routes'
-import ticketPayment from "./ticketPayment.route"
+import restrictionRuleRoutes from './restrictionRule.routes'
+import ticketPaymentRoutes from "./ticketPayment.route"
+import multipliersRoutes from "./multipliers.routes"
 
 const router = Router();
 
@@ -22,7 +23,8 @@ router.use('/bancas', bancaRoutes);
 router.use("/vendedores", vendedorRoutes);
 router.use("/sorteos", sorteoRoutes);
 router.use("/multiplierOverride", multiplierOverrideRoutes);
-router.use("/restrictionRule", restrictionRule);
-router.use("/ticketPayment", ticketPayment);
+router.use("/restrictionRule", restrictionRuleRoutes);
+router.use("/ticketPayment", ticketPaymentRoutes);
+router.use("/multipliers", multipliersRoutes)
 
 export const apiV1Router = router;
