@@ -1,5 +1,5 @@
 import prisma from "../core/prismaClient";
-import { TicketStatus } from "@prisma/client";
+import { Prisma, TicketStatus } from "@prisma/client";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { withTransactionRetry } from "../core/withTransactionRetry";
@@ -46,6 +46,82 @@ async function ensureReventadoPlaceholder(tx: any, loteriaId: string) {
     });
   }
   return mul.id;
+}
+
+async function resolveBaseMultiplierX(
+  tx: Prisma.TransactionClient,
+  args: { bancaId: string; loteriaId: string; userId: string }
+): Promise<{ valueX: number; source: string }> {
+  const { bancaId, loteriaId, userId } = args;
+
+  // 0) Override por usuario (directo en X)
+  const uo = await tx.userMultiplierOverride.findUnique({
+    where: {
+      userId_loteriaId_multiplierType: {
+        userId,
+        loteriaId,
+        multiplierType: "Base",
+      },
+    },
+    select: { baseMultiplierX: true },
+  });
+  if (typeof uo?.baseMultiplierX === "number") {
+    return {
+      valueX: uo.baseMultiplierX,
+      source: "userOverride.baseMultiplierX",
+    };
+  }
+
+  // 1) Config por banca/lotería
+  const bls = await tx.bancaLoteriaSetting.findUnique({
+    where: { bancaId_loteriaId: { bancaId, loteriaId } },
+    select: { baseMultiplierX: true },
+  });
+  if (typeof bls?.baseMultiplierX === "number") {
+    return {
+      valueX: bls.baseMultiplierX,
+      source: "bancaLoteriaSetting.baseMultiplierX",
+    };
+  }
+
+  // 2) Fallback: rulesJson en Lotería
+  const lot = await tx.loteria.findUnique({
+    where: { id: loteriaId },
+    select: { rulesJson: true },
+  });
+  const rulesX = (lot?.rulesJson as any)?.baseMultiplierX;
+  if (typeof rulesX === "number" && rulesX > 0) {
+    return { valueX: rulesX, source: "loteria.rulesJson.baseMultiplierX" };
+  }
+
+  throw new AppError(
+    `Missing baseMultiplierX for bancaId=${bancaId} & loteriaId=${loteriaId}`,
+    400
+  );
+}
+
+// Garantiza que exista un multiplicador "Base" (para linkear en jugadas NUMERO)
+async function ensureBaseMultiplierRow(
+  tx: Prisma.TransactionClient,
+  loteriaId: string
+): Promise<string> {
+  const existing = await tx.loteriaMultiplier.findFirst({
+    where: { loteriaId, isActive: true, name: "Base" },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const created = await tx.loteriaMultiplier.create({
+    data: {
+      loteriaId,
+      name: "Base",
+      valueX: 0,
+      isActive: true,
+      kind: "NUMERO",
+    },
+    select: { id: true },
+  });
+  return created.id;
 }
 
 export const TicketRepository = {
@@ -108,43 +184,26 @@ export const TicketRepository = {
         );
       }
 
-      // 3️⃣ Resolver X efectivo y multiplierId "Base" dentro de la TX
+      // 3️⃣ Resolver X efectivo (con fallback) y asegurar multiplier "Base"
       const bancaId = ventana.bancaId;
 
-      const bls = await tx.bancaLoteriaSetting.findUnique({
-        where: { bancaId_loteriaId: { bancaId, loteriaId } },
-        select: { baseMultiplierX: true },
-      });
-      if (bls?.baseMultiplierX === undefined || bls?.baseMultiplierX === null) {
-        throw new AppError(
-          `Missing baseMultiplierX for bancaId=${bancaId} & loteriaId=${loteriaId}`,
-          400
-        );
-      }
+      const { valueX: effectiveBaseX, source } = await resolveBaseMultiplierX(
+        tx,
+        {
+          bancaId,
+          loteriaId,
+          userId,
+        }
+      );
 
-      const uo = await tx.userMultiplierOverride.findUnique({
-        where: {
-          userId_loteriaId_multiplierType: {
-            userId,
-            loteriaId,
-            multiplierType: "Base",
-          },
-        },
-        select: { baseMultiplierX: true },
-      });
-      const effectiveBaseX = (uo?.baseMultiplierX ??
-        bls.baseMultiplierX) as number;
+      // Asegura que exista un multiplier con name="Base" para linkear jugadas NUMERO
+      const baseMultiplierRowId = await ensureBaseMultiplierRow(tx, loteriaId);
 
-      const baseMultiplierRow = await tx.loteriaMultiplier.findFirst({
-        where: { loteriaId, isActive: true, name: "Base" },
-        select: { id: true },
+      logger.info({
+        layer: "ticket",
+        action: "BASE_MULTIPLIER_RESOLVED",
+        payload: { bancaId, loteriaId, userId, effectiveBaseX, source },
       });
-      if (!baseMultiplierRow) {
-        throw new AppError(
-          `LoteriaMultiplier "Base" not found for loteriaId=${loteriaId}. Seed it first.`,
-          400
-        );
-      }
 
       // 4️⃣ Pipeline de RestrictionRule (User > Ventana > Banca)
       const now = new Date();
@@ -212,7 +271,7 @@ export const TicketRepository = {
           reventadoNumber: null,
           amount: j.amount,
           finalMultiplierX: effectiveBaseX, // congelado en venta
-          multiplierId: baseMultiplierRow.id, // multiplier Base
+          multiplierId: baseMultiplierRowId, // multiplier Base
         };
       });
 

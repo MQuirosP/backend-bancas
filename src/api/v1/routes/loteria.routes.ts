@@ -21,6 +21,13 @@ router.get("/", validateQuery(listLoteriaQuerySchema), LoteriaController.list);
 // Obtener una lotería por ID
 router.get("/:id", validateParams(loteriaIdSchema), LoteriaController.getById);
 
+router.patch(
+  "/:id",
+  validateParams(loteriaIdSchema),
+  validateBody(updateLoteriaSchema), // ya es parcial
+  LoteriaController.update
+);
+
 // Actualizar una lotería
 router.put(
   "/:id",

@@ -17,57 +17,68 @@ export const TicketService = {
         throw new AppError("Missing ventanaId/loteriaId/sorteoId", 400);
       }
 
+      // ✅ Tipado: number es opcional (solo obligatorio para NUMERO)
       const jugadasIn: Array<{
         type?: "NUMERO" | "REVENTADO";
-        number: string;
+        number?: string; // <- opcional
         reventadoNumber?: string | null;
         amount: number;
       }> = Array.isArray(data.jugadas) ? data.jugadas : [];
+
       if (jugadasIn.length === 0) {
         throw new AppError("At least one jugada is required", 400);
       }
 
-      // Coherencia mínima REVENTADO (pairing con NUMERO y mismo número)
+      // ✅ Construimos el set de números que sí tienen jugada NUMERO
       const numeros = new Set(
         jugadasIn
           .filter((j) => (j.type ?? "NUMERO") === "NUMERO")
-          .map((j) => j.number)
+          .map((j) => {
+            if (!j.number) {
+              throw new AppError("NUMERO jugada requires 'number'", 400);
+            }
+            return j.number;
+          })
       );
+
+      // ✅ REVENTADO: solo exigimos que exista la NUMERO para reventadoNumber
       for (const j of jugadasIn) {
         const type = j.type ?? "NUMERO";
         if (type === "REVENTADO") {
-          if (!j.reventadoNumber || j.reventadoNumber !== j.number) {
-            throw new AppError(
-              `REVENTADO must reference the same number (reventadoNumber === number) for ${j.number}`,
-              400
-            );
+          const target = j.reventadoNumber;
+          if (!target) {
+            throw new AppError("REVENTADO requires 'reventadoNumber'", 400);
           }
-          if (!numeros.has(j.number)) {
+          if (!numeros.has(target)) {
             throw new AppError(
-              `A NUMERO bet for ${j.number} must exist to allow REVENTADO`,
+              `Debe existir una jugada NUMERO para ${target} en el mismo ticket`,
               400
             );
           }
         }
       }
 
-      // El total lo calcula el repo; aquí solo pasamos las jugadas tal cual
+      // ✅ Mapeo al repo: para REVENTADO, guardamos number = reventadoNumber
       const ticket = await TicketRepository.create(
         {
           loteriaId,
           sorteoId,
           ventanaId,
-          // totalAmount y multiplierId/finalMultiplierX se resuelven en repo/tx
-          totalAmount: 0,
-          jugadas: jugadasIn.map((j) => ({
-            type: (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO",
-            number: j.number,
-            reventadoNumber:
-              j.reventadoNumber ?? (j.type === "REVENTADO" ? j.number : null),
-            amount: j.amount,
-            multiplierId: "", // placeholder, repo lo resolverá
-            finalMultiplierX: 0, // repo congelará valor efectivo para NUMERO
-          })),
+          totalAmount: 0, // el repo lo calculará
+          jugadas: jugadasIn.map((j) => {
+            const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
+            const isNumero = type === "NUMERO";
+            const number = isNumero ? j.number! : (j.reventadoNumber as string); // <- clave: usamos reventadoNumber
+
+            return {
+              type,
+              number, // <- siempre seteado
+              reventadoNumber: isNumero ? null : number,
+              amount: j.amount,
+              multiplierId: "", // repo lo resuelve
+              finalMultiplierX: 0, // repo congela el valor para NUMERO
+            };
+          }),
         } as any,
         userId
       );
