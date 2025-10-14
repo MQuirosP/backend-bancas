@@ -1,4 +1,3 @@
-// src/api/v1/routes/sorteos.routes.ts
 import { Router } from "express";
 import { SorteoController } from "../controllers/sorteo.controller";
 import {
