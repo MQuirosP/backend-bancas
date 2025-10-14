@@ -3,8 +3,8 @@ import TicketRepository from "../../../repositories/ticket.repository";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
 import { AppError } from "../../../core/errors";
-import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 import prisma from "../../../core/prismaClient";
+import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 
 export const TicketService = {
   /**
@@ -15,6 +15,48 @@ export const TicketService = {
       const { ventanaId, loteriaId, sorteoId } = data;
       if (!ventanaId || !loteriaId || !sorteoId) {
         throw new AppError("Missing ventanaId/loteriaId/sorteoId", 400);
+      }
+
+      // 🔒 Sales cutoff por reglas (USER > VENTANA > BANCA) con default si no hay regla
+      // 1) cargar ventana (para obtener bancaId)
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: ventanaId },
+        select: { id: true, bancaId: true, isDeleted: true },
+      });
+      if (!ventana || ventana.isDeleted) {
+        throw new AppError("La Ventana no existe o está eliminada", 404);
+      }
+
+      // 2) cargar sorteo (para obtener scheduledAt)
+      const sorteo = await prisma.sorteo.findUnique({
+        where: { id: sorteoId },
+        select: { id: true, scheduledAt: true, status: true },
+      });
+      if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
+
+      // (opcional) bloquear si el sorteo ya está cerrado/abierto, según tu flujo
+      // if (sorteo.status !== "OPEN" && sorteo.status !== "SCHEDULED") {
+      //   throw new AppError("El sorteo no está disponible para ventas", 409);
+      // }
+
+      // 3) resolver el cutoff efectivo en minutos
+      const cutoffMinutes = await RestrictionRuleRepository.resolveSalesCutoff({
+        bancaId: ventana.bancaId,
+        ventanaId,
+        userId, // si NO quieres nivel usuario, pasa null
+        defaultCutoff: 5, // fallback si no hay regla
+      });
+
+      // 4) aplicar cutoff: no vender si estamos dentro de la ventana de bloqueo
+      const now = new Date();
+      const cutoffMs = cutoffMinutes * 60_000;
+      const limitTime = new Date(sorteo.scheduledAt.getTime() - cutoffMs);
+
+      if (now >= limitTime) {
+        throw new AppError(
+          `Venta bloqueada: faltan ${Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000))} min para el sorteo (cutoff=${cutoffMinutes} min)`,
+          409
+        );
       }
 
       // ✅ Tipado: number es opcional (solo obligatorio para NUMERO)
