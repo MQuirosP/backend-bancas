@@ -1,25 +1,27 @@
-import { Request, Response, NextFunction } from "express";
 import { z } from "zod";
-import { validateBody } from "../../../middlewares/validate.middleware";
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const BancaIdParamSchema = z.object({
+  id: z.uuid("id inválido (UUID)"),
+}).strict();
 
 export const CreateBancaSchema = z.object({
-  name: z.string().min(2, "El nombre es obligatorio").max(100),
-  code: z.string().min(2, "El código es obligatorio").max(20),
-  email: z.string().trim().toLowerCase().regex(EMAIL_REGEX, "El email no es válido").optional(),
-  address: z.string().max(200).optional(),
-  phone: z.string().max(20).optional(),
-  isActive: z.boolean().optional(),
-  defaultMinBet: z.coerce.number().min(100).positive().optional(),
-  globalMaxPerNumber: z.coerce.number().min(1000).positive().optional(),
+  name: z.string().trim().min(2).max(100),
+  code: z.string().trim().min(2).max(20),
+  email: z.string().trim().toLowerCase().email("email inválido").optional(),
+  address: z.string().trim().max(200).optional(),
+  phone: z.string().trim().max(20).optional(),
+  isActive: z.coerce.boolean().optional(),
+  defaultMinBet: z.coerce.number().positive().min(1).optional(),
+  globalMaxPerNumber: z.coerce.number().positive().min(1).optional(),
 }).strict();
 
 export const UpdateBancaSchema = CreateBancaSchema.partial().strict();
 
-// Wrappers delgados que DELEGAN al middleware central (toDetails + summary + allowedKeys)
-export const validateCreateBanca = (req: Request, res: Response, next: NextFunction) =>
-  validateBody(CreateBancaSchema)(req, res, next);
+export const ListBancasQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
+}).strict();
 
-export const validateUpdateBanca = (req: Request, res: Response, next: NextFunction) =>
-  validateBody(UpdateBancaSchema)(req, res, next);
+export const ReasonBodySchema = z.object({
+  reason: z.string().trim().min(3).max(200).optional(),
+}).strict();
