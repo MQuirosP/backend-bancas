@@ -13,10 +13,10 @@ export interface CreateUserMultiplierOverrideDTO {
   multiplierType: string;
 
   /** Valor del multiplicador personalizado */
-  overrideX: number;
+  baseMuliplierX: number;
 }
 
 export interface UpdateUserMultiplierOverrideDTO {
   /** Nuevo valor del multiplicador (opcional) */
-  overrideX?: number;
+  baseMultiplierX?: number;
 }

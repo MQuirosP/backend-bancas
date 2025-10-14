@@ -1,3 +1,4 @@
+// src/api/v1/routes/userMultiplierOverrides.routes.ts
 import { Router } from "express";
 import {
   createUMOValidator,
@@ -13,26 +14,22 @@ import { Role } from "@prisma/client";
 
 const router = Router();
 
-/** 
- * Middleware: permite solo a ADMIN y VENTANA 
+/**
+ * Solo ADMIN y VENTANA para mutaciones (create/update/delete/restore)
  */
 function requireAdminOrVentana(req: AuthenticatedRequest, _res: any, next: any) {
   if (!req.user) throw new AppError("Unauthorized", 401);
-
-  const allowedRoles: Role[] = [Role.ADMIN, Role.VENTANA];
-  if (!allowedRoles.includes(req.user.role as Role)) {
+  const allowed: Role[] = [Role.ADMIN, Role.VENTANA];
+  if (!allowed.includes(req.user.role as Role)) {
     throw new AppError("Forbidden: insufficient permissions", 403);
   }
-
   next();
 }
 
-/** 
- * Middleware: permite lectura a cualquier usuario autenticado
- */
+// Autenticación obligatoria para todas
 router.use(protect);
 
-// Crear (ADMIN, VENTANA)
+// Create (ADMIN, VENTANA)
 router.post(
   "/",
   requireAdminOrVentana,
@@ -48,13 +45,28 @@ router.patch(
   MultiplierOverrideController.update
 );
 
-// Delete (ADMIN, VENTANA)
-router.delete("/:id", requireAdminOrVentana, MultiplierOverrideController.remove);
+// Soft Delete (ADMIN, VENTANA) - opcionalmente acepta { deletedReason } en body
+router.delete(
+  "/:id",
+  requireAdminOrVentana,
+  MultiplierOverrideController.remove
+);
 
-// GetById (ADMIN, VENTANA dueños, VENDEDOR si es suyo)
+// Restore (ADMIN, VENTANA)
+router.patch(
+  "/:id/restore",
+  requireAdminOrVentana,
+  MultiplierOverrideController.restore
+);
+
+// GetById (lectura para cualquier autenticado; el service aplica guardas por rol)
 router.get("/:id", MultiplierOverrideController.getById);
 
-// List (ADMIN global; VENTANA acotado a su ventana; VENDEDOR: solo suyos)
-router.get("/", validateQuery(listUMOQueryValidator), MultiplierOverrideController.list);
+// List (lectura para cualquier autenticado; el service limita por rol)
+router.get(
+  "/",
+  validateQuery(listUMOQueryValidator),
+  MultiplierOverrideController.list
+);
 
 export default router;

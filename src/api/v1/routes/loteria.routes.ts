@@ -44,7 +44,7 @@ router.delete(
 );
 
 // Restaurar
-router.post(
+router.patch(
   "/:id/restore",
   validateParams(loteriaIdSchema),
   LoteriaController.restore

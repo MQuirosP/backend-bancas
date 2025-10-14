@@ -22,6 +22,7 @@ router.put("/:id", requireAdmin, validateUpdateVentana, VentanaController.update
 router.delete("/:id", requireAdmin, VentanaController.delete);
 
 // Restore
+router.patch("/:id", requireAdmin, VentanaController.update);
 router.patch("/:id/restore", requireAdmin, VentanaController.restore);
 
 // Todos los roles autenticados pueden ver Ventanas

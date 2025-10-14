@@ -22,8 +22,8 @@ router.use("/ventanas", ventanaRoutes);
 router.use('/bancas', bancaRoutes);
 router.use("/vendedores", vendedorRoutes);
 router.use("/sorteos", sorteoRoutes);
-router.use("/multiplierOverride", multiplierOverrideRoutes);
-router.use("/restrictionRule", restrictionRuleRoutes);
+router.use("/multiplier-overrides", multiplierOverrideRoutes);
+router.use("/restriction-rules", restrictionRuleRoutes);
 router.use("/ticketPayment", ticketPaymentRoutes);
 router.use("/multipliers", multipliersRoutes)
 

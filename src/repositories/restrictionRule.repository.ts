@@ -6,6 +6,16 @@ export type EffectiveRestriction = {
   maxTotal: number | null;
 };
 
+type ListParams = {
+  bancaId?: string;
+  ventanaId?: string;
+  userId?: string;
+  number?: string;
+  isDeleted?: boolean | string; // default: false
+  page?: number | string; // viene de query → string
+  pageSize?: number | string; // viene de query → string
+};
+
 export const RestrictionRuleRepository = {
   async create(data: any) {
     return prisma.restrictionRule.create({ data });
@@ -33,43 +43,57 @@ export const RestrictionRuleRepository = {
     return prisma.restrictionRule.findUnique({ where: { id } });
   },
 
-  async list(params: {
-    page?: number;
-    pageSize?: number;
-    bancaId?: string;
-    ventanaId?: string;
-    userId?: string;
-    number?: string;
-    includeDeleted?: boolean;
-  }) {
+  async list(params: ListParams) {
     const {
-      page = 1,
-      pageSize = 10,
       bancaId,
       ventanaId,
       userId,
       number,
-      includeDeleted,
+      isDeleted = false,
+      page = 1,
+      pageSize = 20,
     } = params;
-    const where: any = { isDeleted: includeDeleted ? undefined : false };
+
+    // COERCIÓN SEGURA
+    const _page = Math.max(1, Number(page) || 1);
+    const _pageSize = Math.min(100, Math.max(1, Number(pageSize) || 20));
+    const skip = (_page - 1) * _pageSize;
+    const take = _pageSize;
+
+    // Coerce a boolean real aunque venga como string
+    const _isDeleted =
+      typeof isDeleted === "string"
+        ? isDeleted.toLowerCase() === "true"
+        : Boolean(isDeleted);
+
+    // Filtros
+    const where: any = { isDeleted: _isDeleted };
     if (bancaId) where.bancaId = bancaId;
     if (ventanaId) where.ventanaId = ventanaId;
     if (userId) where.userId = userId;
     if (number) where.number = number;
 
+    // Transacción: findMany + count
     const [data, total] = await prisma.$transaction([
       prisma.restrictionRule.findMany({
         where,
         orderBy: [{ updatedAt: "desc" }],
-        skip: (page - 1) * pageSize,
-        take: pageSize,
+        skip,
+        take,
       }),
-      prisma.restrictionRule.count({ where }),
+      prisma.restrictionRule.count({
+        where, // ← count correcto (sin select)
+      }),
     ]);
 
     return {
       data,
-      meta: { page, pageSize, total, pages: Math.ceil(total / pageSize) },
+      meta: {
+        page: _page,
+        pageSize: _pageSize,
+        total,
+        pages: Math.ceil(total / _pageSize),
+      },
     };
   },
 

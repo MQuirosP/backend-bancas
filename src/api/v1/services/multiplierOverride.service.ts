@@ -1,3 +1,4 @@
+// src/api/v1/services/multiplierOverride.service.ts
 import { Role, ActivityType } from "@prisma/client";
 import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
@@ -16,14 +17,10 @@ type UpdateDTO = {
 };
 
 export const MultiplierOverrideService = {
-  // ADMIN: sin restricciones
-  // VENTANA: solo si el user.target pertenece a su ventana
-  // VENDEDOR: no permitido
-  assertCanManage: async (actor: { id: string; role: Role; ventanaId?: string | null }, targetUserId: string) => {
+  async assertCanManage(actor: { id: string; role: Role; ventanaId?: string | null }, targetUserId: string) {
     if (actor.role === Role.ADMIN) return;
 
     if (actor.role === Role.VENTANA) {
-      // verificar que el usuario destino pertenece a su ventana
       const target = await prisma.user.findUnique({
         where: { id: targetUserId },
         select: { ventanaId: true },
@@ -41,11 +38,12 @@ export const MultiplierOverrideService = {
   async create(actor: { id: string; role: Role; ventanaId?: string | null }, dto: CreateDTO) {
     await this.assertCanManage(actor, dto.userId);
 
-    // evitar duplicados (userId+loteriaId únicos de facto)
-    const existing = await MultiplierOverrideRepository.findByUserAndLoteria(dto.userId, dto.loteriaId, dto.multiplierType);
-    if (existing) {
-      throw new AppError("Override already exists for this user and lottery", 409);
-    }
+    const existing = await MultiplierOverrideRepository.findByUserAndLoteria(
+      dto.userId,
+      dto.loteriaId,
+      dto.multiplierType
+    );
+    if (existing) throw new AppError("Override already exists for this user/lottery/type", 409);
 
     const created = await MultiplierOverrideRepository.create(dto);
 
@@ -62,7 +60,7 @@ export const MultiplierOverrideService = {
 
   async update(actor: { id: string; role: Role; ventanaId?: string | null }, id: string, dto: UpdateDTO) {
     const current = await MultiplierOverrideRepository.getById(id);
-    if (!current) throw new AppError("Override not found", 404);
+    if (!current || current.isDeleted) throw new AppError("Override not found", 404);
 
     await this.assertCanManage(actor, current.userId);
 
@@ -79,30 +77,48 @@ export const MultiplierOverrideService = {
     return updated;
   },
 
-  async remove(actor: { id: string; role: Role; ventanaId?: string | null }, id: string) {
+  async softDelete(actor: { id: string; role: Role; ventanaId?: string | null }, id: string, deletedReason?: string) {
     const current = await MultiplierOverrideRepository.getById(id);
-    if (!current) throw new AppError("Override not found", 404);
+    if (!current || current.isDeleted) throw new AppError("Override not found", 404);
 
     await this.assertCanManage(actor, current.userId);
 
-    const deleted = await MultiplierOverrideRepository.delete(id);
+    const deleted = await MultiplierOverrideRepository.delete(id, actor.id, deletedReason);
 
     await ActivityService.log({
       userId: actor.id,
       action: ActivityType.MULTIPLIER_SETTING_DELETE,
       targetType: "USER_MULTIPLIER_OVERRIDE",
       targetId: id,
-      details: { deleted },
+      details: { deleted, reason: deletedReason ?? null },
     });
 
     return true;
   },
 
-  async getById(actor: { id: string; role: Role; ventanaId?: string | null }, id: string) {
+  async restore(actor: { id: string; role: Role; ventanaId?: string | null }, id: string) {
     const current = await MultiplierOverrideRepository.getById(id);
     if (!current) throw new AppError("Override not found", 404);
 
-    // lectura: VENTANA solo si pertenece a su ventana; VENDEDOR solo si es suyo; ADMIN libre
+    await this.assertCanManage(actor, current.userId);
+
+    const restored = await MultiplierOverrideRepository.restore(id);
+
+    await ActivityService.log({
+      userId: actor.id,
+      action: ActivityType.MULTIPLIER_SETTING_RESTORE,
+      targetType: "USER_MULTIPLIER_OVERRIDE",
+      targetId: id,
+      details: { restored },
+    });
+
+    return restored;
+  },
+
+  async getById(actor: { id: string; role: Role; ventanaId?: string | null }, id: string) {
+    const current = await MultiplierOverrideRepository.getById(id);
+    if (!current || current.isDeleted) throw new AppError("Override not found", 404);
+
     if (actor.role === Role.ADMIN) return current;
 
     if (actor.role === Role.VENTANA) {
@@ -110,13 +126,10 @@ export const MultiplierOverrideService = {
         where: { id: current.userId },
         select: { ventanaId: true },
       });
-      if (!target || target.ventanaId !== actor.ventanaId) {
-        throw new AppError("Forbidden", 403);
-      }
+      if (!target || target.ventanaId !== actor.ventanaId) throw new AppError("Forbidden", 403);
       return current;
     }
 
-    // VENDEDOR: solo su propio override
     if (actor.role === Role.VENDEDOR) {
       if (current.userId !== actor.id) throw new AppError("Forbidden", 403);
       return current;
@@ -133,39 +146,44 @@ export const MultiplierOverrideService = {
     const pageSize = params.pageSize ?? 10;
     const skip = (page - 1) * pageSize;
 
-    // restricciones por rol
     if (actor.role === Role.ADMIN) {
-      return MultiplierOverrideRepository.list({ ...params, skip, take: pageSize });
+      const { data, total } = await MultiplierOverrideRepository.list({
+        ...params,
+        skip,
+        take: pageSize,
+      } as any);
+      return { data, meta: { page, pageSize, total, pages: Math.ceil(total / pageSize) } };
     }
 
     if (actor.role === Role.VENTANA) {
-      // limitar por su ventana: userId de esa ventana
       const users = await prisma.user.findMany({
         where: { ventanaId: actor.ventanaId ?? undefined },
         select: { id: true },
       });
-      const allowedUserIds = users.map((u) => u.id);
+      const allowedUserIds = new Set(users.map((u) => u.id));
 
-      const whereUserId = params.userId
-        ? allowedUserIds.includes(params.userId) ? params.userId : "__blocked__"
-        : undefined;
+      const whereUserId =
+        params.userId != null
+          ? allowedUserIds.has(params.userId) ? params.userId : "__blocked__"
+          : undefined;
 
-      return MultiplierOverrideRepository.list({
+      const { data, total } = await MultiplierOverrideRepository.list({
         userId: whereUserId,
         loteriaId: params.loteriaId,
         skip,
         take: pageSize,
       });
+      return { data, meta: { page, pageSize, total, pages: Math.ceil(total / pageSize) } };
     }
 
-    // VENDEDOR: solo los suyos
     if (actor.role === Role.VENDEDOR) {
-      return MultiplierOverrideRepository.list({
+      const { data, total } = await MultiplierOverrideRepository.list({
         userId: actor.id,
         loteriaId: params.loteriaId,
         skip,
         take: pageSize,
       });
+      return { data, meta: { page, pageSize, total, pages: Math.ceil(total / pageSize) } };
     }
 
     throw new AppError("Forbidden", 403);

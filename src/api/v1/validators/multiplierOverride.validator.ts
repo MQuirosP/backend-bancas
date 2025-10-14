@@ -4,6 +4,7 @@ export const createUMOValidator = z.object({
   userId: z.string().min(1),
   loteriaId: z.string().min(1),
   baseMultiplierX: z.number().positive().max(9999),
+  multiplierType: z.string().min(1)
 });
 
 export const updateUMOValidator = z.object({
