@@ -1,11 +1,17 @@
-// src/api/v1/routes/multipliers.routes.ts
 import { Router } from "express";
 import MultiplierController from "../controllers/multiplier.controller";
 import { AuthenticatedRequest } from "../../../core/types";
 import { AppError } from "../../../core/errors";
 import { Role } from "@prisma/client";
-import { validateCreateMultiplier } from "../validators/multiplier.validator";
 import { protect } from "../../../middlewares/auth.middleware";
+import { validateBody, validateParams, validateQuery } from "../../../middlewares/validate.middleware";
+import {
+  CreateMultiplierSchema,
+  UpdateMultiplierSchema,
+  ListMultipliersQuerySchema,
+  MultiplierIdParamSchema,
+  ToggleMultiplierSchema,
+} from "../validators/multiplier.validator";
 
 const router = Router();
 
@@ -17,11 +23,34 @@ function requireAdmin(req: AuthenticatedRequest, _res: any, next: any) {
 
 router.use(protect);
 
-router.post("/", requireAdmin, validateCreateMultiplier, MultiplierController.create);
-router.get("/", requireAdmin, MultiplierController.list);
-router.get("/:id", requireAdmin, MultiplierController.getById);
-router.patch("/:id", requireAdmin, MultiplierController.update);
-router.patch("/:id/restore", requireAdmin, MultiplierController.restore);
-router.delete("/:id", requireAdmin, MultiplierController.softDelete);
+router.post("/", requireAdmin, validateBody(CreateMultiplierSchema), MultiplierController.create);
+
+router.get("/", requireAdmin, validateQuery(ListMultipliersQuerySchema), MultiplierController.list);
+
+router.get("/:id", requireAdmin, validateParams(MultiplierIdParamSchema), MultiplierController.getById);
+
+router.patch(
+  "/:id",
+  requireAdmin,
+  validateParams(MultiplierIdParamSchema),
+  validateBody(UpdateMultiplierSchema),
+  MultiplierController.update
+);
+
+router.patch(
+  "/:id/restore",
+  requireAdmin,
+  validateParams(MultiplierIdParamSchema),
+  MultiplierController.restore
+);
+
+// toggle isActive (soft/hard según tu service)
+router.delete(
+  "/:id",
+  requireAdmin,
+  validateParams(MultiplierIdParamSchema),
+  validateBody(ToggleMultiplierSchema), // { isActive: boolean }
+  MultiplierController.softDelete
+);
 
 export default router;

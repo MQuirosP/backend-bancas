@@ -1,32 +1,24 @@
-import { z } from "zod";
+// contrato para servicios (sin Zod)
+export type MultiplierKind = "NUMERO" | "REVENTADO";
 
-export const MultiplierKind = z.enum(["NUMERO", "REVENTADO"]);
+export type CreateMultiplierInput = {
+  loteriaId: string;
+  name: string;
+  valueX: number;
+  kind: MultiplierKind;            // con default en schema
+  appliesToDate?: Date | null;     // coaccionado por schema
+  appliesToSorteoId?: string | null;
+  isActive?: boolean;              // default en schema
+};
 
-export const CreateMultiplierDTO = z.object({
-    loteriaId: z.uuid(),
-    name: z.string().min(2).max(32),
-    valueX: z.number().positive(),
-    kind: MultiplierKind.default("NUMERO"),
-    appliesToDate: z.date().optional().nullable(),
-    appliesToSorteoId: z.uuid().optional().nullable(),
-    isActive: z.boolean().optional().default(true),
-});
+export type UpdateMultiplierInput = Partial<Omit<CreateMultiplierInput, "loteriaId">>;
 
-export const UpdateMultiplierDTO = z.object({
-    name: z.string().min(2).max(32).optional(),
-    valueX: z.number().positive().optional(),
-    kind: MultiplierKind.optional(),
-    appliesToDate: z.date().optional().nullable(),
-    appliesToSorteoId: z.uuid().optional().nullable(),
-    isActive: z.boolean().optional()
-})
-
-export const ListMultiplierQuery = z.object({
-    loteriaId: z.uuid().optional(),
-    kind: MultiplierKind.optional(),
-    isActive: z.coerce.boolean().optional(),
-    appliesToSorteoId: z.uuid().optional(),
-    q: z.string().optional(),
-    page: z.coerce.number().int().min(1).max(100).default(20),
-    pageSize: z.coerce.number().int().min(1).max(100).default(20),
-})
+export type ListMultiplierQueryInput = {
+  loteriaId?: string;
+  kind?: MultiplierKind;
+  isActive?: boolean;
+  appliesToSorteoId?: string;
+  q?: string;
+  page?: number;       // default en schema
+  pageSize?: number;   // default en schema
+};
