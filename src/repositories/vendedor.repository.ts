@@ -9,6 +9,7 @@ type VendedorCreateParams = {
   username: string;
   email?: string;
   passwordHash: string;
+  code: string;
 };
 
 type VendedorUpdateParams = Partial<VendedorCreateParams>;
@@ -25,6 +26,7 @@ const VendedorRepository = {
         name: data.name,
         email: data.email,
         username: data.username,
+        code: data.code,
         password: data.passwordHash,
         role: Role.VENDEDOR,
         ventana: { connect: { id: data.ventanaId } },
@@ -42,8 +44,8 @@ const VendedorRepository = {
     });
   },
 
-  findByEmail(email: string) {
-    return prisma.user.findUnique({ where: { email } });
+  findByUsername(username: string) {
+    return prisma.user.findUnique({ where: { username } });
   },
 
   async update(id: string, data: VendedorUpdateParams) {

@@ -170,6 +170,7 @@ model User {
   id        String  @id @default(uuid())
   ventanaId String? // VENDEDOR/VENTANA pertenece a una Ventana
   name      String
+  code      String?  @unique
   email     String? @unique
   username  String  @unique @db.Citext // para case sensitive en DB
   password  String // Almacenada como hash (bcrypt)

@@ -33,14 +33,15 @@ export const VendedorService = {
     await ensureVentanaActive(data.ventanaId);
     assertCanWriteTarget(current, data.ventanaId);
 
-    const dup = await VendedorRepository.findByEmail(data.username);
-    if (dup && !dup.isDeleted) throw new AppError("El correo ya está en uso", 400);
+    const dup = await VendedorRepository.findByUsername(data.username);
+    if (dup && !dup.isDeleted) throw new AppError("El username ya está en uso", 400);
 
     const passwordHash = await bcrypt.hash(data.password, 10);
     const user = await VendedorRepository.create({
       ventanaId: data.ventanaId,
       name: data.name,
       username: data.username,
+      code: data.code,
       email: data.email,
       passwordHash,
     });
@@ -66,8 +67,8 @@ export const VendedorService = {
     await ensureVentanaActive(targetVentanaId);
     assertCanWriteTarget(current, targetVentanaId);
 
-    if (data.email && data.email !== existing.email) {
-      const dup = await VendedorRepository.findByEmail(data.email);
+    if (data.username && data.username !== existing.username) {
+      const dup = await VendedorRepository.findByUsername(data.username);
       if (dup && !dup.isDeleted) throw new AppError("El correo ya está en uso", 400);
     }
 

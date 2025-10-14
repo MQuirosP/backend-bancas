@@ -1,29 +1,77 @@
 import { Router } from "express";
 import { VendedorController } from "../controllers/vendedor.controller";
-import { validateCreateVendedor, validateUpdateVendedor } from "../validators/vendedor.validator";
 import { protect } from "../../../middlewares/auth.middleware";
 import { Role } from "@prisma/client";
 import { AuthenticatedRequest } from "../../../core/types";
 import { AppError } from "../../../core/errors";
+import {
+  validateBody,
+  validateParams,
+  validateQuery,
+} from "../../../middlewares/validate.middleware";
+import {
+  CreateVendedorSchema,
+  UpdateVendedorSchema,
+  VendedorIdParamSchema,
+  ListVendedoresQuerySchema,
+} from "../validators/vendedor.validator";
 
 const router = Router();
 
-function requireAdminOrVentana(req: AuthenticatedRequest, _res: any, next: any) {
+function requireAdminOrVentana(
+  req: AuthenticatedRequest,
+  _res: any,
+  next: any
+) {
   if (!req.user) throw new AppError("Unauthorized", 401);
-  if (req.user.role === Role.ADMIN || req.user.role === Role.VENTANA) return next();
+  if (req.user.role === Role.ADMIN || req.user.role === Role.VENTANA)
+    return next();
   throw new AppError("Forbidden", 403);
 }
 
 router.use(protect);
 
-// Escritura: ADMIN o VENTANA (con scoping en Service)
-router.post("/", requireAdminOrVentana, validateCreateVendedor, VendedorController.create);
-router.put("/:id", requireAdminOrVentana, validateUpdateVendedor, VendedorController.update);
-router.delete("/:id", requireAdminOrVentana, VendedorController.delete);
-router.patch("/:id/restore", requireAdminOrVentana, VendedorController.restore);
+// Escritura
+router.post(
+  "/",
+  requireAdminOrVentana,
+  validateBody(CreateVendedorSchema),
+  VendedorController.create
+);
 
-// Lectura: cualquier autenticado (scoping en Service)
-router.get("/", VendedorController.findAll);
-router.get("/:id", VendedorController.findById);
+router.put(
+  "/:id",
+  requireAdminOrVentana,
+  validateParams(VendedorIdParamSchema),
+  validateBody(UpdateVendedorSchema),
+  VendedorController.update
+);
+
+router.delete(
+  "/:id",
+  requireAdminOrVentana,
+  validateParams(VendedorIdParamSchema),
+  VendedorController.delete
+);
+
+router.patch(
+  "/:id/restore",
+  requireAdminOrVentana,
+  validateParams(VendedorIdParamSchema),
+  VendedorController.restore
+);
+
+// Lectura
+router.get(
+  "/",
+  validateQuery(ListVendedoresQuerySchema),
+  VendedorController.findAll
+);
+
+router.get(
+  "/:id",
+  validateParams(VendedorIdParamSchema),
+  VendedorController.findById
+);
 
 export default router;
