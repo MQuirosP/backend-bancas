@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { VentanaController } from "../controllers/ventana.controller";
-import { validateCreateVentana, validateUpdateVentana } from "../validators/ventana.validator";
 import { protect } from "../../../middlewares/auth.middleware";
 import { Role } from "@prisma/client";
 import { AuthenticatedRequest } from "../../../core/types";
@@ -17,8 +16,8 @@ function requireAdmin(req: AuthenticatedRequest, _res: any, next: any) {
 router.use(protect);
 
 // Solo ADMIN puede crear, editar o eliminar Ventanas
-router.post("/", requireAdmin, validateCreateVentana, VentanaController.create);
-router.put("/:id", requireAdmin, validateUpdateVentana, VentanaController.update);
+router.post("/", requireAdmin, VentanaController.create);
+router.put("/:id", requireAdmin, VentanaController.update);
 router.delete("/:id", requireAdmin, VentanaController.delete);
 
 // Restore

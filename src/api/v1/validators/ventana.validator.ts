@@ -1,69 +1,36 @@
-import { Request, Response, NextFunction } from "express";
 import { z } from "zod";
-import { AppError } from "../../../core/errors";
-import { CreateVentanaDto, UpdateVentanaDto } from "../dto/ventana.dto";
+import { Request, Response, NextFunction } from "express";
+import { validateBody, validateParams } from "../../../middlewares/validate.middleware";
 
-const IdParamDto = z.object({ id: z.uuid("id inválido (UUID)") }).strict();
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
-function normalizeIssues(issues: any[]) {
-  return issues.map((i: any) => {
-    const field = i.path?.length ? i.path.join(".") : "(root)";
-    const code  = i.code as string;
+const IdParamSchema = z.object({
+  id: z.uuid("id inválido (UUID)"),
+}).strict();
 
-    if (code === "invalid_type") {
-      const expected = i.expected;
-      const received = i.received;
-      // 👇 si la clave falta, Zod marca received: "undefined"
-      const message =
-        received === "undefined"
-          ? `${field} es obligatorio`
-          : `Tipo inválido. Esperado: ${expected}. Recibido: ${received}.`;
+export const CreateVendedorSchema = z.object({
+  ventanaId: z.uuid("ventanaId inválido"),
+  name: z.string().min(2, "El nombre es obligatorio"),
+  username: z.string().min(3).max(12),
+  email: z.string().trim().toLowerCase().regex(EMAIL_RE, "Formato de correo inválido").optional(),
+  password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres"),
+}).strict();
 
-      return { field, code, message, expected, received };
-    }
+export const UpdateVendedorSchema = z.object({
+  ventanaId: z.uuid("ventanaId inválido").optional(),
+  name: z.string().min(2, "El nombre es obligatorio").optional(),
+  username: z.string().min(3).max(12).optional(),
+  email: z.string().trim().toLowerCase().regex(EMAIL_RE, "Formato de correo inválido").optional(),
+  password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").optional(),
+  isActive: z.boolean().optional(),
+}).strict();
 
-    if (code === "unrecognized_keys") {
-      const keys = i.keys || [];
-      return { field, code, message: `Claves no permitidas: ${keys.join(", ")}`, keys };
-    }
+// Wrappers delgados que delegan a TU middleware central
+export const validateVendedorIdParam = (req: Request, res: Response, next: NextFunction) =>
+  validateParams(IdParamSchema)(req, res, next);
 
-    if (code === "invalid_string") {
-      return { field, code, message: `String inválida (${i.validation}).`, validation: i.validation };
-    }
+export const validateCreateVendedor = (req: Request, res: Response, next: NextFunction) =>
+  validateBody(CreateVendedorSchema)(req, res, next);
 
-    // too_small / too_big / etc. -> usa el message de Zod (ya es específico)
-    return { field, code, message: i.message };
-  });
-}
-
-const ALLOWED_KEYS = ["bancaId","name","code","commissionMarginX","address","phone","email"];
-
-export const validateCreateVentana = (req: Request, _res: Response, next: NextFunction) => {
-  const parsed = CreateVentanaDto.safeParse(req.body);
-  if (!parsed.success) {
-    const details = normalizeIssues(parsed.error.issues);
-    throw new AppError("Validation error en Ventana (create)", 400, { issues: details, allowedKeys: ALLOWED_KEYS });
-  }
-  req.body = parsed.data;
-  next();
-};
-
-export const validateUpdateVentana = (req: Request, _res: Response, next: NextFunction) => {
-  const parsed = UpdateVentanaDto.safeParse(req.body);
-  if (!parsed.success) {
-    const details = normalizeIssues(parsed.error.issues);
-    throw new AppError("Validation error en Ventana (update)", 400, { issues: details, allowedKeys: ALLOWED_KEYS });
-  }
-  req.body = parsed.data;
-  next();
-};
-
-export const validateIdParam = (req: Request, _res: Response, next: NextFunction) => {
-  const parsed = IdParamDto.safeParse(req.params);
-  if (!parsed.success) {
-    const details = normalizeIssues(parsed.error.issues);
-    throw new AppError("Validation error en Ventana (params)", 400, { issues: details });
-  }
-  req.params = parsed.data as any;
-  next();
-};
+export const validateUpdateVendedor = (req: Request, res: Response, next: NextFunction) =>
+  validateBody(UpdateVendedorSchema)(req, res, next);

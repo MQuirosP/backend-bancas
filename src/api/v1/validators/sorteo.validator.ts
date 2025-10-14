@@ -1,58 +1,31 @@
 import { z } from "zod";
 import { Request, Response, NextFunction } from "express";
-import { AppError } from "../../../core/errors";
+import { validateBody, validateParams } from "../../../middlewares/validate.middleware";
 
-// 2 dígitos exactos para el número ganador
-const twoDigit = z.string().regex(/^\d{2}$/, "winningNumber must be 2 digits (00-99)");
+const IdParamSchema = z.object({ id: z.uuid("id inválido (UUID)") }).strict();
+const twoDigit = z.string().regex(/^\d{2}$/, "winningNumber debe ser 2 dígitos (00-99)");
 
-// CREATE: tu repositorio necesita name, así que lo validamos aquí
-export const createSorteoSchema = z.object({
-  loteriaId: z.uuid(),
+export const CreateSorteoSchema = z.object({
+  loteriaId: z.uuid("loteriaId inválido"),
   scheduledAt: z.coerce.date(),
   name: z.string().trim().min(1).max(100),
-});
+}).strict();
 
-// UPDATE: permitir editar opcionalmente outcome/reventado
-// - extraMultiplierId: uuid para conectar, null para desconectar, omitido = no tocar
-export const updateSorteoSchema = z.object({
+export const UpdateSorteoSchema = z.object({
   scheduledAt: z.coerce.date().optional(),
-  // status: z.enum(["SCHEDULED", "OPEN", "EVALUATED", "CLOSED"]).optional(),
-  // winningNumber: twoDigit.optional(),
-  // extraOutcomeCode: z.string().trim().min(1).max(50).nullable().optional(),
-  // extraMultiplierId: z.uuid().nullable().optional(),
-});
+}).strict();
 
-// EVALUATE: body completo (winningNumber obligatorio, reventado opcional)
-// - extraMultiplierId: si viene (uuid) paga reventado; si viene null ⇒ explícitamente sin reventado
-export const evaluateSorteoSchema = z.object({
+export const EvaluateSorteoSchema = z.object({
   winningNumber: twoDigit,
-  extraMultiplierId: z.uuid().nullable().optional(),
+  extraMultiplierId: z.uuid("extraMultiplierId inválido").nullable().optional(),
   extraOutcomeCode: z.string().trim().min(1).max(50).nullable().optional(),
-});
+}).strict();
 
-export const validateIdParam = (req: Request, _res: Response, next: NextFunction) => {
-  const r = z.uuid().safeParse(req.params.id);
-  if (!r.success) throw new AppError("Parámetro id inválido (uuid)", 400);
-  next();
-};
-
-export const validateCreateSorteo = (req: Request, _res: Response, next: NextFunction) => {
-  const r = createSorteoSchema.safeParse(req.body);
-  if (!r.success) throw new AppError(r.error.issues.map(i => i.message).join(", "), 400);
-  req.body = r.data;
-  next();
-};
-
-export const validateUpdateSorteo = (req: Request, _res: Response, next: NextFunction) => {
-  const r = updateSorteoSchema.safeParse(req.body);
-  if (!r.success) throw new AppError(r.error.issues.map(i => i.message).join(", "), 400);
-  req.body = r.data;
-  next();
-};
-
-export const validateEvaluateSorteo = (req: Request, _res: Response, next: NextFunction) => {
-  const r = evaluateSorteoSchema.safeParse(req.body);
-  if (!r.success) throw new AppError(r.error.issues.map(i => i.message).join(", "), 400);
-  req.body = r.data;
-  next();
-};
+export const validateIdParam = (req: Request, res: Response, next: NextFunction) =>
+  validateParams(IdParamSchema)(req, res, next);
+export const validateCreateSorteo = (req: Request, res: Response, next: NextFunction) =>
+  validateBody(CreateSorteoSchema)(req, res, next);
+export const validateUpdateSorteo = (req: Request, res: Response, next: NextFunction) =>
+  validateBody(UpdateSorteoSchema)(req, res, next);
+export const validateEvaluateSorteo = (req: Request, res: Response, next: NextFunction) =>
+  validateBody(EvaluateSorteoSchema)(req, res, next);

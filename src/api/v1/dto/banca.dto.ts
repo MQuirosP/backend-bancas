@@ -1,30 +1,16 @@
-import { z } from "zod";
+export type CreateBancaInput = {
+  name: string;
+  code: string;
+  email?: string;
+  address?: string;
+  phone?: string;
+  isActive?: boolean;
+  defaultMinBet?: number;
+  globalMaxPerNumber?: number;
+};
 
-// Evitamos depracated de zod: validamos email con reguex
+export type UpdateBancaInput = Partial<CreateBancaInput>;
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-export const CreateBancaDto = z.object({
-  name: z.string().min(2, "El nombre es obligatorio").max(100),
-  code: z.string().min(2, "El código es obligatorio").max(20),
-  email: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .min(5)
-    .max(100)
-    .regex(EMAIL_REGEX, "El email no es válido")
-    .optional(),
-  address: z.string().max(200).optional(),
-  phone: z.string().max(20).optional(),
-  isActive: z.boolean().optional(),
-  defaultMinBet: z.number().min(100).positive().optional(),
-  globalMaxPerNumber: z.number().min(1000).positive().optional(),
-});
-
-export const UpdateBancaDto = CreateBancaDto.partial();
-
-export type CreateBancaInput = z.infer<typeof CreateBancaDto>;
-export type UpdateBancaInput = z.infer<typeof UpdateBancaDto>;
-
-
+// (Opcional) Back-compat aliases si en algún lado usaron otros nombres:
+export type CreateBancaDTO = CreateBancaInput;
+export type UpdateBancaDTO = UpdateBancaInput;
