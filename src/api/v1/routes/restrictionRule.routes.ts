@@ -8,18 +8,10 @@ import {
   RestrictionRuleIdParamSchema,
   ReasonBodySchema,
 } from "../validators/restrictionRule.validator";
-import { AuthenticatedRequest } from "../../../core/types";
-import { AppError } from "../../../core/errors";
-import { Role } from "@prisma/client";
 import { protect } from "../../../middlewares/auth.middleware";
+import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
-
-function requireAdmin(req: AuthenticatedRequest, _res: any, next: any) {
-  if (!req.user) throw new AppError("Unauthorized", 401);
-  if (req.user.role !== Role.ADMIN) throw new AppError("Forbidden", 403);
-  next();
-}
 
 router.use(protect);
 

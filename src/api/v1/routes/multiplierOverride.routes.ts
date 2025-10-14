@@ -11,20 +11,9 @@ import { protect } from "../../../middlewares/auth.middleware";
 import { AuthenticatedRequest } from "../../../core/types";
 import { AppError } from "../../../core/errors";
 import { Role } from "@prisma/client";
+import { requireAdminOrVentana } from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
-
-/**
- * Solo ADMIN y VENTANA para mutaciones (create/update/delete/restore)
- */
-function requireAdminOrVentana(req: AuthenticatedRequest, _res: any, next: any) {
-  if (!req.user) throw new AppError("Unauthorized", 401);
-  const allowed: Role[] = [Role.ADMIN, Role.VENTANA];
-  if (!allowed.includes(req.user.role as Role)) {
-    throw new AppError("Forbidden: insufficient permissions", 403);
-  }
-  next();
-}
 
 // Autenticación obligatoria para todas
 router.use(protect);

@@ -15,19 +15,9 @@ import {
   VendedorIdParamSchema,
   ListVendedoresQuerySchema,
 } from "../validators/vendedor.validator";
+import { requireAdminOrVentana } from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
-
-function requireAdminOrVentana(
-  req: AuthenticatedRequest,
-  _res: any,
-  next: any
-) {
-  if (!req.user) throw new AppError("Unauthorized", 401);
-  if (req.user.role === Role.ADMIN || req.user.role === Role.VENTANA)
-    return next();
-  throw new AppError("Forbidden", 403);
-}
 
 router.use(protect);
 
