@@ -1,21 +1,15 @@
-import { z } from "zod";
+// contrato para servicios (sin Zod)
 
-export const CreateRestrictionRuleDTO = z.object({
-  bancaId: z.uuid().optional(),
-  ventanaId: z.uuid().optional(),
-  userId: z.uuid().optional(),
-  number: z.string().trim().min(1).max(3).optional(), // "0".."999"
-  maxAmount: z.number().positive().optional(),
-  maxTotal: z.number().positive().optional(),
-  appliesToDate: z.coerce.date().optional(),
-  appliesToHour: z.number().int().min(0).max(23).optional(),
-});
+export type CreateRestrictionRuleInput = {
+  bancaId?: string;
+  ventanaId?: string;
+  userId?: string;
 
-export const UpdateRestrictionRuleDTO = CreateRestrictionRuleDTO.partial();
+  number?: string;          // "0".."999"
+  maxAmount?: number;       // > 0
+  maxTotal?: number;        // > 0
+  appliesToDate?: Date;     // coaccionado por schema
+  appliesToHour?: number;   // 0..23
+};
 
-export type CreateRestrictionRuleInput = z.infer<
-  typeof CreateRestrictionRuleDTO
->;
-export type UpdateRestrictionRuleInput = z.infer<
-  typeof UpdateRestrictionRuleDTO
->;
+export type UpdateRestrictionRuleInput = Partial<CreateRestrictionRuleInput>;
