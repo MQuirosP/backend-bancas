@@ -2,15 +2,13 @@ import { Request, Response } from "express";
 import { AppError } from "../../../core/errors";
 import { success, created } from "../../../utils/responses";
 import { AuthenticatedRequest } from "../../../core/types";
-import { CreatePaymentDTO } from "../dto/ticketPayment.dto";
 import TicketPaymentService from "../services/ticketPayment.service";
 
 export const TicketPaymentController = {
   async create(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
-    const data = CreatePaymentDTO.parse(req.body);
 
-    const result = await TicketPaymentService.create(data, req.user);
+    const result = await TicketPaymentService.create(req.body, req.user);
     return created(res, result);
   },
 

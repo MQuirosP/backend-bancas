@@ -15,10 +15,7 @@ export const TicketPaymentService = {
    * Registra un pago de tiquete ganador (total o parcial)
    * con validaciones de idempotencia, rol y monto.
    */
-  async create(
-    data: CreatePaymentInput,
-    actor: AuthActor
-  ): Promise<TicketPayment> {
+  async create(data: CreatePaymentInput, actor: AuthActor): Promise<TicketPayment> {
     const { id: userId, role } = actor;
 
     const ticket = await prisma.ticket.findUnique({
@@ -33,7 +30,7 @@ export const TicketPaymentService = {
       throw new AppError("No autorizado para registrar pagos", 403);
     }
 
-    // 🧩 Idempotencia
+    // Idempotencia: si trae llave y ya existe, devolver ese pago
     if (data.idempotencyKey) {
       const existingKey = await prisma.ticketPayment.findUnique({
         where: { idempotencyKey: data.idempotencyKey },
@@ -41,17 +38,25 @@ export const TicketPaymentService = {
       if (existingKey) return existingKey;
     }
 
-    // 🔐 Verificar si ya hay pago previo
+    // ¿ya pagado?
     const existingPayment = await prisma.ticketPayment.findFirst({
       where: { ticketId: ticket.id, isReversed: false },
     });
-    if (existingPayment)
+    if (existingPayment) {
       throw new AppError("El tiquete ya fue pagado o está en proceso", 409);
+    }
 
-    // 💰 Calcular total del premio
+    // total premio
     const totalPayout = ticket.jugadas
-      .filter((j) => j.isWinner)
+      .filter(j => j.isWinner)
       .reduce((acc, j) => acc + (j.payout ?? 0), 0);
+
+    // no permitir sobrepago
+    if (data.amountPaid > totalPayout) {
+      throw new AppError("El monto pagado excede el total del premio", 400, {
+        details: [{ field: "amountPaid", message: `max ${totalPayout}` }],
+      });
+    }
 
     const isPartial = data.amountPaid < totalPayout;
     const remainingAmount = isPartial ? totalPayout - data.amountPaid : 0;
