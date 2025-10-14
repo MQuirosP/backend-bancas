@@ -25,13 +25,13 @@ const VentanaRepository = {
         address: data.address,
         phone: data.phone,
         email: data.email,
-        banca: { connect: { id: (data.bancaId ) } },
+        banca: { connect: { id: data.bancaId } },
       },
     });
     logger.info({
       layer: "repository",
       action: "VENTANA_CREATE_DB",
-      payload: { ventanaId: ventana.id, code: ventana },
+      payload: { ventanaId: ventana.id, code: ventana.code }, // <- fix
     });
     return ventana;
   },
