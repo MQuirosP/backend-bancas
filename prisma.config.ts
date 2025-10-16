@@ -7,5 +7,5 @@ import { defineConfig } from "prisma/config";
 
 export default defineConfig({
   // Ruta a tu schema. Las rutas se resuelven relativas a ESTE archivo.
-  schema: path.join("prisma", "schema.prisma"),
+  schema: path.join("src", "prisma", "schema.prisma"),
 });
