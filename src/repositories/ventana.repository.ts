@@ -31,7 +31,7 @@ const VentanaRepository = {
     logger.info({
       layer: "repository",
       action: "VENTANA_CREATE_DB",
-      payload: { ventanaId: ventana.id, code: ventana.code }, // <- fix
+      payload: { ventanaId: ventana.id, code: ventana.code },
     });
     return ventana;
   },
@@ -64,7 +64,6 @@ const VentanaRepository = {
   },
 
   async softDelete(id: string, userId: string, reason?: string) {
-    // valida existencia
     const existing = await prisma.ventana.findUnique({ where: { id } });
     if (!existing) {
       throw new AppError("Ventana not found", 404);
@@ -88,21 +87,41 @@ const VentanaRepository = {
     return ventana;
   },
 
-  // Listado con paginación simple como en ticket.respository.ts
-  async list(page = 1, pageSize = 10) {
+  // ✅ Listado con search (contains, insensitive) + $transaction
+  async list(page = 1, pageSize = 10, search?: string) {
     const skip = (page - 1) * pageSize;
-    const [data, total] = await Promise.all([
+
+    const baseWhere: Prisma.VentanaWhereInput = { isDeleted: false };
+
+    const s = typeof search === "string" ? search.trim() : "";
+    const where: Prisma.VentanaWhereInput =
+      s.length > 0
+        ? {
+            AND: [
+              baseWhere,
+              {
+                OR: [
+                  { code:   { contains: s, mode: "insensitive" } },
+                  { name:   { contains: s, mode: "insensitive" } },
+                  { email:  { contains: s, mode: "insensitive" } },
+                  { phone:  { contains: s, mode: "insensitive" } },
+                ],
+              },
+            ],
+          }
+        : baseWhere;
+
+    const [data, total] = await prisma.$transaction([
       prisma.ventana.findMany({
-        where: { isDeleted: false },
+        where,
         include: { banca: true },
         skip,
         take: pageSize,
         orderBy: { createdAt: "desc" },
       }),
-      prisma.ventana.count({
-        where: { isDeleted: false },
-      }),
+      prisma.ventana.count({ where }),
     ]);
+
     return { data, total };
   },
 
@@ -114,15 +133,13 @@ const VentanaRepository = {
     if (!existing) throw new AppError("Ventana no encontrada", 404);
     if (!existing.isDeleted) {
       logger.info({ layer: "repository", action: "VENTANA_RESTORE_IDEMPOTENT", payload: { ventanaId: id } });
-      return existing; // idempotente
+      return existing;
     }
 
-    // La Banca debe existir y estar activa para restaurar la Ventana
     if (!existing.banca || existing.banca.isDeleted) {
       throw new AppError("Cannot restore Ventana: parent Banca is deleted or missing. Restore Banca first.", 409);
     }
 
-    // Evita romper unicidad de code al restaurar
     const dupCode = await prisma.ventana.findFirst({
       where: { id: { not: id }, code: existing.code, isDeleted: false, isActive: true },
     });

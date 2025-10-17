@@ -11,14 +11,16 @@ export const CreateVentanaSchema = z.object({
   commissionMarginX: z.coerce.number().int("commissionMarginX debe ser entero").min(0, "commissionMarginX debe ser >= 0"),
   address: z.string().max(255).optional(),
   phone: z.string().max(20).optional(),
-  email: z.string().email("email inválido").optional(),
+  email: z.email("email inválido").optional(),
 }).strict();
 
 export const UpdateVentanaSchema = CreateVentanaSchema.partial().strict();
 
+// ✅ Agregamos `search` opcional y mantenemos `.strict()` para evitar claves no whitelisteadas
 export const ListVentanasQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
+  search: z.string().trim().min(1).max(100).optional(),
 }).strict();
 
 export const ReasonBodySchema = z.object({

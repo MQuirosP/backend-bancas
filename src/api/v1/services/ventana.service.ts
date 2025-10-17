@@ -13,7 +13,6 @@ export const VentanaService = {
     const existing = await VentanaRepository.findByCode(data.code);
     if (existing) throw new AppError("El código de la ventana ya existe", 400);
 
-    // delega en el repo (que ya hace banca.connect)
     const ventana = await VentanaRepository.create(data);
 
     await ActivityService.log({
@@ -63,11 +62,12 @@ export const VentanaService = {
     return ventana;
   },
 
-  async findAll(page?: number, pageSize?: number) {
+  // ✅ ahora acepta `search`
+  async findAll(page?: number, pageSize?: number, search?: string) {
     const p = page && page > 0 ? page : 1;
     const ps = pageSize && pageSize > 0 ? pageSize : 10;
 
-    const { data, total } = await VentanaRepository.list(p, ps);
+    const { data, total } = await VentanaRepository.list(p, ps, search?.trim() || undefined);
     const totalPages = Math.ceil(total / ps);
 
     return {

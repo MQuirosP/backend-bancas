@@ -24,8 +24,10 @@ export const VentanaController = {
   async findAll(req: Request, res: Response) {
     const page = req.query.page ? Number(req.query.page) : undefined;
     const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
+    // ✅ lee `search` y lo pasa
+    const search = typeof req.query.search === "string" ? req.query.search : undefined;
 
-    const result = await VentanaService.findAll(page, pageSize);
+    const result = await VentanaService.findAll(page, pageSize, search);
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 
@@ -37,7 +39,7 @@ export const VentanaController = {
 
   async restore(req: AuthenticatedRequest, res: Response) {
     const { id } = req.params;
-    const { reason } = req.body; // opcional, solo para auditoría
+    const { reason } = req.body;
     const ventana = await VentanaService.restore(id, req.user!.id, reason);
     res.json({ success: true, data: ventana });
   },
