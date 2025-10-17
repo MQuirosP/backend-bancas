@@ -12,7 +12,7 @@ export const CreateVendedorSchema = z.object({
   // Datos del vendedor
   name: z.string().min(2, "El nombre es obligatorio"),
   username: z.string().min(3).max(12),
-  email: z.string().trim().toLowerCase().email("Formato de correo inválido").optional(),
+  email: z.email("Formato de correo inválido").trim().toLowerCase().optional(),
   password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres"),
 }).strict();
 
