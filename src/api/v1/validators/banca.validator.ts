@@ -18,8 +18,14 @@ export const CreateBancaSchema = z.object({
 export const UpdateBancaSchema = CreateBancaSchema.partial().strict();
 
 export const ListBancasQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).optional(),
-  pageSize: z.coerce.number().int().min(1).max(100).optional(),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  search: z
+      .string()
+      .trim()
+      .min(2, 'Escribe al menos 2 caracteres')
+      .max(100, 'Máximo 100 caracteres')
+      .optional(),
 }).strict();
 
 export const ReasonBodySchema = z.object({

@@ -8,7 +8,7 @@ import { CreateBancaInput, UpdateBancaInput } from "../api/v1/dto/banca.dto";
 const toPrismaCreate = (d: CreateBancaInput): Prisma.BancaCreateInput => ({
   name: d.name,
   code: d.code,
-  defaultMinBet: d.defaultMinBet,          // si vienen, Prisma los usa; si no, DB defaults
+  defaultMinBet: d.defaultMinBet, // si vienen, Prisma los usa; si no, DB defaults
   globalMaxPerNumber: d.globalMaxPerNumber,
   address: d.address,
   phone: d.phone,
@@ -28,7 +28,11 @@ const toPrismaUpdate = (d: UpdateBancaInput): Prisma.BancaUpdateInput => ({
 const BancaRepository = {
   async create(data: CreateBancaInput) {
     const banca = await prisma.banca.create({ data: toPrismaCreate(data) });
-    logger.info({ layer: "repository", action: "BANCA_CREATE_DB", payload: { bancaId: banca.id, code: banca.code } });
+    logger.info({
+      layer: "repository",
+      action: "BANCA_CREATE_DB",
+      payload: { bancaId: banca.id, code: banca.code },
+    });
     return banca;
   },
 
@@ -45,8 +49,15 @@ const BancaRepository = {
   },
 
   async update(id: string, data: UpdateBancaInput) {
-    const banca = await prisma.banca.update({ where: { id }, data: toPrismaUpdate(data) });
-    logger.info({ layer: "repository", action: "BANCA_UPDATE_DB", payload: { bancaId: id } });
+    const banca = await prisma.banca.update({
+      where: { id },
+      data: toPrismaUpdate(data),
+    });
+    logger.info({
+      layer: "repository",
+      action: "BANCA_UPDATE_DB",
+      payload: { bancaId: id },
+    });
     return banca;
   },
 
@@ -56,24 +67,44 @@ const BancaRepository = {
 
     const banca = await prisma.banca.update({
       where: { id },
-      data: { isDeleted: true, deletedAt: new Date(), deletedBy: userId, isActive: false, deletedReason: reason },
+      data: {
+        isDeleted: true,
+        deletedAt: new Date(),
+        deletedBy: userId,
+        isActive: false,
+        deletedReason: reason,
+      },
     });
 
-    logger.warn({ layer: "repository", action: "BANCA_SOFT_DELETE_DB", payload: { bancaId: id, reason } });
+    logger.warn({
+      layer: "repository",
+      action: "BANCA_SOFT_DELETE_DB",
+      payload: { bancaId: id, reason },
+    });
     return banca;
   },
 
-  async list(page = 1, pageSize = 10) {
+  async list(page = 1, pageSize = 10, search = "") {
     const skip = (page - 1) * pageSize;
+    const s = typeof search === "string" ? search.trim() : "";
+
+    const where: any = { isDeleted: false };
+
+    if (s) {
+      where.OR = [
+        { code: { contains: s, mode: "insensitive" } },
+        { name: { contains: s, mode: "insensitive" } },
+      ];
+    }
 
     const [data, total] = await Promise.all([
       prisma.banca.findMany({
-        where: { isDeleted: false },
+        where,
         skip,
         take: pageSize,
         orderBy: { createdAt: "desc" },
       }),
-      prisma.banca.count({ where: { isDeleted: false } }),
+      prisma.banca.count({ where }),
     ]);
 
     return { data, total };
@@ -83,24 +114,50 @@ const BancaRepository = {
     const existing = await prisma.banca.findUnique({ where: { id } });
     if (!existing) throw new AppError("Banca no encontrada", 404);
     if (!existing.isDeleted) {
-      logger.info({ layer: "repository", action: "BANCA_RESTORE_IDEMPOTENT", payload: { bancaId: id } });
+      logger.info({
+        layer: "repository",
+        action: "BANCA_RESTORE_IDEMPOTENT",
+        payload: { bancaId: id },
+      });
       return existing; // idempotente
     }
 
     // Evita romper unicidad al restaurar
     const [dupCode, dupName] = await Promise.all([
-      prisma.banca.findFirst({ where: { id: { not: id }, code: existing.code, isDeleted: false } }),
-      prisma.banca.findFirst({ where: { id: { not: id }, name: existing.name, isDeleted: false } }),
+      prisma.banca.findFirst({
+        where: { id: { not: id }, code: existing.code, isDeleted: false },
+      }),
+      prisma.banca.findFirst({
+        where: { id: { not: id }, name: existing.name, isDeleted: false },
+      }),
     ]);
-    if (dupCode) throw new AppError("Cannot restore: another active Banca with the same code exists.", 409);
-    if (dupName) throw new AppError("Cannot restore: another active Banca with the same name exists.", 409);
+    if (dupCode)
+      throw new AppError(
+        "Cannot restore: another active Banca with the same code exists.",
+        409
+      );
+    if (dupName)
+      throw new AppError(
+        "Cannot restore: another active Banca with the same name exists.",
+        409
+      );
 
     const banca = await prisma.banca.update({
       where: { id },
-      data: { isDeleted: false, deletedAt: null, deletedBy: null, isActive: true, deletedReason: null },
+      data: {
+        isDeleted: false,
+        deletedAt: null,
+        deletedBy: null,
+        isActive: true,
+        deletedReason: null,
+      },
     });
 
-    logger.info({ layer: "repository", action: "BANCA_RESTORE_DB", payload: { bancaId: id } });
+    logger.info({
+      layer: "repository",
+      action: "BANCA_RESTORE_DB",
+      payload: { bancaId: id },
+    });
     return banca;
   },
 };

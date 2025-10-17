@@ -24,7 +24,8 @@ export const BancaController = {
   async findAll(req: Request, res: Response) {
     const page = req.query.page ? Number(req.query.page) : undefined;
     const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
-    const result = await BancaService.findAll(page, pageSize);
+    const search = req.query.search?.toString().trim();
+    const result = await BancaService.findAll(page, pageSize, search);
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 
