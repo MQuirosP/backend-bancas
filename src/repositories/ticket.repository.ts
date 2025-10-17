@@ -354,8 +354,8 @@ export const TicketRepository = {
               amount: j.amount,
               finalMultiplierX: j.finalMultiplierX,
               ...(j.multiplierId
-                ? { multiplier: { connect: { id: j.multiplierId }}}
-              : {})
+                ? { multiplier: { connect: { id: j.multiplierId } } }
+                : {}),
               // multiplier: { connect: { id: j.multiplierId } }, // relación nombrada ok
             })),
           },
@@ -436,12 +436,12 @@ export const TicketRepository = {
       status?: TicketStatus;
       isDeleted?: boolean;
       sorteoId?: string;
+      search?: string;
     } = {}
   ) {
     const skip = (page - 1) * pageSize;
 
-    // 1️⃣ Construir condiciones dinámicas
-    const where: any = {
+    const where: Prisma.TicketWhereInput = {
       ...(filters.status ? { status: filters.status } : {}),
       ...(typeof filters.isDeleted === "boolean"
         ? { isDeleted: filters.isDeleted }
@@ -449,8 +449,38 @@ export const TicketRepository = {
       ...(filters.sorteoId ? { sorteoId: filters.sorteoId } : {}),
     };
 
-    // 2️⃣ Obtener datos y total en paralelo
-    const [data, total] = await Promise.all([
+    // búsqueda unificada
+    const s = typeof filters.search === "string" ? filters.search.trim() : "";
+    if (s.length > 0) {
+      const isDigits = /^\d+$/.test(s);
+      const n = isDigits ? Number(s) : null;
+
+      const existingAnd = where.AND
+        ? Array.isArray(where.AND)
+          ? where.AND
+          : [where.AND]
+        : [];
+
+      where.AND = [
+        ...existingAnd,
+        {
+          OR: [
+            // ticketNumber: igualdad cuando `search` es numérico
+            ...(n !== null
+              ? [{ ticketNumber: n } as Prisma.TicketWhereInput]
+              : []),
+
+            // relaciones por nombre (contains, insensitive)
+            { vendedor: { name: { contains: s, mode: "insensitive" } } },
+            { ventana: { name: { contains: s, mode: "insensitive" } } },
+            { loteria: { name: { contains: s, mode: "insensitive" } } },
+            { sorteo: { name: { contains: s, mode: "insensitive" } } },
+          ],
+        },
+      ];
+    }
+
+    const [data, total] = await prisma.$transaction([
       prisma.ticket.findMany({
         where,
         skip,
@@ -467,9 +497,7 @@ export const TicketRepository = {
       prisma.ticket.count({ where }),
     ]);
 
-    // 3️⃣ Calcular metadatos de paginación
     const totalPages = Math.ceil(total / pageSize);
-
     const meta = {
       total,
       page,
@@ -479,11 +507,15 @@ export const TicketRepository = {
       hasPrevPage: page > 1,
     };
 
-    // 4️⃣ Logging informativo
     logger.info({
       layer: "repository",
       action: "TICKET_LIST",
-      payload: { filters, page, pageSize, total },
+      payload: {
+        filters: { ...filters, search: s || undefined },
+        page,
+        pageSize,
+        total,
+      },
     });
 
     return { data, meta };

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateQuery } from "../../../middlewares/validate.middleware";
 
 const numeroSchema = z
   .string()
@@ -52,3 +53,14 @@ export const CreateTicketSchema = z
       }
     }
   });
+
+  export const ListTicketsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
+  status: z.enum(["ACTIVE","EVALUATED","CANCELLED","RESTORED"]).optional(),
+  isDeleted: z.coerce.boolean().optional(),
+  sorteoId: z.uuid().optional(),
+  search: z.string().trim().min(1).max(100).optional(), // ✅ unificado
+}).strict();
+
+export const validateListTicketsQuery = validateQuery(ListTicketsQuerySchema);

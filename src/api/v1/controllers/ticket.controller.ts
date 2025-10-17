@@ -16,14 +16,10 @@ export const TicketController = {
   },
 
   async list(req: Request, res: Response) {
-    const { page = 1, pageSize = 10, ...filters } = req.query;
-    const result = await TicketService.list(
-      Number(page),
-      Number(pageSize),
-      filters
-    );
-    return success(res, result);
-  },
+  const { page = 1, pageSize = 10, ...filters } = req.query;
+  const result = await TicketService.list(Number(page), Number(pageSize), filters);
+  return success(res, result);
+},
 
   async cancel(req: AuthenticatedRequest, res: Response) {
     const userId = req.user!.id;

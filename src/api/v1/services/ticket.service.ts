@@ -17,7 +17,7 @@ export const TicketService = {
         throw new AppError("Missing ventanaId/loteriaId/sorteoId", 400);
       }
 
-      // 🔒 Sales cutoff por reglas (USER > VENTANA > BANCA) con default si no hay regla
+      // Sales cutoff por reglas (USER > VENTANA > BANCA) con default si no hay regla
       // 1) cargar ventana (para obtener bancaId)
       const ventana = await prisma.ventana.findUnique({
         where: { id: ventanaId },
@@ -59,7 +59,7 @@ export const TicketService = {
         );
       }
 
-      // ✅ Tipado: number es opcional (solo obligatorio para NUMERO)
+      // Tipado: number es opcional (solo obligatorio para NUMERO)
       const jugadasIn: Array<{
         type?: "NUMERO" | "REVENTADO";
         number?: string; // <- opcional
@@ -71,7 +71,7 @@ export const TicketService = {
         throw new AppError("At least one jugada is required", 400);
       }
 
-      // ✅ Construimos el set de números que sí tienen jugada NUMERO
+      // Construimos el set de números que sí tienen jugada NUMERO
       const numeros = new Set(
         jugadasIn
           .filter((j) => (j.type ?? "NUMERO") === "NUMERO")
@@ -83,7 +83,7 @@ export const TicketService = {
           })
       );
 
-      // ✅ REVENTADO: solo exigimos que exista la NUMERO para reventadoNumber
+      // REVENTADO: solo exigimos que exista la NUMERO para reventadoNumber
       for (const j of jugadasIn) {
         const type = j.type ?? "NUMERO";
         if (type === "REVENTADO") {
@@ -100,7 +100,7 @@ export const TicketService = {
         }
       }
 
-      // ✅ Mapeo al repo: para REVENTADO, guardamos number = reventadoNumber
+      // Mapeo al repo: para REVENTADO, guardamos number = reventadoNumber
       const ticket = await TicketRepository.create(
         {
           loteriaId,
@@ -175,6 +175,7 @@ export const TicketService = {
    * Listar tickets
    */
   async list(page = 1, pageSize = 10, filters: any = {}) {
+    // `filters.search` llegará validado por Zod
     return TicketRepository.list(page, pageSize, filters);
   },
 
