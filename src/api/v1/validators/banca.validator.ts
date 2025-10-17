@@ -13,6 +13,7 @@ export const CreateBancaSchema = z.object({
   isActive: z.coerce.boolean().optional(),
   defaultMinBet: z.coerce.number().positive().min(1).optional(),
   globalMaxPerNumber: z.coerce.number().positive().min(1).optional(),
+  salesCutoffMinutes: z.coerce.number().int().positive().optional(),
 }).strict();
 
 export const UpdateBancaSchema = CreateBancaSchema.partial().strict();

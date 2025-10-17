@@ -13,6 +13,17 @@ const toPrismaCreate = (d: CreateBancaInput): Prisma.BancaCreateInput => ({
   address: d.address,
   phone: d.phone,
   email: d.email,
+  ...(typeof d.salesCutoffMinutes === "number"
+    ? {
+        restrictionRules: {
+          create: [
+            {
+              salesCutoffMinutes: Math.trunc(d.salesCutoffMinutes),
+            },
+          ],
+        },
+      }
+    : {}),
 });
 
 const toPrismaUpdate = (d: UpdateBancaInput): Prisma.BancaUpdateInput => ({
@@ -27,7 +38,10 @@ const toPrismaUpdate = (d: UpdateBancaInput): Prisma.BancaUpdateInput => ({
 
 const BancaRepository = {
   async create(data: CreateBancaInput) {
-    const banca = await prisma.banca.create({ data: toPrismaCreate(data) });
+    const banca = await prisma.banca.create({ 
+      data: toPrismaCreate(data),
+      include: { restrictionRules: true },
+    });
     logger.info({
       layer: "repository",
       action: "BANCA_CREATE_DB",
