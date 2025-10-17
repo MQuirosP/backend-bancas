@@ -37,7 +37,9 @@ const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
 const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
   // ✅ ÚNICAMENTE se permite reprogramar la fecha/hora
   scheduledAt: d.scheduledAt
-    ? (d.scheduledAt instanceof Date ? d.scheduledAt : new Date(d.scheduledAt))
+    ? d.scheduledAt instanceof Date
+      ? d.scheduledAt
+      : new Date(d.scheduledAt)
     : undefined,
 
   // No se permite tocar:
@@ -198,14 +200,42 @@ const SorteoRepository = {
     return s;
   },
 
-  async list(loteriaId?: string, page = 1, pageSize = 10) {
+  async list(params: {
+    loteriaId?: string;
+    page: number;
+    pageSize: number;
+    status?: SorteoStatus;
+    search?: string; // ✅
+  }) {
+    const { loteriaId, page, pageSize, status, search } = params;
+
     const where: Prisma.SorteoWhereInput = {
       isDeleted: false,
       ...(loteriaId ? { loteriaId } : {}),
+      ...(status ? { status } : {}),
     };
+
+    const s = typeof search === "string" ? search.trim() : "";
+    if (s.length > 0) {
+      const existingAnd = where.AND
+        ? Array.isArray(where.AND)
+          ? where.AND
+          : [where.AND]
+        : [];
+      where.AND = [
+        ...existingAnd,
+        {
+          OR: [
+            { name: { contains: s, mode: "insensitive" } },
+            { winningNumber: { contains: s, mode: "insensitive" } }, // campo existe en tu schema
+          ],
+        },
+      ];
+    }
+
     const skip = (page - 1) * pageSize;
 
-    const [data, total] = await Promise.all([
+    const [data, total] = await prisma.$transaction([
       prisma.sorteo.findMany({
         where,
         skip,
@@ -213,7 +243,7 @@ const SorteoRepository = {
         orderBy: { scheduledAt: "desc" },
         include: {
           extraMultiplier: { select: { id: true, name: true, valueX: true } },
-        }, // útil en listados
+        },
       }),
       prisma.sorteo.count({ where }),
     ]);

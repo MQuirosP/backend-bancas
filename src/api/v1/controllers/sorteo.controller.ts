@@ -25,7 +25,11 @@ export const SorteoController = {
 
   async evaluate(req: AuthenticatedRequest, res: Response) {
     // Body ya validado por validateEvaluateSorteo
-    const s = await SorteoService.evaluate(req.params.id, req.body, req.user!.id);
+    const s = await SorteoService.evaluate(
+      req.params.id,
+      req.body,
+      req.user!.id
+    );
     res.json({ success: true, data: s });
   },
 
@@ -43,8 +47,23 @@ export const SorteoController = {
       ? String(req.query.loteriaId)
       : undefined;
     const page = req.query.page ? Number(req.query.page) : undefined;
-    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
-    const result = await SorteoService.list(loteriaId, page, pageSize);
+    const pageSize = req.query.pageSize
+      ? Number(req.query.pageSize)
+      : undefined;
+    const status =
+      typeof req.query.status === "string"
+        ? (req.query.status as any)
+        : undefined;
+    const search =
+      typeof req.query.search === "string" ? req.query.search : undefined; // ✅
+
+    const result = await SorteoService.list({
+      loteriaId,
+      page,
+      pageSize,
+      status,
+      search,
+    }); // ✅
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 
@@ -52,4 +71,5 @@ export const SorteoController = {
     const s = await SorteoService.findById(req.params.id);
     res.json({ success: true, data: s });
   },
+
 };

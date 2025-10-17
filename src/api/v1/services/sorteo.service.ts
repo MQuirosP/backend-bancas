@@ -61,7 +61,7 @@ export const SorteoService = {
       );
     }
 
-    // ⬇️ solo pasamos lo permitido por el schema (p. ej. scheduledAt)
+    // solo pasamos lo permitido por el schema (p. ej. scheduledAt)
     const s = await SorteoRepository.update(id, {
       scheduledAt: data.scheduledAt,
     } as UpdateSorteoDTO);
@@ -337,10 +337,24 @@ export const SorteoService = {
     return s;
   },
 
-  async list(loteriaId?: string, page?: number, pageSize?: number) {
-    const p = page && page > 0 ? page : 1;
-    const ps = pageSize && pageSize > 0 ? pageSize : 10;
-    const { data, total } = await SorteoRepository.list(loteriaId, p, ps);
+  async list(params: {
+    loteriaId?: string;
+    page?: number;
+    pageSize?: number;
+    status?: SorteoStatus;
+    search?: string;        // ✅
+  }) {
+    const p = params.page && params.page > 0 ? params.page : 1;
+    const ps = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
+
+    const { data, total } = await SorteoRepository.list({
+      page: p,
+      pageSize: ps,
+      loteriaId: params.loteriaId,
+      status: params.status,
+      search: params.search?.trim() || undefined,
+    });
+
     const totalPages = Math.ceil(total / ps);
     return {
       data,
