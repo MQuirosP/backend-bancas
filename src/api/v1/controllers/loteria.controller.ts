@@ -1,20 +1,24 @@
 // src/api/v1/controllers/loteria.controller.ts
-import { Request, Response } from 'express';
-import { ActivityType } from '@prisma/client';
-import LoteriaService from '../services/loteria.service';
-import ActivityService from '../../../core/activity.service';
-import { success, created } from '../../../utils/responses';
+import { Request, Response } from "express";
+import { ActivityType } from "@prisma/client";
+import LoteriaService from "../services/loteria.service";
+import ActivityService from "../../../core/activity.service";
+import { success, created } from "../../../utils/responses";
 
 export const LoteriaController = {
   async create(req: Request, res: Response) {
     const actorId = (req as any)?.user?.id as string;
     const requestId = (req as any)?.requestId ?? null;
 
-    const loteria = await LoteriaService.create(req.body, actorId, requestId ?? undefined);
+    const loteria = await LoteriaService.create(
+      req.body,
+      actorId,
+      requestId ?? undefined
+    );
 
     (req as any)?.logger?.info({
-      layer: 'controller',
-      action: 'LOTERIA_CREATE',
+      layer: "controller",
+      action: "LOTERIA_CREATE",
       userId: actorId,
       requestId,
       payload: { id: loteria.id, name: loteria.name },
@@ -23,11 +27,11 @@ export const LoteriaController = {
     await ActivityService.log({
       userId: actorId,
       action: ActivityType.LOTERIA_CREATE,
-      targetType: 'LOTERIA',
+      targetType: "LOTERIA",
       targetId: loteria.id,
       details: { name: loteria.name },
       requestId,
-      layer: 'controller',
+      layer: "controller",
     });
 
     return created(res, loteria);
@@ -35,17 +39,34 @@ export const LoteriaController = {
 
   async list(req: Request, res: Response) {
     const page = req.query.page ? Number(req.query.page) : undefined;
-    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
+    const pageSize = req.query.pageSize
+      ? Number(req.query.pageSize)
+      : undefined;
     const isDeleted =
-      typeof req.query.isDeleted === 'string' ? req.query.isDeleted === 'true' : undefined;
+      typeof req.query.isDeleted === "string"
+        ? req.query.isDeleted === "true"
+        : undefined;
 
-    const { data, meta } = await LoteriaService.list({ page, pageSize, isDeleted });
+    const search =
+      typeof req.query.search === "string" ? req.query.search : undefined; // ✅ nuevo
+
+    const { data, meta } = await LoteriaService.list({
+      page,
+      pageSize,
+      isDeleted,
+      search,
+    });
 
     (req as any)?.logger?.info({
-      layer: 'controller',
-      action: 'LOTERIA_LIST',
+      layer: "controller",
+      action: "LOTERIA_LIST",
       requestId: (req as any)?.requestId ?? null,
-      payload: { page, pageSize, isDeleted },
+      payload: {
+        page,
+        pageSize,
+        isDeleted,
+        hasSearch: Boolean(search && search.trim()),
+      },
     });
 
     return success(res, data, meta);
@@ -55,8 +76,8 @@ export const LoteriaController = {
     const loteria = await LoteriaService.getById(req.params.id);
 
     (req as any)?.logger?.info({
-      layer: 'controller',
-      action: 'LOTERIA_GET_BY_ID',
+      layer: "controller",
+      action: "LOTERIA_GET_BY_ID",
       requestId: (req as any)?.requestId ?? null,
       payload: { id: req.params.id },
     });
@@ -76,8 +97,8 @@ export const LoteriaController = {
     );
 
     (req as any)?.logger?.info({
-      layer: 'controller',
-      action: 'LOTERIA_UPDATE',
+      layer: "controller",
+      action: "LOTERIA_UPDATE",
       userId: actorId,
       requestId,
       payload: { id: updated.id, changes: Object.keys(req.body) },
@@ -86,11 +107,11 @@ export const LoteriaController = {
     await ActivityService.log({
       userId: actorId,
       action: ActivityType.LOTERIA_UPDATE,
-      targetType: 'LOTERIA',
+      targetType: "LOTERIA",
       targetId: updated.id,
       details: { fields: Object.keys(req.body) },
       requestId,
-      layer: 'controller',
+      layer: "controller",
     });
 
     return success(res, updated);
@@ -107,8 +128,8 @@ export const LoteriaController = {
     );
 
     (req as any)?.logger?.info({
-      layer: 'controller',
-      action: 'LOTERIA_DELETE',
+      layer: "controller",
+      action: "LOTERIA_DELETE",
       userId: actorId,
       requestId,
       payload: { id: req.params.id },
@@ -117,11 +138,11 @@ export const LoteriaController = {
     await ActivityService.log({
       userId: actorId,
       action: ActivityType.LOTERIA_DELETE,
-      targetType: 'LOTERIA',
+      targetType: "LOTERIA",
       targetId: req.params.id,
-      details: { reason: 'Deleted by admin' },
+      details: { reason: "Deleted by admin" },
       requestId,
-      layer: 'controller',
+      layer: "controller",
     });
 
     return success(res, loteria);
@@ -131,11 +152,15 @@ export const LoteriaController = {
     const actorId = (req as any)?.user?.id as string;
     const requestId = (req as any)?.requestId ?? null;
 
-    const loteria = await LoteriaService.restore(req.params.id, actorId, requestId ?? undefined);
+    const loteria = await LoteriaService.restore(
+      req.params.id,
+      actorId,
+      requestId ?? undefined
+    );
 
     (req as any)?.logger?.info({
-      layer: 'controller',
-      action: 'LOTERIA_RESTORE',
+      layer: "controller",
+      action: "LOTERIA_RESTORE",
       userId: actorId,
       requestId,
       payload: { id: req.params.id },
@@ -144,11 +169,11 @@ export const LoteriaController = {
     await ActivityService.log({
       userId: actorId,
       action: ActivityType.LOTERIA_RESTORE,
-      targetType: 'LOTERIA',
+      targetType: "LOTERIA",
       targetId: req.params.id,
       details: null,
       requestId,
-      layer: 'controller',
+      layer: "controller",
     });
 
     return success(res, loteria);

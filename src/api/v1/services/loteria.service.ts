@@ -1,12 +1,16 @@
-import prisma from '../../../core/prismaClient';
-import { ActivityType, Prisma } from '@prisma/client';
-import ActivityService from '../../../core/activity.service';
-import logger from '../../../core/logger';
-import { AppError } from '../../../core/errors';
-import { paginateOffset } from '../../../utils/pagination';
+import prisma from "../../../core/prismaClient";
+import { ActivityType, Prisma } from "@prisma/client";
+import ActivityService from "../../../core/activity.service";
+import logger from "../../../core/logger";
+import { AppError } from "../../../core/errors";
+import { paginateOffset } from "../../../utils/pagination";
 
 export const LoteriaService = {
-  async create(data: { name: string; rulesJson?: Record<string, any> }, userId: string, requestId?: string) {
+  async create(
+    data: { name: string; rulesJson?: Record<string, any> },
+    userId: string,
+    requestId?: string
+  ) {
     try {
       const loteria = await prisma.loteria.create({
         data: {
@@ -16,8 +20,8 @@ export const LoteriaService = {
       });
 
       logger.info({
-        layer: 'service',
-        action: 'LOTERIA_CREATE',
+        layer: "service",
+        action: "LOTERIA_CREATE",
         userId,
         requestId,
         payload: { id: loteria.id, name: loteria.name },
@@ -26,23 +30,23 @@ export const LoteriaService = {
       await ActivityService.log({
         userId,
         action: ActivityType.LOTERIA_CREATE,
-        targetType: 'LOTERIA',
+        targetType: "LOTERIA",
         targetId: loteria.id,
         details: { name: loteria.name },
         requestId,
-        layer: 'service',
+        layer: "service",
       });
 
       return loteria;
     } catch (err) {
       logger.error({
-        layer: 'service',
-        action: 'LOTERIA_CREATE_ERROR',
+        layer: "service",
+        action: "LOTERIA_CREATE_ERROR",
         userId,
         requestId,
         meta: { message: (err as Error).message },
       });
-      throw new AppError('Failed to create Lotería', 500);
+      throw new AppError("Failed to create Lotería", 500);
     }
   },
 
@@ -52,7 +56,7 @@ export const LoteriaService = {
     });
 
     if (!loteria) {
-      throw new AppError('Lotería not found', 404);
+      throw new AppError("Lotería not found", 404);
     }
 
     return loteria;
@@ -62,13 +66,33 @@ export const LoteriaService = {
     page = 1,
     pageSize = 10,
     isDeleted,
+    search,
   }: {
     page?: number;
     pageSize?: number;
     isDeleted?: boolean;
+    search?: string;
   }) {
-    const where: Record<string, any> = {};
-    if (typeof isDeleted === 'boolean') where.isDeleted = isDeleted;
+    const where: Prisma.LoteriaWhereInput = {};
+
+    if (typeof isDeleted === "boolean") {
+      where.isDeleted = isDeleted;
+    }
+
+    const s = typeof search === "string" ? search.trim() : "";
+    if (s.length > 0) {
+      // Normaliza AND a arreglo aunque Prisma permita objeto o arreglo
+      const existingAnd = where.AND
+        ? Array.isArray(where.AND)
+          ? where.AND
+          : [where.AND]
+        : [];
+
+      where.AND = [
+        ...existingAnd,
+        { name: { contains: s, mode: "insensitive" } },
+      ];
+    }
 
     const result = await paginateOffset(prisma.loteria, {
       where,
@@ -80,29 +104,34 @@ export const LoteriaService = {
         createdAt: true,
         updatedAt: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       pagination: { page, pageSize },
     });
 
     return result;
   },
 
-  async update(id: string, data: Partial<{ name: string; rulesJson: Record<string, any> }>, userId: string, requestId?: string) {
+  async update(
+    id: string,
+    data: Partial<{ name: string; rulesJson: Record<string, any> }>,
+    userId: string,
+    requestId?: string
+  ) {
     const existing = await prisma.loteria.findUnique({ where: { id } });
-    if (!existing) throw new AppError('Lotería not found', 404);
+    if (!existing) throw new AppError("Lotería not found", 404);
 
     const updated = await prisma.loteria.update({
       where: { id },
       data: {
         name: data.name ?? existing.name,
-        rulesJson: (data.rulesJson as Prisma.InputJsonValue) ?? existing.rulesJson,
-
+        rulesJson:
+          (data.rulesJson as Prisma.InputJsonValue) ?? existing.rulesJson,
       },
     });
 
     logger.info({
-      layer: 'service',
-      action: 'LOTERIA_UPDATE',
+      layer: "service",
+      action: "LOTERIA_UPDATE",
       userId,
       requestId,
       payload: { id, changes: Object.keys(data) },
@@ -111,11 +140,11 @@ export const LoteriaService = {
     await ActivityService.log({
       userId,
       action: ActivityType.LOTERIA_UPDATE,
-      targetType: 'LOTERIA',
+      targetType: "LOTERIA",
       targetId: id,
       details: data,
       requestId,
-      layer: 'service',
+      layer: "service",
     });
 
     return updated;
@@ -123,7 +152,7 @@ export const LoteriaService = {
 
   async softDelete(id: string, userId: string, requestId?: string) {
     const existing = await prisma.loteria.findUnique({ where: { id } });
-    if (!existing) throw new AppError('Lotería not found', 404);
+    if (!existing) throw new AppError("Lotería not found", 404);
 
     const deleted = await prisma.loteria.update({
       where: { id },
@@ -131,13 +160,13 @@ export const LoteriaService = {
         isDeleted: true,
         deletedAt: new Date(),
         deletedBy: userId,
-        deletedReason: 'Deleted by admin',
+        deletedReason: "Deleted by admin",
       },
     });
 
     logger.warn({
-      layer: 'service',
-      action: 'LOTERIA_DELETE',
+      layer: "service",
+      action: "LOTERIA_DELETE",
       userId,
       requestId,
       payload: { id },
@@ -146,11 +175,11 @@ export const LoteriaService = {
     await ActivityService.log({
       userId,
       action: ActivityType.LOTERIA_DELETE,
-      targetType: 'LOTERIA',
+      targetType: "LOTERIA",
       targetId: id,
-      details: { reason: 'Deleted by admin' },
+      details: { reason: "Deleted by admin" },
       requestId,
-      layer: 'service',
+      layer: "service",
     });
 
     return deleted;
@@ -158,7 +187,7 @@ export const LoteriaService = {
 
   async restore(id: string, userId: string, requestId?: string) {
     const existing = await prisma.loteria.findUnique({ where: { id } });
-    if (!existing) throw new AppError('Lotería not found', 404);
+    if (!existing) throw new AppError("Lotería not found", 404);
 
     const restored = await prisma.loteria.update({
       where: { id },
@@ -171,8 +200,8 @@ export const LoteriaService = {
     });
 
     logger.info({
-      layer: 'service',
-      action: 'LOTERIA_RESTORE',
+      layer: "service",
+      action: "LOTERIA_RESTORE",
       userId,
       requestId,
       payload: { id },
@@ -181,11 +210,11 @@ export const LoteriaService = {
     await ActivityService.log({
       userId,
       action: ActivityType.LOTERIA_RESTORE,
-      targetType: 'LOTERIA',
+      targetType: "LOTERIA",
       targetId: id,
       details: null,
       requestId,
-      layer: 'service',
+      layer: "service",
     });
 
     return restored;

@@ -12,4 +12,5 @@ export interface LoteriaListParams {
   page?: number;
   pageSize?: number;
   isDeleted?: boolean;
+  search?: string; // ✅ nuevo
 }
