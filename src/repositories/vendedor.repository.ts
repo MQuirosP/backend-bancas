@@ -30,7 +30,7 @@ const VendedorRepository = {
     const user = await prisma.user.create({
       data: {
         name: data.name,
-        email: data.email ?? null,
+        email: (data.email ?? null) ? data.email?.toLowerCase() : null,
         username: data.username, // citext en DB
         code: data.code,
         password: data.passwordHash,
@@ -71,10 +71,16 @@ const VendedorRepository = {
       where: { id },
       data: {
         ...(data.name !== undefined ? { name: data.name } : {}),
-        ...(data.email !== undefined ? { email: data.email } : {}),
+        ...(data.email !== undefined
+          ? { email: data.email ? data.email.toLowerCase() : null }
+          : {}),
         ...(data.passwordHash ? { password: data.passwordHash } : {}),
-        ...(typeof data.isActive === "boolean" ? { isActive: data.isActive } : {}),
-        ...(data.ventanaId ? { ventana: { connect: { id: data.ventanaId } } } : {}),
+        ...(typeof data.isActive === "boolean"
+          ? { isActive: data.isActive }
+          : {}),
+        ...(data.ventanaId
+          ? { ventana: { connect: { id: data.ventanaId } } }
+          : {}),
       } satisfies Prisma.UserUpdateInput,
     });
 
@@ -206,7 +212,16 @@ const VendedorRepository = {
     const [data, total] = await prisma.$transaction([
       prisma.user.findMany({
         where,
-        include: { ventana: true },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          username: true,
+          code: true,
+          isActive: true,
+          createdAt: true,
+          ventana: { select: { id: true, name: true } },
+        },
         skip,
         take: pageSize,
         orderBy: { createdAt: "desc" },
