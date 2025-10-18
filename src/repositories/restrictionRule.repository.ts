@@ -6,17 +6,24 @@ export type EffectiveRestriction = {
   maxTotal: number | null;
 };
 
+export type CutoffSource = "USER" | "VENTANA" | "BANCA" | "DEFAULT";
+
+export type EffectiveSalesCutoffDetailed = {
+  minutes: number;
+  source: CutoffSource;
+};
+
 type ListParams = {
   bancaId?: string;
   ventanaId?: string;
   userId?: string;
   number?: string;
-  isDeleted?: boolean | string; // default: false
-  page?: number | string; // viene de query → string
-  pageSize?: number | string; // viene de query → string
-  /** NUEVO (opcional): si 'true' lista solo reglas de cutoff */
+  isDeleted?: boolean | string;
+  page?: number | string;
+  pageSize?: number | string;
+  /** si 'true' lista solo reglas de cutoff */
   hasCutoff?: boolean | string;
-  /** NUEVO (opcional): si 'true' lista solo reglas de montos */
+  /** si 'true' lista solo reglas de montos */
   hasAmount?: boolean | string;
 };
 
@@ -48,11 +55,7 @@ export const RestrictionRuleRepository = {
   },
 
   /**
-   * Listado con filtros + paginado.
-   * Añadimos filtros opcionales:
-   *  - hasCutoff=true → solo reglas con salesCutoffMinutes != null y number == null
-   *  - hasAmount=true → solo reglas con maxAmount/maxTotal
-   *  (Si ambos true, se devuelven las que cumplan cualquiera de los dos grupos)
+   * Listado con filtros + paginado (incluye filtros hasCutoff / hasAmount).
    */
   async list(params: ListParams) {
     const {
@@ -67,13 +70,11 @@ export const RestrictionRuleRepository = {
       hasAmount,
     } = params;
 
-    // COERCIÓN SEGURA
     const _page = Math.max(1, Number(page) || 1);
     const _pageSize = Math.min(100, Math.max(1, Number(pageSize) || 20));
     const skip = (_page - 1) * _pageSize;
     const take = _pageSize;
 
-    // Coerce a boolean real aunque venga como string
     const _isDeleted =
       typeof isDeleted === "string"
         ? isDeleted.toLowerCase() === "true"
@@ -89,16 +90,12 @@ export const RestrictionRuleRepository = {
         ? hasAmount.toLowerCase() === "true"
         : Boolean(hasAmount);
 
-    // Filtros base
     const where: any = { isDeleted: _isDeleted };
     if (bancaId) where.bancaId = bancaId;
     if (ventanaId) where.ventanaId = ventanaId;
     if (userId) where.userId = userId;
     if (number) where.number = number;
 
-    // Filtros por tipo de regla
-    // - Cutoff: salesCutoffMinutes != null y number == null
-    // - Amount: maxAmount != null o maxTotal != null
     if (_hasCutoff && _hasAmount) {
       where.OR = [
         { AND: [{ salesCutoffMinutes: { not: null } }, { number: null }] },
@@ -118,7 +115,6 @@ export const RestrictionRuleRepository = {
       ];
     }
 
-    // Transacción: findMany + count
     const [data, total] = await prisma.$transaction([
       prisma.restrictionRule.findMany({
         where,
@@ -126,9 +122,7 @@ export const RestrictionRuleRepository = {
         skip,
         take,
       }),
-      prisma.restrictionRule.count({
-        where, // ← count correcto (sin select)
-      }),
+      prisma.restrictionRule.count({ where }),
     ]);
 
     return {
@@ -143,8 +137,7 @@ export const RestrictionRuleRepository = {
   },
 
   /**
-   * Límites de monto efectivos (USER > VENTANA > BANCA), con soporte de number y ventana temporal
-   * (lo que ya tenías).
+   * Límites de montos efectivos (USER > VENTANA > BANCA), con soporte de number y ventana temporal.
    */
   async getEffectiveLimits(params: {
     bancaId: string;
@@ -227,16 +220,15 @@ export const RestrictionRuleRepository = {
   },
 
   /**
-   * NUEVO:
-   * Resuelve el cutoff efectivo (minutos antes del sorteo) según reglas (USER > VENTANA > BANCA).
-   * Considera ventana temporal (appliesToDate / appliesToHour) y SOLO reglas con salesCutoffMinutes (number debe ser null).
+   * Cutoff efectivo con FUENTE (USER > VENTANA > BANCA) y ventana temporal.
+   * Devuelve { minutes, source } o { minutes:null, source:null } si no hay reglas.
    */
-  async getEffectiveSalesCutoff(params: {
+  async getEffectiveSalesCutoffWithSource(params: {
     bancaId: string;
     ventanaId?: string | null;
     userId?: string | null;
     at?: Date;
-  }): Promise<number | null> {
+  }): Promise<{ minutes: number | null; source: "USER" | "VENTANA" | "BANCA" | null }> {
     const { bancaId, ventanaId, userId } = params;
     const at = params.at ?? new Date();
     const hour = at.getHours();
@@ -249,7 +241,6 @@ export const RestrictionRuleRepository = {
       ],
     };
 
-    // Buscamos SOLO reglas de cutoff: salesCutoffMinutes != null y number == null
     const baseWhere = (extra: any) => ({
       ...extra,
       salesCutoffMinutes: { not: null },
@@ -280,33 +271,33 @@ export const RestrictionRuleRepository = {
       }),
     ]);
 
-    return (
-      userRule?.salesCutoffMinutes ??
-      ventanaRule?.salesCutoffMinutes ??
-      bancaRule?.salesCutoffMinutes ??
-      null
-    );
+    if (userRule?.salesCutoffMinutes != null) return { minutes: userRule.salesCutoffMinutes, source: "USER" };
+    if (ventanaRule?.salesCutoffMinutes != null) return { minutes: ventanaRule.salesCutoffMinutes, source: "VENTANA" };
+    if (bancaRule?.salesCutoffMinutes != null) return { minutes: bancaRule.salesCutoffMinutes, source: "BANCA" };
+    return { minutes: null, source: null };
   },
 
   /**
-   * NUEVO helper:
-   * Devuelve el cutoff efectivo usando reglas; si no hay, hace fallback a cutoff de Banca (si lo tienes en la tabla Banca) o a un default.
+   * API ÚNICA para el resto del sistema:
+   * - si hay regla → respeta minutos y fuente
+   * - si no hay → fallback a `defaultCutoff` y source="DEFAULT"
    */
   async resolveSalesCutoff(params: {
     bancaId: string;
     ventanaId?: string | null;
     userId?: string | null;
-    defaultCutoff?: number; // default si ninguna regla aplica
-  }): Promise<number> {
+    defaultCutoff?: number;
+  }): Promise<EffectiveSalesCutoffDetailed> {
     const { bancaId, ventanaId, userId, defaultCutoff = 5 } = params;
-
-    const ruleCutoff = await this.getEffectiveSalesCutoff({
+    const eff = await this.getEffectiveSalesCutoffWithSource({
       bancaId,
       ventanaId: ventanaId ?? null,
       userId: userId ?? null,
-      at: new Date(),
     });
 
-    return ruleCutoff ?? defaultCutoff;
+    if (eff.minutes == null) {
+      return { minutes: Math.max(0, defaultCutoff), source: "DEFAULT" };
+    }
+    return { minutes: Math.max(0, eff.minutes), source: eff.source! };
   },
 };

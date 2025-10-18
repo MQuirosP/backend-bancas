@@ -11,6 +11,7 @@ import multiplierOverrideRoutes from './multiplierOverride.routes';
 import restrictionRuleRoutes from './restrictionRule.routes'
 import ticketPaymentRoutes from "./ticketPayment.route"
 import multipliersRoutes from "./multipliers.routes"
+import diagnosticsRoutes from "./diagnostics.routes"
 
 const router = Router();
 
@@ -25,6 +26,7 @@ router.use("/sorteos", sorteoRoutes);
 router.use("/multiplier-overrides", multiplierOverrideRoutes);
 router.use("/restriction-rules", restrictionRuleRoutes);
 router.use("/ticketPayment", ticketPaymentRoutes);
-router.use("/multipliers", multipliersRoutes)
+router.use("/multipliers", multipliersRoutes);
+router.use("/diagnostics", diagnosticsRoutes);
 
 export const apiV1Router = router;

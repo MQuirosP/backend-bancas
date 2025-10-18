@@ -6,10 +6,9 @@ import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 
+const CUTOFF_GRACE_MS = 5000;
+
 export const TicketService = {
-  /**
-   * Crear ticket (con validación de restricciones)
-   */
   async create(data: any, userId: string, requestId?: string) {
     try {
       const { ventanaId, loteriaId, sorteoId } = data;
@@ -17,8 +16,6 @@ export const TicketService = {
         throw new AppError("Missing ventanaId/loteriaId/sorteoId", 400);
       }
 
-      // Sales cutoff por reglas (USER > VENTANA > BANCA) con default si no hay regla
-      // 1) cargar ventana (para obtener bancaId)
       const ventana = await prisma.ventana.findUnique({
         where: { id: ventanaId },
         select: { id: true, bancaId: true, isDeleted: true },
@@ -27,42 +24,55 @@ export const TicketService = {
         throw new AppError("La Ventana no existe o está eliminada", 404);
       }
 
-      // 2) cargar sorteo (para obtener scheduledAt)
       const sorteo = await prisma.sorteo.findUnique({
         where: { id: sorteoId },
         select: { id: true, scheduledAt: true, status: true },
       });
       if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
 
-      // (opcional) bloquear si el sorteo ya está cerrado/abierto, según tu flujo
-      // if (sorteo.status !== "OPEN" && sorteo.status !== "SCHEDULED") {
-      //   throw new AppError("El sorteo no está disponible para ventas", 409);
-      // }
-
-      // 3) resolver el cutoff efectivo en minutos
-      const cutoffMinutes = await RestrictionRuleRepository.resolveSalesCutoff({
+      // 3) resolver cutoff detallado (minutos + fuente)
+      const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
         bancaId: ventana.bancaId,
         ventanaId,
-        userId, // si NO quieres nivel usuario, pasa null
-        defaultCutoff: 5, // fallback si no hay regla
+        userId,
+        defaultCutoff: 5,
       });
 
-      // 4) aplicar cutoff: no vender si estamos dentro de la ventana de bloqueo
+      // 4) aplicar cutoff con “gracia” anti-flap
       const now = new Date();
-      const cutoffMs = cutoffMinutes * 60_000;
+      const cutoffMs = cutoff.minutes * 60_000;
       const limitTime = new Date(sorteo.scheduledAt.getTime() - cutoffMs);
+      const effectiveLimitTime = new Date(limitTime.getTime() + CUTOFF_GRACE_MS);
 
-      if (now >= limitTime) {
+      logger.info({
+        layer: "service",
+        action: "TICKET_CUTOFF_DIAG",
+        userId,
+        requestId,
+        payload: {
+          cutOff: { minutes: cutoff.minutes, source: cutoff.source },
+          nowISO: now.toISOString(),
+          scheduledAtISO: sorteo.scheduledAt.toISOString(),
+          limitTimeISO: limitTime.toISOString(),
+          effectiveLimitTimeISO: effectiveLimitTime.toISOString(),
+          secondsUntilScheduled: Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 1000)),
+          secondsUntilLimit: Math.max(0, Math.ceil((effectiveLimitTime.getTime() - now.getTime()) / 1000)),
+          sorteoStatus: sorteo.status,
+        },
+      });
+
+      if (now >= effectiveLimitTime) {
+        const minsLeft = Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000));
         throw new AppError(
-          `Venta bloqueada: faltan ${Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000))} min para el sorteo (cutoff=${cutoffMinutes} min)`,
+          `Venta bloqueada: faltan ${minsLeft} min para el sorteo (cutoff=${cutoff.minutes} min, source=${cutoff.source})`,
           409
         );
       }
 
-      // Tipado: number es opcional (solo obligatorio para NUMERO)
+      // Jugadas
       const jugadasIn: Array<{
         type?: "NUMERO" | "REVENTADO";
-        number?: string; // <- opcional
+        number?: string;
         reventadoNumber?: string | null;
         amount: number;
       }> = Array.isArray(data.jugadas) ? data.jugadas : [];
@@ -71,54 +81,43 @@ export const TicketService = {
         throw new AppError("At least one jugada is required", 400);
       }
 
-      // Construimos el set de números que sí tienen jugada NUMERO
       const numeros = new Set(
         jugadasIn
           .filter((j) => (j.type ?? "NUMERO") === "NUMERO")
           .map((j) => {
-            if (!j.number) {
-              throw new AppError("NUMERO jugada requires 'number'", 400);
-            }
+            if (!j.number) throw new AppError("NUMERO jugada requires 'number'", 400);
             return j.number;
           })
       );
 
-      // REVENTADO: solo exigimos que exista la NUMERO para reventadoNumber
       for (const j of jugadasIn) {
         const type = j.type ?? "NUMERO";
         if (type === "REVENTADO") {
           const target = j.reventadoNumber;
-          if (!target) {
-            throw new AppError("REVENTADO requires 'reventadoNumber'", 400);
-          }
+          if (!target) throw new AppError("REVENTADO requires 'reventadoNumber'", 400);
           if (!numeros.has(target)) {
-            throw new AppError(
-              `Debe existir una jugada NUMERO para ${target} en el mismo ticket`,
-              400
-            );
+            throw new AppError(`Debe existir una jugada NUMERO para ${target} en el mismo ticket`, 400);
           }
         }
       }
 
-      // Mapeo al repo: para REVENTADO, guardamos number = reventadoNumber
       const ticket = await TicketRepository.create(
         {
           loteriaId,
           sorteoId,
           ventanaId,
-          totalAmount: 0, // el repo lo calculará
+          totalAmount: 0,
           jugadas: jugadasIn.map((j) => {
             const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
             const isNumero = type === "NUMERO";
-            const number = isNumero ? j.number! : (j.reventadoNumber as string); // <- clave: usamos reventadoNumber
-
+            const number = isNumero ? j.number! : (j.reventadoNumber as string);
             return {
               type,
-              number, // <- siempre seteado
+              number,
               reventadoNumber: isNumero ? null : number,
               amount: j.amount,
-              multiplierId: "", // repo lo resuelve
-              finalMultiplierX: 0, // repo congela el valor para NUMERO
+              multiplierId: "",
+              finalMultiplierX: 0,
             };
           }),
         } as any,
@@ -164,24 +163,14 @@ export const TicketService = {
     }
   },
 
-  /**
-   * Obtener ticket por ID
-   */
   async getById(id: string) {
     return TicketRepository.getById(id);
   },
 
-  /**
-   * Listar tickets
-   */
   async list(page = 1, pageSize = 10, filters: any = {}) {
-    // `filters.search` llegará validado por Zod
     return TicketRepository.list(page, pageSize, filters);
   },
 
-  /**
-   * Cancelar ticket (soft delete)
-   */
   async cancel(id: string, userId: string, requestId?: string) {
     const ticket = await TicketRepository.cancel(id, userId);
 
@@ -206,3 +195,5 @@ export const TicketService = {
     return ticket;
   },
 };
+
+export default TicketService;
