@@ -33,8 +33,19 @@ export const VendedorService = {
     await ensureVentanaActive(data.ventanaId);
     assertCanWriteTarget(current, data.ventanaId);
 
-    const dup = await VendedorRepository.findByUsername(data.username);
-    if (dup && !dup.isDeleted) throw new AppError("El username ya está en uso", 400);
+    // username único
+    const dupUsername = await VendedorRepository.findByUsername(data.username);
+    if (dupUsername && !dupUsername.isDeleted) throw new AppError("El username ya está en uso", 409);
+
+    // code único
+    const dupCode = await VendedorRepository.findByCode(data.code);
+    if (dupCode && !dupCode.isDeleted) throw new AppError("El code ya está en uso", 409);
+
+    // email único (si viene)
+    if (data.email) {
+      const dupEmail = await VendedorRepository.findByEmail(data.email.toLowerCase());
+      if (dupEmail && !dupEmail.isDeleted) throw new AppError("El email ya está en uso", 409);
+    }
 
     const passwordHash = await bcrypt.hash(data.password, 10);
     const user = await VendedorRepository.create({
@@ -42,7 +53,7 @@ export const VendedorService = {
       name: data.name,
       username: data.username,
       code: data.code,
-      email: data.email,
+      email: data.email?.toLowerCase() ?? null,
       passwordHash,
     });
 
@@ -63,13 +74,27 @@ export const VendedorService = {
       throw new AppError("Vendedor no encontrado", 404);
     }
 
+    // Inmutables en este módulo
+    if ((data as any).username !== undefined) {
+      throw new AppError("username no puede modificarse en vendedores", 400);
+    }
+    if ((data as any).code !== undefined) {
+      throw new AppError("code no puede modificarse en vendedores", 400);
+    }
+    if ((data as any).role !== undefined) {
+      throw new AppError("role no puede modificarse en vendedores", 400);
+    }
+
     const targetVentanaId = data.ventanaId ?? existing.ventanaId!;
     await ensureVentanaActive(targetVentanaId);
     assertCanWriteTarget(current, targetVentanaId);
 
-    if (data.username && data.username !== existing.username) {
-      const dup = await VendedorRepository.findByUsername(data.username);
-      if (dup && !dup.isDeleted) throw new AppError("El correo ya está en uso", 400);
+    // email único si cambia
+    if (data.email && data.email.toLowerCase() !== (existing.email ?? "").toLowerCase()) {
+      const dupEmail = await VendedorRepository.findByEmail(data.email.toLowerCase());
+      if (dupEmail && dupEmail.id !== id && !dupEmail.isDeleted) {
+        throw new AppError("El email ya está en uso", 409);
+      }
     }
 
     let passwordHash: string | undefined;
@@ -80,8 +105,9 @@ export const VendedorService = {
     const user = await VendedorRepository.update(id, {
       ventanaId: data.ventanaId,
       name: data.name,
-      email: data.email,
+      email: data.email ? data.email.toLowerCase() : undefined,
       passwordHash,
+      isActive: data.isActive,
     });
 
     await ActivityService.log({
@@ -89,7 +115,12 @@ export const VendedorService = {
       action: ActivityType.USER_UPDATE,
       targetType: "USER",
       targetId: id,
-      details: { ventanaId: data.ventanaId, emailChanged: !!data.email, passwordChanged: !!data.password },
+      details: {
+        ventanaId: data.ventanaId ?? existing.ventanaId,
+        emailChanged: data.email !== undefined,
+        passwordChanged: !!data.password,
+        isActiveChanged: typeof data.isActive === "boolean",
+      },
     });
 
     return user;
@@ -102,7 +133,6 @@ export const VendedorService = {
     }
     assertCanWriteTarget(current, existing.ventanaId!);
 
-    // Política: no eliminar si tiene tickets activos
     const activeTickets = await prisma.ticket.count({
       where: { vendedorId: id, isDeleted: false, status: "ACTIVE" },
     });
@@ -127,7 +157,6 @@ export const VendedorService = {
     const existing = await VendedorRepository.findById(id);
     if (!existing) throw new AppError("Vendedor no encontrado", 404);
 
-    // Permisos: ADMIN o VENTANA dueña
     const ventanaId = existing.ventanaId!;
     assertCanWriteTarget(current, ventanaId);
 
@@ -145,12 +174,9 @@ export const VendedorService = {
   },
 
   async findAll(current: CurrentUser, page?: number, pageSize?: number, ventanaIdFilter?: string, search?: string) {
-    // Permisos de alcance
     assertCanReadList(current, ventanaIdFilter);
 
-    // Escopado por rol:
     if (current.role === Role.VENDEDOR) {
-      // Vendedor solo se ve a sí mismo
       const me = await VendedorRepository.findById(current.id);
       const data = me && !me.isDeleted && me.role === Role.VENDEDOR ? [me] : [];
       return { data, meta: { total: data.length, page: 1, pageSize: data.length || 1, totalPages: 1, hasNextPage: false, hasPrevPage: false } };
@@ -159,7 +185,6 @@ export const VendedorService = {
     const p = page && page > 0 ? page : 1;
     const ps = pageSize && pageSize > 0 ? pageSize : 10;
 
-    // ADMIN: opcional ventanaIdFilter; VENTANA: fuerza su ventanaId
     const ventanaId = current.role === Role.VENTANA ? current.ventanaId || undefined : ventanaIdFilter;
 
     const { data, total } = await VendedorRepository.list(p, ps, { ventanaId, search });

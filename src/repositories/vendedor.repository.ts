@@ -4,15 +4,21 @@ import { AppError } from "../core/errors";
 import { Prisma, Role } from "@prisma/client";
 
 type VendedorCreateParams = {
-  ventanaId?: string;
+  ventanaId: string; // requerimos explícito para evitar nulls
   name: string;
   username: string;
-  email?: string;
+  email?: string | null;
   passwordHash: string;
   code: string;
 };
 
-type VendedorUpdateParams = Partial<VendedorCreateParams>;
+type VendedorUpdateParams = {
+  ventanaId?: string;
+  name?: string;
+  email?: string | null;
+  passwordHash?: string;
+  isActive?: boolean;
+};
 
 type ListFilters = {
   ventanaId?: string;
@@ -24,8 +30,8 @@ const VendedorRepository = {
     const user = await prisma.user.create({
       data: {
         name: data.name,
-        email: data.email,
-        username: data.username,
+        email: data.email ?? null,
+        username: data.username, // citext en DB
         code: data.code,
         password: data.passwordHash,
         role: Role.VENDEDOR,
@@ -52,16 +58,23 @@ const VendedorRepository = {
     return prisma.user.findUnique({ where: { username } });
   },
 
+  findByEmail(email: string) {
+    return prisma.user.findUnique({ where: { email } });
+  },
+
+  findByCode(code: string) {
+    return prisma.user.findUnique({ where: { code } });
+  },
+
   async update(id: string, data: VendedorUpdateParams) {
     const user = await prisma.user.update({
       where: { id },
       data: {
-        name: data.name,
-        email: data.email,
-        password: data.passwordHash,
-        ...(data.ventanaId
-          ? { ventana: { connect: { id: data.ventanaId } } }
-          : {}),
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.email !== undefined ? { email: data.email } : {}),
+        ...(data.passwordHash ? { password: data.passwordHash } : {}),
+        ...(typeof data.isActive === "boolean" ? { isActive: data.isActive } : {}),
+        ...(data.ventanaId ? { ventana: { connect: { id: data.ventanaId } } } : {}),
       } satisfies Prisma.UserUpdateInput,
     });
 
@@ -111,12 +124,10 @@ const VendedorRepository = {
       return existing;
     }
 
-    // Debe seguir siendo vendedor
     if (existing.role !== Role.VENDEDOR) {
       throw new AppError("Cannot restore: user role is not VENDEDOR.", 409);
     }
 
-    // Ventana y Banca deben estar activas
     if (
       !existing.ventana ||
       existing.ventana.isDeleted ||
@@ -130,14 +141,16 @@ const VendedorRepository = {
     }
 
     // email único (contra activos)
-    const dupEmail = await prisma.user.findFirst({
-      where: { id: { not: id }, email: existing.email, isDeleted: false },
-    });
-    if (dupEmail)
-      throw new AppError(
-        "Cannot restore: another active user with the same email exists.",
-        409
-      );
+    if (existing.email) {
+      const dupEmail = await prisma.user.findFirst({
+        where: { id: { not: id }, email: existing.email, isDeleted: false },
+      });
+      if (dupEmail)
+        throw new AppError(
+          "Cannot restore: another active user with the same email exists.",
+          409
+        );
+    }
 
     const user = await prisma.user.update({
       where: { id },
@@ -169,7 +182,6 @@ const VendedorRepository = {
 
     const s = (filters?.search ?? "").trim();
     if (s.length > 0) {
-      // Normaliza AND a array
       const existingAnd = where.AND
         ? Array.isArray(where.AND)
           ? where.AND
@@ -182,9 +194,10 @@ const VendedorRepository = {
           OR: [
             { name: { contains: s, mode: "insensitive" } },
             { email: { contains: s, mode: "insensitive" } },
-            { username: { contains: s, mode: "insensitive" } }, // citext
+            { username: { contains: s, mode: "insensitive" } },
             { code: { contains: s, mode: "insensitive" } },
-            { ventana: { name: { contains: s, mode: "insensitive" } } }, // por sucursal
+            // ⚠️ Relational filter correcto en Prisma:
+            { ventana: { is: { name: { contains: s, mode: "insensitive" } } } },
           ],
         },
       ];
