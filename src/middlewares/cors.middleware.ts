@@ -1,47 +1,33 @@
+// src/middlewares/cors.middleware.ts
 import cors, { CorsOptionsDelegate } from 'cors'
-import express from 'express'
+import { Request } from 'express'
 import { config } from '../config'
 
-const app = express()
+const corsOptions: CorsOptionsDelegate<Request> = (req, cb) => {
+  const origin = (req.headers.origin || '').replace(/\/+$/, '')
+  const allowAll = config.cors.allowAll
+  const ok = origin && config.cors.origins.includes(origin)
 
-// Vary para caches/CDN
-app.use((_, res, next) => {
-  res.setHeader('Vary', 'Origin')
-  next()
-})
-
-const corsOptions: CorsOptionsDelegate = (req, cb) => {
-  const originHeader = (req.headers.origin || '').replace(/\/+$/, '')
-
-  if (config.cors.allowAll) {
-    // Permitir todos los orígenes (útil en dev o si no usas credenciales)
-    return cb(null, {
-      origin: true, // refleja el origin recibido
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-      exposedHeaders: ['Content-Length', 'X-Request-Id'],
-      maxAge: 86400,
-    })
-  }
-
-  const isAllowed = originHeader && config.cors.origins.includes(originHeader)
-  return cb(null, {
-    origin: isAllowed ? originHeader : false, // reflejar solo si está permitido
-    credentials: true, // si usas cookies/Authorization
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    exposedHeaders: ['Content-Length', 'X-Request-Id'],
+  cb(null, {
+    origin: allowAll ? true : ok ? origin : false,
+    credentials: true,
+    methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+    allowedHeaders: ['Content-Type','Authorization','X-Requested-With'],
+    exposedHeaders: ['Content-Length','X-Request-Id'],
     maxAge: 86400,
   })
 }
 
-// 1) Responde preflight **antes** que cualquier otro middleware restrictivo
-app.options('*', cors(corsOptions))
-
-// 2) Aplica cors al resto
-app.use(cors(corsOptions))
-
-// 3) Parsers y rutas
-app.use(express.json())
-// app.use('/api/v1', routes)
+export const corsMiddleware = [
+  // útil para caches/CDN
+  (_: any, res: any, next: any) => { res.setHeader('Vary', 'Origin'); next() },
+  // preflight global
+  (req: any, res: any, next: any) => {
+    if (req.method === 'OPTIONS') {
+      return cors(corsOptions)(req, res, () => res.sendStatus(204))
+    }
+    next()
+  },
+  // CORS para el resto
+  cors(corsOptions),
+]
