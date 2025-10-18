@@ -2,20 +2,21 @@ import { Role } from '@prisma/client';
 
 export interface CreateUserDTO {
   name: string;
-  email?: string;
+  email?: string | null;
   username: string;
   password: string;
   role?: Role;
-  ventanaId: string;
+  ventanaId?: string | null; // <- opcional aquí; el service aplica la regla según role
 }
 
 export interface UpdateUserDTO {
   name?: string;
-  email?: string;
+  email?: string | null;
+  username?: string;
   password?: string;
   role?: Role;
   ventanaId?: string | null;
-  isDeleted?: boolean; // no se expone en ruta pública; se usa en delete/restore
+  isDeleted?: boolean; // admin-only
 }
 
 export interface ListUsersQuery {
@@ -23,4 +24,5 @@ export interface ListUsersQuery {
   pageSize?: number;
   role?: Role;
   isDeleted?: boolean;
+  search?: string;
 }

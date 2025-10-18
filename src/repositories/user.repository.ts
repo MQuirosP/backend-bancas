@@ -1,4 +1,3 @@
-// src/repositories/user.repository.ts
 import prisma from '../core/prismaClient';
 import { Prisma, Role } from '@prisma/client';
 
@@ -6,11 +5,9 @@ export const UserRepository = {
   findById: (id: string) =>
     prisma.user.findUnique({ where: { id } }),
 
-  // 🔧 fix: realmente busca por username
   findByUsername: (username: string) =>
     prisma.user.findUnique({ where: { username } }),
 
-  // (opcional) si necesitas búsqueda por email exacto:
   findByEmail: (email: string) =>
     prisma.user.findUnique({ where: { email } }),
 
@@ -20,7 +17,6 @@ export const UserRepository = {
   update: (id: string, data: Partial<{ name: string; email: string | null; username: string; password: string; role: Role; ventanaId: string | null; isDeleted: boolean; isActive: boolean }>) =>
     prisma.user.update({ where: { id }, data }),
 
-  // ✅ listado con search y count en transacción
   async listPaged(args: {
     page: number;
     pageSize: number;
@@ -49,7 +45,8 @@ export const UserRepository = {
             { email:    { contains: s, mode: 'insensitive' } },
             { username: { contains: s, mode: 'insensitive' } },
             { code:     { contains: s, mode: 'insensitive' } },
-            { ventana:  { name: { contains: s, mode: 'insensitive' } } },
+            // relación opcional: usar `is` para filtrar por la entidad relacionada si existe
+            { ventana:  { is: { name: { contains: s, mode: 'insensitive' } } } },
           ],
         },
       ];
