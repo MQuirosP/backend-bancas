@@ -1,46 +1,60 @@
-// src/middlewares/cors.middleware.ts
-import cors, { CorsOptionsDelegate } from 'cors'
-import type { Request } from 'express'
+// src/server/app.ts
+import express from 'express'
+import 'express-async-errors'
+import helmet from 'helmet'
+import morgan from 'morgan'
+
 import { config } from '../config'
+import logger from '../core/logger'
+import { requestIdMiddleware } from '../middlewares/requestId.middleware'
+import { rateLimitMiddleware } from '../middlewares/rateLimit.middleware'
+import { errorHandler } from '../middlewares/error.middleware'
+import { corsMiddleware } from '../middlewares/cors.middleware'
+import { attachRequestLogger } from '../middlewares/attachLogger.middleware'
+import { apiV1Router } from '../api/v1/routes'
+import { requireJson } from '../middlewares/contentTypeJson.middleware'
 
-const corsOptions: CorsOptionsDelegate<Request> = (req, cb) => {
-  const origin = (req.headers.origin || '').replace(/\/+$/, '')
+const app = express()
 
-  if (config.cors.allowAll) {
-    return cb(null, {
-      origin: true, // refleja la Origin recibida
-      credentials: true,
-      methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-      allowedHeaders: ['Content-Type','Authorization','X-Requested-With'],
-      exposedHeaders: ['Content-Length','X-Request-Id'],
-      maxAge: 86400,
-    })
-  }
+// middlewares (order matters)
+app.use(requestIdMiddleware)
+app.use(attachRequestLogger)
+app.use(helmet())
 
-  const ok = origin && config.cors.origins.includes(origin)
-  cb(null, {
-    origin: ok ? origin : false,  // false => bloquea si no está permitido
-    credentials: true,
-    methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-    allowedHeaders: ['Content-Type','Authorization','X-Requested-With'],
-    exposedHeaders: ['Content-Length','X-Request-Id'],
-    maxAge: 86400,
-  })
+// ⚠️ CORS antes de parsers / rateLimit / requireJson
+app.use(corsMiddleware)
+
+app.use(express.json({ limit: '200kb' }))
+app.use(requireJson) // asegurarte que ignora OPTIONS
+app.use(express.urlencoded({ extended: true }))
+app.use(rateLimitMiddleware)
+
+// dev logging
+if (config.nodeEnv !== 'production') {
+  app.use(morgan('dev'))
 }
 
-// export nombrado: { corsMiddleware }
-export const corsMiddleware = [
-  // Asegura caches correctos/CDN
-  (_req: any, res: any, next: any) => { res.setHeader('Vary', 'Origin'); next() },
+// routes
+app.use('/api/v1', apiV1Router)
 
-  // Preflight global: responde antes que cualquier otro middleware
-  (req: any, res: any, next: any) => {
-    if (req.method === 'OPTIONS') {
-      return cors(corsOptions)(req, res, () => res.sendStatus(204))
-    }
-    next()
-  },
+// health
+app.get('/api/v1/healthz', (_req, res) => res.status(200).json({ status: 'ok' }))
 
-  // CORS para el resto de métodos
-  cors(corsOptions),
-]
+// global error handler (last)
+app.use(errorHandler)
+
+// process-level handlers (structured logs)
+process.on('uncaughtException', (err: unknown) => {
+  const message = err instanceof Error ? err.message : String(err)
+  const stack = err instanceof Error ? err.stack : undefined
+  logger.error({ layer: 'process', action: 'UNCAUGHT_EXCEPTION', meta: { message, stack } })
+  process.exit(1)
+})
+
+process.on('unhandledRejection', (reason: unknown) => {
+  const message = reason instanceof Error ? reason.message : String(reason)
+  const stack = reason instanceof Error ? reason.stack : undefined
+  logger.error({ layer: 'process', action: 'UNHANDLED_REJECTION', meta: { message, stack } })
+})
+
+export default app
