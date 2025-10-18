@@ -1,4 +1,3 @@
-// src/server/server.ts
 import http from 'http'
 import app from './app'
 import logger from '../core/logger'
