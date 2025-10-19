@@ -93,7 +93,11 @@ const VentanaRepository = {
   async list(page = 1, pageSize = 10, search?: string, isActive?: boolean) {
     const skip = (page - 1) * pageSize;
 
-    const baseWhere: Prisma.VentanaWhereInput = { isActive: isActive };
+    // ✅ Nunca pases undefined como valor de filtro y excluye eliminadas por defecto
+    const baseWhere: Prisma.VentanaWhereInput = {
+      isDeleted: false,
+      ...(typeof isActive === "boolean" ? { isActive } : {}),
+    };
 
     const s = typeof search === "string" ? search.trim() : "";
     const where: Prisma.VentanaWhereInput =
@@ -103,10 +107,10 @@ const VentanaRepository = {
               baseWhere,
               {
                 OR: [
-                  { code:   { contains: s, mode: "insensitive" } },
-                  { name:   { contains: s, mode: "insensitive" } },
-                  { email:  { contains: s, mode: "insensitive" } },
-                  { phone:  { contains: s, mode: "insensitive" } },
+                  { code: { contains: s, mode: "insensitive" } },
+                  { name: { contains: s, mode: "insensitive" } },
+                  { email: { contains: s, mode: "insensitive" } },
+                  { phone: { contains: s, mode: "insensitive" } },
                 ],
               },
             ],
@@ -134,25 +138,50 @@ const VentanaRepository = {
     });
     if (!existing) throw new AppError("Ventana no encontrada", 404);
     if (!existing.isDeleted) {
-      logger.info({ layer: "repository", action: "VENTANA_RESTORE_IDEMPOTENT", payload: { ventanaId: id } });
+      logger.info({
+        layer: "repository",
+        action: "VENTANA_RESTORE_IDEMPOTENT",
+        payload: { ventanaId: id },
+      });
       return existing;
     }
 
     if (!existing.banca || existing.banca.isDeleted) {
-      throw new AppError("Cannot restore Ventana: parent Banca is deleted or missing. Restore Banca first.", 409);
+      throw new AppError(
+        "Cannot restore Ventana: parent Banca is deleted or missing. Restore Banca first.",
+        409
+      );
     }
 
     const dupCode = await prisma.ventana.findFirst({
-      where: { id: { not: id }, code: existing.code, isDeleted: false, isActive: true },
+      where: {
+        id: { not: id },
+        code: existing.code,
+        isDeleted: false,
+        isActive: true,
+      },
     });
-    if (dupCode) throw new AppError("Cannot restore: another active Ventana with the same code exists.", 409);
+    if (dupCode)
+      throw new AppError(
+        "Cannot restore: another active Ventana with the same code exists.",
+        409
+      );
 
     const ventana = await prisma.ventana.update({
       where: { id },
-      data: { isDeleted: false, deletedAt: null, deletedBy: null, deletedReason: null },
+      data: {
+        isDeleted: false,
+        deletedAt: null,
+        deletedBy: null,
+        deletedReason: null,
+      },
     });
 
-    logger.info({ layer: "repository", action: "VENTANA_RESTORE_DB", payload: { ventanaId: id } });
+    logger.info({
+      layer: "repository",
+      action: "VENTANA_RESTORE_DB",
+      payload: { ventanaId: id },
+    });
     return ventana;
   },
 };

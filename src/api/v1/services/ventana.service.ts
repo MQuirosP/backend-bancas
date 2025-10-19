@@ -7,7 +7,9 @@ import { CreateVentanaInput, UpdateVentanaInput } from "../dto/ventana.dto";
 
 export const VentanaService = {
   async create(data: CreateVentanaInput, userId: string) {
-    const banca = await prisma.banca.findUnique({ where: { id: data.bancaId } });
+    const banca = await prisma.banca.findUnique({
+      where: { id: data.bancaId },
+    });
     if (!banca) throw new AppError("La banca asociada no existe", 404);
 
     const existing = await VentanaRepository.findByCode(data.code);
@@ -28,7 +30,8 @@ export const VentanaService = {
 
   async update(id: string, data: UpdateVentanaInput, userId: string) {
     const existing = await VentanaRepository.findById(id);
-    if (!existing || existing.isDeleted) throw new AppError("Ventana no encontrada", 404);
+    if (!existing || existing.isDeleted)
+      throw new AppError("Ventana no encontrada", 404);
 
     if (data.code && data.code !== existing.code) {
       const dup = await VentanaRepository.findByCode(data.code);
@@ -63,11 +66,24 @@ export const VentanaService = {
   },
 
   // ✅ ahora acepta `search`
-  async findAll(page?: number, pageSize?: number, search?: string, isActive?: boolean) {
+  async findAll(
+    page?: number,
+    pageSize?: number,
+    search?: string,
+    isActive?: boolean
+  ) {
     const p = page && page > 0 ? page : 1;
     const ps = pageSize && pageSize > 0 ? pageSize : 10;
 
-    const { data, total } = await VentanaRepository.list(p, ps, search?.trim() || undefined, isActive);
+    // ✅ Por defecto activas si no viene el filtro
+    const effectiveIsActive = typeof isActive === "boolean" ? isActive : true;
+
+    const { data, total } = await VentanaRepository.list(
+      p,
+      ps,
+      search?.trim() || undefined,
+      effectiveIsActive
+    );
     const totalPages = Math.ceil(total / ps);
 
     return {
@@ -85,7 +101,8 @@ export const VentanaService = {
 
   async findById(id: string) {
     const ventana = await VentanaRepository.findById(id);
-    if (!ventana || ventana.isDeleted) throw new AppError("Ventana no encontrada", 404);
+    if (!ventana || ventana.isDeleted)
+      throw new AppError("Ventana no encontrada", 404);
     return ventana;
   },
 
