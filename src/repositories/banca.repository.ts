@@ -1,3 +1,4 @@
+import { is } from 'zod/locales';
 import prisma from "../core/prismaClient";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
@@ -103,17 +104,21 @@ const BancaRepository = {
     return banca;
   },
 
-  async list(page = 1, pageSize = 10, search = "") {
+  async list(page = 1, pageSize = 10, search = "", isActive?: boolean) {
     const skip = (page - 1) * pageSize;
     const s = typeof search === "string" ? search.trim() : "";
 
-    const where: any = { isDeleted: false };
+    const where: any = { isDeleted: !!isActive };
 
     if (s) {
       where.OR = [
         { code: { contains: s, mode: "insensitive" } },
         { name: { contains: s, mode: "insensitive" } },
       ];
+    }
+
+    if (isActive !== undefined) {
+      where.isActive = isActive;
     }
 
     const [data, total] = await Promise.all([

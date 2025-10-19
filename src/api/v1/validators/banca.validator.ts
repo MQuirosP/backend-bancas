@@ -27,6 +27,7 @@ export const ListBancasQuerySchema = z.object({
       .min(2, 'Escribe al menos 2 caracteres')
       .max(100, 'Máximo 100 caracteres')
       .optional(),
+  isActive: z.coerce.boolean().optional(),
 }).strict();
 
 export const ReasonBodySchema = z.object({

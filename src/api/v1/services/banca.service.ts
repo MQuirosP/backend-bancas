@@ -70,11 +70,11 @@ export const BancaService = {
     return banca;
   },
 
-  async findAll(page?: number, pageSize?: number, search?: string) {
+  async findAll(page?: number, pageSize?: number, search?: string, isActive?: boolean) {
     const p = page && page > 0 ? page : 1;
     const ps = pageSize && pageSize > 0 ? pageSize : 10;
 
-    const { data, total } = await BancaRepository.list(p, ps, search);
+    const { data, total } = await BancaRepository.list(p, ps, search, isActive);
     const totalPages = Math.ceil(total / ps);
 
     return {

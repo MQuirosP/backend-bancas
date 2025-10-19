@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "dev": "nodemon src/index.ts",
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate --schema=./src/prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --name init --schema=./src/prisma/schema.prisma",
     "prisma:deploy": "prisma migrate deploy --schema=./src/prisma/schema.prisma",
