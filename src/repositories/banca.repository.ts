@@ -34,7 +34,12 @@ const toPrismaUpdate = (d: UpdateBancaInput): Prisma.BancaUpdateInput => ({
   address: d.address,
   phone: d.phone,
   email: d.email,
-});
+
+  // ✅ INCLUIR EN UPDATE
+  ...(typeof d.salesCutoffMinutes === 'number'
+    ? { salesCutoffMinutes: Math.trunc(d.salesCutoffMinutes) }
+    : {}),
+})
 
 const BancaRepository = {
   async create(data: CreateBancaInput) {
