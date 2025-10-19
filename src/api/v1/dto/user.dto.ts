@@ -2,11 +2,13 @@ import { Role } from '@prisma/client';
 
 export interface CreateUserDTO {
   name: string;
-  email?: string | null;
+  email?: string | null;     // opcional
   username: string;
-  password: string;
+  password: string;          // >= 8 (valida el validator)
   role?: Role;
-  ventanaId?: string | null; // <- opcional aquí; el service aplica la regla según role
+  ventanaId?: string | null; // requerido si role != ADMIN (lo aplica el service)
+  code?: string | null;      // ✅ nuevo
+  isActive?: boolean;        // ✅ nuevo
 }
 
 export interface UpdateUserDTO {
@@ -17,6 +19,7 @@ export interface UpdateUserDTO {
   role?: Role;
   ventanaId?: string | null;
   isDeleted?: boolean; // admin-only
+  isActive?: boolean;  // ya estaba permitido
 }
 
 export interface ListUsersQuery {

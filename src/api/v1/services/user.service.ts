@@ -19,13 +19,13 @@ export const UserService = {
     const username = dto.username.trim();
     const role: Role = (dto.role as Role) ?? Role.VENTANA;
     const email = dto.email ? dto.email.trim().toLowerCase() : null;
+    const code = dto.code?.trim() ? dto.code.trim() : null;            // ✅ opcional
+    const isActive = dto.isActive ?? true;                              // ✅ opcional (default true)
 
     // Regla role ↔ ventanaId
     if (role === Role.ADMIN) {
-      // Admin no debe estar ligado a ventana
       dto.ventanaId = null as any;
     } else {
-      // VENTANA / VENDEDOR requieren ventanaId
       if (!dto.ventanaId) throw new AppError('ventanaId is required for role ' + role, 400);
       await ensureVentanaActiveOrThrow(dto.ventanaId);
     }
@@ -40,6 +40,12 @@ export const UserService = {
       if (userByEmail) throw new AppError('Email already in use', 409);
     }
 
+    // Unicidad code (si viene) – Prisma ya es unique, pero damos error claro
+    if (code) {
+      const userByCode = await prisma.user.findFirst({ where: { code }, select: { id: true } });
+      if (userByCode) throw new AppError('Code already in use', 409);
+    }
+
     const hashed = await hashPassword(dto.password);
 
     const created = await UserRepository.create({
@@ -49,14 +55,16 @@ export const UserService = {
       password: hashed,
       role,
       ventanaId: role === Role.ADMIN ? null : dto.ventanaId!,
+      code,                 // ✅ pasa al repo
+      isActive,             // ✅ pasa al repo
     });
 
-    // Respuesta seleccionada
     const result = await prisma.user.findUnique({
       where: { id: created.id },
       select: {
         id: true, name: true, username: true, email: true, role: true,
-        ventanaId: true, isDeleted: true, createdAt: true,
+        ventanaId: true, isDeleted: true, isActive: true, code: true,   // ✅ incluye
+        createdAt: true,
       },
     });
 
@@ -68,7 +76,8 @@ export const UserService = {
       where: { id },
       select: {
         id: true, name: true, email: true, username: true, role: true,
-        ventanaId: true, isDeleted: true, createdAt: true,
+        ventanaId: true, isDeleted: true, isActive: true, code: true,    // ✅ incluye
+        createdAt: true,
       },
     });
     if (!user) throw new AppError('User not found', 404);
