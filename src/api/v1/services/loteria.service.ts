@@ -1,3 +1,4 @@
+import { is } from 'zod/locales';
 import prisma from "../../../core/prismaClient";
 import { ActivityType, Prisma } from "@prisma/client";
 import ActivityService from "../../../core/activity.service";
@@ -7,7 +8,7 @@ import { paginateOffset } from "../../../utils/pagination";
 
 export const LoteriaService = {
   async create(
-    data: { name: string; rulesJson?: Record<string, any> },
+    data: { name: string; rulesJson?: Record<string, any>, isActive?: boolean },
     userId: string,
     requestId?: string
   ) {
@@ -16,6 +17,7 @@ export const LoteriaService = {
         data: {
           name: data.name,
           rulesJson: data.rulesJson ?? {},
+          isActive: data.isActive ?? true,
         },
       });
 
@@ -113,7 +115,7 @@ export const LoteriaService = {
 
   async update(
     id: string,
-    data: Partial<{ name: string; rulesJson: Record<string, any> }>,
+    data: Partial<{ name: string; rulesJson: Record<string, any>, isActive: boolean }>,
     userId: string,
     requestId?: string
   ) {
@@ -126,6 +128,7 @@ export const LoteriaService = {
         name: data.name ?? existing.name,
         rulesJson:
           (data.rulesJson as Prisma.InputJsonValue) ?? existing.rulesJson,
+        isActive: data.isActive ?? existing.isActive,
       },
     });
 

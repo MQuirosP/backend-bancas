@@ -1,13 +1,16 @@
 import { z } from "zod";
+import { is } from "zod/locales";
 
 export const createLoteriaSchema = z.object({
   name: z.string().min(2, "El nombre de la lotería debe tener al menos 2 caracteres"),
   rulesJson: z.record(z.string(), z.any()).optional().nullable(),
+  isActive: z.boolean().optional(),
 }).strict();
 
 export const updateLoteriaSchema = z.object({
   name: z.string().min(2, "El nombre debe tener al menos 2 caracteres").optional(),
   rulesJson: z.record(z.string(), z.any()).optional().nullable(),
+  isActive: z.boolean().optional(),
 }).strict();
 
 export const loteriaIdSchema = z.object({
