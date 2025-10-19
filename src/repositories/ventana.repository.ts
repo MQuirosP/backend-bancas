@@ -90,10 +90,10 @@ const VentanaRepository = {
   },
 
   // ✅ Listado con search (contains, insensitive) + $transaction
-  async list(page = 1, pageSize = 10, search?: string) {
+  async list(page = 1, pageSize = 10, search?: string, isActive?: boolean) {
     const skip = (page - 1) * pageSize;
 
-    const baseWhere: Prisma.VentanaWhereInput = { isDeleted: false };
+    const baseWhere: Prisma.VentanaWhereInput = { isActive: isActive };
 
     const s = typeof search === "string" ? search.trim() : "";
     const where: Prisma.VentanaWhereInput =

@@ -27,7 +27,12 @@ export const VentanaController = {
     // ✅ lee `search` y lo pasa
     const search = typeof req.query.search === "string" ? req.query.search : undefined;
 
-    const result = await VentanaService.findAll(page, pageSize, search);
+    const isActive =
+      req.query.isActive !== undefined
+        ? req.query.isActive === "true" || req.query.isActive === "1"
+        : undefined;
+
+    const result = await VentanaService.findAll(page, pageSize, search, isActive);
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 

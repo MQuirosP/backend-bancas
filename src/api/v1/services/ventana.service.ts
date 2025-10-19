@@ -63,11 +63,11 @@ export const VentanaService = {
   },
 
   // ✅ ahora acepta `search`
-  async findAll(page?: number, pageSize?: number, search?: string) {
+  async findAll(page?: number, pageSize?: number, search?: string, isActive?: boolean) {
     const p = page && page > 0 ? page : 1;
     const ps = pageSize && pageSize > 0 ? pageSize : 10;
 
-    const { data, total } = await VentanaRepository.list(p, ps, search?.trim() || undefined);
+    const { data, total } = await VentanaRepository.list(p, ps, search?.trim() || undefined, isActive);
     const totalPages = Math.ceil(total / ps);
 
     return {
