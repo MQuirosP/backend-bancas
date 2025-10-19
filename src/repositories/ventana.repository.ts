@@ -11,6 +11,7 @@ type VentanaCreateParams = {
   address?: string;
   phone?: string;
   email?: string;
+  isActive?: boolean;
 };
 
 type VentanaUpdateParams = Partial<VentanaCreateParams>;
@@ -25,6 +26,7 @@ const VentanaRepository = {
         address: data.address,
         phone: data.phone,
         email: data.email,
+        isActive: data.isActive ?? true,
         banca: { connect: { id: data.bancaId } },
       },
     });

@@ -7,7 +7,7 @@ export const BancaIdParamSchema = z.object({
 export const CreateBancaSchema = z.object({
   name: z.string().trim().min(2).max(100),
   code: z.string().trim().min(2).max(20),
-  email: z.string().trim().toLowerCase().email("email inválido").optional(),
+  email: z.email("email inválido").trim().toLowerCase().optional(),
   address: z.string().trim().max(200).optional(),
   phone: z.string().trim().max(20).optional(),
   isActive: z.coerce.boolean().optional(),
