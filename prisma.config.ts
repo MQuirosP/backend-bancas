@@ -1,11 +1,14 @@
 // prisma.config.ts
-import path from "node:path";
-import { defineConfig } from "prisma/config";
+import path from 'node:path'
+import { defineConfig } from 'prisma/config'
+import dotenvSafe from 'dotenv-safe'
 
-// Si NO usas variables de entorno aquí, puedes omitir dotenv.
-// import "dotenv/config";
+// Carga .env con validación contra .env.example
+dotenvSafe.config({
+  example: path.resolve(process.cwd(), '.env.example'),
+  allowEmptyValues: false,
+})
 
 export default defineConfig({
-  // Ruta a tu schema. Las rutas se resuelven relativas a ESTE archivo.
-  schema: path.join("src", "prisma", "schema.prisma"),
-});
+  schema: path.join('src', 'prisma', 'schema.prisma'),
+})

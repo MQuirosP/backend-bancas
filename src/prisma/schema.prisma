@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -16,16 +16,16 @@ datasource db {
 // ----------------------------------------------------
 
 enum Role {
-  ADMIN // Administrador del Sistema
-  VENTANA // Administrador de Sucursal / Ventana
-  VENDEDOR // Rol Operativo de Venta
+  ADMIN
+  VENTANA
+  VENDEDOR
 }
 
 enum TicketStatus {
-  ACTIVE // Tiquete vendido, esperando sorteo
-  EVALUATED // Sorteo realizado, jugadas evaluadas
-  CANCELLED // Tiquete cancelado antes del sorteo
-  RESTORED // Tiquete restaurado después de ser cancelado
+  ACTIVE
+  EVALUATED
+  CANCELLED
+  RESTORED
 }
 
 enum SorteoStatus {
@@ -46,12 +46,10 @@ enum MultiplierKind {
 }
 
 enum ActivityType {
-  // Autenticación y sesión
   LOGIN
   LOGOUT
   PASSWORD_CHANGE
 
-  // Tiquetes y jugadas
   TICKET_CREATE
   TICKET_CANCEL
   TICKET_EVALUATE
@@ -61,7 +59,6 @@ enum ActivityType {
   JUGADA_EVALUATE
   JUGADA_RESTORE
 
-  // Sorteos y adjudicación
   SORTEO_CREATE
   SORTEO_EVALUATE
   SORTEO_OPEN
@@ -69,19 +66,16 @@ enum ActivityType {
   SORTEO_REOPEN
   SORTEO_UPDATE
 
-  // Configuración de loterías
   LOTERIA_CREATE
   LOTERIA_UPDATE
   LOTERIA_DELETE
   LOTERIA_RESTORE
 
-  // Configuración por banca
   MULTIPLIER_SETTING_CREATE
   MULTIPLIER_SETTING_UPDATE
   MULTIPLIER_SETTING_DELETE
   MULTIPLIER_SETTING_RESTORE
 
-  // Organización
   BANCA_CREATE
   BANCA_UPDATE
   BANCA_DELETE
@@ -92,14 +86,12 @@ enum ActivityType {
   VENTANA_DELETE
   VENTANA_RESTORE
 
-  // Usuarios
   USER_CREATE
   USER_UPDATE
   USER_DELETE
   USER_RESTORE
   USER_ROLE_CHANGE
 
-  // Auditoría y reversión
   SOFT_DELETE
   RESTORE
   SYSTEM_ACTION
@@ -109,50 +101,23 @@ enum ActivityType {
 // ENTIDADES PRINCIPALES (Organización)
 // ----------------------------------------------------
 
-// La entidad principal que representa la Banca de Lotería
 model Banca {
   id                 String  @id @default(uuid())
-  name               String  @unique
-  code               String  @unique
-  isActive           Boolean @default(true) // Si la banca está operativa
+  name               String  @unique(map: "Banca_name_key")
+  code               String  @unique(map: "Banca_code_key")
+  isActive           Boolean @default(true)
   defaultMinBet      Float   @default(100.00)
-  globalMaxPerNumber Int     @default(5000) // Límite máximo global por número
+  globalMaxPerNumber Int     @default(5000)
 
-  address String? // Dirección física (opcional)
-  phone   String? // Teléfono de contacto (opcional)
-  email   String? // Correo de contacto (opcional)
+  // Minutos antes del sorteo para cortar ventas (nivel banca)
+  salesCutoffMinutes Int     @default(5)
+
+  address String?
+  phone   String?
+  email   String?
 
   ventanas        Ventana[]
   loteriaSettings BancaLoteriaSetting[]
-
-  // Soft-Delete Fields (Trazabilidad)
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-
-  restrictionRules RestrictionRule[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-// Sucursales o puntos de venta
-model Ventana {
-  id                String  @id @default(uuid())
-  bancaId           String
-  name              String
-  code              String  @unique
-  isActive          Boolean @default(true) // Si la ventana está operativa
-  commissionMarginX Float // Margen operativo asignado (ej. 10x)
-
-  address String? // Dirección física (opcional)
-  phone   String? // Teléfono de contacto (opcional)
-  email   String? // Correo de contacto (opcional)
-
-  banca   Banca    @relation(fields: [bancaId], references: [id])
-  users   User[]
-  tickets Ticket[]
 
   // Soft-Delete Fields
   isDeleted     Boolean   @default(false)
@@ -166,25 +131,56 @@ model Ventana {
   updatedAt DateTime @updatedAt
 }
 
-// Usuarios del sistema (Admin, Ventana, Vendedor)
+model Ventana {
+  id                String  @id @default(uuid())
+  bancaId           String
+  name              String
+  code              String  @unique(map: "Ventana_code_key")
+  isActive          Boolean @default(true)
+  commissionMarginX Float
+
+  address String?
+  phone   String?
+  email   String?
+
+  banca   Banca   @relation(fields: [bancaId], references: [id])
+  users   User[]
+  tickets Ticket[]
+
+  isDeleted     Boolean   @default(false)
+  deletedAt     DateTime?
+  deletedBy     String?
+  deletedReason String?
+
+  restrictionRules RestrictionRule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // BTREE auxiliares (no chocan con tus GIN *_trgm)
+  @@index([code],  map: "idx_ventana_code_btree")
+  @@index([email], map: "idx_ventana_email_btree")
+  @@index([name],  map: "idx_ventana_name_btree")
+  @@index([phone], map: "idx_ventana_phone_btree")
+}
+
 model User {
   id        String  @id @default(uuid())
-  ventanaId String? // VENDEDOR/VENTANA pertenece a una Ventana
+  ventanaId String?
   name      String
-  code      String? @unique
-  email     String? @unique
-  username  String  @unique @db.Citext // para case sensitive en DB
-  password  String // Almacenada como hash (bcrypt)
+  code      String? @unique(map: "User_code_key")
+  email     String? @unique(map: "User_email_key")
+  username  String  @unique(map: "User_username_key") @db.Citext
+  password  String
   role      Role    @default(VENTANA)
-  isActive  Boolean @default(true) // Si el usuario puede iniciar sesión
+  isActive  Boolean @default(true)
 
-  refreshTokens RefreshToken[] // Tokens de refresco asociados al usuario
+  refreshTokens RefreshToken[]
 
   ventana        Ventana?      @relation(fields: [ventanaId], references: [id])
   ticketsCreated Ticket[]
   activities     ActivityLog[]
 
-  // Soft-Delete Fields
   isDeleted     Boolean   @default(false)
   deletedAt     DateTime?
   deletedBy     String?
@@ -197,24 +193,28 @@ model User {
   updatedAt DateTime @updatedAt
 
   TicketPayment TicketPayment[]
+
+  // BTREE auxiliares
+  @@index([code],     map: "idx_user_code_btree")
+  @@index([email],    map: "idx_user_email_btree")
+  @@index([name],     map: "idx_user_name_btree")
+  @@index([username], map: "idx_user_username_btree")
 }
 
 // ----------------------------------------------------
 // ENTIDADES DE JUEGO (Configuración)
 // ----------------------------------------------------
 
-// Loterías disponibles en la Banca
 model Loteria {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  isActive  Boolean  @default(true) // Si la lotería está disponible para venta
-  rulesJson Json? // Reglas dinámicas (horarios, tipos de apuesta, etc.)
+  id        String  @id @default(uuid())
+  name      String  @unique(map: "Loteria_name_key")
+  isActive  Boolean @default(true)
+  rulesJson Json?
   sorteos   Sorteo[]
 
   tickets         Ticket[]
   loteriaSettings BancaLoteriaSetting[]
 
-  // Soft-Delete Fields
   isDeleted     Boolean   @default(false)
   deletedAt     DateTime?
   deletedBy     String?
@@ -225,20 +225,21 @@ model Loteria {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // BTREE auxiliar (tu GIN idx_loteria_name_trgm sigue existiendo en DB)
+  @@index([name], map: "idx_loteria_name_btree")
 }
 
-// Configuración de reglas y multiplicadores por Banca y Lotería
 model BancaLoteriaSetting {
   id                String @id @default(uuid())
   bancaId           String
   loteriaId         String
-  baseMultiplierX   Float // Multiplicador total de la banca (ej. 90x)
-  maxTotalPerSorteo Int? // Límite total de venta para el sorteo
+  baseMultiplierX   Float
+  maxTotalPerSorteo Int?
 
   banca   Banca   @relation(fields: [bancaId], references: [id])
   loteria Loteria @relation(fields: [loteriaId], references: [id])
 
-  // Soft-Delete Fields
   isDeleted     Boolean   @default(false)
   deletedAt     DateTime?
   deletedBy     String?
@@ -247,53 +248,51 @@ model BancaLoteriaSetting {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([bancaId, loteriaId]) // Una banca solo tiene una configuración por lotería
+  @@unique([bancaId, loteriaId])
 }
 
 // ----------------------------------------------------
 // ENTIDADES TRANSACCIONALES
 // ----------------------------------------------------
 
-// Contador secuencial de tiquetes (CRÍTICO - Manejado por SQL Function)
 model TicketCounter {
   id            String   @id @default("DEFAULT")
   currentNumber Int      @default(0)
   lastUpdate    DateTime @default(now())
 }
 
-// Tiquete de Venta (Registro Principal)
 model Ticket {
   id           String       @id @default(uuid())
-  ticketNumber Int // Número secuencial atómico
+  ticketNumber Int
   loteriaId    String
   ventanaId    String
   vendedorId   String
-  sorteoId     String // Se asigna cuando se abre el sorteo
+  sorteoId     String
   totalAmount  Float
   status       TicketStatus @default(ACTIVE)
 
-  loteria  Loteria  @relation(fields: [loteriaId], references: [id])
-  ventana  Ventana  @relation(fields: [ventanaId], references: [id])
-  vendedor User     @relation(fields: [vendedorId], references: [id])
-  sorteo   Sorteo   @relation(fields: [sorteoId], references: [id])
+  loteria  Loteria @relation(fields: [loteriaId], references: [id])
+  ventana  Ventana @relation(fields: [ventanaId], references: [id])
+  vendedor User    @relation(fields: [vendedorId], references: [id])
+  sorteo   Sorteo  @relation(fields: [sorteoId], references: [id])
   jugadas  Jugada[]
 
-  isWinner Boolean @default(false) // Se actualiza si alguna jugada fue premiada
-  isActive Boolean @default(true) // Se desactiva al cerrar el sorteo
+  isWinner Boolean @default(false)
+  isActive Boolean @default(true)
 
-  // Soft-Delete Fields
   isDeleted     Boolean   @default(false)
   deletedAt     DateTime?
   deletedBy     String?
   deletedReason String?
 
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   TicketPayment TicketPayment[]
 
-  @@unique([ticketNumber]) // unicidad fuerte en DB
+  @@unique([ticketNumber])
   @@index([sorteoId])
-  @@index([vendedorId, createdAt]) // para acelerar agregados diarios
+  @@index([vendedorId, createdAt])
 }
 
 model TicketPayment {
@@ -302,13 +301,13 @@ model TicketPayment {
   amountPaid  Float
   paidById    String
   paymentDate DateTime @default(now())
-  method      String? // efectivo, transferencia, etc.
+  method      String?
   notes       String?
 
   isPartial       Boolean @default(false)
-  remainingAmount Float? // solo si es pago parcial
+  remainingAmount Float?
 
-  idempotencyKey String? @unique //evita pagos duplicados
+  idempotencyKey String? @unique
 
   ticket Ticket @relation(fields: [ticketId], references: [id])
   paidBy User   @relation(fields: [paidById], references: [id])
@@ -320,10 +319,9 @@ model TicketPayment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([ticketId, isReversed]) // evita doble pago
+  @@unique([ticketId, isReversed])
 }
 
-// Jugada dentro de un Tiquete
 model Jugada {
   id               String  @id @default(uuid())
   ticketId         String
@@ -332,21 +330,16 @@ model Jugada {
   multiplierId     String?
   finalMultiplierX Float
 
-  // NOMBRA la relación de venta (sale-time)
   multiplier LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
 
-  // --- Reventado (evaluación) ---
   type            BetType @default(NUMERO)
   reventadoNumber String?
-
-  // NOMBRA la relación de liquidación (settlement)
 
   isWinner Boolean @default(false)
   payout   Float?
 
   ticket Ticket @relation(fields: [ticketId], references: [id])
 
-  // Soft-Delete
   isDeleted     Boolean   @default(false)
   deletedAt     DateTime?
   deletedBy     String?
@@ -362,21 +355,20 @@ model Jugada {
 
 model Sorteo {
   id            String       @id @default(uuid())
-  name          String       @unique
+  name          String       @unique(map: "Sorteo_name_key") // 👈 corregido
   loteriaId     String
-  scheduledAt   DateTime // Fecha/hora programada
+  scheduledAt   DateTime
   status        SorteoStatus @default(SCHEDULED)
-  winningNumber String? // Número ganador cuando se evalúa
+  winningNumber String?
 
-  extraOutcomeCode  String? // etiqueta neutral
-  extraMultiplierId String? // FK al multiplicador elegido
+  extraOutcomeCode  String?
+  extraMultiplierId String?
   extraMultiplier   LoteriaMultiplier? @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
-  extraMultiplierX  Float? // snapshot del X aplicado
+  extraMultiplierX  Float?
 
   loteria Loteria  @relation(fields: [loteriaId], references: [id])
   tickets Ticket[]
 
-  // Soft-Delete Fields (consistente con el resto)
   isDeleted     Boolean   @default(false)
   deletedAt     DateTime?
   deletedBy     String?
@@ -385,22 +377,26 @@ model Sorteo {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([loteriaId, scheduledAt])
-  @@index([extraMultiplierId])
+  // Usa los nombres que ya existen en Supabase para evitar drift:
+  @@index([loteriaId, scheduledAt], map: "Sorteo_loteriaId_scheduledAt_idx")
+  @@index([extraMultiplierId],      map: "Sorteo_extraMultiplierId_idx")
+
+  // BTREE auxiliares para name/winningNumber (no chocan con GIN *_trgm)
+  @@index([name],          map: "idx_sorteo_name_btree")
+  @@index([winningNumber], map: "idx_sorteo_winning_btree")
 }
 
 // ----------------------------------------------------
 // ENTIDADES DE AUDITORÍA
 // ----------------------------------------------------
 
-// Registro de Actividad (CRÍTICO para trazabilidad)
 model ActivityLog {
   id         String       @id @default(uuid())
-  userId     String? // Quién realizó la acción (puede ser SYSTEM)
+  userId     String?
   action     ActivityType
-  targetType String? // Tipo de entidad afectada (ej. 'LOTERIA', 'TICKET')
-  targetId   String? // ID de la entidad afectada
-  details    Json? // Detalles del cambio (ej. { oldMultiplier: 90, newMultiplier: 85 })
+  targetType String?
+  targetId   String?
+  details    Json?
 
   user User? @relation(fields: [userId], references: [id])
 
@@ -409,16 +405,16 @@ model ActivityLog {
 
 model RestrictionRule {
   id        String  @id @default(uuid())
-  bancaId   String? // Si aplica a toda la banca
-  ventanaId String? // Si aplica a una ventana específica
-  userId    String? // Si aplica a un vendedor específico
-  number    String? // Si aplica a un número específico
-  maxAmount Float? // Monto máximo permitido por jugada
-  maxTotal  Float? // Monto total permitido por tiquete
+  bancaId   String?
+  ventanaId String?
+  userId    String?
+  number    String?
+  maxAmount Float?
+  maxTotal  Float?
 
   salesCutoffMinutes Int?
-  appliesToDate      DateTime? // Si aplica solo en una fecha específica
-  appliesToHour      Int? // Si aplica solo en una hora específica
+  appliesToDate      DateTime?
+  appliesToHour      Int?
 
   banca   Banca?   @relation(fields: [bancaId], references: [id])
   ventana Ventana? @relation(fields: [ventanaId], references: [id])
@@ -430,25 +426,22 @@ model RestrictionRule {
 }
 
 model LoteriaMultiplier {
-  id                String    @id @default(uuid())
+  id                String   @id @default(uuid())
   loteriaId         String
   name              String
   valueX            Float
-  isActive          Boolean   @default(true)
+  isActive          Boolean  @default(true)
   appliesToDate     DateTime?
   appliesToSorteoId String?
 
   loteria Loteria @relation(fields: [loteriaId], references: [id])
 
-  // BACK-RELATIONS con nombres que coinciden
-  jugadasAtSale Jugada[] @relation("JugadaMultiplierAtSale")
-
+  jugadasAtSale  Jugada[] @relation("JugadaMultiplierAtSale")
   appliedInSorteos Sorteo[] @relation("SorteoExtraMultiplier")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // (Opcional) si diferenciás tipo de multiplicador:
   kind MultiplierKind @default(NUMERO)
 
   @@index([loteriaId, kind, isActive])
@@ -459,13 +452,12 @@ model UserMultiplierOverride {
   id              String @id @default(uuid())
   userId          String
   loteriaId       String
-  multiplierType  String // Ej. "Base", "Reventado Roja", "Reventado Verde"
-  baseMultiplierX Float // Ej. 85x, 90x
+  multiplierType  String
+  baseMultiplierX Float
 
   user    User    @relation(fields: [userId], references: [id])
   loteria Loteria @relation(fields: [loteriaId], references: [id])
 
-  // Soft-Delete Fields
   isDeleted     Boolean   @default(false)
   deletedAt     DateTime?
   deletedBy     String?
@@ -478,14 +470,14 @@ model UserMultiplierOverride {
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid()) // Identificador único del token
-  userId    String // ID del usuario asociado
-  token     String   @unique // Cadena del token de refresco (debe ser única)
-  revoked   Boolean  @default(false) // Indica si el token fue revocado
-  expiresAt DateTime // Fecha y hora de expiración
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  revoked   Boolean  @default(false)
+  expiresAt DateTime
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade) // Relación con el modelo User
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now()) // Fecha de creación
-  updatedAt DateTime @updatedAt // Fecha de última modificación (automática)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

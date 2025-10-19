@@ -1,0 +1,2 @@
+-- Manualmente aplicada en Supabase:
+-- ALTER TABLE public."Banca" ADD COLUMN "salesCutoffMinutes" integer NOT NULL DEFAULT 5;
