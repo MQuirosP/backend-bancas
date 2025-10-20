@@ -90,50 +90,31 @@ const VentanaRepository = {
     return ventana;
   },
 
-  // ✅ Listar SOLO por isActive y search (ignoramos isDeleted)
-  async list(page = 1, pageSize = 10, search?: string, isActive?: boolean) {
-    const skip = (page - 1) * pageSize;
+  async list(page = 1, pageSize = 10, search?: string) {
+  const skip = (page - 1) * pageSize
+  const s = (search ?? '').trim()
 
-    const baseWhere: Prisma.VentanaWhereInput =
-      typeof isActive === "boolean" ? { isActive } : {};
+  const where: Prisma.VentanaWhereInput = {
+    ...(s ? {
+      OR: [
+        { code:  { contains: s, mode: 'insensitive' } },
+        { name:  { contains: s, mode: 'insensitive' } },
+        { email: { contains: s, mode: 'insensitive' } },
+        { phone: { contains: s, mode: 'insensitive' } },
+      ],
+    } : {}),
+  }
 
-    const s = typeof search === "string" ? search.trim() : "";
-    const where: Prisma.VentanaWhereInput =
-      s.length > 0
-        ? {
-            AND: [
-              baseWhere,
-              {
-                OR: [
-                  { code: { contains: s, mode: "insensitive" } },
-                  { name: { contains: s, mode: "insensitive" } },
-                  { email: { contains: s, mode: "insensitive" } },
-                  { phone: { contains: s, mode: "insensitive" } },
-                ],
-              },
-            ],
-          }
-        : baseWhere;
+  // debug
+  logger.info({ layer: 'repository', action: 'VENTANA_LIST_WHERE', payload: { where } })
 
-    logger.info({
-      layer: "repository",
-      action: "VENTANA_LIST_WHERE",
-      payload: { where },
-    });
+  const [data, total] = await Promise.all([
+    prisma.ventana.findMany({ where, include: { banca: true }, skip, take: pageSize, orderBy: { createdAt: 'desc' } }),
+    prisma.ventana.count({ where }),
+  ])
 
-    const [data, total] = await prisma.$transaction([
-      prisma.ventana.findMany({
-        where,
-        include: { banca: true },
-        skip,
-        take: pageSize,
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.ventana.count({ where }),
-    ]);
-
-    return { data, total };
-  },
+  return { data, total }
+},
 
   // Si finalmente eliminas “isDeleted” del modelo, elimina también este restore.
   async restore(id: string) {
@@ -142,6 +123,7 @@ const VentanaRepository = {
       where: { id },
       include: { banca: true },
     });
+    console.log(existing);
     if (!existing) throw new AppError("Ventana no encontrada", 404);
 
     // Con el nuevo modelo, restaurar = volver a activar

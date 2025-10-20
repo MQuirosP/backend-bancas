@@ -25,9 +25,8 @@ export const VentanaController = {
   const page     = req.query.page ? Number(req.query.page) : undefined;
   const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
   const search   = typeof req.query.search === "string" ? req.query.search : undefined;
-  const isActive = (req.query as any).isActive as boolean | undefined; // z.coerce.boolean()
 
-  const result = await VentanaService.findAll(page, pageSize, search, isActive);
+  const result = await VentanaService.findAll(page, pageSize, search);
   res.json({ success: true, data: result.data, meta: result.meta });
 },
 

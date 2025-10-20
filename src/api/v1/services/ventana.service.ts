@@ -30,7 +30,7 @@ export const VentanaService = {
 
   async update(id: string, data: UpdateVentanaInput, userId: string) {
     const existing = await VentanaRepository.findById(id);
-    if (!existing || existing.isDeleted)
+    if (!existing)
       throw new AppError("Ventana no encontrada", 404);
 
     if (data.code && data.code !== existing.code) {
@@ -65,43 +65,24 @@ export const VentanaService = {
     return ventana;
   },
 
-  // ✅ ahora acepta `search`
-  async findAll(
-    page?: number,
-    pageSize?: number,
-    search?: string,
-    isActive?: boolean
-  ) {
-    const p = page && page > 0 ? page : 1;
-    const ps = pageSize && pageSize > 0 ? pageSize : 10;
-    const effectiveIsActive = typeof isActive === "boolean" ? isActive : true;
+  // services/ventana.service.ts
+async findAll(page?: number, pageSize?: number, search?: string, isActive?: boolean) {
+  const p  = page && page > 0 ? page : 1
+  const ps = pageSize && pageSize > 0 ? pageSize : 10
 
-    const { data, total } = await VentanaRepository.list(
-      p,
-      ps,
-      search?.trim() || undefined,
-      effectiveIsActive
-    );
+  const { data, total } = await VentanaRepository.list(
+    p, ps, search?.trim() || undefined,
+  )
 
-    // ❌ ya no filtres por isDeleted aquí (lo ignoramos) ni vuelvas a filtrar por isActive
-    const totalPages = Math.ceil(total / ps);
-
-    return {
-      data,
-      meta: {
-        total,
-        page: p,
-        pageSize: ps,
-        totalPages,
-        hasNextPage: p < totalPages,
-        hasPrevPage: p > 1,
-      },
-    };
-  },
+  return {
+    data,
+    meta: { total, page: p, pageSize: ps, totalPages: Math.max(1, Math.ceil(total / ps)) },
+  }
+},
 
   async findById(id: string) {
     const ventana = await VentanaRepository.findById(id);
-    if (!ventana || ventana.isDeleted)
+    if (!ventana || !ventana.id)
       throw new AppError("Ventana no encontrada", 404);
     return ventana;
   },
