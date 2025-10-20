@@ -22,18 +22,16 @@ export const VentanaController = {
   },
 
   async findAll(req: Request, res: Response) {
-    const page = req.query.page ? Number(req.query.page) : undefined;
-    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
-    // ✅ lee `search` y lo pasa
-    const search = typeof req.query.search === "string" ? req.query.search : undefined;
+    const page = req.query.page ? Number(req.query.page) : undefined
+    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined
+    const search =
+      typeof req.query.search === 'string' ? req.query.search : undefined
 
-    const isActive =
-      req.query.isActive !== undefined
-        ? req.query.isActive === "true" || req.query.isActive === "1"
-        : undefined;
+    // ✅ ya es boolean | undefined gracias al validator (z.coerce.boolean())
+    const isActive = (req.query as any).isActive as boolean | undefined
 
-    const result = await VentanaService.findAll(page, pageSize, search, isActive);
-    res.json({ success: true, data: result.data, meta: result.meta });
+    const result = await VentanaService.findAll(page, pageSize, search, isActive)
+    res.json({ success: true, data: result.data, meta: result.meta })
   },
 
   async findById(req: Request, res: Response) {
