@@ -90,13 +90,13 @@ const VentanaRepository = {
   },
 
   // ✅ Listado con search (contains, insensitive) + $transaction
-  // repositories/ventana.repository.ts
   async list(page = 1, pageSize = 10, search?: string, isActive?: boolean) {
     const skip = (page - 1) * pageSize;
 
-    // solo isActive si viene; nada de isDeleted
-    const baseWhere: Prisma.VentanaWhereInput =
-      typeof isActive === "boolean" ? { isActive } : {};
+    const baseWhere: Prisma.VentanaWhereInput = {
+      isDeleted: false,
+      ...(typeof isActive === "boolean" ? { isActive } : {}),
+    };
 
     const s = typeof search === "string" ? search.trim() : "";
     const where: Prisma.VentanaWhereInput =
@@ -116,6 +116,13 @@ const VentanaRepository = {
           }
         : baseWhere;
 
+    // 👇 debug
+    logger.info({
+      layer: "repository",
+      action: "VENTANA_LIST_WHERE",
+      payload: { where },
+    });
+
     const [data, total] = await prisma.$transaction([
       prisma.ventana.findMany({
         where,
@@ -129,6 +136,7 @@ const VentanaRepository = {
 
     return { data, total };
   },
+
   async restore(id: string) {
     const existing = await prisma.ventana.findUnique({
       where: { id },

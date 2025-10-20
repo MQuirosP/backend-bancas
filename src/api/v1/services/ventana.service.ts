@@ -74,8 +74,6 @@ export const VentanaService = {
   ) {
     const p = page && page > 0 ? page : 1;
     const ps = pageSize && pageSize > 0 ? pageSize : 10;
-
-    // ✅ Por defecto activas si no viene el filtro
     const effectiveIsActive = typeof isActive === "boolean" ? isActive : true;
 
     const { data, total } = await VentanaRepository.list(
@@ -84,12 +82,18 @@ export const VentanaService = {
       search?.trim() || undefined,
       effectiveIsActive
     );
-    const totalPages = Math.ceil(total / ps);
+
+    // 🔒 Defense-in-depth: never return deleted, and enforce isActive
+    const filtered = data.filter(
+      (v) => v.isDeleted !== true && (v.isActive ?? true) === effectiveIsActive
+    );
+    const totalFiltered = filtered.length;
+    const totalPages = Math.ceil(totalFiltered / ps);
 
     return {
-      data,
+      data: filtered,
       meta: {
-        total,
+        total: totalFiltered,
         page: p,
         pageSize: ps,
         totalPages,
