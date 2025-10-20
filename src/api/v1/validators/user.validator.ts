@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const emailOptional = z.preprocess(
   (v) => (v == null || (typeof v === "string" && v.trim() === "") ? undefined : v),
-  z.string().trim().toLowerCase().email().optional()
+  z.email().trim().toLowerCase().nullable().optional()
 );
 
 export const createUserSchema = z.object({
