@@ -19,6 +19,7 @@ export interface UpdateUserDTO {
   role?: Role;
   ventanaId?: string | null;
   isDeleted?: boolean; // admin-only
+  code?: string | null;
   isActive?: boolean;  // ya estaba permitido
 }
 
