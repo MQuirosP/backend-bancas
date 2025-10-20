@@ -88,7 +88,6 @@ export const UserService = {
     page?: number;
     pageSize?: number;
     role?: string;
-    isDeleted?: boolean;
     search?: string;
   }) {
     const page = params.page && params.page > 0 ? params.page : 1;
@@ -98,7 +97,6 @@ export const UserService = {
       page,
       pageSize,
       role: params.role as Role | undefined,
-      isDeleted: params.isDeleted,
       search: params.search?.trim() || undefined,
     });
 
@@ -114,7 +112,7 @@ export const UserService = {
     const current = await prisma.user.findUnique({
       where: { id },
       select: {
-        id: true, username: true, email: true, role: true, ventanaId: true,
+        id: true, username: true, email: true, role: true, ventanaId: true, code: true,
       },
     });
     if (!current) throw new AppError('User not found', 404);

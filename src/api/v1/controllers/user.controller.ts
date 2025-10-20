@@ -47,10 +47,6 @@ export const UserController = {
       page: req.query.page ? Number(req.query.page) : undefined,
       pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
       role: (req.query.role as Role) ?? undefined,
-      isDeleted:
-        typeof req.query.isDeleted === "string"
-          ? req.query.isDeleted === "true"
-          : undefined,
       search:
         typeof req.query.search === "string" ? req.query.search : undefined, // ✅
     });

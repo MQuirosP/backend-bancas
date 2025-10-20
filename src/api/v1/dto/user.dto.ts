@@ -7,8 +7,8 @@ export interface CreateUserDTO {
   password: string;          // >= 8 (valida el validator)
   role?: Role;
   ventanaId?: string | null; // requerido si role != ADMIN (lo aplica el service)
-  code?: string | null;      // ✅ nuevo
-  isActive?: boolean;        // ✅ nuevo
+  code?: string | null;
+  isActive?: boolean;
 }
 
 export interface UpdateUserDTO {
@@ -26,6 +26,5 @@ export interface ListUsersQuery {
   page?: number;
   pageSize?: number;
   role?: Role;
-  isDeleted?: boolean;
   search?: string;
 }

@@ -38,7 +38,7 @@ export const UserRepository = {
 
   update: (id: string, data: Partial<{
     name: string; email: string | null; username: string; password: string;
-    role: Role; ventanaId: string | null; isDeleted: boolean; isActive: boolean; code: string | null;
+    role: Role; ventanaId: string | null; isActive: boolean; code: string | null;
   }>) =>
     prisma.user.update({ where: { id }, data }),
 
@@ -46,17 +46,15 @@ export const UserRepository = {
     page: number;
     pageSize: number;
     role?: Role;
-    isDeleted?: boolean;
     search?: string;
     select?: Prisma.UserSelect;
     orderBy?: Prisma.UserOrderByWithRelationInput;
   }) {
-    const { page, pageSize, role, isDeleted, search, select, orderBy } = args;
+    const { page, pageSize, role, search, select, orderBy } = args;
     const skip = (page - 1) * pageSize;
 
     const where: Prisma.UserWhereInput = {
       ...(role ? { role } : {}),
-      ...(typeof isDeleted === 'boolean' ? { isDeleted } : { isDeleted: false }),
     };
 
     const s = (search ?? '').trim();
