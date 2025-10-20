@@ -83,17 +83,13 @@ export const VentanaService = {
       effectiveIsActive
     );
 
-    // 🔒 Defense-in-depth: never return deleted, and enforce isActive
-    const filtered = data.filter(
-      (v) => v.isDeleted !== true && (v.isActive ?? true) === effectiveIsActive
-    );
-    const totalFiltered = filtered.length;
-    const totalPages = Math.ceil(totalFiltered / ps);
+    // ❌ ya no filtres por isDeleted aquí (lo ignoramos) ni vuelvas a filtrar por isActive
+    const totalPages = Math.ceil(total / ps);
 
     return {
-      data: filtered,
+      data,
       meta: {
-        total: totalFiltered,
+        total,
         page: p,
         pageSize: ps,
         totalPages,

@@ -1,3 +1,4 @@
+// repositories/ventana.repository.ts
 import prisma from "../core/prismaClient";
 import { Prisma } from "@prisma/client";
 import { AppError } from "../core/errors";
@@ -65,20 +66,20 @@ const VentanaRepository = {
     return ventana;
   },
 
+  // ⚠️ Deja de marcar isDeleted: sólo inactiva
   async softDelete(id: string, userId: string, reason?: string) {
     const existing = await prisma.ventana.findUnique({ where: { id } });
-    if (!existing) {
-      throw new AppError("Ventana not found", 404);
-    }
+    if (!existing) throw new AppError("Ventana not found", 404);
 
     const ventana = await prisma.ventana.update({
       where: { id },
       data: {
-        isDeleted: true,
+        isActive: false,
+        // si quieres conservar auditoría sin “bloquear” el listado:
         deletedAt: new Date(),
         deletedBy: userId,
         deletedReason: reason || "No reason provided",
-        isActive: false,
+        // ❌ isDeleted: true  (removido)
       },
     });
     logger.info({
@@ -89,14 +90,12 @@ const VentanaRepository = {
     return ventana;
   },
 
-  // ✅ Listado con search (contains, insensitive) + $transaction
+  // ✅ Listar SOLO por isActive y search (ignoramos isDeleted)
   async list(page = 1, pageSize = 10, search?: string, isActive?: boolean) {
     const skip = (page - 1) * pageSize;
 
-    const baseWhere: Prisma.VentanaWhereInput = {
-      isDeleted: false,
-      ...(typeof isActive === "boolean" ? { isActive } : {}),
-    };
+    const baseWhere: Prisma.VentanaWhereInput =
+      typeof isActive === "boolean" ? { isActive } : {};
 
     const s = typeof search === "string" ? search.trim() : "";
     const where: Prisma.VentanaWhereInput =
@@ -116,7 +115,6 @@ const VentanaRepository = {
           }
         : baseWhere;
 
-    // 👇 debug
     logger.info({
       layer: "repository",
       action: "VENTANA_LIST_WHERE",
@@ -137,46 +135,20 @@ const VentanaRepository = {
     return { data, total };
   },
 
+  // Si finalmente eliminas “isDeleted” del modelo, elimina también este restore.
   async restore(id: string) {
+    // Mantén igual o elimina por completo si ya no habrá soft-delete con isDeleted.
     const existing = await prisma.ventana.findUnique({
       where: { id },
       include: { banca: true },
     });
     if (!existing) throw new AppError("Ventana no encontrada", 404);
-    if (!existing.isDeleted) {
-      logger.info({
-        layer: "repository",
-        action: "VENTANA_RESTORE_IDEMPOTENT",
-        payload: { ventanaId: id },
-      });
-      return existing;
-    }
 
-    if (!existing.banca || existing.banca.isDeleted) {
-      throw new AppError(
-        "Cannot restore Ventana: parent Banca is deleted or missing. Restore Banca first.",
-        409
-      );
-    }
-
-    const dupCode = await prisma.ventana.findFirst({
-      where: {
-        id: { not: id },
-        code: existing.code,
-        isDeleted: false,
-        isActive: true,
-      },
-    });
-    if (dupCode)
-      throw new AppError(
-        "Cannot restore: another active Ventana with the same code exists.",
-        409
-      );
-
+    // Con el nuevo modelo, restaurar = volver a activar
     const ventana = await prisma.ventana.update({
       where: { id },
       data: {
-        isDeleted: false,
+        isActive: true,
         deletedAt: null,
         deletedBy: null,
         deletedReason: null,
