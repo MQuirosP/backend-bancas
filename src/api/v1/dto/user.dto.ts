@@ -3,6 +3,7 @@ import { Role } from '@prisma/client';
 export interface CreateUserDTO {
   name: string;
   email?: string | null;     // opcional
+  phone?: string | null;     // opcional
   username: string;
   password: string;          // >= 8 (valida el validator)
   role?: Role;
@@ -14,6 +15,7 @@ export interface CreateUserDTO {
 export interface UpdateUserDTO {
   name?: string;
   email?: string | null;
+  phone?: string | null;
   username?: string;
   password?: string;
   role?: Role;

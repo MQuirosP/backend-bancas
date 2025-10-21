@@ -4,6 +4,7 @@ import { CreateUserDTO, UpdateUserDTO } from '../dto/user.dto';
 import { hashPassword } from '../../../utils/crypto';
 import UserRepository from '../../../repositories/user.repository';
 import { Role } from '@prisma/client';
+import { normalizePhone } from "../../../utils/phoneNormalizer";
 
 async function ensureVentanaActiveOrThrow(ventanaId: string) {
   const v = await prisma.ventana.findUnique({
@@ -19,8 +20,9 @@ export const UserService = {
     const username = dto.username.trim();
     const role: Role = (dto.role as Role) ?? Role.VENTANA;
     const email = dto.email ? dto.email.trim().toLowerCase() : null;
-    const code = dto.code?.trim() ? dto.code.trim() : null;            // ✅ opcional
-    const isActive = dto.isActive ?? true;                              // ✅ opcional (default true)
+    const code = dto.code?.trim() ? dto.code.trim() : null;
+    const phone = dto.phone !== undefined ? normalizePhone(dto.phone) : null;
+    const isActive = dto.isActive ?? true;
 
     // Regla role ↔ ventanaId
     if (role === Role.ADMIN) {
@@ -52,11 +54,12 @@ export const UserService = {
       name: dto.name,
       email,
       username,
+      phone,
       password: hashed,
       role,
       ventanaId: role === Role.ADMIN ? null : dto.ventanaId!,
-      code,                 // ✅ pasa al repo
-      isActive,             // ✅ pasa al repo
+      code,                 
+      isActive,             
     });
 
     const result = await prisma.user.findUnique({

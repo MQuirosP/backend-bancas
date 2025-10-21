@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,9 +8,319 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// ----------------------------------------------------
-// ENUMS
-// ----------------------------------------------------
+model Banca {
+  id                 String                @id @default(uuid())
+  name               String                @unique
+  code               String                @unique
+  defaultMinBet      Float                 @default(100.00)
+  globalMaxPerNumber Int                   @default(5000)
+  isDeleted          Boolean               @default(false)
+  deletedAt          DateTime?
+  deletedBy          String?
+  deletedReason      String?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  address            String?
+  email              String?
+  phone              String?
+  isActive           Boolean               @default(true)
+  salesCutoffMinutes Int                   @default(5)
+  loteriaSettings    BancaLoteriaSetting[]
+  restrictionRules   RestrictionRule[]
+  ventanas           Ventana[]
+}
+
+model Ventana {
+  id                String            @id @default(uuid())
+  bancaId           String
+  name              String
+  code              String            @unique
+  commissionMarginX Float
+  isDeleted         Boolean           @default(false)
+  deletedAt         DateTime?
+  deletedBy         String?
+  deletedReason     String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  address           String?
+  email             String?
+  phone             String?
+  isActive          Boolean           @default(true)
+  restrictionRules  RestrictionRule[]
+  tickets           Ticket[]
+  users             User[]
+  banca             Banca             @relation(fields: [bancaId], references: [id])
+
+  @@index([code])
+  @@index([email])
+  @@index([name])
+  @@index([phone])
+  @@index([code(ops: raw("gin_trgm_ops"))], map: "idx_ventana_code_trgm", type: Gin)
+  @@index([email(ops: raw("gin_trgm_ops"))], map: "idx_ventana_email_trgm", type: Gin)
+  @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_ventana_name_trgm", type: Gin)
+  @@index([phone(ops: raw("gin_trgm_ops"))], map: "idx_ventana_phone_trgm", type: Gin)
+}
+
+model User {
+  id                  String                   @id @default(uuid())
+  ventanaId           String?
+  name                String
+  email               String?                  @unique
+  phone               String?
+  password            String
+  role                Role                     @default(VENTANA)
+  isDeleted           Boolean                  @default(false)
+  deletedAt           DateTime?
+  deletedBy           String?
+  deletedReason       String?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  isActive            Boolean                  @default(true)
+  username            String                   @unique @db.Citext
+  code                String?                  @unique
+  activities          ActivityLog[]
+  refreshTokens       RefreshToken[]
+  restrictionRules    RestrictionRule[]
+  ticketsCreated      Ticket[]
+  TicketPayment       TicketPayment[]
+  ventana             Ventana?                 @relation(fields: [ventanaId], references: [id])
+  multiplierOverrides UserMultiplierOverride[]
+
+  @@index([code])
+  @@index([email])
+  @@index([name])
+  @@index([username])
+  @@index([code(ops: raw("gin_trgm_ops"))], map: "idx_user_code_trgm", type: Gin)
+  @@index([email(ops: raw("gin_trgm_ops"))], map: "idx_user_email_trgm", type: Gin)
+  @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_user_name_trgm", type: Gin)
+  @@index([username(ops: raw("gin_trgm_ops"))], map: "idx_user_username_trgm", type: Gin)
+}
+
+model Loteria {
+  id              String                   @id @default(uuid())
+  name            String                   @unique
+  rulesJson       Json?
+  isDeleted       Boolean                  @default(false)
+  deletedAt       DateTime?
+  deletedBy       String?
+  deletedReason   String?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  isActive        Boolean                  @default(true)
+  loteriaSettings BancaLoteriaSetting[]
+  multipliers     LoteriaMultiplier[]
+  sorteos         Sorteo[]
+  tickets         Ticket[]
+  userOverrides   UserMultiplierOverride[]
+
+  @@index([name])
+  @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_loteria_name_trgm", type: Gin)
+}
+
+model BancaLoteriaSetting {
+  id                String    @id @default(uuid())
+  bancaId           String
+  loteriaId         String
+  baseMultiplierX   Float
+  maxTotalPerSorteo Int?
+  isDeleted         Boolean   @default(false)
+  deletedAt         DateTime?
+  deletedBy         String?
+  deletedReason     String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  banca             Banca     @relation(fields: [bancaId], references: [id])
+  loteria           Loteria   @relation(fields: [loteriaId], references: [id])
+
+  @@unique([bancaId, loteriaId])
+}
+
+model TicketCounter {
+  id            String   @id @default("DEFAULT")
+  currentNumber Int      @default(0)
+  lastUpdate    DateTime @default(now())
+}
+
+model Ticket {
+  id            String          @id @default(uuid())
+  ticketNumber  Int             @unique @default(autoincrement())
+  loteriaId     String
+  ventanaId     String
+  vendedorId    String
+  totalAmount   Float
+  status        TicketStatus    @default(ACTIVE)
+  isDeleted     Boolean         @default(false)
+  deletedAt     DateTime?
+  deletedBy     String?
+  deletedReason String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  isActive      Boolean         @default(true)
+  isWinner      Boolean         @default(false)
+  sorteoId      String
+  jugadas       Jugada[]
+  loteria       Loteria         @relation(fields: [loteriaId], references: [id])
+  sorteo        Sorteo          @relation(fields: [sorteoId], references: [id])
+  vendedor      User            @relation(fields: [vendedorId], references: [id])
+  ventana       Ventana         @relation(fields: [ventanaId], references: [id])
+  TicketPayment TicketPayment[]
+
+  @@index([sorteoId])
+  @@index([vendedorId, createdAt])
+}
+
+model TicketPayment {
+  id              String    @id @default(uuid())
+  ticketId        String
+  amountPaid      Float
+  paidById        String
+  paymentDate     DateTime  @default(now())
+  method          String?
+  notes           String?
+  isReversed      Boolean   @default(false)
+  reversedAt      DateTime?
+  reversedBy      String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  idempotencyKey  String?   @unique
+  isPartial       Boolean   @default(false)
+  remainingAmount Float?
+  paidBy          User      @relation(fields: [paidById], references: [id])
+  ticket          Ticket    @relation(fields: [ticketId], references: [id])
+
+  @@unique([ticketId, isReversed])
+}
+
+model Jugada {
+  id               String             @id @default(uuid())
+  ticketId         String
+  number           String
+  amount           Float
+  finalMultiplierX Float
+  payout           Float?
+  isDeleted        Boolean            @default(false)
+  deletedAt        DateTime?
+  deletedBy        String?
+  deletedReason    String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  isWinner         Boolean            @default(false)
+  multiplierId     String?
+  reventadoNumber  String?
+  type             BetType            @default(NUMERO)
+  multiplier       LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
+  ticket           Ticket             @relation(fields: [ticketId], references: [id])
+
+  @@index([ticketId])
+  @@index([type])
+  @@index([reventadoNumber])
+}
+
+model Sorteo {
+  id                String             @id @default(uuid())
+  loteriaId         String
+  scheduledAt       DateTime
+  status            SorteoStatus       @default(SCHEDULED)
+  winningNumber     String?
+  isDeleted         Boolean            @default(false)
+  deletedAt         DateTime?
+  deletedBy         String?
+  deletedReason     String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  name              String             @unique
+  extraMultiplierId String?
+  extraMultiplierX  Float?
+  extraOutcomeCode  String?
+  extraMultiplier   LoteriaMultiplier? @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
+  loteria           Loteria            @relation(fields: [loteriaId], references: [id])
+  tickets           Ticket[]
+
+  @@index([loteriaId, scheduledAt])
+  @@index([extraMultiplierId])
+  @@index([name])
+  @@index([winningNumber])
+  @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_name_trgm", type: Gin)
+  @@index([winningNumber(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_winning_trgm", type: Gin)
+}
+
+model ActivityLog {
+  id         String       @id @default(uuid())
+  userId     String?
+  action     ActivityType
+  targetType String?
+  targetId   String?
+  details    Json?
+  createdAt  DateTime     @default(now())
+  user       User?        @relation(fields: [userId], references: [id])
+}
+
+model RestrictionRule {
+  id                 String    @id @default(uuid())
+  bancaId            String?
+  ventanaId          String?
+  userId             String?
+  number             String?
+  maxAmount          Float?
+  maxTotal           Float?
+  appliesToDate      DateTime?
+  appliesToHour      Int?
+  isDeleted          Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  salesCutoffMinutes Int?
+  banca              Banca?    @relation(fields: [bancaId], references: [id])
+  user               User?     @relation(fields: [userId], references: [id])
+  ventana            Ventana?  @relation(fields: [ventanaId], references: [id])
+}
+
+model LoteriaMultiplier {
+  id                String         @id @default(uuid())
+  loteriaId         String
+  name              String
+  valueX            Float
+  isActive          Boolean        @default(true)
+  appliesToDate     DateTime?
+  appliesToSorteoId String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  kind              MultiplierKind @default(NUMERO)
+  jugadasAtSale     Jugada[]       @relation("JugadaMultiplierAtSale")
+  loteria           Loteria        @relation(fields: [loteriaId], references: [id])
+  appliedInSorteos  Sorteo[]       @relation("SorteoExtraMultiplier")
+
+  @@index([loteriaId, kind, isActive])
+  @@index([appliesToSorteoId])
+}
+
+model UserMultiplierOverride {
+  id              String    @id @default(uuid())
+  userId          String
+  loteriaId       String
+  baseMultiplierX Float
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+  deletedBy       String?
+  deletedReason   String?
+  isDeleted       Boolean   @default(false)
+  multiplierType  String
+  loteria         Loteria   @relation(fields: [loteriaId], references: [id])
+  user            User      @relation(fields: [userId], references: [id])
+
+  @@unique([userId, loteriaId, multiplierType])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  revoked   Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
 
 enum Role {
   ADMIN
@@ -49,435 +356,42 @@ enum ActivityType {
   LOGIN
   LOGOUT
   PASSWORD_CHANGE
-
   TICKET_CREATE
   TICKET_CANCEL
   TICKET_EVALUATE
   TICKET_RESTORE
-  TICKET_PAY
-  TICKET_PAYMENT_REVERSE
   JUGADA_EVALUATE
   JUGADA_RESTORE
-
   SORTEO_CREATE
   SORTEO_EVALUATE
-  SORTEO_OPEN
   SORTEO_CLOSE
   SORTEO_REOPEN
-  SORTEO_UPDATE
-
   LOTERIA_CREATE
   LOTERIA_UPDATE
   LOTERIA_DELETE
   LOTERIA_RESTORE
-
   MULTIPLIER_SETTING_CREATE
   MULTIPLIER_SETTING_UPDATE
   MULTIPLIER_SETTING_DELETE
   MULTIPLIER_SETTING_RESTORE
-
   BANCA_CREATE
   BANCA_UPDATE
   BANCA_DELETE
   BANCA_RESTORE
-
   VENTANA_CREATE
   VENTANA_UPDATE
   VENTANA_DELETE
   VENTANA_RESTORE
-
   USER_CREATE
   USER_UPDATE
   USER_DELETE
   USER_RESTORE
   USER_ROLE_CHANGE
-
   SOFT_DELETE
   RESTORE
   SYSTEM_ACTION
-}
-
-// ----------------------------------------------------
-// ENTIDADES PRINCIPALES (Organización)
-// ----------------------------------------------------
-
-model Banca {
-  id                 String  @id @default(uuid())
-  name               String  @unique(map: "Banca_name_key")
-  code               String  @unique(map: "Banca_code_key")
-  isActive           Boolean @default(true)
-  defaultMinBet      Float   @default(100.00)
-  globalMaxPerNumber Int     @default(5000)
-
-  // Minutos antes del sorteo para cortar ventas (nivel banca)
-  salesCutoffMinutes Int     @default(5)
-
-  address String?
-  phone   String?
-  email   String?
-
-  ventanas        Ventana[]
-  loteriaSettings BancaLoteriaSetting[]
-
-  // Soft-Delete Fields
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-
-  restrictionRules RestrictionRule[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model Ventana {
-  id                String  @id @default(uuid())
-  bancaId           String
-  name              String
-  code              String  @unique(map: "Ventana_code_key")
-  isActive          Boolean @default(true)
-  commissionMarginX Float
-
-  address String?
-  phone   String?
-  email   String?
-
-  banca   Banca   @relation(fields: [bancaId], references: [id])
-  users   User[]
-  tickets Ticket[]
-
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-
-  restrictionRules RestrictionRule[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // BTREE auxiliares (no chocan con tus GIN *_trgm)
-  @@index([code],  map: "idx_ventana_code_btree")
-  @@index([email], map: "idx_ventana_email_btree")
-  @@index([name],  map: "idx_ventana_name_btree")
-  @@index([phone], map: "idx_ventana_phone_btree")
-}
-
-model User {
-  id        String  @id @default(uuid())
-  ventanaId String?
-  name      String
-  code      String? @unique(map: "User_code_key")
-  email     String? @unique(map: "User_email_key")
-  username  String  @unique(map: "User_username_key") @db.Citext
-  password  String
-  role      Role    @default(VENTANA)
-  isActive  Boolean @default(true)
-
-  refreshTokens RefreshToken[]
-
-  ventana        Ventana?      @relation(fields: [ventanaId], references: [id])
-  ticketsCreated Ticket[]
-  activities     ActivityLog[]
-
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-
-  restrictionRules    RestrictionRule[]
-  multiplierOverrides UserMultiplierOverride[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  TicketPayment TicketPayment[]
-
-  // BTREE auxiliares
-  @@index([code],     map: "idx_user_code_btree")
-  @@index([email],    map: "idx_user_email_btree")
-  @@index([name],     map: "idx_user_name_btree")
-  @@index([username], map: "idx_user_username_btree")
-}
-
-// ----------------------------------------------------
-// ENTIDADES DE JUEGO (Configuración)
-// ----------------------------------------------------
-
-model Loteria {
-  id        String  @id @default(uuid())
-  name      String  @unique(map: "Loteria_name_key")
-  isActive  Boolean @default(true)
-  rulesJson Json?
-  sorteos   Sorteo[]
-
-  tickets         Ticket[]
-  loteriaSettings BancaLoteriaSetting[]
-
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-
-  multipliers   LoteriaMultiplier[]
-  userOverrides UserMultiplierOverride[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // BTREE auxiliar (tu GIN idx_loteria_name_trgm sigue existiendo en DB)
-  @@index([name], map: "idx_loteria_name_btree")
-}
-
-model BancaLoteriaSetting {
-  id                String @id @default(uuid())
-  bancaId           String
-  loteriaId         String
-  baseMultiplierX   Float
-  maxTotalPerSorteo Int?
-
-  banca   Banca   @relation(fields: [bancaId], references: [id])
-  loteria Loteria @relation(fields: [loteriaId], references: [id])
-
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([bancaId, loteriaId])
-}
-
-// ----------------------------------------------------
-// ENTIDADES TRANSACCIONALES
-// ----------------------------------------------------
-
-model TicketCounter {
-  id            String   @id @default("DEFAULT")
-  currentNumber Int      @default(0)
-  lastUpdate    DateTime @default(now())
-}
-
-model Ticket {
-  id           String       @id @default(uuid())
-  ticketNumber Int
-  loteriaId    String
-  ventanaId    String
-  vendedorId   String
-  sorteoId     String
-  totalAmount  Float
-  status       TicketStatus @default(ACTIVE)
-
-  loteria  Loteria @relation(fields: [loteriaId], references: [id])
-  ventana  Ventana @relation(fields: [ventanaId], references: [id])
-  vendedor User    @relation(fields: [vendedorId], references: [id])
-  sorteo   Sorteo  @relation(fields: [sorteoId], references: [id])
-  jugadas  Jugada[]
-
-  isWinner Boolean @default(false)
-  isActive Boolean @default(true)
-
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  TicketPayment TicketPayment[]
-
-  @@unique([ticketNumber])
-  @@index([sorteoId])
-  @@index([vendedorId, createdAt])
-}
-
-model TicketPayment {
-  id          String   @id @default(uuid())
-  ticketId    String
-  amountPaid  Float
-  paidById    String
-  paymentDate DateTime @default(now())
-  method      String?
-  notes       String?
-
-  isPartial       Boolean @default(false)
-  remainingAmount Float?
-
-  idempotencyKey String? @unique
-
-  ticket Ticket @relation(fields: [ticketId], references: [id])
-  paidBy User   @relation(fields: [paidById], references: [id])
-
-  isReversed Boolean   @default(false)
-  reversedAt DateTime?
-  reversedBy String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([ticketId, isReversed])
-}
-
-model Jugada {
-  id               String  @id @default(uuid())
-  ticketId         String
-  number           String
-  amount           Float
-  multiplierId     String?
-  finalMultiplierX Float
-
-  multiplier LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
-
-  type            BetType @default(NUMERO)
-  reventadoNumber String?
-
-  isWinner Boolean @default(false)
-  payout   Float?
-
-  ticket Ticket @relation(fields: [ticketId], references: [id])
-
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([ticketId])
-  @@index([type])
-  @@index([reventadoNumber])
-}
-
-model Sorteo {
-  id            String       @id @default(uuid())
-  name          String       @unique(map: "Sorteo_name_key") // 👈 corregido
-  loteriaId     String
-  scheduledAt   DateTime
-  status        SorteoStatus @default(SCHEDULED)
-  winningNumber String?
-
-  extraOutcomeCode  String?
-  extraMultiplierId String?
-  extraMultiplier   LoteriaMultiplier? @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
-  extraMultiplierX  Float?
-
-  loteria Loteria  @relation(fields: [loteriaId], references: [id])
-  tickets Ticket[]
-
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Usa los nombres que ya existen en Supabase para evitar drift:
-  @@index([loteriaId, scheduledAt], map: "Sorteo_loteriaId_scheduledAt_idx")
-  @@index([extraMultiplierId],      map: "Sorteo_extraMultiplierId_idx")
-
-  // BTREE auxiliares para name/winningNumber (no chocan con GIN *_trgm)
-  @@index([name],          map: "idx_sorteo_name_btree")
-  @@index([winningNumber], map: "idx_sorteo_winning_btree")
-}
-
-// ----------------------------------------------------
-// ENTIDADES DE AUDITORÍA
-// ----------------------------------------------------
-
-model ActivityLog {
-  id         String       @id @default(uuid())
-  userId     String?
-  action     ActivityType
-  targetType String?
-  targetId   String?
-  details    Json?
-
-  user User? @relation(fields: [userId], references: [id])
-
-  createdAt DateTime @default(now())
-}
-
-model RestrictionRule {
-  id        String  @id @default(uuid())
-  bancaId   String?
-  ventanaId String?
-  userId    String?
-  number    String?
-  maxAmount Float?
-  maxTotal  Float?
-
-  salesCutoffMinutes Int?
-  appliesToDate      DateTime?
-  appliesToHour      Int?
-
-  banca   Banca?   @relation(fields: [bancaId], references: [id])
-  ventana Ventana? @relation(fields: [ventanaId], references: [id])
-  user    User?    @relation(fields: [userId], references: [id])
-
-  isDeleted Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model LoteriaMultiplier {
-  id                String   @id @default(uuid())
-  loteriaId         String
-  name              String
-  valueX            Float
-  isActive          Boolean  @default(true)
-  appliesToDate     DateTime?
-  appliesToSorteoId String?
-
-  loteria Loteria @relation(fields: [loteriaId], references: [id])
-
-  jugadasAtSale  Jugada[] @relation("JugadaMultiplierAtSale")
-  appliedInSorteos Sorteo[] @relation("SorteoExtraMultiplier")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  kind MultiplierKind @default(NUMERO)
-
-  @@index([loteriaId, kind, isActive])
-  @@index([appliesToSorteoId])
-}
-
-model UserMultiplierOverride {
-  id              String @id @default(uuid())
-  userId          String
-  loteriaId       String
-  multiplierType  String
-  baseMultiplierX Float
-
-  user    User    @relation(fields: [userId], references: [id])
-  loteria Loteria @relation(fields: [loteriaId], references: [id])
-
-  isDeleted     Boolean   @default(false)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([userId, loteriaId, multiplierType])
-}
-
-model RefreshToken {
-  id        String   @id @default(uuid())
-  userId    String
-  token     String   @unique
-  revoked   Boolean  @default(false)
-  expiresAt DateTime
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  SORTEO_UPDATE
+  TICKET_PAY
+  TICKET_PAYMENT_REVERSE
+  SORTEO_OPEN
 }

@@ -7,3 +7,5 @@ node_modules/
 tests/tickets/concurrency.test.ts
 jest.config.ts
 dist/
+# old prisma migrations parked locally
+src/prisma/migrations_archive/
