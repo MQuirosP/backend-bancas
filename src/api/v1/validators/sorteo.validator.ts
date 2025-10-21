@@ -9,10 +9,12 @@ export const CreateSorteoSchema = z.object({
   loteriaId: z.uuid("loteriaId inválido"),
   scheduledAt: z.coerce.date(),
   name: z.string().trim().min(1).max(100),
+  isActive: z.coerce.boolean().optional(),
 }).strict();
 
 export const UpdateSorteoSchema = z.object({
   scheduledAt: z.coerce.date().optional(),
+  isActive: z.coerce.boolean().optional(),
 }).strict();
 
 export const EvaluateSorteoSchema = z.object({
@@ -28,6 +30,7 @@ export const ListSorteosQuerySchema = z.object({
   loteriaId: z.string().uuid().optional(),
   status: z.enum(["SCHEDULED","OPEN","EVALUATED","CLOSED"]).optional(),
   search: z.string().trim().min(1).max(100).optional(),
+  isActive: z.coerce.boolean().optional(),
 }).strict();
 
 export const validateIdParam = (req: Request, res: Response, next: NextFunction) =>

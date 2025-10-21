@@ -52,7 +52,7 @@ export const SorteoService = {
 
   async update(id: string, data: UpdateSorteoDTO, userId: string) {
     const existing = await SorteoRepository.findById(id);
-    if (!existing || existing.isDeleted)
+    if (!existing)
       throw new AppError("Sorteo no encontrado", 404);
     if (FINAL_STATES.has(existing.status)) {
       throw new AppError(
@@ -88,7 +88,7 @@ export const SorteoService = {
 
   async open(id: string, userId: string) {
     const existing = await SorteoRepository.findById(id);
-    if (!existing || existing.isDeleted)
+    if (!existing)
       throw new AppError("Sorteo no encontrado", 404);
     if (existing.status !== SorteoStatus.SCHEDULED) {
       throw new AppError("Solo se puede abrir desde SCHEDULED", 409);
@@ -114,7 +114,7 @@ export const SorteoService = {
 
   async close(id: string, userId: string) {
     const existing = await SorteoRepository.findById(id);
-    if (!existing || existing.isDeleted)
+    if (!existing)
       throw new AppError("Sorteo no encontrado", 404);
     if (existing.status !== SorteoStatus.OPEN) {
       throw new AppError("Solo se puede cerrar desde OPEN", 409);
@@ -150,7 +150,7 @@ export const SorteoService = {
 
     // 1) Cargar sorteo y validar estado
     const existing = await SorteoRepository.findById(id);
-    if (!existing || existing.isDeleted)
+    if (!existing)
       throw new AppError("Sorteo no encontrado", 404);
     if (!EVALUABLE_STATES.has(existing.status)) {
       throw new AppError("Solo se puede evaluar desde OPEN", 409);
@@ -268,7 +268,7 @@ export const SorteoService = {
       ]);
 
       const tickets = await tx.ticket.findMany({
-        where: { sorteoId: id, isDeleted: false },
+        where: { sorteoId: id },
         select: { id: true },
       });
 
@@ -370,8 +370,8 @@ export const SorteoService = {
   },
 
   async findById(id: string) {
-    const s = await SorteoRepository.findById(id);
-    if (!s || s.isDeleted) throw new AppError("Sorteo no encontrado", 404);
-    return s;
+    const sorteo = await SorteoRepository.findById(id);
+    if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
+    return sorteo;
   },
 };

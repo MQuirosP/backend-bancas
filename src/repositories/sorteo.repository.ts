@@ -205,12 +205,12 @@ const SorteoRepository = {
     page: number;
     pageSize: number;
     status?: SorteoStatus;
-    search?: string; // ✅
+    search?: string;
   }) {
     const { loteriaId, page, pageSize, status, search } = params;
 
     const where: Prisma.SorteoWhereInput = {
-      isDeleted: false,
+      isActive: true,
       ...(loteriaId ? { loteriaId } : {}),
       ...(status ? { status } : {}),
     };
@@ -222,12 +222,15 @@ const SorteoRepository = {
           ? where.AND
           : [where.AND]
         : [];
+
       where.AND = [
         ...existingAnd,
         {
           OR: [
             { name: { contains: s, mode: "insensitive" } },
-            { winningNumber: { contains: s, mode: "insensitive" } }, // campo existe en tu schema
+            { winningNumber: { contains: s, mode: "insensitive" } },
+            // 👇 permite buscar por nombre de lotería
+            { loteria: { name: { contains: s, mode: "insensitive" } } },
           ],
         },
       ];
@@ -242,6 +245,7 @@ const SorteoRepository = {
         take: pageSize,
         orderBy: { scheduledAt: "desc" },
         include: {
+          loteria: { select: { id: true, name: true } }, // 👈 incluir nombre de la lotería
           extraMultiplier: { select: { id: true, name: true, valueX: true } },
         },
       }),
@@ -258,7 +262,7 @@ const SorteoRepository = {
     const s = await prisma.sorteo.update({
       where: { id },
       data: {
-        isDeleted: true,
+        isActive: false,
         deletedAt: new Date(),
         deletedBy: userId,
         deletedReason: reason,
