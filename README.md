@@ -246,6 +246,7 @@ LOG_LEVEL=info
 Desarrollador Backend (Trainee)  
 📧 [mquirosp78@gmail.com](mailto:mquirosp78@gmail.com)  
 🌐 [github.com/MQuirosP](https://github.com/MQuirosP)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/MQuirosP/backend-bancas)
 
 ---
 
