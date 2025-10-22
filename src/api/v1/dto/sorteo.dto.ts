@@ -8,7 +8,9 @@ export interface CreateSorteoDTO {
 }
 
 export interface UpdateSorteoDTO {
+  loteriaId?: string;
   scheduledAt?: Date | string;
+  name?: string;
   status?: SorteoStatus;
   isActive?: boolean;
   winningNumber?: string;

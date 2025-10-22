@@ -51,40 +51,52 @@ export const SorteoService = {
   },
 
   async update(id: string, data: UpdateSorteoDTO, userId: string) {
-    const existing = await SorteoRepository.findById(id);
-    if (!existing)
-      throw new AppError("Sorteo no encontrado", 404);
-    if (FINAL_STATES.has(existing.status)) {
-      throw new AppError(
-        "No se puede editar un sorteo evaluado o cerrado",
-        409
-      );
+  const existing = await SorteoRepository.findById(id);
+  if (!existing) throw new AppError("Sorteo no encontrado", 404);
+  if (FINAL_STATES.has(existing.status)) {
+    throw new AppError("No se puede editar un sorteo evaluado o cerrado", 409);
+  }
+
+  // ✅ Validar loteriaId si viene y (opcional) restringir en estados no SCHEDULED
+  if (data.loteriaId && data.loteriaId !== existing.loteriaId) {
+    if (existing.status !== "SCHEDULED") {
+      throw new AppError("Solo se puede cambiar la lotería en estado SCHEDULED", 409);
     }
+    const loteria = await prisma.loteria.findUnique({ where: { id: data.loteriaId } });
+    if (!loteria || loteria.isDeleted) throw new AppError("Lotería no encontrada", 404);
+  }
 
-    // solo pasamos lo permitido por el schema (p. ej. scheduledAt)
-    const s = await SorteoRepository.update(id, {
-      scheduledAt: data.scheduledAt,
-    } as UpdateSorteoDTO);
+  // ✅ Pasar SOLO lo permitido por el schema (pero incluyendo name y loteriaId)
+  const s = await SorteoRepository.update(id, {
+    name: data.name,
+    loteriaId: data.loteriaId,
+    scheduledAt: data.scheduledAt,
+    // isActive si también quieres permitirlo:
+    isActive: data.isActive,
+  } as UpdateSorteoDTO);
 
-    const details: Record<string, any> = {};
-    if (data.scheduledAt) {
-      details.scheduledAt = (
-        data.scheduledAt instanceof Date
-          ? data.scheduledAt
-          : new Date(data.scheduledAt)
-      ).toISOString();
-    }
+  const details: Record<string, any> = {};
+  if (data.name && data.name !== existing.name) details.name = data.name;
+  if (data.loteriaId && data.loteriaId !== existing.loteriaId) details.loteriaId = data.loteriaId;
+  if (data.scheduledAt) {
+    details.scheduledAt = (
+      data.scheduledAt instanceof Date ? data.scheduledAt : new Date(data.scheduledAt)
+    ).toISOString();
+  }
+  if (data.isActive !== undefined && data.isActive !== (existing as any).isActive) {
+    details.isActive = data.isActive;
+  }
 
-    await ActivityService.log({
-      userId,
-      action: ActivityType.SORTEO_UPDATE,
-      targetType: "SORTEO",
-      targetId: id,
-      details,
-    });
+  await ActivityService.log({
+    userId,
+    action: ActivityType.SORTEO_UPDATE,
+    targetType: "SORTEO",
+    targetId: id,
+    details,
+  });
 
-    return s;
-  },
+  return s;
+},
 
   async open(id: string, userId: string) {
     const existing = await SorteoRepository.findById(id);

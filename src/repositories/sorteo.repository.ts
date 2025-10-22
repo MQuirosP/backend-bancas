@@ -42,6 +42,9 @@ const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
       : new Date(d.scheduledAt)
     : undefined,
 
+    name: d.name ?? undefined,
+    ...(d.loteriaId ? { loteria: { connect: { id: d.loteriaId } } } : {}),
+    ...(typeof d.isActive === "boolean" ? { isActive: d.isActive } : {}),
   // No se permite tocar:
   // - status
   // - winningNumber

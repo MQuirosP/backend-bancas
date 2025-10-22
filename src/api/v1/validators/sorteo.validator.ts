@@ -13,6 +13,8 @@ export const CreateSorteoSchema = z.object({
 }).strict();
 
 export const UpdateSorteoSchema = z.object({
+  loteriaId: z.uuid("loteriaId inválido").optional(),
+  name: z.string().trim().min(1).max(100).optional(),
   scheduledAt: z.coerce.date().optional(),
   isActive: z.coerce.boolean().optional(),
 }).strict();
@@ -27,7 +29,7 @@ export const EvaluateSorteoSchema = z.object({
 export const ListSorteosQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
-  loteriaId: z.string().uuid().optional(),
+  loteriaId: z.uuid().optional(),
   status: z.enum(["SCHEDULED","OPEN","EVALUATED","CLOSED"]).optional(),
   search: z.string().trim().min(1).max(100).optional(),
   isActive: z.coerce.boolean().optional(),
