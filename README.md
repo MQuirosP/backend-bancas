@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD024 -->
+
 # 🏦 Banca Management Backend
 
 > **Proyecto backend modular y escalable** para la gestión integral de bancas de lotería.  
@@ -94,15 +96,39 @@ src/
 
 - Evaluación automática: `payout = jugada.amount × finalMultiplierX`.
 
-### Rutas Sorteos
+### Rutas Sorteos (v1)
 
 ```http
-POST   /api/v1/sorteos
-PATCH  /api/v1/sorteos/:id/open
-PATCH  /api/v1/sorteos/:id/close
-PATCH  /api/v1/sorteos/:id/evaluate
-GET    /api/v1/sorteos
+POST    /api/v1/sorteos                 # Crear sorteo
+PUT     /api/v1/sorteos/:id             # Reprogramar (solo scheduledAt)  ⬅️ rc5
+PATCH   /api/v1/sorteos/:id             # Reprogramar (solo scheduledAt)  ⬅️ rc5
+PATCH   /api/v1/sorteos/:id/open        # Abrir sorteo (SCHEDULED -> OPEN)
+PATCH   /api/v1/sorteos/:id/close       # Cerrar sorteo (OPEN -> CLOSED)
+PATCH   /api/v1/sorteos/:id/evaluate    # Evaluar sorteo (ganador + REVENTADO opcional) ⬅️ rc5
+GET     /api/v1/sorteos                 # Listar (con search y filtros)   ⬅️ rc5
+GET     /api/v1/sorteos/:id             # Obtener por id
+DELETE  /api/v1/sorteos/:id             # Soft-delete
 ```
+
+#### Contrato rc5 — **Update** y **Evaluate**
+
+- **Update (`PUT/PATCH /sorteos/:id`)**  
+  - **Únicamente** admite `scheduledAt` (opcional).  
+  - Cualquier otra clave (p.ej. `extraOutcomeCode`, `extraMultiplierId`, `loteriaId`, `status`) será **rechazada** por el schema estricto (400 *unrecognized_keys*).
+
+- **Evaluate (`PATCH /sorteos/:id/evaluate`)**  
+  - Requiere `winningNumber` (2 dígitos).  
+  - Opcionales:  
+    - `extraMultiplierId` (tipo `REVENTADO`, activo, misma lotería; si tiene `appliesToSorteoId`, debe coincidir).  
+    - `extraOutcomeCode` (etiqueta libre; si no viene, se usa el `name` del multiplicador).  
+  - Efectos:
+    - Conecta/desconecta relación `extraMultiplier`.
+    - Snapshot `extraMultiplierX` en sorteo y `finalMultiplierX` en jugadas de tipo `REVENTADO`.
+    - Marca tickets del sorteo como `EVALUATED` y desactiva `isActive`.
+
+- **Search en `/sorteos`**  
+  - Búsqueda por `sorteo.name`, `winningNumber` y **nombre de lotería**.
+  - Incluye `loteria { id, name }` y `extraMultiplier { id, name, valueX }` en list/detalle.
 
 ---
 
@@ -197,6 +223,8 @@ await prisma.activityLog.create({
 });
 ```
 
+> También se auditan: `SORTEO_CREATE`, `SORTEO_UPDATE`, `SORTEO_OPEN`, `SORTEO_CLOSE`, `SORTEO_EVALUATE`.
+
 ---
 
 ## 🧱 Fases del Proyecto
@@ -257,5 +285,5 @@ Consulta el archivo `LICENSE` para más detalles.
 
 ---
 
-> 💡 *Versión actual:* `v1.0.0-rc4`  
-> *Próximo hito:* integración de pagos, reportes y despliegue CI/CD con Docker + GitHub Actions.
+> 💡 *Versión actual:* `v1.0.0-rc5`  
+> *Notas rc5:* Update restringido a `scheduledAt`, evaluación con `extraMultiplierId/extraOutcomeCode`, búsqueda por nombre/ganador/lotería y auditoría completa de eventos de sorteo.

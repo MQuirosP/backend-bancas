@@ -160,3 +160,45 @@ TypeScript · Express.js · Prisma ORM · PostgreSQL · JWT · Zod · Winston
 > La próxima iteración se enfocará en pagos, reportes, documentación y despliegue continuo.
 
 ---
+
+## 🏷️ v1.0.0-rc5 — Sorteos hardening & search
+
+📅 **Fecha:** 2025-10-22  
+🔖 **Rama:** `master`
+
+### ✳️ Nuevas/ajustes clave
+
+- **Update de Sorteos endurecido (solo reprogramación)**
+  - `UpdateSorteoSchema` con `.strict()` y campos opcionales.
+  - En Servicio/Repositorio **solo** se aplica `scheduledAt` en `PUT/PATCH /sorteos/:id`.
+  - Evita cambios de lotería y rechaza llaves no permitidas (p. ej. `extraOutcomeCode`, `extraMultiplierId`).
+
+- **Evaluación con multiplicador extra (REVENTADO)**
+  - `PATCH /sorteos/:id/evaluate` acepta `winningNumber` + opcionales `extraMultiplierId` y `extraOutcomeCode`.
+  - Validaciones: activo, pertenece a la misma lotería, tipo `REVENTADO`, y (si existe) `appliesToSorteoId`.
+  - Conecta/desconecta relación `extraMultiplier` y hace **snapshot** `extraMultiplierX`.
+  - Payouts:
+    - `NUMERO`: `amount * finalMultiplierX`.
+    - `REVENTADO`: `amount * extraMultiplierX`.
+  - Tickets del sorteo pasan a `EVALUATED` con `isActive = false`.
+
+- **Listado con búsqueda avanzada**
+  - `ListSorteosQuerySchema` en `.strict()` y soporte de `search` en repositorio:
+    - Busca por `sorteo.name`, `winningNumber` y **nombre de lotería**.
+  - Inclusión de `loteria { id, name }` y `extraMultiplier { id, name, valueX }` en respuestas de lista/detalle.
+
+- **Auditoría y logging**
+  - `ActivityLog` para `SORTEO_CREATE`, `SORTEO_UPDATE`, `SORTEO_OPEN`, `SORTEO_CLOSE`, `SORTEO_EVALUATE`.
+  - Logs estructurados en repositorio/servicio para operaciones críticas.
+
+### 🛠️ Fixes
+
+- **400 por “claves no permitidas”** en `PUT /sorteos/:id` al enviar `extraOutcomeCode/extraMultiplierId`.  
+  ➜ Validación estricta y contrato documentado: esos campos **van solo** en `/evaluate`.
+
+### ⚠️ Breaking changes (contrato)
+
+- No enviar `extraMultiplierId` ni `extraOutcomeCode` a `PUT/PATCH /sorteos/:id`. Usar `PATCH /sorteos/:id/evaluate`.
+- No se permite cambiar la lotería de un sorteo vía update; únicamente reprogramar `scheduledAt`.
+
+---
