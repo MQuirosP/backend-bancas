@@ -210,7 +210,7 @@ const SorteoRepository = {
     const { loteriaId, page, pageSize, status, search } = params;
 
     const where: Prisma.SorteoWhereInput = {
-      isActive: true,
+      // isActive: true,
       ...(loteriaId ? { loteriaId } : {}),
       ...(status ? { status } : {}),
     };
