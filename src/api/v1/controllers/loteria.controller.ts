@@ -68,7 +68,6 @@ export const LoteriaController = {
         hasSearch: Boolean(search && search.trim()),
       },
     });
-    console.log("Loteria list meta:", meta, "search:", search, "data:", data);
     return success(res, data, meta);
   },
 
