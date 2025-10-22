@@ -1,3 +1,4 @@
+// src/api/v1/services/multiplier.service.ts
 import { AppError } from "../../../core/errors";
 import { ActivityType } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
@@ -10,13 +11,15 @@ import {
 
 const MultiplierService = {
   async create(userId: string, data: CreateMultiplierInput) {
-    // Unicidad lógica: (loteriaId, name) activos
     const dup = await prisma.loteriaMultiplier.findFirst({
       where: { loteriaId: data.loteriaId, name: data.name, isActive: true },
       select: { id: true },
     });
     if (dup) {
-      throw new AppError("A multiplier with the same name is already active for this loteria", 409);
+      throw new AppError(
+        "A multiplier with the same name is already active for this loteria",
+        409
+      );
     }
 
     const created = await prisma.loteriaMultiplier.create({
@@ -29,6 +32,8 @@ const MultiplierService = {
         appliesToSorteoId: data.appliesToSorteoId ?? null,
         isActive: data.isActive ?? true,
       },
+      // 👉 devuelve también la lotería al crear (opcional pero útil para front)
+      include: { loteria: { select: { id: true, name: true } } },
     });
 
     await ActivityService.log({
@@ -46,7 +51,6 @@ const MultiplierService = {
     const existing = await prisma.loteriaMultiplier.findUnique({ where: { id } });
     if (!existing) throw new AppError("Multiplier not found", 404);
 
-    // Evitar duplicado activo si cambian el name
     if (data.name && data.name !== existing.name) {
       const dup = await prisma.loteriaMultiplier.findFirst({
         where: {
@@ -58,7 +62,10 @@ const MultiplierService = {
         select: { id: true },
       });
       if (dup) {
-        throw new AppError("A multiplier with the same name is already active for this loteria", 409);
+        throw new AppError(
+          "A multiplier with the same name is already active for this loteria",
+          409
+        );
       }
     }
 
@@ -69,11 +76,17 @@ const MultiplierService = {
         valueX: data.valueX ?? existing.valueX,
         kind: data.kind ?? existing.kind,
         appliesToDate:
-          data.appliesToDate === undefined ? existing.appliesToDate : data.appliesToDate, // respeta null explícito
+          data.appliesToDate === undefined
+            ? existing.appliesToDate
+            : data.appliesToDate,
         appliesToSorteoId:
-          data.appliesToSorteoId === undefined ? existing.appliesToSorteoId : data.appliesToSorteoId,
+          data.appliesToSorteoId === undefined
+            ? existing.appliesToSorteoId
+            : data.appliesToSorteoId,
         isActive: data.isActive ?? existing.isActive,
       },
+      // 👉 devuelve también la lotería al actualizar
+      include: { loteria: { select: { id: true, name: true } } },
     });
 
     await ActivityService.log({
@@ -91,11 +104,18 @@ const MultiplierService = {
     const existing = await prisma.loteriaMultiplier.findUnique({ where: { id } });
     if (!existing) throw new AppError("Multiplier not found", 404);
 
-    if (existing.isActive === enable) return existing;
+    if (existing.isActive === enable) {
+      // Devuelve con include consistente
+      return prisma.loteriaMultiplier.findUnique({
+        where: { id },
+        include: { loteria: { select: { id: true, name: true } } },
+      }) as any;
+    }
 
     const updated = await prisma.loteriaMultiplier.update({
       where: { id },
       data: { isActive: enable },
+      include: { loteria: { select: { id: true, name: true } } },
     });
 
     await ActivityService.log({
@@ -112,11 +132,17 @@ const MultiplierService = {
   async restore(userId: string, id: string) {
     const existing = await prisma.loteriaMultiplier.findUnique({ where: { id } });
     if (!existing) throw new AppError("Multiplier not found", 404);
-    if (existing.isActive) return existing;
+    if (existing.isActive) {
+      return prisma.loteriaMultiplier.findUnique({
+        where: { id },
+        include: { loteria: { select: { id: true, name: true } } },
+      }) as any;
+    }
 
     const restored = await prisma.loteriaMultiplier.update({
       where: { id },
       data: { isActive: true },
+      include: { loteria: { select: { id: true, name: true } } },
     });
 
     await ActivityService.log({
@@ -130,8 +156,12 @@ const MultiplierService = {
     return restored;
   },
 
+  // ✅ incluye lotería para detalle
   async getById(id: string) {
-    const r = await prisma.loteriaMultiplier.findUnique({ where: { id } });
+    const r = await prisma.loteriaMultiplier.findUnique({
+      where: { id },
+      include: { loteria: { select: { id: true, name: true } } },
+    });
     if (!r) throw new AppError("Multiplier not found", 404);
     return r;
   },
@@ -139,12 +169,25 @@ const MultiplierService = {
   async list(query: ListMultiplierQueryInput) {
     const q = query;
 
-    const where: any = {};
-    if (q.loteriaId) where.loteriaId = q.loteriaId;
-    if (q.kind) where.kind = q.kind;
-    if (typeof q.isActive === "boolean") where.isActive = q.isActive;
-    if (q.appliesToSorteoId) where.appliesToSorteoId = q.appliesToSorteoId;
-    if (q.q) where.name = { contains: q.q, mode: "insensitive" };
+    // 👉 construir where con búsqueda por name y por nombre de lotería
+    const and: any[] = [];
+    if (q.q?.trim()) {
+      const s = q.q.trim();
+      and.push({
+        OR: [
+          { name: { contains: s, mode: "insensitive" } },
+          { loteria: { name: { contains: s, mode: "insensitive" } } as any },
+        ],
+      });
+    }
+
+    const where: any = {
+      ...(q.loteriaId ? { loteriaId: q.loteriaId } : {}),
+      ...(q.kind ? { kind: q.kind } : {}),
+      ...(typeof q.isActive === "boolean" ? { isActive: q.isActive } : {}),
+      ...(q.appliesToSorteoId ? { appliesToSorteoId: q.appliesToSorteoId } : {}),
+      ...(and.length ? { AND: and } : {}),
+    };
 
     const page = q.page ?? 1;
     const pageSize = q.pageSize ?? 20;
@@ -156,6 +199,7 @@ const MultiplierService = {
         skip,
         take: pageSize,
         orderBy: { updatedAt: "desc" },
+        include: { loteria: { select: { id: true, name: true } } },
       }),
       prisma.loteriaMultiplier.count({ where }),
     ]);
