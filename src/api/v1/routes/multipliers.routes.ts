@@ -21,7 +21,7 @@ router.get("/", requireAdmin, validateQuery(ListMultipliersQuerySchema), Multipl
 
 router.get("/:id", requireAdmin, validateParams(MultiplierIdParamSchema), MultiplierController.getById);
 
-router.patch(
+router.put(
   "/:id",
   requireAdmin,
   validateParams(MultiplierIdParamSchema),

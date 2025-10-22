@@ -17,6 +17,7 @@ export const CreateMultiplierSchema = z.object({
 }).strict();
 
 export const UpdateMultiplierSchema = z.object({
+  loteriaId: z.uuid("loteriaId inválido").optional(),
   name: z.string().min(2).max(32).optional(),
   valueX: z.coerce.number().positive().optional(),
   kind: MultiplierKindSchema.optional(),
