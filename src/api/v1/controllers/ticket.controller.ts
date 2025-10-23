@@ -1,7 +1,11 @@
-import { Request, Response } from "express";
+// src/modules/tickets/controllers/ticket.controller.ts
+import { Response } from "express";
 import { TicketService } from "../services/ticket.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
+
+function startOfDay(d: Date) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
+function endOfDay(d: Date)   { const x = new Date(d); x.setHours(23,59,59,999); return x; }
 
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
@@ -10,24 +14,51 @@ export const TicketController = {
     return success(res, result);
   },
 
-  async getById(req: Request, res: Response) {
+  async getById(req: AuthenticatedRequest, res: Response) {
     const result = await TicketService.getById(req.params.id);
     return success(res, result);
   },
 
-  async list(req: Request, res: Response) {
-  const { page = 1, pageSize = 10, ...filters } = req.query;
-  const result = await TicketService.list(Number(page), Number(pageSize), filters);
-  return success(res, result);
-},
+  async list(req: AuthenticatedRequest, res: Response) {
+    const { page = 1, pageSize = 10, scope = "mine", date = "today", from, to, ...rest } = req.query as any;
+
+    const filters: any = { ...rest };
+
+    // scope → filtrar por vendedor autenticado
+    if (scope === "mine") {
+      filters.userId = req.user!.id;
+    }
+
+    // date → rango de fechas sobre createdAt
+    if (date === "today") {
+      const now = new Date();
+      filters.dateFrom = startOfDay(now);
+      filters.dateTo = endOfDay(now);
+    } else if (date === "yesterday") {
+      const y = new Date();
+      y.setDate(y.getDate() - 1);
+      filters.dateFrom = startOfDay(y);
+      filters.dateTo = endOfDay(y);
+    } else if (date === "range") {
+      if (!from || !to) {
+        return res.status(400).json({ success: false, message: "Para date=range debes enviar from y to (ISO)" });
+      }
+      const df = new Date(from);
+      const dt = new Date(to);
+      if (isNaN(df.getTime()) || isNaN(dt.getTime())) {
+        return res.status(400).json({ success: false, message: "from/to inválidos" });
+      }
+      filters.dateFrom = df;
+      filters.dateTo = dt;
+    }
+
+    const result = await TicketService.list(Number(page), Number(pageSize), filters);
+    return success(res, result);
+  },
 
   async cancel(req: AuthenticatedRequest, res: Response) {
     const userId = req.user!.id;
-    const result = await TicketService.cancel(
-      req.params.id,
-      userId,
-      req.requestId
-    );
+    const result = await TicketService.cancel(req.params.id, userId, req.requestId);
     return success(res, result);
   },
 };

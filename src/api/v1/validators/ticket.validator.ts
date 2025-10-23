@@ -1,9 +1,8 @@
+// src/modules/tickets/validators/ticket.validator.ts
 import { z } from "zod";
 import { validateQuery } from "../../../middlewares/validate.middleware";
 
-const numeroSchema = z
-  .string()
-  .regex(/^\d{1,2}$/, "Número debe ser 0..99 (uno o dos dígitos)");
+const numeroSchema = z.string().regex(/^\d{1,2}$/, "Número debe ser 0..99 (uno o dos dígitos)");
 
 const JugadaNumeroSchema = z.object({
   type: z.literal("NUMERO"),
@@ -15,7 +14,7 @@ const JugadaNumeroSchema = z.object({
 
 const JugadaReventadoSchema = z.object({
   type: z.literal("REVENTADO"),
-  number: numeroSchema, // requerido y debe ser igual a reventadoNumber
+  number: numeroSchema,
   reventadoNumber: numeroSchema,
   amount: z.number().positive(),
 });
@@ -24,16 +23,11 @@ export const CreateTicketSchema = z
   .object({
     loteriaId: z.uuid("loteriaId inválido"),
     sorteoId: z.uuid("sorteoId inválido"),
-    ventanaId: z.uuid("ventanaId inválido").optional(), // hazlo optional si lo infieres por rol
-    jugadas: z
-      .array(z.union([JugadaNumeroSchema, JugadaReventadoSchema]))
-      .min(1),
+    ventanaId: z.uuid("ventanaId inválido").optional(),
+    jugadas: z.array(z.union([JugadaNumeroSchema, JugadaReventadoSchema])).min(1),
   })
   .superRefine((val, ctx) => {
-    const numeros = new Set(
-      val.jugadas.filter((j) => j.type === "NUMERO").map((j) => j.number)
-    );
-
+    const numeros = new Set(val.jugadas.filter(j => j.type === "NUMERO").map(j => j.number));
     for (const [i, j] of val.jugadas.entries()) {
       if (j.type === "REVENTADO") {
         if (!numeros.has(j.reventadoNumber)) {
@@ -54,13 +48,22 @@ export const CreateTicketSchema = z
     }
   });
 
-  export const ListTicketsQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).optional(),
-  pageSize: z.coerce.number().int().min(1).max(100).optional(),
-  status: z.enum(["ACTIVE","EVALUATED","CANCELLED","RESTORED"]).optional(),
-  isDeleted: z.coerce.boolean().optional(),
-  sorteoId: z.uuid().optional(),
-  search: z.string().trim().min(1).max(100).optional(), // ✅ unificado
-}).strict();
+export const ListTicketsQuerySchema = z
+  .object({
+    // existentes
+    page: z.coerce.number().int().min(1).optional(),
+    pageSize: z.coerce.number().int().min(1).max(100).optional(),
+    status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED"]).optional(),
+    isDeleted: z.coerce.boolean().optional(),
+    sorteoId: z.uuid().optional(),
+    search: z.string().trim().min(1).max(100).optional(),
+
+    // nuevos
+    scope: z.enum(["mine", "all"]).optional().default("mine"),
+    date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+  })
+  .strict();
 
 export const validateListTicketsQuery = validateQuery(ListTicketsQuerySchema);

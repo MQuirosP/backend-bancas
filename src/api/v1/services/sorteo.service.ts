@@ -1,8 +1,8 @@
+// src/modules/sorteos/services/sorteo.service.ts
 import {
   ActivityType,
   Prisma,
   SorteoStatus,
-  TicketStatus,
 } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
@@ -18,7 +18,6 @@ const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
   SorteoStatus.CLOSED,
 ]);
-
 const EVALUABLE_STATES = new Set<SorteoStatus>([SorteoStatus.OPEN]);
 
 export const SorteoService = {
@@ -51,57 +50,54 @@ export const SorteoService = {
   },
 
   async update(id: string, data: UpdateSorteoDTO, userId: string) {
-  const existing = await SorteoRepository.findById(id);
-  if (!existing) throw new AppError("Sorteo no encontrado", 404);
-  if (FINAL_STATES.has(existing.status)) {
-    throw new AppError("No se puede editar un sorteo evaluado o cerrado", 409);
-  }
-
-  // ✅ Validar loteriaId si viene y (opcional) restringir en estados no SCHEDULED
-  if (data.loteriaId && data.loteriaId !== existing.loteriaId) {
-    if (existing.status !== "SCHEDULED") {
-      throw new AppError("Solo se puede cambiar la lotería en estado SCHEDULED", 409);
+    const existing = await SorteoRepository.findById(id);
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+    if (FINAL_STATES.has(existing.status)) {
+      throw new AppError("No se puede editar un sorteo evaluado o cerrado", 409);
     }
-    const loteria = await prisma.loteria.findUnique({ where: { id: data.loteriaId } });
-    if (!loteria || loteria.isDeleted) throw new AppError("Lotería no encontrada", 404);
-  }
 
-  // ✅ Pasar SOLO lo permitido por el schema (pero incluyendo name y loteriaId)
-  const s = await SorteoRepository.update(id, {
-    name: data.name,
-    loteriaId: data.loteriaId,
-    scheduledAt: data.scheduledAt,
-    // isActive si también quieres permitirlo:
-    isActive: data.isActive,
-  } as UpdateSorteoDTO);
+    // Validar cambio de lotería solo desde SCHEDULED
+    if (data.loteriaId && data.loteriaId !== existing.loteriaId) {
+      if (existing.status !== "SCHEDULED") {
+        throw new AppError("Solo se puede cambiar la lotería en estado SCHEDULED", 409);
+      }
+      const loteria = await prisma.loteria.findUnique({ where: { id: data.loteriaId } });
+      if (!loteria || loteria.isDeleted) throw new AppError("Lotería no encontrada", 404);
+    }
 
-  const details: Record<string, any> = {};
-  if (data.name && data.name !== existing.name) details.name = data.name;
-  if (data.loteriaId && data.loteriaId !== existing.loteriaId) details.loteriaId = data.loteriaId;
-  if (data.scheduledAt) {
-    details.scheduledAt = (
-      data.scheduledAt instanceof Date ? data.scheduledAt : new Date(data.scheduledAt)
-    ).toISOString();
-  }
-  if (data.isActive !== undefined && data.isActive !== (existing as any).isActive) {
-    details.isActive = data.isActive;
-  }
+    const s = await SorteoRepository.update(id, {
+      name: data.name,
+      loteriaId: data.loteriaId,
+      scheduledAt: data.scheduledAt,
+      isActive: data.isActive,
+    } as UpdateSorteoDTO);
 
-  await ActivityService.log({
-    userId,
-    action: ActivityType.SORTEO_UPDATE,
-    targetType: "SORTEO",
-    targetId: id,
-    details,
-  });
+    const details: Record<string, any> = {};
+    if (data.name && data.name !== existing.name) details.name = data.name;
+    if (data.loteriaId && data.loteriaId !== existing.loteriaId) details.loteriaId = data.loteriaId;
+    if (data.scheduledAt) {
+      details.scheduledAt = (
+        data.scheduledAt instanceof Date ? data.scheduledAt : new Date(data.scheduledAt)
+      ).toISOString();
+    }
+    if (data.isActive !== undefined && data.isActive !== (existing as any).isActive) {
+      details.isActive = data.isActive;
+    }
 
-  return s;
-},
+    await ActivityService.log({
+      userId,
+      action: ActivityType.SORTEO_UPDATE,
+      targetType: "SORTEO",
+      targetId: id,
+      details,
+    });
+
+    return s;
+  },
 
   async open(id: string, userId: string) {
     const existing = await SorteoRepository.findById(id);
-    if (!existing)
-      throw new AppError("Sorteo no encontrado", 404);
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
     if (existing.status !== SorteoStatus.SCHEDULED) {
       throw new AppError("Solo se puede abrir desde SCHEDULED", 409);
     }
@@ -126,8 +122,7 @@ export const SorteoService = {
 
   async close(id: string, userId: string) {
     const existing = await SorteoRepository.findById(id);
-    if (!existing)
-      throw new AppError("Sorteo no encontrado", 404);
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
     if (existing.status !== SorteoStatus.OPEN) {
       throw new AppError("Solo se puede cerrar desde OPEN", 409);
     }
@@ -162,13 +157,12 @@ export const SorteoService = {
 
     // 1) Cargar sorteo y validar estado
     const existing = await SorteoRepository.findById(id);
-    if (!existing)
-      throw new AppError("Sorteo no encontrado", 404);
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
     if (!EVALUABLE_STATES.has(existing.status)) {
       throw new AppError("Solo se puede evaluar desde OPEN", 409);
     }
 
-    // 2) Resolver multiplicador extra (si viene) sin asumir colores
+    // 2) Resolver multiplicador extra (si viene) y etiqueta neutra
     let extraX: number | null = null;
     let extraOutcomeCode: string | null = null;
 
@@ -202,8 +196,28 @@ export const SorteoService = {
       }
 
       extraX = mul.valueX;
-      // etiqueta neutral: primero la que envía el cliente, si no, tomamos el nombre del multiplicador
       extraOutcomeCode = (extraOutcomeCodeInput ?? mul.name ?? null) || null;
+    }
+
+    // 2.1) ✅ VALIDACIÓN ANTICIPADA:
+    // Si habrá REVENTADO ganadores (mismo número ganador) y no mandaron extraMultiplierId,
+    // abortar (así evitamos dejar multiplierId en null en las jugadas ganadoras).
+    if (!extraMultiplierId) {
+      const possibleReventadoWinnerExists = await prisma.jugada.findFirst({
+        where: {
+          ticket: { sorteoId: id },
+          type: "REVENTADO",
+          reventadoNumber: winningNumber,
+          isDeleted: false,
+        },
+        select: { id: true },
+      });
+      if (possibleReventadoWinnerExists) {
+        throw new AppError(
+          "Hay jugadas REVENTADO que ganarían con ese número. Debes proporcionar extraMultiplierId para evaluarlo.",
+          400
+        );
+      }
     }
 
     // 3) Transacción
@@ -214,7 +228,7 @@ export const SorteoService = {
         data: {
           status: "EVALUATED",
           winningNumber,
-          extraOutcomeCode, // <- ahora existe y es agnóstico
+          extraOutcomeCode,
           ...(extraMultiplierId
             ? { extraMultiplier: { connect: { id: extraMultiplierId } } }
             : { extraMultiplier: { disconnect: true } }),
@@ -246,9 +260,9 @@ export const SorteoService = {
         });
       }
 
-      // 3.3 Pagar REVENTADO
-      let reventadoWinners: { id: string; amount: number; ticketId: string }[] =
-        [];
+      // 3.3 Pagar REVENTADO (y asignar multiplierId)
+      let reventadoWinners: { id: string; amount: number; ticketId: string }[] = [];
+
       if (extraX != null && extraX > 0) {
         reventadoWinners = await tx.jugada.findMany({
           where: {
@@ -260,14 +274,25 @@ export const SorteoService = {
           select: { id: true, amount: true, ticketId: true },
         });
 
+        // Defensa adicional (debería estar cubierto por la validación anticipada)
+        if (reventadoWinners.length > 0 && !extraMultiplierId) {
+          throw new AppError(
+            "Hay jugadas REVENTADO ganadoras: falta extraMultiplierId para asignar multiplierId",
+            400
+          );
+        }
+
         for (const j of reventadoWinners) {
           const payout = j.amount * extraX!;
           await tx.jugada.update({
             where: { id: j.id },
             data: {
               isWinner: true,
-              finalMultiplierX: extraX!, // snapshot a la jugada; sin settled*
+              finalMultiplierX: extraX!, // snapshot a la jugada
               payout,
+              ...(extraMultiplierId
+                ? { multiplier: { connect: { id: extraMultiplierId } } }
+                : {}),
             },
           });
         }
@@ -305,7 +330,7 @@ export const SorteoService = {
             winningNumber,
             extraMultiplierId,
             extraMultiplierX: extraX,
-            extraOutcomeCode, // etiqueta neutral
+            extraOutcomeCode,
             winners,
           },
         },
@@ -314,24 +339,25 @@ export const SorteoService = {
       return { winners, extraMultiplierX: extraX };
     });
 
-    // 4) Log adicional (opcional)
+    // 4) Log adicional
     await ActivityService.log({
       userId,
-      action: "SORTEO_EVALUATE",
+      action: ActivityType.SORTEO_EVALUATE,
       targetType: "SORTEO",
       targetId: id,
       details: {
         winningNumber,
         extraMultiplierId,
         extraMultiplierX: evaluationResult.extraMultiplierX,
-        extraOutcomeCode, // idem
+        extraOutcomeCode,
         winners: evaluationResult.winners,
       },
     });
 
-    // 5) Devolver sorteo evaluado
+    // 5) Devolver sorteo evaluado (con include si lo prefieres)
     return prisma.sorteo.findUnique({ where: { id } });
   },
+
   async remove(id: string, userId: string, reason?: string) {
     const s = await SorteoRepository.softDelete(id, userId, reason);
 
@@ -354,7 +380,7 @@ export const SorteoService = {
     page?: number;
     pageSize?: number;
     status?: SorteoStatus;
-    search?: string;        // ✅
+    search?: string;
   }) {
     const p = params.page && params.page > 0 ? params.page : 1;
     const ps = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
@@ -387,3 +413,5 @@ export const SorteoService = {
     return sorteo;
   },
 };
+
+export default SorteoService;

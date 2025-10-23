@@ -63,7 +63,7 @@ export const SorteoController = {
       pageSize,
       status,
       search,
-    }); // ✅
+    });
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 

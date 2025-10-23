@@ -21,4 +21,5 @@ export type ListMultiplierQueryInput = {
   q?: string;
   page?: number;       // default en schema
   pageSize?: number;   // default en schema
+  search?: string;
 };

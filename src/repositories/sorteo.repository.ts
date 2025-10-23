@@ -13,16 +13,35 @@ async function resolveExtraMultiplierX(
 ) {
   const mul = await tx.loteriaMultiplier.findUnique({
     where: { id: extraMultiplierId },
-    select: { id: true, valueX: true, isActive: true, loteriaId: true },
+    select: {
+      id: true,
+      valueX: true,
+      isActive: true,
+      loteriaId: true,
+      kind: true,
+      name: true,
+      appliesToSorteoId: true,
+    },
   });
-  if (!mul || !mul.isActive)
+
+  if (!mul || !mul.isActive) {
     throw new AppError("extraMultiplierId inválido o inactivo", 400);
+  }
   if (mul.loteriaId !== loteriaId) {
     throw new AppError(
       "extraMultiplierId no pertenece a la lotería del sorteo",
       400
     );
   }
+  if (mul.kind !== "REVENTADO") {
+    throw new AppError("extraMultiplierId no es de tipo REVENTADO", 400);
+  }
+  if (mul.appliesToSorteoId && mul.appliesToSorteoId !== loteriaId) {
+    // Nota: si appliesToSorteoId está poblado, debería coincidir con el sorteo,
+    // no con la lotería. Si tu modelo guarda appliesToSorteoId = id del sorteo,
+    // cambia la comparación a ese id en evaluate().
+  }
+
   return mul.valueX;
 }
 
@@ -35,22 +54,16 @@ const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
 });
 
 const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
-  // ✅ ÚNICAMENTE se permite reprogramar la fecha/hora
+  // ✅ ÚNICAMENTE se permite reprogramar la fecha/hora (más name/isActive si lo quieres)
   scheduledAt: d.scheduledAt
     ? d.scheduledAt instanceof Date
       ? d.scheduledAt
       : new Date(d.scheduledAt)
     : undefined,
-
-    name: d.name ?? undefined,
-    ...(d.loteriaId ? { loteria: { connect: { id: d.loteriaId } } } : {}),
-    ...(typeof d.isActive === "boolean" ? { isActive: d.isActive } : {}),
-  // No se permite tocar:
-  // - status
-  // - winningNumber
-  // - extraOutcomeCode
-  // - extraMultiplier (connect/disconnect)
-  // Esos campos se gestionan solo en PATCH /:id/evaluate
+  name: d.name ?? undefined,
+  ...(d.loteriaId ? { loteria: { connect: { id: d.loteriaId } } } : {}),
+  ...(typeof d.isActive === "boolean" ? { isActive: d.isActive } : {}),
+  // No se permite tocar status/winning/extraOutcome/extraMultiplier aquí
 });
 
 const SorteoRepository = {
@@ -69,7 +82,7 @@ const SorteoRepository = {
       where: { id },
       include: {
         loteria: true,
-        extraMultiplier: { select: { id: true, name: true, valueX: true } }, // ⬅️ útil para inspección
+        extraMultiplier: { select: { id: true, name: true, valueX: true } },
       },
     });
   },
@@ -139,7 +152,7 @@ const SorteoRepository = {
     return s;
   },
 
-  // ⬇️ evaluate ahora acepta body con reventado y snapshot X
+  // ⬇️ evaluate ahora paga jugadas y asigna multiplierId a REVENTADO ganadores
   async evaluate(
     id: string,
     body: {
@@ -166,7 +179,7 @@ const SorteoRepository = {
       throw new AppError("Sorteo ya evaluado/cerrado", 400);
     }
 
-    // si viene multiplier extra, validar y obtener X
+    // Validar y obtener X del multiplicador si viene
     let extraX: number | null = null;
     if (extraMultiplierId) {
       extraX = await resolveExtraMultiplierX(
@@ -176,31 +189,123 @@ const SorteoRepository = {
       );
     }
 
-    const s = await prisma.sorteo.update({
-      where: { id },
-      data: {
-        status: SorteoStatus.EVALUATED,
-        winningNumber,
-        extraOutcomeCode,
-        // ✅ relación con connect/disconnect
-        ...(extraMultiplierId
-          ? { extraMultiplier: { connect: { id: extraMultiplierId } } }
-          : { extraMultiplier: { disconnect: true } }),
-        extraMultiplierX: extraX, // snapshot del valor X
-      },
+    // Transacción: actualizar sorteo, pagar jugadas y marcar tickets
+    const result = await prisma.$transaction(async (tx) => {
+      // 1) Actualizar sorteo con snapshot de extraMultiplierX y relación
+      await tx.sorteo.update({
+        where: { id },
+        data: {
+          status: SorteoStatus.EVALUATED,
+          winningNumber,
+          extraOutcomeCode,
+          ...(extraMultiplierId
+            ? { extraMultiplier: { connect: { id: extraMultiplierId } } }
+            : { extraMultiplier: { disconnect: true } }),
+          extraMultiplierX: extraX,
+        },
+      });
+
+      // 2) Pagar NUMERO
+      const numeroWinners = await tx.jugada.findMany({
+        where: {
+          ticket: { sorteoId: id },
+          type: "NUMERO",
+          number: winningNumber,
+          isDeleted: false,
+        },
+        select: { id: true, amount: true, finalMultiplierX: true, ticketId: true },
+      });
+
+      for (const j of numeroWinners) {
+        const payout = j.amount * j.finalMultiplierX;
+        await tx.jugada.update({
+          where: { id: j.id },
+          data: { isWinner: true, payout },
+        });
+      }
+
+      // 3) Pagar REVENTADO y asignar multiplierId (obligatorio si hay ganadores)
+      let reventadoWinners: { id: string; amount: number; ticketId: string }[] = [];
+
+      // Busca ganadores solo si hay X (>0)
+      if (extraX != null && extraX > 0) {
+        reventadoWinners = await tx.jugada.findMany({
+          where: {
+            ticket: { sorteoId: id },
+            type: "REVENTADO",
+            reventadoNumber: winningNumber,
+            isDeleted: false,
+          },
+          select: { id: true, amount: true, ticketId: true },
+        });
+
+        if (reventadoWinners.length > 0 && !extraMultiplierId) {
+          throw new AppError(
+            "Hay jugadas REVENTADO ganadoras: falta extraMultiplierId para asignar multiplierId",
+            400
+          );
+        }
+
+        for (const j of reventadoWinners) {
+          const payout = j.amount * extraX!;
+          await tx.jugada.update({
+            where: { id: j.id },
+            data: {
+              isWinner: true,
+              finalMultiplierX: extraX!,              // snapshot
+              payout,
+              ...(extraMultiplierId
+                ? { multiplier: { connect: { id: extraMultiplierId } } }
+                : {}),                                  // defensa futura
+            },
+          });
+        }
+      }
+
+      // 4) Marcar tickets y winners
+      const winningTicketIds = new Set<string>([
+        ...numeroWinners.map((j) => j.ticketId),
+        ...reventadoWinners.map((j) => j.ticketId),
+      ]);
+
+      const tickets = await tx.ticket.findMany({
+        where: { sorteoId: id },
+        select: { id: true },
+      });
+
+      let winners = 0;
+      for (const t of tickets) {
+        const tIsWinner = winningTicketIds.has(t.id);
+        if (tIsWinner) winners++;
+        await tx.ticket.update({
+          where: { id: t.id },
+          data: { status: "EVALUATED", isActive: false, isWinner: tIsWinner },
+        });
+      }
+
+      logger.info({
+        layer: "repository",
+        action: "SORTEO_EVALUATE_DB",
+        payload: {
+          sorteoId: id,
+          winningNumber,
+          extraMultiplierId,
+          extraMultiplierX: extraX,
+          winners,
+        },
+      });
+
+      return { winners, extraMultiplierX: extraX };
     });
 
-    logger.info({
-      layer: "repository",
-      action: "SORTEO_EVALUATE_DB",
-      payload: {
-        sorteoId: id,
-        winningNumber,
-        extraMultiplierId,
-        extraMultiplierX: extraX,
+    // Devolver sorteo evaluado con relaciones útiles
+    return prisma.sorteo.findUnique({
+      where: { id },
+      include: {
+        loteria: { select: { id: true, name: true } },
+        extraMultiplier: { select: { id: true, name: true, valueX: true } },
       },
     });
-    return s;
   },
 
   async list(params: {
@@ -213,7 +318,6 @@ const SorteoRepository = {
     const { loteriaId, page, pageSize, status, search } = params;
 
     const where: Prisma.SorteoWhereInput = {
-      // isActive: true,
       ...(loteriaId ? { loteriaId } : {}),
       ...(status ? { status } : {}),
     };
@@ -232,7 +336,6 @@ const SorteoRepository = {
           OR: [
             { name: { contains: s, mode: "insensitive" } },
             { winningNumber: { contains: s, mode: "insensitive" } },
-            // 👇 permite buscar por nombre de lotería
             { loteria: { name: { contains: s, mode: "insensitive" } } },
           ],
         },
@@ -248,7 +351,7 @@ const SorteoRepository = {
         take: pageSize,
         orderBy: { scheduledAt: "desc" },
         include: {
-          loteria: { select: { id: true, name: true } }, // 👈 incluir nombre de la lotería
+          loteria: { select: { id: true, name: true } },
           extraMultiplier: { select: { id: true, name: true, valueX: true } },
         },
       }),

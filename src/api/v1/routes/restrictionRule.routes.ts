@@ -1,3 +1,4 @@
+// src/modules/restrictions/routes/restrictions.router.ts
 import { Router } from "express";
 import { RestrictionRuleController } from "../controllers/restrictionRule.controller";
 import { validateBody, validateParams, validateQuery } from "../../../middlewares/validate.middleware";
@@ -9,13 +10,35 @@ import {
   ReasonBodySchema,
 } from "../validators/restrictionRule.validator";
 import { protect } from "../../../middlewares/auth.middleware";
-import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
+import { requireAdmin, requireAuth } from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
 
+// 🔐 todos los endpoints requieren estar autenticado
 router.use(protect);
 
-// CREATE
+/**
+ * LIBERADOS (solo requieren estar autenticado)
+ * GET /api/v1/restrictions
+ * GET /api/v1/restrictions/:id
+ */
+router.get(
+  "/",
+  requireAuth,                          // ← antes requireAdmin
+  validateQuery(ListRestrictionRuleQuerySchema),
+  RestrictionRuleController.list
+);
+
+router.get(
+  "/:id",
+  requireAuth,                          // ← antes requireAdmin
+  validateParams(RestrictionRuleIdParamSchema),
+  RestrictionRuleController.findById
+);
+
+/**
+ * 🔒 ADMIN (CRUD)
+ */
 router.post(
   "/",
   requireAdmin,
@@ -23,23 +46,6 @@ router.post(
   RestrictionRuleController.create
 );
 
-// LIST (usa validateQuery, no validateBody)
-router.get(
-  "/",
-  requireAdmin,
-  validateQuery(ListRestrictionRuleQuerySchema),
-  RestrictionRuleController.list
-);
-
-// GET BY ID
-router.get(
-  "/:id",
-  requireAdmin,
-  validateParams(RestrictionRuleIdParamSchema),
-  RestrictionRuleController.findById
-);
-
-// UPDATE
 router.patch(
   "/:id",
   requireAdmin,
@@ -48,7 +54,6 @@ router.patch(
   RestrictionRuleController.update
 );
 
-// SOFT DELETE (con reason opcional)
 router.delete(
   "/:id",
   requireAdmin,
@@ -57,7 +62,6 @@ router.delete(
   RestrictionRuleController.delete
 );
 
-// RESTORE (sin body o con reason opcional si quieres)
 router.patch(
   "/:id/restore",
   requireAdmin,

@@ -11,11 +11,24 @@ const CUTOFF_GRACE_MS = 5000;
 export const TicketService = {
   async create(data: any, userId: string, requestId?: string) {
     try {
-      const { ventanaId, loteriaId, sorteoId } = data;
-      if (!ventanaId || !loteriaId || !sorteoId) {
-        throw new AppError("Missing ventanaId/loteriaId/sorteoId", 400);
+      const { loteriaId, sorteoId } = data;
+
+      // ✅ No confíes en ventanaId del body; resuélvelo por el usuario
+      if (!loteriaId || !sorteoId) {
+        throw new AppError("Missing loteriaId/sorteoId", 400);
       }
 
+      // 🔎 Trae la ventana del vendedor autenticado
+      const seller = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, ventanaId: true },
+      });
+      if (!seller?.ventanaId) {
+        throw new AppError("El vendedor no tiene una Ventana asignada", 400);
+      }
+      const ventanaId = seller.ventanaId;
+
+      // ✅ valida ventana real
       const ventana = await prisma.ventana.findUnique({
         where: { id: ventanaId },
         select: { id: true, bancaId: true, isDeleted: true },
@@ -24,13 +37,14 @@ export const TicketService = {
         throw new AppError("La Ventana no existe o está eliminada", 404);
       }
 
+      // ✅ valida sorteo
       const sorteo = await prisma.sorteo.findUnique({
         where: { id: sorteoId },
         select: { id: true, scheduledAt: true, status: true },
       });
       if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
 
-      // 3) resolver cutoff detallado (minutos + fuente)
+      // ⏱ cutoff
       const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
         bancaId: ventana.bancaId,
         ventanaId,
@@ -38,7 +52,6 @@ export const TicketService = {
         defaultCutoff: 5,
       });
 
-      // 4) aplicar cutoff con “gracia” anti-flap
       const now = new Date();
       const cutoffMs = cutoff.minutes * 60_000;
       const limitTime = new Date(sorteo.scheduledAt.getTime() - cutoffMs);
@@ -55,21 +68,22 @@ export const TicketService = {
           scheduledAtISO: sorteo.scheduledAt.toISOString(),
           limitTimeISO: limitTime.toISOString(),
           effectiveLimitTimeISO: effectiveLimitTime.toISOString(),
-          secondsUntilScheduled: Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 1000)),
-          secondsUntilLimit: Math.max(0, Math.ceil((effectiveLimitTime.getTime() - now.getTime()) / 1000)),
           sorteoStatus: sorteo.status,
         },
       });
 
       if (now >= effectiveLimitTime) {
-        const minsLeft = Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000));
+        const minsLeft = Math.max(
+          0,
+          Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000)
+        );
         throw new AppError(
           `Venta bloqueada: faltan ${minsLeft} min para el sorteo (cutoff=${cutoff.minutes} min, source=${cutoff.source})`,
           409
         );
       }
 
-      // Jugadas
+      // 🎯 Jugadas desde el body (el validador ya corrió antes)
       const jugadasIn: Array<{
         type?: "NUMERO" | "REVENTADO";
         number?: string;
@@ -81,6 +95,7 @@ export const TicketService = {
         throw new AppError("At least one jugada is required", 400);
       }
 
+      // Seguridad extra por si algún cliente antiguo no envía ambos campos
       const numeros = new Set(
         jugadasIn
           .filter((j) => (j.type ?? "NUMERO") === "NUMERO")
@@ -89,32 +104,35 @@ export const TicketService = {
             return j.number;
           })
       );
-
       for (const j of jugadasIn) {
         const type = j.type ?? "NUMERO";
         if (type === "REVENTADO") {
-          const target = j.reventadoNumber;
+          const target = j.reventadoNumber ?? j.number;
           if (!target) throw new AppError("REVENTADO requires 'reventadoNumber'", 400);
           if (!numeros.has(target)) {
-            throw new AppError(`Debe existir una jugada NUMERO para ${target} en el mismo ticket`, 400);
+            throw new AppError(
+              `Debe existir una jugada NUMERO para ${target} en el mismo ticket`,
+              400
+            );
           }
         }
       }
 
+      // 🧩 Normaliza jugadas para el repositorio
       const ticket = await TicketRepository.create(
         {
           loteriaId,
           sorteoId,
-          ventanaId,
+          ventanaId, // ✅ resuelto por el servidor
           totalAmount: 0,
           jugadas: jugadasIn.map((j) => {
             const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
             const isNumero = type === "NUMERO";
-            const number = isNumero ? j.number! : (j.reventadoNumber as string);
+            const number = isNumero ? j.number! : (j.reventadoNumber ?? j.number)!;
             return {
               type,
               number,
-              reventadoNumber: isNumero ? null : number,
+              reventadoNumber: isNumero ? null : number, // REVENTADO => ambos iguales
               amount: j.amount,
               multiplierId: "",
               finalMultiplierX: 0,
