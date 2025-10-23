@@ -59,6 +59,7 @@ model Ventana {
   @@index([email(ops: raw("gin_trgm_ops"))], map: "idx_ventana_email_trgm", type: Gin)
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_ventana_name_trgm", type: Gin)
   @@index([phone(ops: raw("gin_trgm_ops"))], map: "idx_ventana_phone_trgm", type: Gin)
+  VentanaMultiplierOverride VentanaMultiplierOverride[]
 }
 
 model User {
@@ -115,6 +116,7 @@ model Loteria {
 
   @@index([name])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_loteria_name_trgm", type: Gin)
+  VentanaMultiplierOverride VentanaMultiplierOverride[]
 }
 
 model BancaLoteriaSetting {
@@ -309,6 +311,25 @@ model UserMultiplierOverride {
   user            User      @relation(fields: [userId], references: [id])
 
   @@unique([userId, loteriaId, multiplierType])
+}
+
+model VentanaMultiplierOverride {
+  id              String   @id @default(uuid())
+  ventanaId       String
+  loteriaId       String
+  baseMultiplierX Float
+  multiplierType  String
+  isActive        Boolean  @default(true)
+  deletedAt       DateTime?
+  deletedBy       String?
+  deletedReason   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  ventana   Ventana @relation(fields: [ventanaId], references: [id])
+  loteria   Loteria @relation(fields: [loteriaId], references: [id])
+
+  @@unique([ventanaId, loteriaId, multiplierType])
 }
 
 model RefreshToken {

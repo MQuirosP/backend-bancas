@@ -1,16 +1,16 @@
 import { Request, Response } from "express";
-import MultiplierOverrideService from "../../v1/services/multiplierOverride.service";
+import UserMultiplierOverrrideService from "../services/userMultiplierOverride.service";
 import { success, created as createdResponse } from "../../../utils/responses";
 import { Role } from "@prisma/client";
 
-export const MultiplierOverrideController = {
+export const UserMultiplierOverrideController = {
   async create(req: Request, res: Response) {
     const actor = req.user as {
       id: string;
       role: Role;
       ventanaId?: string | null;
     };
-    const result = await MultiplierOverrideService.create(actor, req.body);
+    const result = await UserMultiplierOverrrideService.create(actor, req.body);
     return createdResponse(res, result);
   },
 
@@ -20,7 +20,7 @@ export const MultiplierOverrideController = {
       role: Role;
       ventanaId?: string | null;
     };
-    const result = await MultiplierOverrideService.update(
+    const result = await UserMultiplierOverrrideService.update(
       actor,
       req.params.id,
       req.body
@@ -34,7 +34,7 @@ export const MultiplierOverrideController = {
       role: Role;
       ventanaId?: string | null;
     };
-    await MultiplierOverrideService.softDelete(
+    await UserMultiplierOverrrideService.softDelete(
       actor,
       req.params.id,
       (req.body && req.body.deletedReason) || undefined
@@ -48,7 +48,7 @@ export const MultiplierOverrideController = {
       role: Role;
       ventanaId?: string | null;
     };
-    const result = await MultiplierOverrideService.getById(
+    const result = await UserMultiplierOverrrideService.getById(
       actor,
       req.params.id
     );
@@ -61,7 +61,7 @@ export const MultiplierOverrideController = {
       role: Role;
       ventanaId?: string | null;
     };
-    const result = await MultiplierOverrideService.list(
+    const result = await UserMultiplierOverrrideService.list(
       actor,
       req.query as any
     );
@@ -75,7 +75,7 @@ export const MultiplierOverrideController = {
       role: Role;
       ventanaId?: string | null;
     };
-    const result = await MultiplierOverrideService.restore(
+    const result = await UserMultiplierOverrrideService.restore(
       actor,
       req.params.id
     );
@@ -83,4 +83,4 @@ export const MultiplierOverrideController = {
   },
 };
 
-export default MultiplierOverrideController;
+export default UserMultiplierOverrideController;

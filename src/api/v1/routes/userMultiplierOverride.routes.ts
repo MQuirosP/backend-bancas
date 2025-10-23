@@ -4,13 +4,10 @@ import {
   createUMOValidator,
   updateUMOValidator,
   listUMOQueryValidator,
-} from "../../v1/validators/multiplierOverride.validator";
-import MultiplierOverrideController from "../../v1/controllers/multiplierOverride.controller";
+} from "../validators/userMultiplierOverride.validator";
+import UserMultiplierOverrideController from "../controllers/userMultiplierOverride.controller";
 import { validateBody, validateQuery } from "../../../middlewares/validate.middleware";
 import { protect } from "../../../middlewares/auth.middleware";
-import { AuthenticatedRequest } from "../../../core/types";
-import { AppError } from "../../../core/errors";
-import { Role } from "@prisma/client";
 import { requireAdminOrVentana } from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
@@ -23,7 +20,7 @@ router.post(
   "/",
   requireAdminOrVentana,
   validateBody(createUMOValidator),
-  MultiplierOverrideController.create
+  UserMultiplierOverrideController.create
 );
 
 // Update (ADMIN, VENTANA)
@@ -31,31 +28,31 @@ router.patch(
   "/:id",
   requireAdminOrVentana,
   validateBody(updateUMOValidator),
-  MultiplierOverrideController.update
+  UserMultiplierOverrideController.update
 );
 
 // Soft Delete (ADMIN, VENTANA) - opcionalmente acepta { deletedReason } en body
 router.delete(
   "/:id",
   requireAdminOrVentana,
-  MultiplierOverrideController.remove
+  UserMultiplierOverrideController.remove
 );
 
 // Restore (ADMIN, VENTANA)
 router.patch(
   "/:id/restore",
   requireAdminOrVentana,
-  MultiplierOverrideController.restore
+  UserMultiplierOverrideController.restore
 );
 
 // GetById (lectura para cualquier autenticado; el service aplica guardas por rol)
-router.get("/:id", MultiplierOverrideController.getById);
+router.get("/:id", UserMultiplierOverrideController.getById);
 
 // List (lectura para cualquier autenticado; el service limita por rol)
 router.get(
   "/",
   validateQuery(listUMOQueryValidator),
-  MultiplierOverrideController.list
+  UserMultiplierOverrideController.list
 );
 
 export default router;

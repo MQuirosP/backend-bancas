@@ -1,10 +1,10 @@
 // ========================================================
-// UserMultiplierOverride DTOs
+// UserMultiplierOverride DTOs (corregidos)
 // ========================================================
 
-export interface CreateUserMultiplierOverrideDTO {
+export interface CreateVentanaMultiplierOverrideDTO {
   /** ID del usuario al que se aplica el multiplicador personalizado */
-  userId: string;
+  ventanaId: string;
 
   /** ID de la lotería para la cual se aplica el override */
   loteriaId: string;
@@ -13,7 +13,7 @@ export interface CreateUserMultiplierOverrideDTO {
   multiplierType: string;
 
   /** Valor del multiplicador personalizado */
-  baseMuliplierX: number;
+  baseMultiplierX: number; // <-- corregido (antes: baseMuliplierX)
 }
 
 export interface UpdateUserMultiplierOverrideDTO {

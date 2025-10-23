@@ -3,7 +3,7 @@ import { Role, ActivityType } from "@prisma/client";
 import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
 import ActivityService from "../../../core/activity.service";
-import MultiplierOverrideRepository from "../../../repositories/multiplierOverride.repository";
+import UserMultiplierOverrideRepository from "../../../repositories/userMultiplierOverride.repository";
 
 type CreateDTO = {
   userId: string;
@@ -16,7 +16,7 @@ type UpdateDTO = {
   baseMultiplierX: number;
 };
 
-export const MultiplierOverrideService = {
+export const UserMultiplierOverrideService = {
   async assertCanManage(actor: { id: string; role: Role; ventanaId?: string | null }, targetUserId: string) {
     if (actor.role === Role.ADMIN) return;
 
@@ -38,14 +38,14 @@ export const MultiplierOverrideService = {
   async create(actor: { id: string; role: Role; ventanaId?: string | null }, dto: CreateDTO) {
     await this.assertCanManage(actor, dto.userId);
 
-    const existing = await MultiplierOverrideRepository.findByUserAndLoteria(
+    const existing = await UserMultiplierOverrideRepository.findByUserAndLoteria(
       dto.userId,
       dto.loteriaId,
       dto.multiplierType
     );
     if (existing) throw new AppError("Override already exists for this user/lottery/type", 409);
 
-    const created = await MultiplierOverrideRepository.create(dto);
+    const created = await UserMultiplierOverrideRepository.create(dto);
 
     await ActivityService.log({
       userId: actor.id,
@@ -59,12 +59,12 @@ export const MultiplierOverrideService = {
   },
 
   async update(actor: { id: string; role: Role; ventanaId?: string | null }, id: string, dto: UpdateDTO) {
-    const current = await MultiplierOverrideRepository.getById(id);
+    const current = await UserMultiplierOverrideRepository.getById(id);
     if (!current || current.isDeleted) throw new AppError("Override not found", 404);
 
     await this.assertCanManage(actor, current.userId);
 
-    const updated = await MultiplierOverrideRepository.update(id, dto);
+    const updated = await UserMultiplierOverrideRepository.update(id, dto);
 
     await ActivityService.log({
       userId: actor.id,
@@ -78,12 +78,12 @@ export const MultiplierOverrideService = {
   },
 
   async softDelete(actor: { id: string; role: Role; ventanaId?: string | null }, id: string, deletedReason?: string) {
-    const current = await MultiplierOverrideRepository.getById(id);
+    const current = await UserMultiplierOverrideRepository.getById(id);
     if (!current || current.isDeleted) throw new AppError("Override not found", 404);
 
     await this.assertCanManage(actor, current.userId);
 
-    const deleted = await MultiplierOverrideRepository.delete(id, actor.id, deletedReason);
+    const deleted = await UserMultiplierOverrideRepository.delete(id, actor.id, deletedReason);
 
     await ActivityService.log({
       userId: actor.id,
@@ -97,12 +97,12 @@ export const MultiplierOverrideService = {
   },
 
   async restore(actor: { id: string; role: Role; ventanaId?: string | null }, id: string) {
-    const current = await MultiplierOverrideRepository.getById(id);
+    const current = await UserMultiplierOverrideRepository.getById(id);
     if (!current) throw new AppError("Override not found", 404);
 
     await this.assertCanManage(actor, current.userId);
 
-    const restored = await MultiplierOverrideRepository.restore(id);
+    const restored = await UserMultiplierOverrideRepository.restore(id);
 
     await ActivityService.log({
       userId: actor.id,
@@ -116,7 +116,7 @@ export const MultiplierOverrideService = {
   },
 
   async getById(actor: { id: string; role: Role; ventanaId?: string | null }, id: string) {
-    const current = await MultiplierOverrideRepository.getById(id);
+    const current = await UserMultiplierOverrideRepository.getById(id);
     if (!current || current.isDeleted) throw new AppError("Override not found", 404);
 
     if (actor.role === Role.ADMIN) return current;
@@ -147,7 +147,7 @@ export const MultiplierOverrideService = {
     const skip = (page - 1) * pageSize;
 
     if (actor.role === Role.ADMIN) {
-      const { data, total } = await MultiplierOverrideRepository.list({
+      const { data, total } = await UserMultiplierOverrideRepository.list({
         ...params,
         skip,
         take: pageSize,
@@ -167,7 +167,7 @@ export const MultiplierOverrideService = {
           ? allowedUserIds.has(params.userId) ? params.userId : "__blocked__"
           : undefined;
 
-      const { data, total } = await MultiplierOverrideRepository.list({
+      const { data, total } = await UserMultiplierOverrideRepository.list({
         userId: whereUserId,
         loteriaId: params.loteriaId,
         skip,
@@ -177,7 +177,7 @@ export const MultiplierOverrideService = {
     }
 
     if (actor.role === Role.VENDEDOR) {
-      const { data, total } = await MultiplierOverrideRepository.list({
+      const { data, total } = await UserMultiplierOverrideRepository.list({
         userId: actor.id,
         loteriaId: params.loteriaId,
         skip,
@@ -190,4 +190,4 @@ export const MultiplierOverrideService = {
   },
 };
 
-export default MultiplierOverrideService;
+export default UserMultiplierOverrideService;

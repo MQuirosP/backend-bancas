@@ -4,6 +4,7 @@ import { ActivityType, Prisma } from '@prisma/client';
 
 export type ActivityPayload = {
   userId?: string | null;
+  ventanaId?: string | null;
   action: ActivityType;
   targetType?: string | null;
   targetId?: string | null;
@@ -27,6 +28,7 @@ export const ActivityService = {
   async log(payload: ActivityPayload) {
     const {
       userId = null,
+      ventanaId = null,
       action,
       targetType = null,
       targetId = null,

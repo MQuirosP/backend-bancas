@@ -1,7 +1,7 @@
 // src/repositories/multiplierOverride.repository.ts
 import prisma from "../core/prismaClient";
 
-export const MultiplierOverrideRepository = {
+export const UserMultiplierOverrideRepository = {
   async create(data: { userId: string; loteriaId: string; baseMultiplierX: number; multiplierType: string }) {
     return prisma.userMultiplierOverride.create({ data });
   },
@@ -69,4 +69,4 @@ export const MultiplierOverrideRepository = {
   },
 };
 
-export default MultiplierOverrideRepository;
+export default UserMultiplierOverrideRepository;
