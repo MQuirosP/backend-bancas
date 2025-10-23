@@ -205,7 +205,7 @@ export const TicketRepository = {
         const now = new Date();
         const candidateRules = await tx.restrictionRule.findMany({
           where: {
-            isDeleted: false,
+            isActive: true,
             OR: [{ userId }, { ventanaId }, { bancaId }],
           },
         });

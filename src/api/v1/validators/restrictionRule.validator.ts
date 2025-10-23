@@ -1,3 +1,4 @@
+// src/modules/restrictions/validators/restrictionRule.validator.ts
 import { z } from "zod";
 
 // id param
@@ -5,7 +6,6 @@ export const RestrictionRuleIdParamSchema = z.object({
   id: z.uuid("id inválido (UUID)"),
 }).strict();
 
-// helper: number 0..999 exacto (string)
 const NUMBER_0_999 = z
   .string()
   .trim()
@@ -16,13 +16,13 @@ const hasScope = (d: any) => !!(d.bancaId || d.ventanaId || d.userId);
 const isAmountRule = (d: any) => d.maxAmount != null || d.maxTotal != null;
 const isCutoffRule = (d: any) => d.salesCutoffMinutes != null;
 
-// CREATE: scope requerido + (montos XOR cutoff) + si cutoff => sin number
+// CREATE
 export const CreateRestrictionRuleSchema = z.object({
   bancaId: z.uuid().optional(),
   ventanaId: z.uuid().optional(),
   userId: z.uuid().optional(),
 
-  number: NUMBER_0_999.optional(), // solo sentido para reglas de monto
+  number: NUMBER_0_999.optional(),
   maxAmount: z.coerce.number().positive().optional(),
   maxTotal: z.coerce.number().positive().optional(),
   salesCutoffMinutes: z.coerce.number().int().min(0).max(30).optional(),
@@ -32,7 +32,6 @@ export const CreateRestrictionRuleSchema = z.object({
 })
 .strict()
 .superRefine((data, ctx) => {
-  // 1) Alcance: al menos uno
   if (!hasScope(data)) {
     ctx.addIssue({
       code: "custom",
@@ -44,7 +43,6 @@ export const CreateRestrictionRuleSchema = z.object({
   const amount = isAmountRule(data);
   const cutoff = isCutoffRule(data);
 
-  // 2) Debe ser exactamente uno de los dos tipos de regla
   if ((amount ? 1 : 0) + (cutoff ? 1 : 0) !== 1) {
     ctx.addIssue({
       code: "custom",
@@ -53,7 +51,6 @@ export const CreateRestrictionRuleSchema = z.object({
     });
   }
 
-  // 3) Si es cutoff, number NO debe venir
   if (cutoff && data.number != null) {
     ctx.addIssue({
       code: "custom",
@@ -63,7 +60,7 @@ export const CreateRestrictionRuleSchema = z.object({
   }
 });
 
-// UPDATE: parcial, pero si mandan campos conflictivos, marcar
+// UPDATE
 export const UpdateRestrictionRuleSchema = z.object({
   bancaId: z.uuid().optional(),
   ventanaId: z.uuid().optional(),
@@ -82,8 +79,6 @@ export const UpdateRestrictionRuleSchema = z.object({
   const amount = isAmountRule(data);
   const cutoff = isCutoffRule(data);
 
-  // En update no exigimos scope (puede heredar del existente),
-  // pero sí evitamos combinaciones inválidas si las envían:
   if (amount && cutoff) {
     ctx.addIssue({
       code: "custom",
@@ -100,18 +95,22 @@ export const UpdateRestrictionRuleSchema = z.object({
   }
 });
 
-// LIST (query)
+// LIST (query)  ✅ acepta hasAmount / hasCutoff y usa isActive
 export const ListRestrictionRuleQuerySchema = z.object({
   bancaId: z.uuid().optional(),
   ventanaId: z.uuid().optional(),
   userId: z.uuid().optional(),
   number: z.string().trim().min(1).optional(),
-  isDeleted: z.coerce.boolean().default(false),
+
+  isActive: z.coerce.boolean().optional(),     // ← reemplaza isDeleted
+  hasCutoff: z.coerce.boolean().optional(),    // ← NUEVO
+  hasAmount: z.coerce.boolean().optional(),    // ← NUEVO
+
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 }).strict();
 
-// opcional: body para delete/restore que acepten "reason"
+// opcional: body para delete/restore
 export const ReasonBodySchema = z.object({
   reason: z.string().trim().min(3).max(200).optional(),
 }).strict();

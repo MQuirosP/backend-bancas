@@ -1,3 +1,4 @@
+// src/repositories/restrictionRule.repository.ts
 import prisma from "../core/prismaClient";
 
 export type EffectiveRestriction = {
@@ -18,7 +19,7 @@ type ListParams = {
   ventanaId?: string;
   userId?: string;
   number?: string;
-  isDeleted?: boolean | string;
+  isActive?: boolean | string;
   page?: number | string;
   pageSize?: number | string;
   /** si 'true' lista solo reglas de cutoff */
@@ -26,6 +27,12 @@ type ListParams = {
   /** si 'true' lista solo reglas de montos */
   hasAmount?: boolean | string;
 };
+
+const includeLabels = {
+  banca:   { select: { id: true, name: true, code: true } },
+  ventana: { select: { id: true, name: true, code: true } },
+  user:    { select: { id: true, name: true, username: true } },
+} as const;
 
 export const RestrictionRuleRepository = {
   async create(data: any) {
@@ -37,21 +44,25 @@ export const RestrictionRuleRepository = {
   },
 
   async softDelete(id: string, _actorId: string, _reason?: string) {
+    // baja lógica: isActive = false
     return prisma.restrictionRule.update({
       where: { id },
-      data: { isDeleted: true, updatedAt: new Date() },
+      data: { isActive: false, updatedAt: new Date() },
     });
   },
 
   async restore(id: string) {
     return prisma.restrictionRule.update({
       where: { id },
-      data: { isDeleted: false },
+      data: { isActive: true },
     });
   },
 
   async findById(id: string) {
-    return prisma.restrictionRule.findUnique({ where: { id } });
+    return prisma.restrictionRule.findUnique({
+      where: { id },
+      include: includeLabels, // ← incluye banca/ventana/user para mostrar nombre/código
+    });
   },
 
   /**
@@ -63,7 +74,7 @@ export const RestrictionRuleRepository = {
       ventanaId,
       userId,
       number,
-      isDeleted = false,
+      isActive = true, // por defecto solo activas
       page = 1,
       pageSize = 20,
       hasCutoff,
@@ -75,10 +86,11 @@ export const RestrictionRuleRepository = {
     const skip = (_page - 1) * _pageSize;
     const take = _pageSize;
 
-    const _isDeleted =
-      typeof isDeleted === "string"
-        ? isDeleted.toLowerCase() === "true"
-        : Boolean(isDeleted);
+    // ✅ parseo correcto de boolean desde string
+    const _isActive =
+      typeof isActive === "string"
+        ? isActive.toLowerCase() === "true"
+        : Boolean(isActive);
 
     const _hasCutoff =
       typeof hasCutoff === "string"
@@ -90,24 +102,29 @@ export const RestrictionRuleRepository = {
         ? hasAmount.toLowerCase() === "true"
         : Boolean(hasAmount);
 
-    const where: any = { isDeleted: _isDeleted };
+    const where: any = {};
+    // por default aplicamos isActive (true), pero si lo envían como string/boolean, respetamos:
+    if (_isActive !== undefined) where.isActive = _isActive;
     if (bancaId) where.bancaId = bancaId;
     if (ventanaId) where.ventanaId = ventanaId;
     if (userId) where.userId = userId;
     if (number) where.number = number;
 
     if (_hasCutoff && _hasAmount) {
+      // ambas clases de reglas
       where.OR = [
         { AND: [{ salesCutoffMinutes: { not: null } }, { number: null }] },
         { OR: [{ maxAmount: { not: null } }, { maxTotal: { not: null } }] },
       ];
     } else if (_hasCutoff) {
+      // solo cutoff: sin number
       where.AND = [
         ...(where.AND ?? []),
         { salesCutoffMinutes: { not: null } },
         { number: null },
       ];
     } else if (_hasAmount) {
+      // solo montos
       where.OR = [
         ...(where.OR ?? []),
         { maxAmount: { not: null } },
@@ -121,6 +138,7 @@ export const RestrictionRuleRepository = {
         orderBy: [{ updatedAt: "desc" }],
         skip,
         take,
+        include: includeLabels, // ← incluye banca/ventana/user en el listado
       }),
       prisma.restrictionRule.count({ where }),
     ]);
@@ -138,6 +156,7 @@ export const RestrictionRuleRepository = {
 
   /**
    * Límites de montos efectivos (USER > VENTANA > BANCA), con soporte de number y ventana temporal.
+   * Solo considera reglas activas.
    */
   async getEffectiveLimits(params: {
     bancaId: string;
@@ -159,42 +178,44 @@ export const RestrictionRuleRepository = {
       ],
     };
 
+    // 🔎 reglas específicas (con number)
     const [userSpecific, ventanaSpecific, bancaSpecific] = await Promise.all([
       userId
         ? prisma.restrictionRule.findFirst({
-            where: { userId, number, ...whereTime },
+            where: { userId, number, isActive: true, ...whereTime },
             orderBy: { updatedAt: "desc" },
           })
         : Promise.resolve(null),
       ventanaId
         ? prisma.restrictionRule.findFirst({
-            where: { ventanaId, number, ...whereTime },
+            where: { ventanaId, number, isActive: true, ...whereTime },
             orderBy: { updatedAt: "desc" },
           })
         : Promise.resolve(null),
       prisma.restrictionRule.findFirst({
-        where: { bancaId, number, ...whereTime },
+        where: { bancaId, number, isActive: true, ...whereTime },
         orderBy: { updatedAt: "desc" },
       }),
     ]);
 
+    // 🔎 reglas genéricas (sin number) si no hubo específica
     const [userGeneric, ventanaGeneric, bancaGeneric] = await Promise.all([
       userSpecific || !userId
         ? Promise.resolve(null)
         : prisma.restrictionRule.findFirst({
-            where: { userId, number: null, ...whereTime },
+            where: { userId, number: null, isActive: true, ...whereTime },
             orderBy: { updatedAt: "desc" },
           }),
       ventanaSpecific || !ventanaId
         ? Promise.resolve(null)
         : prisma.restrictionRule.findFirst({
-            where: { ventanaId, number: null, ...whereTime },
+            where: { ventanaId, number: null, isActive: true, ...whereTime },
             orderBy: { updatedAt: "desc" },
           }),
       bancaSpecific
         ? Promise.resolve(null)
         : prisma.restrictionRule.findFirst({
-            where: { bancaId, number: null, ...whereTime },
+            where: { bancaId, number: null, isActive: true, ...whereTime },
             orderBy: { updatedAt: "desc" },
           }),
     ]);
@@ -221,7 +242,7 @@ export const RestrictionRuleRepository = {
 
   /**
    * Cutoff efectivo con FUENTE (USER > VENTANA > BANCA) y ventana temporal.
-   * Devuelve { minutes, source } o { minutes:null, source:null } si no hay reglas.
+   * Solo considera reglas activas.
    */
   async getEffectiveSalesCutoffWithSource(params: {
     bancaId: string;
@@ -241,11 +262,12 @@ export const RestrictionRuleRepository = {
       ],
     };
 
+    // Base para cutoff: debe ser activa, sin number, con minutos
     const baseWhere = (extra: any) => ({
       ...extra,
+      isActive: true,
       salesCutoffMinutes: { not: null },
       number: null,
-      isDeleted: false,
       ...whereTime,
     });
 
@@ -271,9 +293,15 @@ export const RestrictionRuleRepository = {
       }),
     ]);
 
-    if (userRule?.salesCutoffMinutes != null) return { minutes: userRule.salesCutoffMinutes, source: "USER" };
-    if (ventanaRule?.salesCutoffMinutes != null) return { minutes: ventanaRule.salesCutoffMinutes, source: "VENTANA" };
-    if (bancaRule?.salesCutoffMinutes != null) return { minutes: bancaRule.salesCutoffMinutes, source: "BANCA" };
+    if (userRule?.salesCutoffMinutes != null) {
+      return { minutes: userRule.salesCutoffMinutes, source: "USER" };
+    }
+    if (ventanaRule?.salesCutoffMinutes != null) {
+      return { minutes: ventanaRule.salesCutoffMinutes, source: "VENTANA" };
+    }
+    if (bancaRule?.salesCutoffMinutes != null) {
+      return { minutes: bancaRule.salesCutoffMinutes, source: "BANCA" };
+    }
     return { minutes: null, source: null };
   },
 
