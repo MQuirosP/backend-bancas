@@ -98,7 +98,7 @@ model User {
 
 model Loteria {
   id              String                   @id @default(uuid())
-  name            String                   
+  name            String                   @unique
   rulesJson       Json?
   isDeleted       Boolean                  @default(false)
   deletedAt       DateTime?
@@ -228,7 +228,7 @@ model Sorteo {
   deletedReason     String?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
-  name              String             @unique
+  name              String             
   extraMultiplierId String?
   extraMultiplierX  Float?
   extraOutcomeCode  String?
