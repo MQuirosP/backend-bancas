@@ -3,9 +3,10 @@ import { Response } from "express";
 import { TicketService } from "../services/ticket.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
+import { Role } from "@prisma/client";
 
-function startOfDay(d: Date) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
-function endOfDay(d: Date)   { const x = new Date(d); x.setHours(23,59,59,999); return x; }
+function startOfDay(d: Date) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+function endOfDay(d: Date) { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; }
 
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
@@ -24,12 +25,19 @@ export const TicketController = {
 
     const filters: any = { ...rest };
 
-    // scope → filtrar por vendedor autenticado
+    // scope → filtrar según el rol del usuario autenticado
     if (scope === "mine") {
-      filters.userId = req.user!.id;
+      const me = req.user!;
+      if (me.role === Role.VENDEDOR) {
+        filters.userId = me.id;             // tickets del vendedor
+      } else if (me.role === Role.VENTANA) {
+        filters.ventanaId = me.ventanaId;   // tickets de la ventana (todos sus vendedores)
+      } else if (me.role === Role.ADMIN) {
+        // admin con scope=mine -> si quieres, podrías filtrar por algo; por ahora, sin filtro
+      }
     }
 
-    // date → rango de fechas sobre createdAt
+    // date → rango de fechas sobre createdAt (igual que antes)
     if (date === "today") {
       const now = new Date();
       filters.dateFrom = startOfDay(now);
@@ -53,6 +61,12 @@ export const TicketController = {
     }
 
     const result = await TicketService.list(Number(page), Number(pageSize), filters);
+    req.logger?.info({
+      layer: "controller",
+      action: "TICKET_LIST_RESOLVED_FILTERS",
+      payload: { filters, page, pageSize, scope, date, from, to }
+    })
+
     return success(res, result);
   },
 
