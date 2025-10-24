@@ -32,7 +32,7 @@ export const createUserSchema = z
     username: z.string().trim().min(3).max(32),
     password: z.string().min(8),
     role: z.enum(['ADMIN', 'VENTANA', 'VENDEDOR']).optional(),
-    ventanaId: z.string().uuid('ventanaId inválido').optional(), // requerido condicional abajo
+    ventanaId: z.uuid('ventanaId inválido').nullable().optional(), // requerido condicional abajo
     code: z
       .string()
       .trim()
@@ -42,12 +42,13 @@ export const createUserSchema = z
     isActive: z.boolean().optional(),
   })
   .superRefine((val, ctx) => {
-    // Si no especifican role, asumimos que el servicio manejará el default.
     const role = val.role ?? 'VENTANA'
     if (role !== 'ADMIN') {
-      if (!val.ventanaId) {
+      // Para no romper si viene '', conviértelo a null en un preprocess si lo deseas,
+      // aquí solo exige presencia válida cuando no es ADMIN:
+      if (!val.ventanaId || typeof val.ventanaId !== 'string' || val.ventanaId.trim().length === 0) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           path: ['ventanaId'],
           message: 'Selecciona una ventana',
         })

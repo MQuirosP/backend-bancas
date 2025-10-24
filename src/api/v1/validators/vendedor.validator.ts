@@ -21,7 +21,7 @@ export const UpdateVendedorSchema = z.object({
   username: z.never({ message: "username no puede modificarse en vendedores" }).optional(),
   // role tampoco se toca desde aquí
   name: z.string().min(2, "El nombre es obligatorio").optional(),
-  email: z.string().email("Formato de correo inválido").trim().toLowerCase().optional(),
+  email: z.email("Formato de correo inválido").trim().toLowerCase().optional(),
   password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").optional(),
   isActive: z.boolean().optional(),
 }).strict();

@@ -17,7 +17,7 @@ router.delete('/:id', protect, restrictTo(Role.ADMIN), validateParams(idParamSch
 router.patch('/:id/restore', protect, restrictTo(Role.ADMIN), validateParams(idParamSchema), UserController.restore);
 
 // List & Get (list admin-only; get self allowed if necesitas, por ahora admin)
-router.get('/', protect, restrictTo(Role.ADMIN), validateQuery(listUsersQuerySchema), UserController.list);
+router.get('/', protect, restrictTo(Role.ADMIN, Role.VENTANA), validateQuery(listUsersQuerySchema), UserController.list);
 router.get('/:id', protect, restrictTo(Role.ADMIN), validateParams(idParamSchema), UserController.getById);
 
 export default router;

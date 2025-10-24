@@ -9,7 +9,7 @@ datasource db {
 }
 
 model Banca {
-  id                 String                @id @default(uuid())
+  id                 String                @id @default(uuid()) @db.Uuid
   name               String                @unique
   code               String                @unique
   defaultMinBet      Float                 @default(100.00)
@@ -31,25 +31,26 @@ model Banca {
 }
 
 model Ventana {
-  id                String            @id @default(uuid())
-  bancaId           String
-  name              String
-  code              String            @unique
-  commissionMarginX Float
-  isDeleted         Boolean           @default(false)
-  deletedAt         DateTime?
-  deletedBy         String?
-  deletedReason     String?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  address           String?
-  email             String?
-  phone             String?
-  isActive          Boolean           @default(true)
-  restrictionRules  RestrictionRule[]
-  tickets           Ticket[]
-  users             User[]
-  banca             Banca             @relation(fields: [bancaId], references: [id])
+  id                        String                      @id @default(uuid()) @db.Uuid
+  bancaId                   String
+  name                      String
+  code                      String                      @unique
+  commissionMarginX         Float
+  isDeleted                 Boolean                     @default(false)
+  deletedAt                 DateTime?
+  deletedBy                 String?
+  deletedReason             String?
+  createdAt                 DateTime                    @default(now())
+  updatedAt                 DateTime                    @updatedAt
+  address                   String?
+  email                     String?
+  phone                     String?
+  isActive                  Boolean                     @default(true)
+  restrictionRules          RestrictionRule[]
+  tickets                   Ticket[]
+  users                     User[]
+  banca                     Banca                       @relation(fields: [bancaId], references: [id])
+  VentanaMultiplierOverride VentanaMultiplierOverride[]
 
   @@index([code])
   @@index([email])
@@ -59,11 +60,10 @@ model Ventana {
   @@index([email(ops: raw("gin_trgm_ops"))], map: "idx_ventana_email_trgm", type: Gin)
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_ventana_name_trgm", type: Gin)
   @@index([phone(ops: raw("gin_trgm_ops"))], map: "idx_ventana_phone_trgm", type: Gin)
-  VentanaMultiplierOverride VentanaMultiplierOverride[]
 }
 
 model User {
-  id                  String                   @id @default(uuid())
+  id                  String                   @id @default(uuid()) @db.Uuid
   ventanaId           String?
   name                String
   email               String?                  @unique
@@ -98,29 +98,29 @@ model User {
 }
 
 model Loteria {
-  id              String                   @id @default(uuid())
-  name            String                   @unique
-  rulesJson       Json?
-  isDeleted       Boolean                  @default(false)
-  deletedAt       DateTime?
-  deletedBy       String?
-  deletedReason   String?
-  createdAt       DateTime                 @default(now())
-  updatedAt       DateTime                 @updatedAt
-  isActive        Boolean                  @default(true)
-  loteriaSettings BancaLoteriaSetting[]
-  multipliers     LoteriaMultiplier[]
-  sorteos         Sorteo[]
-  tickets         Ticket[]
-  userOverrides   UserMultiplierOverride[]
+  id                        String                      @id @default(uuid()) @db.Uuid
+  name                      String                      @unique
+  rulesJson                 Json?
+  isDeleted                 Boolean                     @default(false)
+  deletedAt                 DateTime?
+  deletedBy                 String?
+  deletedReason             String?
+  createdAt                 DateTime                    @default(now())
+  updatedAt                 DateTime                    @updatedAt
+  isActive                  Boolean                     @default(true)
+  loteriaSettings           BancaLoteriaSetting[]
+  multipliers               LoteriaMultiplier[]
+  sorteos                   Sorteo[]
+  tickets                   Ticket[]
+  userOverrides             UserMultiplierOverride[]
+  VentanaMultiplierOverride VentanaMultiplierOverride[]
 
   @@index([name])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_loteria_name_trgm", type: Gin)
-  VentanaMultiplierOverride VentanaMultiplierOverride[]
 }
 
 model BancaLoteriaSetting {
-  id                String    @id @default(uuid())
+  id                String    @id @default(uuid()) @db.Uuid
   bancaId           String
   loteriaId         String
   baseMultiplierX   Float
@@ -144,7 +144,7 @@ model TicketCounter {
 }
 
 model Ticket {
-  id            String          @id @default(uuid())
+  id            String          @id @default(uuid()) @db.Uuid
   ticketNumber  Int             @unique @default(autoincrement())
   loteriaId     String
   ventanaId     String
@@ -172,7 +172,7 @@ model Ticket {
 }
 
 model TicketPayment {
-  id              String    @id @default(uuid())
+  id              String    @id @default(uuid()) @db.Uuid
   ticketId        String
   amountPaid      Float
   paidById        String
@@ -194,7 +194,7 @@ model TicketPayment {
 }
 
 model Jugada {
-  id               String             @id @default(uuid())
+  id               String             @id @default(uuid()) @db.Uuid
   ticketId         String
   number           String
   amount           Float
@@ -219,7 +219,7 @@ model Jugada {
 }
 
 model Sorteo {
-  id                String             @id @default(uuid())
+  id                String             @id @default(uuid()) @db.Uuid
   loteriaId         String
   scheduledAt       DateTime
   status            SorteoStatus       @default(SCHEDULED)
@@ -230,7 +230,7 @@ model Sorteo {
   deletedReason     String?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
-  name              String             
+  name              String
   extraMultiplierId String?
   extraMultiplierX  Float?
   extraOutcomeCode  String?
@@ -247,7 +247,7 @@ model Sorteo {
 }
 
 model ActivityLog {
-  id         String       @id @default(uuid())
+  id         String       @id @default(uuid()) @db.Uuid
   userId     String?
   action     ActivityType
   targetType String?
@@ -258,7 +258,7 @@ model ActivityLog {
 }
 
 model RestrictionRule {
-  id                 String    @id @default(uuid())
+  id                 String    @id @default(uuid()) @db.Uuid
   bancaId            String?
   ventanaId          String?
   userId             String?
@@ -277,7 +277,7 @@ model RestrictionRule {
 }
 
 model LoteriaMultiplier {
-  id                String         @id @default(uuid())
+  id                String         @id @default(uuid()) @db.Uuid
   loteriaId         String
   name              String
   valueX            Float
@@ -296,7 +296,7 @@ model LoteriaMultiplier {
 }
 
 model UserMultiplierOverride {
-  id              String    @id @default(uuid())
+  id              String    @id @default(uuid()) @db.Uuid
   userId          String
   loteriaId       String
   baseMultiplierX Float
@@ -314,26 +314,26 @@ model UserMultiplierOverride {
 }
 
 model VentanaMultiplierOverride {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid()) @db.Uuid
   ventanaId       String
   loteriaId       String
   baseMultiplierX Float
   multiplierType  String
-  isActive        Boolean  @default(true)
+  isActive        Boolean   @default(true)
   deletedAt       DateTime?
   deletedBy       String?
   deletedReason   String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  ventana   Ventana @relation(fields: [ventanaId], references: [id])
-  loteria   Loteria @relation(fields: [loteriaId], references: [id])
+  ventana Ventana @relation(fields: [ventanaId], references: [id])
+  loteria Loteria @relation(fields: [loteriaId], references: [id])
 
   @@unique([ventanaId, loteriaId, multiplierType])
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
+  id        String   @id @default(uuid()) @db.Uuid
   userId    String
   token     String   @unique
   revoked   Boolean  @default(false)
