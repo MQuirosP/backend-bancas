@@ -381,6 +381,7 @@ export const SorteoService = {
     pageSize?: number;
     status?: SorteoStatus;
     search?: string;
+    isActive?: boolean
   }) {
     const p = params.page && params.page > 0 ? params.page : 1;
     const ps = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
@@ -391,6 +392,7 @@ export const SorteoService = {
       loteriaId: params.loteriaId,
       status: params.status,
       search: params.search?.trim() || undefined,
+      isActive: params.isActive,
     });
 
     const totalPages = Math.ceil(total / ps);

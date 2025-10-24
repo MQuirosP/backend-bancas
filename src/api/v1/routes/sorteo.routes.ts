@@ -6,7 +6,7 @@ import {
   validateUpdateSorteo,
   validateEvaluateSorteo,
   validateIdParam,
-  validateListSorteosQuery, // ✅ nuevo
+  validateListSorteosQuery,
 } from "../validators/sorteo.validator";
 import { protect } from "../../../middlewares/auth.middleware";
 import { requireAdmin } from "../../../middlewares/roleGuards.middleware";

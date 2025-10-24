@@ -37,9 +37,8 @@ async function resolveExtraMultiplierX(
     throw new AppError("extraMultiplierId no es de tipo REVENTADO", 400);
   }
   if (mul.appliesToSorteoId && mul.appliesToSorteoId !== loteriaId) {
-    // Nota: si appliesToSorteoId está poblado, debería coincidir con el sorteo,
-    // no con la lotería. Si tu modelo guarda appliesToSorteoId = id del sorteo,
-    // cambia la comparación a ese id en evaluate().
+    // Si mul.appliesToSorteoId está seteado, la validación se hace en service.evaluate
+    // comparándolo con el id del sorteo (NO con loteriaId).
   }
 
   return mul.valueX;
@@ -314,12 +313,14 @@ const SorteoRepository = {
     pageSize: number;
     status?: SorteoStatus;
     search?: string;
+    isActive?: boolean
   }) {
-    const { loteriaId, page, pageSize, status, search } = params;
+    const { loteriaId, page, pageSize, status, search, isActive } = params;
 
     const where: Prisma.SorteoWhereInput = {
       ...(loteriaId ? { loteriaId } : {}),
       ...(status ? { status } : {}),
+      ...(typeof isActive === 'boolean' ? { isActive } : {}),
     };
 
     const s = typeof search === "string" ? search.trim() : "";

@@ -55,7 +55,8 @@ export const SorteoController = {
         ? (req.query.status as any)
         : undefined;
     const search =
-      typeof req.query.search === "string" ? req.query.search : undefined; // ✅
+      typeof req.query.search === "string" ? req.query.search : undefined;
+    const isActive = typeof req.query.isActive !== "undefined" ? req.query.isActive === "true" || req.query.isActive === "1" : undefined;
 
     const result = await SorteoService.list({
       loteriaId,
@@ -63,6 +64,7 @@ export const SorteoController = {
       pageSize,
       status,
       search,
+      isActive
     });
     res.json({ success: true, data: result.data, meta: result.meta });
   },
