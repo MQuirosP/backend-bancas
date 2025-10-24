@@ -160,12 +160,15 @@ export const TicketRepository = {
           throw new AppError("Failed to generate ticket number", 500, "SEQ_ERROR");
         }
 
-        // 2) Validación de FKs (defensiva)
-        const [existsLoteria, sorteo, ventana, existsUser] = await Promise.all([
-          tx.loteria.findUnique({ where: { id: loteriaId }, select: { id: true } }),
+        // 2) Validación de FKs + reglas de la lotería
+        const [loteria, sorteo, ventana, existsUser] = await Promise.all([
+          tx.loteria.findUnique({
+            where: { id: loteriaId },
+            select: { id: true, isActive: true, rulesJson: true },
+          }),
           tx.sorteo.findUnique({
             where: { id: sorteoId },
-            select: { id: true, status: true },
+            select: { id: true, status: true, loteriaId: true },
           }),
           tx.ventana.findUnique({
             where: { id: ventanaId },
@@ -175,14 +178,15 @@ export const TicketRepository = {
         ]);
 
         if (!existsUser) throw new AppError("Seller (vendedor) not found", 404, "FK_VIOLATION");
-        if (!existsLoteria) throw new AppError("Lotería not found", 404, "FK_VIOLATION");
+        if (!loteria || loteria.isActive === false) throw new AppError("Lotería not found", 404, "FK_VIOLATION");
         if (!sorteo) throw new AppError("Sorteo not found", 404, "FK_VIOLATION");
         if (!ventana) throw new AppError("Ventana not found", 404, "FK_VIOLATION");
 
-        // 2.1) No permitir venta si sorteo no está abierto
-        if (sorteo.status !== "OPEN") {
-          throw new AppError("No se pueden crear tickets para sorteos no abiertos", 400, "SORTEO_NOT_OPEN");
+        // Defensa: el sorteo debe pertenecer a la misma lotería
+        if (sorteo.loteriaId !== loteriaId) {
+          throw new AppError("El sorteo no pertenece a la lotería indicada", 400, "SORTEO_LOTERIA_MISMATCH");
         }
+
 
         // 3) Resolver X efectivo y asegurar fila Base
         const bancaId = ventana.bancaId;
@@ -226,6 +230,74 @@ export const TicketRepository = {
           })
           .sort((a, b) => b.score - a.score)
           .map((x) => x.r);
+
+        // 5) Validaciones con rulesJson de la Lotería
+        const RJ = (loteria.rulesJson ?? {}) as any;
+
+        const allowedBetTypes = Array.isArray(RJ.allowedBetTypes) ? new Set<string>(RJ.allowedBetTypes) : null;
+        const reventadoEnabled = !!(RJ.reventadoConfig?.enabled);
+        const requiresMatchingNumber = !!(RJ.reventadoConfig?.requiresMatchingNumber);
+        const numberRange = RJ.numberRange && typeof RJ.numberRange.min === "number" && typeof RJ.numberRange.max === "number"
+          ? { min: RJ.numberRange.min, max: RJ.numberRange.max }
+          : { min: 0, max: 99 };
+
+        const minBetAmount = typeof RJ.minBetAmount === "number" ? RJ.minBetAmount : undefined;
+        const maxBetAmount = typeof RJ.maxBetAmount === "number" ? RJ.maxBetAmount : undefined;
+        const maxNumbersPerTicket = typeof RJ.maxNumbersPerTicket === "number" ? RJ.maxNumbersPerTicket : undefined;
+
+        // a) tipos permitidos
+        if (allowedBetTypes) {
+          for (const j of jugadas) {
+            if (!allowedBetTypes.has(j.type)) {
+              throw new AppError(`Tipo de jugada no permitido: ${j.type}`, 400, "BETTYPE_NOT_ALLOWED");
+            }
+          }
+        }
+
+        // b) REVENTADO habilitado
+        if (!reventadoEnabled) {
+          const hasReventado = jugadas.some(j => j.type === "REVENTADO");
+          if (hasReventado) {
+            throw new AppError("REVENTADO no está habilitado para esta lotería", 400, "REVENTADO_DISABLED");
+          }
+        }
+
+        // c) matching de número en REVENTADO (si la regla lo exige)
+        if (requiresMatchingNumber) {
+          for (const j of jugadas) {
+            if (j.type === "REVENTADO") {
+              if (!j.reventadoNumber || j.reventadoNumber !== j.number) {
+                throw new AppError("REVENTADO debe coincidir con el mismo número (number === reventadoNumber)", 400, "REVENTADO_MATCH_REQUIRED");
+              }
+            }
+          }
+        }
+
+        // d) rango de número (respeta numberRange si es más estrecho que 00..99)
+        for (const j of jugadas) {
+          const num = Number(j.number);
+          if (Number.isNaN(num) || num < numberRange.min || num > numberRange.max) {
+            throw new AppError(`Número fuera de rango permitido (${numberRange.min}..${numberRange.max}): ${j.number}`, 400, "NUMBER_OUT_OF_RANGE");
+          }
+        }
+
+        // e) min/max por jugada
+        for (const j of jugadas) {
+          if (typeof minBetAmount === "number" && j.amount < minBetAmount) {
+            throw new AppError(`Monto mínimo por jugada: ${minBetAmount}`, 400, "BET_MIN_VIOLATION");
+          }
+          if (typeof maxBetAmount === "number" && j.amount > maxBetAmount) {
+            throw new AppError(`Monto máximo por jugada: ${maxBetAmount}`, 400, "BET_MAX_VIOLATION");
+          }
+        }
+
+        // f) límite de cantidad de números por ticket (solo NUMERO, únicos)
+        if (typeof maxNumbersPerTicket === "number") {
+          const uniqueNumeros = new Set(jugadas.filter(j => j.type === "NUMERO").map(j => j.number));
+          if (uniqueNumeros.size > maxNumbersPerTicket) {
+            throw new AppError(`Máximo de números por ticket: ${maxNumbersPerTicket}`, 400, "MAX_NUMBERS_PER_TICKET");
+          }
+        }
 
         // 6) Normalizar jugadas + total
         const preparedJugadas = jugadas.map((j) => {
@@ -426,11 +498,11 @@ export const TicketRepository = {
       ...(filters.userId ? { vendedorId: filters.userId } : {}),
       ...(filters.dateFrom || filters.dateTo
         ? {
-            createdAt: {
-              ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
-              ...(filters.dateTo ? { lte: filters.dateTo } : {}),
-            },
-          }
+          createdAt: {
+            ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
+            ...(filters.dateTo ? { lte: filters.dateTo } : {}),
+          },
+        }
         : {}),
     };
 
