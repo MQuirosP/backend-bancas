@@ -199,7 +199,7 @@ export const SorteoService = {
       extraOutcomeCode = (extraOutcomeCodeInput ?? mul.name ?? null) || null;
     }
 
-    // 2.1) ✅ VALIDACIÓN ANTICIPADA:
+    // 2.1) VALIDACIÓN ANTICIPADA:
     // Si habrá REVENTADO ganadores (mismo número ganador) y no mandaron extraMultiplierId,
     // abortar (así evitamos dejar multiplierId en null en las jugadas ganadoras).
     if (!extraMultiplierId) {
