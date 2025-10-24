@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { is } from "zod/locales";
 
 export const createLoteriaSchema = z.object({
   name: z.string().min(2, "El nombre de la lotería debe tener al menos 2 caracteres"),
@@ -23,3 +22,10 @@ export const listLoteriaQuerySchema = z.object({
   isDeleted: z.coerce.boolean().optional(),
   search: z.string().trim().min(1).max(100).optional(),
 }).strict();
+
+export const previewScheduleQuerySchema = z.object({
+  start: z.coerce.date().optional(),             // ISO opcional; default = ahora
+  days: z.coerce.number().int().min(1).max(31).optional(),   // default 7
+  limit: z.coerce.number().int().min(1).max(1000).optional() // top 200 por default
+}).strict();
+

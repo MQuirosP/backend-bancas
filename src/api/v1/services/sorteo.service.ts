@@ -208,7 +208,7 @@ export const SorteoService = {
           ticket: { sorteoId: id },
           type: "REVENTADO",
           reventadoNumber: winningNumber,
-          isDeleted: false,
+          isActive: true,
         },
         select: { id: true },
       });
@@ -242,7 +242,7 @@ export const SorteoService = {
           ticket: { sorteoId: id },
           type: "NUMERO",
           number: winningNumber,
-          isDeleted: false,
+          isActive: true,
         },
         select: {
           id: true,
@@ -269,7 +269,7 @@ export const SorteoService = {
             ticket: { sorteoId: id },
             type: "REVENTADO",
             reventadoNumber: winningNumber,
-            isDeleted: false,
+            isActive: true,
           },
           select: { id: true, amount: true, ticketId: true },
         });

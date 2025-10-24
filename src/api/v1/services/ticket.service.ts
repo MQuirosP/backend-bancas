@@ -5,6 +5,7 @@ import logger from "../../../core/logger";
 import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
+import { isWithinSalesHours, validateTicketAgainstRules } from "../../../utils/loteriaRules";
 
 const CUTOFF_GRACE_MS = 5000;
 
@@ -12,39 +13,31 @@ export const TicketService = {
   async create(data: any, userId: string, requestId?: string) {
     try {
       const { loteriaId, sorteoId } = data;
+      if (!loteriaId || !sorteoId) throw new AppError("Missing loteriaId/sorteoId", 400);
 
-      // ✅ No confíes en ventanaId del body; resuélvelo por el usuario
-      if (!loteriaId || !sorteoId) {
-        throw new AppError("Missing loteriaId/sorteoId", 400);
-      }
-
-      // 🔎 Trae la ventana del vendedor autenticado
+      // Ventana del vendedor
       const seller = await prisma.user.findUnique({
         where: { id: userId },
         select: { id: true, ventanaId: true },
       });
-      if (!seller?.ventanaId) {
-        throw new AppError("El vendedor no tiene una Ventana asignada", 400);
-      }
+      if (!seller?.ventanaId) throw new AppError("El vendedor no tiene una Ventana asignada", 400);
       const ventanaId = seller.ventanaId;
 
-      // ✅ valida ventana real
+      // Ventana válida
       const ventana = await prisma.ventana.findUnique({
         where: { id: ventanaId },
         select: { id: true, bancaId: true, isDeleted: true },
       });
-      if (!ventana || ventana.isDeleted) {
-        throw new AppError("La Ventana no existe o está eliminada", 404);
-      }
+      if (!ventana || ventana.isDeleted) throw new AppError("La Ventana no existe o está eliminada", 404);
 
-      // ✅ valida sorteo
+      // Sorteo válido
       const sorteo = await prisma.sorteo.findUnique({
         where: { id: sorteoId },
-        select: { id: true, scheduledAt: true, status: true },
+        select: { id: true, scheduledAt: true, status: true, loteriaId: true },
       });
       if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
 
-      // ⏱ cutoff
+      // ⏱ cutoff efectivo (rules → RestrictionRuleRepository)
       const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
         bancaId: ventana.bancaId,
         ventanaId,
@@ -73,29 +66,23 @@ export const TicketService = {
       });
 
       if (now >= effectiveLimitTime) {
-        const minsLeft = Math.max(
-          0,
-          Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000)
-        );
+        const minsLeft = Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000));
         throw new AppError(
           `Venta bloqueada: faltan ${minsLeft} min para el sorteo (cutoff=${cutoff.minutes} min, source=${cutoff.source})`,
           409
         );
       }
 
-      // 🎯 Jugadas desde el body (el validador ya corrió antes)
+      // 🎯 Jugadas (el validador ya corrió)
       const jugadasIn: Array<{
         type?: "NUMERO" | "REVENTADO";
         number?: string;
         reventadoNumber?: string | null;
         amount: number;
       }> = Array.isArray(data.jugadas) ? data.jugadas : [];
+      if (jugadasIn.length === 0) throw new AppError("At least one jugada is required", 400);
 
-      if (jugadasIn.length === 0) {
-        throw new AppError("At least one jugada is required", 400);
-      }
-
-      // Seguridad extra por si algún cliente antiguo no envía ambos campos
+      // Seguridad extra: reventado apunta a un NUMERO del mismo ticket
       const numeros = new Set(
         jugadasIn
           .filter((j) => (j.type ?? "NUMERO") === "NUMERO")
@@ -110,20 +97,43 @@ export const TicketService = {
           const target = j.reventadoNumber ?? j.number;
           if (!target) throw new AppError("REVENTADO requires 'reventadoNumber'", 400);
           if (!numeros.has(target)) {
-            throw new AppError(
-              `Debe existir una jugada NUMERO para ${target} en el mismo ticket`,
-              400
-            );
+            throw new AppError(`Debe existir una jugada NUMERO para ${target} en el mismo ticket`, 400);
           }
         }
       }
 
-      // 🧩 Normaliza jugadas para el repositorio
+      // 🔒 Validaciones por rulesJson de la Lotería (horarios + reglas de jugadas)
+      const loteria = await prisma.loteria.findUnique({
+        where: { id: loteriaId },
+        select: { name: true, rulesJson: true },
+      });
+      const rules = (loteria?.rulesJson ?? {}) as any;
+
+      // 1) horario
+      if (!isWithinSalesHours(now, rules)) {
+        throw new AppError("Fuera del horario de ventas para hoy", 409);
+      }
+
+      // 2) reglas del ticket
+      const rulesCheck = validateTicketAgainstRules({
+        loteriaRules: rules,
+        jugadas: jugadasIn.map((j) => ({
+          type: (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO",
+          number: j.number ?? j.reventadoNumber ?? "",
+          amount: j.amount,
+          reventadoNumber: j.reventadoNumber ?? undefined,
+        })),
+      });
+      if (!rulesCheck.ok) {
+        throw new AppError(rulesCheck.reason, 400);
+      }
+
+      // 🧩 Normalizar para repo
       const ticket = await TicketRepository.create(
         {
           loteriaId,
           sorteoId,
-          ventanaId, // ✅ resuelto por el servidor
+          ventanaId,
           totalAmount: 0,
           jugadas: jugadasIn.map((j) => {
             const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
@@ -132,7 +142,7 @@ export const TicketService = {
             return {
               type,
               number,
-              reventadoNumber: isNumero ? null : number, // REVENTADO => ambos iguales
+              reventadoNumber: isNumero ? null : number,
               amount: j.amount,
               multiplierId: "",
               finalMultiplierX: 0,
@@ -161,11 +171,7 @@ export const TicketService = {
         action: "TICKET_CREATE",
         userId,
         requestId,
-        payload: {
-          ticketId: ticket.id,
-          totalAmount: ticket.totalAmount,
-          jugadas: ticket.jugadas.length,
-        },
+        payload: { ticketId: ticket.id, totalAmount: ticket.totalAmount, jugadas: ticket.jugadas.length },
       });
 
       return ticket;

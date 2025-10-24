@@ -1,5 +1,4 @@
 // src/lib/rules/loteriaRules.ts
-import { Loteria, Banca, Ventana, User, RestrictionRule, Sorteo } from '@prisma/client'
 
 export type RulesJson = {
   closingTimeBeforeDraw?: number

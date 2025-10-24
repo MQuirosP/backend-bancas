@@ -200,7 +200,7 @@ model Jugada {
   amount           Float
   finalMultiplierX Float
   payout           Float?
-  isDeleted        Boolean            @default(false)
+  isActive         Boolean            @default(true)
   deletedAt        DateTime?
   deletedBy        String?
   deletedReason    String?

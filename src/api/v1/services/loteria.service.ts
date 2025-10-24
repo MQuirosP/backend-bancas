@@ -5,6 +5,8 @@ import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
 import { AppError } from "../../../core/errors";
 import { paginateOffset } from "../../../utils/pagination";
+import { computeOccurrences } from '../../../utils/schedule';
+import SorteoRepository from '../../../repositories/sorteo.repository';
 
 export const LoteriaService = {
   async create(
@@ -221,6 +223,41 @@ export const LoteriaService = {
     });
 
     return restored;
+  },
+
+  async seedSorteosFromRules(loteriaId: string, start: Date, days: number, dryRun = false) {
+    const loteria = await prisma.loteria.findUnique({
+      where: { id: loteriaId },
+      select: { name: true, rulesJson: true, isActive: true },
+    })
+    if (!loteria) throw new Error("Lotería no encontrada")
+    if (!loteria.isActive) throw new Error("Lotería inactiva")
+
+    const rules = (loteria.rulesJson ?? {}) as any
+    if (rules?.autoCreateSorteos === false) {
+      // Si quieres, permite override via query param; por ahora respetamos bandera.
+      return { created: 0, skipped: 0, note: "autoCreateSorteos=false" }
+    }
+
+    const schedule = rules?.drawSchedule ?? {}
+    const occurrences = computeOccurrences({
+      loteriaName: loteria.name,
+      schedule: {
+        frequency: schedule.frequency,
+        times: schedule.times,
+        daysOfWeek: schedule.daysOfWeek,
+      },
+      start,
+      days,
+      limit: 1000,
+    })
+
+    if (dryRun) {
+      return { created: 0, skipped: 0, preview: occurrences.map(o => ({ name: o.name, scheduledAt: o.scheduledAt.toISOString() })) }
+    }
+
+    const result = await SorteoRepository.bulkCreateIfMissing(loteriaId, occurrences)
+    return result
   },
 };
 

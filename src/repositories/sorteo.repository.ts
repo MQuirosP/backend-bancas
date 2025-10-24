@@ -138,7 +138,7 @@ const SorteoRepository = {
         data: { status: SorteoStatus.CLOSED },
       });
       await tx.ticket.updateMany({
-        where: { sorteoId: id, isDeleted: false },
+        where: { sorteoId: id },
         data: { isActive: false },
       });
       return closed;
@@ -210,7 +210,7 @@ const SorteoRepository = {
           ticket: { sorteoId: id },
           type: "NUMERO",
           number: winningNumber,
-          isDeleted: false,
+          isActive: true,
         },
         select: { id: true, amount: true, finalMultiplierX: true, ticketId: true },
       });
@@ -233,7 +233,7 @@ const SorteoRepository = {
             ticket: { sorteoId: id },
             type: "REVENTADO",
             reventadoNumber: winningNumber,
-            isDeleted: false,
+            isActive: true,
           },
           select: { id: true, amount: true, ticketId: true },
         });
@@ -382,6 +382,48 @@ const SorteoRepository = {
       payload: { sorteoId: id, reason },
     });
     return s;
+  },
+
+  async bulkCreateIfMissing(loteriaId: string, occurrences: Array<{ scheduledAt: Date; name: string }>) {
+    if (occurrences.length === 0) return { created: 0, skipped: 0 }
+
+    // Traer existentes en rango para no duplicar
+    const minAt = occurrences[0].scheduledAt
+    const maxAt = occurrences[occurrences.length - 1].scheduledAt
+
+    const existing = await prisma.sorteo.findMany({
+      where: {
+        loteriaId,
+        scheduledAt: { gte: minAt, lte: maxAt },
+      },
+      select: { id: true, scheduledAt: true },
+    })
+    const existingKey = new Set(existing.map(e => `${e.scheduledAt.toISOString()}`))
+
+    let created = 0
+    for (const occ of occurrences) {
+      const key = occ.scheduledAt.toISOString()
+      if (existingKey.has(key)) continue
+
+      await prisma.sorteo.create({
+        data: {
+          loteriaId,
+          name: occ.name,
+          scheduledAt: occ.scheduledAt,
+          status: SorteoStatus.SCHEDULED,
+          isActive: true,
+        },
+      })
+      created++
+    }
+
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_BULK_CREATE_IF_MISSING",
+      payload: { loteriaId, created, skipped: occurrences.length - created },
+    })
+
+    return { created, skipped: occurrences.length - created }
   },
 };
 

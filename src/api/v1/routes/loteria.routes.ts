@@ -1,53 +1,42 @@
+// src/api/v1/routes/loteria.routes.ts
 import { Router } from "express";
 import { LoteriaController } from "../controllers/loteria.controller";
 import { protect } from "../../../middlewares/auth.middleware";
+import { validateBody, validateParams, validateQuery } from "../../../middlewares/validate.middleware";
 import {
-  validateBody,
-  validateParams,
-  validateQuery,
-} from "../../../middlewares/validate.middleware";
-import { createLoteriaSchema, listLoteriaQuerySchema, loteriaIdSchema, updateLoteriaSchema } from "../validators/loteria.validator";
+  createLoteriaSchema,
+  listLoteriaQuerySchema,
+  loteriaIdSchema,
+  previewScheduleQuerySchema,
+  updateLoteriaSchema,
+} from "../validators/loteria.validator";
+import z from "zod";
 
 const router = Router();
-
 router.use(protect);
 
-// Crear una nueva lotería
+// Colección
+router.post(
+  "/:id/seed_sorteos",
+  validateParams(loteriaIdSchema),
+  validateQuery(previewScheduleQuerySchema.extend({ dryRun: z.enum(["true","false"]).optional() })), // si quieres validarlo
+  LoteriaController.seedSorteos
+)
 router.post("/", validateBody(createLoteriaSchema), LoteriaController.create);
-
-// Listar loterías (activas / eliminadas)
 router.get("/", validateQuery(listLoteriaQuerySchema), LoteriaController.list);
 
-// Obtener una lotería por ID
+// Item (acciones específicas antes del GET por id es opcional; aquí lo dejo arriba por claridad)
+router.get(
+  "/:id/preview_schedule",
+  validateParams(loteriaIdSchema),
+  validateQuery(previewScheduleQuerySchema),
+  LoteriaController.previewSchedule
+);
+
 router.get("/:id", validateParams(loteriaIdSchema), LoteriaController.getById);
-
-router.patch(
-  "/:id",
-  validateParams(loteriaIdSchema),
-  validateBody(updateLoteriaSchema), // ya es parcial
-  LoteriaController.update
-);
-
-// Actualizar una lotería
-router.put(
-  "/:id",
-  validateParams(loteriaIdSchema),
-  validateBody(updateLoteriaSchema),
-  LoteriaController.update
-);
-
-// Eliminar (soft delete)
-router.delete(
-  "/:id",
-  validateParams(loteriaIdSchema),
-  LoteriaController.remove
-);
-
-// Restaurar
-router.patch(
-  "/:id/restore",
-  validateParams(loteriaIdSchema),
-  LoteriaController.restore
-);
+router.patch("/:id", validateParams(loteriaIdSchema), validateBody(updateLoteriaSchema), LoteriaController.update);
+router.put("/:id", validateParams(loteriaIdSchema), validateBody(updateLoteriaSchema), LoteriaController.update);
+router.delete("/:id", validateParams(loteriaIdSchema), LoteriaController.remove);
+router.patch("/:id/restore", validateParams(loteriaIdSchema), LoteriaController.restore);
 
 export default router;

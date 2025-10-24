@@ -177,6 +177,91 @@ export const LoteriaController = {
 
     return success(res, loteria);
   },
+
+    async previewSchedule(req: Request, res: Response) {
+    const loteriaId = req.params.id;
+    const start = req.query.start ? new Date(String(req.query.start)) : new Date();
+    const days = req.query.days ? Number(req.query.days) : 7;
+    const limit = req.query.limit ? Number(req.query.limit) : 200;
+
+    if (isNaN(start.getTime())) {
+      return res.status(400).json({ success: false, message: "start inválido" });
+    }
+
+    const loteria = await LoteriaService.getById(loteriaId);
+    const rules = (loteria.rulesJson ?? {}) as any;
+
+    // Normalizar drawSchedule con tus claves en español
+    const frequency: 'diario'|'semanal'|'personalizado' = rules?.drawSchedule?.frequency ?? 'diario';
+    const times: string[] = Array.isArray(rules?.drawSchedule?.times) ? rules.drawSchedule.times : [];
+    const daysOfWeek: number[] = Array.isArray(rules?.drawSchedule?.daysOfWeek) ? rules.drawSchedule.daysOfWeek : [0,1,2,3,4,5,6];
+
+    if (times.length === 0) {
+      return success(res, [], { count: 0 });
+    }
+
+    // Helpers locales
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const addDays = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+    const atTime = (base: Date, hhmm: string) => {
+      const [h, m] = hhmm.split(":").map((x: string) => parseInt(x, 10));
+      const d = new Date(base);
+      d.setHours(isNaN(h) ? 0 : h, isNaN(m) ? 0 : m, 0, 0);
+      return d;
+    };
+
+    const from = new Date(start); from.setSeconds(0,0);
+    const to = addDays(from, days);
+
+    const out: Array<{ scheduledAt: string; name: string }> = [];
+    const cursor = new Date(from.getFullYear(), from.getMonth(), from.getDate(), 0, 0, 0, 0);
+
+    while (cursor <= to && out.length < limit) {
+      const dow = cursor.getDay(); // 0..6 (0=Domingo)
+      const includeDay =
+        frequency === 'diario'
+          ? true
+          : frequency === 'semanal'
+            ? daysOfWeek.includes(dow)
+            : true; // personalizado: mostramos 'times' cada día; si luego necesitas otra semántica, se ajusta aquí
+
+      if (includeDay) {
+        for (const t of times) {
+          const dt = atTime(cursor, t);
+          if (dt >= from && dt <= to) {
+            out.push({
+              scheduledAt: dt.toISOString(),
+              name: `${loteria.name} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`,
+            });
+            if (out.length >= limit) break;
+          }
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+      cursor.setHours(0,0,0,0);
+    }
+
+    out.sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+    return success(res, out, { count: out.length, from: from.toISOString(), to: to.toISOString() });
+  },
+
+  async seedSorteos(req: Request, res: Response) {
+  const loteriaId = req.params.id
+  const start = req.query.start ? new Date(String(req.query.start)) : new Date()
+  const days = req.query.days ? Number(req.query.days) : 7
+  const dryRun = req.query.dryRun === "true"
+
+  if (isNaN(start.getTime())) {
+    return res.status(400).json({ success: false, message: "start inválido" })
+  }
+  if (days < 1 || days > 31) {
+    return res.status(400).json({ success: false, message: "days debe ser 1..31" })
+  }
+
+  const result = await LoteriaService.seedSorteosFromRules(loteriaId, start, days, dryRun)
+  return res.json({ success: true, data: result })
+}
+
 };
 
 export default LoteriaController;

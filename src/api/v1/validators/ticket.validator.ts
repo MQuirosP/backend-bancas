@@ -10,6 +10,7 @@ const JugadaNumeroSchema = z.object({
   amount: z.number().positive(),
   multiplierId: z.uuid().optional(),
   finalMultiplierX: z.number().optional(),
+  isActive: z.coerce.boolean().optional(),
 });
 
 const JugadaReventadoSchema = z.object({
