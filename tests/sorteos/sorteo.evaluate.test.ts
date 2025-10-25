@@ -135,7 +135,7 @@ describe("🎲 Sorteo evaluate flow", () => {
 
     // Verificar jugadas
     const jugadas = await prisma.jugada.findMany({
-      where: { ticket: { sorteoId }, isDeleted: false },
+      where: { ticket: { sorteoId }, isActive: true },
       orderBy: { createdAt: "asc" },
       select: {
         type: true,
