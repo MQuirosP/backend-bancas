@@ -60,7 +60,7 @@ export const UserMultiplierOverrideService = {
 
   async update(actor: { id: string; role: Role; ventanaId?: string | null }, id: string, dto: UpdateDTO) {
     const current = await UserMultiplierOverrideRepository.getById(id);
-    if (!current || current.isDeleted) throw new AppError("Override not found", 404);
+    if (!current || (current as any).isActive === false) throw new AppError("Override not found", 404);
 
     await this.assertCanManage(actor, current.userId);
 
@@ -79,7 +79,7 @@ export const UserMultiplierOverrideService = {
 
   async softDelete(actor: { id: string; role: Role; ventanaId?: string | null }, id: string, deletedReason?: string) {
     const current = await UserMultiplierOverrideRepository.getById(id);
-    if (!current || current.isDeleted) throw new AppError("Override not found", 404);
+    if (!current || (current as any).isActive === false) throw new AppError("Override not found", 404);
 
     await this.assertCanManage(actor, current.userId);
 
@@ -117,7 +117,7 @@ export const UserMultiplierOverrideService = {
 
   async getById(actor: { id: string; role: Role; ventanaId?: string | null }, id: string) {
     const current = await UserMultiplierOverrideRepository.getById(id);
-    if (!current || current.isDeleted) throw new AppError("Override not found", 404);
+    if (!current || (current as any).isActive === false) throw new AppError("Override not found", 404);
 
     if (actor.role === Role.ADMIN) return current;
 

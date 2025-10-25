@@ -9,3 +9,4 @@ jest.config.ts
 dist/
 # old prisma migrations parked locally
 src/prisma/migrations_archive/
+src/prisma/migrations_archive1/

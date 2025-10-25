@@ -42,9 +42,9 @@ export const LoteriaController = {
     const pageSize = req.query.pageSize
       ? Number(req.query.pageSize)
       : undefined;
-    const isDeleted =
-      typeof req.query.isDeleted === "string"
-        ? req.query.isDeleted === "true"
+    const isActive =
+      typeof req.query.isActive === "string"
+        ? req.query.isActive === "true"
         : undefined;
 
     const search =
@@ -53,7 +53,7 @@ export const LoteriaController = {
     const { data, meta } = await LoteriaService.list({
       page,
       pageSize,
-      isDeleted,
+      isActive,
       search,
     });
 
@@ -64,7 +64,7 @@ export const LoteriaController = {
       payload: {
         page,
         pageSize,
-        isDeleted,
+        isActive,
         hasSearch: Boolean(search && search.trim()),
       },
     });

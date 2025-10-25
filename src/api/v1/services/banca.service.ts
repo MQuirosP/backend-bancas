@@ -26,7 +26,7 @@ export const BancaService = {
 
   async update(id: string, data: UpdateBancaInput, userId: string) {
     const existing = await BancaRepository.findById(id);
-    if (!existing || existing.isDeleted) throw new AppError("Banca no encontrada", 404);
+    if (!existing || !existing.isActive) throw new AppError("Banca no encontrada o inactiva", 404);
 
     if (data.code && data.code !== existing.code) {
       const dup = await BancaRepository.findByCode(data.code);
@@ -51,10 +51,10 @@ export const BancaService = {
   },
 
   async softDelete(id: string, userId: string, reason?: string) {
-    // Política operativa: bloquear borrado si hay Ventanas activas
-    const activeVentanas = await prisma.ventana.count({ where: { bancaId: id, isDeleted: false } });
+    // Política operativa: desactivar si no hay Ventanas activas
+    const activeVentanas = await prisma.ventana.count({ where: { bancaId: id, isActive: true } });
     if (activeVentanas > 0) {
-      throw new AppError("No se puede eliminar la banca: existen Ventanas activas asociadas.", 409);
+      throw new AppError("No se puede desactivar la banca: existen Ventanas activas asociadas.", 409);
     }
 
     const banca = await BancaRepository.softDelete(id, userId, reason);
@@ -92,7 +92,7 @@ export const BancaService = {
 
   async findById(id: string) {
     const banca = await BancaRepository.findById(id);
-    if (!banca || banca.isDeleted) throw new AppError("Banca no encontrada", 404);
+    if (!banca || !banca.isActive) throw new AppError("Banca no encontrada o inactiva", 404);
     return banca;
   },
 

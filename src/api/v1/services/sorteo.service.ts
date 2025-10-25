@@ -24,8 +24,9 @@ export const SorteoService = {
   async create(data: CreateSorteoDTO, userId: string) {
     const loteria = await prisma.loteria.findUnique({
       where: { id: data.loteriaId },
+      select: { id: true, isActive: true },
     });
-    if (!loteria || loteria.isDeleted)
+    if (!loteria || !loteria.isActive)
       throw new AppError("Lotería no encontrada", 404);
 
     const s = await SorteoRepository.create(data);
@@ -61,8 +62,8 @@ export const SorteoService = {
       if (existing.status !== "SCHEDULED") {
         throw new AppError("Solo se puede cambiar la lotería en estado SCHEDULED", 409);
       }
-      const loteria = await prisma.loteria.findUnique({ where: { id: data.loteriaId } });
-      if (!loteria || loteria.isDeleted) throw new AppError("Lotería no encontrada", 404);
+      const loteria = await prisma.loteria.findUnique({ where: { id: data.loteriaId }, select: { id: true, isActive: true } });
+      if (!loteria || !loteria.isActive) throw new AppError("Lotería no encontrada", 404);
     }
 
     const s = await SorteoRepository.update(id, {

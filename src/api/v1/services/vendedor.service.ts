@@ -10,8 +10,8 @@ type CurrentUser = { id: string; role: Role; ventanaId?: string | null };
 
 async function ensureVentanaActive(ventanaId: string) {
   const v = await prisma.ventana.findUnique({ where: { id: ventanaId }, include: { banca: true } });
-  if (!v || v.isDeleted) throw new AppError("La Ventana no existe o está eliminada", 404);
-  if (!v.banca || v.banca.isDeleted) throw new AppError("La Banca asociada está eliminada", 409);
+  if (!v || !v.isActive) throw new AppError("La Ventana no existe o está inactiva", 404);
+  if (!v.banca || !v.banca.isActive) throw new AppError("La Banca asociada está inactiva", 409);
   return v;
 }
 
@@ -35,16 +35,16 @@ export const VendedorService = {
 
     // username único
     const dupUsername = await VendedorRepository.findByUsername(data.username);
-    if (dupUsername && !dupUsername.isDeleted) throw new AppError("El username ya está en uso", 409);
+    if (dupUsername && dupUsername.isActive) throw new AppError("El username ya está en uso", 409);
 
     // code único
     const dupCode = await VendedorRepository.findByCode(data.code);
-    if (dupCode && !dupCode.isDeleted) throw new AppError("El code ya está en uso", 409);
+    if (dupCode && dupCode.isActive) throw new AppError("El code ya está en uso", 409);
 
     // email único (si viene)
     if (data.email) {
       const dupEmail = await VendedorRepository.findByEmail(data.email.toLowerCase());
-      if (dupEmail && !dupEmail.isDeleted) throw new AppError("El email ya está en uso", 409);
+      if (dupEmail && dupEmail.isActive) throw new AppError("El email ya está en uso", 409);
     }
 
     const passwordHash = await bcrypt.hash(data.password, 10);
@@ -70,7 +70,7 @@ export const VendedorService = {
 
   async update(id: string, data: UpdateVendedorInput, current: CurrentUser) {
     const existing = await VendedorRepository.findById(id);
-    if (!existing || existing.isDeleted || existing.role !== Role.VENDEDOR) {
+    if (!existing || !existing.isActive || existing.role !== Role.VENDEDOR) {
       throw new AppError("Vendedor no encontrado", 404);
     }
 
@@ -92,7 +92,7 @@ export const VendedorService = {
     // email único si cambia
     if (data.email && data.email.toLowerCase() !== (existing.email ?? "").toLowerCase()) {
       const dupEmail = await VendedorRepository.findByEmail(data.email.toLowerCase());
-      if (dupEmail && dupEmail.id !== id && !dupEmail.isDeleted) {
+      if (dupEmail && dupEmail.id !== id && dupEmail.isActive) {
         throw new AppError("El email ya está en uso", 409);
       }
     }
@@ -128,13 +128,13 @@ export const VendedorService = {
 
   async softDelete(id: string, current: CurrentUser, reason?: string) {
     const existing = await VendedorRepository.findById(id);
-    if (!existing || existing.isDeleted || existing.role !== Role.VENDEDOR) {
+    if (!existing || !existing.isActive || existing.role !== Role.VENDEDOR) {
       throw new AppError("Vendedor no encontrado", 404);
     }
     assertCanWriteTarget(current, existing.ventanaId!);
 
     const activeTickets = await prisma.ticket.count({
-      where: { vendedorId: id, isDeleted: false, status: "ACTIVE" },
+      where: { vendedorId: id, isActive: true, status: "ACTIVE" },
     });
     if (activeTickets > 0) {
       throw new AppError("No se puede eliminar: el vendedor tiene tickets activos", 409);
@@ -177,8 +177,8 @@ export const VendedorService = {
     assertCanReadList(current, ventanaIdFilter);
 
     if (current.role === Role.VENDEDOR) {
-      const me = await VendedorRepository.findById(current.id);
-      const data = me && !me.isDeleted && me.role === Role.VENDEDOR ? [me] : [];
+    const me = await VendedorRepository.findById(current.id);
+    const data = me && me.isActive && me.role === Role.VENDEDOR ? [me] : [];
       return { data, meta: { total: data.length, page: 1, pageSize: data.length || 1, totalPages: 1, hasNextPage: false, hasPrevPage: false } };
     }
 
@@ -198,7 +198,7 @@ export const VendedorService = {
 
   async findById(id: string, current: CurrentUser) {
     const user = await VendedorRepository.findById(id);
-    if (!user || user.isDeleted || user.role !== Role.VENDEDOR) throw new AppError("Vendedor no encontrado", 404);
+    if (!user || !user.isActive || user.role !== Role.VENDEDOR) throw new AppError("Vendedor no encontrado", 404);
 
     if (current.role === Role.ADMIN) return user;
     if (current.role === Role.VENTANA && current.ventanaId === user.ventanaId) return user;

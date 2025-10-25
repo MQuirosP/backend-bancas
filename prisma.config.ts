@@ -11,4 +11,5 @@ dotenvSafe.config({
 
 export default defineConfig({
   schema: path.join('src', 'prisma', 'schema.prisma'),
+  migrations: { path: path.join("src", "prisma", "migrations") },
 })

@@ -367,9 +367,7 @@ const SorteoRepository = {
       where: { id },
       data: {
         isActive: false,
-        deletedAt: new Date(),
-        deletedBy: userId,
-        deletedReason: reason,
+        // campos de borrado lógico deprecated: no se usan
       },
     });
 

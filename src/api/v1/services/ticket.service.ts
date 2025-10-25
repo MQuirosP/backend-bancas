@@ -26,9 +26,9 @@ export const TicketService = {
       // Ventana válida
       const ventana = await prisma.ventana.findUnique({
         where: { id: ventanaId },
-        select: { id: true, bancaId: true, isDeleted: true },
+        select: { id: true, bancaId: true, isActive: true },
       });
-      if (!ventana || ventana.isDeleted) throw new AppError("La Ventana no existe o está eliminada", 404);
+      if (!ventana || !ventana.isActive) throw new AppError("La Ventana no existe o está inactiva", 404);
 
       // Sorteo válido
       const sorteo = await prisma.sorteo.findUnique({

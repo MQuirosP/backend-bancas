@@ -99,11 +99,7 @@ const VendedorRepository = {
     const user = await prisma.user.update({
       where: { id },
       data: {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy: actorUserId,
         isActive: false,
-        deletedReason: reason,
       },
     });
 
@@ -121,7 +117,7 @@ const VendedorRepository = {
       include: { ventana: { include: { banca: true } } },
     });
     if (!existing) throw new AppError("Vendedor no encontrado", 404);
-    if (!existing.isDeleted) {
+    if (existing.isActive) {
       logger.info({
         layer: "repository",
         action: "VENDEDOR_RESTORE_IDEMPOTENT",
@@ -136,12 +132,12 @@ const VendedorRepository = {
 
     if (
       !existing.ventana ||
-      existing.ventana.isDeleted ||
+      !existing.ventana.isActive ||
       !existing.ventana.banca ||
-      existing.ventana.banca.isDeleted
+      !existing.ventana.banca.isActive
     ) {
       throw new AppError(
-        "Cannot restore: parent Ventana/Banca is deleted. Restore hierarchy first.",
+        "Cannot restore: parent Ventana/Banca is inactive. Restore hierarchy first.",
         409
       );
     }
@@ -149,7 +145,7 @@ const VendedorRepository = {
     // email único (contra activos)
     if (existing.email) {
       const dupEmail = await prisma.user.findFirst({
-        where: { id: { not: id }, email: existing.email, isDeleted: false },
+        where: { id: { not: id }, email: existing.email, isActive: true },
       });
       if (dupEmail)
         throw new AppError(
@@ -161,10 +157,6 @@ const VendedorRepository = {
     const user = await prisma.user.update({
       where: { id },
       data: {
-        isDeleted: false,
-        deletedAt: null,
-        deletedBy: null,
-        deletedReason: null,
         isActive: true,
       },
     });
@@ -181,7 +173,7 @@ const VendedorRepository = {
     const skip = (page - 1) * pageSize;
 
     const where: Prisma.UserWhereInput = {
-      isDeleted: false,
+      isActive: true,
       role: Role.VENDEDOR,
       ...(filters?.ventanaId ? { ventanaId: filters.ventanaId } : {}),
     };

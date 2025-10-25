@@ -19,10 +19,10 @@ export const DiagnosticsController = {
 
     const ventana = await prisma.ventana.findUnique({
       where: { id: ventanaId },
-      select: { id: true, bancaId: true, isDeleted: true },
+      select: { id: true, bancaId: true, isActive: true },
     });
-    if (!ventana || ventana.isDeleted) {
-      throw new AppError("Ventana no encontrada o eliminada", 404);
+    if (!ventana || !ventana.isActive) {
+      throw new AppError("Ventana no encontrada o inactiva", 404);
     }
 
     const sorteo = await prisma.sorteo.findUnique({

@@ -75,11 +75,7 @@ const VentanaRepository = {
       where: { id },
       data: {
         isActive: false,
-        // si quieres conservar auditoría sin “bloquear” el listado:
-        deletedAt: new Date(),
-        deletedBy: userId,
-        deletedReason: reason || "No reason provided",
-        // ❌ isDeleted: true  (removido)
+        // Campos de borrado lógico deprecated: no se usan
       },
     });
     logger.info({
@@ -131,9 +127,6 @@ const VentanaRepository = {
       where: { id },
       data: {
         isActive: true,
-        deletedAt: null,
-        deletedBy: null,
-        deletedReason: null,
       },
     });
 

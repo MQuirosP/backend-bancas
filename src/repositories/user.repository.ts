@@ -83,7 +83,7 @@ export const UserRepository = {
         take: pageSize,
         select: select ?? {
           id: true, name: true, email: true, username: true, role: true,
-          ventanaId: true, isDeleted: true, isActive: true, code: true,    // ✅ incluir
+          ventanaId: true, isActive: true, code: true,
           createdAt: true, updatedAt: true,
           ventana: { select: { id: true, name: true } },
         },

@@ -88,11 +88,7 @@ const BancaRepository = {
     const banca = await prisma.banca.update({
       where: { id },
       data: {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy: userId,
         isActive: false,
-        deletedReason: reason,
       },
     });
 
@@ -108,7 +104,7 @@ const BancaRepository = {
     const skip = (page - 1) * pageSize;
     const s = typeof search === "string" ? search.trim() : "";
 
-    const where: any = { isDeleted: !!isActive };
+    const where: any = {};
 
     if (s) {
       where.OR = [
@@ -137,7 +133,7 @@ const BancaRepository = {
   async restore(id: string) {
     const existing = await prisma.banca.findUnique({ where: { id } });
     if (!existing) throw new AppError("Banca no encontrada", 404);
-    if (!existing.isDeleted) {
+    if (existing.isActive) {
       logger.info({
         layer: "repository",
         action: "BANCA_RESTORE_IDEMPOTENT",
@@ -149,10 +145,10 @@ const BancaRepository = {
     // Evita romper unicidad al restaurar
     const [dupCode, dupName] = await Promise.all([
       prisma.banca.findFirst({
-        where: { id: { not: id }, code: existing.code, isDeleted: false },
+        where: { id: { not: id }, code: existing.code, isActive: true },
       }),
       prisma.banca.findFirst({
-        where: { id: { not: id }, name: existing.name, isDeleted: false },
+        where: { id: { not: id }, name: existing.name, isActive: true },
       }),
     ]);
     if (dupCode)
@@ -169,11 +165,7 @@ const BancaRepository = {
     const banca = await prisma.banca.update({
       where: { id },
       data: {
-        isDeleted: false,
-        deletedAt: null,
-        deletedBy: null,
         isActive: true,
-        deletedReason: null,
       },
     });
 

@@ -1,10 +1,6 @@
--- Enable required extensions (idempotent)
-CREATE EXTENSION IF NOT EXISTS citext        WITH SCHEMA public;
-CREATE EXTENSION IF NOT EXISTS pg_trgm       WITH SCHEMA public;
-CREATE EXTENSION IF NOT EXISTS pgcrypto      WITH SCHEMA public; -- gen_random_uuid()
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp"   WITH SCHEMA public; -- uuid_generate_v4()
--- (opcionales según tu uso)
-
+CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+-- y que la columna username salga como CITEXT si usas @db.Citext
 
 -- CreateEnum
 CREATE TYPE "Role" AS ENUM ('ADMIN', 'VENTANA', 'VENDEDOR');
@@ -26,12 +22,11 @@ CREATE TYPE "ActivityType" AS ENUM ('LOGIN', 'LOGOUT', 'PASSWORD_CHANGE', 'TICKE
 
 -- CreateTable
 CREATE TABLE "Banca" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "code" TEXT NOT NULL,
     "defaultMinBet" DOUBLE PRECISION NOT NULL DEFAULT 100.00,
     "globalMaxPerNumber" INTEGER NOT NULL DEFAULT 5000,
-    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
     "deletedAt" TIMESTAMP(3),
     "deletedBy" TEXT,
     "deletedReason" TEXT,
@@ -48,12 +43,11 @@ CREATE TABLE "Banca" (
 
 -- CreateTable
 CREATE TABLE "Ventana" (
-    "id" TEXT NOT NULL,
-    "bancaId" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "bancaId" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "code" TEXT NOT NULL,
     "commissionMarginX" DOUBLE PRECISION NOT NULL,
-    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
     "deletedAt" TIMESTAMP(3),
     "deletedBy" TEXT,
     "deletedReason" TEXT,
@@ -69,14 +63,13 @@ CREATE TABLE "Ventana" (
 
 -- CreateTable
 CREATE TABLE "User" (
-    "id" TEXT NOT NULL,
-    "ventanaId" TEXT,
+    "id" UUID NOT NULL,
+    "ventanaId" UUID,
     "name" TEXT NOT NULL,
     "email" TEXT,
     "phone" TEXT,
     "password" TEXT NOT NULL,
     "role" "Role" NOT NULL DEFAULT 'VENTANA',
-    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
     "deletedAt" TIMESTAMP(3),
     "deletedBy" TEXT,
     "deletedReason" TEXT,
@@ -91,10 +84,9 @@ CREATE TABLE "User" (
 
 -- CreateTable
 CREATE TABLE "Loteria" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "rulesJson" JSONB,
-    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
     "deletedAt" TIMESTAMP(3),
     "deletedBy" TEXT,
     "deletedReason" TEXT,
@@ -107,12 +99,11 @@ CREATE TABLE "Loteria" (
 
 -- CreateTable
 CREATE TABLE "BancaLoteriaSetting" (
-    "id" TEXT NOT NULL,
-    "bancaId" TEXT NOT NULL,
-    "loteriaId" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "bancaId" UUID NOT NULL,
+    "loteriaId" UUID NOT NULL,
     "baseMultiplierX" DOUBLE PRECISION NOT NULL,
     "maxTotalPerSorteo" INTEGER,
-    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
     "deletedAt" TIMESTAMP(3),
     "deletedBy" TEXT,
     "deletedReason" TEXT,
@@ -133,14 +124,13 @@ CREATE TABLE "TicketCounter" (
 
 -- CreateTable
 CREATE TABLE "Ticket" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
     "ticketNumber" SERIAL NOT NULL,
-    "loteriaId" TEXT NOT NULL,
-    "ventanaId" TEXT NOT NULL,
-    "vendedorId" TEXT NOT NULL,
+    "loteriaId" UUID NOT NULL,
+    "ventanaId" UUID NOT NULL,
+    "vendedorId" UUID NOT NULL,
     "totalAmount" DOUBLE PRECISION NOT NULL,
     "status" "TicketStatus" NOT NULL DEFAULT 'ACTIVE',
-    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
     "deletedAt" TIMESTAMP(3),
     "deletedBy" TEXT,
     "deletedReason" TEXT,
@@ -148,17 +138,17 @@ CREATE TABLE "Ticket" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "isWinner" BOOLEAN NOT NULL DEFAULT false,
-    "sorteoId" TEXT NOT NULL,
+    "sorteoId" UUID NOT NULL,
 
     CONSTRAINT "Ticket_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "TicketPayment" (
-    "id" TEXT NOT NULL,
-    "ticketId" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "ticketId" UUID NOT NULL,
     "amountPaid" DOUBLE PRECISION NOT NULL,
-    "paidById" TEXT NOT NULL,
+    "paidById" UUID NOT NULL,
     "paymentDate" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "method" TEXT,
     "notes" TEXT,
@@ -176,20 +166,20 @@ CREATE TABLE "TicketPayment" (
 
 -- CreateTable
 CREATE TABLE "Jugada" (
-    "id" TEXT NOT NULL,
-    "ticketId" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "ticketId" UUID NOT NULL,
     "number" TEXT NOT NULL,
     "amount" DOUBLE PRECISION NOT NULL,
     "finalMultiplierX" DOUBLE PRECISION NOT NULL,
     "payout" DOUBLE PRECISION,
-    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
     "deletedAt" TIMESTAMP(3),
     "deletedBy" TEXT,
     "deletedReason" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "isWinner" BOOLEAN NOT NULL DEFAULT false,
-    "multiplierId" TEXT,
+    "multiplierId" UUID,
     "reventadoNumber" TEXT,
     "type" "BetType" NOT NULL DEFAULT 'NUMERO',
 
@@ -198,19 +188,19 @@ CREATE TABLE "Jugada" (
 
 -- CreateTable
 CREATE TABLE "Sorteo" (
-    "id" TEXT NOT NULL,
-    "loteriaId" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "loteriaId" UUID NOT NULL,
     "scheduledAt" TIMESTAMP(3) NOT NULL,
     "status" "SorteoStatus" NOT NULL DEFAULT 'SCHEDULED',
     "winningNumber" TEXT,
-    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
     "deletedAt" TIMESTAMP(3),
     "deletedBy" TEXT,
     "deletedReason" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "name" TEXT NOT NULL,
-    "extraMultiplierId" TEXT,
+    "extraMultiplierId" UUID,
     "extraMultiplierX" DOUBLE PRECISION,
     "extraOutcomeCode" TEXT,
 
@@ -219,8 +209,8 @@ CREATE TABLE "Sorteo" (
 
 -- CreateTable
 CREATE TABLE "ActivityLog" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT,
+    "id" UUID NOT NULL,
+    "userId" UUID,
     "action" "ActivityType" NOT NULL,
     "targetType" TEXT,
     "targetId" TEXT,
@@ -232,16 +222,16 @@ CREATE TABLE "ActivityLog" (
 
 -- CreateTable
 CREATE TABLE "RestrictionRule" (
-    "id" TEXT NOT NULL,
-    "bancaId" TEXT,
-    "ventanaId" TEXT,
-    "userId" TEXT,
+    "id" UUID NOT NULL,
+    "bancaId" UUID,
+    "ventanaId" UUID,
+    "userId" UUID,
     "number" TEXT,
     "maxAmount" DOUBLE PRECISION,
     "maxTotal" DOUBLE PRECISION,
     "appliesToDate" TIMESTAMP(3),
     "appliesToHour" INTEGER,
-    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "salesCutoffMinutes" INTEGER,
@@ -251,13 +241,13 @@ CREATE TABLE "RestrictionRule" (
 
 -- CreateTable
 CREATE TABLE "LoteriaMultiplier" (
-    "id" TEXT NOT NULL,
-    "loteriaId" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "loteriaId" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "valueX" DOUBLE PRECISION NOT NULL,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "appliesToDate" TIMESTAMP(3),
-    "appliesToSorteoId" TEXT,
+    "appliesToSorteoId" UUID,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "kind" "MultiplierKind" NOT NULL DEFAULT 'NUMERO',
@@ -267,25 +257,42 @@ CREATE TABLE "LoteriaMultiplier" (
 
 -- CreateTable
 CREATE TABLE "UserMultiplierOverride" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
-    "loteriaId" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "userId" UUID NOT NULL,
+    "loteriaId" UUID NOT NULL,
     "baseMultiplierX" DOUBLE PRECISION NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "deletedAt" TIMESTAMP(3),
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
     "deletedBy" TEXT,
     "deletedReason" TEXT,
-    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
     "multiplierType" TEXT NOT NULL,
 
     CONSTRAINT "UserMultiplierOverride_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
+CREATE TABLE "VentanaMultiplierOverride" (
+    "id" UUID NOT NULL,
+    "ventanaId" UUID NOT NULL,
+    "loteriaId" UUID NOT NULL,
+    "baseMultiplierX" DOUBLE PRECISION NOT NULL,
+    "multiplierType" TEXT NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "deletedAt" TIMESTAMP(3),
+    "deletedBy" TEXT,
+    "deletedReason" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "VentanaMultiplierOverride_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "RefreshToken" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "userId" UUID NOT NULL,
     "token" TEXT NOT NULL,
     "revoked" BOOLEAN NOT NULL DEFAULT false,
     "expiresAt" TIMESTAMP(3) NOT NULL,
@@ -398,9 +405,6 @@ CREATE INDEX "Jugada_type_idx" ON "Jugada"("type");
 CREATE INDEX "Jugada_reventadoNumber_idx" ON "Jugada"("reventadoNumber");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Sorteo_name_key" ON "Sorteo"("name");
-
--- CreateIndex
 CREATE INDEX "Sorteo_loteriaId_scheduledAt_idx" ON "Sorteo"("loteriaId", "scheduledAt");
 
 -- CreateIndex
@@ -426,6 +430,9 @@ CREATE INDEX "LoteriaMultiplier_appliesToSorteoId_idx" ON "LoteriaMultiplier"("a
 
 -- CreateIndex
 CREATE UNIQUE INDEX "UserMultiplierOverride_userId_loteriaId_multiplierType_key" ON "UserMultiplierOverride"("userId", "loteriaId", "multiplierType");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "VentanaMultiplierOverride_ventanaId_loteriaId_multiplierTyp_key" ON "VentanaMultiplierOverride"("ventanaId", "loteriaId", "multiplierType");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "RefreshToken_token_key" ON "RefreshToken"("token");
@@ -494,5 +501,10 @@ ALTER TABLE "UserMultiplierOverride" ADD CONSTRAINT "UserMultiplierOverride_lote
 ALTER TABLE "UserMultiplierOverride" ADD CONSTRAINT "UserMultiplierOverride_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "RefreshToken" ADD CONSTRAINT "RefreshToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "VentanaMultiplierOverride" ADD CONSTRAINT "VentanaMultiplierOverride_ventanaId_fkey" FOREIGN KEY ("ventanaId") REFERENCES "Ventana"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
+-- AddForeignKey
+ALTER TABLE "VentanaMultiplierOverride" ADD CONSTRAINT "VentanaMultiplierOverride_loteriaId_fkey" FOREIGN KEY ("loteriaId") REFERENCES "Loteria"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "RefreshToken" ADD CONSTRAINT "RefreshToken_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

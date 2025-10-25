@@ -9,10 +9,10 @@ import { normalizePhone } from "../../../utils/phoneNormalizer";
 async function ensureVentanaActiveOrThrow(ventanaId: string) {
   const v = await prisma.ventana.findUnique({
     where: { id: ventanaId },
-    select: { id: true, isDeleted: true, banca: { select: { id: true, isDeleted: true } } },
+    select: { id: true, isActive: true, banca: { select: { id: true, isActive: true } } },
   });
-  if (!v || v.isDeleted) throw new AppError('Ventana not found or deleted', 404);
-  if (!v.banca || v.banca.isDeleted) throw new AppError('Parent Banca deleted', 409);
+  if (!v || !v.isActive) throw new AppError('Ventana not found or inactive', 404);
+  if (!v.banca || !v.banca.isActive) throw new AppError('Parent Banca inactive', 409);
 }
 
 export const UserService = {
@@ -66,7 +66,7 @@ export const UserService = {
       where: { id: created.id },
       select: {
         id: true, name: true, username: true, email: true, role: true,
-        ventanaId: true, isDeleted: true, isActive: true, code: true,   // ✅ incluye
+        ventanaId: true, isActive: true, code: true,
         createdAt: true,
       },
     });
@@ -79,7 +79,7 @@ export const UserService = {
       where: { id },
       select: {
         id: true, name: true, email: true, username: true, role: true,
-        ventanaId: true, isDeleted: true, isActive: true, code: true,    // ✅ incluye
+        ventanaId: true, isActive: true, code: true,
         createdAt: true,
       },
     });
@@ -177,8 +177,8 @@ export const UserService = {
       }
     }
 
-    // toggles internos (solo admin routes los exponen)
-    if (dto.isDeleted !== undefined) toUpdate.isDeleted = dto.isDeleted;
+    // toggle de actividad (deprecated isDeleted → usar isActive inverso)
+    if (dto.isActive !== undefined) toUpdate.isActive = dto.isActive;
 
     const updated = await UserRepository.update(id, toUpdate);
 
@@ -187,23 +187,20 @@ export const UserService = {
       where: { id: updated.id },
       select: {
         id: true, name: true, username: true, email: true, role: true,
-        ventanaId: true, isDeleted: true, createdAt: true,
+        ventanaId: true, isActive: true, createdAt: true,
       },
     });
 
     return result!;
   },
 
-  async softDelete(id: string, deletedBy: string, deletedReason?: string) {
+  async softDelete(id: string, _deletedBy: string, _deletedReason?: string) {
     const user = await prisma.user.update({
       where: { id },
       data: {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy,
-        deletedReason: deletedReason ?? 'User soft-deleted',
+        isActive: false,
       },
-      select: { id: true, name: true, email: true, role: true, ventanaId: true, isDeleted: true, createdAt: true },
+      select: { id: true, name: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
     });
     return user;
   },
@@ -211,8 +208,8 @@ export const UserService = {
   async restore(id: string) {
     const user = await prisma.user.update({
       where: { id },
-      data: { isDeleted: false, deletedAt: null, deletedBy: null, deletedReason: null },
-      select: { id: true, name: true, email: true, role: true, ventanaId: true, isDeleted: true, createdAt: true },
+      data: { isActive: true },
+      select: { id: true, name: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
     });
     return user;
   },

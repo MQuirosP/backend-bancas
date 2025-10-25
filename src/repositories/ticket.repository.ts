@@ -479,7 +479,7 @@ export const TicketRepository = {
     pageSize = 10,
     filters: {
       status?: TicketStatus;
-      isDeleted?: boolean;
+      isActive?: boolean;
       sorteoId?: string;
       search?: string;
       userId?: string;
@@ -491,9 +491,9 @@ export const TicketRepository = {
 
     const where: Prisma.TicketWhereInput = {
       ...(filters.status ? { status: filters.status } : {}),
-      ...(typeof filters.isDeleted === "boolean"
-        ? { isDeleted: filters.isDeleted }
-        : { isDeleted: false }),
+      ...(typeof filters.isActive === "boolean"
+        ? { isActive: filters.isActive }
+        : { isActive: true }),
       ...(filters.sorteoId ? { sorteoId: filters.sorteoId } : {}),
       ...(filters.userId ? { vendedorId: filters.userId } : {}),
       ...(filters.dateFrom || filters.dateTo
@@ -600,11 +600,8 @@ export const TicketRepository = {
         const cancelled = await tx.ticket.update({
           where: { id },
           data: {
-            isDeleted: true,
             isActive: false,
-            deletedAt: new Date(),
-            deletedBy: userId,
-            deletedReason: "Cancelled by user",
+            
             status: TicketStatus.CANCELLED,
             updatedAt: new Date(),
           },
@@ -634,7 +631,7 @@ export const TicketRepository = {
           details: {
             ticketNumber: ticket.ticketNumber,
             totalAmount: ticket.totalAmount,
-            cancelledAt: ticket.deletedAt,
+            cancelledAt: ticket.updatedAt,
           },
         },
       })

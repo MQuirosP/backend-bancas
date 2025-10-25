@@ -16,10 +16,7 @@ export const VentanaMultiplierOverrideRepository = {
     return prisma.ventanaMultiplierOverride.update({
       where: { id },
       data: {
-        isActive: false,                // ✅
-        deletedAt: new Date(),
-        deletedBy: actorId,
-        deletedReason: deletedReason ?? null,
+        isActive: false,
       },
     });
   },
@@ -28,10 +25,7 @@ export const VentanaMultiplierOverrideRepository = {
     return prisma.ventanaMultiplierOverride.update({
       where: { id },
       data: {
-        isActive: true,                 // ✅
-        deletedAt: null,
-        deletedBy: null,
-        deletedReason: null,
+        isActive: true,
       },
     });
   },

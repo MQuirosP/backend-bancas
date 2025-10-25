@@ -13,6 +13,6 @@ export interface UpdateLoteriaDTO {
 export interface LoteriaListParams {
   page?: number;
   pageSize?: number;
-  isDeleted?: boolean;
+  isActive?: boolean;
   search?: string; // ✅ nuevo
 }

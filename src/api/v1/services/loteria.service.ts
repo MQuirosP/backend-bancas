@@ -69,18 +69,18 @@ export const LoteriaService = {
   async list({
     page = 1,
     pageSize = 10,
-    isDeleted,
+    isActive,
     search,
   }: {
     page?: number;
     pageSize?: number;
-    isDeleted?: boolean;
+    isActive?: boolean;
     search?: string;
   }) {
     const where: Prisma.LoteriaWhereInput = {};
 
-    if (typeof isDeleted === "boolean") {
-      where.isDeleted = isDeleted;
+    if (typeof isActive === "boolean") {
+      where.isActive = isActive;
     }
 
     const s = typeof search === "string" ? search.trim() : "";
@@ -104,7 +104,7 @@ export const LoteriaService = {
         id: true,
         name: true,
         rulesJson: true,
-        isDeleted: true,
+        isActive: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -162,10 +162,7 @@ export const LoteriaService = {
     const deleted = await prisma.loteria.update({
       where: { id },
       data: {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy: userId,
-        deletedReason: "Deleted by admin",
+        isActive: false,
       },
     });
 
@@ -182,7 +179,7 @@ export const LoteriaService = {
       action: ActivityType.LOTERIA_DELETE,
       targetType: "LOTERIA",
       targetId: id,
-      details: { reason: "Deleted by admin" },
+      details: { isActive: false },
       requestId,
       layer: "service",
     });
@@ -197,10 +194,7 @@ export const LoteriaService = {
     const restored = await prisma.loteria.update({
       where: { id },
       data: {
-        isDeleted: false,
-        deletedAt: null,
-        deletedBy: null,
-        deletedReason: null,
+        isActive: true,
       },
     });
 
@@ -217,7 +211,7 @@ export const LoteriaService = {
       action: ActivityType.LOTERIA_RESTORE,
       targetType: "LOTERIA",
       targetId: id,
-      details: null,
+      details: { isActive: true },
       requestId,
       layer: "service",
     });

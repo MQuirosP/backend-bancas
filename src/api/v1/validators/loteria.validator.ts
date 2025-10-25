@@ -19,7 +19,7 @@ export const loteriaIdSchema = z.object({
 export const listLoteriaQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
-  isDeleted: z.coerce.boolean().optional(),
+  isActive: z.coerce.boolean().optional(),
   search: z.string().trim().min(1).max(100).optional(),
 }).strict();
 

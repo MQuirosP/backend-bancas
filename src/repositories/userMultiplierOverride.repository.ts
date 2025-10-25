@@ -18,10 +18,7 @@ export const UserMultiplierOverrideRepository = {
     return prisma.userMultiplierOverride.update({
       where: { id },
       data: {
-        isDeleted: true,
-        deletedAt: new Date(),
-        deletedBy: actorId,
-        deletedReason: deletedReason ?? null,
+        isActive: false,
       },
     });
   },
@@ -30,12 +27,7 @@ export const UserMultiplierOverrideRepository = {
   async restore(id: string) {
     return prisma.userMultiplierOverride.update({
       where: { id },
-      data: {
-        isDeleted: false,
-        deletedAt: null,
-        deletedBy: null,
-        deletedReason: null,
-      },
+      data: { isActive: true },
     });
   },
 
@@ -45,13 +37,13 @@ export const UserMultiplierOverrideRepository = {
 
   async findByUserAndLoteria(userId: string, loteriaId: string, multiplierType: string) {
     return prisma.userMultiplierOverride.findFirst({
-      where: { userId, loteriaId, multiplierType, isDeleted: false },
+      where: { userId, loteriaId, multiplierType, isActive: true },
     });
   },
 
   async list(params: { userId?: string; loteriaId?: string; skip: number; take: number }) {
     const { userId, loteriaId, skip, take } = params;
-    const where: any = { isDeleted: false };
+    const where: any = { isActive: true };
     if (userId) where.userId = userId;
     if (loteriaId) where.loteriaId = loteriaId;
 
