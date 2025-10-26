@@ -6,7 +6,7 @@ datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
-  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  // shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 model Banca {
@@ -51,7 +51,7 @@ model Ventana {
   restrictionRules          RestrictionRule[]
   tickets                   Ticket[]
   users                     User[]
-  VentanaMultiplierOverride VentanaMultiplierOverride[]
+  multiplierOverrides       MultiplierOverride[]
 
   @@index([code])
   @@index([email])
@@ -86,7 +86,7 @@ model User {
   ticketsCreated      Ticket[]
   TicketPayment       TicketPayment[]
   ventana             Ventana?                 @relation(fields: [ventanaId], references: [id])
-  multiplierOverrides UserMultiplierOverride[]
+  multiplierOverrides MultiplierOverride[]
 
   @@index([code])
   @@index([email])
@@ -112,8 +112,7 @@ model Loteria {
   multipliers               LoteriaMultiplier[]
   sorteos                   Sorteo[]
   tickets                   Ticket[]
-  userOverrides             UserMultiplierOverride[]
-  VentanaMultiplierOverride VentanaMultiplierOverride[]
+  multiplierOverrides       MultiplierOverride[]
 
   @@index([name])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_loteria_name_trgm", type: Gin)
@@ -300,42 +299,27 @@ model LoteriaMultiplier {
   @@index([appliesToSorteoId])
 }
 
-model UserMultiplierOverride {
-  id              String    @id @default(uuid()) @db.Uuid
-  userId          String    @db.Uuid
-  loteriaId       String    @db.Uuid
-  baseMultiplierX Float
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  deletedAt       DateTime?
-  isActive        Boolean   @default(true) // si decides mantenerlo
-  deletedBy       String?
-  deletedReason   String?
+model MultiplierOverride {
+  id              String        @id @default(uuid()) @db.Uuid
+  scope           OverrideScope
+  userId          String?       @db.Uuid
+  ventanaId       String?       @db.Uuid
+  loteriaId       String        @db.Uuid
   multiplierType  String
-
-  loteria Loteria @relation(fields: [loteriaId], references: [id])
-  user    User    @relation(fields: [userId], references: [id])
-
-  @@unique([userId, loteriaId, multiplierType])
-}
-
-model VentanaMultiplierOverride {
-  id              String    @id @default(uuid()) @db.Uuid
-  ventanaId       String    @db.Uuid
-  loteriaId       String    @db.Uuid
   baseMultiplierX Float
-  multiplierType  String
-  isActive        Boolean   @default(true)
+  isActive        Boolean       @default(true)
   deletedAt       DateTime?
   deletedBy       String?
   deletedReason   String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
-  ventana Ventana @relation(fields: [ventanaId], references: [id])
-  loteria Loteria @relation(fields: [loteriaId], references: [id])
+  user    User?    @relation(fields: [userId], references: [id])
+  ventana Ventana? @relation(fields: [ventanaId], references: [id])
+  loteria Loteria  @relation(fields: [loteriaId], references: [id])
 
-  @@unique([ventanaId, loteriaId, multiplierType])
+  @@unique([scope, userId, ventanaId, loteriaId, multiplierType], map: "uniq_override_scope_target")
+  @@index([scope, userId, ventanaId, loteriaId, multiplierType], map: "idx_override_lookup")
 }
 
 model RefreshToken {
@@ -348,6 +332,11 @@ model RefreshToken {
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum OverrideScope {
+  USER
+  VENTANA
 }
 
 enum Role {

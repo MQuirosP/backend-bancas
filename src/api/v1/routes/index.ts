@@ -7,8 +7,7 @@ import ventanaRoutes from './ventana.routes';
 import bancaRoutes from './banca.routes';
 import vendedorRoutes from './vendedor.routes';
 import sorteoRoutes from './sorteo.routes';
-import userMultiplierOverrideRoutes from './userMultiplierOverride.routes';
-import ventanaMultiplierOverrideRoutes from './ventanaMultiplierOverride.routes';
+import multiplierOverrideRoutes from './multiplierOverride.routes';
 import restrictionRuleRoutes from './restrictionRule.routes'
 import ticketPaymentRoutes from "./ticketPayment.route"
 import multipliersRoutes from "./multipliers.routes"
@@ -24,8 +23,7 @@ router.use("/ventanas", ventanaRoutes);
 router.use('/bancas', bancaRoutes);
 router.use("/vendedores", vendedorRoutes);
 router.use("/sorteos", sorteoRoutes);
-router.use("/user-multiplier-overrides", userMultiplierOverrideRoutes);
-router.use('/ventana-multiplier-overrides', ventanaMultiplierOverrideRoutes);
+router.use("/multiplier-overrides", multiplierOverrideRoutes);
 router.use("/restrictions", restrictionRuleRoutes);
 router.use("/ticketPayment", ticketPaymentRoutes);
 router.use("/multipliers", multipliersRoutes);
