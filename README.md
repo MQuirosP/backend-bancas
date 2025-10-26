@@ -289,6 +289,7 @@ Sistema jerárquico de comisiones con políticas JSON configurables por **User**
 ### Matching de reglas
 
 Una regla aplica si **TODOS** los criterios se cumplen:
+
 1. `loteriaId` coincide (o es `null` = comodín)
 2. `betType` coincide (o es `null` = comodín)
 3. `finalMultiplierX` está en `[min, max]` (inclusivo)
