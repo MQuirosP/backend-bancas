@@ -244,13 +244,13 @@ model Sorteo {
   loteria         Loteria            @relation(fields: [loteriaId], references: [id])
   tickets         Ticket[]
 
+  @@unique([loteriaId, scheduledAt])
   @@index([loteriaId, scheduledAt])
   @@index([extraMultiplierId])
   @@index([name])
   @@index([winningNumber])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_name_trgm", type: Gin)
   @@index([winningNumber(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_winning_trgm", type: Gin)
-  @@unique([loteriaId, scheduledAt])
 }
 
 model ActivityLog {

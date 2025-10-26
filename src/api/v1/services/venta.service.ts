@@ -69,10 +69,15 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
     const searchTerm = filters.search.trim();
     const orConditions: Prisma.TicketWhereInput[] = [];
 
-    // Búsqueda por número de ticket
-    if (!isNaN(Number(searchTerm))) {
-      orConditions.push({ ticketNumber: Number(searchTerm) });
-    }
+    // Búsqueda por número de ticket (ahora es string, soporta búsqueda exacta y contains)
+    // Formato nuevo: TYYMMDD-XXXXXX-CC (ej: T250126-00000A-42)
+    // También soporta números antiguos convertidos a string (ej: "12345")
+    orConditions.push({
+      ticketNumber: {
+        contains: searchTerm,
+        mode: "insensitive" as Prisma.QueryMode
+      }
+    });
 
     // Búsqueda por nombre de vendedor, ventana, lotería, sorteo
     orConditions.push(

@@ -162,19 +162,14 @@ export const TicketRepository = {
     // Toda la operación dentro de una transacción con retry y timeouts explícitos
     const ticket = await withTransactionRetry(
       async (tx) => {
-        // 1) Generador secuencial: función o secuencia local
+        // 1) Generador secuencial: función generate_ticket_number() retorna string
+        // Formato: TYYMMDD-XXXXXX-CC (ej: T250126-00000A-42)
         const [seqRow] = await tx.$queryRawUnsafe<
-          { next_number: string | number }[]
+          { next_number: string }[]
         >(
-          `
-          SELECT CASE
-            WHEN to_regprocedure('generate_ticket_number()') IS NOT NULL
-              THEN generate_ticket_number()
-            ELSE nextval('ticket_number_seq')
-          END AS next_number
-        `.trim()
+          `SELECT generate_ticket_number() AS next_number`
         );
-        const nextNumber = Number(seqRow?.next_number ?? 0);
+        const nextNumber = seqRow?.next_number;
         if (!nextNumber) {
           throw new AppError("Failed to generate ticket number", 500, "SEQ_ERROR");
         }
