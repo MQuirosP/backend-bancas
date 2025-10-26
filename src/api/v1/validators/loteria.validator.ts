@@ -29,3 +29,14 @@ export const previewScheduleQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(1000).optional() // top 200 por default
 }).strict();
 
+// Body para seed_sorteos: subset de fechas específicas (ISO). Opcional.
+export const seedSorteosBodySchema = z
+  .object({
+    scheduledDates: z
+      .array(
+        z.preprocess((v) => (typeof v === 'string' || v instanceof Date ? new Date(v as any) : v), z.date())
+      )
+      .optional(),
+  })
+  .strict();
+

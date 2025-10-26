@@ -6,6 +6,7 @@ import logger from "../../../core/logger";
 import { AppError } from "../../../core/errors";
 import { paginateOffset } from "../../../utils/pagination";
 import { computeOccurrences } from '../../../utils/schedule';
+import { formatIsoUtc } from '../../../utils/datetime';
 import SorteoRepository from '../../../repositories/sorteo.repository';
 
 export const LoteriaService = {
@@ -219,7 +220,7 @@ export const LoteriaService = {
     return restored;
   },
 
-  async seedSorteosFromRules(loteriaId: string, start: Date, days: number, dryRun = false) {
+  async seedSorteosFromRules(loteriaId: string, start: Date, days: number, dryRun = false, scheduledDates?: Date[]) {
     const loteria = await prisma.loteria.findUnique({
       where: { id: loteriaId },
       select: { name: true, rulesJson: true, isActive: true },
@@ -246,11 +247,24 @@ export const LoteriaService = {
       limit: 1000,
     })
 
-    if (dryRun) {
-      return { created: 0, skipped: 0, preview: occurrences.map(o => ({ name: o.name, scheduledAt: o.scheduledAt.toISOString() })) }
+    // Si viene subset, filtrar por timestamps exactos (idempotente)
+    let subset = occurrences
+    if (Array.isArray(scheduledDates) && scheduledDates.length > 0) {
+      const subsetKeys = new Set(scheduledDates.map(d => new Date(d).getTime()))
+      subset = occurrences.filter(o => subsetKeys.has(o.scheduledAt.getTime()))
     }
 
-    const result = await SorteoRepository.bulkCreateIfMissing(loteriaId, occurrences)
+    if (dryRun) {
+      return {
+        created: [],
+        skipped: [],
+        alreadyExists: [],
+        preview: subset.map(o => ({ name: o.name, scheduledAt: o.scheduledAt.toISOString() })),
+        processedSubset: (scheduledDates ?? []).map(formatIsoUtc),
+      }
+    }
+
+    const result = await SorteoRepository.bulkCreateIfMissing(loteriaId, subset)
     return result
   },
 };

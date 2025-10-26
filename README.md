@@ -1,4 +1,24 @@
 <!-- markdownlint-disable MD024 -->
+
+
+### Idempotencia y UTC en Sorteos (rc8)
+
+- BD: restricción única `@@unique([loteriaId, scheduledAt])` para evitar duplicados por lotería-fecha.
+- Tiempo: todos los cálculos de horario (`computeOccurrences`) y comparaciones internas se realizan en UTC.
+- Seed idempotente: `POST /api/v1/loterias/:id/seed_sorteos?start&days&dryRun`
+  - Opcional body: `{ "scheduledDates": ["2025-01-20T12:55:00.000Z", ...] }` para honrar un subset específico enviado por el frontend.
+  - Respuesta (no dryRun):
+    - `created: string[]` ISO UTC creados efectivamente
+    - `skipped: string[]` ISO UTC omitidos (ya existían o perdidos por concurrencia)
+    - `alreadyExists: string[]` ISO UTC detectados como existentes antes de insertar
+    - `processed: string[]` ISO UTC procesados (eco)
+  - Respuesta (dryRun): incluye `preview` y `processedSubset` (si aplica).
+
+Notas:
+- La deduplicación utiliza timestamps (`getTime`) en memoria y en BD (índice único), no `toISOString()` como clave.
+- El repositorio usa `createMany({ skipDuplicates: true })` y trata P2002/23505 como “skipped”.
+
+<!-- markdownlint-disable MD024 -->
 <!-- markdownlint-disable MD047 -->
 
 # 🏦 Banca Management Backend
@@ -450,3 +470,7 @@ Proyecto bajo licencia **MIT** (ver `LICENSE`).
 
 > 💡 *Versión actual:* `v1.0.0-rc5`  
 > *Notas rc5**: Update restringido; evaluación con `extraMultiplierId/extraOutcomeCode`; búsqueda por nombre/ganador/lotería; preview & seed de sorteos desde `rulesJson.drawSchedule`; resolución jerárquica de `baseMultiplierX` y `salesCutoff`.
+
+
+
+
