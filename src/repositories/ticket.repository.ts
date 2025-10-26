@@ -33,25 +33,43 @@ function isSameLocalDay(a: Date, b: Date) {
 
 async function resolveBaseMultiplierX(
   tx: Prisma.TransactionClient,
-  args: { bancaId: string; loteriaId: string; userId: string }
+  args: { bancaId: string; loteriaId: string; userId: string; ventanaId: string }
 ): Promise<{ valueX: number; source: string }> {
-  const { bancaId, loteriaId, userId } = args;
+  const { bancaId, loteriaId, userId, ventanaId } = args;
 
-  // 0) Override por usuario (directo en X)
-  const uo = await tx.userMultiplierOverride.findUnique({
+  // 0) Override por usuario (directo en X) - HIGHEST PRIORITY
+  const userOverride = await tx.multiplierOverride.findFirst({
     where: {
-      userId_loteriaId_multiplierType: {
-        userId,
-        loteriaId,
-        multiplierType: "Base",
-      },
+      scope: "USER",
+      userId,
+      loteriaId,
+      multiplierType: "NUMERO",
+      isActive: true,
     },
     select: { baseMultiplierX: true },
   });
-  if (typeof uo?.baseMultiplierX === "number") {
+  if (typeof userOverride?.baseMultiplierX === "number") {
     return {
-      valueX: uo.baseMultiplierX,
-      source: "userOverride.baseMultiplierX",
+      valueX: userOverride.baseMultiplierX,
+      source: "multiplierOverride[scope=USER]",
+    };
+  }
+
+  // 0.5) Override por ventana - SECOND PRIORITY
+  const ventanaOverride = await tx.multiplierOverride.findFirst({
+    where: {
+      scope: "VENTANA",
+      ventanaId,
+      loteriaId,
+      multiplierType: "NUMERO",
+      isActive: true,
+    },
+    select: { baseMultiplierX: true },
+  });
+  if (typeof ventanaOverride?.baseMultiplierX === "number") {
+    return {
+      valueX: ventanaOverride.baseMultiplierX,
+      source: "multiplierOverride[scope=VENTANA]",
     };
   }
 
@@ -195,6 +213,7 @@ export const TicketRepository = {
           bancaId,
           loteriaId,
           userId,
+          ventanaId,
         });
 
         const baseMultiplierRowId = await ensureBaseMultiplierRow(tx, loteriaId);

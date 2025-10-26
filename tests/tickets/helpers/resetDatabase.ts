@@ -10,7 +10,7 @@ export async function resetDatabase() {
       "Jugada",
       "Ticket",
       "RestrictionRule",
-      "UserMultiplierOverride",
+      "MultiplierOverride",
       "LoteriaMultiplier",
       "Sorteo",
       "Loteria",
