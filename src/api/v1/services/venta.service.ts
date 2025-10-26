@@ -170,6 +170,8 @@ export const VentasService = {
     jugadasCount: number;
     payoutTotal: number;
     neto: number;
+    commissionTotal: number;
+    netoDespuesComision: number;
     lastTicketAt: string | null;
   }> {
     try {
@@ -184,12 +186,12 @@ export const VentasService = {
           _count: { id: true },
         }),
 
-        // Suma de payouts y count de jugadas
+        // Suma de payouts, commissionAmount y count de jugadas
         prisma.jugada.aggregate({
           where: {
             ticket: where,
           },
-          _sum: { payout: true },
+          _sum: { payout: true, commissionAmount: true },
           _count: { id: true },
         }),
 
@@ -203,12 +205,14 @@ export const VentasService = {
 
       const ventasTotal = ticketsAgg._sum.totalAmount ?? 0;
       const payoutTotal = jugadasAgg._sum.payout ?? 0;
+      const commissionTotal = jugadasAgg._sum.commissionAmount ?? 0;
       const neto = ventasTotal - payoutTotal;
+      const netoDespuesComision = neto - commissionTotal;
 
       logger.info({
         layer: "service",
         action: "VENTA_SUMMARY",
-        payload: { filters, ventasTotal, ticketsCount: ticketsAgg._count.id },
+        payload: { filters, ventasTotal, ticketsCount: ticketsAgg._count.id, commissionTotal },
       });
 
       return {
@@ -217,6 +221,8 @@ export const VentasService = {
         jugadasCount: jugadasAgg._count.id,
         payoutTotal,
         neto,
+        commissionTotal,
+        netoDespuesComision,
         lastTicketAt: lastTicket?.createdAt?.toISOString() ?? null,
       };
     } catch (err: any) {
@@ -245,6 +251,7 @@ export const VentasService = {
       ticketsCount: number;
       payoutTotal: number;
       neto: number;
+      commissionTotal: number;
     }>
   > {
     try {
@@ -275,26 +282,31 @@ export const VentasService = {
           });
           const ventanaMap = new Map(ventanas.map((v) => [v.id, v]));
 
-          const payouts = await prisma.jugada.groupBy({
+          const jugadasAgg = await prisma.jugada.groupBy({
             by: ["ticketId"],
             where: { ticket: { ventanaId: { in: ventanaIds }, ...where } },
-            _sum: { payout: true },
+            _sum: { payout: true, commissionAmount: true },
           });
-          const ticketIds = payouts.map((p) => p.ticketId);
+          const ticketIds = jugadasAgg.map((p) => p.ticketId);
           const tickets = await prisma.ticket.findMany({
             where: { id: { in: ticketIds } },
             select: { id: true, ventanaId: true },
           });
           const payoutByVentana = new Map<string, number>();
+          const commissionByVentana = new Map<string, number>();
           tickets.forEach((t) => {
-            const payout = payouts.find((p) => p.ticketId === t.id)?._sum.payout ?? 0;
+            const jugada = jugadasAgg.find((p) => p.ticketId === t.id);
+            const payout = jugada?._sum.payout ?? 0;
+            const commission = jugada?._sum.commissionAmount ?? 0;
             payoutByVentana.set(t.ventanaId, (payoutByVentana.get(t.ventanaId) ?? 0) + payout);
+            commissionByVentana.set(t.ventanaId, (commissionByVentana.get(t.ventanaId) ?? 0) + commission);
           });
 
           return result.map((r) => {
             const ventana = ventanaMap.get(r.ventanaId);
             const ventasTotal = r._sum.totalAmount ?? 0;
             const payoutTotal = payoutByVentana.get(r.ventanaId) ?? 0;
+            const commissionTotal = commissionByVentana.get(r.ventanaId) ?? 0;
             return {
               key: r.ventanaId,
               name: ventana?.name ?? "Desconocida",
@@ -302,6 +314,7 @@ export const VentasService = {
               ticketsCount: r._count.id,
               payoutTotal,
               neto: ventasTotal - payoutTotal,
+              commissionTotal,
             };
           });
         }
@@ -323,26 +336,31 @@ export const VentasService = {
           });
           const vendedorMap = new Map(vendedores.map((v) => [v.id, v]));
 
-          const payouts = await prisma.jugada.groupBy({
+          const jugadasAgg = await prisma.jugada.groupBy({
             by: ["ticketId"],
             where: { ticket: { vendedorId: { in: vendedorIds }, ...where } },
-            _sum: { payout: true },
+            _sum: { payout: true, commissionAmount: true },
           });
-          const ticketIds = payouts.map((p) => p.ticketId);
+          const ticketIds = jugadasAgg.map((p) => p.ticketId);
           const tickets = await prisma.ticket.findMany({
             where: { id: { in: ticketIds } },
             select: { id: true, vendedorId: true },
           });
           const payoutByVendedor = new Map<string, number>();
+          const commissionByVendedor = new Map<string, number>();
           tickets.forEach((t) => {
-            const payout = payouts.find((p) => p.ticketId === t.id)?._sum.payout ?? 0;
+            const jugada = jugadasAgg.find((p) => p.ticketId === t.id);
+            const payout = jugada?._sum.payout ?? 0;
+            const commission = jugada?._sum.commissionAmount ?? 0;
             payoutByVendedor.set(t.vendedorId, (payoutByVendedor.get(t.vendedorId) ?? 0) + payout);
+            commissionByVendedor.set(t.vendedorId, (commissionByVendedor.get(t.vendedorId) ?? 0) + commission);
           });
 
           return result.map((r) => {
             const vendedor = vendedorMap.get(r.vendedorId);
             const ventasTotal = r._sum.totalAmount ?? 0;
             const payoutTotal = payoutByVendedor.get(r.vendedorId) ?? 0;
+            const commissionTotal = commissionByVendedor.get(r.vendedorId) ?? 0;
             return {
               key: r.vendedorId,
               name: vendedor?.name ?? "Desconocido",
@@ -350,6 +368,7 @@ export const VentasService = {
               ticketsCount: r._count.id,
               payoutTotal,
               neto: ventasTotal - payoutTotal,
+              commissionTotal,
             };
           });
         }
@@ -371,26 +390,31 @@ export const VentasService = {
           });
           const loteriaMap = new Map(loterias.map((l) => [l.id, l]));
 
-          const payouts = await prisma.jugada.groupBy({
+          const jugadasAgg = await prisma.jugada.groupBy({
             by: ["ticketId"],
             where: { ticket: { loteriaId: { in: loteriaIds }, ...where } },
-            _sum: { payout: true },
+            _sum: { payout: true, commissionAmount: true },
           });
-          const ticketIds = payouts.map((p) => p.ticketId);
+          const ticketIds = jugadasAgg.map((p) => p.ticketId);
           const tickets = await prisma.ticket.findMany({
             where: { id: { in: ticketIds } },
             select: { id: true, loteriaId: true },
           });
           const payoutByLoteria = new Map<string, number>();
+          const commissionByLoteria = new Map<string, number>();
           tickets.forEach((t) => {
-            const payout = payouts.find((p) => p.ticketId === t.id)?._sum.payout ?? 0;
+            const jugada = jugadasAgg.find((p) => p.ticketId === t.id);
+            const payout = jugada?._sum.payout ?? 0;
+            const commission = jugada?._sum.commissionAmount ?? 0;
             payoutByLoteria.set(t.loteriaId, (payoutByLoteria.get(t.loteriaId) ?? 0) + payout);
+            commissionByLoteria.set(t.loteriaId, (commissionByLoteria.get(t.loteriaId) ?? 0) + commission);
           });
 
           return result.map((r) => {
             const loteria = loteriaMap.get(r.loteriaId);
             const ventasTotal = r._sum.totalAmount ?? 0;
             const payoutTotal = payoutByLoteria.get(r.loteriaId) ?? 0;
+            const commissionTotal = commissionByLoteria.get(r.loteriaId) ?? 0;
             return {
               key: r.loteriaId,
               name: loteria?.name ?? "Desconocida",
@@ -398,6 +422,7 @@ export const VentasService = {
               ticketsCount: r._count.id,
               payoutTotal,
               neto: ventasTotal - payoutTotal,
+              commissionTotal,
             };
           });
         }
@@ -419,26 +444,31 @@ export const VentasService = {
           });
           const sorteoMap = new Map(sorteos.map((s) => [s.id, s]));
 
-          const payouts = await prisma.jugada.groupBy({
+          const jugadasAgg = await prisma.jugada.groupBy({
             by: ["ticketId"],
             where: { ticket: { sorteoId: { in: sorteoIds }, ...where } },
-            _sum: { payout: true },
+            _sum: { payout: true, commissionAmount: true },
           });
-          const ticketIds = payouts.map((p) => p.ticketId);
+          const ticketIds = jugadasAgg.map((p) => p.ticketId);
           const tickets = await prisma.ticket.findMany({
             where: { id: { in: ticketIds } },
             select: { id: true, sorteoId: true },
           });
           const payoutBySorteo = new Map<string, number>();
+          const commissionBySorteo = new Map<string, number>();
           tickets.forEach((t) => {
-            const payout = payouts.find((p) => p.ticketId === t.id)?._sum.payout ?? 0;
+            const jugada = jugadasAgg.find((p) => p.ticketId === t.id);
+            const payout = jugada?._sum.payout ?? 0;
+            const commission = jugada?._sum.commissionAmount ?? 0;
             payoutBySorteo.set(t.sorteoId, (payoutBySorteo.get(t.sorteoId) ?? 0) + payout);
+            commissionBySorteo.set(t.sorteoId, (commissionBySorteo.get(t.sorteoId) ?? 0) + commission);
           });
 
           return result.map((r) => {
             const sorteo = sorteoMap.get(r.sorteoId);
             const ventasTotal = r._sum.totalAmount ?? 0;
             const payoutTotal = payoutBySorteo.get(r.sorteoId) ?? 0;
+            const commissionTotal = commissionBySorteo.get(r.sorteoId) ?? 0;
             return {
               key: r.sorteoId,
               name: sorteo?.name ?? "Desconocido",
@@ -446,6 +476,7 @@ export const VentasService = {
               ticketsCount: r._count.id,
               payoutTotal,
               neto: ventasTotal - payoutTotal,
+              commissionTotal,
             };
           });
         }
@@ -454,7 +485,7 @@ export const VentasService = {
           const result = await prisma.jugada.groupBy({
             by: ["number"],
             where: { ticket: where },
-            _sum: { amount: true, payout: true },
+            _sum: { amount: true, payout: true, commissionAmount: true },
             _count: { id: true },
             orderBy: { _sum: { amount: "desc" } },
             take: top,
@@ -463,6 +494,7 @@ export const VentasService = {
           return result.map((r) => {
             const ventasTotal = r._sum.amount ?? 0;
             const payoutTotal = r._sum.payout ?? 0;
+            const commissionTotal = r._sum.commissionAmount ?? 0;
             return {
               key: r.number,
               name: `Número ${r.number}`,
@@ -470,6 +502,7 @@ export const VentasService = {
               ticketsCount: r._count.id,
               payoutTotal,
               neto: ventasTotal - payoutTotal,
+              commissionTotal,
             };
           });
         }
@@ -502,6 +535,7 @@ export const VentasService = {
       ts: string;
       ventasTotal: number;
       ticketsCount: number;
+      commissionTotal: number;
     }>
   > {
     try {
@@ -524,46 +558,49 @@ export const VentasService = {
       }
 
       // Construir condiciones WHERE dinámicamente
-      const whereConditions: Prisma.Sql[] = [Prisma.sql`"isActive" = true`];
+      const whereConditions: Prisma.Sql[] = [Prisma.sql`t."isActive" = true`];
 
       if (filters.dateFrom) {
-        whereConditions.push(Prisma.sql`"createdAt" >= ${filters.dateFrom}`);
+        whereConditions.push(Prisma.sql`t."createdAt" >= ${filters.dateFrom}`);
       }
       if (filters.dateTo) {
-        whereConditions.push(Prisma.sql`"createdAt" <= ${filters.dateTo}`);
+        whereConditions.push(Prisma.sql`t."createdAt" <= ${filters.dateTo}`);
       }
       if (filters.status) {
-        whereConditions.push(Prisma.sql`"status" = ${filters.status}`);
+        whereConditions.push(Prisma.sql`t."status" = ${filters.status}`);
       }
       if (filters.ventanaId) {
-        whereConditions.push(Prisma.sql`"ventanaId" = ${filters.ventanaId}`);
+        whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}`);
       }
       if (filters.vendedorId) {
-        whereConditions.push(Prisma.sql`"vendedorId" = ${filters.vendedorId}`);
+        whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}`);
       }
       if (filters.loteriaId) {
-        whereConditions.push(Prisma.sql`"loteriaId" = ${filters.loteriaId}`);
+        whereConditions.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}`);
       }
       if (filters.sorteoId) {
-        whereConditions.push(Prisma.sql`"sorteoId" = ${filters.sorteoId}`);
+        whereConditions.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}`);
       }
 
       const whereClause =
         whereConditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}` : Prisma.empty;
 
-      // Query SQL crudo para agrupar por time bucket
+      // Query SQL crudo para agrupar por time bucket con comisiones
       const result = await prisma.$queryRaw<
         Array<{
           ts: Date;
           ventasTotal: string;
           ticketsCount: string;
+          commissionTotal: string;
         }>
       >`
         SELECT
-          DATE_TRUNC(${truncFormat}, "createdAt") as ts,
-          SUM("totalAmount")::text as "ventasTotal",
-          COUNT(*)::text as "ticketsCount"
-        FROM "Ticket"
+          DATE_TRUNC(${truncFormat}, t."createdAt") as ts,
+          SUM(t."totalAmount")::text as "ventasTotal",
+          COUNT(DISTINCT t.id)::text as "ticketsCount",
+          COALESCE(SUM(j."commissionAmount"), 0)::text as "commissionTotal"
+        FROM "Ticket" t
+        LEFT JOIN "Jugada" j ON j."ticketId" = t.id
         ${whereClause}
         GROUP BY ts
         ORDER BY ts ASC
@@ -579,6 +616,7 @@ export const VentasService = {
         ts: r.ts.toISOString(),
         ventasTotal: parseFloat(r.ventasTotal),
         ticketsCount: parseInt(r.ticketsCount, 10),
+        commissionTotal: parseFloat(r.commissionTotal),
       }));
     } catch (err: any) {
       logger.error({
