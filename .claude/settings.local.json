@@ -5,7 +5,9 @@
       "Bash(npm run migrate:dev:*)",
       "Bash(npm run typecheck:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(npx prisma validate:*)",
+      "Bash(timeout 10 tail:*)"
     ],
     "deny": [],
     "ask": []
