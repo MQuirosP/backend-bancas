@@ -6,6 +6,7 @@ import {
   validateVentasSummaryQuery,
   validateVentasBreakdownQuery,
   validateVentasTimeseriesQuery,
+  validateFacetsQuery,
 } from "../validators/venta.validator";
 import { protect, restrictTo } from "../../../middlewares/auth.middleware";
 import { Role } from "@prisma/client";
@@ -28,9 +29,13 @@ router.get("/breakdown", validateVentasBreakdownQuery, VentaController.breakdown
 // GET /ventas/timeseries?granularity=hour|day|week
 router.get("/timeseries", validateVentasTimeseriesQuery, VentaController.timeseries);
 
+// 5) Facets - Valores válidos para filtros
+// GET /ventas/facets
+router.get("/facets", validateFacetsQuery, VentaController.facets);
+
 // 1) Listado transaccional (detalle)
 // GET /ventas
-// IMPORTANTE: Este debe ir al final para evitar conflictos con /summary, /breakdown, /timeseries
+// IMPORTANTE: Este debe ir al final para evitar conflictos con /summary, /breakdown, /timeseries, /facets
 router.get("/", validateListVentasQuery, VentaController.list);
 
 export default router;
