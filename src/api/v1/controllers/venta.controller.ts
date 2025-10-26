@@ -69,6 +69,30 @@ function applyDateFilters(date: string, from: any, to: any, filters: any) {
   }
 }
 
+/**
+ * Valida límites de rango para timeseries según granularidad
+ */
+function validateTimeseriesRange(granularity: string, dateFrom?: Date, dateTo?: Date) {
+  if (!dateFrom || !dateTo) return;
+
+  const diffMs = dateTo.getTime() - dateFrom.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  if (granularity === "hour" && diffDays > 30) {
+    throw new AppError("Para granularidad 'hour', el rango máximo es 30 días", 400, {
+      code: "SLS_2001",
+      details: [{ field: "granularity", message: "Rango excede 30 días para granularity=hour" }],
+    });
+  }
+
+  if (granularity === "day" && diffDays > 90) {
+    throw new AppError("Para granularidad 'day', el rango máximo es 90 días", 400, {
+      code: "SLS_2001",
+      details: [{ field: "granularity", message: "Rango excede 90 días para granularity=day" }],
+    });
+  }
+}
+
 export const VentaController = {
   /**
    * 1) Listado transaccional (detalle)
@@ -160,7 +184,7 @@ export const VentaController = {
    * GET /ventas/timeseries?granularity=hour|day|week
    */
   async timeseries(req: AuthenticatedRequest, res: Response) {
-    const { granularity = "day", dimension, scope = "mine", date = "today", from, to, ...rest } = req.query as any;
+    const { granularity = "day", scope = "mine", date = "today", from, to, ...rest } = req.query as any;
 
     const filters: any = { ...rest };
 
@@ -170,12 +194,41 @@ export const VentaController = {
     // Aplicar filtros de fecha
     applyDateFilters(date, from, to, filters);
 
-    const result = await VentasService.timeseries(granularity, filters, dimension);
+    // Validar límites de rango según granularidad
+    validateTimeseriesRange(granularity, filters.dateFrom, filters.dateTo);
+
+    const result = await VentasService.timeseries(granularity, filters);
 
     req.logger?.info({
       layer: "controller",
       action: "VENTA_TIMESERIES",
-      payload: { granularity, dimension, filters, scope, date, from, to },
+      payload: { granularity, filters, scope, date, from, to },
+    });
+
+    return success(res, result);
+  },
+
+  /**
+   * 5) Facets - Valores válidos para filtros dinámicos
+   * GET /ventas/facets
+   */
+  async facets(req: AuthenticatedRequest, res: Response) {
+    const { scope = "mine", date = "today", from, to, ...rest } = req.query as any;
+
+    const filters: any = { ...rest };
+
+    // Aplicar scope por rol
+    applyScopeFilters(scope, req.user!, filters);
+
+    // Aplicar filtros de fecha
+    applyDateFilters(date, from, to, filters);
+
+    const result = await VentasService.facets(filters);
+
+    req.logger?.info({
+      layer: "controller",
+      action: "VENTA_FACETS",
+      payload: { filters, scope, date, from, to },
     });
 
     return success(res, result);

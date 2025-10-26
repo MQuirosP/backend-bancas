@@ -1,0 +1,431 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2025-10-26T00:00:00.000Z",
+  "__export_source": "insomnia.desktop.app:v2023.5.8",
+  "resources": [
+    {
+      "_id": "req_ventas_list_today",
+      "parentId": "fld_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas?scope=mine&date=today&page=1&pageSize=20",
+      "name": "1. List Ventas - Today (Mine)",
+      "description": "Lista de tickets del día actual filtrados por scope=mine (según rol)",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171200000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_list_range",
+      "parentId": "fld_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas?scope=all&date=range&from=2025-10-01T00:00:00.000Z&to=2025-10-25T23:59:59.999Z&page=1&pageSize=20&orderBy=-totalAmount",
+      "name": "2. List Ventas - Range (All) with Order",
+      "description": "Lista de tickets en rango de fechas personalizado, scope=all, ordenados por totalAmount desc",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171190000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_list_search",
+      "parentId": "fld_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas?scope=mine&date=today&search=Juan&winnersOnly=true",
+      "name": "3. List Ventas - Search Winners",
+      "description": "Búsqueda unificada con search=Juan y winnersOnly=true",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171180000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_summary_today",
+      "parentId": "fld_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas/summary?scope=mine&date=today",
+      "name": "4. Summary - Today (Mine)",
+      "description": "KPIs del día actual",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171170000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_summary_month",
+      "parentId": "fld_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas/summary?scope=all&date=range&from=2025-10-01T00:00:00.000Z&to=2025-10-31T23:59:59.999Z",
+      "name": "5. Summary - Month (All)",
+      "description": "KPIs del mes completo, scope=all (solo ADMIN)",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171160000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_breakdown_vendedor",
+      "parentId": "fld_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas/breakdown?dimension=vendedor&top=10&scope=mine&date=today",
+      "name": "6. Breakdown - Top 10 Vendedores (Today)",
+      "description": "Top 10 vendedores del día",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171150000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_breakdown_numero",
+      "parentId": "fld_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas/breakdown?dimension=numero&top=20&scope=all&date=range&from=2025-10-01T00:00:00.000Z&to=2025-10-31T23:59:59.999Z",
+      "name": "7. Breakdown - Top 20 Números (Month)",
+      "description": "Top 20 números más jugados del mes",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171140000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_timeseries_hour",
+      "parentId": "fld_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas/timeseries?granularity=hour&scope=mine&date=today",
+      "name": "8. Timeseries - Hour (Today)",
+      "description": "Serie de tiempo por hora del día actual",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171130000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_timeseries_day",
+      "parentId": "fld_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas/timeseries?granularity=day&scope=all&date=range&from=2025-10-01T00:00:00.000Z&to=2025-10-31T23:59:59.999Z",
+      "name": "9. Timeseries - Day (Month)",
+      "description": "Serie de tiempo por día del mes",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171120000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_facets",
+      "parentId": "fld_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas/facets?scope=mine&date=today",
+      "name": "10. Facets - Get Filter Options",
+      "description": "Obtener valores válidos para filtros dinámicos",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171110000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_error_range_missing",
+      "parentId": "fld_ventas_errors",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas?date=range&scope=mine",
+      "name": "ERROR: Missing from/to (SLS_2001)",
+      "description": "Error esperado cuando date=range pero faltan from/to",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171100000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_error_top_exceeded",
+      "parentId": "fld_ventas_errors",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas/breakdown?dimension=vendedor&top=100&date=today",
+      "name": "ERROR: Top > 50 (VAL_3001)",
+      "description": "Error esperado cuando top > 50",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1735171090000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ventas_error_unauthorized",
+      "parentId": "fld_ventas_errors",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "url": "{{ _.baseUrl }}/api/v1/ventas?date=today",
+      "name": "ERROR: No Auth Token (AUTH_1003)",
+      "description": "Error esperado cuando falta el token JWT",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1735171080000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "fld_ventas",
+      "parentId": "wrk_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "name": "Ventas",
+      "description": "Endpoints de ventas y analítica",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -1735171200000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_ventas_errors",
+      "parentId": "wrk_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "name": "Errors",
+      "description": "Casos de error esperados",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -1735171100000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "wrk_ventas",
+      "parentId": null,
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "name": "Bancas - Ventas API",
+      "description": "Colección de requests para el módulo de Ventas",
+      "scope": "collection",
+      "_type": "workspace"
+    },
+    {
+      "_id": "env_ventas",
+      "parentId": "wrk_ventas",
+      "modified": 1735171200000,
+      "created": 1735171200000,
+      "name": "Base Environment",
+      "data": {
+        "baseUrl": "http://localhost:3000",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      },
+      "dataPropertyOrder": {
+        "&": ["baseUrl", "token"]
+      },
+      "color": null,
+      "isPrivate": false,
+      "metaSortKey": 1735171200000,
+      "_type": "environment"
+    }
+  ]
+}
