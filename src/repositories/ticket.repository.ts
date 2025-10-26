@@ -3,6 +3,7 @@ import { Prisma, TicketStatus } from "@prisma/client";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { withTransactionRetry } from "../core/withTransactionRetry";
+import { resolveCommission } from "../services/commission.resolver";
 
 type CreateTicketInput = {
   loteriaId: string;
@@ -178,8 +179,8 @@ export const TicketRepository = {
           throw new AppError("Failed to generate ticket number", 500, "SEQ_ERROR");
         }
 
-        // 2) Validación de FKs + reglas de la lotería
-        const [loteria, sorteo, ventana, existsUser] = await Promise.all([
+        // 2) Validación de FKs + reglas de la lotería + políticas de comisión
+        const [loteria, sorteo, ventana, user] = await Promise.all([
           tx.loteria.findUnique({
             where: { id: loteriaId },
             select: { id: true, isActive: true, rulesJson: true },
@@ -190,12 +191,25 @@ export const TicketRepository = {
           }),
           tx.ventana.findUnique({
             where: { id: ventanaId },
-            select: { id: true, bancaId: true },
+            select: {
+              id: true,
+              bancaId: true,
+              commissionPolicyJson: true,
+              banca: {
+                select: {
+                  id: true,
+                  commissionPolicyJson: true,
+                }
+              }
+            },
           }),
-          tx.user.findUnique({ where: { id: userId }, select: { id: true } }),
+          tx.user.findUnique({
+            where: { id: userId },
+            select: { id: true, commissionPolicyJson: true }
+          }),
         ]);
 
-        if (!existsUser) throw new AppError("Seller (vendedor) not found", 404, "FK_VIOLATION");
+        if (!user) throw new AppError("Seller (vendedor) not found", 404, "FK_VIOLATION");
         if (!loteria || loteria.isActive === false) throw new AppError("Lotería not found", 404, "FK_VIOLATION");
         if (!sorteo) throw new AppError("Sorteo not found", 404, "FK_VIOLATION");
         if (!ventana) throw new AppError("Ventana not found", 404, "FK_VIOLATION");
@@ -390,7 +404,10 @@ export const TicketRepository = {
           }
         }
 
-        // 9) Crear ticket y jugadas
+        // 9) Crear ticket y jugadas con comisiones
+        // Acumular datos para ActivityLog
+        const commissionsDetails: any[] = [];
+
         const createdTicket = await tx.ticket.create({
           data: {
             ticketNumber: nextNumber,
@@ -402,20 +419,54 @@ export const TicketRepository = {
             status: TicketStatus.ACTIVE,
             isActive: true,
             jugadas: {
-              create: preparedJugadas.map((j) => ({
-                type: j.type,
-                number: j.number,
-                reventadoNumber: j.reventadoNumber ?? null,
-                amount: j.amount,
-                finalMultiplierX: j.finalMultiplierX,
-                ...(j.multiplierId
-                  ? { multiplier: { connect: { id: j.multiplierId } } }
-                  : {}),
-              })),
+              create: preparedJugadas.map((j) => {
+                // Resolver comisión para esta jugada
+                const commissionSnapshot = resolveCommission(
+                  {
+                    loteriaId,
+                    betType: j.type,
+                    finalMultiplierX: j.finalMultiplierX,
+                    amount: j.amount,
+                  },
+                  user.commissionPolicyJson,
+                  ventana.commissionPolicyJson,
+                  ventana.banca.commissionPolicyJson
+                );
+
+                // Guardar para ActivityLog
+                commissionsDetails.push({
+                  origin: commissionSnapshot.commissionOrigin,
+                  ruleId: commissionSnapshot.commissionRuleId,
+                  percent: commissionSnapshot.commissionPercent,
+                  amount: commissionSnapshot.commissionAmount,
+                  loteriaId,
+                  betType: j.type,
+                  multiplierX: j.finalMultiplierX,
+                  jugadaAmount: j.amount,
+                });
+
+                return {
+                  type: j.type,
+                  number: j.number,
+                  reventadoNumber: j.reventadoNumber ?? null,
+                  amount: j.amount,
+                  finalMultiplierX: j.finalMultiplierX,
+                  commissionPercent: commissionSnapshot.commissionPercent,
+                  commissionAmount: commissionSnapshot.commissionAmount,
+                  commissionOrigin: commissionSnapshot.commissionOrigin,
+                  commissionRuleId: commissionSnapshot.commissionRuleId,
+                  ...(j.multiplierId
+                    ? { multiplier: { connect: { id: j.multiplierId } } }
+                    : {}),
+                };
+              }),
             },
           },
           include: { jugadas: true },
         });
+
+        // Almacenar commissionsDetails en el ticket para usarlo fuera de TX
+        (createdTicket as any).__commissionsDetails = commissionsDetails;
 
         return createdTicket;
       },
@@ -431,6 +482,7 @@ export const TicketRepository = {
     );
 
     // ActivityLog fuera de la TX (no bloqueante)
+    const commissionsDetailsForLog = (ticket as any).__commissionsDetails || [];
     prisma.activityLog
       .create({
         data: {
@@ -442,6 +494,7 @@ export const TicketRepository = {
             ticketNumber: ticket.ticketNumber,
             totalAmount: ticket.totalAmount,
             jugadas: ticket.jugadas.length,
+            commissions: commissionsDetailsForLog,
           },
         },
       })

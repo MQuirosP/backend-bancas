@@ -13,6 +13,7 @@ import ticketPaymentRoutes from "./ticketPayment.route"
 import multipliersRoutes from "./multipliers.routes"
 import diagnosticsRoutes from "./diagnostics.routes"
 import ventaRoutes from "./venta.routes"
+import commissionRoutes from "./commission.routes"
 
 const router = Router();
 
@@ -30,5 +31,6 @@ router.use("/ticketPayment", ticketPaymentRoutes);
 router.use("/multipliers", multipliersRoutes);
 router.use("/diagnostics", diagnosticsRoutes);
 router.use("/ventas", ventaRoutes);
+router.use("/", commissionRoutes); // Commission routes include their own path prefixes
 
 export const apiV1Router = router;
