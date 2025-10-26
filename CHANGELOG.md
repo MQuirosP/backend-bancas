@@ -7,6 +7,156 @@
 
 ---
 
+## 🏷️ v1.0.0 — Commission System & Sales Analytics
+
+📅 **Fecha:** 2025-10-26
+🔖 **Rama:** `master`
+
+### ✳️ Nuevas funcionalidades
+
+- **Sistema de Comisiones Jerárquico**
+  - Políticas de comisión en JSON (version 1) con `percent` en escala 0-100.
+  - Almacenamiento en `Banca.commissionPolicyJson`, `Ventana.commissionPolicyJson`, `User.commissionPolicyJson`.
+  - Estructura: `defaultPercent` + `rules[]` con matching por `loteriaId`, `betType`, `multiplierRange`.
+  - **Primera regla que calza gana** (orden del array importa).
+  - Vigencia temporal con `effectiveFrom` y `effectiveTo` (ISO 8601).
+  - Auto-generación de UUIDs para reglas sin `id` (Zod transform).
+
+- **Snapshot Inmutable de Comisión por Jugada**
+  - Campos en `Jugada`: `commissionPercent`, `commissionAmount`, `commissionOrigin`, `commissionRuleId`.
+  - Resolución al momento de creación del ticket con prioridad **USER → VENTANA → BANCA**.
+  - Persistencia inmutable (no se recalcula posteriormente).
+  - Logging detallado en `ActivityLog.details.commissions` por cada jugada.
+
+- **Endpoints CRUD de Políticas de Comisión (ADMIN only)**
+  ```http
+  PUT  /api/v1/bancas/:id/commission-policy
+  GET  /api/v1/bancas/:id/commission-policy
+  PUT  /api/v1/ventanas/:id/commission-policy
+  GET  /api/v1/ventanas/:id/commission-policy
+  PUT  /api/v1/users/:id/commission-policy
+  GET  /api/v1/users/:id/commission-policy
+  ```
+  - Validación estricta con Zod schemas.
+  - Permite establecer o remover (`null`) políticas.
+
+- **Extensión de Endpoints de Analítica de Ventas**
+  - `GET /api/v1/ventas/summary` incluye:
+    - `commissionTotal`: Suma total de comisiones.
+    - `netoDespuesComision`: `neto - commissionTotal`.
+  - `GET /api/v1/ventas/breakdown` (5 dimensiones) incluye `commissionTotal` por grupo.
+  - `GET /api/v1/ventas/timeseries` incluye `commissionTotal` por periodo temporal.
+
+### ⚙️ Mejoras y endurecimientos
+
+- **Manejo de errores graceful**
+  - JSON malformado o políticas expiradas → `commissionPercent = 0`, WARN en logs, **no bloquea ventas**.
+  - Validación de rangos: `min <= max`, `effectiveFrom <= effectiveTo`, `percent` 0-100.
+
+- **Resolución robusta de comisión**
+  - Matching exacto por `loteriaId` (o `null` = wildcard), `betType` (o `null`), `multiplierRange` inclusivo.
+  - Fallback a `defaultPercent` si ninguna regla aplica.
+  - Logging estructurado con origen, ruleId, percent y amount calculado.
+
+- **Integración transaccional**
+  - Resolución de comisión dentro de la transacción de creación de ticket.
+  - Fetch de políticas en paralelo (`Promise.all`) junto con otras validaciones.
+  - Cálculo de `commissionAmount` con redondeo a 2 decimales (`round2`).
+
+### 📦 Migraciones
+
+**Migration:** `20251026050708_add_commission_system`
+
+```sql
+ALTER TABLE "Banca" ADD COLUMN "commissionPolicyJson" JSONB;
+ALTER TABLE "Ventana" ADD COLUMN "commissionPolicyJson" JSONB;
+ALTER TABLE "User" ADD COLUMN "commissionPolicyJson" JSONB;
+
+ALTER TABLE "Jugada" ADD COLUMN "commissionPercent" DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE "Jugada" ADD COLUMN "commissionAmount" DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE "Jugada" ADD COLUMN "commissionOrigin" TEXT;
+ALTER TABLE "Jugada" ADD COLUMN "commissionRuleId" TEXT;
+```
+
+### 🧪 Checklist de pruebas
+
+- Crear política de comisión en Banca/Ventana/User.
+- Verificar prioridad USER > VENTANA > BANCA al crear ticket.
+- Validar matching de reglas por lotería, betType y multiplierRange.
+- Confirmar snapshot inmutable en Jugada (no recálculo).
+- Verificar JSON malformado → 0% sin bloquear venta.
+- Analítica: `commissionTotal` y `netoDespuesComision` correctos.
+
+### 📚 Documentación
+
+- **Documentación completa:** [`docs/COMMISSION_SYSTEM.md`](docs/COMMISSION_SYSTEM.md)
+  - Estructura de JSON schema version 1
+  - Reglas de matching y prioridades
+  - Ejemplos de políticas (simple, por lotería, por betType, temporal)
+  - Endpoints CRUD y analytics
+  - Fórmulas de cálculo
+
+- **README actualizado:** Sección "💰 Sistema de Comisiones" con características y endpoints.
+
+### 🔌 Archivos creados/modificados
+
+**Nuevos:**
+- `src/services/commission.resolver.ts` — Motor de resolución de comisiones
+- `src/api/v1/validators/commission.validator.ts` — Schemas Zod
+- `src/api/v1/controllers/commission.controller.ts` — Controladores CRUD
+- `src/api/v1/routes/commission.routes.ts` — Rutas de comisiones
+- `docs/COMMISSION_SYSTEM.md` — Documentación completa
+
+**Modificados:**
+- `src/repositories/ticket.repository.ts` — Integración en creación de ticket
+- `src/api/v1/services/venta.service.ts` — Métricas de comisión en analytics
+- `src/prisma/schema.prisma` — 7 campos nuevos (3 JSONB, 4 en Jugada)
+- `README.md` — Documentación principal actualizada
+
+### 🧭 Guía de actualización
+
+1. **Ejecutar migración:**
+   ```bash
+   npx prisma migrate deploy
+   npx prisma generate
+   ```
+
+2. **Configurar políticas de comisión** (opcional):
+   - Enviar `PUT /api/v1/bancas/:id/commission-policy` con JSON version 1.
+   - Orden de reglas importa (primera match gana).
+
+3. **Ejemplo de política básica:**
+   ```json
+   {
+     "version": 1,
+     "effectiveFrom": null,
+     "effectiveTo": null,
+     "defaultPercent": 5,
+     "rules": [
+       {
+         "loteriaId": "uuid-loteria-especial",
+         "betType": null,
+         "multiplierRange": { "min": 0, "max": 999999 },
+         "percent": 8.5
+       }
+     ]
+   }
+   ```
+
+4. **Verificar analítica:**
+   - `GET /api/v1/ventas/summary` ahora incluye `commissionTotal` y `netoDespuesComision`.
+
+### 🎯 Resultado
+
+✅ **Sistema de comisiones completo y funcional**
+✅ **7 nuevos campos en base de datos**
+✅ **6 endpoints CRUD + 3 endpoints analytics extendidos**
+✅ **Documentación completa con ejemplos**
+✅ **Integración transaccional y logging detallado**
+✅ **Manejo graceful de errores (no bloquea ventas)**
+
+---
+
 ## 🏷️ v1.0.0-rc6 — Draw schedule preview & auto-seed, cutoff & multipliers
 
 📅 **Fecha:** 2025-10-24  

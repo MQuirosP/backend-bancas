@@ -230,6 +230,7 @@ Body opcional: { "dryRun": false }
 - Secuencia segura `ticket_number_seq` o `TicketCounter` atómico.
 - Creación protegida por `withTransactionRetry` (manejo de *deadlocks* y *timeouts*).
 - Aplicación de `RestrictionRule` jerárquica dentro de la transacción.
+- **Sistema de comisiones** con snapshot inmutable por jugada.
 - Cancelación con soft-delete y registro en `ActivityLog`.
 
 ### Validaciones automáticas
@@ -245,8 +246,97 @@ Body opcional: { "dryRun": false }
 3. Se resuelve **base multiplier X** (prioridad descrita arriba).
 4. Se resuelve y aplica **sales cutoff** (User→Ventana→Banca→fallback).
 5. Se normalizan y validan jugadas contra `rulesJson`.
-6. Se crea el ticket y sus jugadas (snapshot de `finalMultiplierX` para `NUMERO`).
-7. Auditoría asincrónica (`TICKET_CREATE`).
+6. **Se resuelve comisión** por prioridad (User→Ventana→Banca) y se persiste snapshot.
+7. Se crea el ticket y sus jugadas (snapshot de `finalMultiplierX` para `NUMERO` y comisión).
+8. Auditoría asincrónica (`TICKET_CREATE`) con detalles de comisión.
+
+---
+
+## 💰 Sistema de Comisiones
+
+Sistema jerárquico de comisiones con políticas JSON configurables por **User**, **Ventana** y **Banca**.
+
+### Características principales
+
+- ✅ **Políticas JSON** (versión 1) con porcentajes 0-100
+- ✅ **Prioridad jerárquica**: USER → VENTANA → BANCA
+- ✅ **Primera regla gana** (first match wins)
+- ✅ **Snapshot inmutable** por jugada al momento de venta
+- ✅ **Vigencia temporal** con `effectiveFrom`/`effectiveTo`
+- ✅ **UUID auto-generado** para reglas sin ID
+- ✅ **Sin bloqueo**: JSON malformado → 0% comisión (WARN)
+
+### Estructura de política
+
+```json
+{
+  "version": 1,
+  "effectiveFrom": "2025-01-01T00:00:00.000Z" | null,
+  "effectiveTo": "2025-12-31T23:59:59.999Z" | null,
+  "defaultPercent": 5.0,
+  "rules": [
+    {
+      "id": "uuid-auto-generado",
+      "loteriaId": "uuid" | null,
+      "betType": "NUMERO" | "REVENTADO" | null,
+      "multiplierRange": { "min": 70, "max": 100 },
+      "percent": 8.5
+    }
+  ]
+}
+```
+
+### Matching de reglas
+
+Una regla aplica si **TODOS** los criterios se cumplen:
+1. `loteriaId` coincide (o es `null` = comodín)
+2. `betType` coincide (o es `null` = comodín)
+3. `finalMultiplierX` está en `[min, max]` (inclusivo)
+
+**Primera regla que calza gana** (orden del array).
+
+### Snapshot en Jugada
+
+Campos inmutables persistidos al momento de venta:
+
+```typescript
+{
+  commissionPercent: 8.5,        // 0..100
+  commissionAmount: 4.25,         // round2(amount * percent / 100)
+  commissionOrigin: "USER",       // "USER" | "VENTANA" | "BANCA" | null
+  commissionRuleId: "rule-uuid"   // ID de regla aplicada o null
+}
+```
+
+### Endpoints CRUD (ADMIN only)
+
+```http
+PUT /api/v1/bancas/:id/commission-policy
+GET /api/v1/bancas/:id/commission-policy
+
+PUT /api/v1/ventanas/:id/commission-policy
+GET /api/v1/ventanas/:id/commission-policy
+
+PUT /api/v1/users/:id/commission-policy
+GET /api/v1/users/:id/commission-policy
+```
+
+### Analytics de Comisiones
+
+Los endpoints de ventas incluyen métricas de comisión:
+
+```http
+GET /api/v1/ventas/summary
+# Retorna: commissionTotal, netoDespuesComision
+
+GET /api/v1/ventas/breakdown?dimension=ventana
+# Cada item incluye: commissionTotal
+
+GET /api/v1/ventas/timeseries?granularity=day
+# Cada punto incluye: commissionTotal
+```
+
+> 📖 Ver documentación completa en [`docs/COMMISSION_SYSTEM.md`](docs/COMMISSION_SYSTEM.md)
 
 ---
 
