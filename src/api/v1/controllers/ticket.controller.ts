@@ -66,7 +66,7 @@ export const TicketController = {
       action: "TICKET_LIST_RESOLVED_FILTERS",
       payload: { filters, page, pageSize, scope, date, from, to }
     })
-
+    console.log(result)
     return success(res, result);
   },
 
