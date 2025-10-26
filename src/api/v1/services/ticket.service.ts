@@ -1,4 +1,4 @@
-import { ActivityType } from "@prisma/client";
+import { ActivityType, Role } from "@prisma/client";
 import TicketRepository from "../../../repositories/ticket.repository";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
@@ -15,13 +15,45 @@ export const TicketService = {
       const { loteriaId, sorteoId } = data;
       if (!loteriaId || !sorteoId) throw new AppError("Missing loteriaId/sorteoId", 400);
 
-      // Ventana del vendedor
-      const seller = await prisma.user.findUnique({
+      // Actor autenticado
+      const actor = await prisma.user.findUnique({
         where: { id: userId },
-        select: { id: true, ventanaId: true },
+        select: { id: true, role: true, ventanaId: true, isActive: true },
       });
-      if (!seller?.ventanaId) throw new AppError("El vendedor no tiene una Ventana asignada", 400);
-      const ventanaId = seller.ventanaId;
+      if (!actor) throw new AppError("Authenticated user not found", 401);
+
+      // Resolver vendedor efectivo (impersonación opcional para ADMIN/VENTANA)
+      const requestedVendedorId: string | undefined = data?.vendedorId;
+      let effectiveVendedorId: string;
+      let ventanaId: string;
+
+      if (requestedVendedorId) {
+        if (actor.role !== Role.ADMIN && actor.role !== Role.VENTANA) {
+          throw new AppError("vendedorId no permitido para este rol", 403);
+        }
+        const target = await prisma.user.findUnique({
+          where: { id: requestedVendedorId },
+          select: { id: true, role: true, ventanaId: true, isActive: true },
+        });
+        if (!target || !target.isActive) throw new AppError("Vendedor no encontrado o inactivo", 404);
+        if (target.role !== Role.VENDEDOR) throw new AppError("vendedorId debe pertenecer a un usuario con rol VENDEDOR", 400);
+        if (!target.ventanaId) throw new AppError("El vendedor seleccionado no tiene Ventana asignada", 400);
+        if (actor.role === Role.VENTANA) {
+          if (!actor.ventanaId || actor.ventanaId !== target.ventanaId) {
+            throw new AppError("vendedorId no pertenece a tu Ventana", 403);
+          }
+        }
+        effectiveVendedorId = target.id;
+        ventanaId = target.ventanaId;
+      } else {
+        if (actor.role === Role.VENDEDOR) {
+          if (!actor.ventanaId) throw new AppError("El vendedor no tiene una Ventana asignada", 400);
+          effectiveVendedorId = actor.id;
+          ventanaId = actor.ventanaId;
+        } else {
+          throw new AppError("vendedorId es requerido para este rol", 400);
+        }
+      }
 
       // Ventana válida
       const ventana = await prisma.ventana.findUnique({
@@ -149,7 +181,7 @@ export const TicketService = {
             };
           }),
         } as any,
-        userId
+        effectiveVendedorId
       );
 
       await ActivityService.log({
