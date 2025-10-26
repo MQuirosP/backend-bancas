@@ -4,6 +4,7 @@ import { ActivityType } from "@prisma/client";
 import LoteriaService from "../services/loteria.service";
 import ActivityService from "../../../core/activity.service";
 import { success, created } from "../../../utils/responses";
+import { computeOccurrences } from "../../../utils/schedule";
 
 export const LoteriaController = {
   async create(req: Request, res: Response) {
@@ -191,58 +192,24 @@ export const LoteriaController = {
     const loteria = await LoteriaService.getById(loteriaId);
     const rules = (loteria.rulesJson ?? {}) as any;
 
-    // Normalizar drawSchedule con tus claves en español
-    const frequency: 'diario'|'semanal'|'personalizado' = rules?.drawSchedule?.frequency ?? 'diario';
-    const times: string[] = Array.isArray(rules?.drawSchedule?.times) ? rules.drawSchedule.times : [];
-    const daysOfWeek: number[] = Array.isArray(rules?.drawSchedule?.daysOfWeek) ? rules.drawSchedule.daysOfWeek : [0,1,2,3,4,5,6];
+    const occurrences = computeOccurrences({
+      loteriaName: loteria.name,
+      schedule: {
+        frequency: rules?.drawSchedule?.frequency,
+        times: rules?.drawSchedule?.times,
+        daysOfWeek: rules?.drawSchedule?.daysOfWeek,
+      },
+      start,
+      days,
+      limit,
+    });
 
-    if (times.length === 0) {
-      return success(res, [], { count: 0 });
-    }
+    const data = occurrences.map((o: any) => ({
+      scheduledAt: o.scheduledAt.toISOString(),
+      name: o.name,
+    }));
 
-    // Helpers locales
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const addDays = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-    const atTime = (base: Date, hhmm: string) => {
-      const [h, m] = hhmm.split(":").map((x: string) => parseInt(x, 10));
-      const d = new Date(base);
-      d.setHours(isNaN(h) ? 0 : h, isNaN(m) ? 0 : m, 0, 0);
-      return d;
-    };
-
-    const from = new Date(start); from.setSeconds(0,0);
-    const to = addDays(from, days);
-
-    const out: Array<{ scheduledAt: string; name: string }> = [];
-    const cursor = new Date(from.getFullYear(), from.getMonth(), from.getDate(), 0, 0, 0, 0);
-
-    while (cursor <= to && out.length < limit) {
-      const dow = cursor.getDay(); // 0..6 (0=Domingo)
-      const includeDay =
-        frequency === 'diario'
-          ? true
-          : frequency === 'semanal'
-            ? daysOfWeek.includes(dow)
-            : true; // personalizado: mostramos 'times' cada día; si luego necesitas otra semántica, se ajusta aquí
-
-      if (includeDay) {
-        for (const t of times) {
-          const dt = atTime(cursor, t);
-          if (dt >= from && dt <= to) {
-            out.push({
-              scheduledAt: dt.toISOString(),
-              name: `${loteria.name} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`,
-            });
-            if (out.length >= limit) break;
-          }
-        }
-      }
-      cursor.setDate(cursor.getDate() + 1);
-      cursor.setHours(0,0,0,0);
-    }
-
-    out.sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
-    return success(res, out, { count: out.length, from: from.toISOString(), to: to.toISOString() });
+    return success(res, data, { count: data.length });
   },
 
   async seedSorteos(req: Request, res: Response) {
@@ -258,7 +225,11 @@ export const LoteriaController = {
     return res.status(400).json({ success: false, message: "days debe ser 1..31" })
   }
 
-  const result = await LoteriaService.seedSorteosFromRules(loteriaId, start, days, dryRun)
+  const subset: Date[] | undefined = Array.isArray((req as any).body?.scheduledDates)
+    ? (req as any).body.scheduledDates.map((d: any) => new Date(d)).filter((d: Date) => !isNaN(d.getTime()))
+    : undefined
+
+  const result = await LoteriaService.seedSorteosFromRules(loteriaId, start, days, dryRun, subset)
   return res.json({ success: true, data: result })
 }
 

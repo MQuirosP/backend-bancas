@@ -380,45 +380,81 @@ const SorteoRepository = {
   },
 
   async bulkCreateIfMissing(loteriaId: string, occurrences: Array<{ scheduledAt: Date; name: string }>) {
-    if (occurrences.length === 0) return { created: 0, skipped: 0 }
+    if (occurrences.length === 0) return { created: [], skipped: [], alreadyExists: [], processed: [] }
 
-    // Traer existentes en rango para no duplicar
-    const minAt = occurrences[0].scheduledAt
-    const maxAt = occurrences[occurrences.length - 1].scheduledAt
+    // Ordenar y construir claves por timestamp para deduplicación robusta
+    const items = occurrences
+      .map(o => ({ ...o, ts: o.scheduledAt.getTime() }))
+      .sort((a, b) => a.ts - b.ts)
+
+    const minAt = new Date(items[0].ts)
+    const maxAt = new Date(items[items.length - 1].ts)
+
+    // Pequeño buffer a ambos lados del rango para blindaje de fronteras
+    const bufferedMin = new Date(minAt.getTime() - 60_000)
+    const bufferedMax = new Date(maxAt.getTime() + 60_000)
 
     const existing = await prisma.sorteo.findMany({
-      where: {
-        loteriaId,
-        scheduledAt: { gte: minAt, lte: maxAt },
-      },
+      where: { loteriaId, scheduledAt: { gte: bufferedMin, lte: bufferedMax } },
       select: { id: true, scheduledAt: true },
     })
-    const existingKey = new Set(existing.map(e => `${e.scheduledAt.toISOString()}`))
+    const existingBefore = new Set(existing.map(e => e.scheduledAt.getTime()))
 
-    let created = 0
-    for (const occ of occurrences) {
-      const key = occ.scheduledAt.toISOString()
-      if (existingKey.has(key)) continue
+    const toInsert = items.filter(it => !existingBefore.has(it.ts))
+    const alreadyExists = items.filter(it => existingBefore.has(it.ts))
 
-      await prisma.sorteo.create({
-        data: {
-          loteriaId,
-          name: occ.name,
-          scheduledAt: occ.scheduledAt,
-          status: SorteoStatus.SCHEDULED,
-          isActive: true,
-        },
-      })
-      created++
+    // Inserción masiva idempotente con respaldo de @@unique(loteriaId, scheduledAt)
+    if (toInsert.length > 0) {
+      try {
+        await prisma.sorteo.createMany({
+          data: toInsert.map(it => ({
+            loteriaId,
+            name: it.name,
+            scheduledAt: new Date(it.ts),
+            status: SorteoStatus.SCHEDULED,
+            isActive: true,
+          })),
+          skipDuplicates: true,
+        })
+      } catch (err: any) {
+        // P2002 / 23505 deben tratarse como skips, no como error fatal
+        if (!(err?.code === 'P2002' || String(err?.message).includes('23505'))) {
+          throw err
+        }
+      }
     }
+
+    // Verificación post-inserción para reflejar creados reales bajo concurrencia
+    const existingAfter = await prisma.sorteo.findMany({
+      where: { loteriaId, scheduledAt: { gte: bufferedMin, lte: bufferedMax } },
+      select: { scheduledAt: true },
+    })
+    const afterSet = new Set(existingAfter.map(e => e.scheduledAt.getTime()))
+
+    const createdTs = toInsert
+      .map(it => it.ts)
+      .filter(ts => afterSet.has(ts) && !existingBefore.has(ts))
+    const skippedTs = items.map(it => it.ts).filter(ts => !createdTs.includes(ts))
+
+    const fmt = (ts: number) => new Date(ts).toISOString()
 
     logger.info({
       layer: "repository",
       action: "SORTEO_BULK_CREATE_IF_MISSING",
-      payload: { loteriaId, created, skipped: occurrences.length - created },
+      payload: {
+        loteriaId,
+        created: createdTs.length,
+        skipped: skippedTs.length,
+        processed: items.length,
+      },
     })
 
-    return { created, skipped: occurrences.length - created }
+    return {
+      created: createdTs.map(fmt),
+      skipped: skippedTs.map(fmt),
+      alreadyExists: alreadyExists.map(it => fmt(it.ts)),
+      processed: items.map(it => fmt(it.ts)),
+    }
   },
 };
 

@@ -9,6 +9,7 @@ import {
   loteriaIdSchema,
   previewScheduleQuerySchema,
   updateLoteriaSchema,
+  seedSorteosBodySchema,
 } from "../validators/loteria.validator";
 import z from "zod";
 
@@ -20,6 +21,7 @@ router.post(
   "/:id/seed_sorteos",
   validateParams(loteriaIdSchema),
   validateQuery(previewScheduleQuerySchema.extend({ dryRun: z.enum(["true","false"]).optional() })), // si quieres validarlo
+  validateBody(seedSorteosBodySchema),
   LoteriaController.seedSorteos
 )
 router.post("/", validateBody(createLoteriaSchema), LoteriaController.create);

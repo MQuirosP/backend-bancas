@@ -1,4 +1,46 @@
-<!-- markdownlint-disable MD024 -->
+## 🚀 v1.0.0-rc8 - Idempotencia de Sorteos y UTC
+
+Fecha: 2025-10-26  
+Rama: master
+
+### ✅ Nuevas/Ajustes clave
+
+- Restricción única en Sorteo: @@unique([loteriaId, scheduledAt]) (evita duplicados por lotería-fecha-hora).
+- computeOccurrences migra a UTC (entradas iguales ⇒ salidas iguales).
+  - Usa getUTCDay y setUTCHours para construir horas exactas.
+- Seed idempotente que respeta subset del frontend:
+  - POST /api/v1/loterias/:id/seed_sorteos?start&days&dryRun
+  - Body opcional { scheduledDates: string[] ISO } ⇒ procesa exclusivamente esas fechas.
+  - Respuesta detallada: created, skipped, lreadyExists, processed.
+- Dedupe robusto:
+  - In-memory por timestamp (getTime) y BD por índice único.
+  - createMany({ skipDuplicates: true }) + manejo de P2002/23505 como “skipped”.
+  - Verificación post-inserción para contar creados reales bajo concurrencia.
+
+### 🧩 Migración
+
+20251026215000_add_unique_sorteo_loteria_scheduledAt
+
+`
+CREATE UNIQUE INDEX IF NOT EXISTS "Sorteo_loteriaId_scheduledAt_key"
+  ON "Sorteo" ("loteriaId", "scheduledAt");
+`
+
+Requiere limpiar duplicados existentes antes de deploy:db.
+
+### 📚 Documentación
+
+- README: sección “Idempotencia y UTC en Sorteos (rc8)”.
+- docs/architecture/Sorteos_Idempotencia_UTC.md con detalles técnicos y contratos.
+
+### 🧪 Checklist de validación
+
+- Medianoche: preview/seed antes y después de 00:00 ⇒ segunda corrida sin created (solo skipped/alreadyExists).
+- Concurrencia: dos seeds simultáneos ⇒ sin duplicados; contaje correcto de created.
+- Subset: enviando 2 timestamps ⇒ sólo esos se crean/procesan.
+- TZ: re-lectura de scheduledAt conserva el mismo timestamp.
+
+---<!-- markdownlint-disable MD024 -->
 
 # 📘 CHANGELOG – Banca Management Backend
 
@@ -440,3 +482,7 @@ TypeScript · Express.js · Prisma ORM · PostgreSQL · JWT · Zod · Pino
 
 > 💡 *Este release marca la culminación técnica del MVP Backend Bancas.*  
 > La próxima iteración se enfocará en pagos, reportes, documentación y despliegue continuo.
+
+
+
+

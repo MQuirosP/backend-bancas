@@ -142,15 +142,9 @@ model BancaLoteriaSetting {
   @@unique([bancaId, loteriaId])
 }
 
-model TicketCounter {
-  id            String   @id @default("DEFAULT")
-  currentNumber Int      @default(0)
-  lastUpdate    DateTime @default(now())
-}
-
 model Ticket {
   id            String       @id @default(uuid()) @db.Uuid
-  ticketNumber  Int          @unique @default(autoincrement())
+  ticketNumber  String       @unique @default(dbgenerated("generate_ticket_number()")) @db.VarChar(24)
   loteriaId     String       @db.Uuid
   ventanaId     String       @db.Uuid
   vendedorId    String       @db.Uuid
@@ -256,6 +250,7 @@ model Sorteo {
   @@index([winningNumber])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_name_trgm", type: Gin)
   @@index([winningNumber(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_winning_trgm", type: Gin)
+  @@unique([loteriaId, scheduledAt])
 }
 
 model ActivityLog {
