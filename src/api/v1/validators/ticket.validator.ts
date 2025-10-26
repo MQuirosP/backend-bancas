@@ -26,7 +26,7 @@ export const CreateTicketSchema = z
     sorteoId: z.uuid("sorteoId inválido"),
     ventanaId: z.uuid("ventanaId inválido").optional(),
     jugadas: z.array(z.union([JugadaNumeroSchema, JugadaReventadoSchema])).min(1),
-  })
+  }).merge(z.object({ vendedorId: z.string().uuid("vendedorId inválido").optional() }))
   .superRefine((val, ctx) => {
     const numeros = new Set(val.jugadas.filter(j => j.type === "NUMERO").map(j => j.number));
     for (const [i, j] of val.jugadas.entries()) {

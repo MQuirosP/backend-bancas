@@ -259,6 +259,16 @@ Body opcional: { "dryRun": false }
 - Sorteo debe estar en estado **OPEN**.
 - Cumplimiento de `maxAmount`, `maxTotal` y reglas de `rulesJson`.
 
+### Impersonación VENTANA/ADMIN (vendedorId opcional)
+
+- POST /api/v1/tickets acepta `vendedorId` opcional en el body.
+- Reglas:
+  - Rol VENDEDOR: ignora/deniega `vendedorId`; se usa el usuario autenticado como vendedor.
+  - Rol VENTANA: debe enviar `vendedorId` y tiene que pertenecer a su misma `ventanaId`.
+  - Rol ADMIN: puede enviar cualquier `vendedorId` válido con rol VENDEDOR.
+- La `ventanaId` usada para el ticket siempre es la del vendedor efectivo (el indicado por `vendedorId` o el usuario vendedor autenticado).
+- Si el rol es ADMIN/VENTANA y no se envía `vendedorId`, se retorna 400.
+
 ### Flujo transaccional
 
 1. Se obtiene número secuencial seguro.

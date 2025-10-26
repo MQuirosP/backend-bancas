@@ -2,6 +2,7 @@ export interface CreateTicketDTO {
   loteriaId: string;
   sorteoId: string;
   ventanaId: string;
+  vendedorId?: string; // opcional para ADMIN/VENTANA
   jugadas: {
     number: string;
     amount: number;
@@ -14,7 +15,7 @@ export interface CreateTicketDTO {
 
 export interface TicketResponseDTO {
   id: string;
-  ticketNumber: number;
+  ticketNumber: string;  // Formato: TYYMMDD-XXXXXX-CC (ej: T250126-00000A-42)
   totalAmount: number;
   status: string;
   loteriaId: string;

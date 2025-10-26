@@ -16,6 +16,7 @@ Rama: master
   - In-memory por timestamp (getTime) y BD por índice único.
   - createMany({ skipDuplicates: true }) + manejo de P2002/23505 como “skipped”.
   - Verificación post-inserción para contar creados reales bajo concurrencia.
+- Creación de tickets: `vendedorId` opcional en body para ADMIN/VENTANA con validación de pertenencia a Ventana y rol VENDEDOR.
 
 ### 🧩 Migración
 
@@ -482,6 +483,7 @@ TypeScript · Express.js · Prisma ORM · PostgreSQL · JWT · Zod · Pino
 
 > 💡 *Este release marca la culminación técnica del MVP Backend Bancas.*  
 > La próxima iteración se enfocará en pagos, reportes, documentación y despliegue continuo.
+
 
 
 
