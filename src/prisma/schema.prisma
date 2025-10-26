@@ -87,6 +87,10 @@ model User {
   TicketPayment       TicketPayment[]
   ventana             Ventana?                 @relation(fields: [ventanaId], references: [id])
   multiplierOverrides MultiplierOverride[]
+  savedReports        SavedReport[]
+  exportJobs          ExportJob[]
+  alerts              Alert[]
+  apiKeys             ApiKey[]
 
   @@index([code])
   @@index([email])
@@ -334,6 +338,149 @@ model RefreshToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+// ==================== MÓDULO DE VENTAS Y ANALÍTICA ====================
+
+model SavedReport {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  userId    String   @db.Uuid
+  filters   Json     // Filtros guardados (scope, date, ventanaId, etc.)
+  schedule  Json?    // Programación opcional: { frequency: "daily|weekly|monthly", recipients: ["email@..."] }
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schedules ReportSchedule[]
+
+  @@index([userId, isActive])
+}
+
+model ExportJob {
+  id            String         @id @default(uuid()) @db.Uuid
+  userId        String         @db.Uuid
+  format        ExportFormat   @default(CSV)
+  filters       Json           // Filtros aplicados
+  status        JobStatus      @default(PENDING)
+  fileUrl       String?        // URL de descarga cuando status=COMPLETED
+  errorMessage  String?
+  progress      Int            @default(0) // 0-100
+  totalRecords  Int?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  completedAt   DateTime?
+  idempotencyKey String?       @unique
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+}
+
+model Alert {
+  id          String      @id @default(uuid()) @db.Uuid
+  name        String
+  userId      String      @db.Uuid
+  dimension   String      // ventana|vendedor|loteria|sorteo
+  targetId    String?     // ID de la entidad (ventanaId, vendedorId, etc.)
+  condition   Json        // { type: "threshold|spike|drop", operator: "gt|lt", value: 1000 }
+  isActive    Boolean     @default(true)
+  lastFiredAt DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  notifyEmail String?
+  notifyWebhook String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([isActive, lastFiredAt])
+  @@index([userId, isActive])
+}
+
+model ApiKey {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  key         String   @unique // Hash de la key (bcrypt)
+  userId      String?  @db.Uuid // Si es de un usuario específico
+  scopes      String[] // ["read:sales", "read:metrics", "write:reports"]
+  isActive    Boolean  @default(true)
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([key, isActive])
+  @@index([userId, isActive])
+}
+
+model Webhook {
+  id          String        @id @default(uuid()) @db.Uuid
+  name        String
+  url         String
+  events      String[]      // ["sales.summary.closedHour", "sales.ticket.created", etc.]
+  isActive    Boolean       @default(true)
+  secret      String?       // Para firmar payloads (HMAC)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  lastFiredAt DateTime?
+  failCount   Int           @default(0)
+
+  deliveries WebhookDelivery[]
+
+  @@index([isActive])
+}
+
+model WebhookDelivery {
+  id           String   @id @default(uuid()) @db.Uuid
+  webhookId    String   @db.Uuid
+  event        String
+  payload      Json
+  status       Int      // HTTP status code
+  responseBody String?
+  attempt      Int      @default(1)
+  createdAt    DateTime @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId, createdAt])
+  @@index([createdAt])
+}
+
+model ReportSchedule {
+  id          String   @id @default(uuid()) @db.Uuid
+  reportId    String   @db.Uuid
+  frequency   String   // "daily"|"weekly"|"monthly"
+  recipients  String[] // Emails
+  nextRunAt   DateTime
+  lastRunAt   DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  report SavedReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([isActive, nextRunAt])
+}
+
+model Goal {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  dimension  String   // "ventana"|"vendedor"|"global"
+  targetId   String?  // ID de la entidad (ventanaId, vendedorId)
+  targetValue Float   // Objetivo numérico
+  period     String   // "day"|"week"|"month"|"year"
+  startDate  DateTime
+  endDate    DateTime
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([dimension, targetId, isActive])
+  @@index([period, isActive])
+}
+
 enum OverrideScope {
   USER
   VENTANA
@@ -411,4 +558,18 @@ enum ActivityType {
   TICKET_PAY
   TICKET_PAYMENT_REVERSE
   SORTEO_OPEN
+}
+
+enum ExportFormat {
+  CSV
+  XLSX
+  JSON
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
 }
