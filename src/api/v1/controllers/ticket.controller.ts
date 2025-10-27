@@ -22,17 +22,24 @@ export const TicketController = {
     const { page = 1, pageSize = 10, scope = "mine", date = "today", fromDate, toDate, ...rest } = req.query as any;
 
     const filters: any = { ...rest };
+    const me = req.user!;
 
-    // scope → filtrar según el rol del usuario autenticado
-    if (scope === "mine") {
-      const me = req.user!;
-      if (me.role === Role.VENDEDOR) {
-        filters.userId = me.id;             // tickets del vendedor
-      } else if (me.role === Role.VENTANA) {
-        filters.ventanaId = me.ventanaId;   // tickets de la ventana (todos sus vendedores)
-      } else if (me.role === Role.ADMIN) {
-        // admin con scope=mine -> si quieres, podrías filtrar por algo; por ahora, sin filtro
+    // RBAC: Applica automáticamente según el rol, ignorando scope si es insuficiente
+    // VENDEDOR: Solo ve sus tickets (scope se ignora)
+    // VENTANA: Solo ve tickets de su ventana (scope se ignora)
+    // ADMIN: Respeta scope (mine = sin filtro, all = todos)
+    if (me.role === Role.VENDEDOR) {
+      // VENDEDOR always sees only own tickets (scope parameter ignored)
+      filters.userId = me.id;
+    } else if (me.role === Role.VENTANA) {
+      // VENTANA always sees only own window's tickets (scope parameter ignored)
+      filters.ventanaId = me.ventanaId;
+    } else if (me.role === Role.ADMIN) {
+      // ADMIN respects scope parameter
+      if (scope === "mine") {
+        // admin scope=mine: no filters (sees all, but can be scoped if needed)
       }
+      // scope=all (or anything else): no filters, sees all
     }
 
     // Resolver rango de fechas (mismo patrón que Venta/Dashboard)
@@ -48,6 +55,8 @@ export const TicketController = {
         page,
         pageSize,
         scope,
+        role: me.role,
+        rbacApplied: me.role === Role.VENDEDOR ? "userId" : (me.role === Role.VENTANA ? "ventanaId" : "none"),
         dateRange: {
           fromAt: dateRange.fromAt.toISOString(),
           toAt: dateRange.toAt.toISOString(),
