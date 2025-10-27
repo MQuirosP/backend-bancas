@@ -6,13 +6,9 @@ import { Role } from "@prisma/client";
 import DashboardService from "../services/dashboard.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 
-interface DashboardQuery {
-  timeframe?: 'today' | 'thisWeek' | 'thisMonth' | 'thisYear' | 'custom';
-  fromDate?: string; // YYYY-MM-DD
-  toDate?: string; // YYYY-MM-DD
-  ventanaId?: string;
-  scope?: 'all' | 'byVentana';
-}
+// Nota: Usa el mismo patrón que Venta/Sales módulo
+// date: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'range'
+// Si range: requiere fromDate y toDate en YYYY-MM-DD
 
 export const DashboardController = {
   /**
@@ -27,11 +23,11 @@ export const DashboardController = {
       throw new AppError("No autorizado para ver dashboard", 403);
     }
 
-    const query = req.query as any as DashboardQuery;
+    const query = req.query as any;
 
-    // Resolver rango de fechas
-    const timeframe = query.timeframe || 'today';
-    const dateRange = resolveDateRange(timeframe, query.fromDate, query.toDate);
+    // Resolver rango de fechas (usa el mismo patrón que Venta)
+    const date = query.date || 'today';
+    const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     // Aplicar RBAC
     let ventanaId = query.ventanaId;
@@ -63,9 +59,9 @@ export const DashboardController = {
       throw new AppError("No autorizado", 403);
     }
 
-    const query = req.query as any as DashboardQuery;
-    const timeframe = query.timeframe || 'today';
-    const dateRange = resolveDateRange(timeframe, query.fromDate, query.toDate);
+    const query = req.query as any;
+    const date = query.date || 'today';
+    const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {
@@ -101,9 +97,9 @@ export const DashboardController = {
       throw new AppError("No autorizado", 403);
     }
 
-    const query = req.query as any as DashboardQuery;
-    const timeframe = query.timeframe || 'today';
-    const dateRange = resolveDateRange(timeframe, query.fromDate, query.toDate);
+    const query = req.query as any;
+    const date = query.date || 'today';
+    const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {
@@ -139,9 +135,9 @@ export const DashboardController = {
       throw new AppError("No autorizado", 403);
     }
 
-    const query = req.query as any as DashboardQuery;
-    const timeframe = query.timeframe || 'today';
-    const dateRange = resolveDateRange(timeframe, query.fromDate, query.toDate);
+    const query = req.query as any;
+    const date = query.date || 'today';
+    const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {

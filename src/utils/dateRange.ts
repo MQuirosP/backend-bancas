@@ -41,6 +41,16 @@ function crDateToUtc(dateStr: string): Date {
 }
 
 /**
+ * Formatear un Date en YYYY-MM-DD.
+ */
+function formatDateComponents(d: Date): string {
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * Validar formato YYYY-MM-DD.
  */
 function isValidDateFormat(dateStr: string): boolean {
@@ -71,7 +81,11 @@ export interface DateRangeResolution {
 /**
  * Resuelve un rango de fechas desde parámetros semánticos a UTC.
  *
- * @param date 'today' | 'yesterday' | 'range'
+ * Soporta dos modos:
+ * 1. Semantic tokens: 'today', 'yesterday', 'week', 'month', 'year'
+ * 2. Custom range: date='range' con fromDate/toDate en YYYY-MM-DD
+ *
+ * @param date 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'range'
  * @param fromDate YYYY-MM-DD (requerido si date='range')
  * @param toDate YYYY-MM-DD (requerido si date='range')
  * @param serverNow Fecha actual (para testing); defecto: new Date()
@@ -87,13 +101,14 @@ export function resolveDateRange(
   serverNow: Date = new Date()
 ): DateRangeResolution {
   // Validar parámetro 'date'
-  if (!['today', 'yesterday', 'range'].includes(date)) {
+  const validDates = ['today', 'yesterday', 'week', 'month', 'year', 'range'];
+  if (!validDates.includes(date)) {
     throw new AppError('Invalid date parameter', 400, {
       code: 'SLS_2001',
       details: [
         {
           field: 'date',
-          reason: 'Must be one of: today, yesterday, range'
+          reason: `Must be one of: ${validDates.join(', ')}`
         }
       ]
     });
@@ -114,6 +129,35 @@ export function resolveDateRange(
     fromDateStr = getTodayInTz(yesterday);
     toDateStr = fromDateStr;
     description = `Yesterday (${fromDateStr}) in ${BUSINESS_TZ}`;
+  } else if (date === 'week') {
+    // Semana actual (Lunes a Domingo en CR)
+    const today = new Date(serverNow.getTime() + TZ_OFFSET_HOURS * 60 * 60 * 1000);
+    const dayOfWeek = today.getUTCDay(); // 0 = Domingo
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const monday = new Date(today.getTime() - daysToMonday * 24 * 60 * 60 * 1000);
+    const sunday = new Date(monday.getTime() + 6 * 24 * 60 * 60 * 1000);
+
+    fromDateStr = formatDateComponents(monday);
+    toDateStr = formatDateComponents(sunday);
+    description = `This week (${fromDateStr} to ${toDateStr}) in ${BUSINESS_TZ}`;
+  } else if (date === 'month') {
+    // Mes actual
+    const today = new Date(serverNow.getTime() + TZ_OFFSET_HOURS * 60 * 60 * 1000);
+    const firstDay = new Date(today.getUTCFullYear(), today.getUTCMonth(), 1);
+    const lastDay = new Date(today.getUTCFullYear(), today.getUTCMonth() + 1, 0);
+
+    fromDateStr = formatDateComponents(firstDay);
+    toDateStr = formatDateComponents(lastDay);
+    description = `This month (${fromDateStr} to ${toDateStr}) in ${BUSINESS_TZ}`;
+  } else if (date === 'year') {
+    // Año actual
+    const today = new Date(serverNow.getTime() + TZ_OFFSET_HOURS * 60 * 60 * 1000);
+    const firstDay = new Date(today.getUTCFullYear(), 0, 1);
+    const lastDay = new Date(today.getUTCFullYear(), 11, 31);
+
+    fromDateStr = formatDateComponents(firstDay);
+    toDateStr = formatDateComponents(lastDay);
+    description = `This year (${fromDateStr} to ${toDateStr}) in ${BUSINESS_TZ}`;
   } else {
     // date === 'range'
     if (!fromDate || !toDate) {
