@@ -92,6 +92,8 @@ export const UserService = {
     pageSize?: number;
     role?: string;
     search?: string;
+    ventanaId?: string;
+    isActive?: boolean;
   }) {
     const page = params.page && params.page > 0 ? params.page : 1;
     const pageSize = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
@@ -101,6 +103,8 @@ export const UserService = {
       pageSize,
       role: params.role as Role | undefined,
       search: params.search?.trim() || undefined,
+      ventanaId: params.ventanaId,
+      isActive: params.isActive,
     });
 
     const totalPages = Math.ceil(total / pageSize);

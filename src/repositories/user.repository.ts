@@ -12,6 +12,12 @@ export const UserRepository = {
   findByEmail: (email: string) =>
     prisma.user.findUnique({ where: { email } }),
 
+  findActiveVendedorById: (id: string) =>
+    prisma.user.findFirst({
+      where: { id, role: Role.VENDEDOR, isActive: true },
+      select: { id: true, role: true, ventanaId: true, isActive: true },
+    }),
+
   // ✅ admitir code e isActive en create
   create: (data: {
     name: string;
@@ -49,14 +55,18 @@ export const UserRepository = {
     pageSize: number;
     role?: Role;
     search?: string;
+    ventanaId?: string;
+    isActive?: boolean;
     select?: Prisma.UserSelect;
     orderBy?: Prisma.UserOrderByWithRelationInput;
   }) {
-    const { page, pageSize, role, search, select, orderBy } = args;
+    const { page, pageSize, role, search, ventanaId, isActive, select, orderBy } = args;
     const skip = (page - 1) * pageSize;
 
     const where: Prisma.UserWhereInput = {
       ...(role ? { role } : {}),
+      ...(ventanaId ? { ventanaId } : {}),
+      ...(typeof isActive === 'boolean' ? { isActive } : {}),
     };
 
     const s = (search ?? '').trim();
