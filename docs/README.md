@@ -18,32 +18,59 @@ The backend discovered and fixed a critical date handling issue:
 
 **The Solution**: Backend is now the sole authority for all date calculations using Costa Rica timezone (UTC-6).
 
-### Key Documents
+### Key Documents (Read in Order)
 
-1. **[BACKEND_AUTHORITY_MODEL_SUMMARY.md](./BACKEND_AUTHORITY_MODEL_SUMMARY.md)** ⭐ START HERE
-   - Executive summary for decision makers
-   - Why this matters (security & consistency)
+#### For Frontend Developers
+
+1. **[UNIVERSAL_DATE_PARAMETER_STANDARD.md](./UNIVERSAL_DATE_PARAMETER_STANDARD.md)** ⭐⭐⭐ START HERE
+   - The law: What every endpoint accepts
+   - No exceptions policy
+   - Token resolution reference
+   - Implementation rules (5 critical rules)
+
+2. **[FRONTEND_DATE_IMPLEMENTATION_SPEC.md](./FRONTEND_DATE_IMPLEMENTATION_SPEC.md)** ⭐⭐⭐ FOR CODING
+   - Step-by-step implementation guide
+   - 6 copy-paste ready code examples
+   - React hooks and utilities
+   - Error handling patterns
+   - Testing checklist
+   - Migration path for existing code
+
+#### For Decision Makers & QA
+
+3. **[BACKEND_AUTHORITY_MODEL_SUMMARY.md](./BACKEND_AUTHORITY_MODEL_SUMMARY.md)** ⭐ EXECUTIVE SUMMARY
+   - Why backend is authority (security & consistency)
    - What was fixed
    - What frontend must do
    - Before/after examples
 
-2. **[DATE_PARAMETERS_STANDARDIZATION.md](./DATE_PARAMETERS_STANDARDIZATION.md)**
-   - Technical details of all changes
-   - Complete API endpoint reference
-   - Error codes and responses
-   - Testing scenarios
-
-3. **[FRONTEND_DATE_STRATEGY.md](./FRONTEND_DATE_STRATEGY.md)**
-   - Complete implementation guide for frontend team
-   - Migration checklist with specific files to update
-   - Code examples and patterns
-   - Common mistakes and how to avoid them
-
-4. **[DATE_TESTING_CHECKLIST.md](./DATE_TESTING_CHECKLIST.md)**
-   - 12-part QA testing plan
+4. **[DATE_TESTING_CHECKLIST.md](./DATE_TESTING_CHECKLIST.md)** ⭐ FOR QA TEAM
+   - 12-part comprehensive testing plan
    - Specific curl commands
    - Expected log outputs
    - Edge cases and error scenarios
+
+#### Technical Reference
+
+5. **[DATE_PARAMETERS_STANDARDIZATION.md](./DATE_PARAMETERS_STANDARDIZATION.md)**
+   - Technical deep-dive of all changes
+   - Endpoint-by-endpoint breakdown
+   - Error codes and responses
+
+6. **[PARAMETER_VALIDATION_AUDIT.md](./PARAMETER_VALIDATION_AUDIT.md)**
+   - What discrepancies were found
+   - How they were fixed
+   - Code changes made
+
+7. **[API_ENDPOINT_PARAMETERS_REFERENCE.md](./API_ENDPOINT_PARAMETERS_REFERENCE.md)**
+   - Complete reference for all endpoints
+   - Parameter details with examples
+   - RBAC rules for each endpoint
+
+8. **[PARAMETER_VALIDATION_FINAL_SUMMARY.md](./PARAMETER_VALIDATION_FINAL_SUMMARY.md)**
+   - Complete audit results
+   - Verification checklist
+   - Production readiness status
 
 ### Quick Reference
 
