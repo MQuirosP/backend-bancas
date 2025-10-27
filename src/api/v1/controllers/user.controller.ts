@@ -43,13 +43,25 @@ export const UserController = {
   },
 
   async list(req: Request, res: Response) {
-    const { data, meta } = await UserService.list({
+    const currentUser = (req as any)?.user;
+    const queryParams: any = {
       page: req.query.page ? Number(req.query.page) : undefined,
       pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
       role: (req.query.role as Role) ?? undefined,
       search:
-        typeof req.query.search === "string" ? req.query.search : undefined, // ✅
-    });
+        typeof req.query.search === "string" ? req.query.search : undefined,
+    };
+
+    // Scoping por rol: VENTANA solo ve sus vendedores activos
+    if (currentUser && currentUser.role === Role.VENTANA) {
+      Object.assign(queryParams, {
+        role: Role.VENDEDOR,
+        ventanaId: currentUser.ventanaId,
+        isActive: true,
+      });
+    }
+
+    const { data, meta } = await UserService.list(queryParams);
     return success(res, data, meta);
   },
 

@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import { logger } from '../../../core/logger';
 import prisma from '../../../core/prismaClient';
-import { ActivityType } from '@prisma/client';
+import { ActivityType, Role } from '@prisma/client';
 import { success, created } from '../../../utils/responses';
 
 export const AuthController = {
@@ -73,11 +73,37 @@ export const AuthController = {
 
   async me(req: Request, res: Response) {
     const userId = (req as any).user?.id;
-    const user = await prisma.user.findUnique({
+    const u = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, username: true, name: true, role: true },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        role: true,
+        ventanaId: true,
+      },
     });
 
-    return success(res, user);
+    // Normalización según rol:
+    // - VENDEDOR: vendedorId = id, ventanaId = u.ventanaId
+    // - VENTANA:  ventanaId = u.ventanaId, vendedorId = null
+    // - ADMIN:    vendedorId = null, ventanaId = null
+    const payload = u && {
+      id: u.id,
+      email: u.email,
+      username: u.username,
+      name: u.name,
+      role: u.role,
+      vendedorId: u.role === Role.VENDEDOR ? u.id : null,
+      ventanaId:
+        u.role === Role.VENTANA
+          ? u.ventanaId
+          : u.role === Role.VENDEDOR
+          ? u.ventanaId ?? null
+          : null,
+    };
+
+    return success(res, payload);
   },
 };
