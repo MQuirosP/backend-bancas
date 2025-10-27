@@ -14,6 +14,7 @@ import multipliersRoutes from "./multipliers.routes"
 import diagnosticsRoutes from "./diagnostics.routes"
 import ventaRoutes from "./venta.routes"
 import commissionRoutes from "./commission.routes"
+import dashboardRoutes from "./dashboard.routes"
 
 const router = Router();
 
@@ -27,10 +28,11 @@ router.use("/vendedores", vendedorRoutes);
 router.use("/sorteos", sorteoRoutes);
 router.use("/multiplier-overrides", multiplierOverrideRoutes);
 router.use("/restrictions", restrictionRuleRoutes);
-router.use("/ticketPayment", ticketPaymentRoutes);
+router.use("/ticket-payments", ticketPaymentRoutes);
 router.use("/multipliers", multipliersRoutes);
 router.use("/diagnostics", diagnosticsRoutes);
 router.use("/ventas", ventaRoutes);
+router.use("/admin/dashboard", dashboardRoutes);
 router.use("/", commissionRoutes); // Commission routes include their own path prefixes
 
 export const apiV1Router = router;
