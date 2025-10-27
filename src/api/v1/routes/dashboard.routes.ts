@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { protect } from "../../../middlewares/auth.middleware";
 import DashboardController from "../controllers/dashboard.controller";
+import { validateDashboardQuery } from "../validators/dashboard.validator";
 
 const router = Router();
 
@@ -12,11 +13,11 @@ router.use(protect);
  */
 
 // Dashboard principal
-router.get("/", DashboardController.getMainDashboard);
+router.get("/", validateDashboardQuery, DashboardController.getMainDashboard);
 
 // Desgloses específicos
-router.get("/ganancia", DashboardController.getGanancia);
-router.get("/cxc", DashboardController.getCxC);
-router.get("/cxp", DashboardController.getCxP);
+router.get("/ganancia", validateDashboardQuery, DashboardController.getGanancia);
+router.get("/cxc", validateDashboardQuery, DashboardController.getCxC);
+router.get("/cxp", validateDashboardQuery, DashboardController.getCxP);
 
 export default router;

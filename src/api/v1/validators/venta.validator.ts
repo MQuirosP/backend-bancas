@@ -4,7 +4,7 @@ import { validateQuery } from "../../../middlewares/validate.middleware";
 
 /**
  * Schema para listar ventas (detalle transaccional)
- * Fechas: date (today|yesterday|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range
+ * Fechas: date (today|yesterday|week|month|year|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range
  */
 export const ListVentasQuerySchema = z
   .object({
@@ -16,7 +16,7 @@ export const ListVentasQuerySchema = z
     scope: z.enum(["mine", "all"]).optional(),
 
     // Filtros de fecha (CR timezone, YYYY-MM-DD format)
-    date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
+    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
@@ -42,7 +42,7 @@ export const VentasSummaryQuerySchema = z
     // Scope (aceptado pero ignorado; RBAC lo maneja automáticamente)
     scope: z.enum(["mine", "all"]).optional(),
 
-    date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
+    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
@@ -69,7 +69,7 @@ export const VentasBreakdownQuerySchema = z
     scope: z.enum(["mine", "all"]).optional(),
 
     // Filtros estándar
-    date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
+    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
@@ -94,7 +94,7 @@ export const VentasTimeseriesQuerySchema = z
     scope: z.enum(["mine", "all"]).optional(),
 
     // Filtros estándar
-    date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
+    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
@@ -116,7 +116,7 @@ export const FacetsQuerySchema = z
     // Scope (aceptado pero ignorado; RBAC lo maneja automáticamente)
     scope: z.enum(["mine", "all"]).optional(),
 
-    date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
+    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })
