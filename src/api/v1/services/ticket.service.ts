@@ -62,12 +62,26 @@ export const TicketService = {
       });
       if (!ventana || !ventana.isActive) throw new AppError("La Ventana no existe o está inactiva", 404);
 
-      // Sorteo válido
+      // Sorteo válido + obtener lotería desde sorteo
       const sorteo = await prisma.sorteo.findUnique({
         where: { id: sorteoId },
-        select: { id: true, scheduledAt: true, status: true, loteriaId: true },
+        select: {
+          id: true,
+          scheduledAt: true,
+          status: true,
+          loteriaId: true,
+          loteria: { select: { id: true, name: true, rulesJson: true } },
+        },
       });
       if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
+
+      // Validar que loteriaId del request coincida con loteriaId del sorteo
+      if (loteriaId !== sorteo.loteriaId) {
+        throw new AppError(
+          `loteriaId mismatch: request=${loteriaId}, sorteo=${sorteo.loteriaId}`,
+          400
+        );
+      }
 
       // ⏱ cutoff efectivo (rules → RestrictionRuleRepository)
       const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
@@ -135,11 +149,8 @@ export const TicketService = {
       }
 
       // 🔒 Validaciones por rulesJson de la Lotería (horarios + reglas de jugadas)
-      const loteria = await prisma.loteria.findUnique({
-        where: { id: loteriaId },
-        select: { name: true, rulesJson: true },
-      });
-      const rules = (loteria?.rulesJson ?? {}) as any;
+      // Nota: loteria ya fue obtenida del sorteo arriba
+      const rules = (sorteo.loteria?.rulesJson ?? {}) as any;
 
       // 1) horario
       if (!isWithinSalesHours(now, rules)) {

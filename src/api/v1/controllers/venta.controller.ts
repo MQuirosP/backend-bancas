@@ -5,237 +5,382 @@ import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { Role } from "@prisma/client";
 import { AppError } from "../../../core/errors";
-
-// Helpers para manejo de fechas (reutilizados de ticket.controller)
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function endOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
-}
-
-/**
- * Aplica scope por rol a los filtros
- * REGLAS:
- * - ADMIN: puede ver todo con scope=mine o scope=all
- * - VENTANA: puede ver todos los vendedores de su ventana (scope=mine aplica ventanaId)
- * - VENDEDOR: solo puede ver sus propias ventas (scope=mine o scope=all aplican vendedorId)
- */
-function applyScopeFilters(scope: string, user: any, filters: any) {
-  if (user.role === Role.VENDEDOR) {
-    // VENDEDOR siempre ve solo sus propias ventas, independientemente del scope
-    filters.vendedorId = user.id;
-  } else if (user.role === Role.VENTANA) {
-    // VENTANA siempre ve solo su ventana, independientemente del scope
-    filters.ventanaId = user.ventanaId;
-  } else if (user.role === Role.ADMIN) {
-    // ADMIN puede ver todo
-    // scope=mine sin filtro adicional (o podría filtrar por bancaId si se implementa)
-    // scope=all sin filtro (ve todo el sistema)
-  }
-}
-
-/**
- * Aplica filtros de fecha al objeto filters
- */
-function applyDateFilters(date: string, from: any, to: any, filters: any) {
-  if (date === "today") {
-    const now = new Date();
-    filters.dateFrom = startOfDay(now);
-    filters.dateTo = endOfDay(now);
-  } else if (date === "yesterday") {
-    const y = new Date();
-    y.setDate(y.getDate() - 1);
-    filters.dateFrom = startOfDay(y);
-    filters.dateTo = endOfDay(y);
-  } else if (date === "range") {
-    if (!from || !to) {
-      throw new AppError("Para date=range debes enviar from y to (ISO)", 400, {
-        code: "SLS_2001",
-        details: [{ field: "from/to", message: "Requeridos para date=range" }],
-      });
-    }
-    const df = new Date(from);
-    const dt = new Date(to);
-    if (isNaN(df.getTime()) || isNaN(dt.getTime())) {
-      throw new AppError("from/to inválidos", 400, {
-        code: "SLS_2001",
-        details: [{ field: "from/to", message: "Formato ISO inválido" }],
-      });
-    }
-    filters.dateFrom = df;
-    filters.dateTo = dt;
-  }
-}
-
-/**
- * Valida límites de rango para timeseries según granularidad
- */
-function validateTimeseriesRange(granularity: string, dateFrom?: Date, dateTo?: Date) {
-  if (!dateFrom || !dateTo) return;
-
-  const diffMs = dateTo.getTime() - dateFrom.getTime();
-  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-  if (granularity === "hour" && diffDays > 30) {
-    throw new AppError("Para granularidad 'hour', el rango máximo es 30 días", 400, {
-      code: "SLS_2001",
-      details: [{ field: "granularity", message: "Rango excede 30 días para granularity=hour" }],
-    });
-  }
-
-  if (granularity === "day" && diffDays > 90) {
-    throw new AppError("Para granularidad 'day', el rango máximo es 90 días", 400, {
-      code: "SLS_2001",
-      details: [{ field: "granularity", message: "Rango excede 90 días para granularity=day" }],
-    });
-  }
-}
+import { resolveDateRange, validateTimeseriesRange } from "../../../utils/dateRange";
+import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
 
 export const VentaController = {
   /**
    * 1) Listado transaccional (detalle)
-   * GET /ventas
+   * GET /ventas?date=today|yesterday|range&fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD&page=1&pageSize=20
    */
   async list(req: AuthenticatedRequest, res: Response) {
-    const { page = 1, pageSize = 10, scope = "mine", date = "today", from, to, ...rest } = req.query as any;
+    const {
+      page = 1,
+      pageSize = 20,
+      date = "today",
+      fromDate,
+      toDate,
+      ...rest
+    } = req.query as any;
 
-    const filters: any = { ...rest };
+    // Asegurar que las fechas sean strings, no arrays
+    const fromDateStr = Array.isArray(fromDate) ? fromDate[0] : fromDate;
+    const toDateStr = Array.isArray(toDate) ? toDate[0] : toDate;
+    const dateStr = Array.isArray(date) ? date[0] : date;
 
-    // Aplicar scope por rol
-    applyScopeFilters(scope, req.user!, filters);
+    // Resolver rango de fechas (CR → UTC)
+    const dateRange = resolveDateRange(dateStr, fromDateStr, toDateStr);
 
-    // Aplicar filtros de fecha
-    applyDateFilters(date, from, to, filters);
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId
+    };
+    const effectiveFilters = await applyRbacFilters(context, rest);
+
+    // Construir filtros finales para el servicio
+    const filters: any = {
+      ...effectiveFilters,
+      dateFrom: dateRange.fromAt,
+      dateTo: dateRange.toAt
+    };
 
     const result = await VentasService.list(Number(page), Number(pageSize), filters);
 
     req.logger?.info({
       layer: "controller",
       action: "VENTA_LIST",
-      payload: { filters, page, pageSize, scope, date, from, to },
+      payload: {
+        page,
+        pageSize,
+        effectiveFilters,
+        dateRange: {
+          fromAt: dateRange.fromAt.toISOString(),
+          toAt: dateRange.toAt.toISOString(),
+          tz: dateRange.tz
+        }
+      },
     });
 
-    return success(res, result.data, result.meta);
+    return success(res, result.data, {
+      ...result.meta,
+      range: {
+        fromAt: dateRange.fromAt.toISOString(),
+        toAt: dateRange.toAt.toISOString(),
+        tz: dateRange.tz
+      },
+      effectiveFilters
+    });
   },
 
   /**
    * 2) Resumen ejecutivo (KPI)
-   * GET /ventas/summary
+   * GET /ventas/summary?date=today|yesterday|range&fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD
    */
   async summary(req: AuthenticatedRequest, res: Response) {
-    const { scope = "mine", date = "today", from, to, ...rest } = req.query as any;
+    const {
+      date = "today",
+      fromDate,
+      toDate,
+      ...rest
+    } = req.query as any;
 
-    const filters: any = { ...rest };
+    // Asegurar que las fechas sean strings, no arrays
+    const fromDateStr = Array.isArray(fromDate) ? fromDate[0] : fromDate;
+    const toDateStr = Array.isArray(toDate) ? toDate[0] : toDate;
+    const dateStr = Array.isArray(date) ? date[0] : date;
 
-    // Aplicar scope por rol
-    applyScopeFilters(scope, req.user!, filters);
+    // Resolver rango de fechas (CR → UTC)
+    const dateRange = resolveDateRange(dateStr, fromDateStr, toDateStr);
 
-    // Aplicar filtros de fecha
-    applyDateFilters(date, from, to, filters);
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId
+    };
+    const effectiveFilters = await applyRbacFilters(context, rest);
+
+    // Construir filtros finales para el servicio
+    const filters: any = {
+      ...effectiveFilters,
+      dateFrom: dateRange.fromAt,
+      dateTo: dateRange.toAt
+    };
 
     const result = await VentasService.summary(filters);
 
     req.logger?.info({
       layer: "controller",
       action: "VENTA_SUMMARY",
-      payload: { filters, scope, date, from, to },
+      payload: {
+        effectiveFilters,
+        dateRange: {
+          fromAt: dateRange.fromAt.toISOString(),
+          toAt: dateRange.toAt.toISOString(),
+          tz: dateRange.tz
+        }
+      },
     });
 
-    return success(res, result);
+    return success(res, result, {
+      range: {
+        fromAt: dateRange.fromAt.toISOString(),
+        toAt: dateRange.toAt.toISOString(),
+        tz: dateRange.tz
+      },
+      effectiveFilters
+    });
   },
 
   /**
    * 3) Desglose por dimensión (Top-N)
-   * GET /ventas/breakdown?dimension=ventana|vendedor|loteria|sorteo|numero&top=10
+   * GET /ventas/breakdown?dimension=vendedor|ventana|loteria|sorteo|numero&top=10&date=today
    */
   async breakdown(req: AuthenticatedRequest, res: Response) {
-    const { dimension, top = 10, scope = "mine", date = "today", from, to, ...rest } = req.query as any;
+    const {
+      dimension,
+      top = 10,
+      date = "today",
+      fromDate,
+      toDate,
+      ...rest
+    } = req.query as any;
 
+    // Validar dimensión
     if (!dimension) {
-      throw new AppError("dimension es requerido", 400, {
+      throw new AppError("dimension is required", 400, {
         code: "SLS_2002",
-        details: [{ field: "dimension", message: "Debe especificar: ventana|vendedor|loteria|sorteo|numero" }],
+        details: [
+          {
+            field: "dimension",
+            reason: "Must be one of: vendedor, ventana, loteria, sorteo, numero"
+          }
+        ]
       });
     }
 
-    const filters: any = { ...rest };
+    const validDimensions = ["vendedor", "ventana", "loteria", "sorteo", "numero"];
+    const dimensionStr = Array.isArray(dimension) ? dimension[0] : dimension;
+    if (!validDimensions.includes(dimensionStr)) {
+      throw new AppError("Invalid dimension", 400, {
+        code: "SLS_2002",
+        details: [
+          {
+            field: "dimension",
+            reason: "Must be one of: vendedor, ventana, loteria, sorteo, numero"
+          }
+        ]
+      });
+    }
 
-    // Aplicar scope por rol
-    applyScopeFilters(scope, req.user!, filters);
+    // Validar top
+    if (Number(top) > 50) {
+      throw new AppError("top cannot exceed 50", 400, {
+        code: "SLS_2001",
+        details: [
+          {
+            field: "top",
+            reason: "Maximum value is 50"
+          }
+        ]
+      });
+    }
 
-    // Aplicar filtros de fecha
-    applyDateFilters(date, from, to, filters);
+    // Asegurar que las fechas sean strings, no arrays
+    const fromDateStr = Array.isArray(fromDate) ? fromDate[0] : fromDate;
+    const toDateStr = Array.isArray(toDate) ? toDate[0] : toDate;
+    const dateStr = Array.isArray(date) ? date[0] : date;
 
-    const result = await VentasService.breakdown(dimension, Number(top), filters);
+    // Resolver rango de fechas (CR → UTC)
+    const dateRange = resolveDateRange(dateStr, fromDateStr, toDateStr);
+
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId
+    };
+    const effectiveFilters = await applyRbacFilters(context, rest);
+
+    // Construir filtros finales para el servicio
+    const filters: any = {
+      ...effectiveFilters,
+      dateFrom: dateRange.fromAt,
+      dateTo: dateRange.toAt
+    };
+
+    const result = await VentasService.breakdown(dimensionStr, Number(top), filters);
 
     req.logger?.info({
       layer: "controller",
       action: "VENTA_BREAKDOWN",
-      payload: { dimension, top, filters, scope, date, from, to },
+      payload: {
+        dimension: dimensionStr,
+        top,
+        effectiveFilters,
+        dateRange: {
+          fromAt: dateRange.fromAt.toISOString(),
+          toAt: dateRange.toAt.toISOString(),
+          tz: dateRange.tz
+        }
+      },
     });
 
-    return success(res, result);
+    return success(res, result, {
+      range: {
+        fromAt: dateRange.fromAt.toISOString(),
+        toAt: dateRange.toAt.toISOString(),
+        tz: dateRange.tz
+      },
+      dimension,
+      topCount: Number(top),
+      effectiveFilters
+    });
   },
 
   /**
    * 4) Serie de tiempo (timeseries)
-   * GET /ventas/timeseries?granularity=hour|day|week
+   * GET /ventas/timeseries?granularity=hour|day|week&date=today
    */
   async timeseries(req: AuthenticatedRequest, res: Response) {
-    const { granularity = "day", scope = "mine", date = "today", from, to, ...rest } = req.query as any;
+    const {
+      granularity = "day",
+      date = "today",
+      fromDate,
+      toDate,
+      ...rest
+    } = req.query as any;
 
-    const filters: any = { ...rest };
+    // Asegurar que granularidad sea string, no array
+    const granularityStr = Array.isArray(granularity) ? granularity[0] : granularity;
 
-    // Aplicar scope por rol
-    applyScopeFilters(scope, req.user!, filters);
+    // Validar granularidad
+    const validGranularities = ["hour", "day", "week"];
+    if (!validGranularities.includes(granularityStr)) {
+      throw new AppError("Invalid granularity", 400, {
+        code: "SLS_2001",
+        details: [
+          {
+            field: "granularity",
+            reason: "Must be one of: hour, day, week"
+          }
+        ]
+      });
+    }
 
-    // Aplicar filtros de fecha
-    applyDateFilters(date, from, to, filters);
+    // Asegurar que las fechas sean strings, no arrays
+    const fromDateStr = Array.isArray(fromDate) ? fromDate[0] : fromDate;
+    const toDateStr = Array.isArray(toDate) ? toDate[0] : toDate;
+    const dateStr = Array.isArray(date) ? date[0] : date;
 
-    // Validar límites de rango según granularidad
-    validateTimeseriesRange(granularity, filters.dateFrom, filters.dateTo);
+    // Resolver rango de fechas (CR → UTC)
+    const dateRange = resolveDateRange(dateStr, fromDateStr, toDateStr);
 
-    const result = await VentasService.timeseries(granularity, filters);
+    // Validar límites según granularidad
+    validateTimeseriesRange(dateRange.fromAt, dateRange.toAt, granularityStr as any);
+
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId
+    };
+    const effectiveFilters = await applyRbacFilters(context, rest);
+
+    // Construir filtros finales para el servicio
+    const filters: any = {
+      ...effectiveFilters,
+      dateFrom: dateRange.fromAt,
+      dateTo: dateRange.toAt
+    };
+
+    const result = await VentasService.timeseries(granularityStr, filters);
 
     req.logger?.info({
       layer: "controller",
       action: "VENTA_TIMESERIES",
-      payload: { granularity, filters, scope, date, from, to },
+      payload: {
+        granularity,
+        effectiveFilters,
+        dateRange: {
+          fromAt: dateRange.fromAt.toISOString(),
+          toAt: dateRange.toAt.toISOString(),
+          tz: dateRange.tz
+        }
+      },
     });
 
-    return success(res, result);
+    return success(res, result, {
+      range: {
+        fromAt: dateRange.fromAt.toISOString(),
+        toAt: dateRange.toAt.toISOString(),
+        tz: dateRange.tz
+      },
+      granularity,
+      effectiveFilters
+    });
   },
 
   /**
    * 5) Facets - Valores válidos para filtros dinámicos
-   * GET /ventas/facets
+   * GET /ventas/facets?date=today
    */
   async facets(req: AuthenticatedRequest, res: Response) {
-    const { scope = "mine", date = "today", from, to, ...rest } = req.query as any;
+    const {
+      date = "today",
+      fromDate,
+      toDate,
+      ...rest
+    } = req.query as any;
 
-    const filters: any = { ...rest };
+    // Asegurar que las fechas sean strings, no arrays
+    const fromDateStr = Array.isArray(fromDate) ? fromDate[0] : fromDate;
+    const toDateStr = Array.isArray(toDate) ? toDate[0] : toDate;
+    const dateStr = Array.isArray(date) ? date[0] : date;
 
-    // Aplicar scope por rol
-    applyScopeFilters(scope, req.user!, filters);
+    // Resolver rango de fechas (CR → UTC)
+    const dateRange = resolveDateRange(dateStr, fromDateStr, toDateStr);
 
-    // Aplicar filtros de fecha
-    applyDateFilters(date, from, to, filters);
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId
+    };
+    const effectiveFilters = await applyRbacFilters(context, rest);
+
+    // Construir filtros finales para el servicio
+    const filters: any = {
+      ...effectiveFilters,
+      dateFrom: dateRange.fromAt,
+      dateTo: dateRange.toAt
+    };
 
     const result = await VentasService.facets(filters);
 
     req.logger?.info({
       layer: "controller",
       action: "VENTA_FACETS",
-      payload: { filters, scope, date, from, to },
+      payload: {
+        effectiveFilters,
+        dateRange: {
+          fromAt: dateRange.fromAt.toISOString(),
+          toAt: dateRange.toAt.toISOString(),
+          tz: dateRange.tz
+        }
+      },
     });
 
-    return success(res, result);
+    return success(res, result, {
+      range: {
+        fromAt: dateRange.fromAt.toISOString(),
+        toAt: dateRange.toAt.toISOString(),
+        tz: dateRange.tz
+      },
+      effectiveFilters
+    });
   },
 };
 
