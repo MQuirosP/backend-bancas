@@ -1,8 +1,46 @@
 # Date Parameters Standardization Report
 
 **Date**: 2025-10-27
-**Status**: ✅ FIXED & STANDARDIZED
-**Breaking Changes**: YES - Frontend needs updates
+**Status**: ✅ BACKEND FIXED | ⚠️ FRONTEND MUST UPDATE
+**Breaking Changes**: YES - Frontend needs critical updates
+**Related**: See `docs/FRONTEND_DATE_STRATEGY.md` for frontend implementation guide
+
+---
+
+## ⚠️ CRITICAL: Backend Authority Model
+
+**The backend is the SOLE authority for date calculations.**
+
+### Why This Matters
+
+1. **Security**: Frontend date calculations can be manipulated by changing device time
+2. **Consistency**: Server time is the source of truth, not client time
+3. **Reliability**: Same request always returns same data, regardless of client clock
+4. **Auditability**: All date tokens resolved server-side with immutable business logic
+
+### Frontend Responsibility
+
+- ✅ Send only **semantic tokens** (`today`, `yesterday`, `week`, `month`, `year`)
+- ✅ For custom ranges, send **YYYY-MM-DD** (not ISO timestamps)
+- ❌ DO NOT calculate date ranges on client
+- ❌ DO NOT send ISO datetime strings for semantic queries
+- ❌ DO NOT assume client and server timezones match
+
+### Example of Why This Is Important
+
+```javascript
+// ❌ WRONG: Frontend calculates "7 days ago"
+const now = new Date()        // Client time (could be wrong!)
+const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000)
+fetch(`/api/data?from=${sevenDaysAgo.toISOString()}&to=${now.toISOString()}`)
+// Result: Wrong data if client time is off, inconsistent results
+
+// ✅ CORRECT: Backend calculates "7 days ago"
+fetch(`/api/data?date=week`)
+// Result: Exact same data every time, server is authority
+```
+
+**See `docs/FRONTEND_DATE_STRATEGY.md` for complete frontend implementation guide.**
 
 ---
 
