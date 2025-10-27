@@ -5,6 +5,7 @@ export interface AuthUser {
     id: string;
     role: Role;
     ventanaId?: string | null;
+    bancaId?: string | null;
 }
 
 export interface RequestWithUser extends Request {

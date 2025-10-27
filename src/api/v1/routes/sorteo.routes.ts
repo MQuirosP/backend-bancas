@@ -30,6 +30,18 @@ router.patch(
   validateUpdateSorteo,
   SorteoController.update
 );
+router.patch(
+  "/:id/restore",
+  requireAdmin,
+  validateIdParam,
+  SorteoController.update
+);
+router.patch(
+  "/:id/close",
+  requireAdmin,
+  validateIdParam,
+  SorteoController.close
+);
 router.patch("/:id/open", requireAdmin, validateIdParam, SorteoController.open);
 router.patch(
   "/:id/close",
