@@ -186,6 +186,8 @@ model TicketPayment {
   idempotencyKey  String?   @unique
   isPartial       Boolean   @default(false)
   remainingAmount Float?
+  isFinal         Boolean   @default(false) // Marks partial as intentionally final
+  completedAt     DateTime? // When payment was finalized (full or final partial)
 
   paidBy User   @relation(fields: [paidById], references: [id])
   ticket Ticket @relation(fields: [ticketId], references: [id])
@@ -497,6 +499,7 @@ enum Role {
 enum TicketStatus {
   ACTIVE
   EVALUATED
+  PAGADO
   CANCELLED
   RESTORED
 }
@@ -559,6 +562,8 @@ enum ActivityType {
   SORTEO_UPDATE
   TICKET_PAY
   TICKET_PAYMENT_REVERSE
+  TICKET_PAY_FINALIZE
+  TICKET_STATUS_PAGADO
   SORTEO_OPEN
 }
 
