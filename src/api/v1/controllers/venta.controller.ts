@@ -21,19 +21,23 @@ function endOfDay(d: Date) {
 
 /**
  * Aplica scope por rol a los filtros
- * Reutiliza la misma lógica que ticket.controller
+ * REGLAS:
+ * - ADMIN: puede ver todo con scope=mine o scope=all
+ * - VENTANA: puede ver todos los vendedores de su ventana (scope=mine aplica ventanaId)
+ * - VENDEDOR: solo puede ver sus propias ventas (scope=mine o scope=all aplican vendedorId)
  */
 function applyScopeFilters(scope: string, user: any, filters: any) {
-  if (scope === "mine") {
-    if (user.role === Role.VENDEDOR) {
-      filters.vendedorId = user.id; // Solo tickets del vendedor
-    } else if (user.role === Role.VENTANA) {
-      filters.ventanaId = user.ventanaId; // Solo tickets de la ventana
-    } else if (user.role === Role.ADMIN) {
-      // Admin con scope=mine: sin filtro adicional (puede ver todo)
-    }
+  if (user.role === Role.VENDEDOR) {
+    // VENDEDOR siempre ve solo sus propias ventas, independientemente del scope
+    filters.vendedorId = user.id;
+  } else if (user.role === Role.VENTANA) {
+    // VENTANA siempre ve solo su ventana, independientemente del scope
+    filters.ventanaId = user.ventanaId;
+  } else if (user.role === Role.ADMIN) {
+    // ADMIN puede ver todo
+    // scope=mine sin filtro adicional (o podría filtrar por bancaId si se implementa)
+    // scope=all sin filtro (ve todo el sistema)
   }
-  // Si scope === "all", no se aplica filtro de scope (solo admin debería poder)
 }
 
 /**
