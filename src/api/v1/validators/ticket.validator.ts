@@ -51,19 +51,22 @@ export const CreateTicketSchema = z
 
 export const ListTicketsQuerySchema = z
   .object({
-    // existentes
+    // Paginación
     page: z.coerce.number().int().min(1).optional(),
     pageSize: z.coerce.number().int().min(1).max(100).optional(),
+
+    // Filtros estándar
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED"]).optional(),
     isActive: z.coerce.boolean().optional(),
     sorteoId: z.uuid().optional(),
     search: z.string().trim().min(1).max(100).optional(),
-
-    // nuevos
     scope: z.enum(["mine", "all"]).optional().default("mine"),
-    date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
-    from: z.string().datetime().optional(),
-    to: z.string().datetime().optional(),
+
+    // Filtros de fecha (STANDARDIZADO - mismo patrón que Venta/Dashboard)
+    // Fechas: date (today|yesterday|week|month|year|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range
+    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })
   .strict();
 

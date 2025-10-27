@@ -4,9 +4,7 @@ import { TicketService } from "../services/ticket.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { Role } from "@prisma/client";
-
-function startOfDay(d: Date) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
-function endOfDay(d: Date) { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; }
+import { resolveDateRange } from "../../../utils/dateRange";
 
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
@@ -21,7 +19,7 @@ export const TicketController = {
   },
 
   async list(req: AuthenticatedRequest, res: Response) {
-    const { page = 1, pageSize = 10, scope = "mine", date = "today", from, to, ...rest } = req.query as any;
+    const { page = 1, pageSize = 10, scope = "mine", date = "today", fromDate, toDate, ...rest } = req.query as any;
 
     const filters: any = { ...rest };
 
@@ -37,34 +35,26 @@ export const TicketController = {
       }
     }
 
-    // date → rango de fechas sobre createdAt (igual que antes)
-    if (date === "today") {
-      const now = new Date();
-      filters.dateFrom = startOfDay(now);
-      filters.dateTo = endOfDay(now);
-    } else if (date === "yesterday") {
-      const y = new Date();
-      y.setDate(y.getDate() - 1);
-      filters.dateFrom = startOfDay(y);
-      filters.dateTo = endOfDay(y);
-    } else if (date === "range") {
-      if (!from || !to) {
-        return res.status(400).json({ success: false, message: "Para date=range debes enviar from y to (ISO)" });
-      }
-      const df = new Date(from);
-      const dt = new Date(to);
-      if (isNaN(df.getTime()) || isNaN(dt.getTime())) {
-        return res.status(400).json({ success: false, message: "from/to inválidos" });
-      }
-      filters.dateFrom = df;
-      filters.dateTo = dt;
-    }
+    // Resolver rango de fechas (mismo patrón que Venta/Dashboard)
+    const dateRange = resolveDateRange(date, fromDate, toDate);
+    filters.dateFrom = dateRange.fromAt;
+    filters.dateTo = dateRange.toAt;
 
     const result = await TicketService.list(Number(page), Number(pageSize), filters);
     req.logger?.info({
       layer: "controller",
-      action: "TICKET_LIST_RESOLVED_FILTERS",
-      payload: { filters, page, pageSize, scope, date, from, to }
+      action: "TICKET_LIST",
+      payload: {
+        page,
+        pageSize,
+        scope,
+        dateRange: {
+          fromAt: dateRange.fromAt.toISOString(),
+          toAt: dateRange.toAt.toISOString(),
+          tz: dateRange.tz,
+          description: dateRange.description,
+        }
+      }
     })
     return success(res, result);
   },
