@@ -4,7 +4,7 @@ import { validateQuery } from "../../../middlewares/validate.middleware";
 
 /**
  * Schema para listar ventas (detalle transaccional)
- * Reutiliza la misma semántica que tickets: scope, date, from, to
+ * Fechas: date (today|yesterday|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range
  */
 export const ListVentasQuerySchema = z
   .object({
@@ -12,11 +12,13 @@ export const ListVentasQuerySchema = z
     page: z.coerce.number().int().min(1).optional(),
     pageSize: z.coerce.number().int().min(1).max(100).optional(),
 
-    // Filtros de scope y fecha (semántica igual que tickets)
-    scope: z.enum(["mine", "all"]).optional().default("mine"),
+    // Scope (aceptado pero ignorado; RBAC lo maneja automáticamente)
+    scope: z.enum(["mine", "all"]).optional(),
+
+    // Filtros de fecha (CR timezone, YYYY-MM-DD format)
     date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
-    from: z.string().datetime().optional(),
-    to: z.string().datetime().optional(),
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     // Filtros adicionales
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED"]).optional(),
@@ -37,10 +39,12 @@ export const ListVentasQuerySchema = z
  */
 export const VentasSummaryQuerySchema = z
   .object({
-    scope: z.enum(["mine", "all"]).optional().default("mine"),
+    // Scope (aceptado pero ignorado; RBAC lo maneja automáticamente)
+    scope: z.enum(["mine", "all"]).optional(),
+
     date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
-    from: z.string().datetime().optional(),
-    to: z.string().datetime().optional(),
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED"]).optional(),
     winnersOnly: z.coerce.boolean().optional(),
@@ -61,11 +65,13 @@ export const VentasBreakdownQuerySchema = z
     dimension: z.enum(["ventana", "vendedor", "loteria", "sorteo", "numero"]),
     top: z.coerce.number().int().min(1).max(50).optional().default(10),
 
+    // Scope (aceptado pero ignorado; RBAC lo maneja automáticamente)
+    scope: z.enum(["mine", "all"]).optional(),
+
     // Filtros estándar
-    scope: z.enum(["mine", "all"]).optional().default("mine"),
     date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
-    from: z.string().datetime().optional(),
-    to: z.string().datetime().optional(),
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED"]).optional(),
     winnersOnly: z.coerce.boolean().optional(),
@@ -84,11 +90,13 @@ export const VentasTimeseriesQuerySchema = z
   .object({
     granularity: z.enum(["hour", "day", "week"]).optional().default("day"),
 
+    // Scope (aceptado pero ignorado; RBAC lo maneja automáticamente)
+    scope: z.enum(["mine", "all"]).optional(),
+
     // Filtros estándar
-    scope: z.enum(["mine", "all"]).optional().default("mine"),
     date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
-    from: z.string().datetime().optional(),
-    to: z.string().datetime().optional(),
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED"]).optional(),
     winnersOnly: z.coerce.boolean().optional(),
@@ -105,10 +113,12 @@ export const VentasTimeseriesQuerySchema = z
  */
 export const FacetsQuerySchema = z
   .object({
-    scope: z.enum(["mine", "all"]).optional().default("mine"),
+    // Scope (aceptado pero ignorado; RBAC lo maneja automáticamente)
+    scope: z.enum(["mine", "all"]).optional(),
+
     date: z.enum(["today", "yesterday", "range"]).optional().default("today"),
-    from: z.string().datetime().optional(),
-    to: z.string().datetime().optional(),
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })
   .strict();
 

@@ -24,10 +24,13 @@ export interface VentasFilters {
 
 /**
  * Construye el WHERE de Prisma a partir de filtros normalizados
+ * Nota: Usa deletedAt IS NULL para soft-delete, no isActive
+ * Tickets válidos: ACTIVE o EVALUATED
  */
 function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
   const where: Prisma.TicketWhereInput = {
-    isActive: true, // Solo tickets activos (no soft-deleted)
+    deletedAt: null, // Soft-delete: solo tickets no eliminados
+    status: { in: ['ACTIVE', 'EVALUATED'] as any }, // Solo tickets activos o evaluados
   };
 
   // Filtro por fechas (createdAt)
@@ -37,7 +40,7 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
     if (filters.dateTo) where.createdAt.lte = filters.dateTo;
   }
 
-  // Filtro por status
+  // Filtro por status personalizado (si se solicita un status específico diferente)
   if (filters.status) {
     where.status = filters.status as any;
   }
@@ -444,7 +447,7 @@ export const VentasService = {
 
           const sorteoIds = result.map((r) => r.sorteoId);
           const sorteos = await prisma.sorteo.findMany({
-            where: { id: { in: sorteoIds } },
+            where: { id: { in: sorteoIds }, status: 'EVALUATED' },
             select: { id: true, name: true, scheduledAt: true },
           });
           const sorteoMap = new Map(sorteos.map((s) => [s.id, s]));
@@ -563,7 +566,10 @@ export const VentasService = {
       }
 
       // Construir condiciones WHERE dinámicamente
-      const whereConditions: Prisma.Sql[] = [Prisma.sql`t."isActive" = true`];
+      const whereConditions: Prisma.Sql[] = [
+        Prisma.sql`t."deletedAt" IS NULL`,
+        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED')` // Tickets activos o evaluados
+      ];
 
       if (filters.dateFrom) {
         whereConditions.push(Prisma.sql`t."createdAt" >= ${filters.dateFrom}`);
@@ -702,7 +708,7 @@ export const VentasService = {
         }),
 
         prisma.sorteo.findMany({
-          where: { id: { in: sorteoIds }, isActive: true },
+          where: { id: { in: sorteoIds }, status: 'EVALUATED' },
           select: { id: true, name: true, scheduledAt: true },
           orderBy: { scheduledAt: "desc" },
           take: 50, // Limitar sorteos a los últimos 50
