@@ -20,16 +20,27 @@ export const AuthService = {
     const hashed = await hashPassword(data.password);
     const role = data.role ?? 'VENTANA';
 
+    // Prevent public registration from creating ADMIN users
+    if (role === 'ADMIN') {
+      throw new AppError('ADMIN users must be created by system administrator', 403);
+    }
+
     // Validar que VENTANA y VENDEDOR tengan ventanaId
     if ((role === 'VENTANA' || role === 'VENDEDOR') && !data.ventanaId) {
       throw new AppError('ventanaId is required for VENTANA and VENDEDOR roles', 400);
     }
 
-    // Validar que ventanaId existe si se proporciona
+    // Validar que ventanaId existe Y está activo (incluyendo parent banca)
     if (data.ventanaId) {
-      const ventana = await prisma.ventana.findUnique({ where: { id: data.ventanaId } });
-      if (!ventana) {
-        throw new AppError('ventana not found', 404);
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: data.ventanaId },
+        select: { id: true, isActive: true, banca: { select: { id: true, isActive: true } } },
+      });
+      if (!ventana || !ventana.isActive) {
+        throw new AppError('Ventana not found or inactive', 404);
+      }
+      if (!ventana.banca || !ventana.banca.isActive) {
+        throw new AppError('Parent Banca inactive', 409);
       }
     }
 
