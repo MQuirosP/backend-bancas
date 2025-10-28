@@ -26,6 +26,7 @@ export const CreatePaymentSchema = z.object({
     .min(8, "idempotencyKey debe tener al menos 8 caracteres")
     .max(100, "idempotencyKey máximo 100 caracteres")
     .optional(),
+  ventanaId: z.string().trim().optional(),
 }).strict();
 
 export type CreatePaymentInput = z.infer<typeof CreatePaymentSchema>;

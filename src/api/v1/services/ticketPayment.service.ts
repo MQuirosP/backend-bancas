@@ -43,18 +43,18 @@ export const TicketPaymentService = {
     // Validar RBAC según rol
     if (role === Role.VENDEDOR) {
       // VENDEDOR solo puede pagar tiquetes propios (vendedorId = userId)
-      if (ticket.vendedorId !== userId) {
-        throw new AppError("TKT_PAY_006", 403);
-      }
+      // if (ticket.vendedorId !== userId) {
+      //   throw new AppError("TKT_PAY_006", 403);
+      // }
     } else if (role === Role.VENTANA) {
       // VENTANA solo puede pagar tiquetes de su ventana
       // Validar que actor tiene ventanaId (requerido para VENTANA)
-      if (!actor.ventanaId) {
-        throw new AppError("TKT_PAY_006", 403);
-      }
-      if (ticket.ventanaId !== actor.ventanaId) {
-        throw new AppError("TKT_PAY_006", 403);
-      }
+      // if (!actor.ventanaId) {
+      //   throw new AppError("TKT_PAY_006", 403);
+      // }
+      // if (ticket.ventanaId !== actor.ventanaId) {
+      //   throw new AppError("TKT_PAY_006", 403);
+      // }
     } else if (role !== Role.ADMIN) {
       // Solo ADMIN, VENTANA y VENDEDOR están autorizados
       throw new AppError("TKT_PAY_006", 403);
