@@ -260,6 +260,8 @@ export const VentasService = {
       payoutTotal: number;
       neto: number;
       commissionTotal: number;
+      totalWinningTickets: number;
+      totalPaidTickets: number;
     }>
   > {
     try {
@@ -298,16 +300,29 @@ export const VentasService = {
           const ticketIds = jugadasAgg.map((p) => p.ticketId);
           const tickets = await prisma.ticket.findMany({
             where: { id: { in: ticketIds } },
-            select: { id: true, ventanaId: true },
+            select: { id: true, ventanaId: true, isWinner: true, status: true },
           });
           const payoutByVentana = new Map<string, number>();
           const commissionByVentana = new Map<string, number>();
+          const winningTicketsByVentana = new Map<string, number>();
+          const paidTicketsByVentana = new Map<string, number>();
+
           tickets.forEach((t) => {
             const jugada = jugadasAgg.find((p) => p.ticketId === t.id);
             const payout = jugada?._sum.payout ?? 0;
             const commission = jugada?._sum.commissionAmount ?? 0;
             payoutByVentana.set(t.ventanaId, (payoutByVentana.get(t.ventanaId) ?? 0) + payout);
             commissionByVentana.set(t.ventanaId, (commissionByVentana.get(t.ventanaId) ?? 0) + commission);
+
+            // Count winning tickets
+            if (t.isWinner) {
+              winningTicketsByVentana.set(t.ventanaId, (winningTicketsByVentana.get(t.ventanaId) ?? 0) + 1);
+            }
+
+            // Count paid tickets
+            if (t.status === 'PAID') {
+              paidTicketsByVentana.set(t.ventanaId, (paidTicketsByVentana.get(t.ventanaId) ?? 0) + 1);
+            }
           });
 
           return result.map((r) => {
@@ -323,6 +338,8 @@ export const VentasService = {
               payoutTotal,
               neto: ventasTotal - payoutTotal,
               commissionTotal,
+              totalWinningTickets: winningTicketsByVentana.get(r.ventanaId) ?? 0,
+              totalPaidTickets: paidTicketsByVentana.get(r.ventanaId) ?? 0,
             };
           });
         }
@@ -352,16 +369,29 @@ export const VentasService = {
           const ticketIds = jugadasAgg.map((p) => p.ticketId);
           const tickets = await prisma.ticket.findMany({
             where: { id: { in: ticketIds } },
-            select: { id: true, vendedorId: true },
+            select: { id: true, vendedorId: true, isWinner: true, status: true },
           });
           const payoutByVendedor = new Map<string, number>();
           const commissionByVendedor = new Map<string, number>();
+          const winningTicketsByVendedor = new Map<string, number>();
+          const paidTicketsByVendedor = new Map<string, number>();
+
           tickets.forEach((t) => {
             const jugada = jugadasAgg.find((p) => p.ticketId === t.id);
             const payout = jugada?._sum.payout ?? 0;
             const commission = jugada?._sum.commissionAmount ?? 0;
             payoutByVendedor.set(t.vendedorId, (payoutByVendedor.get(t.vendedorId) ?? 0) + payout);
             commissionByVendedor.set(t.vendedorId, (commissionByVendedor.get(t.vendedorId) ?? 0) + commission);
+
+            // Count winning tickets
+            if (t.isWinner) {
+              winningTicketsByVendedor.set(t.vendedorId, (winningTicketsByVendedor.get(t.vendedorId) ?? 0) + 1);
+            }
+
+            // Count paid tickets
+            if (t.status === 'PAID') {
+              paidTicketsByVendedor.set(t.vendedorId, (paidTicketsByVendedor.get(t.vendedorId) ?? 0) + 1);
+            }
           });
 
           return result.map((r) => {
@@ -377,6 +407,8 @@ export const VentasService = {
               payoutTotal,
               neto: ventasTotal - payoutTotal,
               commissionTotal,
+              totalWinningTickets: winningTicketsByVendedor.get(r.vendedorId) ?? 0,
+              totalPaidTickets: paidTicketsByVendedor.get(r.vendedorId) ?? 0,
             };
           });
         }
@@ -406,16 +438,29 @@ export const VentasService = {
           const ticketIds = jugadasAgg.map((p) => p.ticketId);
           const tickets = await prisma.ticket.findMany({
             where: { id: { in: ticketIds } },
-            select: { id: true, loteriaId: true },
+            select: { id: true, loteriaId: true, isWinner: true, status: true },
           });
           const payoutByLoteria = new Map<string, number>();
           const commissionByLoteria = new Map<string, number>();
+          const winningTicketsByLoteria = new Map<string, number>();
+          const paidTicketsByLoteria = new Map<string, number>();
+
           tickets.forEach((t) => {
             const jugada = jugadasAgg.find((p) => p.ticketId === t.id);
             const payout = jugada?._sum.payout ?? 0;
             const commission = jugada?._sum.commissionAmount ?? 0;
             payoutByLoteria.set(t.loteriaId, (payoutByLoteria.get(t.loteriaId) ?? 0) + payout);
             commissionByLoteria.set(t.loteriaId, (commissionByLoteria.get(t.loteriaId) ?? 0) + commission);
+
+            // Count winning tickets
+            if (t.isWinner) {
+              winningTicketsByLoteria.set(t.loteriaId, (winningTicketsByLoteria.get(t.loteriaId) ?? 0) + 1);
+            }
+
+            // Count paid tickets
+            if (t.status === 'PAID') {
+              paidTicketsByLoteria.set(t.loteriaId, (paidTicketsByLoteria.get(t.loteriaId) ?? 0) + 1);
+            }
           });
 
           return result.map((r) => {
@@ -431,6 +476,8 @@ export const VentasService = {
               payoutTotal,
               neto: ventasTotal - payoutTotal,
               commissionTotal,
+              totalWinningTickets: winningTicketsByLoteria.get(r.loteriaId) ?? 0,
+              totalPaidTickets: paidTicketsByLoteria.get(r.loteriaId) ?? 0,
             };
           });
         }
@@ -460,16 +507,29 @@ export const VentasService = {
           const ticketIds = jugadasAgg.map((p) => p.ticketId);
           const tickets = await prisma.ticket.findMany({
             where: { id: { in: ticketIds } },
-            select: { id: true, sorteoId: true },
+            select: { id: true, sorteoId: true, isWinner: true, status: true },
           });
           const payoutBySorteo = new Map<string, number>();
           const commissionBySorteo = new Map<string, number>();
+          const winningTicketsBySorteo = new Map<string, number>();
+          const paidTicketsBySorteo = new Map<string, number>();
+
           tickets.forEach((t) => {
             const jugada = jugadasAgg.find((p) => p.ticketId === t.id);
             const payout = jugada?._sum.payout ?? 0;
             const commission = jugada?._sum.commissionAmount ?? 0;
             payoutBySorteo.set(t.sorteoId, (payoutBySorteo.get(t.sorteoId) ?? 0) + payout);
             commissionBySorteo.set(t.sorteoId, (commissionBySorteo.get(t.sorteoId) ?? 0) + commission);
+
+            // Count winning tickets
+            if (t.isWinner) {
+              winningTicketsBySorteo.set(t.sorteoId, (winningTicketsBySorteo.get(t.sorteoId) ?? 0) + 1);
+            }
+
+            // Count paid tickets
+            if (t.status === 'PAID') {
+              paidTicketsBySorteo.set(t.sorteoId, (paidTicketsBySorteo.get(t.sorteoId) ?? 0) + 1);
+            }
           });
 
           return result.map((r) => {
@@ -485,6 +545,8 @@ export const VentasService = {
               payoutTotal,
               neto: ventasTotal - payoutTotal,
               commissionTotal,
+              totalWinningTickets: winningTicketsBySorteo.get(r.sorteoId) ?? 0,
+              totalPaidTickets: paidTicketsBySorteo.get(r.sorteoId) ?? 0,
             };
           });
         }
@@ -499,6 +561,32 @@ export const VentasService = {
             take: top,
           });
 
+          // Get all jugadas for these numbers to count winning and paid tickets
+          const numeros = result.map((r) => r.number);
+          const jugadas = await prisma.jugada.findMany({
+            where: { number: { in: numeros }, ticket: where },
+            select: { number: true, ticket: { select: { id: true, isWinner: true, status: true } } },
+          });
+
+          const winningTicketsByNumero = new Map<string, Set<string>>();
+          const paidTicketsByNumero = new Map<string, Set<string>>();
+
+          jugadas.forEach((j) => {
+            if (!winningTicketsByNumero.has(j.number)) {
+              winningTicketsByNumero.set(j.number, new Set());
+            }
+            if (!paidTicketsByNumero.has(j.number)) {
+              paidTicketsByNumero.set(j.number, new Set());
+            }
+
+            if (j.ticket.isWinner) {
+              winningTicketsByNumero.get(j.number)!.add(j.ticket.id);
+            }
+            if (j.ticket.status === 'PAID') {
+              paidTicketsByNumero.get(j.number)!.add(j.ticket.id);
+            }
+          });
+
           return result.map((r) => {
             const ventasTotal = r._sum.amount ?? 0;
             const payoutTotal = r._sum.payout ?? 0;
@@ -511,6 +599,8 @@ export const VentasService = {
               payoutTotal,
               neto: ventasTotal - payoutTotal,
               commissionTotal,
+              totalWinningTickets: winningTicketsByNumero.get(r.number)?.size ?? 0,
+              totalPaidTickets: paidTicketsByNumero.get(r.number)?.size ?? 0,
             };
           });
         }
