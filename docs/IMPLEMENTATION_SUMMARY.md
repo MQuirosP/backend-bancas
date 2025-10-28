@@ -56,7 +56,7 @@ enum ActivityType {
 CreatePaymentSchema {
   ticketId: UUID ✓
   amountPaid: positive number ✓
-  method: enum ['cash'|'check'|'transfer'|'system'] (optional)
+  method: enum ['CASH'|'CHECK'|'TRANSFER'|'SYSTEM'] (optional)
   notes: string, max 300 chars (optional)
   isFinal: boolean (optional, default false)
   idempotencyKey: string 8-100 chars (optional)
