@@ -48,6 +48,10 @@ export const TicketPaymentService = {
       }
     } else if (role === Role.VENTANA) {
       // VENTANA solo puede pagar tiquetes de su ventana
+      // Validar que actor tiene ventanaId (requerido para VENTANA)
+      if (!actor.ventanaId) {
+        throw new AppError("TKT_PAY_006", 403);
+      }
       if (ticket.ventanaId !== actor.ventanaId) {
         throw new AppError("TKT_PAY_006", 403);
       }
@@ -317,8 +321,10 @@ export const TicketPaymentService = {
     // Validar RBAC
     if (actor?.role === Role.VENDEDOR && existing.ticket.vendedorId !== actor.id) {
       throw new AppError("No autorizado para revertir este pago", 403);
-    } else if (actor?.role === Role.VENTANA && existing.ticket.ventanaId !== actor.ventanaId) {
-      throw new AppError("No autorizado para revertir este pago", 403);
+    } else if (actor?.role === Role.VENTANA) {
+      if (!actor.ventanaId || existing.ticket.ventanaId !== actor.ventanaId) {
+        throw new AppError("No autorizado para revertir este pago", 403);
+      }
     }
 
     // Si el pago estaba final, necesitamos revertir el status del tiquete
@@ -383,8 +389,10 @@ export const TicketPaymentService = {
     // RBAC
     if (actor?.role === Role.VENDEDOR && payment.ticket.vendedorId !== actor.id) {
       throw new AppError("No autorizado para ver este pago", 403);
-    } else if (actor?.role === Role.VENTANA && payment.ticket.ventanaId !== actor.ventanaId) {
-      throw new AppError("No autorizado para ver este pago", 403);
+    } else if (actor?.role === Role.VENTANA) {
+      if (!actor.ventanaId || payment.ticket.ventanaId !== actor.ventanaId) {
+        throw new AppError("No autorizado para ver este pago", 403);
+      }
     }
 
     return payment;
@@ -411,8 +419,10 @@ export const TicketPaymentService = {
     // RBAC
     if (actor?.role === Role.VENDEDOR && existing.ticket.vendedorId !== actor.id) {
       throw new AppError("No autorizado para editar este pago", 403);
-    } else if (actor?.role === Role.VENTANA && existing.ticket.ventanaId !== actor.ventanaId) {
-      throw new AppError("No autorizado para editar este pago", 403);
+    } else if (actor?.role === Role.VENTANA) {
+      if (!actor.ventanaId || existing.ticket.ventanaId !== actor.ventanaId) {
+        throw new AppError("No autorizado para editar este pago", 403);
+      }
     }
 
     // Si estamos marcando como final y es parcial, cambiar status a PAID
@@ -504,8 +514,10 @@ export const TicketPaymentService = {
     // RBAC
     if (actor?.role === Role.VENDEDOR && ticket.vendedorId !== actor.id) {
       throw new AppError("No autorizado para ver este tiquete", 403);
-    } else if (actor?.role === Role.VENTANA && ticket.ventanaId !== actor.ventanaId) {
-      throw new AppError("No autorizado para ver este tiquete", 403);
+    } else if (actor?.role === Role.VENTANA) {
+      if (!actor.ventanaId || ticket.ventanaId !== actor.ventanaId) {
+        throw new AppError("No autorizado para ver este tiquete", 403);
+      }
     }
 
     const payments = await prisma.ticketPayment.findMany({
