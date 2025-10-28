@@ -18,6 +18,20 @@ export const AuthService = {
     }
 
     const hashed = await hashPassword(data.password);
+    const role = data.role ?? 'VENTANA';
+
+    // Validar que VENTANA y VENDEDOR tengan ventanaId
+    if ((role === 'VENTANA' || role === 'VENDEDOR') && !data.ventanaId) {
+      throw new AppError('ventanaId is required for VENTANA and VENDEDOR roles', 400);
+    }
+
+    // Validar que ventanaId existe si se proporciona
+    if (data.ventanaId) {
+      const ventana = await prisma.ventana.findUnique({ where: { id: data.ventanaId } });
+      if (!ventana) {
+        throw new AppError('ventana not found', 404);
+      }
+    }
 
     const user = await prisma.user.create({
       data: {
@@ -25,7 +39,8 @@ export const AuthService = {
         email: data.email,
         username: data.username,
         password: hashed,
-        role: data.role ?? 'VENTANA',
+        role,
+        ventanaId: data.ventanaId ?? null,
       },
     });
 
