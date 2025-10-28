@@ -135,16 +135,51 @@ GET /api/v1/admin/dashboard?date=month
 
 ---
 
+## Frontend Integration Guide (NEW!)
+
+### Sales API Documentation for Frontend
+
+**For frontend developers**, start here:
+
+1. **[SALES_API_QUICK_REFERENCE.md](./SALES_API_QUICK_REFERENCE.md)** ⭐⭐⭐ QUICK START
+   - One-page endpoint summary
+   - Copy-paste ready examples
+   - Response field reference
+   - Common mistakes and fixes
+   - curl examples for testing
+
+2. **[FRONTEND_SALES_API_GUIDE.md](./FRONTEND_SALES_API_GUIDE.md)** ⭐⭐⭐ COMPLETE GUIDE
+   - 2500+ line comprehensive reference
+   - All 5 endpoints detailed
+   - Parameter documentation
+   - Response structures with examples
+   - RBAC behavior explained
+   - Error handling guide
+   - React/Vue/Angular code examples
+   - Testing checklist
+
+### Key Features
+- **5 read-only endpoints** for sales analytics
+- **Universal date parameters** (today, yesterday, week, month, year, range)
+- **RBAC enforcement** (auto-filtered by role)
+- **Pagination support** (max 100 per page)
+- **Multiple aggregation views** (summary, breakdown, timeseries)
+- **Filter dropdowns** (facets endpoint)
+
+---
+
 ## All Available Endpoints
 
 ### Ventas (Sales)
 ```
-GET /api/v1/ventas                  - List all sales with filters
-GET /api/v1/ventas/summary          - Aggregated metrics
-GET /api/v1/ventas/breakdown        - Breakdown by dimension
-GET /api/v1/ventas/timeseries       - Time-based trends
-GET /api/v1/ventas/facets           - Available filter values
+GET /api/v1/ventas                  - List all sales with filters & pagination
+GET /api/v1/ventas/summary          - Aggregated KPI metrics
+GET /api/v1/ventas/breakdown        - Top-N analysis by dimension
+GET /api/v1/ventas/timeseries       - Time-bucketed sales trends
+GET /api/v1/ventas/facets           - Available filter values for UI
 ```
+
+**See**: [SALES_API_QUICK_REFERENCE.md](./SALES_API_QUICK_REFERENCE.md) for quick examples
 
 ### Dashboard
 ```
@@ -292,7 +327,27 @@ For questions about:
 
 ---
 
-**Last Updated**: 2025-10-27
-**Status**: ✅ Backend complete | ⚠️ Frontend update in progress
+**Last Updated**: 2025-10-28
+**Status**: ✅ Backend complete | ✅ Frontend documentation complete | ⏳ Frontend implementation in progress
 **Next Review**: After frontend integration complete and QA testing finished
+
+---
+
+## Recent Updates (2025-10-28)
+
+### New Documentation
+- ✅ Added FRONTEND_SALES_API_GUIDE.md (2500+ lines)
+- ✅ Added SALES_API_QUICK_REFERENCE.md (500+ lines)
+- ✅ Enhanced breakdown endpoint with ticket metrics (totalWinningTickets, totalPaidTickets)
+- ✅ Fixed TicketStatus enum (PAGADO → PAID)
+
+### Schema Changes
+- ✅ Created migration: 20251028010355_rename_pagado_to_paid
+- ✅ Updated all service references to use TicketStatus.PAID
+- ✅ Updated ActivityType enum: TICKET_STATUS_PAGADO → TICKET_STATUS_PAID
+
+### Code Quality
+- ✅ TypeScript: All type checks passing
+- ✅ Git: 3 clean commits documented
+- ✅ Documentation: Ready for frontend team
 
