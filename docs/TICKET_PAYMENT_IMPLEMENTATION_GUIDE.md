@@ -403,20 +403,44 @@ const payment = {
 
 ### VENDEDOR
 
-**Permisos**: ❌ NINGUNO
+**Permisos**: ✅ Para tiquetes propios
 
-- ❌ No puede registrar pagos
-- ❌ No puede listar pagos
-- ❌ No puede revertir pagos
-- ❌ No puede ver historial
+- ✅ Puede registrar pagos en tiquetes que creó (vendedorId)
+- ✅ Puede listar pagos de sus tiquetes
+- ✅ Puede revertir pagos de sus tiquetes
+- ✅ Puede ver historial de sus tiquetes
 
-**Ejemplo**:
+**Restricciones**:
+- ❌ No puede pagar tiquete de otro vendedor
+- ❌ No puede revertir pago de otro vendedor
+- ❌ No puede listar pagos de otro vendedor
+
+**Ejemplo - Permitido (tiquete propio)**:
 ```javascript
-// VENDEDOR intenta listar pagos
-fetch('/api/v1/ticket-payments', { ... });
+// VENDEDOR crea tiquete con vendedorId = su userId
+// Luego puede pagar ese tiquete
+const payment = {
+  ticketId: "mi-tiquete",  // vendedorId = mi userId
+  amountPaid: 50
+};
 
-// Response: 403
-// "No autorizado para listar pagos"
+fetch('/api/v1/ticket-payments', {
+  method: 'POST',
+  body: JSON.stringify(payment)
+});
+// ✅ Response: 201 (éxito)
+```
+
+**Ejemplo - Bloqueado (tiquete de otro)**:
+```javascript
+// VENDEDOR intenta pagar tiquete de otro vendedor
+const payment = {
+  ticketId: "tiquete-otro-vendedor",  // vendedorId ≠ mi userId
+  amountPaid: 50
+};
+
+fetch('/api/v1/ticket-payments', { ... });
+// ❌ Response: 403 RBAC_001 "No autorizado"
 ```
 
 ---
@@ -1056,8 +1080,9 @@ describe('Reversión de Pago', () => {
 - [ ] Idempotencia funciona ✓
 - [ ] Revertir pago completo → EVALUATED ✓
 - [ ] Revertir pago parcial ✓
+- [ ] VENDEDOR puede pagar tiquetes propios ✓
+- [ ] VENDEDOR bloqueado en tiquetes ajenos ✓
 - [ ] VENTANA no puede pagar otra ventana ✓
-- [ ] VENDEDOR no puede acceder ✓
 - [ ] Historial de pagos correcto ✓
 - [ ] Monto máximo validado ✓
 - [ ] Métodos de pago listados ✓

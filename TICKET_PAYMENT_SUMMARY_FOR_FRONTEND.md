@@ -412,7 +412,7 @@ const handleReverse = async (paymentId) => {
 **R**: Opcional pero recomendado para proteger contra reintentos de red.
 
 ### P: ¿VENDEDOR puede registrar pagos?
-**R**: No, solo ADMIN y VENTANA tienen permiso (error 403).
+**R**: Sí, pero solo para tiquetes que creó (vendedorId = su userId). Si intenta pagar tiquete de otro vendedor, recibe error 403.
 
 ### P: ¿VENTANA puede pagar tiquete de otra ventana?
 **R**: No, automáticamente filtrado por RBAC (error 403 RBAC_001).
