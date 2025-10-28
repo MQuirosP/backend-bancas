@@ -40,16 +40,22 @@ export const TicketPaymentService = {
       throw new AppError("TKT_PAY_003", 409);
     }
 
-    // Validar rol
-    const allowedRoles: Role[] = [Role.ADMIN, Role.VENTANA];
-    if (!allowedRoles.includes(role)) {
+    // Validar RBAC según rol
+    if (role === Role.VENDEDOR) {
+      // VENDEDOR solo puede pagar tiquetes propios (vendedorId = userId)
+      if (ticket.vendedorId !== userId) {
+        throw new AppError("TKT_PAY_006", 403);
+      }
+    } else if (role === Role.VENTANA) {
+      // VENTANA solo puede pagar tiquetes de su ventana
+      if (ticket.ventanaId !== actor.ventanaId) {
+        throw new AppError("TKT_PAY_006", 403);
+      }
+    } else if (role !== Role.ADMIN) {
+      // Solo ADMIN, VENTANA y VENDEDOR están autorizados
       throw new AppError("TKT_PAY_006", 403);
     }
-
-    // Validar RBAC: VENTANA solo puede pagar sus propios tiquetes
-    if (role === Role.VENTANA && ticket.ventanaId !== actor.ventanaId) {
-      throw new AppError("TKT_PAY_006", 403);
-    }
+    // ADMIN puede pagar cualquier tiquete (sin restricción)
 
     // Idempotencia: si trae llave y ya existe, devolver ese pago
     if (data.idempotencyKey) {
@@ -206,14 +212,16 @@ export const TicketPaymentService = {
     const where: any = {};
 
     // Aplicar RBAC
-    if (actor?.role === Role.VENTANA && actor?.ventanaId) {
-      // VENTANA solo ve sus propios pagos
+    if (actor?.role === Role.VENDEDOR && actor?.id) {
+      // VENDEDOR solo ve sus propios pagos
+      where.ticket = {
+        vendedorId: actor.id,
+      };
+    } else if (actor?.role === Role.VENTANA && actor?.ventanaId) {
+      // VENTANA solo ve pagos de su ventana
       where.ticket = {
         ventanaId: actor.ventanaId,
       };
-    } else if (actor?.role === Role.VENDEDOR) {
-      // VENDEDOR no tiene acceso
-      throw new AppError("No autorizado para listar pagos", 403);
     }
 
     // Filtros adicionales
@@ -307,7 +315,9 @@ export const TicketPaymentService = {
       throw new AppError("El pago ya fue revertido", 409);
 
     // Validar RBAC
-    if (actor?.role === Role.VENTANA && existing.ticket.ventanaId !== actor.ventanaId) {
+    if (actor?.role === Role.VENDEDOR && existing.ticket.vendedorId !== actor.id) {
+      throw new AppError("No autorizado para revertir este pago", 403);
+    } else if (actor?.role === Role.VENTANA && existing.ticket.ventanaId !== actor.ventanaId) {
       throw new AppError("No autorizado para revertir este pago", 403);
     }
 
@@ -370,8 +380,10 @@ export const TicketPaymentService = {
 
     if (!payment) throw new AppError("Pago no encontrado", 404);
 
-    // RBAC: VENTANA solo puede ver sus propios pagos
-    if (actor?.role === Role.VENTANA && payment.ticket.ventanaId !== actor.ventanaId) {
+    // RBAC
+    if (actor?.role === Role.VENDEDOR && payment.ticket.vendedorId !== actor.id) {
+      throw new AppError("No autorizado para ver este pago", 403);
+    } else if (actor?.role === Role.VENTANA && payment.ticket.ventanaId !== actor.ventanaId) {
       throw new AppError("No autorizado para ver este pago", 403);
     }
 
@@ -397,7 +409,9 @@ export const TicketPaymentService = {
       throw new AppError("No se puede editar un pago revertido", 409);
 
     // RBAC
-    if (actor?.role === Role.VENTANA && existing.ticket.ventanaId !== actor.ventanaId) {
+    if (actor?.role === Role.VENDEDOR && existing.ticket.vendedorId !== actor.id) {
+      throw new AppError("No autorizado para editar este pago", 403);
+    } else if (actor?.role === Role.VENTANA && existing.ticket.ventanaId !== actor.ventanaId) {
       throw new AppError("No autorizado para editar este pago", 403);
     }
 
@@ -488,7 +502,9 @@ export const TicketPaymentService = {
     if (!ticket) throw new AppError("Tiquete no encontrado", 404);
 
     // RBAC
-    if (actor?.role === Role.VENTANA && ticket.ventanaId !== actor.ventanaId) {
+    if (actor?.role === Role.VENDEDOR && ticket.vendedorId !== actor.id) {
+      throw new AppError("No autorizado para ver este tiquete", 403);
+    } else if (actor?.role === Role.VENTANA && ticket.ventanaId !== actor.ventanaId) {
       throw new AppError("No autorizado para ver este tiquete", 403);
     }
 
