@@ -22,7 +22,8 @@
       "Read(//c/Users/mquir/Proyectos/Bancas/**)",
       "Read(//c/Users/mquir/**)",
       "Bash(git log:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(awk:*)"
     ],
     "deny": [],
     "ask": []
