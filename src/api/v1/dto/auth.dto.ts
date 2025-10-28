@@ -4,6 +4,7 @@ export interface RegisterDTO {
     username: string,
     password: string,
     role?: 'ADMIN' | 'VENTANA' | 'VENDEDOR',
+    ventanaId?: string,  // UUID de ventana (requerido para VENTANA y VENDEDOR)
 }
 
 export interface LoginDTO {
