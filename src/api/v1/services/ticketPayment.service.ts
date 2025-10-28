@@ -19,7 +19,7 @@ export const TicketPaymentService = {
   /**
    * Registra un pago de tiquete ganador (total o parcial)
    * con validaciones de idempotencia, rol y monto.
-   * Actualiza status a PAGADO si pago es completo o isFinal=true.
+   * Actualiza status a PAID si pago es completo o isFinal=true.
    */
   async create(data: CreatePaymentInput, actor: AuthActor): Promise<PaymentWithRelations> {
     const { id: userId, role } = actor;
@@ -91,8 +91,8 @@ export const TicketPaymentService = {
     const remainingAmount = isPartial ? totalPayout - data.amountPaid : 0;
 
     // Determinar si el pago completa o finaliza
-    const shouldMarkPagado = !isPartial || data.isFinal;
-    const completedAt = shouldMarkPagado ? new Date() : null;
+    const shouldMarkPaid = !isPartial || data.isFinal;
+    const completedAt = shouldMarkPaid ? new Date() : null;
 
     // Usar transacción para atomicidad
     const payment = await prisma.$transaction(async (tx) => {
@@ -114,21 +114,21 @@ export const TicketPaymentService = {
       });
 
       // Actualizar status del tiquete si es pago completo o final
-      if (shouldMarkPagado) {
+      if (shouldMarkPaid) {
         await tx.ticket.update({
           where: { id: ticket.id },
-          data: { status: TicketStatus.PAGADO },
+          data: { status: TicketStatus.PAID },
         });
 
         // Log especial para cambio de status
         await ActivityService.log({
           userId,
-          action: ActivityType.TICKET_STATUS_PAGADO,
+          action: ActivityType.TICKET_STATUS_PAID,
           targetType: "TICKET",
           targetId: ticket.id,
           details: {
             ticketNumber: ticket.ticketNumber,
-            newStatus: TicketStatus.PAGADO,
+            newStatus: TicketStatus.PAID,
             fromStatus: TicketStatus.EVALUATED,
           },
           layer: "service",
@@ -295,7 +295,7 @@ export const TicketPaymentService = {
 
   /**
    * Reversión de un pago (marcado lógico, sin borrar registro).
-   * Si el pago había cambiado el status a PAGADO, revierte a EVALUATED.
+   * Si el pago había cambiado el status a PAID, revierte a EVALUATED.
    */
   async reverse(id: string, userId: string, actor?: AuthActor): Promise<PaymentWithRelations> {
     const existing = await prisma.ticketPayment.findUnique({
@@ -312,7 +312,7 @@ export const TicketPaymentService = {
     }
 
     // Si el pago estaba final, necesitamos revertir el status del tiquete
-    const wasTicketMarkedPagado =
+    const wasTicketMarkedPaid =
       existing.isFinal || (!existing.isPartial && !existing.isReversed);
 
     const reversed = await prisma.$transaction(async (tx) => {
@@ -327,8 +327,8 @@ export const TicketPaymentService = {
         include: { ticket: true, paidBy: true },
       });
 
-      // Revertir status del tiquete si fue marcado como PAGADO
-      if (wasTicketMarkedPagado && existing.ticket.status === TicketStatus.PAGADO) {
+      // Revertir status del tiquete si fue marcado como PAID
+      if (wasTicketMarkedPaid && existing.ticket.status === TicketStatus.PAID) {
         await tx.ticket.update({
           where: { id: existing.ticketId },
           data: { status: TicketStatus.EVALUATED },
@@ -401,11 +401,11 @@ export const TicketPaymentService = {
       throw new AppError("No autorizado para editar este pago", 403);
     }
 
-    // Si estamos marcando como final y es parcial, cambiar status a PAGADO
+    // Si estamos marcando como final y es parcial, cambiar status a PAID
     const willBeFinal = data.isFinal ?? existing.isFinal;
     const isPartial = existing.isPartial;
     const shouldUpdateTicketStatus =
-      willBeFinal && isPartial && existing.ticket.status !== TicketStatus.PAGADO;
+      willBeFinal && isPartial && existing.ticket.status !== TicketStatus.PAID;
 
     const updated = await prisma.$transaction(async (tx) => {
       // Actualizar pago
@@ -419,21 +419,21 @@ export const TicketPaymentService = {
         include: { ticket: true, paidBy: true },
       });
 
-      // Actualizar ticket a PAGADO si aplica
+      // Actualizar ticket a PAID si aplica
       if (shouldUpdateTicketStatus) {
         await tx.ticket.update({
           where: { id: existing.ticketId },
-          data: { status: TicketStatus.PAGADO },
+          data: { status: TicketStatus.PAID },
         });
 
         await ActivityService.log({
           userId,
-          action: ActivityType.TICKET_STATUS_PAGADO,
+          action: ActivityType.TICKET_STATUS_PAID,
           targetType: "TICKET",
           targetId: existing.ticketId,
           details: {
             ticketNumber: existing.ticket.ticketNumber,
-            newStatus: TicketStatus.PAGADO,
+            newStatus: TicketStatus.PAID,
             fromStatus: TicketStatus.EVALUATED,
           },
           layer: "service",
