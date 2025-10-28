@@ -105,7 +105,7 @@ export const DashboardService = {
         WHERE t."deletedAt" IS NULL
           AND s.status = 'EVALUATED'
           AND j."isWinner" = true
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAGADO')
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
           ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
@@ -177,7 +177,7 @@ export const DashboardService = {
         FROM "Ventana" v
         LEFT JOIN "Ticket" t ON v.id = t."ventanaId"
           AND t."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAGADO')
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
         LEFT JOIN "TicketPayment" tp ON t.id = tp."ticketId"
@@ -233,7 +233,7 @@ export const DashboardService = {
         FROM "Ventana" v
         LEFT JOIN "Ticket" t ON v.id = t."ventanaId"
           AND t."deletedAt" IS NULL
-          AND t.status IN ('EVALUATED', 'PAGADO')
+          AND t.status IN ('EVALUATED', 'PAID')
           AND t."isWinner" = true
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
@@ -281,7 +281,7 @@ export const DashboardService = {
           SELECT COALESCE(SUM(t."totalAmount"), 0) as total
           FROM "Ticket" t
           WHERE t."deletedAt" IS NULL
-            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAGADO')
+            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${filters.fromDate}
             AND t."createdAt" <= ${filters.toDate}
             ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
@@ -294,7 +294,7 @@ export const DashboardService = {
           JOIN "Ticket" t ON j."ticketId" = t."id"
           WHERE t."deletedAt" IS NULL
             AND j."isWinner" = true
-            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAGADO')
+            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${filters.fromDate}
             AND t."createdAt" <= ${filters.toDate}
             ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
@@ -307,7 +307,7 @@ export const DashboardService = {
           JOIN "Ticket" t ON j."ticketId" = t."id"
           WHERE t."deletedAt" IS NULL
             AND j."isWinner" = true
-            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAGADO')
+            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${filters.fromDate}
             AND t."createdAt" <= ${filters.toDate}
             ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
@@ -316,7 +316,7 @@ export const DashboardService = {
       prisma.ticket.count({
         where: {
           deletedAt: null,
-          status: { in: ['ACTIVE', 'EVALUATED', 'PAGADO'] as any },
+          status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] as any },
           createdAt: {
             gte: filters.fromDate,
             lte: filters.toDate,
@@ -330,7 +330,7 @@ export const DashboardService = {
       where: {
         deletedAt: null,
         isWinner: true,
-        status: { in: ['ACTIVE', 'EVALUATED', 'PAGADO'] as any },
+        status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] as any },
         createdAt: {
           gte: filters.fromDate,
           lte: filters.toDate,
