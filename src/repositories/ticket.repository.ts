@@ -34,7 +34,12 @@ function isSameLocalDay(a: Date, b: Date) {
 
 async function resolveBaseMultiplierX(
   tx: Prisma.TransactionClient,
-  args: { bancaId: string; loteriaId: string; userId: string; ventanaId: string }
+  args: {
+    bancaId: string;
+    loteriaId: string;
+    userId: string;
+    ventanaId: string;
+  }
 ): Promise<{ valueX: number; source: string }> {
   const { bancaId, loteriaId, userId, ventanaId } = args;
 
@@ -164,14 +169,16 @@ export const TicketRepository = {
       async (tx) => {
         // 1) Generador secuencial: función generate_ticket_number() retorna string
         // Formato: TYYMMDD-XXXXXX-CC (ej: T250126-00000A-42)
-        const [seqRow] = await tx.$queryRawUnsafe<
-          { next_number: string }[]
-        >(
+        const [seqRow] = await tx.$queryRawUnsafe<{ next_number: string }[]>(
           `SELECT generate_ticket_number() AS next_number`
         );
         const nextNumber = seqRow?.next_number;
         if (!nextNumber) {
-          throw new AppError("Failed to generate ticket number", 500, "SEQ_ERROR");
+          throw new AppError(
+            "Failed to generate ticket number",
+            500,
+            "SEQ_ERROR"
+          );
         }
 
         // 2) Validación de FKs + reglas de la lotería + políticas de comisión
@@ -194,38 +201,55 @@ export const TicketRepository = {
                 select: {
                   id: true,
                   commissionPolicyJson: true,
-                }
-              }
+                },
+              },
             },
           }),
           tx.user.findUnique({
             where: { id: userId },
-            select: { id: true, commissionPolicyJson: true }
+            select: { id: true, commissionPolicyJson: true },
           }),
         ]);
 
-        if (!user) throw new AppError("Seller (vendedor) not found", 404, "FK_VIOLATION");
-        if (!loteria || loteria.isActive === false) throw new AppError("Lotería not found", 404, "FK_VIOLATION");
-        if (!sorteo) throw new AppError("Sorteo not found", 404, "FK_VIOLATION");
-        if (!ventana) throw new AppError("Ventana not found", 404, "FK_VIOLATION");
+        if (!user)
+          throw new AppError(
+            "Seller (vendedor) not found",
+            404,
+            "FK_VIOLATION"
+          );
+        if (!loteria || loteria.isActive === false)
+          throw new AppError("Lotería not found", 404, "FK_VIOLATION");
+        if (!sorteo)
+          throw new AppError("Sorteo not found", 404, "FK_VIOLATION");
+        if (!ventana)
+          throw new AppError("Ventana not found", 404, "FK_VIOLATION");
 
         // Defensa: el sorteo debe pertenecer a la misma lotería
         if (sorteo.loteriaId !== loteriaId) {
-          throw new AppError("El sorteo no pertenece a la lotería indicada", 400, "SORTEO_LOTERIA_MISMATCH");
+          throw new AppError(
+            "El sorteo no pertenece a la lotería indicada",
+            400,
+            "SORTEO_LOTERIA_MISMATCH"
+          );
         }
-
 
         // 3) Resolver X efectivo y asegurar fila Base
         const bancaId = ventana.bancaId;
 
-        const { valueX: effectiveBaseX, source } = await resolveBaseMultiplierX(tx, {
-          bancaId,
-          loteriaId,
-          userId,
-          ventanaId,
-        });
+        const { valueX: effectiveBaseX, source } = await resolveBaseMultiplierX(
+          tx,
+          {
+            bancaId,
+            loteriaId,
+            userId,
+            ventanaId,
+          }
+        );
 
-        const baseMultiplierRowId = await ensureBaseMultiplierRow(tx, loteriaId);
+        const baseMultiplierRowId = await ensureBaseMultiplierRow(
+          tx,
+          loteriaId
+        );
 
         logger.info({
           layer: "ticket",
@@ -244,8 +268,16 @@ export const TicketRepository = {
 
         const applicable = candidateRules
           .filter((r) => {
-            if (r.appliesToDate && !isSameLocalDay(new Date(r.appliesToDate), now)) return false;
-            if (typeof r.appliesToHour === "number" && r.appliesToHour !== now.getHours()) return false;
+            if (
+              r.appliesToDate &&
+              !isSameLocalDay(new Date(r.appliesToDate), now)
+            )
+              return false;
+            if (
+              typeof r.appliesToHour === "number" &&
+              r.appliesToHour !== now.getHours()
+            )
+              return false;
             return true;
           })
           .map((r) => {
@@ -262,31 +294,50 @@ export const TicketRepository = {
         // 5) Validaciones con rulesJson de la Lotería
         const RJ = (loteria.rulesJson ?? {}) as any;
 
-        const allowedBetTypes = Array.isArray(RJ.allowedBetTypes) ? new Set<string>(RJ.allowedBetTypes) : null;
-        const reventadoEnabled = !!(RJ.reventadoConfig?.enabled);
-        const requiresMatchingNumber = !!(RJ.reventadoConfig?.requiresMatchingNumber);
-        const numberRange = RJ.numberRange && typeof RJ.numberRange.min === "number" && typeof RJ.numberRange.max === "number"
-          ? { min: RJ.numberRange.min, max: RJ.numberRange.max }
-          : { min: 0, max: 99 };
+        const allowedBetTypes = Array.isArray(RJ.allowedBetTypes)
+          ? new Set<string>(RJ.allowedBetTypes)
+          : null;
+        const reventadoEnabled = !!RJ.reventadoConfig?.enabled;
+        const requiresMatchingNumber =
+          !!RJ.reventadoConfig?.requiresMatchingNumber;
+        const numberRange =
+          RJ.numberRange &&
+          typeof RJ.numberRange.min === "number" &&
+          typeof RJ.numberRange.max === "number"
+            ? { min: RJ.numberRange.min, max: RJ.numberRange.max }
+            : { min: 0, max: 99 };
 
-        const minBetAmount = typeof RJ.minBetAmount === "number" ? RJ.minBetAmount : undefined;
-        const maxBetAmount = typeof RJ.maxBetAmount === "number" ? RJ.maxBetAmount : undefined;
-        const maxNumbersPerTicket = typeof RJ.maxNumbersPerTicket === "number" ? RJ.maxNumbersPerTicket : undefined;
+        const minBetAmount =
+          typeof RJ.minBetAmount === "number" ? RJ.minBetAmount : undefined;
+        const maxBetAmount =
+          typeof RJ.maxBetAmount === "number" ? RJ.maxBetAmount : undefined;
+        const maxNumbersPerTicket =
+          typeof RJ.maxNumbersPerTicket === "number"
+            ? RJ.maxNumbersPerTicket
+            : undefined;
 
         // a) tipos permitidos
         if (allowedBetTypes) {
           for (const j of jugadas) {
             if (!allowedBetTypes.has(j.type)) {
-              throw new AppError(`Tipo de jugada no permitido: ${j.type}`, 400, "BETTYPE_NOT_ALLOWED");
+              throw new AppError(
+                `Tipo de jugada no permitido: ${j.type}`,
+                400,
+                "BETTYPE_NOT_ALLOWED"
+              );
             }
           }
         }
 
         // b) REVENTADO habilitado
         if (!reventadoEnabled) {
-          const hasReventado = jugadas.some(j => j.type === "REVENTADO");
+          const hasReventado = jugadas.some((j) => j.type === "REVENTADO");
           if (hasReventado) {
-            throw new AppError("REVENTADO no está habilitado para esta lotería", 400, "REVENTADO_DISABLED");
+            throw new AppError(
+              "REVENTADO no está habilitado para esta lotería",
+              400,
+              "REVENTADO_DISABLED"
+            );
           }
         }
 
@@ -295,7 +346,11 @@ export const TicketRepository = {
           for (const j of jugadas) {
             if (j.type === "REVENTADO") {
               if (!j.reventadoNumber || j.reventadoNumber !== j.number) {
-                throw new AppError("REVENTADO debe coincidir con el mismo número (number === reventadoNumber)", 400, "REVENTADO_MATCH_REQUIRED");
+                throw new AppError(
+                  "REVENTADO debe coincidir con el mismo número (number === reventadoNumber)",
+                  400,
+                  "REVENTADO_MATCH_REQUIRED"
+                );
               }
             }
           }
@@ -304,26 +359,48 @@ export const TicketRepository = {
         // d) rango de número (respeta numberRange si es más estrecho que 00..99)
         for (const j of jugadas) {
           const num = Number(j.number);
-          if (Number.isNaN(num) || num < numberRange.min || num > numberRange.max) {
-            throw new AppError(`Número fuera de rango permitido (${numberRange.min}..${numberRange.max}): ${j.number}`, 400, "NUMBER_OUT_OF_RANGE");
+          if (
+            Number.isNaN(num) ||
+            num < numberRange.min ||
+            num > numberRange.max
+          ) {
+            throw new AppError(
+              `Número fuera de rango permitido (${numberRange.min}..${numberRange.max}): ${j.number}`,
+              400,
+              "NUMBER_OUT_OF_RANGE"
+            );
           }
         }
 
         // e) min/max por jugada
         for (const j of jugadas) {
           if (typeof minBetAmount === "number" && j.amount < minBetAmount) {
-            throw new AppError(`Monto mínimo por jugada: ${minBetAmount}`, 400, "BET_MIN_VIOLATION");
+            throw new AppError(
+              `Monto mínimo por jugada: ${minBetAmount}`,
+              400,
+              "BET_MIN_VIOLATION"
+            );
           }
           if (typeof maxBetAmount === "number" && j.amount > maxBetAmount) {
-            throw new AppError(`Monto máximo por jugada: ${maxBetAmount}`, 400, "BET_MAX_VIOLATION");
+            throw new AppError(
+              `Monto máximo por jugada: ${maxBetAmount}`,
+              400,
+              "BET_MAX_VIOLATION"
+            );
           }
         }
 
         // f) límite de cantidad de números por ticket (solo NUMERO, únicos)
         if (typeof maxNumbersPerTicket === "number") {
-          const uniqueNumeros = new Set(jugadas.filter(j => j.type === "NUMERO").map(j => j.number));
+          const uniqueNumeros = new Set(
+            jugadas.filter((j) => j.type === "NUMERO").map((j) => j.number)
+          );
           if (uniqueNumeros.size > maxNumbersPerTicket) {
-            throw new AppError(`Máximo de números por ticket: ${maxNumbersPerTicket}`, 400, "MAX_NUMBERS_PER_TICKET");
+            throw new AppError(
+              `Máximo de números por ticket: ${maxNumbersPerTicket}`,
+              400,
+              "MAX_NUMBERS_PER_TICKET"
+            );
           }
         }
 
@@ -357,7 +434,10 @@ export const TicketRepository = {
           };
         });
 
-        const totalAmountTx = preparedJugadas.reduce((acc, j) => acc + j.amount, 0);
+        const totalAmountTx = preparedJugadas.reduce(
+          (acc, j) => acc + j.amount,
+          0
+        );
 
         // 7) Límite diario por vendedor
         const dayStart = new Date();
@@ -372,7 +452,11 @@ export const TicketRepository = {
         const dailyTotal = _sum.totalAmount ?? 0;
         const MAX_DAILY_TOTAL = Number(process.env.SALES_DAILY_MAX ?? 1000);
         if (dailyTotal + totalAmountTx > MAX_DAILY_TOTAL) {
-          throw new AppError("Daily sales limit exceeded", 400, "LIMIT_VIOLATION");
+          throw new AppError(
+            "Daily sales limit exceeded",
+            400,
+            "LIMIT_VIOLATION"
+          );
         }
 
         // 8) Aplicar primera regla aplicable (si hay)
@@ -384,18 +468,30 @@ export const TicketRepository = {
               .reduce((acc, j) => acc + j.amount, 0);
 
             if (rule.maxAmount && sumForNumber > rule.maxAmount)
-              throw new AppError(`Number ${rule.number} exceeded maxAmount (${rule.maxAmount})`, 400);
+              throw new AppError(
+                `Number ${rule.number} exceeded maxAmount (${rule.maxAmount})`,
+                400
+              );
 
             if (rule.maxTotal && totalAmountTx > rule.maxTotal)
-              throw new AppError(`Ticket total exceeded maxTotal (${rule.maxTotal})`, 400);
+              throw new AppError(
+                `Ticket total exceeded maxTotal (${rule.maxTotal})`,
+                400
+              );
           } else {
             if (rule.maxAmount) {
               const maxBet = Math.max(...preparedJugadas.map((j) => j.amount));
               if (maxBet > rule.maxAmount)
-                throw new AppError(`Bet amount exceeded maxAmount (${rule.maxAmount})`, 400);
+                throw new AppError(
+                  `Bet amount exceeded maxAmount (${rule.maxAmount})`,
+                  400
+                );
             }
             if (rule.maxTotal && totalAmountTx > rule.maxTotal)
-              throw new AppError(`Ticket total exceeded maxTotal (${rule.maxTotal})`, 400);
+              throw new AppError(
+                `Ticket total exceeded maxTotal (${rule.maxTotal})`,
+                400
+              );
           }
         }
 
@@ -548,6 +644,7 @@ export const TicketRepository = {
       status?: TicketStatus;
       isActive?: boolean;
       sorteoId?: string;
+      ventanaId?: string;
       search?: string;
       userId?: string;
       dateFrom?: Date;
@@ -560,16 +657,17 @@ export const TicketRepository = {
       ...(filters.status ? { status: filters.status } : {}),
       ...(typeof filters.isActive === "boolean"
         ? { isActive: filters.isActive }
-        : { isActive: true }),
+        : { isActive: filters.isActive }),
       ...(filters.sorteoId ? { sorteoId: filters.sorteoId } : {}),
       ...(filters.userId ? { vendedorId: filters.userId } : {}),
+      ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}), // ✅ ahora sí aplica
       ...(filters.dateFrom || filters.dateTo
         ? {
-          createdAt: {
-            ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
-            ...(filters.dateTo ? { lte: filters.dateTo } : {}),
-          },
-        }
+            createdAt: {
+              ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
+              ...(filters.dateTo ? { lt: filters.dateTo } : {}), // ✅ medio-abierto
+            },
+          }
         : {}),
     };
 
@@ -589,7 +687,9 @@ export const TicketRepository = {
         ...existingAnd,
         {
           OR: [
-            ...(n !== null ? [{ ticketNumber: n } as Prisma.TicketWhereInput] : []),
+            ...(n !== null
+              ? [{ ticketNumber: n } as Prisma.TicketWhereInput]
+              : []),
             { vendedor: { name: { contains: s, mode: "insensitive" } } },
             { ventana: { name: { contains: s, mode: "insensitive" } } },
             { loteria: { name: { contains: s, mode: "insensitive" } } },
@@ -606,7 +706,9 @@ export const TicketRepository = {
         take: pageSize,
         include: {
           loteria: { select: { id: true, name: true } },
-          sorteo: { select: { id: true, name: true, status: true, scheduledAt: true } },
+          sorteo: {
+            select: { id: true, name: true, status: true, scheduledAt: true },
+          },
           ventana: { select: { id: true, name: true } },
           vendedor: { select: { id: true, name: true, role: true } },
           jugadas: true,
@@ -655,12 +757,23 @@ export const TicketRepository = {
         }
 
         if (existing.status === TicketStatus.EVALUATED) {
-          throw new AppError("Cannot cancel an evaluated ticket", 400, "INVALID_STATE");
+          throw new AppError(
+            "Cannot cancel an evaluated ticket",
+            400,
+            "INVALID_STATE"
+          );
         }
 
         // 2) Validar sorteo (no permitir cancelar si el sorteo ya está cerrado o evaluado)
-        if (existing.sorteo.status === "CLOSED" || existing.sorteo.status === "EVALUATED") {
-          throw new AppError("Cannot cancel ticket from closed or evaluated sorteo", 400, "SORTEO_LOCKED");
+        if (
+          existing.sorteo.status === "CLOSED" ||
+          existing.sorteo.status === "EVALUATED"
+        ) {
+          throw new AppError(
+            "Cannot cancel ticket from closed or evaluated sorteo",
+            400,
+            "SORTEO_LOCKED"
+          );
         }
 
         // 3) Actualizar ticket (soft delete + inactivar)
@@ -668,7 +781,7 @@ export const TicketRepository = {
           where: { id },
           data: {
             isActive: false,
-            
+
             status: TicketStatus.CANCELLED,
             updatedAt: new Date(),
           },
