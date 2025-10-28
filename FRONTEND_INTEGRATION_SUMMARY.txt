@@ -1,0 +1,449 @@
+================================================================================
+FRONTEND INTEGRATION - COMPLETE DOCUMENTATION PACKAGE
+================================================================================
+
+Date: 2025-10-28
+Status: ✅ READY FOR FRONTEND IMPLEMENTATION
+
+================================================================================
+WHAT YOU NEED TO PASS TO FRONTEND
+================================================================================
+
+📦 DOCUMENTATION FILES (Ready in docs/ folder):
+
+1. SALES_API_QUICK_REFERENCE.md (500 lines)
+   → One-page reference for quick lookups
+   → Copy-paste examples for all 5 endpoints
+   → Common mistakes and how to fix them
+   → curl examples for testing
+
+2. FRONTEND_SALES_API_GUIDE.md (2500+ lines)
+   → Complete integration guide
+   → All endpoints documented in detail
+   → Request/response examples with real data
+   → Code examples for React/Vue/Angular
+   → RBAC behavior explained
+   → Error handling patterns
+   → Testing checklist (20+ items)
+   → Date handling best practices
+
+3. README.md (Updated)
+   → Updated with links to both guides
+   → Recent changes documented
+   → Status clearly marked
+
+================================================================================
+WHAT THE SALES API PROVIDES (5 ENDPOINTS)
+================================================================================
+
+✅ GET /api/v1/ventas
+   Purpose: Transactional detail (rows, paginated)
+   Use for: Data tables, exports, transaction history
+   Supports: pagination (page, pageSize), filtering, search, sorting
+
+✅ GET /api/v1/ventas/summary
+   Purpose: KPI executive summary (single aggregated record)
+   Use for: Dashboard cards, performance metrics
+   Returns: sales total, ticket count, payouts, net, commissions
+
+✅ GET /api/v1/ventas/breakdown
+   Purpose: Top-N analysis by dimension (rankings)
+   Use for: Leaderboards, comparison tables
+   Dimensions: vendedor (sellers), ventana (windows), loteria (games),
+              sorteo (draws), numero (numbers)
+   Includes: totalWinningTickets, totalPaidTickets (NEW)
+
+✅ GET /api/v1/ventas/timeseries
+   Purpose: Time-bucketed sales aggregation (trends)
+   Use for: Line charts, bar charts, trend analysis
+   Granularity: hour (max 30d), day (max 90d), week (unlimited)
+
+✅ GET /api/v1/ventas/facets
+   Purpose: Available filter values (for UI dropdowns)
+   Use for: Populating filter dropdowns dynamically
+   Returns: ventanas, vendedores, loterias, sorteos
+
+================================================================================
+UNIVERSAL PARAMETERS (All endpoints support)
+================================================================================
+
+?date=today|yesterday|week|month|year|range
+  → Semantic date ranges resolved server-side
+  → Backend uses Costa Rica timezone (UTC-6)
+  → Client sends calendar dates (YYYY-MM-DD only)
+
+?fromDate=YYYY-MM-DD (required if date=range)
+?toDate=YYYY-MM-DD   (required if date=range)
+
+?winnersOnly=true|false
+  → Filter for winning tickets only
+
+?status=ACTIVE|EVALUATED|CANCELLED|RESTORED
+  → Filter by ticket status
+
+?ventanaId=UUID
+  → Filter by sales window (auto-filtered by RBAC)
+
+?vendedorId=UUID
+  → Filter by seller (auto-filtered by RBAC)
+
+?loteriaId=UUID
+  → Filter by lottery
+
+?sorteoId=UUID
+  → Filter by draw
+
+?page=1              (List only, default: 1)
+?pageSize=20         (List only, default: 20, max: 100)
+?search=text         (List only, searches ticket numbers)
+?orderBy=field       (List only, prefix with - for DESC)
+
+?dimension=vendedor  (Breakdown only, REQUIRED)
+?top=10              (Breakdown only, max: 50)
+
+?granularity=day     (Timeseries only, hour|day|week)
+
+================================================================================
+AUTHENTICATION
+================================================================================
+
+All endpoints require JWT token in Authorization header:
+
+Authorization: Bearer <JWT_TOKEN>
+
+The backend:
+1. Verifies JWT signature (can't be forged)
+2. Extracts user role and identifiers
+3. Auto-filters data based on role:
+   - VENDEDOR: sees own sales only
+   - VENTANA: sees window sales, can filter by seller in window
+   - ADMIN: sees all data (no filtering)
+
+4. Returns 403 if user tries to access outside their scope
+
+================================================================================
+DATE HANDLING - CRITICAL POINTS
+================================================================================
+
+✅ BACKEND IS THE AUTHORITY
+   - Client sends semantic dates (today, yesterday, etc)
+   - Backend resolves using server time (no client-side calculation)
+   - Prevents timezone confusion and date manipulation
+
+✅ FORMAT FOR PARAMETERS: YYYY-MM-DD
+   ❌ DON'T: ?fromDate=2025-10-27T06:00:00Z
+   ✅ DO:    ?fromDate=2025-10-27
+
+✅ HELPER FUNCTION (JavaScript)
+   function formatCRDate(date = new Date()) {
+     return date.toISOString().split('T')[0];  // → YYYY-MM-DD
+   }
+
+✅ RESPONSES ARE IN UTC
+   "createdAt": "2025-10-27T10:30:45.123Z"
+   Convert to local timezone for display:
+
+   const crFormatter = new Intl.DateTimeFormat('es-CR', {
+     timeZone: 'America/Costa_Rica',
+     year: 'numeric',
+     month: '2-digit',
+     day: '2-digit',
+     hour: '2-digit',
+     minute: '2-digit'
+   });
+   console.log(crFormatter.format(new Date("2025-10-27T10:30:45.123Z")));
+   // → "27/10/2025, 04:30:45"
+
+================================================================================
+QUICK COPY-PASTE EXAMPLES
+================================================================================
+
+Today's summary:
+/api/v1/ventas/summary?date=today
+
+Top 10 sellers this month:
+/api/v1/ventas/breakdown?dimension=vendedor&date=month&top=10
+
+Winners only, this week:
+/api/v1/ventas?date=week&winnersOnly=true&pageSize=50
+
+Sales trend (last 30 days by day):
+/api/v1/ventas/timeseries?granularity=day&date=month
+
+Custom date range:
+/api/v1/ventas?date=range&fromDate=2025-10-01&toDate=2025-10-27
+
+Available filters for today:
+/api/v1/ventas/facets
+
+Top 20 most played numbers:
+/api/v1/ventas/breakdown?dimension=numero&top=20&date=week
+
+================================================================================
+RESPONSE STRUCTURE
+================================================================================
+
+All responses follow this pattern:
+
+{
+  "success": true,
+  "data": [               ← Array (list) or Object (summary) or null
+    { /* item */ }
+  ],
+  "meta": {
+    "range": {
+      "fromAt": "2025-10-27T06:00:00.000Z",
+      "toAt": "2025-10-28T05:59:59.999Z",
+      "tz": "America/Costa_Rica"
+    },
+    "effectiveFilters": {  ← Shows RBAC-applied filters
+      "vendedorId": "uuid"
+    },
+    "total": 250,          ← List only
+    "page": 1,             ← List only
+    "pageSize": 20,        ← List only
+    "totalPages": 13,      ← List only
+    "hasNextPage": true,   ← List only
+    "hasPrevPage": false   ← List only
+  }
+}
+
+Error responses:
+
+{
+  "success": false,
+  "error": {
+    "message": "Invalid date range",
+    "code": "SLS_2001",
+    "statusCode": 400,
+    "details": [
+      {
+        "field": "toDate",
+        "reason": "Cannot be in the future"
+      }
+    ]
+  }
+}
+
+================================================================================
+COMMON ERROR CODES
+================================================================================
+
+SLS_2001 (400) - Validation error
+  → Invalid date format
+  → Date range issues (fromDate > toDate)
+  → Timeseries limit exceeded (hour max: 30d, day max: 90d)
+  → Invalid parameter values
+
+SLS_2002 (400) - Invalid parameter
+  → Invalid dimension (not: vendedor, ventana, loteria, sorteo, numero)
+  → Invalid granularity (not: hour, day, week)
+  → Missing required parameter
+
+RBAC_001 (403) - Access denied
+  → Attempting to access different window (VENTANA/VENDEDOR roles)
+
+RBAC_002 (403) - Access denied
+  → Seller not in your window (VENTANA role)
+
+401 - Unauthenticated
+  → Missing or invalid JWT token
+
+================================================================================
+IMPLEMENTATION WORKFLOW
+================================================================================
+
+1. Frontend receives documentation
+   → Read SALES_API_QUICK_REFERENCE.md (5 min)
+   → Skim FRONTEND_SALES_API_GUIDE.md for details
+
+2. Test with curl
+   Get token, try simple request:
+   curl -H "Authorization: Bearer TOKEN" \
+     "https://api.example.com/api/v1/ventas/summary"
+
+3. Build components
+   → Summary dashboard (use /summary endpoint)
+   → Rankings table (use /breakdown endpoint)
+   → Charts (use /timeseries endpoint)
+   → Filters (populate from /facets endpoint)
+   → List (use /ventas endpoint with pagination)
+
+4. Handle dates correctly
+   → Use helper function: formatCRDate()
+   → Send YYYY-MM-DD format
+   → Let backend calculate ranges
+
+5. Test RBAC scenarios
+   → Login as VENDEDOR → see own sales only
+   → Login as VENTANA → see window sales
+   → Login as ADMIN → see all data
+   → Try accessing outside scope → get 403
+
+6. Test error handling
+   → Invalid date format → SLS_2001
+   → Invalid dimension → SLS_2002
+   → Missing token → 401
+   → Cross-window access → 403
+
+7. Deploy to production
+   → All tests passing
+   → Documentation reviewed
+   → Team trained
+
+================================================================================
+KEY FEATURES
+================================================================================
+
+✅ 5 read-only endpoints (safe for frontend)
+✅ Universal date parameters (no client-side calculation)
+✅ RBAC enforcement (automatic, can't bypass)
+✅ Pagination support (handle large datasets)
+✅ Multiple aggregation views (summary, breakdown, timeseries)
+✅ Filter dropdowns (facets endpoint)
+✅ Search capabilities (full-text search)
+✅ Sorting options (createdAt, totalAmount, etc)
+✅ Error codes (consistent, documented)
+✅ Activity logging (audit trail)
+
+================================================================================
+NEW IN THIS RELEASE
+================================================================================
+
+✅ Enhanced breakdown endpoint
+   → Added totalWinningTickets
+   → Added totalPaidTickets
+   → All 5 dimensions support these metrics
+
+✅ Fixed TicketStatus enum
+   → PAGADO renamed to PAID
+   → Migration created: 20251028010355_rename_pagado_to_paid
+   → All references updated in services
+   → ActivityType.TICKET_STATUS_PAID added
+
+✅ Comprehensive documentation
+   → 2500+ line implementation guide
+   → 500+ line quick reference
+   → Code examples for React
+   → Testing checklist (20+ items)
+
+================================================================================
+NEXT STEPS FOR FRONTEND
+================================================================================
+
+1. ✅ Receive documentation (you have it now)
+2. ⏳ Read quick reference (5 min)
+3. ⏳ Set up API client (axios, fetch, etc)
+4. ⏳ Build summary component
+5. ⏳ Build breakdown component
+6. ⏳ Build timeseries charts
+7. ⏳ Implement filters
+8. ⏳ Add pagination
+9. ⏳ Test all scenarios
+10. ⏳ Deploy
+
+================================================================================
+TESTING BEFORE PRODUCTION
+================================================================================
+
+Checklist (from FRONTEND_SALES_API_GUIDE.md):
+
+Authentication:
+[ ] Invalid token returns 401
+[ ] Expired token returns 401
+[ ] Missing token returns 401
+
+RBAC - VENDEDOR:
+[ ] Can call endpoints
+[ ] Auto-filtered to own sales
+[ ] Cannot request other vendedorId
+[ ] Cannot request other ventanaId
+
+RBAC - VENTANA:
+[ ] Can call endpoints
+[ ] Auto-filtered to window
+[ ] Can request seller in window
+[ ] Cannot request seller outside window
+
+RBAC - ADMIN:
+[ ] Can call endpoints
+[ ] No auto-filtering
+[ ] Can cross all boundaries
+
+Date Parameters:
+[ ] date=today works
+[ ] date=yesterday works
+[ ] date=week works
+[ ] date=month works
+[ ] date=year works
+[ ] date=range with fromDate/toDate works
+[ ] Invalid date format returns SLS_2001
+[ ] Future date returns SLS_2001
+[ ] fromDate > toDate returns SLS_2001
+
+All endpoints:
+[ ] Returns 200 OK
+[ ] Response has success, data, meta
+[ ] Date ranges match request
+[ ] effectiveFilters show RBAC filters
+[ ] Timestamps are ISO 8601 UTC
+
+List endpoint:
+[ ] Pagination works (page, pageSize)
+[ ] totalPages calculated correctly
+[ ] hasNextPage/hasPrevPage correct
+
+Breakdown endpoint:
+[ ] All 5 dimensions work
+[ ] Top parameter limits results
+[ ] Top > 50 returns error
+[ ] totalWinningTickets populated
+[ ] totalPaidTickets populated
+
+Timeseries endpoint:
+[ ] Granularity=hour works (max 30d)
+[ ] Granularity=day works (max 90d)
+[ ] Granularity=week works
+[ ] Exceeding limits returns error
+[ ] Results sorted by timestamp ASC
+
+Error handling:
+[ ] Invalid parameters return proper codes
+[ ] Errors include field and reason
+[ ] 4xx vs 5xx status codes correct
+[ ] Error response structure valid
+
+================================================================================
+SUPPORT & QUESTIONS
+================================================================================
+
+For clarifications:
+1. Check SALES_API_QUICK_REFERENCE.md (quick answers)
+2. Check FRONTEND_SALES_API_GUIDE.md (detailed reference)
+3. Test with curl first (validate parameters)
+4. Contact backend with full error response
+
+Documents location: /docs/FRONTEND_SALES_API_GUIDE.md
+                    /docs/SALES_API_QUICK_REFERENCE.md
+
+================================================================================
+SUMMARY
+================================================================================
+
+You have:
+✅ 2500+ line complete API reference
+✅ 500+ line quick reference
+✅ Code examples (React)
+✅ Testing checklist
+✅ Date handling guide
+✅ RBAC explanation
+✅ Error handling patterns
+✅ curl examples
+✅ Production-ready backend
+
+Everything you need to implement a full-featured sales analytics frontend.
+
+Start with SALES_API_QUICK_REFERENCE.md - 10 minute read.
+Then reference FRONTEND_SALES_API_GUIDE.md as needed.
+
+================================================================================
