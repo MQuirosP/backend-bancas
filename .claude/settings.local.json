@@ -17,7 +17,12 @@
       "Bash(gh:*)",
       "Bash(git push:*)",
       "Bash(tree:*)",
-      "Bash(npm run dev)"
+      "Bash(npm run dev)",
+      "Bash(node -e:*)",
+      "Read(//c/Users/mquir/Proyectos/Bancas/**)",
+      "Read(//c/Users/mquir/**)",
+      "Bash(git log:*)",
+      "Bash(test:*)"
     ],
     "deny": [],
     "ask": []
