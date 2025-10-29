@@ -385,12 +385,18 @@ EXPOSURE_THRESHOLD_CRITICAL=80
 
 ### 🚀 Próximos Pasos (Roadmap)
 
-#### Implementación (Pending)
-- [ ] Implementar endpoints nuevos en backend
-- [ ] Implementar sistema de alertas
-- [ ] Configurar Redis cache
-- [ ] Implementar ETag support
-- [ ] Agregar métricas de performance (queryExecutionTime)
+#### Implementación (Completed)
+- [x] Implementar endpoints nuevos en backend
+  - [x] GET /timeseries - Serie temporal
+  - [x] GET /exposure - Exposición financiera
+  - [x] GET /vendedores - Ranking vendedores
+  - [x] GET /export - Exportación (placeholder)
+- [x] Implementar sistema de alertas
+- [x] Agregar métricas de performance (queryExecutionTime, totalQueries)
+- [x] Agregar campos nuevos a endpoints existentes (winRate, margin, etc.)
+- [ ] Configurar Redis cache (TODO)
+- [ ] Implementar ETag support (TODO)
+- [ ] Implementar exportación real CSV/XLSX/PDF (TODO)
 
 #### Testing (Pending)
 - [ ] Tests unitarios por endpoint
