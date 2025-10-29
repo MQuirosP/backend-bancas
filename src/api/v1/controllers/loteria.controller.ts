@@ -205,7 +205,7 @@ export const LoteriaController = {
     });
 
     const data = occurrences.map((o: any) => ({
-      scheduledAt: o.scheduledAt.toISOString(),
+      scheduledAt: o.scheduledAt.toISOString(), // Dejar como está - el frontend espera ISO string
       name: o.name,
     }));
 

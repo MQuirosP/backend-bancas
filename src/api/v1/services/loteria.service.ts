@@ -6,7 +6,7 @@ import logger from "../../../core/logger";
 import { AppError } from "../../../core/errors";
 import { paginateOffset } from "../../../utils/pagination";
 import { computeOccurrences } from '../../../utils/schedule';
-import { formatIsoUtc } from '../../../utils/datetime';
+import { formatIsoLocal } from '../../../utils/datetime';
 import SorteoRepository from '../../../repositories/sorteo.repository';
 
 export const LoteriaService = {
@@ -259,8 +259,8 @@ export const LoteriaService = {
         created: [],
         skipped: [],
         alreadyExists: [],
-        preview: subset.map(o => ({ name: o.name, scheduledAt: o.scheduledAt.toISOString() })),
-        processedSubset: (scheduledDates ?? []).map(formatIsoUtc),
+        preview: subset.map(o => ({ name: o.name, scheduledAt: formatIsoLocal(o.scheduledAt) })),
+        processedSubset: (scheduledDates ?? []).map(formatIsoLocal),
       }
     }
 
