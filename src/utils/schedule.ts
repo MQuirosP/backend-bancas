@@ -1,10 +1,10 @@
 export type DrawSchedule = {
   frequency?: 'diario' | 'semanal' | 'personalizado'
-  times?: string[]              // "HH:MM" en hora local de Costa Rica (GMT-6), se convierte automáticamente a UTC
-  daysOfWeek?: number[]         // 0..6 (0=Domingo, usando getUTCDay)
+  times?: string[]              // "HH:MM" en hora local de Costa Rica (GMT-6)
+  daysOfWeek?: number[]         // 0..6 (0=Domingo)
 }
 
-import { atUtcTime, addUtcDays, startOfUtcDay } from './datetime'
+import { atLocalTime, addLocalDays, startOfLocalDay } from './datetime'
 
 export function computeOccurrences(params: {
   loteriaName: string
@@ -20,16 +20,16 @@ export function computeOccurrences(params: {
 
   const pad = (n: number) => String(n).padStart(2, '0')
 
-  const from = startOfUtcDay(start)
-  const to = addUtcDays(from, days)
+  const from = startOfLocalDay(start)
+  const to = addLocalDays(from, days)
 
   const out: Array<{ scheduledAt: Date; name: string }> = []
-  const cursor = startOfUtcDay(from)
+  const cursor = startOfLocalDay(from)
 
   if (times.length === 0) return out
 
   while (cursor <= to && out.length < limit) {
-    const dow = cursor.getUTCDay() // 0..6 (UTC)
+    const dow = cursor.getDay() // 0..6 (0=Domingo, hora local)
     const includeDay =
       frequency === 'diario'
         ? true
@@ -39,18 +39,20 @@ export function computeOccurrences(params: {
 
     if (includeDay) {
       for (const t of times) {
-        const dt = atUtcTime(cursor, t)
+        const dt = atLocalTime(cursor, t)
         if (dt >= from && dt <= to) {
           out.push({
             scheduledAt: dt,
-            name: `${loteriaName} ${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}`,
+            // IMPORTANTE: Usar la hora CONFIGURADA (t), NO la hora del Date object
+            // Esto garantiza que el nombre muestre "12:55" si se configuró "12:55"
+            name: `${loteriaName} ${t}`,
           })
           if (out.length >= limit) break
         }
       }
     }
-    cursor.setUTCDate(cursor.getUTCDate() + 1)
-    cursor.setUTCHours(0,0,0,0)
+    cursor.setDate(cursor.getDate() + 1)
+    cursor.setHours(0, 0, 0, 0)
   }
 
   out.sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())
