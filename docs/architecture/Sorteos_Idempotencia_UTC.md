@@ -7,9 +7,17 @@ Objetivo: garantizar que no se creen sorteos duplicados por Lotería/fecha-hora,
 - Restricción única en BD: `@@unique([loteriaId, scheduledAt])` en el modelo `Sorteo`.
 - Utilidades UTC en `src/utils/datetime.ts`:
   - `toUtcDate`, `startOfUtcDay`, `addUtcDays`, `atUtcTime`, `sameInstant`, `formatIsoUtc`.
+  - **IMPORTANTE:** `atUtcTime` interpreta las horas configuradas como **hora local de Costa Rica (GMT-6)** y las convierte automáticamente a UTC.
 - `computeOccurrences` (src/utils/schedule.ts) ahora genera ocurrencias en UTC (getUTCDay, setUTCHours).
 - Repo de Sorteo: `bulkCreateIfMissing` usa `createMany({ skipDuplicates: true })`, deduplicación por timestamp y buffer temporal ±60s.
 - Servicio de Lotería: `seedSorteosFromRules` honra el subset opcional `scheduledDates` del body (por timestamp exacto) y respeta dry-run.
+
+## Zona Horaria de Costa Rica
+
+- Costa Rica opera en **GMT-6 (UTC-6)** todo el año
+- **No usa horario de verano (DST)**
+- Las horas configuradas en `Loteria.rulesJson.drawSchedule.times` se interpretan como hora local
+- Conversión automática: `12:55 PM (local)` → `18:55 UTC` → Frontend muestra `12:55 PM` ✅
 
 ## API y Contratos
 

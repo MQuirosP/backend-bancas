@@ -299,7 +299,7 @@ export const SorteoService = {
         }
       }
 
-      // 3.4 Marcar tickets
+      // 3.4 Marcar tickets y calcular totalPayout para ganadores
       const winningTicketIds = new Set<string>([
         ...numeroWinners.map((j) => j.ticketId),
         ...reventadoWinners.map((j) => j.ticketId),
@@ -314,9 +314,31 @@ export const SorteoService = {
       for (const t of tickets) {
         const tIsWinner = winningTicketIds.has(t.id);
         if (tIsWinner) winners++;
+        
+        // Si es ganador, calcular totalPayout sumando jugadas ganadoras
+        let totalPayout = 0;
+        let remainingAmount = 0;
+        if (tIsWinner) {
+          const winningJugadas = await tx.jugada.aggregate({
+            where: { ticketId: t.id, isWinner: true },
+            _sum: { payout: true },
+          });
+          totalPayout = winningJugadas._sum.payout || 0;
+          remainingAmount = totalPayout; // Inicialmente todo pendiente
+        }
+        
         await tx.ticket.update({
           where: { id: t.id },
-          data: { status: "EVALUATED", isActive: false, isWinner: tIsWinner },
+          data: { 
+            status: "EVALUATED", 
+            isActive: false, 
+            isWinner: tIsWinner,
+            ...(tIsWinner ? { 
+              totalPayout,
+              totalPaid: 0,
+              remainingAmount,
+            } : {}),
+          },
         });
       }
 

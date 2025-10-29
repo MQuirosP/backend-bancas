@@ -1,6 +1,13 @@
 /**
  * Fecha/hora: utilidades para trabajar en UTC de forma consistente.
+ * 
+ * NOTA: Las horas configuradas en loterías se interpretan como hora local
+ * de Costa Rica (GMT-6) y se convierten automáticamente a UTC para almacenamiento.
  */
+
+// Zona horaria de Costa Rica: GMT-6 (UTC-6)
+// Costa Rica no usa horario de verano (DST), por lo que siempre es -6 horas
+const COSTA_RICA_OFFSET_HOURS = -6;
 
 // Normaliza entrada a Date (UTC instant). Acepta Date o ISO string.
 export function toUtcDate(input: Date | string): Date {
@@ -36,13 +43,34 @@ export function addUtcDays(d: Date | string, days: number): Date {
   return out;
 }
 
-// Construye un Date en UTC con HH:mm sobre la fecha base (UTC)
+/**
+ * Construye un Date en UTC interpretando HH:mm como hora LOCAL de Costa Rica.
+ * 
+ * Ejemplo:
+ * - Input: "12:55" (mediodía en Costa Rica)
+ * - Output: Date con 18:55 UTC (12:55 + 6 horas)
+ * 
+ * Esto garantiza que cuando el frontend (en Costa Rica) muestre la fecha,
+ * automáticamente la convierta de UTC a local y muestre "12:55" correctamente.
+ */
 export function atUtcTime(baseUtcDate: Date | string, hhmm: string): Date {
   const [hRaw, mRaw] = hhmm.split(":");
-  const h = Number.parseInt(hRaw ?? "0", 10);
-  const m = Number.parseInt(mRaw ?? "0", 10);
+  const localHour = Number.parseInt(hRaw ?? "0", 10);
+  const localMinute = Number.parseInt(mRaw ?? "0", 10);
+  
+  if (!isFinite(localHour) || !isFinite(localMinute)) {
+    throw new Error(`Invalid time format: ${hhmm}`);
+  }
+  
+  // Empezar con el inicio del día en UTC
   const base = startOfUtcDay(baseUtcDate);
-  base.setUTCHours(isFinite(h) ? h : 0, isFinite(m) ? m : 0, 0, 0);
+  
+  // Convertir hora local de Costa Rica (GMT-6) a UTC
+  // Si son las 12:55 en Costa Rica, en UTC son las 18:55 (12 + 6)
+  const utcHour = localHour - COSTA_RICA_OFFSET_HOURS;
+  
+  base.setUTCHours(utcHour, localMinute, 0, 0);
+  
   return base;
 }
 

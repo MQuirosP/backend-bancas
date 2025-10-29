@@ -73,4 +73,56 @@ export const TicketController = {
     const result = await TicketService.cancel(req.params.id, userId, req.requestId);
     return success(res, result);
   },
+
+  // ==================== PAYMENT ENDPOINTS ====================
+
+  /**
+   * POST /api/v1/tickets/:id/pay
+   * Registrar un pago (total o parcial) en un ticket ganador
+   */
+  async registerPayment(req: AuthenticatedRequest, res: Response) {
+    const userId = req.user!.id;
+    const ticketId = req.params.id;
+    const result = await TicketService.registerPayment(
+      ticketId,
+      req.body,
+      userId,
+      req.requestId
+    );
+    return success(res, result);
+  },
+
+  /**
+   * POST /api/v1/tickets/:id/reverse-payment
+   * Revertir el último pago de un ticket
+   */
+  async reversePayment(req: AuthenticatedRequest, res: Response) {
+    const userId = req.user!.id;
+    const ticketId = req.params.id;
+    const { reason } = req.body;
+    const result = await TicketService.reversePayment(
+      ticketId,
+      userId,
+      reason,
+      req.requestId
+    );
+    return success(res, result);
+  },
+
+  /**
+   * POST /api/v1/tickets/:id/finalize-payment
+   * Marcar el pago parcial como final (acepta deuda restante)
+   */
+  async finalizePayment(req: AuthenticatedRequest, res: Response) {
+    const userId = req.user!.id;
+    const ticketId = req.params.id;
+    const { notes } = req.body;
+    const result = await TicketService.finalizePayment(
+      ticketId,
+      userId,
+      notes,
+      req.requestId
+    );
+    return success(res, result);
+  },
 };

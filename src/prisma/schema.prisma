@@ -87,6 +87,7 @@ model User {
   refreshTokens       RefreshToken[]
   restrictionRules    RestrictionRule[]
   ticketsCreated      Ticket[]
+  ticketsPaid         Ticket[]             @relation("TicketPaidBy")
   TicketPayment       TicketPayment[]
   ventana             Ventana?             @relation(fields: [ventanaId], references: [id])
   multiplierOverrides MultiplierOverride[]
@@ -158,16 +159,29 @@ model Ticket {
   isActive      Boolean      @default(true)
   isWinner      Boolean      @default(false)
   sorteoId      String       @db.Uuid
+  
+  // Campos de pago unificados
+  totalPayout      Float?    @default(0)     // Total de premios ganados
+  totalPaid        Float?    @default(0)     // Total pagado acumulado
+  remainingAmount  Float?    @default(0)     // Monto pendiente de pago
+  lastPaymentAt    DateTime?                 // Fecha del último pago
+  paidById         String?   @db.Uuid        // Usuario que realizó el último pago
+  paymentMethod    String?                   // Método del último pago (cash|transfer|check)
+  paymentNotes     String?                   // Notas del último pago
+  paymentHistory   Json?                     // Historial completo de pagos
 
   jugadas       Jugada[]
   loteria       Loteria         @relation(fields: [loteriaId], references: [id])
   sorteo        Sorteo          @relation(fields: [sorteoId], references: [id])
   vendedor      User            @relation(fields: [vendedorId], references: [id])
   ventana       Ventana         @relation(fields: [ventanaId], references: [id])
-  TicketPayment TicketPayment[]
+  paidBy        User?           @relation("TicketPaidBy", fields: [paidById], references: [id])
+  TicketPayment TicketPayment[] // Mantenido para auditoría
 
   @@index([sorteoId])
   @@index([vendedorId, createdAt])
+  @@index([status, isWinner])
+  @@index([paidById])
 }
 
 model TicketPayment {
@@ -192,7 +206,8 @@ model TicketPayment {
   paidBy User   @relation(fields: [paidById], references: [id])
   ticket Ticket @relation(fields: [ticketId], references: [id])
 
-  @@unique([ticketId, isReversed])
+  @@index([ticketId, isReversed])
+  @@index([ticketId, createdAt])
 }
 
 model Jugada {
@@ -500,6 +515,7 @@ enum TicketStatus {
   ACTIVE
   EVALUATED
   PAID
+  PAGADO
   CANCELLED
   RESTORED
 }
