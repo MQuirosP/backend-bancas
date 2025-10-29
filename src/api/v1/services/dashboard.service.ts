@@ -11,15 +11,29 @@ interface DashboardFilters {
   fromDate: Date;
   toDate: Date;
   ventanaId?: string; // Para RBAC
+  loteriaId?: string; // Filtro por lotería
+  betType?: 'NUMERO' | 'REVENTADO'; // Filtro por tipo de apuesta
   scope?: 'all' | 'byVentana';
+  dimension?: 'ventana' | 'loteria' | 'vendedor'; // Agrupación
+  top?: number; // Limitar resultados
+  orderBy?: string; // Campo para ordenar
+  order?: 'asc' | 'desc'; // Dirección
+  page?: number; // Paginación
+  pageSize?: number; // Tamaño de página
+  interval?: 'day' | 'hour'; // Para timeseries
+  aging?: boolean; // Para CxC aging
 }
 
 interface GananciaResult {
   totalAmount: number;
+  totalSales: number;
+  margin: number;
   byVentana: Array<{
     ventanaId: string;
     ventanaName: string;
     amount: number;
+    sales: number;
+    margin: number;
   }>;
   byLoteria: Array<{
     loteriaId: string;
@@ -56,6 +70,7 @@ interface DashboardSummary {
   totalCommissions: number;
   totalTickets: number;
   winningTickets: number;
+  winRate: number;
 }
 
 export const DashboardService = {
@@ -114,8 +129,23 @@ export const DashboardService = {
       `
     );
 
+    // Obtener total de ventas para calcular margen
+    const salesResult = await prisma.$queryRaw<Array<{ total_sales: number }>>(
+      Prisma.sql`
+        SELECT COALESCE(SUM(t."totalAmount"), 0) as total_sales
+        FROM "Ticket" t
+        WHERE t."deletedAt" IS NULL
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."createdAt" >= ${filters.fromDate}
+          AND t."createdAt" <= ${filters.toDate}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+      `
+    );
+
+    const totalSales = Number(salesResult[0]?.total_sales) || 0;
+
     // Agrupar resultados
-    const byVentanaMap = new Map<string, { ventanaId: string; ventanaName: string; amount: number }>();
+    const byVentanaMap = new Map<string, { ventanaId: string; ventanaName: string; amount: number; sales: number }>();
     const byLoteriaMap = new Map<string, { loteriaId: string; loteriaName: string; amount: number }>();
     let totalAmount = 0;
 
@@ -130,6 +160,7 @@ export const DashboardService = {
           ventanaId: row.ventana_id,
           ventanaName: row.ventana_name,
           amount: 0,
+          sales: 0,
         });
       }
       const ventanaRecord = byVentanaMap.get(ventanaKey)!;
@@ -148,9 +179,16 @@ export const DashboardService = {
       loteriaRecord.amount += commission;
     });
 
+    const margin = totalSales > 0 ? (totalAmount / totalSales) * 100 : 0;
+
     return {
       totalAmount,
-      byVentana: Array.from(byVentanaMap.values()),
+      totalSales,
+      margin: parseFloat(margin.toFixed(2)),
+      byVentana: Array.from(byVentanaMap.values()).map(v => ({
+        ...v,
+        margin: v.sales > 0 ? parseFloat(((v.amount / v.sales) * 100).toFixed(2)) : 0,
+      })),
       byLoteria: Array.from(byLoteriaMap.values()),
     };
   },
@@ -339,12 +377,18 @@ export const DashboardService = {
       },
     });
 
+    const totalSales = Number(sales[0]?.total) || 0;
+    const totalPayouts = Number(payouts[0]?.total) || 0;
+    const totalCommissions = Number(commissions[0]?.total) || 0;
+    const winRate = tickets > 0 ? (winningTickets / tickets) * 100 : 0;
+
     return {
-      totalSales: Number(sales[0]?.total) || 0,
-      totalPayouts: Number(payouts[0]?.total) || 0,
-      totalCommissions: Number(commissions[0]?.total) || 0,
+      totalSales,
+      totalPayouts,
+      totalCommissions,
       totalTickets: tickets,
       winningTickets,
+      winRate: parseFloat(winRate.toFixed(2)),
     };
   },
 
@@ -352,18 +396,30 @@ export const DashboardService = {
    * Dashboard completo: combina ganancia, CxC, CxP y resumen
    */
   async getFullDashboard(filters: DashboardFilters) {
-    const [ganancia, cxc, cxp, summary] = await Promise.all([
-      this.calculateGanancia(filters),
-      this.calculateCxC(filters),
-      this.calculateCxP(filters),
-      this.getSummary(filters),
+    const startTime = Date.now();
+    let queryCount = 0;
+
+    const [ganancia, cxc, cxp, summary, timeSeries, exposure, previousPeriod] = await Promise.all([
+      this.calculateGanancia(filters).then(r => { queryCount += 3; return r; }),
+      this.calculateCxC(filters).then(r => { queryCount += 1; return r; }),
+      this.calculateCxP(filters).then(r => { queryCount += 1; return r; }),
+      this.getSummary(filters).then(r => { queryCount += 4; return r; }),
+      this.getTimeSeries({ ...filters, interval: filters.interval || 'day' }).then(r => { queryCount += 1; return r; }),
+      this.calculateExposure(filters).then(r => { queryCount += 3; return r; }),
+      this.calculatePreviousPeriod(filters).then(r => { queryCount += 4; return r; }),
     ]);
+
+    const alerts = this.generateAlerts({ ganancia, cxc, cxp, summary, exposure });
 
     return {
       ganancia,
       cxc,
       cxp,
       summary,
+      timeSeries: timeSeries.timeSeries,
+      exposure,
+      previousPeriod,
+      alerts,
       meta: {
         range: {
           fromAt: filters.fromDate.toISOString(),
@@ -372,8 +428,412 @@ export const DashboardService = {
         },
         scope: filters.scope || 'all',
         generatedAt: new Date().toISOString(),
+        queryExecutionTime: Date.now() - startTime,
+        totalQueries: queryCount,
       },
     };
+  },
+
+  /**
+   * Serie temporal: datos agrupados por día u hora para gráficos
+   */
+  async getTimeSeries(filters: DashboardFilters) {
+    const interval = filters.interval || 'day';
+
+    // Validación: interval=hour solo si rango <= 7 días
+    if (interval === 'hour') {
+      const diffDays = Math.ceil((filters.toDate.getTime() - filters.fromDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 7) {
+        throw new AppError('interval=hour solo permitido para rangos <= 7 días', 422);
+      }
+    }
+
+    const dateFormat = interval === 'day'
+      ? Prisma.sql`DATE_TRUNC('day', t."createdAt")`
+      : Prisma.sql`DATE_TRUNC('hour', t."createdAt")`;
+
+    const result = await prisma.$queryRaw<
+      Array<{
+        date_bucket: Date;
+        total_sales: number;
+        total_commissions: number;
+        total_tickets: number;
+      }>
+    >(
+      Prisma.sql`
+        SELECT
+          ${dateFormat} as date_bucket,
+          COALESCE(SUM(t."totalAmount"), 0) as total_sales,
+          COALESCE(SUM(j."commissionAmount"), 0) as total_commissions,
+          COUNT(DISTINCT t.id) as total_tickets
+        FROM "Ticket" t
+        LEFT JOIN "Jugada" j ON t.id = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
+        WHERE t."deletedAt" IS NULL
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."createdAt" >= ${filters.fromDate}
+          AND t."createdAt" <= ${filters.toDate}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+        GROUP BY date_bucket
+        ORDER BY date_bucket ASC
+      `
+    );
+
+    return {
+      timeSeries: result.map(row => ({
+        date: row.date_bucket.toISOString(),
+        sales: Number(row.total_sales) || 0,
+        commissions: Number(row.total_commissions) || 0,
+        tickets: Number(row.total_tickets) || 0,
+      })),
+      meta: {
+        interval,
+        dataPoints: result.length,
+      },
+    };
+  },
+
+  /**
+   * Exposición: análisis de riesgo por número y lotería
+   */
+  async calculateExposure(filters: DashboardFilters) {
+    const topLimit = filters.top || 10;
+
+    // Top números con mayor venta
+    const topNumbers = await prisma.$queryRaw<
+      Array<{
+        number: string;
+        bet_type: string;
+        total_sales: number;
+        potential_payout: number;
+      }>
+    >(
+      Prisma.sql`
+        SELECT
+          j.number,
+          j.type as bet_type,
+          COALESCE(SUM(j.amount), 0) as total_sales,
+          COALESCE(SUM(j.payout), 0) as potential_payout
+        FROM "Jugada" j
+        JOIN "Ticket" t ON j."ticketId" = t.id
+        WHERE t."deletedAt" IS NULL
+          AND j."deletedAt" IS NULL
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."createdAt" >= ${filters.fromDate}
+          AND t."createdAt" <= ${filters.toDate}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+          ${filters.betType ? Prisma.sql`AND j.type = ${filters.betType}` : Prisma.empty}
+        GROUP BY j.number, j.type
+        ORDER BY total_sales DESC
+        LIMIT ${topLimit}
+      `
+    );
+
+    // Heatmap: ventas por número (00-99)
+    const heatmap = await prisma.$queryRaw<
+      Array<{
+        number: string;
+        total_sales: number;
+      }>
+    >(
+      Prisma.sql`
+        SELECT
+          j.number,
+          COALESCE(SUM(j.amount), 0) as total_sales
+        FROM "Jugada" j
+        JOIN "Ticket" t ON j."ticketId" = t.id
+        WHERE t."deletedAt" IS NULL
+          AND j."deletedAt" IS NULL
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."createdAt" >= ${filters.fromDate}
+          AND t."createdAt" <= ${filters.toDate}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+        GROUP BY j.number
+        ORDER BY j.number ASC
+      `
+    );
+
+    // Exposición por lotería
+    const byLoteria = await prisma.$queryRaw<
+      Array<{
+        loteria_id: string;
+        loteria_name: string;
+        total_sales: number;
+        potential_payout: number;
+      }>
+    >(
+      Prisma.sql`
+        SELECT
+          l.id as loteria_id,
+          l.name as loteria_name,
+          COALESCE(SUM(j.amount), 0) as total_sales,
+          COALESCE(SUM(j.payout), 0) as potential_payout
+        FROM "Jugada" j
+        JOIN "Ticket" t ON j."ticketId" = t.id
+        JOIN "Loteria" l ON t."loteriaId" = l.id
+        WHERE t."deletedAt" IS NULL
+          AND j."deletedAt" IS NULL
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."createdAt" >= ${filters.fromDate}
+          AND t."createdAt" <= ${filters.toDate}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+        GROUP BY l.id, l.name
+        ORDER BY total_sales DESC
+      `
+    );
+
+    return {
+      topNumbers: topNumbers.map(row => {
+        const sales = Number(row.total_sales) || 0;
+        const payout = Number(row.potential_payout) || 0;
+        return {
+          number: row.number,
+          betType: row.bet_type,
+          sales,
+          potentialPayout: payout,
+          ratio: sales > 0 ? (payout / sales) : 0,
+        };
+      }),
+      heatmap: heatmap.map(row => ({
+        number: row.number,
+        sales: Number(row.total_sales) || 0,
+      })),
+      byLoteria: byLoteria.map(row => {
+        const sales = Number(row.total_sales) || 0;
+        const payout = Number(row.potential_payout) || 0;
+        return {
+          loteriaId: row.loteria_id,
+          loteriaName: row.loteria_name,
+          sales,
+          potentialPayout: payout,
+          ratio: sales > 0 ? (payout / sales) : 0,
+        };
+      }),
+    };
+  },
+
+  /**
+   * Ranking por vendedor: ventas, comisiones, tickets
+   */
+  async getVendedores(filters: DashboardFilters) {
+    const page = filters.page || 1;
+    const pageSize = filters.pageSize || 20;
+    const offset = (page - 1) * pageSize;
+    const orderBy = filters.orderBy || 'sales';
+    const order = filters.order || 'desc';
+
+    const orderClause = {
+      sales: Prisma.sql`total_sales`,
+      commissions: Prisma.sql`total_commissions`,
+      tickets: Prisma.sql`total_tickets`,
+      winners: Prisma.sql`winning_tickets`,
+      avgTicket: Prisma.sql`avg_ticket`,
+    }[orderBy] || Prisma.sql`total_sales`;
+
+    const orderDirection = order === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
+
+    const result = await prisma.$queryRaw<
+      Array<{
+        vendedor_id: string;
+        vendedor_name: string;
+        total_sales: number;
+        total_commissions: number;
+        total_tickets: number;
+        winning_tickets: number;
+        avg_ticket: number;
+      }>
+    >(
+      Prisma.sql`
+        SELECT
+          u.id as vendedor_id,
+          u.name as vendedor_name,
+          COALESCE(SUM(t."totalAmount"), 0) as total_sales,
+          COALESCE(SUM(j."commissionAmount"), 0) as total_commissions,
+          COUNT(DISTINCT t.id) as total_tickets,
+          COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets,
+          CASE
+            WHEN COUNT(DISTINCT t.id) > 0 THEN COALESCE(SUM(t."totalAmount"), 0) / COUNT(DISTINCT t.id)
+            ELSE 0
+          END as avg_ticket
+        FROM "User" u
+        JOIN "Ticket" t ON u.id = t."userId"
+        LEFT JOIN "Jugada" j ON t.id = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
+        WHERE t."deletedAt" IS NULL
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."createdAt" >= ${filters.fromDate}
+          AND t."createdAt" <= ${filters.toDate}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+        GROUP BY u.id, u.name
+        ORDER BY ${orderClause} ${orderDirection}
+        LIMIT ${pageSize}
+        OFFSET ${offset}
+      `
+    );
+
+    // Count total para paginación
+    const totalCount = await prisma.$queryRaw<Array<{ count: bigint }>>(
+      Prisma.sql`
+        SELECT COUNT(DISTINCT u.id) as count
+        FROM "User" u
+        JOIN "Ticket" t ON u.id = t."userId"
+        WHERE t."deletedAt" IS NULL
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."createdAt" >= ${filters.fromDate}
+          AND t."createdAt" <= ${filters.toDate}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+      `
+    );
+
+    const total = Number(totalCount[0]?.count) || 0;
+
+    return {
+      byVendedor: result.map(row => ({
+        vendedorId: row.vendedor_id,
+        vendedorName: row.vendedor_name,
+        sales: Number(row.total_sales) || 0,
+        commissions: Number(row.total_commissions) || 0,
+        tickets: Number(row.total_tickets) || 0,
+        winners: Number(row.winning_tickets) || 0,
+        avgTicket: Number(row.avg_ticket) || 0,
+      })),
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    };
+  },
+
+  /**
+   * Período anterior: para comparación de crecimiento
+   */
+  async calculatePreviousPeriod(filters: DashboardFilters) {
+    const diffMs = filters.toDate.getTime() - filters.fromDate.getTime();
+    const previousFromDate = new Date(filters.fromDate.getTime() - diffMs);
+    const previousToDate = new Date(filters.fromDate.getTime() - 1);
+
+    const previousFilters = {
+      ...filters,
+      fromDate: previousFromDate,
+      toDate: previousToDate,
+    };
+
+    const [sales, commissions] = await Promise.all([
+      prisma.$queryRaw<Array<{ total: number }>>(
+        Prisma.sql`
+          SELECT COALESCE(SUM(t."totalAmount"), 0) as total
+          FROM "Ticket" t
+          WHERE t."deletedAt" IS NULL
+            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+            AND t."createdAt" >= ${previousFromDate}
+            AND t."createdAt" <= ${previousToDate}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+        `
+      ),
+      prisma.$queryRaw<Array<{ total: number }>>(
+        Prisma.sql`
+          SELECT COALESCE(SUM(j."commissionAmount"), 0) as total
+          FROM "Jugada" j
+          JOIN "Ticket" t ON j."ticketId" = t."id"
+          WHERE t."deletedAt" IS NULL
+            AND j."isWinner" = true
+            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+            AND t."createdAt" >= ${previousFromDate}
+            AND t."createdAt" <= ${previousToDate}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+        `
+      ),
+    ]);
+
+    return {
+      sales: Number(sales[0]?.total) || 0,
+      commissions: Number(commissions[0]?.total) || 0,
+      range: {
+        fromAt: previousFromDate.toISOString(),
+        toAt: previousToDate.toISOString(),
+      },
+    };
+  },
+
+  /**
+   * Sistema de alertas: detecta problemas y oportunidades
+   */
+  generateAlerts(data: any) {
+    const alerts: Array<{
+      type: string;
+      severity: 'info' | 'warn' | 'critical';
+      message: string;
+      action: string;
+    }> = [];
+
+    // Thresholds (deberían venir de env)
+    const CXC_THRESHOLD_WARN = 50000;
+    const CXC_THRESHOLD_CRITICAL = 100000;
+    const LOW_SALES_THRESHOLD = 10000;
+    const EXPOSURE_THRESHOLD_WARN = 60;
+    const EXPOSURE_THRESHOLD_CRITICAL = 80;
+
+    // Alerta: CxC alto
+    if (data.cxc.totalAmount > CXC_THRESHOLD_CRITICAL) {
+      alerts.push({
+        type: 'HIGH_CXC',
+        severity: 'critical',
+        message: `CxC total: ₡${data.cxc.totalAmount.toLocaleString()} excede umbral crítico`,
+        action: 'Revisar ventanas con mayor deuda y gestionar cobro inmediato',
+      });
+    } else if (data.cxc.totalAmount > CXC_THRESHOLD_WARN) {
+      alerts.push({
+        type: 'HIGH_CXC',
+        severity: 'warn',
+        message: `CxC total: ₡${data.cxc.totalAmount.toLocaleString()} excede umbral de advertencia`,
+        action: 'Monitorear cuentas por cobrar y planificar gestión de cobro',
+      });
+    }
+
+    // Alerta: Ventas bajas
+    if (data.summary.totalSales < LOW_SALES_THRESHOLD) {
+      alerts.push({
+        type: 'LOW_SALES',
+        severity: 'warn',
+        message: `Ventas bajas: ₡${data.summary.totalSales.toLocaleString()}`,
+        action: 'Revisar actividad de vendedores y promociones activas',
+      });
+    }
+
+    // Alerta: Alta exposición en número específico
+    if (data.exposure?.topNumbers?.[0]?.ratio > EXPOSURE_THRESHOLD_CRITICAL) {
+      alerts.push({
+        type: 'HIGH_EXPOSURE',
+        severity: 'critical',
+        message: `Exposición crítica en número ${data.exposure.topNumbers[0].number}: ${data.exposure.topNumbers[0].ratio.toFixed(0)}x`,
+        action: 'Considerar límites de apuesta para este número',
+      });
+    } else if (data.exposure?.topNumbers?.[0]?.ratio > EXPOSURE_THRESHOLD_WARN) {
+      alerts.push({
+        type: 'HIGH_EXPOSURE',
+        severity: 'warn',
+        message: `Exposición alta en número ${data.exposure.topNumbers[0].number}: ${data.exposure.topNumbers[0].ratio.toFixed(0)}x`,
+        action: 'Monitorear ventas en este número',
+      });
+    }
+
+    // Alerta: Overpayment (CxP > 0)
+    if (data.cxp.totalAmount > 0) {
+      alerts.push({
+        type: 'OVERPAYMENT',
+        severity: 'info',
+        message: `CxP detectado: ₡${data.cxp.totalAmount.toLocaleString()}`,
+        action: 'Banco debe liquidar con ventanas',
+      });
+    }
+
+    return alerts;
   },
 };
 
