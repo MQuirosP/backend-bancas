@@ -185,13 +185,16 @@ export const DashboardController = {
       ventanaId = req.user.ventanaId!;
     }
 
+    // Mapear granularity a interval (frontend compatibility)
+    const interval = query.interval || query.granularity || 'day';
+
     const result = await DashboardService.getTimeSeries({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
-      interval: query.interval || 'day',
+      interval,
     });
 
     return success(res, {
