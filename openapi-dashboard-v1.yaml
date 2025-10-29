@@ -1,0 +1,2076 @@
+openapi: 3.1.0
+info:
+  title: Dashboard API - Banca Management Backend
+  version: 1.0.0
+  description: |
+    API de Dashboard Administrativo para monitoreo financiero y toma de decisiones.
+
+    **Características:**
+    - Zona horaria: America/Costa_Rica (GMT-6)
+    - Filtros de fecha: presets (today, yesterday, week, month, year) o rango personalizado
+    - Control de acceso: ADMIN (total), VENTANA (scope limitado), VENDEDOR (bloqueado)
+    - Caché: Redis con ETag y TTL configurable
+    - Métricas: Ventas, comisiones, CxC, CxP, exposición, ranking de vendedores
+
+    **Versionado:**
+    - v1: Versión actual estable
+    - Política de compatibilidad: cambios aditivos solamente
+    - Breaking changes → v2 con período de deprecación ≥90 días
+
+  contact:
+    name: Backend Team
+    email: backend@banca.com
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Development
+  - url: https://api.banca.com/api/v1
+    description: Production
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Dashboard
+    description: Endpoints de dashboard administrativo
+  - name: Analytics
+    description: Análisis y métricas detalladas
+  - name: Export
+    description: Exportación de datos
+
+paths:
+  /admin/dashboard:
+    get:
+      tags:
+        - Dashboard
+      summary: Dashboard completo
+      description: |
+        Retorna todas las métricas del dashboard consolidadas: resumen, ganancia, CxC, CxP,
+        serie temporal, exposición, comparación con período anterior y alertas.
+
+        **RBAC:**
+        - ADMIN: Acceso total, puede filtrar por ventanaId
+        - VENTANA: Solo ve sus datos (ventanaId auto-aplicado)
+        - VENDEDOR: 403 Forbidden
+
+        **Caché:**
+        - Redis TTL: 300s
+        - Cache key: `dashboard:${hash(filters)}`
+        - ETag soportado (304 Not Modified)
+
+        **Performance SLO:**
+        - p95 ≤ 800ms (caché caliente)
+        - p95 ≤ 1500ms (caché frío)
+
+      operationId: getMainDashboard
+      parameters:
+        - $ref: '#/components/parameters/DatePreset'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/VentanaId'
+        - $ref: '#/components/parameters/LoteriaId'
+        - $ref: '#/components/parameters/BetType'
+        - $ref: '#/components/parameters/Interval'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Dashboard completo retornado exitosamente
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              schema:
+                type: string
+                example: max-age=300
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+              examples:
+                admin_today:
+                  summary: ADMIN - Vista de hoy
+                  value:
+                    success: true
+                    data:
+                      summary:
+                        totalSales: 150000.00
+                        totalTickets: 1250
+                        totalWinners: 85
+                        totalCommissions: 7500.00
+                        winRate: 6.80
+                      ganancia:
+                        totalAmount: 7500.00
+                        totalSales: 150000.00
+                        margin: 5.00
+                        byVentana:
+                          - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                            ventanaName: "Ventana Central"
+                            amount: 4500.00
+                          - ventanaId: "550e8400-e29b-41d4-a716-446655440001"
+                            ventanaName: "Ventana Norte"
+                            amount: 3000.00
+                        byLoteria:
+                          - loteriaId: "660e8400-e29b-41d4-a716-446655440000"
+                            loteriaName: "Tiempos Tica"
+                            amount: 5000.00
+                          - loteriaId: "660e8400-e29b-41d4-a716-446655440001"
+                            loteriaName: "Lotto"
+                            amount: 2500.00
+                      cxc:
+                        totalAmount: 65000.00
+                        byVentana:
+                          - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                            ventanaName: "Ventana Central"
+                            totalSales: 120000.00
+                            totalPaidOut: 55000.00
+                            amount: 65000.00
+                      cxp:
+                        totalAmount: 0
+                        byVentana: []
+                      timeSeries:
+                        - date: "2025-10-29"
+                          sales: 150000.00
+                          commissions: 7500.00
+                          tickets: 1250
+                      exposure:
+                        topNumbers:
+                          - number: "00"
+                            betType: "NUMERO"
+                            sales: 15000.00
+                            potentialPayout: 1050000.00
+                            ratio: 70.00
+                          - number: "13"
+                            betType: "NUMERO"
+                            sales: 12000.00
+                            potentialPayout: 840000.00
+                            ratio: 70.00
+                        heatmap:
+                          - number: "00"
+                            sales: 15000.00
+                          - number: "13"
+                            sales: 12000.00
+                        byLoteria:
+                          - loteriaId: "660e8400-e29b-41d4-a716-446655440000"
+                            loteriaName: "Tiempos Tica"
+                            sales: 100000.00
+                            potentialPayout: 7000000.00
+                      previousPeriod:
+                        summary:
+                          totalSales: 140000.00
+                          totalTickets: 1180
+                          totalWinners: 78
+                          totalCommissions: 7000.00
+                          winRate: 6.61
+                        ganancia:
+                          totalAmount: 7000.00
+                          totalSales: 140000.00
+                          margin: 5.00
+                        cxc:
+                          totalAmount: 60000.00
+                        cxp:
+                          totalAmount: 0
+                      alerts:
+                        - id: "alert-001"
+                          type: "HIGH_CXC"
+                          severity: "warn"
+                          message: "CxC de Ventana Central excede umbral"
+                          threshold: 50000.00
+                          ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                          ventanaName: "Ventana Central"
+                          suggestedAction: "Solicitar pago o ajustar crédito"
+                      meta:
+                        range:
+                          fromAt: "2025-10-29T00:00:00.000-06:00"
+                          toAt: "2025-10-29T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:30:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 245
+                        totalQueries: 8
+                admin_month_filtered:
+                  summary: ADMIN - Mes de octubre con filtros
+                  value:
+                    success: true
+                    data:
+                      summary:
+                        totalSales: 4500000.00
+                        totalTickets: 37500
+                        totalWinners: 2550
+                        totalCommissions: 225000.00
+                        winRate: 6.80
+                      ganancia:
+                        totalAmount: 225000.00
+                        totalSales: 4500000.00
+                        margin: 5.00
+                        byVentana:
+                          - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                            ventanaName: "Ventana Central"
+                            amount: 135000.00
+                        byLoteria:
+                          - loteriaId: "660e8400-e29b-41d4-a716-446655440000"
+                            loteriaName: "Tiempos Tica"
+                            amount: 225000.00
+                      cxc:
+                        totalAmount: 1950000.00
+                        byVentana:
+                          - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                            ventanaName: "Ventana Central"
+                            totalSales: 3600000.00
+                            totalPaidOut: 1650000.00
+                            amount: 1950000.00
+                      cxp:
+                        totalAmount: 0
+                        byVentana: []
+                      timeSeries:
+                        - date: "2025-10-01"
+                          sales: 145000.00
+                          commissions: 7250.00
+                          tickets: 1208
+                        - date: "2025-10-02"
+                          sales: 152000.00
+                          commissions: 7600.00
+                          tickets: 1267
+                      exposure:
+                        topNumbers:
+                          - number: "00"
+                            betType: "NUMERO"
+                            sales: 450000.00
+                            potentialPayout: 31500000.00
+                            ratio: 70.00
+                        heatmap:
+                          - number: "00"
+                            sales: 450000.00
+                        byLoteria:
+                          - loteriaId: "660e8400-e29b-41d4-a716-446655440000"
+                            loteriaName: "Tiempos Tica"
+                            sales: 4500000.00
+                            potentialPayout: 315000000.00
+                      previousPeriod:
+                        summary:
+                          totalSales: 4200000.00
+                          totalTickets: 35000
+                          totalWinners: 2380
+                          totalCommissions: 210000.00
+                          winRate: 6.80
+                        ganancia:
+                          totalAmount: 210000.00
+                          totalSales: 4200000.00
+                          margin: 5.00
+                        cxc:
+                          totalAmount: 1800000.00
+                        cxp:
+                          totalAmount: 0
+                      alerts: []
+                      meta:
+                        range:
+                          fromAt: "2025-10-01T00:00:00.000-06:00"
+                          toAt: "2025-10-31T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:35:00.000-06:00"
+                        scope: "byVentana"
+                        queryExecutionTime: 892
+                        totalQueries: 8
+        '304':
+          description: Not Modified (ETag match)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /admin/dashboard/ganancia:
+    get:
+      tags:
+        - Analytics
+      summary: Desglose de ganancia (comisiones)
+      description: |
+        Retorna el desglose detallado de comisiones por dimensión especificada.
+
+        **Cálculo:**
+        - `totalAmount`: SUM(commissionAmount) WHERE isWinner=true
+        - `margin`: (totalCommissions / totalSales) * 100
+
+        **Dimensiones soportadas:**
+        - `ventana`: Agrupación por ventana
+        - `loteria`: Agrupación por lotería
+        - `vendedor`: Agrupación por vendedor
+
+        **Ranking:**
+        - Usar `top` para limitar resultados
+        - `orderBy`: sales, commissions, amount, margin
+        - `order`: asc, desc (default: desc)
+
+      operationId: getGanancia
+      parameters:
+        - $ref: '#/components/parameters/DatePreset'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/VentanaId'
+        - $ref: '#/components/parameters/LoteriaId'
+        - $ref: '#/components/parameters/BetType'
+        - $ref: '#/components/parameters/Dimension'
+        - $ref: '#/components/parameters/Top'
+        - $ref: '#/components/parameters/OrderBy'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Desglose de ganancia retornado exitosamente
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GananciaResponse'
+              examples:
+                today_by_ventana:
+                  summary: Ganancia de hoy por ventana
+                  value:
+                    success: true
+                    data:
+                      totalAmount: 7500.00
+                      totalSales: 150000.00
+                      margin: 5.00
+                      byVentana:
+                        - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                          ventanaName: "Ventana Central"
+                          amount: 4500.00
+                          sales: 90000.00
+                          margin: 5.00
+                        - ventanaId: "550e8400-e29b-41d4-a716-446655440001"
+                          ventanaName: "Ventana Norte"
+                          amount: 3000.00
+                          sales: 60000.00
+                          margin: 5.00
+                      meta:
+                        range:
+                          fromAt: "2025-10-29T00:00:00.000-06:00"
+                          toAt: "2025-10-29T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:30:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 125
+                        totalQueries: 2
+                month_top_5_vendedores:
+                  summary: Top 5 vendedores del mes
+                  value:
+                    success: true
+                    data:
+                      totalAmount: 225000.00
+                      totalSales: 4500000.00
+                      margin: 5.00
+                      byVendedor:
+                        - vendedorId: "770e8400-e29b-41d4-a716-446655440000"
+                          vendedorName: "Juan Pérez"
+                          amount: 60000.00
+                          sales: 1200000.00
+                          margin: 5.00
+                          tickets: 10000
+                        - vendedorId: "770e8400-e29b-41d4-a716-446655440001"
+                          vendedorName: "María González"
+                          amount: 52500.00
+                          sales: 1050000.00
+                          margin: 5.00
+                          tickets: 8750
+                      pagination:
+                        page: 1
+                        pageSize: 5
+                        total: 25
+                      meta:
+                        range:
+                          fromAt: "2025-10-01T00:00:00.000-06:00"
+                          toAt: "2025-10-31T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:35:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 198
+                        totalQueries: 3
+        '304':
+          description: Not Modified
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /admin/dashboard/cxc:
+    get:
+      tags:
+        - Analytics
+      summary: Cuentas por Cobrar
+      description: |
+        Retorna el desglose de cuentas por cobrar (dinero que ventanas deben al banco).
+
+        **Cálculo:**
+        - `CxC = Total Ventas - Total Pagado`
+        - Solo se incluyen montos positivos (debe > 0)
+
+        **Aging (opcional):**
+        - Incluir `aging=true` para desglose por antigüedad de deuda
+        - Buckets: 0-7 días, 8-14 días, 15-30 días, 31+ días
+
+      operationId: getCxC
+      parameters:
+        - $ref: '#/components/parameters/DatePreset'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/VentanaId'
+        - $ref: '#/components/parameters/LoteriaId'
+        - $ref: '#/components/parameters/BetType'
+        - name: aging
+          in: query
+          description: Incluir desglose por antigüedad
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: CxC retornado exitosamente
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CxCResponse'
+              examples:
+                today_without_aging:
+                  summary: CxC de hoy sin aging
+                  value:
+                    success: true
+                    data:
+                      totalAmount: 65000.00
+                      byVentana:
+                        - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                          ventanaName: "Ventana Central"
+                          totalSales: 120000.00
+                          totalPaidOut: 55000.00
+                          amount: 65000.00
+                      meta:
+                        range:
+                          fromAt: "2025-10-29T00:00:00.000-06:00"
+                          toAt: "2025-10-29T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:30:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 98
+                        totalQueries: 1
+                month_with_aging:
+                  summary: CxC del mes con aging
+                  value:
+                    success: true
+                    data:
+                      totalAmount: 1950000.00
+                      byVentana:
+                        - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                          ventanaName: "Ventana Central"
+                          totalSales: 3600000.00
+                          totalPaidOut: 1650000.00
+                          amount: 1950000.00
+                      aging:
+                        - bucket: "0-7"
+                          amount: 500000.00
+                          ventanas:
+                            - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                              ventanaName: "Ventana Central"
+                              amount: 500000.00
+                        - bucket: "8-14"
+                          amount: 650000.00
+                          ventanas:
+                            - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                              ventanaName: "Ventana Central"
+                              amount: 650000.00
+                        - bucket: "15-30"
+                          amount: 600000.00
+                          ventanas:
+                            - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                              ventanaName: "Ventana Central"
+                              amount: 600000.00
+                        - bucket: "31+"
+                          amount: 200000.00
+                          ventanas:
+                            - ventanaId: "550e8400-e29b-41d4-a716-446655440000"
+                              ventanaName: "Ventana Central"
+                              amount: 200000.00
+                      meta:
+                        range:
+                          fromAt: "2025-10-01T00:00:00.000-06:00"
+                          toAt: "2025-10-31T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:35:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 256
+                        totalQueries: 2
+        '304':
+          description: Not Modified
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /admin/dashboard/cxp:
+    get:
+      tags:
+        - Analytics
+      summary: Cuentas por Pagar
+      description: |
+        Retorna el desglose de cuentas por pagar (overpayments - dinero que banco debe a ventanas).
+
+        **Cálculo:**
+        - `CxP = Total Pagado - Total Premios`
+        - Solo se incluyen montos positivos (overpayment > 0)
+
+        **Nota:** CxP ocurre cuando una ventana paga más de lo que los clientes ganaron.
+
+      operationId: getCxP
+      parameters:
+        - $ref: '#/components/parameters/DatePreset'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/VentanaId'
+        - $ref: '#/components/parameters/LoteriaId'
+        - $ref: '#/components/parameters/BetType'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: CxP retornado exitosamente
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CxPResponse'
+              examples:
+                today_no_overpayment:
+                  summary: CxP de hoy sin overpayment
+                  value:
+                    success: true
+                    data:
+                      totalAmount: 0
+                      byVentana: []
+                      meta:
+                        range:
+                          fromAt: "2025-10-29T00:00:00.000-06:00"
+                          toAt: "2025-10-29T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:30:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 85
+                        totalQueries: 1
+                month_with_overpayment:
+                  summary: CxP del mes con overpayment
+                  value:
+                    success: true
+                    data:
+                      totalAmount: 15000.00
+                      byVentana:
+                        - ventanaId: "550e8400-e29b-41d4-a716-446655440002"
+                          ventanaName: "Ventana Sur"
+                          totalWinners: 85000.00
+                          totalPaidOut: 100000.00
+                          amount: 15000.00
+                      meta:
+                        range:
+                          fromAt: "2025-10-01T00:00:00.000-06:00"
+                          toAt: "2025-10-31T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:35:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 112
+                        totalQueries: 1
+        '304':
+          description: Not Modified
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /admin/dashboard/timeseries:
+    get:
+      tags:
+        - Analytics
+      summary: Serie temporal para gráficos
+      description: |
+        Retorna datos de serie temporal listos para renderizar en gráficos de línea/área.
+
+        **Intervalo:**
+        - `day`: Agrupación diaria (default)
+        - `hour`: Agrupación por hora (solo si rango ≤ 7 días)
+
+        **Validación:**
+        - Si `interval=hour` y rango > 7 días → 422 ValidationError
+
+        **Performance SLO:**
+        - p95 ≤ 1000ms
+
+      operationId: getTimeSeries
+      parameters:
+        - $ref: '#/components/parameters/DatePreset'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/VentanaId'
+        - $ref: '#/components/parameters/LoteriaId'
+        - $ref: '#/components/parameters/BetType'
+        - $ref: '#/components/parameters/Interval'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Serie temporal retornada exitosamente
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeSeriesResponse'
+              examples:
+                week_by_day:
+                  summary: Última semana por día
+                  value:
+                    success: true
+                    data:
+                      timeSeries:
+                        - date: "2025-10-23"
+                          sales: 148000.00
+                          commissions: 7400.00
+                          tickets: 1233
+                        - date: "2025-10-24"
+                          sales: 152000.00
+                          commissions: 7600.00
+                          tickets: 1267
+                        - date: "2025-10-25"
+                          sales: 145000.00
+                          commissions: 7250.00
+                          tickets: 1208
+                        - date: "2025-10-26"
+                          sales: 150000.00
+                          commissions: 7500.00
+                          tickets: 1250
+                        - date: "2025-10-27"
+                          sales: 155000.00
+                          commissions: 7750.00
+                          tickets: 1292
+                        - date: "2025-10-28"
+                          sales: 147000.00
+                          commissions: 7350.00
+                          tickets: 1225
+                        - date: "2025-10-29"
+                          sales: 150000.00
+                          commissions: 7500.00
+                          tickets: 1250
+                      meta:
+                        range:
+                          fromAt: "2025-10-23T00:00:00.000-06:00"
+                          toAt: "2025-10-29T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:30:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 178
+                        totalQueries: 1
+                today_by_hour:
+                  summary: Hoy por hora
+                  value:
+                    success: true
+                    data:
+                      timeSeries:
+                        - date: "2025-10-29T06:00:00.000-06:00"
+                          sales: 5000.00
+                          commissions: 250.00
+                          tickets: 42
+                        - date: "2025-10-29T07:00:00.000-06:00"
+                          sales: 8000.00
+                          commissions: 400.00
+                          tickets: 67
+                        - date: "2025-10-29T08:00:00.000-06:00"
+                          sales: 12000.00
+                          commissions: 600.00
+                          tickets: 100
+                      meta:
+                        range:
+                          fromAt: "2025-10-29T00:00:00.000-06:00"
+                          toAt: "2025-10-29T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:30:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 245
+                        totalQueries: 1
+        '304':
+          description: Not Modified
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /admin/dashboard/exposure:
+    get:
+      tags:
+        - Analytics
+      summary: Exposición por número y lotería
+      description: |
+        Retorna análisis de exposición financiera por número y lotería.
+
+        **Métricas:**
+        - `topNumbers`: Números con mayor venta y payout potencial
+        - `heatmap`: Matriz de ventas por número (00-99)
+        - `byLoteria`: Exposición agregada por lotería
+
+        **Ratio:**
+        - `ratio = potentialPayout / sales`: Indica cuántas veces las ventas podría perder la banca
+        - Valores altos (>100) indican alta exposición
+
+        **Performance SLO:**
+        - p95 ≤ 1000ms
+
+      operationId: getExposure
+      parameters:
+        - $ref: '#/components/parameters/DatePreset'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/VentanaId'
+        - $ref: '#/components/parameters/LoteriaId'
+        - $ref: '#/components/parameters/BetType'
+        - $ref: '#/components/parameters/Top'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Exposición retornada exitosamente
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExposureResponse'
+              examples:
+                today_top_10:
+                  summary: Top 10 números de hoy
+                  value:
+                    success: true
+                    data:
+                      topNumbers:
+                        - number: "00"
+                          betType: "NUMERO"
+                          sales: 15000.00
+                          potentialPayout: 1050000.00
+                          ratio: 70.00
+                        - number: "13"
+                          betType: "NUMERO"
+                          sales: 12000.00
+                          potentialPayout: 840000.00
+                          ratio: 70.00
+                        - number: "07"
+                          betType: "NUMERO"
+                          sales: 11500.00
+                          potentialPayout: 805000.00
+                          ratio: 70.00
+                      heatmap:
+                        - number: "00"
+                          sales: 15000.00
+                        - number: "01"
+                          sales: 8500.00
+                        - number: "02"
+                          sales: 7200.00
+                      byLoteria:
+                        - loteriaId: "660e8400-e29b-41d4-a716-446655440000"
+                          loteriaName: "Tiempos Tica"
+                          sales: 100000.00
+                          potentialPayout: 7000000.00
+                          ratio: 70.00
+                        - loteriaId: "660e8400-e29b-41d4-a716-446655440001"
+                          loteriaName: "Lotto"
+                          sales: 50000.00
+                          potentialPayout: 3500000.00
+                          ratio: 70.00
+                      meta:
+                        range:
+                          fromAt: "2025-10-29T00:00:00.000-06:00"
+                          toAt: "2025-10-29T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:30:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 312
+                        totalQueries: 3
+        '304':
+          description: Not Modified
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /admin/dashboard/vendedores:
+    get:
+      tags:
+        - Analytics
+      summary: Ranking y métricas de vendedores
+      description: |
+        Retorna métricas detalladas por vendedor para gestión comercial.
+
+        **Métricas incluidas:**
+        - Ventas totales
+        - Comisiones generadas
+        - Cantidad de tickets
+        - Tickets ganadores
+        - Ticket promedio (sales / tickets)
+
+        **Ranking:**
+        - Usar `top` para limitar resultados
+        - `orderBy`: sales, commissions, tickets, winners, avgTicket
+        - `order`: asc, desc (default: desc)
+
+      operationId: getVendedores
+      parameters:
+        - $ref: '#/components/parameters/DatePreset'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/VentanaId'
+        - $ref: '#/components/parameters/LoteriaId'
+        - $ref: '#/components/parameters/BetType'
+        - $ref: '#/components/parameters/Top'
+        - $ref: '#/components/parameters/OrderBy'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Métricas de vendedores retornadas exitosamente
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VendedoresResponse'
+              examples:
+                month_top_10:
+                  summary: Top 10 vendedores del mes
+                  value:
+                    success: true
+                    data:
+                      byVendedor:
+                        - vendedorId: "770e8400-e29b-41d4-a716-446655440000"
+                          vendedorName: "Juan Pérez"
+                          sales: 1200000.00
+                          commissions: 60000.00
+                          tickets: 10000
+                          winners: 680
+                          avgTicket: 120.00
+                        - vendedorId: "770e8400-e29b-41d4-a716-446655440001"
+                          vendedorName: "María González"
+                          sales: 1050000.00
+                          commissions: 52500.00
+                          tickets: 8750
+                          winners: 595
+                          avgTicket: 120.00
+                      pagination:
+                        page: 1
+                        pageSize: 10
+                        total: 45
+                      meta:
+                        range:
+                          fromAt: "2025-10-01T00:00:00.000-06:00"
+                          toAt: "2025-10-31T23:59:59.999-06:00"
+                        generatedAt: "2025-10-29T15:35:00.000-06:00"
+                        scope: "all"
+                        queryExecutionTime: 289
+                        totalQueries: 2
+        '304':
+          description: Not Modified
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /admin/dashboard/export:
+    get:
+      tags:
+        - Export
+      summary: Exportar datos del dashboard
+      description: |
+        Exporta los datos del dashboard en el formato especificado.
+
+        **Formatos soportados:**
+        - `csv`: Valores separados por coma (UTF-8 BOM)
+        - `xlsx`: Microsoft Excel
+        - `pdf`: Reporte PDF con gráficos
+
+        **Contenido:**
+        - Incluye todas las métricas del dashboard principal
+        - Respeta filtros aplicados (fecha, ventana, lotería, etc.)
+        - Nombre de archivo: `dashboard-{date}-{timestamp}.{format}`
+
+      operationId: exportDashboard
+      parameters:
+        - $ref: '#/components/parameters/DatePreset'
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/VentanaId'
+        - $ref: '#/components/parameters/LoteriaId'
+        - $ref: '#/components/parameters/BetType'
+        - name: format
+          in: query
+          description: Formato de exportación
+          required: true
+          schema:
+            type: string
+            enum:
+              - csv
+              - xlsx
+              - pdf
+      responses:
+        '200':
+          description: Archivo descargado exitosamente
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="dashboard-2025-10-29-153000.xlsx"'
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token JWT obtenido del endpoint de autenticación.
+
+        **Incluye:**
+        - userId
+        - role (ADMIN | VENTANA | VENDEDOR)
+        - ventanaId (si role=VENTANA)
+
+  parameters:
+    DatePreset:
+      name: date
+      in: query
+      description: Preset de fecha
+      required: false
+      schema:
+        type: string
+        enum:
+          - today
+          - yesterday
+          - week
+          - month
+          - year
+          - range
+        default: today
+
+    FromDate:
+      name: fromDate
+      in: query
+      description: Fecha de inicio (YYYY-MM-DD). Requerido si date=range
+      required: false
+      schema:
+        type: string
+        format: date
+        example: "2025-10-01"
+
+    ToDate:
+      name: toDate
+      in: query
+      description: Fecha de fin (YYYY-MM-DD). Requerido si date=range
+      required: false
+      schema:
+        type: string
+        format: date
+        example: "2025-10-31"
+
+    VentanaId:
+      name: ventanaId
+      in: query
+      description: |
+        Filtrar por ventana específica (UUID).
+
+        **RBAC:**
+        - ADMIN: Puede especificar cualquier ventanaId o omitir (todas)
+        - VENTANA: Ignorado y auto-aplicado desde token
+      required: false
+      schema:
+        type: string
+        format: uuid
+        example: "550e8400-e29b-41d4-a716-446655440000"
+
+    LoteriaId:
+      name: loteriaId
+      in: query
+      description: Filtrar por lotería específica (UUID)
+      required: false
+      schema:
+        type: string
+        format: uuid
+        example: "660e8400-e29b-41d4-a716-446655440000"
+
+    BetType:
+      name: betType
+      in: query
+      description: Filtrar por tipo de apuesta
+      required: false
+      schema:
+        type: string
+        enum:
+          - NUMERO
+          - REVENTADO
+
+    Dimension:
+      name: dimension
+      in: query
+      description: Dimensión de agrupación
+      required: false
+      schema:
+        type: string
+        enum:
+          - ventana
+          - loteria
+          - vendedor
+        default: ventana
+
+    Top:
+      name: top
+      in: query
+      description: Limitar resultados a top N
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        example: 10
+
+    OrderBy:
+      name: orderBy
+      in: query
+      description: Campo para ordenar
+      required: false
+      schema:
+        type: string
+        enum:
+          - sales
+          - commissions
+          - amount
+          - margin
+          - tickets
+          - winners
+          - avgTicket
+        default: sales
+
+    Order:
+      name: order
+      in: query
+      description: Dirección de ordenamiento
+      required: false
+      schema:
+        type: string
+        enum:
+          - asc
+          - desc
+        default: desc
+
+    Interval:
+      name: interval
+      in: query
+      description: |
+        Intervalo de agrupación para serie temporal.
+
+        **Validación:**
+        - `hour`: Solo si rango ≤ 7 días (422 si no cumple)
+        - `day`: Sin restricción
+      required: false
+      schema:
+        type: string
+        enum:
+          - day
+          - hour
+        default: day
+
+    Page:
+      name: page
+      in: query
+      description: Número de página (1-indexed)
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    PageSize:
+      name: pageSize
+      in: query
+      description: Cantidad de elementos por página
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      description: ETag para validación de caché
+      required: false
+      schema:
+        type: string
+        example: '"33a64df551425fcc55e4d42a148795d9f25f89d4"'
+
+  headers:
+    ETag:
+      description: Identificador único de la versión del recurso (para caché)
+      schema:
+        type: string
+        example: '"33a64df551425fcc55e4d42a148795d9f25f89d4"'
+
+  schemas:
+    DashboardResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - summary
+            - ganancia
+            - cxc
+            - cxp
+            - timeSeries
+            - exposure
+            - previousPeriod
+            - alerts
+            - meta
+          properties:
+            summary:
+              $ref: '#/components/schemas/Summary'
+            ganancia:
+              $ref: '#/components/schemas/Ganancia'
+            cxc:
+              $ref: '#/components/schemas/CxC'
+            cxp:
+              $ref: '#/components/schemas/CxP'
+            timeSeries:
+              type: array
+              items:
+                $ref: '#/components/schemas/TimeSeriesPoint'
+            exposure:
+              $ref: '#/components/schemas/Exposure'
+            previousPeriod:
+              $ref: '#/components/schemas/PreviousPeriod'
+            alerts:
+              type: array
+              items:
+                $ref: '#/components/schemas/Alert'
+            meta:
+              $ref: '#/components/schemas/Meta'
+
+    Summary:
+      type: object
+      required:
+        - totalSales
+        - totalTickets
+        - totalWinners
+        - totalCommissions
+        - winRate
+      properties:
+        totalSales:
+          type: number
+          format: double
+          description: Total de ventas en el período
+          example: 150000.00
+        totalTickets:
+          type: integer
+          description: Cantidad total de tickets vendidos
+          example: 1250
+        totalWinners:
+          type: integer
+          description: Cantidad de tickets ganadores
+          example: 85
+        totalCommissions:
+          type: number
+          format: double
+          description: Total de comisiones generadas
+          example: 7500.00
+        winRate:
+          type: number
+          format: double
+          description: Tasa de ganadores (winningTickets / totalTickets * 100)
+          example: 6.80
+
+    Ganancia:
+      type: object
+      required:
+        - totalAmount
+        - totalSales
+        - margin
+        - byVentana
+        - byLoteria
+      properties:
+        totalAmount:
+          type: number
+          format: double
+          description: Total de comisiones
+          example: 7500.00
+        totalSales:
+          type: number
+          format: double
+          description: Total de ventas (para calcular margin)
+          example: 150000.00
+        margin:
+          type: number
+          format: double
+          description: Margen de ganancia (commissions / sales * 100)
+          example: 5.00
+        byVentana:
+          type: array
+          items:
+            $ref: '#/components/schemas/VentanaGanancia'
+        byLoteria:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoteriaGanancia'
+
+    VentanaGanancia:
+      type: object
+      required:
+        - ventanaId
+        - ventanaName
+        - amount
+      properties:
+        ventanaId:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        ventanaName:
+          type: string
+          example: "Ventana Central"
+        amount:
+          type: number
+          format: double
+          example: 4500.00
+        sales:
+          type: number
+          format: double
+          description: Ventas de esta ventana (opcional)
+          example: 90000.00
+        margin:
+          type: number
+          format: double
+          description: Margen de esta ventana (opcional)
+          example: 5.00
+
+    LoteriaGanancia:
+      type: object
+      required:
+        - loteriaId
+        - loteriaName
+        - amount
+      properties:
+        loteriaId:
+          type: string
+          format: uuid
+          example: "660e8400-e29b-41d4-a716-446655440000"
+        loteriaName:
+          type: string
+          example: "Tiempos Tica"
+        amount:
+          type: number
+          format: double
+          example: 5000.00
+
+    CxC:
+      type: object
+      required:
+        - totalAmount
+        - byVentana
+      properties:
+        totalAmount:
+          type: number
+          format: double
+          description: Total de cuentas por cobrar
+          example: 65000.00
+        byVentana:
+          type: array
+          items:
+            $ref: '#/components/schemas/VentanaCxC'
+        aging:
+          type: array
+          description: Desglose por antigüedad (opcional)
+          items:
+            $ref: '#/components/schemas/AgingBucket'
+
+    VentanaCxC:
+      type: object
+      required:
+        - ventanaId
+        - ventanaName
+        - totalSales
+        - totalPaidOut
+        - amount
+      properties:
+        ventanaId:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        ventanaName:
+          type: string
+          example: "Ventana Central"
+        totalSales:
+          type: number
+          format: double
+          description: Total de ventas de esta ventana
+          example: 120000.00
+        totalPaidOut:
+          type: number
+          format: double
+          description: Total pagado por esta ventana
+          example: 55000.00
+        amount:
+          type: number
+          format: double
+          description: Diferencia (sales - paidOut)
+          example: 65000.00
+
+    AgingBucket:
+      type: object
+      required:
+        - bucket
+        - amount
+        - ventanas
+      properties:
+        bucket:
+          type: string
+          enum:
+            - "0-7"
+            - "8-14"
+            - "15-30"
+            - "31+"
+          example: "0-7"
+        amount:
+          type: number
+          format: double
+          example: 500000.00
+        ventanas:
+          type: array
+          items:
+            type: object
+            required:
+              - ventanaId
+              - ventanaName
+              - amount
+            properties:
+              ventanaId:
+                type: string
+                format: uuid
+              ventanaName:
+                type: string
+              amount:
+                type: number
+                format: double
+
+    CxP:
+      type: object
+      required:
+        - totalAmount
+        - byVentana
+      properties:
+        totalAmount:
+          type: number
+          format: double
+          description: Total de cuentas por pagar (overpayments)
+          example: 0
+        byVentana:
+          type: array
+          items:
+            $ref: '#/components/schemas/VentanaCxP'
+
+    VentanaCxP:
+      type: object
+      required:
+        - ventanaId
+        - ventanaName
+        - totalWinners
+        - totalPaidOut
+        - amount
+      properties:
+        ventanaId:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440002"
+        ventanaName:
+          type: string
+          example: "Ventana Sur"
+        totalWinners:
+          type: number
+          format: double
+          description: Total de premios ganados
+          example: 85000.00
+        totalPaidOut:
+          type: number
+          format: double
+          description: Total pagado por la ventana
+          example: 100000.00
+        amount:
+          type: number
+          format: double
+          description: Overpayment (paidOut - winners)
+          example: 15000.00
+
+    TimeSeriesPoint:
+      type: object
+      required:
+        - date
+        - sales
+        - commissions
+        - tickets
+      properties:
+        date:
+          type: string
+          description: Fecha (YYYY-MM-DD) o timestamp ISO si interval=hour
+          example: "2025-10-29"
+        sales:
+          type: number
+          format: double
+          example: 150000.00
+        commissions:
+          type: number
+          format: double
+          example: 7500.00
+        tickets:
+          type: integer
+          example: 1250
+
+    Exposure:
+      type: object
+      required:
+        - topNumbers
+        - heatmap
+        - byLoteria
+      properties:
+        topNumbers:
+          type: array
+          items:
+            $ref: '#/components/schemas/NumberExposure'
+        heatmap:
+          type: array
+          items:
+            $ref: '#/components/schemas/HeatmapPoint'
+        byLoteria:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoteriaExposure'
+
+    NumberExposure:
+      type: object
+      required:
+        - number
+        - betType
+        - sales
+        - potentialPayout
+        - ratio
+      properties:
+        number:
+          type: string
+          pattern: '^[0-9]{2}$'
+          description: Número de dos dígitos (00-99)
+          example: "00"
+        betType:
+          type: string
+          enum:
+            - NUMERO
+            - REVENTADO
+          example: "NUMERO"
+        sales:
+          type: number
+          format: double
+          description: Ventas de este número
+          example: 15000.00
+        potentialPayout:
+          type: number
+          format: double
+          description: Payout potencial si gana
+          example: 1050000.00
+        ratio:
+          type: number
+          format: double
+          description: Ratio de exposición (potentialPayout / sales)
+          example: 70.00
+
+    HeatmapPoint:
+      type: object
+      required:
+        - number
+        - sales
+      properties:
+        number:
+          type: string
+          pattern: '^[0-9]{2}$'
+          example: "00"
+        sales:
+          type: number
+          format: double
+          example: 15000.00
+
+    LoteriaExposure:
+      type: object
+      required:
+        - loteriaId
+        - loteriaName
+        - sales
+        - potentialPayout
+      properties:
+        loteriaId:
+          type: string
+          format: uuid
+          example: "660e8400-e29b-41d4-a716-446655440000"
+        loteriaName:
+          type: string
+          example: "Tiempos Tica"
+        sales:
+          type: number
+          format: double
+          example: 100000.00
+        potentialPayout:
+          type: number
+          format: double
+          example: 7000000.00
+        ratio:
+          type: number
+          format: double
+          description: Ratio de exposición
+          example: 70.00
+
+    PreviousPeriod:
+      type: object
+      required:
+        - summary
+        - ganancia
+        - cxc
+        - cxp
+      properties:
+        summary:
+          $ref: '#/components/schemas/Summary'
+        ganancia:
+          type: object
+          required:
+            - totalAmount
+            - totalSales
+            - margin
+          properties:
+            totalAmount:
+              type: number
+              format: double
+            totalSales:
+              type: number
+              format: double
+            margin:
+              type: number
+              format: double
+        cxc:
+          type: object
+          required:
+            - totalAmount
+          properties:
+            totalAmount:
+              type: number
+              format: double
+        cxp:
+          type: object
+          required:
+            - totalAmount
+          properties:
+            totalAmount:
+              type: number
+              format: double
+
+    Alert:
+      type: object
+      required:
+        - id
+        - type
+        - severity
+        - message
+      properties:
+        id:
+          type: string
+          description: Identificador único de la alerta
+          example: "alert-001"
+        type:
+          type: string
+          enum:
+            - HIGH_CXC
+            - LOW_SALES
+            - HIGH_EXPOSURE
+            - OVERPAYMENT
+          example: "HIGH_CXC"
+        severity:
+          type: string
+          enum:
+            - info
+            - warn
+            - critical
+          example: "warn"
+        message:
+          type: string
+          example: "CxC de Ventana Central excede umbral"
+        threshold:
+          type: number
+          format: double
+          description: Umbral configurado
+          example: 50000.00
+        ventanaId:
+          type: string
+          format: uuid
+          description: Ventana afectada (opcional)
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        ventanaName:
+          type: string
+          description: Nombre de ventana afectada (opcional)
+          example: "Ventana Central"
+        suggestedAction:
+          type: string
+          description: Acción sugerida (opcional)
+          example: "Solicitar pago o ajustar crédito"
+
+    Meta:
+      type: object
+      required:
+        - range
+        - generatedAt
+        - scope
+        - queryExecutionTime
+        - totalQueries
+      properties:
+        range:
+          type: object
+          required:
+            - fromAt
+            - toAt
+          properties:
+            fromAt:
+              type: string
+              format: date-time
+              description: Inicio del rango (ISO 8601 con TZ)
+              example: "2025-10-29T00:00:00.000-06:00"
+            toAt:
+              type: string
+              format: date-time
+              description: Fin del rango (ISO 8601 con TZ)
+              example: "2025-10-29T23:59:59.999-06:00"
+        generatedAt:
+          type: string
+          format: date-time
+          description: Timestamp de generación (ISO 8601 con TZ)
+          example: "2025-10-29T15:30:00.000-06:00"
+        scope:
+          type: string
+          enum:
+            - all
+            - byVentana
+          description: Alcance de los datos
+          example: "all"
+        queryExecutionTime:
+          type: integer
+          description: Tiempo de ejecución de queries (ms)
+          example: 245
+        totalQueries:
+          type: integer
+          description: Cantidad total de queries ejecutadas
+          example: 8
+
+    GananciaResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          required:
+            - totalAmount
+            - totalSales
+            - margin
+            - meta
+          properties:
+            totalAmount:
+              type: number
+              format: double
+            totalSales:
+              type: number
+              format: double
+            margin:
+              type: number
+              format: double
+            byVentana:
+              type: array
+              items:
+                $ref: '#/components/schemas/VentanaGanancia'
+            byLoteria:
+              type: array
+              items:
+                $ref: '#/components/schemas/LoteriaGanancia'
+            byVendedor:
+              type: array
+              items:
+                $ref: '#/components/schemas/VendedorGanancia'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            meta:
+              $ref: '#/components/schemas/Meta'
+
+    VendedorGanancia:
+      type: object
+      required:
+        - vendedorId
+        - vendedorName
+        - amount
+      properties:
+        vendedorId:
+          type: string
+          format: uuid
+        vendedorName:
+          type: string
+        amount:
+          type: number
+          format: double
+        sales:
+          type: number
+          format: double
+        margin:
+          type: number
+          format: double
+        tickets:
+          type: integer
+
+    CxCResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          required:
+            - totalAmount
+            - byVentana
+            - meta
+          properties:
+            totalAmount:
+              type: number
+              format: double
+            byVentana:
+              type: array
+              items:
+                $ref: '#/components/schemas/VentanaCxC'
+            aging:
+              type: array
+              items:
+                $ref: '#/components/schemas/AgingBucket'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            meta:
+              $ref: '#/components/schemas/Meta'
+
+    CxPResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          required:
+            - totalAmount
+            - byVentana
+            - meta
+          properties:
+            totalAmount:
+              type: number
+              format: double
+            byVentana:
+              type: array
+              items:
+                $ref: '#/components/schemas/VentanaCxP'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            meta:
+              $ref: '#/components/schemas/Meta'
+
+    TimeSeriesResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          required:
+            - timeSeries
+            - meta
+          properties:
+            timeSeries:
+              type: array
+              items:
+                $ref: '#/components/schemas/TimeSeriesPoint'
+            meta:
+              $ref: '#/components/schemas/Meta'
+
+    ExposureResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          required:
+            - topNumbers
+            - heatmap
+            - byLoteria
+            - meta
+          properties:
+            topNumbers:
+              type: array
+              items:
+                $ref: '#/components/schemas/NumberExposure'
+            heatmap:
+              type: array
+              items:
+                $ref: '#/components/schemas/HeatmapPoint'
+            byLoteria:
+              type: array
+              items:
+                $ref: '#/components/schemas/LoteriaExposure'
+            meta:
+              $ref: '#/components/schemas/Meta'
+
+    VendedoresResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          required:
+            - byVendedor
+            - meta
+          properties:
+            byVendedor:
+              type: array
+              items:
+                $ref: '#/components/schemas/VendedorMetrics'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            meta:
+              $ref: '#/components/schemas/Meta'
+
+    VendedorMetrics:
+      type: object
+      required:
+        - vendedorId
+        - vendedorName
+        - sales
+        - commissions
+        - tickets
+        - winners
+        - avgTicket
+      properties:
+        vendedorId:
+          type: string
+          format: uuid
+        vendedorName:
+          type: string
+        sales:
+          type: number
+          format: double
+        commissions:
+          type: number
+          format: double
+        tickets:
+          type: integer
+        winners:
+          type: integer
+        avgTicket:
+          type: number
+          format: double
+          description: Ticket promedio (sales / tickets)
+
+    Pagination:
+      type: object
+      required:
+        - page
+        - pageSize
+        - total
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          example: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          example: 20
+        total:
+          type: integer
+          minimum: 0
+          description: Total de elementos disponibles
+          example: 45
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "Error message"
+        code:
+          type: string
+          description: Código de error específico (opcional)
+          example: "FORBIDDEN"
+
+    ValidationErrorResponse:
+      type: object
+      required:
+        - success
+        - message
+        - errors
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "ValidationError"
+        errors:
+          type: array
+          items:
+            type: object
+            required:
+              - path
+              - message
+            properties:
+              path:
+                type: string
+                description: Campo que falló la validación
+                example: "fromDate"
+              message:
+                type: string
+                description: Descripción del error
+                example: "fromDate must be before or equal to toDate"
+
+  responses:
+    Unauthorized:
+      description: No autenticado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            message: "Unauthorized"
+
+    Forbidden:
+      description: No autorizado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            vendedor_forbidden:
+              summary: VENDEDOR intenta acceder al dashboard
+              value:
+                success: false
+                message: "No autorizado para ver dashboard"
+                code: "FORBIDDEN"
+            ventana_access_denied:
+              summary: VENTANA intenta ver otra ventana
+              value:
+                success: false
+                message: "No autorizado"
+                code: "FORBIDDEN"
+
+    ValidationError:
+      description: Error de validación
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+          examples:
+            invalid_date_range:
+              summary: Rango de fechas inválido
+              value:
+                success: false
+                message: "ValidationError"
+                errors:
+                  - path: "fromDate"
+                    message: "fromDate must be before or equal to toDate"
+            missing_date_range:
+              summary: Falta fromDate cuando date=range
+              value:
+                success: false
+                message: "ValidationError"
+                errors:
+                  - path: "fromDate"
+                    message: "fromDate is required when date=range"
+                  - path: "toDate"
+                    message: "toDate is required when date=range"
+            invalid_interval:
+              summary: interval=hour con rango > 7 días
+              value:
+                success: false
+                message: "ValidationError"
+                errors:
+                  - path: "interval"
+                    message: "interval=hour is only allowed for ranges <= 7 days"
