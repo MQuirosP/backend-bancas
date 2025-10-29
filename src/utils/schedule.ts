@@ -1,6 +1,6 @@
 export type DrawSchedule = {
   frequency?: 'diario' | 'semanal' | 'personalizado'
-  times?: string[]              // "HH:MM" (interpretado en UTC para reproducibilidad)
+  times?: string[]              // "HH:MM" en hora local de Costa Rica (GMT-6), se convierte automáticamente a UTC
   daysOfWeek?: number[]         // 0..6 (0=Domingo, usando getUTCDay)
 }
 

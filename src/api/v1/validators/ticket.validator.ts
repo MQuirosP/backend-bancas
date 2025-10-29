@@ -71,3 +71,30 @@ export const ListTicketsQuerySchema = z
   .strict();
 
 export const validateListTicketsQuery = validateQuery(ListTicketsQuerySchema);
+
+// ==================== PAYMENT VALIDATORS ====================
+
+/**
+ * Schema para registrar un pago (total o parcial)
+ */
+export const RegisterPaymentSchema = z.object({
+  amountPaid: z.number().positive("El monto pagado debe ser mayor a 0"),
+  method: z.enum(["cash", "transfer", "check", "other"]).default("cash"),
+  notes: z.string().max(500).optional(),
+  isFinal: z.boolean().default(false),
+  idempotencyKey: z.string().min(8).max(100).optional(),
+}).passthrough(); // Permitir campos adicionales del frontend sin causar error
+
+/**
+ * Schema para revertir un pago
+ */
+export const ReversePaymentSchema = z.object({
+  reason: z.string().min(5).max(500).optional(),
+});
+
+/**
+ * Schema para marcar pago parcial como final
+ */
+export const FinalizePaymentSchema = z.object({
+  notes: z.string().max(500).optional(),
+});

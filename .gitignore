@@ -1,17 +1,61 @@
+# Dependencies
 node_modules/
+
+# Environment variables
 .env
 **/.env
+
+# IDE
 .vscode/
 **/.vscode/
 .DS_Store
+
+# Tests
 tests/tickets/concurrency.test.ts
 jest.config.ts
+
+# Build output
 dist/
-# old prisma migrations parked locally
+
+# Prisma migrations backup
 src/prisma/migrations_archive/
 src/prisma/migrations_archive1/
+
+# Archivos temporales de sesión
 FRONTEND_API_SUMMARY.md
 VENTAS_API_DOCUMENTATION.md
+SEND_TO_FRONTEND.md
+SESSION_SUMMARY.md
+test-*.js
+test-*.ts
+*.test.temp.ts
+*.temp.js
+*.temp.ts
+
+# Archivos de respaldo/copia
+*- copia.*
+*- backup.*
+*.backup
+*.bak
+
+# Scripts temporales (no versionar en raíz, solo en scripts/ si es necesario)
+/*.bat
+/*.ps1
+/*.sh
+/*.sql
+RESET_*.bat
+CLEAN_*.bat
+CREATE_*.sql
+ENABLE_*.sql
+FIX_*.sql
+VERIFY_*.sql
+RESTORE_*.sql
+apply-*.bat
+apply-*.ps1
+apply-*.sh
+
+# Documentación generada automáticamente (mantener solo en docs/)
+# La carpeta docs/ está versionada, pero estos archivos específicos no
 docs/VENTAS_MODULE.md
 docs/COMMISSION_SYSTEM.md
 docs/guia-completa-cliente/GUIA_COMPLETA_CLIENTE_PARTE2.md
@@ -22,8 +66,6 @@ docs/guia-completa-cliente/INDICE_GUIA_COMPLETA.md
 docs/reportes/FRONTEND_INTEGRATION.md
 docs/reportes/VENTAS_API.md
 docs/DASHBOARD_TICKET_PAYMENT_STRATEGY.md
-SEND_TO_FRONTEND.md
-SESSION_SUMMARY.md
 docs/IMPLEMENTATION_SUMMARY.md
 docs/FRONTEND_INTEGRATION_SUMMARY.txt
 docs/TICKET_PAYMENT_IMPLEMENTATION_GUIDE.md
@@ -43,3 +85,13 @@ docs/USER_DATABASE_VERIFICATION.md
 docs/SESSION_SUMMARY_USER_MODULE.md
 docs/TICKET_PAYMENT_REQUEST_PAYLOAD.md
 docs/ERROR_TKT_PAY_006_ANALYSIS.md
+docs/BACKEND_INTEGRATION_PAYMENTS.md
+docs/CLEANUP_GITIGNORE.md
+docs/IDEMPOTENCY_GUIDE.md
+docs/PAYMENT_FIXES_LOG.md
+docs/RESUMEN_UNIFICACION_PAGOS.md
+docs/TICKET_PAYMENT_UNIFICATION.md
+docs/TICKET_UNIFIED_PAYMENT_INTEGRATION.md
+docs/architecture/Sorteos_Idempotencia_UTC.md
+docs/fixes/TIMEZONE_FIX_RESUMEN.md
+docs/fixes/TIMEZONE_FIX.md
