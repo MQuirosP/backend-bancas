@@ -511,7 +511,7 @@ export const DashboardService = {
       Prisma.sql`
         SELECT
           j.number,
-          j."betType" as bet_type,
+          j.type as bet_type,
           COALESCE(SUM(j.amount), 0) as total_sales,
           COALESCE(SUM(j.payout), 0) as potential_payout
         FROM "Jugada" j
@@ -523,8 +523,8 @@ export const DashboardService = {
           AND t."createdAt" <= ${filters.toDate}
           ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
           ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
-          ${filters.betType ? Prisma.sql`AND j."betType" = ${filters.betType}` : Prisma.empty}
-        GROUP BY j.number, j."betType"
+          ${filters.betType ? Prisma.sql`AND j.type = ${filters.betType}` : Prisma.empty}
+        GROUP BY j.number, j.type
         ORDER BY total_sales DESC
         LIMIT ${topLimit}
       `
