@@ -25,12 +25,13 @@ export interface VentasFilters {
 /**
  * Construye el WHERE de Prisma a partir de filtros normalizados
  * Nota: Usa deletedAt IS NULL para soft-delete, no isActive
- * Tickets válidos: ACTIVE o EVALUATED
+ * Incluye todos los statuses (ACTIVE, EVALUATED, PAID, CANCELLED) excepto soft-deleted
  */
 function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
   const where: Prisma.TicketWhereInput = {
     deletedAt: null, // Soft-delete: solo tickets no eliminados
-    status: { in: ['ACTIVE', 'EVALUATED'] as any }, // Solo tickets activos o evaluados
+    // NO filtrar por status aquí - incluir TODOS los tickets (ACTIVE, EVALUATED, PAID)
+    // El filtro de status se aplica solo si se solicita explícitamente en filters.status
   };
 
   // Filtro por fechas (createdAt)
@@ -228,19 +229,25 @@ export const VentasService = {
       // Contar tickets pagados vs no pagados (solo tickets ganadores)
       const winnerWhere = { ...where, isWinner: true };
       const [paidCount, unpaidCount] = await prisma.$transaction([
-        // Tickets completamente pagados (remainingAmount = 0)
+        // Tickets completamente pagados (status PAID o remainingAmount = 0 con totalPaid > 0)
         prisma.ticket.count({
           where: {
             ...winnerWhere,
-            remainingAmount: 0,
-            totalPaid: { gt: 0 },
+            OR: [
+              { status: 'PAID' }, // Status PAID significa pago completo
+              {
+                remainingAmount: 0,
+                totalPaid: { gt: 0 }
+              }
+            ]
           },
         }),
-        // Tickets con pago pendiente (remainingAmount > 0)
+        // Tickets con pago pendiente (remainingAmount > 0 y no PAID)
         prisma.ticket.count({
           where: {
             ...winnerWhere,
             remainingAmount: { gt: 0 },
+            status: { not: 'PAID' }
           },
         }),
       ]);
