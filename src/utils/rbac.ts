@@ -28,6 +28,28 @@ export interface EffectiveFilters {
 }
 
 /**
+ * Valida que un usuario VENTANA tenga ventanaId asignado.
+ * Lanza error 403 si el usuario es VENTANA pero no tiene ventanaId.
+ *
+ * @param role Rol del usuario
+ * @param ventanaId ventanaId del usuario (puede ser null/undefined)
+ * @throws AppError(403) si role es VENTANA pero ventanaId es null/undefined
+ */
+export function validateVentanaUser(role: Role, ventanaId?: string | null): void {
+  if (role === Role.VENTANA && !ventanaId) {
+    throw new AppError('VENTANA user must have ventanaId assigned', 403, {
+      code: 'RBAC_003',
+      details: [
+        {
+          field: 'ventanaId',
+          reason: 'User configuration error: VENTANA role requires ventanaId'
+        }
+      ]
+    });
+  }
+}
+
+/**
  * Aplica filtros de RBAC automáticamente según el rol del usuario.
  *
  * Reglas:
@@ -52,6 +74,9 @@ export async function applyRbacFilters(
     delete effective.ventanaId; // ignorar cualquier ventanaId
   } else if (context.role === Role.VENTANA) {
     // VENTANA: todas las ventas de su ventana
+    // CRITICAL: Validar que el usuario VENTANA tenga un ventanaId asignado
+    validateVentanaUser(context.role, context.ventanaId);
+
     effective.ventanaId = context.ventanaId;
 
     // Si solicita un vendedorId específico, validar que pertenezca a la ventana
