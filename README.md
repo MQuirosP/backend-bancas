@@ -373,6 +373,109 @@ GET /api/v1/ventas/timeseries?granularity=day
 
 ---
 
+## 📊 Dashboard API & Analytics
+
+Sistema completo de análisis de ventas y métricas operacionales.
+
+### Endpoints disponibles
+
+```http
+GET /api/v1/admin/dashboard              # Dashboard principal con KPIs
+GET /api/v1/admin/dashboard/timeseries   # Series temporales (día/hora)
+GET /api/v1/admin/dashboard/exposure     # Análisis de exposición financiera
+GET /api/v1/admin/dashboard/vendedores   # Ranking de vendedores (paginado)
+GET /api/v1/admin/dashboard/export       # Exportación (placeholder)
+```
+
+### Características principales
+
+- ✅ **Filtros universales**: `fromDate`, `toDate`, `ventanaId`, `loteriaId`, `betType`
+- ✅ **RBAC automático**: Filtrado por rol (ADMIN/VENTANA/VENDEDOR)
+- ✅ **Intervalos temporales**: day/hour con validación (hour solo si ≤7 días)
+- ✅ **Alertas automáticas**: CXC alto, ventas bajas, exposición alta, sobrepago
+- ✅ **Comparación periódica**: `compare=true` para métricas vs periodo anterior
+- ✅ **Performance tracking**: `queryExecutionTime` y `totalQueries` en metadata
+
+### Métricas incluidas
+
+| Categoría | Métricas |
+|-----------|----------|
+| **Ventas** | `totalSales`, `totalTickets`, `avgTicketAmount` |
+| **Premios** | `totalPayout`, `totalWinners`, `netRevenue` |
+| **Comisiones** | `totalCommissions`, `netAfterCommission` |
+| **CXC** | `totalAmount`, `overdueAmount`, `oldestDays` |
+| **Pagos** | `totalPaid`, `remainingAmount`, `paidCount`, `unpaidCount` |
+
+> 📖 Ver documentación completa en [`docs/DASHBOARD_API.md`](docs/DASHBOARD_API.md)
+
+---
+
+## 💳 Payment Tracking
+
+Sistema de seguimiento de pagos a tickets ganadores.
+
+### Campos de pago en `/ventas/summary`
+
+```typescript
+{
+  // ... campos existentes de ventas
+  totalPaid: number;           // Total pagado a ganadores
+  remainingAmount: number;     // Premios pendientes de pago
+  paidTicketsCount: number;    // Tickets completamente pagados
+  unpaidTicketsCount: number;  // Tickets con pago pendiente
+}
+```
+
+### Lógica de conteo
+
+- **paidTicketsCount**: Tickets con `status = 'PAID'` O (`remainingAmount = 0` Y `totalPaid > 0`)
+- **unpaidTicketsCount**: Tickets con `remainingAmount > 0` Y `status ≠ 'PAID'`
+
+### Endpoints de pago de tickets
+
+```http
+POST /api/v1/tickets/:id/pay              # Registrar pago (total/parcial)
+POST /api/v1/tickets/:id/reverse-payment  # Revertir último pago
+POST /api/v1/tickets/:id/finalize-payment # Marcar pago como final
+```
+
+> 📖 Ver documentación completa en [`docs/VENTAS_SUMMARY_API.md`](docs/VENTAS_SUMMARY_API.md)
+
+---
+
+## 🔒 RBAC Security
+
+Sistema de control de acceso basado en roles con validación jerárquica.
+
+### Características de seguridad
+
+- ✅ **JWT Transition Support**: Fetch de `ventanaId` desde DB si falta en token
+- ✅ **Permissive Mode**: Permite transición gradual sin romper sesiones activas
+- ✅ **Logging completo**: Warnings para tokens antiguos, info para fetches desde DB
+- ✅ **Validación estricta**: Solo acceso a recursos propios según jerarquía
+
+### Flujo de validación
+
+```
+1. Usuario VENTANA solicita datos con scope=mine
+2. applyRbacFilters() valida ventanaId en JWT
+3. Si falta → fetch desde DB: SELECT ventanaId FROM User WHERE id = ...
+4. Log warning: "JWT missing ventanaId - fetching from database"
+5. Aplica filtro: WHERE ventanaId = <valor desde DB>
+6. Retorna solo datos de su ventana
+```
+
+### Endpoints protegidos
+
+- ✅ `GET /tickets` - Filtrado por ventanaId (VENTANA) o vendedorId (VENDEDOR)
+- ✅ `GET /ventas/summary` - RBAC con DB lookup
+- ✅ `GET /ventas/breakdown` - RBAC con DB lookup
+- ✅ `GET /ventas/timeseries` - RBAC con DB lookup
+
+> 📖 Ver documentación completa en [`docs/BUG_FIX_RBAC_SCOPE_MINE.md`](docs/BUG_FIX_RBAC_SCOPE_MINE.md)
+
+---
+
 ## 🔢 Multipliers y RestrictionRules
 
 ### **LoteriaMultiplier**
@@ -480,5 +583,5 @@ Proyecto bajo licencia **MIT** (ver `LICENSE`).
 
 ---
 
-> 💡 *Versión actual:* `v1.0.0-rc5`  
-> *Notas rc5**: Update restringido; evaluación con `extraMultiplierId/extraOutcomeCode`; búsqueda por nombre/ganador/lotería; preview & seed de sorteos desde `rulesJson.drawSchedule`; resolución jerárquica de `baseMultiplierX` y `salesCutoff`.
+> 💡 *Versión actual:* `v1.1.0`
+> **Notas v1.1.0**: Dashboard API v1.0.0 con analytics completos; sistema de pagos en `/ventas/summary`; fixes de seguridad RBAC críticos; corrección de exclusión de tickets PAID en reportes.
