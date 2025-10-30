@@ -30,43 +30,58 @@ export interface EffectiveFilters {
 
 /**
  * Valida que un usuario VENTANA tenga ventanaId asignado.
- * MODO PERMISIVO: Registra warning pero permite continuar si ventanaId es null.
- *
- * TODO: Cambiar a modo estricto (lanzar 403) después de que todos los usuarios
- * hagan logout/login para renovar sus JWT con ventanaId actualizado.
+ * Si no está en JWT, lo busca en la base de datos.
  *
  * @param role Rol del usuario
  * @param ventanaId ventanaId del usuario (puede ser null/undefined)
- * @param userId userId para logging
+ * @param userId userId para buscar en BD si es necesario
+ * @returns ventanaId garantizado (del JWT o de la BD)
+ * @throws AppError(403) si no tiene ventanaId en BD
  */
-export function validateVentanaUser(role: Role, ventanaId?: string | null, userId?: string): void {
-  if (role === Role.VENTANA && !ventanaId) {
-    // MODO PERMISIVO: Solo registrar warning, no lanzar error
+export async function validateVentanaUser(role: Role, ventanaId?: string | null, userId?: string): Promise<string | null | undefined> {
+  if (role === Role.VENTANA && !ventanaId && userId) {
+    // JWT antiguo sin ventanaId - buscar en base de datos
     logger.warn({
       layer: 'rbac',
-      action: 'VENTANA_USER_NO_VENTANAID',
+      action: 'VENTANA_FETCHING_FROM_DB_VALIDATE',
       payload: {
         userId,
-        role,
-        ventanaId,
-        message: 'VENTANA user has null ventanaId - JWT needs refresh (logout/login)',
-        recommendation: 'User should logout and login again to get updated JWT'
+        message: 'JWT missing ventanaId - fetching from database (validateVentanaUser)'
       }
     });
 
-    // TODO: Descomentar esto después de la transición (cuando todos tengan JWT actualizado)
-    /*
-    throw new AppError('VENTANA user must have ventanaId assigned', 403, {
-      code: 'RBAC_003',
-      details: [
-        {
-          field: 'ventanaId',
-          reason: 'User configuration error: VENTANA role requires ventanaId. Please logout and login again.'
-        }
-      ]
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { ventanaId: true }
     });
-    */
+
+    if (!user?.ventanaId) {
+      // Usuario no tiene ventanaId en BD tampoco - error crítico
+      throw new AppError('VENTANA user must have ventanaId assigned in database', 403, {
+        code: 'RBAC_003',
+        details: [
+          {
+            field: 'ventanaId',
+            reason: 'User configuration error: VENTANA role requires ventanaId'
+          }
+        ]
+      });
+    }
+
+    logger.info({
+      layer: 'rbac',
+      action: 'VENTANA_VENTANAID_LOADED_VALIDATE',
+      payload: {
+        userId,
+        ventanaId: user.ventanaId,
+        message: 'VentanaId loaded from database (validateVentanaUser) - user should logout/login'
+      }
+    });
+
+    return user.ventanaId;
   }
+
+  return ventanaId;
 }
 
 /**
@@ -94,10 +109,52 @@ export async function applyRbacFilters(
     delete effective.ventanaId; // ignorar cualquier ventanaId
   } else if (context.role === Role.VENTANA) {
     // VENTANA: todas las ventas de su ventana
-    // CRITICAL: Validar que el usuario VENTANA tenga un ventanaId asignado
-    validateVentanaUser(context.role, context.ventanaId, context.userId);
+    // CRITICAL: Si ventanaId no está en JWT, buscar en BD
+    let ventanaId = context.ventanaId;
 
-    effective.ventanaId = context.ventanaId;
+    if (!ventanaId) {
+      // JWT antiguo sin ventanaId - buscar en base de datos
+      logger.warn({
+        layer: 'rbac',
+        action: 'VENTANA_FETCHING_FROM_DB',
+        payload: {
+          userId: context.userId,
+          message: 'JWT missing ventanaId - fetching from database'
+        }
+      });
+
+      const user = await prisma.user.findUnique({
+        where: { id: context.userId },
+        select: { ventanaId: true }
+      });
+
+      if (!user?.ventanaId) {
+        // Usuario no tiene ventanaId en BD tampoco - error crítico
+        throw new AppError('VENTANA user must have ventanaId assigned in database', 403, {
+          code: 'RBAC_003',
+          details: [
+            {
+              field: 'ventanaId',
+              reason: 'User configuration error: VENTANA role requires ventanaId'
+            }
+          ]
+        });
+      }
+
+      ventanaId = user.ventanaId;
+
+      logger.info({
+        layer: 'rbac',
+        action: 'VENTANA_VENTANAID_LOADED',
+        payload: {
+          userId: context.userId,
+          ventanaId,
+          message: 'VentanaId loaded from database - user should logout/login to refresh JWT'
+        }
+      });
+    }
+
+    effective.ventanaId = ventanaId;
 
     // Si solicita un vendedorId específico, validar que pertenezca a la ventana
     if (requestFilters.vendedorId) {
