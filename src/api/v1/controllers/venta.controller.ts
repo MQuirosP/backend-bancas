@@ -202,7 +202,30 @@ export const VentaController = {
       role: req.user!.role,
       ventanaId: req.user!.ventanaId
     };
+
+    // DEBUG: Log context and filters BEFORE RBAC
+    req.logger?.info({
+      layer: "controller",
+      action: "BREAKDOWN_RBAC_DEBUG",
+      payload: {
+        context,
+        requestFilters: rest,
+        dimension: dimensionStr,
+        message: "BEFORE applyRbacFilters"
+      }
+    });
+
     const effectiveFilters = await applyRbacFilters(context, rest);
+
+    // DEBUG: Log AFTER RBAC
+    req.logger?.info({
+      layer: "controller",
+      action: "BREAKDOWN_RBAC_APPLIED",
+      payload: {
+        effectiveFilters,
+        message: "AFTER applyRbacFilters - these are the filters that will be used"
+      }
+    });
 
     // Construir filtros finales para el servicio
     const filters: any = {

@@ -345,6 +345,17 @@ export const VentasService = {
         }
 
         case "vendedor": {
+          // DEBUG: Log filters to see if ventanaId is present
+          logger.info({
+            layer: "service",
+            action: "BREAKDOWN_VENDEDOR_DEBUG",
+            payload: {
+              filters,
+              whereClause: where,
+              message: "Breakdown vendedor - checking filters"
+            }
+          });
+
           const result = await prisma.ticket.groupBy({
             by: ["vendedorId"],
             where,
@@ -355,6 +366,17 @@ export const VentasService = {
           });
 
           const vendedorIds = result.map((r) => r.vendedorId);
+
+          // DEBUG: Log vendedorIds found
+          logger.info({
+            layer: "service",
+            action: "BREAKDOWN_VENDEDOR_RESULT",
+            payload: {
+              vendedorIds,
+              count: vendedorIds.length,
+              message: "VendedorIds after groupBy filtering"
+            }
+          });
           const vendedores = await prisma.user.findMany({
             where: { id: { in: vendedorIds } },
             select: { id: true, name: true, username: true },
