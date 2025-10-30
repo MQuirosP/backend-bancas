@@ -5,6 +5,7 @@ import { AuthenticatedRequest } from "../../../core/types";
 import { Role } from "@prisma/client";
 import DashboardService from "../services/dashboard.service";
 import { resolveDateRange } from "../../../utils/dateRange";
+import { validateVentanaUser } from "../../../utils/rbac";
 
 // Nota: Usa el mismo patrón que Venta/Sales módulo
 // date: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'range'
@@ -33,6 +34,7 @@ export const DashboardController = {
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {
       // VENTANA solo ve su dashboard
+      validateVentanaUser(req.user.role, req.user.ventanaId);
       ventanaId = req.user.ventanaId!;
     } else if (req.user.role !== Role.ADMIN) {
       throw new AppError("No autorizado", 403);
@@ -68,6 +70,7 @@ export const DashboardController = {
 
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {
+      validateVentanaUser(req.user.role, req.user.ventanaId);
       ventanaId = req.user.ventanaId!;
     }
 
@@ -106,6 +109,7 @@ export const DashboardController = {
 
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {
+      validateVentanaUser(req.user.role, req.user.ventanaId);
       ventanaId = req.user.ventanaId!;
     }
 
@@ -144,6 +148,7 @@ export const DashboardController = {
 
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {
+      validateVentanaUser(req.user.role, req.user.ventanaId);
       ventanaId = req.user.ventanaId!;
     }
 
@@ -182,6 +187,7 @@ export const DashboardController = {
 
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {
+      validateVentanaUser(req.user.role, req.user.ventanaId);
       ventanaId = req.user.ventanaId!;
     }
 
@@ -226,6 +232,7 @@ export const DashboardController = {
 
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {
+      validateVentanaUser(req.user.role, req.user.ventanaId);
       ventanaId = req.user.ventanaId!;
     }
 
@@ -267,6 +274,7 @@ export const DashboardController = {
 
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {
+      validateVentanaUser(req.user.role, req.user.ventanaId);
       ventanaId = req.user.ventanaId!;
     }
 
@@ -318,6 +326,7 @@ export const DashboardController = {
 
     let ventanaId = query.ventanaId;
     if (req.user.role === Role.VENTANA) {
+      validateVentanaUser(req.user.role, req.user.ventanaId);
       ventanaId = req.user.ventanaId!;
     }
 
