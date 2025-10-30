@@ -10,6 +10,10 @@ node_modules/
 **/.vscode/
 .DS_Store
 
+# Claude Code
+.claude/
+**/.claude/
+
 # Tests
 tests/tickets/concurrency.test.ts
 jest.config.ts
