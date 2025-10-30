@@ -60,11 +60,27 @@ export const TicketController = {
     const dateRange = resolveDateRange(date, fromDate, toDate);
 
     // Build final filters for service
+    // IMPORTANT: Map vendedorId → userId for backward compatibility with repository
     const filters: any = {
       ...effectiveFilters,
       dateFrom: dateRange.fromAt,
       dateTo: dateRange.toAt
     };
+
+    // Repository expects 'userId' but RBAC returns 'vendedorId'
+    if (effectiveFilters.vendedorId) {
+      filters.userId = effectiveFilters.vendedorId;
+      delete filters.vendedorId;
+
+      req.logger?.info({
+        layer: "controller",
+        action: "TICKET_LIST_VENDEDOR_MAPPING",
+        payload: {
+          vendedorId: filters.userId,
+          message: "Mapped vendedorId → userId for repository compatibility"
+        }
+      });
+    }
 
     const result = await TicketService.list(Number(page), Number(pageSize), filters);
 
