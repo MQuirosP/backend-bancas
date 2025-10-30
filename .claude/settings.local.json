@@ -23,7 +23,12 @@
       "Read(//c/Users/mquir/**)",
       "Bash(git log:*)",
       "Bash(test:*)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(mkdir:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge feature/dashboard-v1-spec --no-ff -m \"$(cat <<''EOF''\nMerge branch ''feature/dashboard-v1-spec'' into master\n\nComplete implementation of Dashboard API v1.0.0\n\nThis merge brings the complete Dashboard API v1.0.0 implementation to master:\n\nDocumentation:\n- OpenAPI 3.1 specification (openapi-dashboard-v1.yaml)\n- README-DASHBOARD.md with comprehensive documentation\n- CHANGELOG-DASHBOARD.md with version history\n- Implementation status report\n\nNew Endpoints (4):\n- GET /timeseries - Time series data with day/hour intervals\n- GET /exposure - Financial exposure analysis\n- GET /vendedores - Seller rankings with pagination\n- GET /export - Export placeholder (CSV/XLSX/PDF)\n\nEnhanced Endpoints (4):\n- Main dashboard: Added timeSeries, exposure, previousPeriod, alerts\n- Ganancia: Added totalSales, margin calculations\n- Summary: Added winRate metric\n- All: Support for new filters (loteriaId, betType, interval)\n\nFeatures:\n- Alert system (HIGH_CXC, LOW_SALES, HIGH_EXPOSURE, OVERPAYMENT)\n- Previous period comparison\n- Performance metrics (queryExecutionTime, totalQueries)\n- RBAC enforcement (ADMIN/VENTANA/VENDEDOR)\n- Backward compatible (additive changes only)\n\nBug Fixes:\n- Fixed validator to accept all query parameters\n- Fixed column name (betType → type) in Jugada queries\n- Added frontend compatibility (granularity alias)\n\nAll endpoints tested and working:\n✓ TypeScript compilation passes\n✓ 200 responses for all endpoints\n✓ RBAC properly enforced\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git branch:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

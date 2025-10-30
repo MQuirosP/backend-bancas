@@ -8,6 +8,7 @@
 import { Role } from '@prisma/client';
 import { AppError } from '../core/errors';
 import prisma from '../core/prismaClient';
+import logger from '../core/logger';
 
 export interface AuthContext {
   userId: string;         // sub del JWT
@@ -29,23 +30,42 @@ export interface EffectiveFilters {
 
 /**
  * Valida que un usuario VENTANA tenga ventanaId asignado.
- * Lanza error 403 si el usuario es VENTANA pero no tiene ventanaId.
+ * MODO PERMISIVO: Registra warning pero permite continuar si ventanaId es null.
+ *
+ * TODO: Cambiar a modo estricto (lanzar 403) después de que todos los usuarios
+ * hagan logout/login para renovar sus JWT con ventanaId actualizado.
  *
  * @param role Rol del usuario
  * @param ventanaId ventanaId del usuario (puede ser null/undefined)
- * @throws AppError(403) si role es VENTANA pero ventanaId es null/undefined
+ * @param userId userId para logging
  */
-export function validateVentanaUser(role: Role, ventanaId?: string | null): void {
+export function validateVentanaUser(role: Role, ventanaId?: string | null, userId?: string): void {
   if (role === Role.VENTANA && !ventanaId) {
+    // MODO PERMISIVO: Solo registrar warning, no lanzar error
+    logger.warn({
+      layer: 'rbac',
+      action: 'VENTANA_USER_NO_VENTANAID',
+      payload: {
+        userId,
+        role,
+        ventanaId,
+        message: 'VENTANA user has null ventanaId - JWT needs refresh (logout/login)',
+        recommendation: 'User should logout and login again to get updated JWT'
+      }
+    });
+
+    // TODO: Descomentar esto después de la transición (cuando todos tengan JWT actualizado)
+    /*
     throw new AppError('VENTANA user must have ventanaId assigned', 403, {
       code: 'RBAC_003',
       details: [
         {
           field: 'ventanaId',
-          reason: 'User configuration error: VENTANA role requires ventanaId'
+          reason: 'User configuration error: VENTANA role requires ventanaId. Please logout and login again.'
         }
       ]
     });
+    */
   }
 }
 
@@ -75,7 +95,7 @@ export async function applyRbacFilters(
   } else if (context.role === Role.VENTANA) {
     // VENTANA: todas las ventas de su ventana
     // CRITICAL: Validar que el usuario VENTANA tenga un ventanaId asignado
-    validateVentanaUser(context.role, context.ventanaId);
+    validateVentanaUser(context.role, context.ventanaId, context.userId);
 
     effective.ventanaId = context.ventanaId;
 
