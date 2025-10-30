@@ -181,12 +181,17 @@ export const VentasService = {
     commissionTotal: number;
     netoDespuesComision: number;
     lastTicketAt: string | null;
+    // Campos de pagos (coinciden con campos de Ticket model)
+    totalPaid: number;           // Total pagado a ganadores
+    remainingAmount: number;     // Pendiente de pago (antes totalPending)
+    paidTicketsCount: number;    // Tickets completamente pagados
+    unpaidTicketsCount: number;  // Tickets con pago pendiente
   }> {
     try {
       const where = buildWhereClause(filters);
 
       // Agregaciones en paralelo
-      const [ticketsAgg, jugadasAgg, lastTicket] = await prisma.$transaction([
+      const [ticketsAgg, jugadasAgg, lastTicket, paymentStats] = await prisma.$transaction([
         // Suma de totalAmount y count de tickets
         prisma.ticket.aggregate({
           where,
@@ -209,18 +214,58 @@ export const VentasService = {
           orderBy: { createdAt: "desc" },
           select: { createdAt: true },
         }),
+
+        // Agregaciones de pagos
+        prisma.ticket.aggregate({
+          where,
+          _sum: {
+            totalPaid: true,
+            remainingAmount: true,
+          },
+        }),
+      ]);
+
+      // Contar tickets pagados vs no pagados (solo tickets ganadores)
+      const winnerWhere = { ...where, isWinner: true };
+      const [paidCount, unpaidCount] = await prisma.$transaction([
+        // Tickets completamente pagados (remainingAmount = 0)
+        prisma.ticket.count({
+          where: {
+            ...winnerWhere,
+            remainingAmount: 0,
+            totalPaid: { gt: 0 },
+          },
+        }),
+        // Tickets con pago pendiente (remainingAmount > 0)
+        prisma.ticket.count({
+          where: {
+            ...winnerWhere,
+            remainingAmount: { gt: 0 },
+          },
+        }),
       ]);
 
       const ventasTotal = ticketsAgg._sum.totalAmount ?? 0;
       const payoutTotal = jugadasAgg._sum.payout ?? 0;
       const commissionTotal = jugadasAgg._sum.commissionAmount ?? 0;
+      const totalPaid = paymentStats._sum.totalPaid ?? 0;
+      const remainingAmount = paymentStats._sum.remainingAmount ?? 0;
       const neto = ventasTotal - payoutTotal;
       const netoDespuesComision = neto - commissionTotal;
 
       logger.info({
         layer: "service",
         action: "VENTA_SUMMARY",
-        payload: { filters, ventasTotal, ticketsCount: ticketsAgg._count.id, commissionTotal },
+        payload: {
+          filters,
+          ventasTotal,
+          ticketsCount: ticketsAgg._count.id,
+          commissionTotal,
+          totalPaid,
+          remainingAmount,
+          paidTicketsCount: paidCount,
+          unpaidTicketsCount: unpaidCount
+        },
       });
 
       return {
@@ -232,6 +277,11 @@ export const VentasService = {
         commissionTotal,
         netoDespuesComision,
         lastTicketAt: lastTicket?.createdAt?.toISOString() ?? null,
+        // Campos de pagos
+        totalPaid,
+        remainingAmount,
+        paidTicketsCount: paidCount,
+        unpaidTicketsCount: unpaidCount,
       };
     } catch (err: any) {
       logger.error({
