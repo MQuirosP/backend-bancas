@@ -2,12 +2,13 @@ import prisma from "../../src/core/prismaClient";
 import { resetDatabase } from "../tickets/helpers/resetDatabase";
 import { SorteoService } from "../../src/api/v1/services/sorteo.service";
 import { Role, SorteoStatus } from "@prisma/client";
+import { TEST_IDS } from "../helpers/testIds";
 
 jest.setTimeout(20000);
 
 describe("🗓️ Sorteo lifecycle", () => {
-  const admin = "admin-lc";
-  const loteriaId = "lot-lc";
+  const admin = TEST_IDS.ADMIN_ID;
+  const loteriaId = TEST_IDS.LOTERIA_ID;
   let sorteoId = "";
 
   beforeAll(async () => {

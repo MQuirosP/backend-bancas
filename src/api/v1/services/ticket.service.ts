@@ -257,7 +257,7 @@ export const TicketService = {
     return TicketRepository.getById(id);
   },
 
-  async list(page = 1, pageSize = 10, filters: any = {}) {
+  async list(page = 1, pageSize = 10, filters: any = {}): Promise<ReturnType<typeof TicketRepository.list>> {
     return TicketRepository.list(page, pageSize, filters);
   },
 

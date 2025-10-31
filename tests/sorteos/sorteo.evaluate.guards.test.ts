@@ -3,15 +3,16 @@ import { Role, SorteoStatus } from "@prisma/client";
 import { SorteoService } from "../../src/api/v1/services/sorteo.service";
 import { AppError } from "../../src/core/errors";
 import { resetDatabase } from "../tickets/helpers/resetDatabase";
+import { TEST_IDS } from "../helpers/testIds";
 
 jest.setTimeout(20000);
 
 describe("🛡️ SorteoService.evaluate state guards", () => {
-  const adminId = "admin-eval-guards";
-  const loteriaId = "lot-eval-guards";
-  const sorteoScheduledId = "sor-eval-scheduled";
-  const sorteoOpenId = "sor-eval-open";
-  const sorteoClosedId = "sor-eval-closed";
+  const adminId = TEST_IDS.ADMIN_ID;
+  const loteriaId = TEST_IDS.LOTERIA_ID;
+  const sorteoScheduledId = "a5f8e2d1-4c3b-4a7e-9d1f-3b4c5d6e7f8a";
+  const sorteoOpenId = "b6a9f3e2-5d4c-4b8f-0e2a-4c5d6e7f8a9b";
+  const sorteoClosedId = "c7b0a4f3-6e5d-4c9a-1f3b-5d6e7f8a9b0c";
 
   beforeAll(async () => {
     await resetDatabase();
