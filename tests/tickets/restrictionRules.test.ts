@@ -3,16 +3,17 @@ import prisma from "../../src/core/prismaClient";
 import TicketRepository from "../../src/repositories/ticket.repository";
 import { Role, SorteoStatus } from "@prisma/client";
 import { resetDatabase } from "./helpers/resetDatabase";
+import { TEST_IDS } from "../helpers/testIds";
 
 jest.setTimeout(20000);
 
 describe("🎯 RestrictionRule pipeline", () => {
-  const userId = "user-rule-test";
-  const bancaId = "banca-rule";
-  const ventanaId = "ventana-rule";
-  const loteriaId = "loteria-rule";
-  const sorteoId = "sorteo-rule";
-  const baseMultiplierId = "multiplier-base"; // ← importante: debe llamarse "Base"
+  const userId = TEST_IDS.VENDEDOR_ID;
+  const bancaId = TEST_IDS.BANCA_ID;
+  const ventanaId = TEST_IDS.VENTANA_ID;
+  const loteriaId = TEST_IDS.LOTERIA_ID;
+  const sorteoId = TEST_IDS.SORTEO_ID;
+  const baseMultiplierId = TEST_IDS.BASE_MULTIPLIER_ID;
 
   beforeAll(async () => {
     await resetDatabase();

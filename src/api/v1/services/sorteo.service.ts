@@ -164,7 +164,8 @@ export const SorteoService = {
     }
 
     // 2) Resolver multiplicador extra (si viene) y etiqueta neutra
-    let extraX: number | null = null;
+    // Si no viene extraMultiplierId, significa que no salió multiplicador → extraX = 0
+    let extraX: number = 0;
     let extraOutcomeCode: string | null = null;
 
     if (extraMultiplierId) {
@@ -198,27 +199,6 @@ export const SorteoService = {
 
       extraX = mul.valueX;
       extraOutcomeCode = (extraOutcomeCodeInput ?? mul.name ?? null) || null;
-    }
-
-    // 2.1) VALIDACIÓN ANTICIPADA:
-    // Si habrá REVENTADO ganadores (mismo número ganador) y no mandaron extraMultiplierId,
-    // abortar (así evitamos dejar multiplierId en null en las jugadas ganadoras).
-    if (!extraMultiplierId) {
-      const possibleReventadoWinnerExists = await prisma.jugada.findFirst({
-        where: {
-          ticket: { sorteoId: id },
-          type: "REVENTADO",
-          reventadoNumber: winningNumber,
-          isActive: true,
-        },
-        select: { id: true },
-      });
-      if (possibleReventadoWinnerExists) {
-        throw new AppError(
-          "Hay jugadas REVENTADO que ganarían con ese número. Debes proporcionar extraMultiplierId para evaluarlo.",
-          400
-        );
-      }
     }
 
     // 3) Transacción
@@ -262,9 +242,10 @@ export const SorteoService = {
       }
 
       // 3.3 Pagar REVENTADO (y asignar multiplierId)
+      // Solo paga si extraX > 0 (es decir, si salió multiplicador extra)
       let reventadoWinners: { id: string; amount: number; ticketId: string }[] = [];
 
-      if (extraX != null && extraX > 0) {
+      if (extraX > 0) {
         reventadoWinners = await tx.jugada.findMany({
           where: {
             ticket: { sorteoId: id },
@@ -275,21 +256,13 @@ export const SorteoService = {
           select: { id: true, amount: true, ticketId: true },
         });
 
-        // Defensa adicional (debería estar cubierto por la validación anticipada)
-        if (reventadoWinners.length > 0 && !extraMultiplierId) {
-          throw new AppError(
-            "Hay jugadas REVENTADO ganadoras: falta extraMultiplierId para asignar multiplierId",
-            400
-          );
-        }
-
         for (const j of reventadoWinners) {
-          const payout = j.amount * extraX!;
+          const payout = j.amount * extraX;
           await tx.jugada.update({
             where: { id: j.id },
             data: {
               isWinner: true,
-              finalMultiplierX: extraX!, // snapshot a la jugada
+              finalMultiplierX: extraX, // snapshot a la jugada
               payout,
               ...(extraMultiplierId
                 ? { multiplier: { connect: { id: extraMultiplierId } } }

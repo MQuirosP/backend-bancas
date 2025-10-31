@@ -33,12 +33,12 @@ export const createUserSchema = z
     password: z.string().min(8),
     role: z.enum(['ADMIN', 'VENTANA', 'VENDEDOR']).optional(),
     ventanaId: z.uuid('ventanaId inválido').nullable().optional(), // requerido condicional abajo
-    code: z
-      .string()
-      .trim()
-      .min(2)
-      .max(32)
-      .optional(),
+    // code: z
+    //   .string()
+    //   .trim()
+    //   .min(2)
+    //   .max(32)
+    //   .optional(),
     isActive: z.boolean().optional(),
   })
   .superRefine((val, ctx) => {

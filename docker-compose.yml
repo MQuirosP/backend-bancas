@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # Base de datos para DEVELOPMENT
+  postgres-dev:
+    image: postgres:15
+    container_name: bancas_dev_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dev_password_123
+      POSTGRES_DB: bancas_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Base de datos para TESTING
+  postgres-test:
+    image: postgres:15
+    container_name: bancas_test_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: test_password_123
+      POSTGRES_DB: bancas_test
+    ports:
+      - "5433:5432"  # Nota: Puerto externo 5433 para diferenciar
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_dev_data:
+  postgres_test_data:

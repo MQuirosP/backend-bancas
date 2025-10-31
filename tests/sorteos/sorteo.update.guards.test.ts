@@ -2,14 +2,15 @@ import prisma from "../../src/core/prismaClient";
 import { Role, SorteoStatus } from "@prisma/client";
 import { SorteoService } from "../../src/api/v1/services/sorteo.service";
 import { resetDatabase } from "../tickets/helpers/resetDatabase";
+import { TEST_IDS } from "../helpers/testIds";
 
 jest.setTimeout(20000);
 
 describe("🛡️ SorteoService.update guards", () => {
-  const adminId = "admin-update-guards";
-  const loteriaId = "lot-update-guards";
-  const sorteoId = "sor-update-guards";
-  const extraMulId = "mul-update-guards";
+  const adminId = TEST_IDS.ADMIN_ID;
+  const loteriaId = TEST_IDS.LOTERIA_ID;
+  const sorteoId = TEST_IDS.SORTEO_ID;
+  const extraMulId = TEST_IDS.EXTRA_MULTIPLIER_ID;
 
   beforeAll(async () => {
     await resetDatabase();

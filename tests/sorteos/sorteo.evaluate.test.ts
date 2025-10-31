@@ -2,18 +2,19 @@ import prisma from "../../src/core/prismaClient";
 import { resetDatabase } from "../tickets/helpers/resetDatabase";
 import { Role, SorteoStatus } from "@prisma/client";
 import { SorteoService } from "../../src/api/v1/services/sorteo.service";
+import { TEST_IDS } from "../helpers/testIds";
 
 jest.setTimeout(30000);
 
 describe("🎲 Sorteo evaluate flow", () => {
-  const userAdmin = "admin-user";
-  const loteriaId = "lot-eval";
-  const sorteoId = "sor-eval";
-  const ventanaId = "ven-eval";
-  const bancaId = "ban-eval";
-  const vendedorId = "vend-eval";
-  const baseMultiplierId = "mul-base";
-  const extraMultiplierId = "mul-extra"; // para REVENTADO
+  const userAdmin = TEST_IDS.ADMIN_ID;
+  const loteriaId = TEST_IDS.LOTERIA_ID;
+  const sorteoId = TEST_IDS.SORTEO_2_ID;
+  const ventanaId = TEST_IDS.VENTANA_ID;
+  const bancaId = TEST_IDS.BANCA_ID;
+  const vendedorId = TEST_IDS.VENDEDOR_ID;
+  const baseMultiplierId = TEST_IDS.BASE_MULTIPLIER_ID;
+  const extraMultiplierId = TEST_IDS.EXTRA_MULTIPLIER_ID;
 
   beforeAll(async () => {
     await resetDatabase();
@@ -55,7 +56,16 @@ describe("🎲 Sorteo evaluate flow", () => {
     });
 
     await prisma.loteria.create({
-      data: { id: loteriaId, name: "Lotería Eval" },
+      data: {
+        id: loteriaId,
+        name: "Lotería Eval",
+        rulesJson: {
+          reventadoConfig: {
+            enabled: true,
+            requiresMatchingNumber: false
+          }
+        }
+      },
     });
 
     // Base y Extra
