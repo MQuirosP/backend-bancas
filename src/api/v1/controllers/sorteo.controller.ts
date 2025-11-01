@@ -57,6 +57,46 @@ export const SorteoController = {
     const search =
       typeof req.query.search === "string" ? req.query.search : undefined;
     const isActive = typeof req.query.isActive !== "undefined" ? req.query.isActive === "true" || req.query.isActive === "1" : undefined;
+    const date = typeof req.query.date === "string" ? req.query.date : undefined;
+    const fromDate = typeof req.query.fromDate === "string" ? req.query.fromDate : undefined;
+    const toDate = typeof req.query.toDate === "string" ? req.query.toDate : undefined;
+
+    // DEBUG: Log parámetros recibidos
+    req.logger?.info({
+      layer: "controller",
+      action: "SORTEO_LIST_DEBUG",
+      payload: {
+        date,
+        fromDate,
+        toDate,
+        message: "Parámetros de fecha recibidos del FE"
+      }
+    });
+
+    // Resolver rango de fechas
+    // Para sorteos permitimos fechas futuras (a diferencia de tickets/ventas)
+    // Si no se envía parámetro de fecha, no aplicar filtro (undefined = sin restricción)
+    let dateFromResolved: Date | undefined;
+    let dateToResolved: Date | undefined;
+
+    if (date || fromDate || toDate) {
+      const { resolveDateRangeAllowFuture } = await import("../../../utils/dateRange");
+      const dateRange = resolveDateRangeAllowFuture(date || "range", fromDate, toDate);
+      dateFromResolved = dateRange.fromAt;
+      dateToResolved = dateRange.toAt;
+
+      req.logger?.info({
+        layer: "controller",
+        action: "SORTEO_LIST_DATE_RESOLVED",
+        payload: {
+          dateRange: {
+            fromAt: dateFromResolved?.toISOString(),
+            toAt: dateToResolved?.toISOString(),
+          },
+          message: "Rango de fechas resuelto (permite futuro)"
+        }
+      });
+    }
 
     const result = await SorteoService.list({
       loteriaId,
@@ -64,8 +104,22 @@ export const SorteoController = {
       pageSize,
       status,
       search,
-      isActive
+      isActive,
+      dateFrom: dateFromResolved,
+      dateTo: dateToResolved,
     });
+
+    req.logger?.info({
+      layer: "controller",
+      action: "SORTEO_LIST_RESULT",
+      payload: {
+        total: result.meta.total,
+        page: result.meta.page,
+        totalPages: result.meta.totalPages,
+        message: "Resultado de lista"
+      }
+    });
+
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 

@@ -248,6 +248,165 @@ export function resolveDateRange(
 }
 
 /**
+ * Resuelve un rango de fechas permitiendo fechas futuras.
+ * Variante de resolveDateRange() para casos como sorteos que pueden estar en el futuro.
+ *
+ * Soporta dos modos:
+ * 1. Semantic tokens: 'today', 'yesterday', 'week', 'month', 'year'
+ * 2. Custom range: date='range' con fromDate/toDate en YYYY-MM-DD
+ *
+ * @param date 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'range'
+ * @param fromDate YYYY-MM-DD (requerido si date='range')
+ * @param toDate YYYY-MM-DD (requerido si date='range')
+ * @param serverNow Fecha actual (para testing); defecto: new Date()
+ *
+ * @throws AppError(400, 'SLS_2001') si fechas son inválidas
+ * @throws AppError(400, 'SLS_2001') si fromDate > toDate
+ */
+export function resolveDateRangeAllowFuture(
+  date: string = 'today',
+  fromDate?: string,
+  toDate?: string,
+  serverNow: Date = new Date()
+): DateRangeResolution {
+  // Validar parámetro 'date'
+  const validDates = ['today', 'yesterday', 'week', 'month', 'year', 'range'];
+  if (!validDates.includes(date)) {
+    throw new AppError('Invalid date parameter', 400, {
+      code: 'SLS_2001',
+      details: [
+        {
+          field: 'date',
+          reason: `Must be one of: ${validDates.join(', ')}`
+        }
+      ]
+    });
+  }
+
+  const todayInCr = getTodayInTz(serverNow);
+
+  let fromDateStr: string;
+  let toDateStr: string;
+  let description: string;
+
+  if (date === 'today') {
+    fromDateStr = todayInCr;
+    toDateStr = todayInCr;
+    description = `Today (${todayInCr}) in ${BUSINESS_TZ}`;
+  } else if (date === 'yesterday') {
+    const yesterday = new Date(serverNow.getTime() - 24 * 60 * 60 * 1000);
+    fromDateStr = getTodayInTz(yesterday);
+    toDateStr = fromDateStr;
+    description = `Yesterday (${fromDateStr}) in ${BUSINESS_TZ}`;
+  } else if (date === 'week') {
+    // Semana actual (Lunes a Domingo en CR)
+    const today = new Date(serverNow.getTime() + TZ_OFFSET_HOURS * 60 * 60 * 1000);
+    const dayOfWeek = today.getUTCDay(); // 0 = Domingo
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const monday = new Date(today.getTime() - daysToMonday * 24 * 60 * 60 * 1000);
+    const sunday = new Date(monday.getTime() + 6 * 24 * 60 * 60 * 1000);
+
+    fromDateStr = formatDateComponents(monday);
+    toDateStr = formatDateComponents(sunday);
+    description = `This week (${fromDateStr} to ${toDateStr}) in ${BUSINESS_TZ}`;
+  } else if (date === 'month') {
+    // Mes actual
+    const today = new Date(serverNow.getTime() + TZ_OFFSET_HOURS * 60 * 60 * 1000);
+    const firstDay = new Date(today.getUTCFullYear(), today.getUTCMonth(), 1);
+    const lastDay = new Date(today.getUTCFullYear(), today.getUTCMonth() + 1, 0);
+
+    fromDateStr = formatDateComponents(firstDay);
+    toDateStr = formatDateComponents(lastDay);
+    description = `This month (${fromDateStr} to ${toDateStr}) in ${BUSINESS_TZ}`;
+  } else if (date === 'year') {
+    // Año actual
+    const today = new Date(serverNow.getTime() + TZ_OFFSET_HOURS * 60 * 60 * 1000);
+    const firstDay = new Date(today.getUTCFullYear(), 0, 1);
+    const lastDay = new Date(today.getUTCFullYear(), 11, 31);
+
+    fromDateStr = formatDateComponents(firstDay);
+    toDateStr = formatDateComponents(lastDay);
+    description = `This year (${fromDateStr} to ${toDateStr}) in ${BUSINESS_TZ}`;
+  } else {
+    // date === 'range'
+    if (!fromDate || !toDate) {
+      throw new AppError('fromDate and toDate required for date=range', 400, {
+        code: 'SLS_2001',
+        details: [
+          {
+            field: fromDate ? 'toDate' : 'fromDate',
+            reason: 'Required when date=range'
+          }
+        ]
+      });
+    }
+
+    if (!isValidDateFormat(fromDate)) {
+      throw new AppError('Invalid fromDate format', 400, {
+        code: 'SLS_2001',
+        details: [
+          {
+            field: 'fromDate',
+            reason: 'Use format YYYY-MM-DD'
+          }
+        ]
+      });
+    }
+
+    if (!isValidDateFormat(toDate)) {
+      throw new AppError('Invalid toDate format', 400, {
+        code: 'SLS_2001',
+        details: [
+          {
+            field: 'toDate',
+            reason: 'Use format YYYY-MM-DD'
+          }
+        ]
+      });
+    }
+
+    if (fromDate > toDate) {
+      throw new AppError('fromDate must be ≤ toDate', 400, {
+        code: 'SLS_2001',
+        details: [
+          {
+            field: 'fromDate/toDate',
+            reason: 'fromDate must be before or equal to toDate'
+          }
+        ]
+      });
+    }
+
+    // ✅ NO VALIDAMOS QUE toDate NO SEA FUTURO (a diferencia de resolveDateRange)
+    // Los sorteos pueden estar programados para el futuro
+
+    fromDateStr = fromDate;
+    toDateStr = toDate;
+    description = `Range ${fromDate} to ${toDate} in ${BUSINESS_TZ} (future dates allowed)`;
+  }
+
+  // Convertir a UTC
+  const fromAt = crDateToUtc(fromDateStr);
+
+  // toAt es el final del día (23:59:59.999 CR)
+  const toParsed = new Date(serverNow);
+  const [toYear, toMonth, toDay] = toDateStr.split('-').map(Number);
+  toParsed.setUTCFullYear(toYear, toMonth - 1, toDay);
+  toParsed.setUTCHours(0, 0, 0, 0);
+  // Calcular 06:00:00 UTC del día siguiente (00:00:00 CR del día siguiente)
+  const toAtMidnight = new Date(toParsed.getTime() + 24 * 60 * 60 * 1000 + TZ_OFFSET_HOURS * 60 * 60 * 1000);
+  // Restar 1ms para que sea 23:59:59.999 del día actual en CR
+  const toAt = new Date(toAtMidnight.getTime() - 1);
+
+  return {
+    fromAt,
+    toAt,
+    tz: BUSINESS_TZ,
+    description
+  };
+}
+
+/**
  * Validar un rango según granularidad de timeseries.
  *
  * @throws AppError(400, 'SLS_2001') si rango excede límite

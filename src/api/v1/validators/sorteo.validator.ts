@@ -33,6 +33,10 @@ export const ListSorteosQuerySchema = z.object({
   status: z.enum(["SCHEDULED","OPEN","EVALUATED","CLOSED"]).optional(),
   search: z.string().trim().min(1).max(100).optional(),
   isActive: z.coerce.boolean().optional(),
+  // Filtros de fecha (patrón: date=today|yesterday|week|month|year|range)
+  date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional(),
+  fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
+  toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
 }).strict();
 
 export const validateIdParam = (req: Request, res: Response, next: NextFunction) =>
