@@ -1,6 +1,6 @@
 import { Router } from "express";
 import UserController from "../controllers/user.controller";
-import { protect, restrictTo } from "../../../middlewares/auth.middleware";
+import { protect, restrictTo, restrictToAdminOrSelf } from "../../../middlewares/auth.middleware";
 import {
   validateBody,
   validateParams,
@@ -30,7 +30,7 @@ router.post(
 router.patch(
   "/:id",
   protect,
-  restrictTo(Role.ADMIN),
+  restrictToAdminOrSelf,
   validateParams(idParamSchema),
   validateBody(updateUserSchema),
   UserController.update
