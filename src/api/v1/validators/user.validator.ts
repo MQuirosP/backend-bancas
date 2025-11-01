@@ -24,6 +24,34 @@ const phoneOptional = z.preprocess(
     )
 )
 
+// ==================== USER SETTINGS (definir antes de updateUserSchema) ====================
+
+/**
+ * Configuraciones de impresión para usuario/ventana
+ */
+const PrintSettingsSchema = z
+  .object({
+    name: z.string().trim().max(100).nullable().optional(),
+    phone: z.string().trim().max(32).nullable().optional(),
+    width: z.union([z.literal(58), z.literal(88)]).nullable().optional(), // 58mm o 88mm
+    footer: z.string().trim().max(200).nullable().optional(), // Máximo 200 caracteres
+    barcode: z.boolean().nullable().optional(),
+  })
+  .strict()
+
+/**
+ * Esquema completo de UserSettings
+ * Incluye configuraciones de impresión y tema
+ */
+export const UserSettingsSchema = z
+  .object({
+    print: PrintSettingsSchema.optional(),
+    theme: z.enum(['light', 'dark']).nullable().optional(),
+  })
+  .strict()
+
+// ==================== CREATE & UPDATE SCHEMAS ====================
+
 export const createUserSchema = z
   .object({
     name: z.string().trim().min(2).max(100),
@@ -71,6 +99,7 @@ export const updateUserSchema = z
       .optional(),
     isActive: z.boolean().optional(),
     code: z.string().trim().min(2).max(32).nullable().optional(),
+    settings: UserSettingsSchema.nullable().optional(),
   })
   .superRefine((val, ctx) => {
     // Si cambian role en update, validamos la coherencia con ventanaId
@@ -101,3 +130,32 @@ export const listUsersQuerySchema = z
       .transform((v) => (v && v.length > 0 ? v : undefined)),
   })
   .strict()
+
+// ==================== ADDITIONAL SETTINGS SCHEMAS ====================
+
+/**
+ * Esquema para actualizar settings (merge parcial)
+ * Los campos pueden venir null o undefined; el servicio hace merge
+ */
+export const UpdateUserSettingsSchema = z
+  .object({
+    settings: UserSettingsSchema.nullable().optional(),
+  })
+  .strict()
+
+/**
+ * Esquema para cambiar contraseña propia
+ */
+export const ChangePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Contraseña actual requerida'),
+    newPassword: z.string().min(8, 'Nueva contraseña debe tener al menos 8 caracteres'),
+  })
+  .strict()
+  .refine(
+    (data) => data.currentPassword !== data.newPassword,
+    {
+      message: 'La nueva contraseña debe ser diferente a la actual',
+      path: ['newPassword'],
+    }
+  )

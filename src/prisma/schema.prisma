@@ -47,7 +47,7 @@ model Ventana {
   phone                String?
   isActive             Boolean   @default(true)
   commissionPolicyJson Json? // Política de comisiones jerárquica
-  settings             Json? // Configuraciones (print settings, theme, etc.)
+  settings             Json? // Configuraciones de la ventana (print, theme, etc.)
 
   banca Banca @relation(fields: [bancaId], references: [id]) // <- relación requerida
 
@@ -83,7 +83,7 @@ model User {
   username             String    @unique @db.Citext
   code                 String?   @unique
   commissionPolicyJson Json? // Política de comisiones jerárquica
-  settings             Json? // Configuraciones (print settings, theme, etc.)
+  settings             Json? // Configuraciones del usuario (print, theme, etc.)
 
   activities          ActivityLog[]
   refreshTokens       RefreshToken[]
