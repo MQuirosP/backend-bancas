@@ -159,6 +159,46 @@ export const UserController = {
 
     return success(res, user);
   },
+
+  async changePassword(req: Request, res: Response) {
+    const actorId = (req as any)?.user?.id;
+    const requestId = (req as any)?.requestId ?? null;
+    const { currentPassword, newPassword } = req.body;
+
+    // Solo el usuario autenticado puede cambiar su propia contraseña
+    if (!actorId) {
+      throw new (require("../../../core/errors").AppError)(
+        "Usuario no autenticado",
+        401,
+        { code: "UNAUTHORIZED" }
+      );
+    }
+
+    const result = await UserService.changePassword(
+      actorId,
+      currentPassword,
+      newPassword
+    );
+
+    (req as any)?.logger?.info({
+      layer: "controller",
+      action: "PASSWORD_CHANGE",
+      userId: actorId,
+      payload: { success: true },
+    });
+
+    await ActivityService.log({
+      userId: actorId,
+      action: ActivityType.PASSWORD_CHANGE,
+      targetType: "USER",
+      targetId: actorId,
+      details: null,
+      requestId,
+      layer: "controller",
+    });
+
+    return success(res, result);
+  },
 };
 
 export default UserController;

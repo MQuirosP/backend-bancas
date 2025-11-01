@@ -10,6 +10,7 @@ import {
   createUserSchema,
   updateUserSchema,
   listUsersQuerySchema,
+  ChangePasswordSchema,
 } from "../validators/user.validator";
 import { z } from "zod";
 import { Role } from "@prisma/client";
@@ -47,6 +48,14 @@ router.patch(
   restrictTo(Role.ADMIN),
   validateParams(idParamSchema),
   UserController.restore
+);
+
+// Change password (permite que el usuario autenticado cambie su propia contraseña)
+router.put(
+  "/me/password",
+  protect,
+  validateBody(ChangePasswordSchema),
+  UserController.changePassword
 );
 
 // List & Get (list admin-only; get self allowed if necesitas, por ahora admin)

@@ -1,10 +1,44 @@
 import prisma from '../../../core/prismaClient';
 import { AppError } from '../../../core/errors';
 import { CreateUserDTO, UpdateUserDTO } from '../dto/user.dto';
-import { hashPassword } from '../../../utils/crypto';
+import { hashPassword, comparePassword } from '../../../utils/crypto';
 import UserRepository from '../../../repositories/user.repository';
 import { Role } from '@prisma/client';
 import { normalizePhone } from "../../../utils/phoneNormalizer";
+
+/**
+ * Deep merge de configuraciones (parcial)
+ * newSettings override los valores en currentSettings, manteniendo lo demás
+ */
+function deepMergeSettings(
+  currentSettings: Record<string, any>,
+  newSettings: Record<string, any>
+): Record<string, any> {
+  const merged = { ...currentSettings };
+
+  for (const key in newSettings) {
+    const newVal = newSettings[key];
+
+    // Si es null, se borra del merged (null = "remover este campo")
+    if (newVal === null || newVal === undefined) {
+      delete merged[key];
+    } else if (typeof newVal === 'object' && newVal !== null && !Array.isArray(newVal)) {
+      // Si es un objeto anidado, mergear recursivamente
+      const currentVal = merged[key];
+      if (typeof currentVal === 'object' && currentVal !== null && !Array.isArray(currentVal)) {
+        merged[key] = deepMergeSettings(currentVal, newVal);
+      } else {
+        // Si el actual no es objeto, reemplazar completamente
+        merged[key] = newVal;
+      }
+    } else {
+      // Para primitivos o arrays, reemplazar completamente
+      merged[key] = newVal;
+    }
+  }
+
+  return merged;
+}
 
 async function ensureVentanaActiveOrThrow(ventanaId: string) {
   const v = await prisma.ventana.findUnique({
@@ -184,6 +218,26 @@ export const UserService = {
     // toggle de actividad (deprecated isDeleted → usar isActive inverso)
     if (dto.isActive !== undefined) toUpdate.isActive = dto.isActive;
 
+    // settings: merge parcial con los settings existentes
+    if (dto.settings !== undefined) {
+      // Obtener settings actuales (pueden ser null)
+      const currentUser = await prisma.user.findUnique({
+        where: { id },
+        select: { settings: true },
+      });
+
+      const currentSettings = currentUser?.settings as Record<string, any> | null || {};
+
+      if (dto.settings === null) {
+        // Si envían null explícitamente, limpiar settings
+        toUpdate.settings = null;
+      } else {
+        // Merge parcial: el DTO override los campos que vienen, mantienen los demás
+        const mergedSettings = deepMergeSettings(currentSettings, dto.settings);
+        toUpdate.settings = mergedSettings;
+      }
+    }
+
     const updated = await UserRepository.update(id, toUpdate);
 
     // Respuesta coherente (incluye username)
@@ -216,6 +270,38 @@ export const UserService = {
       select: { id: true, name: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
     });
     return user;
+  },
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    // Obtener contraseña actual del usuario
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, password: true, name: true },
+    });
+
+    if (!user) {
+      throw new AppError('Usuario no encontrado', 404, { code: 'USER_NOT_FOUND' });
+    }
+
+    // Verificar que la contraseña actual es correcta
+    const isPasswordValid = await comparePassword(currentPassword, user.password);
+    if (!isPasswordValid) {
+      throw new AppError('Contraseña actual incorrecta', 400, { code: 'INVALID_PASSWORD' });
+    }
+
+    // Hash de la nueva contraseña
+    const hashedNewPassword = await hashPassword(newPassword);
+
+    // Actualizar contraseña
+    await prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedNewPassword },
+    });
+
+    return {
+      success: true,
+      message: 'Contraseña actualizada correctamente',
+    };
   },
 };
 
