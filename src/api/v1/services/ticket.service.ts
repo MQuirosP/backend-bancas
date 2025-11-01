@@ -9,6 +9,21 @@ import { isWithinSalesHours, validateTicketAgainstRules } from "../../../utils/l
 
 const CUTOFF_GRACE_MS = 5000;
 
+/**
+ * Extrae la configuración de impresión de un usuario/ventana
+ * Retorna un objeto con printName, printPhone, printWidth, printFooter, printBarcode
+ */
+function extractPrintConfig(settings: any, defaultName: string | null, defaultPhone: string | null) {
+  const printSettings = (settings as any)?.print ?? {};
+  return {
+    printName: printSettings.name ?? defaultName,
+    printPhone: printSettings.phone ?? defaultPhone,
+    printWidth: printSettings.width ?? null,
+    printFooter: printSettings.footer ?? null,
+    printBarcode: printSettings.barcode ?? true,
+  };
+}
+
 // Interfaces para pagos
 interface RegisterPaymentInput {
   amountPaid: number;
@@ -218,6 +233,29 @@ export const TicketService = {
         effectiveVendedorId
       );
 
+      // 🖨️ Obtener configuraciones de impresión del vendedor y ventana
+      const vendedor = await prisma.user.findUnique({
+        where: { id: effectiveVendedorId },
+        select: { name: true, phone: true, settings: true },
+      });
+      const ventanaData = await prisma.ventana.findUnique({
+        where: { id: ventanaId },
+        select: { name: true, phone: true, settings: true },
+      });
+
+      // Enriquecer respuesta con configuraciones de impresión
+      const response = {
+        ...ticket,
+        vendedor: {
+          id: effectiveVendedorId,
+          ...extractPrintConfig(vendedor?.settings, vendedor?.name || null, vendedor?.phone || null),
+        },
+        ventana: {
+          id: ventanaId,
+          ...extractPrintConfig(ventanaData?.settings, ventanaData?.name || null, ventanaData?.phone || null),
+        },
+      };
+
       await ActivityService.log({
         userId,
         action: ActivityType.TICKET_CREATE,
@@ -240,7 +278,7 @@ export const TicketService = {
         payload: { ticketId: ticket.id, totalAmount: ticket.totalAmount, jugadas: ticket.jugadas.length },
       });
 
-      return ticket;
+      return response;
     } catch (err: any) {
       logger.error({
         layer: "service",
@@ -254,7 +292,34 @@ export const TicketService = {
   },
 
   async getById(id: string) {
-    return TicketRepository.getById(id);
+    const ticket = await TicketRepository.getById(id);
+
+    if (!ticket) {
+      throw new AppError("Ticket no encontrado", 404);
+    }
+
+    // 🖨️ Obtener configuraciones de impresión del vendedor y ventana
+    const vendedor = await prisma.user.findUnique({
+      where: { id: ticket.vendedorId },
+      select: { name: true, phone: true, settings: true },
+    });
+    const ventanaData = await prisma.ventana.findUnique({
+      where: { id: ticket.ventanaId },
+      select: { name: true, phone: true, settings: true },
+    });
+
+    // Enriquecer respuesta con configuraciones de impresión
+    return {
+      ...ticket,
+      vendedor: ticket.vendedor ? {
+        ...ticket.vendedor,
+        ...extractPrintConfig(vendedor?.settings, vendedor?.name || null, vendedor?.phone || null),
+      } : undefined,
+      ventana: ticket.ventana ? {
+        ...ticket.ventana,
+        ...extractPrintConfig(ventanaData?.settings, ventanaData?.name || null, ventanaData?.phone || null),
+      } : undefined,
+    };
   },
 
   async list(page = 1, pageSize = 10, filters: any = {}): Promise<ReturnType<typeof TicketRepository.list>> {

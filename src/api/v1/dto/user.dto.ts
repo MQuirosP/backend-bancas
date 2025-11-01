@@ -22,6 +22,7 @@ export interface UpdateUserDTO {
   ventanaId?: string | null;
   code?: string | null;
   isActive?: boolean;  // ya estaba permitido
+  settings?: Record<string, any> | null;  // Configuraciones (print, theme, etc.)
 }
 
 export interface ListUsersQuery {
