@@ -305,21 +305,47 @@ const SorteoRepository = {
     status?: SorteoStatus;
     search?: string;
     isActive?: boolean;
+    dateFrom?: Date;
+    dateTo?: Date;
   }) {
-    const { loteriaId, page, pageSize, status, search, isActive } = params;
+    const { loteriaId, page, pageSize, status, search, isActive, dateFrom, dateTo } = params;
 
-    // 👉 “Hoy” en la zona horaria del servidor. Si guardas UTC y quieres “hoy UTC”:
-    // const now = new Date(); const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // 00:00:00 local
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_LIST_PARAMS",
+      payload: {
+        dateFrom: dateFrom?.toISOString(),
+        dateTo: dateTo?.toISOString(),
+        loteriaId,
+        status,
+        isActive,
+        message: "Parámetros recibidos en repository"
+      }
+    });
 
     const where: Prisma.SorteoWhereInput = {
       ...(loteriaId ? { loteriaId } : {}),
       ...(status ? { status } : {}),
       ...(typeof isActive === 'boolean' ? { isActive } : {}),
-      // 🔑 FUTURO: de hoy (inclusive) hacia adelante
-      scheduledAt: { gte: startOfToday },
+      // 🔑 Filtro de fecha: si se proporciona, usarlo; si no, sin restricción de fecha
+      ...(dateFrom || dateTo
+        ? {
+            scheduledAt: {
+              ...(dateFrom ? { gte: dateFrom } : {}),
+              ...(dateTo ? { lte: dateTo } : {}),
+            },
+          }
+        : {}),
     };
+
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_LIST_WHERE",
+      payload: {
+        where: JSON.stringify(where),
+        message: "Filtro WHERE construido"
+      }
+    });
 
     const q = (search ?? '').trim();
     if (q) {
