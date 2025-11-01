@@ -45,3 +45,22 @@ export const restrictTo = (...roles: Role[]) => {
     next();
   };
 };
+
+// Permite que ADMIN actualice cualquier usuario, o que el usuario se actualice a sí mismo
+export const restrictToAdminOrSelf = (req: Request, _res: Response, next: NextFunction) => {
+  const user = (req as any)?.user;
+  const userId = req.params.id;
+
+  if (!user) {
+    throw new AppError("Unauthorized", 401);
+  }
+
+  const isAdmin = user.role === Role.ADMIN;
+  const isSelf = user.id === userId;
+
+  if (!isAdmin && !isSelf) {
+    throw new AppError("Forbidden", 403);
+  }
+
+  next();
+};
