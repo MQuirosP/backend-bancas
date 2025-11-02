@@ -15,6 +15,7 @@ import diagnosticsRoutes from "./diagnostics.routes"
 import ventaRoutes from "./venta.routes"
 import commissionRoutes from "./commission.routes"
 import dashboardRoutes from "./dashboard.routes"
+import activityLogRoutes from "./activityLog.routes"
 
 const router = Router();
 
@@ -33,6 +34,7 @@ router.use("/multipliers", multipliersRoutes);
 router.use("/diagnostics", diagnosticsRoutes);
 router.use("/ventas", ventaRoutes);
 router.use("/admin/dashboard", dashboardRoutes);
+router.use("/activity-logs", activityLogRoutes);
 router.use("/", commissionRoutes); // Commission routes include their own path prefixes
 
 export const apiV1Router = router;
