@@ -74,7 +74,7 @@ export const ActivityLogService = {
     return ActivityLogRepository.listByAction(action, 100);
   },
 
-  async cleanupOldLogs(days: number = 90) {
+  async cleanupOldLogs(days: number = 45) {
     if (days < 1) {
       throw new AppError('El número de días debe ser mayor a 0', 400);
     }
