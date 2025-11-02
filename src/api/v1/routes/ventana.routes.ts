@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { VentanaController } from "../controllers/ventana.controller";
-import { protect } from "../../../middlewares/auth.middleware";
+import { protect, restrictToAdminOrSelf } from "../../../middlewares/auth.middleware";
 import { validateBody, validateParams, validateQuery } from "../../../middlewares/validate.middleware";
 import {
   CreateVentanaSchema,
@@ -21,6 +21,14 @@ router.post("/", requireAdmin, validateBody(CreateVentanaSchema), VentanaControl
 router.put(
   "/:id",
   requireAdmin,
+  validateParams(VentanaIdParamSchema),
+  validateBody(UpdateVentanaSchema),
+  VentanaController.update
+);
+
+router.patch(
+  "/:id",
+  restrictToAdminOrSelf,
   validateParams(VentanaIdParamSchema),
   validateBody(UpdateVentanaSchema),
   VentanaController.update

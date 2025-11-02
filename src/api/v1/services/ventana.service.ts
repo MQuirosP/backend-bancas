@@ -5,6 +5,40 @@ import ActivityService from "../../../core/activity.service";
 import VentanaRepository from "../../../repositories/ventana.repository";
 import { CreateVentanaInput, UpdateVentanaInput } from "../dto/ventana.dto";
 
+/**
+ * Deep merge de configuraciones (parcial)
+ * newSettings override los valores en currentSettings, manteniendo lo demás
+ */
+function deepMergeSettings(
+  currentSettings: Record<string, any>,
+  newSettings: Record<string, any>
+): Record<string, any> {
+  const merged = { ...currentSettings };
+
+  for (const key in newSettings) {
+    const newVal = newSettings[key];
+
+    // Si es null, se borra del merged (null = "remover este campo")
+    if (newVal === null || newVal === undefined) {
+      delete merged[key];
+    } else if (typeof newVal === 'object' && newVal !== null && !Array.isArray(newVal)) {
+      // Si es un objeto anidado, mergear recursivamente
+      const currentVal = merged[key];
+      if (typeof currentVal === 'object' && currentVal !== null && !Array.isArray(currentVal)) {
+        merged[key] = deepMergeSettings(currentVal, newVal);
+      } else {
+        // Si el actual no es objeto, reemplazar completamente
+        merged[key] = newVal;
+      }
+    } else {
+      // Para primitivos o arrays, reemplazar completamente
+      merged[key] = newVal;
+    }
+  }
+
+  return merged;
+}
+
 export const VentanaService = {
   async create(data: CreateVentanaInput, userId: string) {
     const banca = await prisma.banca.findUnique({
@@ -38,7 +72,28 @@ export const VentanaService = {
       if (dup) throw new AppError("El código de la ventana ya existe", 400);
     }
 
-    const ventana = await VentanaRepository.update(id, data);
+    const toUpdate: any = { ...data };
+
+    // settings: merge parcial con los settings existentes
+    if ((data as any).settings !== undefined) {
+      const currentVentana = await prisma.ventana.findUnique({
+        where: { id },
+        select: { settings: true },
+      });
+
+      const currentSettings = currentVentana?.settings as Record<string, any> | null || {};
+
+      if ((data as any).settings === null) {
+        // Si envían null explícitamente, limpiar settings
+        toUpdate.settings = null;
+      } else {
+        // Merge parcial
+        const mergedSettings = deepMergeSettings(currentSettings, (data as any).settings);
+        toUpdate.settings = mergedSettings;
+      }
+    }
+
+    const ventana = await VentanaRepository.update(id, toUpdate);
 
     await ActivityService.log({
       userId,
