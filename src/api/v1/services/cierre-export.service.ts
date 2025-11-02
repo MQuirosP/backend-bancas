@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import {
-  CierreWeeklyResponse,
-  CierreBySellerResponse,
+  CierreWeeklyData,
+  CierreBySellerData,
   CierreView,
   BandaMetrics,
   LoteriaMetrics,
@@ -21,7 +21,7 @@ export class CierreExportService {
    * Genera un workbook de Excel basado en la vista especificada
    */
   static async generateWorkbook(
-    data: CierreWeeklyResponse | CierreBySellerResponse,
+    data: CierreWeeklyData | CierreBySellerData,
     view: CierreView
   ): Promise<ExcelJS.Workbook> {
     const workbook = new ExcelJS.Workbook();
@@ -32,15 +32,15 @@ export class CierreExportService {
 
     if (view === 'seller') {
       // Vista por vendedor
-      const sellerData = data as CierreBySellerResponse;
+      const sellerData = data as CierreBySellerData;
       this.addSellerSheet(workbook, sellerData);
     } else if (view === 'total') {
       // Vista total: todas las bandas en una hoja
-      const weeklyData = data as CierreWeeklyResponse;
+      const weeklyData = data as CierreWeeklyData;
       this.addTotalSheet(workbook, weeklyData);
     } else {
       // Vista por banda específica (80, 85, 90, 92, 200)
-      const weeklyData = data as CierreWeeklyResponse;
+      const weeklyData = data as CierreWeeklyData;
       const banda = parseInt(view) as BandaMultiplicador;
       this.addBandSheet(workbook, weeklyData, banda);
     }
@@ -53,7 +53,7 @@ export class CierreExportService {
    */
   private static addTotalSheet(
     workbook: ExcelJS.Workbook,
-    data: CierreWeeklyResponse
+    data: CierreWeeklyData
   ): void {
     const sheet = workbook.addWorksheet('Cierre Total');
 
@@ -125,7 +125,7 @@ export class CierreExportService {
    */
   private static addBandSheet(
     workbook: ExcelJS.Workbook,
-    data: CierreWeeklyResponse,
+    data: CierreWeeklyData,
     banda: BandaMultiplicador
   ): void {
     const bandaData = data.bands[banda];
@@ -182,7 +182,7 @@ export class CierreExportService {
    */
   private static addSellerSheet(
     workbook: ExcelJS.Workbook,
-    data: CierreBySellerResponse
+    data: CierreBySellerData
   ): void {
     const sheet = workbook.addWorksheet('Cierre por Vendedor');
 

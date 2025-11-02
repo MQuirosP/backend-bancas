@@ -13,6 +13,8 @@ import {
   CierreView,
 } from '../types/cierre.types';
 
+const TIMEZONE = 'America/Costa_Rica';
+
 /**
  * Parsea una fecha YYYY-MM-DD en zona horaria Costa Rica a UTC
  */
@@ -84,6 +86,7 @@ async function applyRbacToFilters(
 /**
  * Controlador para endpoints de Cierre Operativo
  * Implementa RBAC (ADMIN=all; VENTANA=mine con DB lookup)
+ * Sigue estándar: success(res, data, meta)
  */
 export const CierreController = {
   /**
@@ -123,10 +126,29 @@ export const CierreController = {
       query.scope
     );
 
-    // Ejecutar agregación
-    const result = await CierreService.aggregateWeekly(filters);
+    // Ejecutar agregación (servicio retorna data + _performance)
+    const { _performance, ...data } = await CierreService.aggregateWeekly(filters);
 
-    return success(res, result);
+    // Construir effectiveFilters para meta
+    const effectiveFilters: any = {
+      scope: filters.scope,
+    };
+    if (filters.ventanaId) effectiveFilters.ventanaId = filters.ventanaId;
+    if (filters.loteriaId) effectiveFilters.loteriaId = filters.loteriaId;
+
+    // Retornar siguiendo estándar: success(res, data, meta)
+    return success(res, data, {
+      range: {
+        fromAt: filters.fromDate.toISOString(),
+        toAt: filters.toDate.toISOString(),
+        tz: TIMEZONE,
+      },
+      scope: filters.scope,
+      effectiveFilters,
+      queryExecutionTime: _performance.queryExecutionTime,
+      totalQueries: _performance.totalQueries,
+      generatedAt: new Date().toISOString(),
+    });
   },
 
   /**
@@ -170,14 +192,35 @@ export const CierreController = {
     const top = query.top ? parseInt(query.top, 10) : undefined;
     const orderBy = query.orderBy || 'totalVendida';
 
-    // Ejecutar agregación
-    const result = await CierreService.aggregateBySeller(
+    // Ejecutar agregación (servicio retorna data + _performance)
+    const { _performance, ...data } = await CierreService.aggregateBySeller(
       filters,
       top,
       orderBy
     );
 
-    return success(res, result);
+    // Construir effectiveFilters para meta
+    const effectiveFilters: any = {
+      scope: filters.scope,
+      top,
+      orderBy,
+    };
+    if (filters.ventanaId) effectiveFilters.ventanaId = filters.ventanaId;
+    if (filters.loteriaId) effectiveFilters.loteriaId = filters.loteriaId;
+
+    // Retornar siguiendo estándar: success(res, data, meta)
+    return success(res, data, {
+      range: {
+        fromAt: filters.fromDate.toISOString(),
+        toAt: filters.toDate.toISOString(),
+        tz: TIMEZONE,
+      },
+      scope: filters.scope,
+      effectiveFilters,
+      queryExecutionTime: _performance.queryExecutionTime,
+      totalQueries: _performance.totalQueries,
+      generatedAt: new Date().toISOString(),
+    });
   },
 
   /**
@@ -223,18 +266,21 @@ export const CierreController = {
     );
 
     // Obtener datos según la vista
-    let data;
+    let result;
 
     if (view === 'seller') {
       const top = query.top ? parseInt(query.top, 10) : undefined;
       const orderBy = query.orderBy || 'totalVendida';
-      data = await CierreService.aggregateBySeller(filters, top, orderBy);
+      result = await CierreService.aggregateBySeller(filters, top, orderBy);
     } else {
-      data = await CierreService.aggregateWeekly(filters);
+      result = await CierreService.aggregateWeekly(filters);
     }
 
+    // Remover _performance antes de exportar
+    const { _performance, ...data } = result;
+
     // Generar workbook de Excel
-    const workbook = await CierreExportService.generateWorkbook(data, view);
+    const workbook = await CierreExportService.generateWorkbook(data as any, view);
 
     // Configurar headers de respuesta
     res.setHeader(
