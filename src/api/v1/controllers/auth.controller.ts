@@ -82,6 +82,7 @@ export const AuthController = {
         name: true,
         role: true,
         ventanaId: true,
+        settings: true,
       },
     });
 
@@ -95,6 +96,7 @@ export const AuthController = {
       username: u.username,
       name: u.name,
       role: u.role,
+      settings: u.settings,
       vendedorId: u.role === Role.VENDEDOR ? u.id : null,
       ventanaId:
         u.role === Role.VENTANA
