@@ -8,6 +8,7 @@ import { RestrictionRuleRepository } from "../../../repositories/restrictionRule
 import { isWithinSalesHours, validateTicketAgainstRules } from "../../../utils/loteriaRules";
 
 const CUTOFF_GRACE_MS = 5000;
+// Updated: Added clienteNombre field support
 
 /**
  * Extrae la configuración de impresión de un usuario/ventana
@@ -216,6 +217,7 @@ export const TicketService = {
           sorteoId,
           ventanaId,
           totalAmount: 0,
+          clienteNombre: data.clienteNombre ?? null,
           jugadas: jugadasIn.map((j) => {
             const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
             const isNumero = type === "NUMERO";

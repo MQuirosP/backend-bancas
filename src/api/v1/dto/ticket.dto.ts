@@ -3,6 +3,7 @@ export interface CreateTicketDTO {
   sorteoId: string;
   ventanaId: string;
   vendedorId?: string; // opcional para ADMIN/VENTANA
+  clienteNombre?: string | null; // nombre del cliente (opcional)
   jugadas: {
     number: string;
     amount: number;
@@ -22,5 +23,6 @@ export interface TicketResponseDTO {
   sorteoId: string;
   ventanaId: string;
   vendedorId: string;
+  clienteNombre?: string | null;
   createdAt: Date;
 }

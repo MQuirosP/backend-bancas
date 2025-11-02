@@ -25,6 +25,7 @@ export const CreateTicketSchema = z
     loteriaId: z.uuid("loteriaId inválido"),
     sorteoId: z.uuid("sorteoId inválido"),
     ventanaId: z.uuid("ventanaId inválido").optional(),
+    clienteNombre: z.string().trim().min(1).max(100, "clienteNombre debe tener máximo 100 caracteres").nullable().optional(),
     jugadas: z.array(z.union([JugadaNumeroSchema, JugadaReventadoSchema])).min(1),
   }).merge(z.object({ vendedorId: z.string().uuid("vendedorId inválido").optional() }))
   .superRefine((val, ctx) => {
