@@ -13,9 +13,7 @@ export const ActivityLogController = {
   async list(req: Request, res: Response) {
     const query = req.query as unknown as ListActivityLogsQuery;
     const result = await ActivityLogService.list(query);
-    return success(res, result.data, {
-      meta: result.meta,
-    });
+    return success(res, result.data, result.meta);
   },
 
   async getByUser(req: Request, res: Response) {
@@ -23,9 +21,7 @@ export const ActivityLogController = {
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 20;
     const result = await ActivityLogService.getByUser(userId, page, pageSize);
-    return success(res, result.data, {
-      meta: result.meta,
-    });
+    return success(res, result.data, result.meta);
   },
 
   async getByTarget(req: Request, res: Response) {
@@ -33,9 +29,7 @@ export const ActivityLogController = {
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 20;
     const result = await ActivityLogService.getByTarget(targetType, targetId, page, pageSize);
-    return success(res, result.data, {
-      meta: result.meta,
-    });
+    return success(res, result.data, result.meta);
   },
 
   async getByAction(req: Request, res: Response) {
@@ -43,9 +37,7 @@ export const ActivityLogController = {
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = parseInt(req.query.pageSize as string) || 20;
     const result = await ActivityLogService.getByAction(action as any, page, pageSize);
-    return success(res, result.data, {
-      meta: result.meta,
-    });
+    return success(res, result.data, result.meta);
   },
 
   async cleanup(req: Request, res: Response) {
