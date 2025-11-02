@@ -161,6 +161,7 @@ model Ticket {
   isActive      Boolean      @default(true)
   isWinner      Boolean      @default(false)
   sorteoId      String       @db.Uuid
+  clienteNombre String?      @default("CLIENTE CONTADO") @db.VarChar(100)
   
   // Campos de pago unificados
   totalPayout      Float?    @default(0)     // Total de premios ganados

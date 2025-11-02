@@ -10,6 +10,7 @@ type CreateTicketInput = {
   sorteoId: string;
   ventanaId: string;
   totalAmount?: number; // ignorado; el backend calcula el total
+  clienteNombre?: string | null; // nombre del cliente (opcional)
   jugadas: Array<{
     type: "NUMERO" | "REVENTADO";
     number: string;
@@ -162,7 +163,7 @@ async function ensureBaseMultiplierRow(
 
 export const TicketRepository = {
   async create(data: CreateTicketInput, userId: string) {
-    const { loteriaId, sorteoId, ventanaId, jugadas } = data;
+    const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
 
     // Toda la operación dentro de una transacción con retry y timeouts explícitos
     const ticket = await withTransactionRetry(
@@ -499,6 +500,9 @@ export const TicketRepository = {
         // Acumular datos para ActivityLog
         const commissionsDetails: any[] = [];
 
+        // Normalizar clienteNombre: trim y default "CLIENTE CONTADO"
+        const normalizedClienteNombre = (clienteNombre?.trim() || "CLIENTE CONTADO");
+
         const createdTicket = await tx.ticket.create({
           data: {
             ticketNumber: nextNumber,
@@ -509,6 +513,7 @@ export const TicketRepository = {
             totalAmount: totalAmountTx,
             status: TicketStatus.ACTIVE,
             isActive: true,
+            clienteNombre: normalizedClienteNombre,
             jugadas: {
               create: preparedJugadas.map((j) => {
                 // Resolver comisión para esta jugada

@@ -394,7 +394,7 @@ export function resolveDateRangeAllowFuture(
   toParsed.setUTCFullYear(toYear, toMonth - 1, toDay);
   toParsed.setUTCHours(0, 0, 0, 0);
   // Calcular 06:00:00 UTC del día siguiente (00:00:00 CR del día siguiente)
-  const toAtMidnight = new Date(toParsed.getTime() + 24 * 60 * 60 * 1000 + TZ_OFFSET_HOURS * 60 * 60 * 1000);
+  const toAtMidnight = new Date(toParsed.getTime() + 24 * 60 * 60 * 1000 - TZ_OFFSET_HOURS * 60 * 60 * 1000);
   // Restar 1ms para que sea 23:59:59.999 del día actual en CR
   const toAt = new Date(toAtMidnight.getTime() - 1);
 
