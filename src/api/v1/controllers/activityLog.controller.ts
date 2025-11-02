@@ -50,7 +50,7 @@ export const ActivityLogController = {
 
   async cleanup(req: Request, res: Response) {
     const { days } = req.body;
-    const result = await ActivityLogService.cleanupOldLogs(days || 90);
+    const result = await ActivityLogService.cleanupOldLogs(days || 45);
     return success(res, result);
   },
 };
