@@ -62,16 +62,52 @@ export const ActivityLogService = {
     };
   },
 
-  async getByUser(userId: string) {
-    return ActivityLogRepository.listByUser(userId, 100);
+  async getByUser(userId: string, page = 1, pageSize = 20) {
+    const { data, total } = await ActivityLogRepository.listByUser(userId, page, pageSize);
+    const totalPages = Math.ceil(total / pageSize);
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        pageSize,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    };
   },
 
-  async getByTarget(targetType: string, targetId: string) {
-    return ActivityLogRepository.listByTarget(targetType, targetId);
+  async getByTarget(targetType: string, targetId: string, page = 1, pageSize = 20) {
+    const { data, total } = await ActivityLogRepository.listByTarget(targetType, targetId, page, pageSize);
+    const totalPages = Math.ceil(total / pageSize);
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        pageSize,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    };
   },
 
-  async getByAction(action: ActivityType) {
-    return ActivityLogRepository.listByAction(action, 100);
+  async getByAction(action: ActivityType, page = 1, pageSize = 20) {
+    const { data, total } = await ActivityLogRepository.listByAction(action, page, pageSize);
+    const totalPages = Math.ceil(total / pageSize);
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        pageSize,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    };
   },
 
   async cleanupOldLogs(days: number = 45) {
