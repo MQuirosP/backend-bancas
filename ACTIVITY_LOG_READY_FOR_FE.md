@@ -299,6 +299,7 @@ console.log(`Se eliminaron ${result.data.deletedCount} registros`);
 Para detalles técnicos exhaustivos, consulta:
 - **[ACTIVITY_LOG_API.md](./docs/ACTIVITY_LOG_API.md)** - Especificación técnica completa
 - **[FRONTEND_INTEGRATION_GUIDE.md](./docs/FRONTEND_INTEGRATION_GUIDE.md)** - Guía detallada para frontend
+- **[ACTIVITY_LOG_DEPLOYMENT_GUIDE.md](./docs/ACTIVITY_LOG_DEPLOYMENT_GUIDE.md)** - Guía de despliegue y validación
 
 ---
 
