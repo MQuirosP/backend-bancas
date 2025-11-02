@@ -14,6 +14,74 @@ import {
 } from '../types/cierre.types';
 
 /**
+ * Parsea una fecha YYYY-MM-DD en zona horaria Costa Rica a UTC
+ */
+function parseDateCR(dateStr: string, boundary: 'start' | 'end'): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+
+  if (boundary === 'start') {
+    // Inicio del día en CR: 00:00:00 CR = 06:00:00 UTC
+    return new Date(Date.UTC(year, month - 1, day, 6, 0, 0, 0));
+  } else {
+    // Fin del día en CR: 23:59:59.999 CR = 05:59:59.999 UTC del día siguiente
+    return new Date(Date.UTC(year, month - 1, day + 1, 5, 59, 59, 999));
+  }
+}
+
+/**
+ * Aplica filtros RBAC basados en el rol del usuario
+ */
+async function applyRbacToFilters(
+  user: { id: string; role: Role; ventanaId?: string | null },
+  fromDate: Date,
+  toDate: Date,
+  requestedVentanaId?: string,
+  requestedScope?: string
+): Promise<CierreFilters> {
+  const scope: CierreScope = requestedScope === 'mine' ? 'mine' : 'all';
+  let ventanaId: string | undefined;
+
+  if (user.role === Role.VENTANA) {
+    // VENTANA: siempre scope=mine, forzar ventanaId
+    const validatedVentanaId = await validateVentanaUser(
+      user.role,
+      user.ventanaId,
+      user.id
+    );
+
+    if (!validatedVentanaId) {
+      throw new AppError('VENTANA user must have ventanaId assigned', 403, {
+        code: 'RBAC_003',
+      });
+    }
+
+    ventanaId = validatedVentanaId;
+
+    // Si solicita una ventana diferente, rechazar
+    if (requestedVentanaId && requestedVentanaId !== ventanaId) {
+      throw new AppError('Cannot access other ventanas', 403, {
+        code: 'RBAC_001',
+      });
+    }
+  } else if (user.role === Role.ADMIN) {
+    // ADMIN: puede ver todas las ventanas o una específica
+    if (scope === 'mine' && user.ventanaId) {
+      ventanaId = user.ventanaId;
+    } else if (requestedVentanaId) {
+      ventanaId = requestedVentanaId;
+    }
+    // Si scope=all y no requestedVentanaId, ventanaId queda undefined (global)
+  }
+
+  return {
+    fromDate,
+    toDate,
+    ventanaId,
+    scope,
+  };
+}
+
+/**
  * Controlador para endpoints de Cierre Operativo
  * Implementa RBAC (ADMIN=all; VENTANA=mine con DB lookup)
  */
@@ -43,11 +111,11 @@ export const CierreController = {
     validateDateRange(query.from, query.to);
 
     // Convertir fechas a UTC (inicio y fin de día en CR)
-    const fromDate = this.parseDateCR(query.from, 'start');
-    const toDate = this.parseDateCR(query.to, 'end');
+    const fromDate = parseDateCR(query.from, 'start');
+    const toDate = parseDateCR(query.to, 'end');
 
     // Aplicar RBAC
-    const filters = await this.applyRbacToFilters(
+    const filters = await applyRbacToFilters(
       req.user,
       fromDate,
       toDate,
@@ -86,11 +154,11 @@ export const CierreController = {
     validateDateRange(query.from, query.to);
 
     // Convertir fechas
-    const fromDate = this.parseDateCR(query.from, 'start');
-    const toDate = this.parseDateCR(query.to, 'end');
+    const fromDate = parseDateCR(query.from, 'start');
+    const toDate = parseDateCR(query.to, 'end');
 
     // Aplicar RBAC
-    const filters = await this.applyRbacToFilters(
+    const filters = await applyRbacToFilters(
       req.user,
       fromDate,
       toDate,
@@ -114,7 +182,7 @@ export const CierreController = {
 
   /**
    * GET /api/v1/cierres/export.xlsx
-   * Exporta cierre a Excel (implementación pendiente)
+   * Exporta cierre a Excel
    */
   async exportXLSX(req: AuthenticatedRequest, res: Response) {
     if (!req.user) {
@@ -142,11 +210,11 @@ export const CierreController = {
     const view: CierreView = query.view;
 
     // Convertir fechas
-    const fromDate = this.parseDateCR(query.from, 'start');
-    const toDate = this.parseDateCR(query.to, 'end');
+    const fromDate = parseDateCR(query.from, 'start');
+    const toDate = parseDateCR(query.to, 'end');
 
     // Aplicar RBAC
-    const filters = await this.applyRbacToFilters(
+    const filters = await applyRbacToFilters(
       req.user,
       fromDate,
       toDate,
@@ -181,83 +249,5 @@ export const CierreController = {
     // Escribir workbook directamente a la respuesta
     await workbook.xlsx.write(res);
     res.end();
-  },
-
-  /**
-   * Aplica filtros RBAC basados en el rol del usuario
-   * @private
-   */
-  async applyRbacToFilters(
-    user: { id: string; role: Role; ventanaId?: string | null },
-    fromDate: Date,
-    toDate: Date,
-    requestedVentanaId?: string,
-    requestedScope?: string
-  ): Promise<CierreFilters> {
-    const scope: CierreScope =
-      requestedScope === 'mine' ? 'mine' : 'all';
-
-    let ventanaId: string | undefined;
-
-    if (user.role === Role.VENTANA) {
-      // VENTANA: siempre scope=mine, forzar ventanaId
-      const validatedVentanaId = await validateVentanaUser(
-        user.role,
-        user.ventanaId,
-        user.id
-      );
-
-      if (!validatedVentanaId) {
-        throw new AppError('VENTANA user must have ventanaId assigned', 403, {
-          code: 'RBAC_003',
-        });
-      }
-
-      ventanaId = validatedVentanaId;
-
-      // Si solicita una ventana diferente, rechazar
-      if (requestedVentanaId && requestedVentanaId !== ventanaId) {
-        throw new AppError('Cannot access other ventanas', 403, {
-          code: 'RBAC_001',
-        });
-      }
-    } else if (user.role === Role.ADMIN) {
-      // ADMIN: puede ver todas las ventanas o una específica
-      if (scope === 'mine' && user.ventanaId) {
-        ventanaId = user.ventanaId;
-      } else if (requestedVentanaId) {
-        ventanaId = requestedVentanaId;
-      }
-      // Si scope=all y no requestedVentanaId, ventanaId queda undefined (global)
-    }
-
-    return {
-      fromDate,
-      toDate,
-      ventanaId,
-      scope,
-    };
-  },
-
-  /**
-   * Parsea una fecha YYYY-MM-DD en zona horaria Costa Rica a UTC
-   * @private
-   */
-  parseDateCR(
-    dateStr: string,
-    boundary: 'start' | 'end'
-  ): Date {
-    // Parsear fecha en formato YYYY-MM-DD
-    const [year, month, day] = dateStr.split('-').map(Number);
-
-    if (boundary === 'start') {
-      // Inicio del día en CR: 00:00:00 CR = 06:00:00 UTC
-      const crDate = new Date(Date.UTC(year, month - 1, day, 6, 0, 0, 0));
-      return crDate;
-    } else {
-      // Fin del día en CR: 23:59:59.999 CR = 05:59:59.999 UTC del día siguiente
-      const crDate = new Date(Date.UTC(year, month - 1, day + 1, 5, 59, 59, 999));
-      return crDate;
-    }
   },
 };
