@@ -68,41 +68,27 @@ export interface VendedorMetrics extends CeldaMetrics {
 }
 
 /**
- * Respuesta del endpoint weekly
+ * Datos retornados por el servicio weekly (solo datos, sin meta)
  */
-export interface CierreWeeklyResponse {
-  period: {
-    from: string; // ISO 8601 con -06:00
-    to: string; // ISO 8601 con -06:00
-  };
-  meta: {
-    timezone: string; // "America/Costa_Rica"
-    queryExecutionTime: number; // ms
-    totalQueries: number;
-    scope: CierreScope;
-    generatedAt: string; // ISO 8601
-  };
-  totals: CeldaMetrics; // totales globales
-  bands: Record<BandaMultiplicador, BandaMetrics>; // 80, 85, 90, 92, 200
+export interface CierreWeeklyData {
+  totals: CeldaMetrics;
+  bands: Record<BandaMultiplicador, BandaMetrics>;
 }
 
 /**
- * Respuesta del endpoint by-seller
+ * Datos retornados por el servicio by-seller (solo datos, sin meta)
  */
-export interface CierreBySellerResponse {
-  period: {
-    from: string;
-    to: string;
-  };
-  meta: {
-    timezone: string;
-    queryExecutionTime: number;
-    totalQueries: number;
-    scope: CierreScope;
-    generatedAt: string;
-  };
+export interface CierreBySellerData {
   totals: CeldaMetrics;
-  vendedores: VendedorMetrics[]; // ordenado por criterio (top)
+  vendedores: VendedorMetrics[];
+}
+
+/**
+ * Performance metrics para incluir en meta del controlador
+ */
+export interface CierrePerformance {
+  queryExecutionTime: number;
+  totalQueries: number;
 }
 
 /**

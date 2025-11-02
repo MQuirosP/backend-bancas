@@ -2,8 +2,9 @@ import { Prisma } from '@prisma/client';
 import prisma from '../../../core/prismaClient';
 import {
   CierreFilters,
-  CierreWeeklyResponse,
-  CierreBySellerResponse,
+  CierreWeeklyData,
+  CierreBySellerData,
+  CierrePerformance,
   CeldaMetrics,
   TurnoMetrics,
   LoteriaMetrics,
@@ -28,10 +29,11 @@ export class CierreService {
 
   /**
    * Agrega datos semanales por banda, lotería y turno
+   * Retorna solo datos + performance metrics (controlador agrega meta)
    */
   static async aggregateWeekly(
     filters: CierreFilters
-  ): Promise<CierreWeeklyResponse> {
+  ): Promise<CierreWeeklyData & { _performance: CierrePerformance }> {
     const startTime = Date.now();
     let queryCount = 0;
 
@@ -43,30 +45,24 @@ export class CierreService {
     const { totals, bands } = this.transformWeeklyData(rawData);
 
     return {
-      period: {
-        from: this.toCostaRicaISO(filters.fromDate),
-        to: this.toCostaRicaISO(filters.toDate),
-      },
-      meta: {
-        timezone: this.TIMEZONE,
-        queryExecutionTime: Date.now() - startTime,
-        totalQueries: queryCount,
-        scope: filters.scope,
-        generatedAt: new Date().toISOString(),
-      },
       totals,
       bands,
+      _performance: {
+        queryExecutionTime: Date.now() - startTime,
+        totalQueries: queryCount,
+      },
     };
   }
 
   /**
    * Agrega datos por vendedor
+   * Retorna solo datos + performance metrics (controlador agrega meta)
    */
   static async aggregateBySeller(
     filters: CierreFilters,
     top?: number,
     orderBy: 'totalVendida' | 'ganado' | 'netoDespuesComision' = 'totalVendida'
-  ): Promise<CierreBySellerResponse> {
+  ): Promise<CierreBySellerData & { _performance: CierrePerformance }> {
     const startTime = Date.now();
     let queryCount = 0;
 
@@ -82,19 +78,12 @@ export class CierreService {
     );
 
     return {
-      period: {
-        from: this.toCostaRicaISO(filters.fromDate),
-        to: this.toCostaRicaISO(filters.toDate),
-      },
-      meta: {
-        timezone: this.TIMEZONE,
-        queryExecutionTime: Date.now() - startTime,
-        totalQueries: queryCount,
-        scope: filters.scope,
-        generatedAt: new Date().toISOString(),
-      },
       totals,
       vendedores,
+      _performance: {
+        queryExecutionTime: Date.now() - startTime,
+        totalQueries: queryCount,
+      },
     };
   }
 
@@ -446,13 +435,4 @@ export class CierreService {
     target.jugadasCount += source.jugadasCount;
   }
 
-  /**
-   * Convierte Date a ISO con zona horaria Costa Rica
-   */
-  private static toCostaRicaISO(date: Date): string {
-    // Formatear con offset -06:00
-    const isoString = date.toISOString();
-    // Reemplazar Z con -06:00 (simplificación; en producción usar librería de TZ)
-    return isoString.replace('Z', '-06:00');
-  }
 }
