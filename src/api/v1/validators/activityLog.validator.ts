@@ -3,7 +3,7 @@ import { ActivityType } from '@prisma/client';
 
 export const listActivityLogsQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
-  pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(20),
   userId: z.string().uuid().optional(),
   action: z.nativeEnum(ActivityType).optional(),
   targetType: z.string().min(1).optional(),
@@ -30,5 +30,5 @@ export const getByActionParamSchema = z.object({
 });
 
 export const cleanupLogsBodySchema = z.object({
-  days: z.number().int().positive().optional().default(90),
+  days: z.number().int().positive().optional().default(45),
 });

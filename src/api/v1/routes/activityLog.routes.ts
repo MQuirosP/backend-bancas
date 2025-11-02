@@ -22,18 +22,11 @@ const router = Router();
 router.use(protect);
 router.use(restrictTo(Role.ADMIN));
 
-// GET /api/v1/activity-logs - Lista paginada de todos los logs
-router.get(
-  '/',
-  validateQuery(listActivityLogsQuerySchema),
-  ActivityLogController.list
-);
-
-// GET /api/v1/activity-logs/:id - Obtener un log específico
-router.get(
-  '/:id',
-  validateParams(getActivityLogByIdParamSchema),
-  ActivityLogController.getById
+// POST /api/v1/activity-logs/cleanup - Limpiar logs antiguos
+router.post(
+  '/cleanup',
+  validateBody(cleanupLogsBodySchema),
+  ActivityLogController.cleanup
 );
 
 // GET /api/v1/activity-logs/user/:userId - Logs de un usuario específico
@@ -57,11 +50,18 @@ router.get(
   ActivityLogController.getByAction
 );
 
-// POST /api/v1/activity-logs/cleanup - Limpiar logs antiguos
-router.post(
-  '/cleanup',
-  validateBody(cleanupLogsBodySchema),
-  ActivityLogController.cleanup
+// GET /api/v1/activity-logs/:id - Obtener un log específico
+router.get(
+  '/:id',
+  validateParams(getActivityLogByIdParamSchema),
+  ActivityLogController.getById
+);
+
+// GET /api/v1/activity-logs - Lista paginada de todos los logs
+router.get(
+  '/',
+  validateQuery(listActivityLogsQuerySchema),
+  ActivityLogController.list
 );
 
 export default router;
