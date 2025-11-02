@@ -46,7 +46,7 @@ export const UserRepository = {
 
   update: (id: string, data: Partial<{
     name: string; email: string | null; username: string; password: string;
-    role: Role; ventanaId: string | null; isActive: boolean; code: string | null; phone: string | null;
+    role: Role; ventanaId: string | null; isActive: boolean; code: string | null; phone: string | null; settings: any;
   }>) =>
     prisma.user.update({ where: { id }, data }),
 
@@ -94,7 +94,7 @@ export const UserRepository = {
         select: select ?? {
           id: true, name: true, email: true, username: true, role: true,
           ventanaId: true, isActive: true, code: true,
-          createdAt: true, updatedAt: true,
+          createdAt: true, updatedAt: true, settings: true,
           ventana: { select: { id: true, name: true } },
         },
         orderBy: orderBy ?? { createdAt: 'desc' },
