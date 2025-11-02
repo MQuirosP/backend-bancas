@@ -3,8 +3,9 @@ import { AppError } from '../../../core/errors';
 import { CreateUserDTO, UpdateUserDTO } from '../dto/user.dto';
 import { hashPassword, comparePassword } from '../../../utils/crypto';
 import UserRepository from '../../../repositories/user.repository';
-import { Role } from '@prisma/client';
+import { Role, ActivityType } from '@prisma/client';
 import { normalizePhone } from "../../../utils/phoneNormalizer";
+import ActivityService from '../../../core/activity.service';
 
 /**
  * Deep merge de configuraciones (parcial)
@@ -50,7 +51,7 @@ async function ensureVentanaActiveOrThrow(ventanaId: string) {
 }
 
 export const UserService = {
-  async create(dto: CreateUserDTO) {
+  async create(dto: CreateUserDTO, createdByUserId?: string) {
     const username = dto.username.trim();
     const role: Role = (dto.role as Role) ?? Role.VENTANA;
     const email = dto.email ? dto.email.trim().toLowerCase() : null;
@@ -105,6 +106,17 @@ export const UserService = {
       },
     });
 
+    // Log de auditoría
+    if (result && createdByUserId) {
+      await ActivityService.log({
+        userId: createdByUserId,
+        action: ActivityType.USER_CREATE,
+        targetType: 'USER',
+        targetId: result.id,
+        details: { username: result.username, role: result.role, ventanaId: result.ventanaId },
+      });
+    }
+
     return result!;
   },
 
@@ -148,7 +160,7 @@ export const UserService = {
     };
   },
 
-  async update(id: string, dto: UpdateUserDTO) {
+  async update(id: string, dto: UpdateUserDTO, updatedByUserId?: string) {
     // Cargar actual para comparaciones
     const current = await prisma.user.findUnique({
       where: { id },
@@ -249,10 +261,21 @@ export const UserService = {
       },
     });
 
+    // Log de auditoría
+    if (result && updatedByUserId && Object.keys(toUpdate).length > 0) {
+      await ActivityService.log({
+        userId: updatedByUserId,
+        action: ActivityType.USER_UPDATE,
+        targetType: 'USER',
+        targetId: id,
+        details: { changedFields: Object.keys(toUpdate) },
+      });
+    }
+
     return result!;
   },
 
-  async softDelete(id: string, _deletedBy: string, _deletedReason?: string) {
+  async softDelete(id: string, deletedBy: string, deletedReason?: string) {
     const user = await prisma.user.update({
       where: { id },
       data: {
@@ -260,15 +283,37 @@ export const UserService = {
       },
       select: { id: true, name: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
     });
+
+    // Log de auditoría
+    await ActivityService.log({
+      userId: deletedBy,
+      action: ActivityType.USER_DELETE,
+      targetType: 'USER',
+      targetId: id,
+      details: { reason: deletedReason },
+    });
+
     return user;
   },
 
-  async restore(id: string) {
+  async restore(id: string, restoredByUserId?: string) {
     const user = await prisma.user.update({
       where: { id },
       data: { isActive: true },
       select: { id: true, name: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
     });
+
+    // Log de auditoría
+    if (restoredByUserId) {
+      await ActivityService.log({
+        userId: restoredByUserId,
+        action: ActivityType.USER_RESTORE,
+        targetType: 'USER',
+        targetId: id,
+        details: null,
+      });
+    }
+
     return user;
   },
 
