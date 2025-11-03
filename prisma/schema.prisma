@@ -656,6 +656,8 @@ model Account {
   ledgerEntries       LedgerEntry[]
   bankDeposits        BankDeposit[]
   dailySnapshots      DailyBalanceSnapshot[]
+  paymentsFrom        PaymentDocument[]       @relation("PaymentFrom")
+  paymentsTo          PaymentDocument[]       @relation("PaymentTo")
 
   @@unique([ownerType, ownerId])
   @@index([ownerType])
@@ -716,4 +718,26 @@ model DailyBalanceSnapshot {
   @@unique([accountId, date])
   @@index([accountId])
   @@index([date])
+}
+
+model PaymentDocument {
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fromAccountId     String      @db.Uuid
+  toAccountId       String      @db.Uuid
+  amount            Decimal
+  docNumber         String
+  date              DateTime
+  description       String?
+  receiptUrl        String?     @db.VarChar(500)
+  createdBy         String      @db.Uuid
+  createdAt         DateTime    @default(now())
+  requestId         String?     @unique
+
+  fromAccount Account @relation("PaymentFrom", fields: [fromAccountId], references: [id])
+  toAccount   Account @relation("PaymentTo", fields: [toAccountId], references: [id])
+
+  @@index([fromAccountId])
+  @@index([toAccountId])
+  @@index([date])
+  @@index([createdAt])
 }

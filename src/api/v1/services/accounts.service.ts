@@ -1,5 +1,5 @@
 import prisma from '../../../core/prismaClient';
-import { OwnerType, LedgerType, ReferenceType, Prisma, ActivityType } from '@prisma/client';
+import { OwnerType, LedgerType, ReferenceType, Prisma, ActivityType, LedgerEntry } from '@prisma/client';
 import { AppError } from '../../../core/errors';
 import ActivityService from '../../../core/activity.service';
 import AccountsRepository from '../modules/accounts/accounts.repository';
@@ -40,17 +40,31 @@ export class AccountsService {
   }
 
   /**
-   * Obtener balance actual de cuenta
+   * Obtener balance actual de cuenta con estado CXC/CXP
    */
   static async getBalance(accountId: string) {
     const account = await AccountsRepository.getAccountById(accountId);
     if (!account) {
       throw new AppError('Account not found', 404);
     }
+
+    const balance = parseFloat(account.balance.toString());
+    const debtStatus = balance > 0 ? 'CXC' : balance < 0 ? 'CXP' : 'BALANCE';
+
     return {
       accountId: account.id,
-      balance: parseFloat(account.balance.toString()),
+      balance,
       currency: account.currency,
+      debtStatus: {
+        status: debtStatus,
+        amount: Math.abs(balance),
+        description:
+          debtStatus === 'CXC'
+            ? `Cuentas por Cobrar (nos deben ${Math.abs(balance)})`
+            : debtStatus === 'CXP'
+              ? `Cuentas por Pagar (debemos ${Math.abs(balance)})`
+              : 'Balance cuadrado',
+      },
       asOf: new Date(),
     };
   }
@@ -695,6 +709,235 @@ export class AccountsService {
         payload: { error: error instanceof Error ? error.message : 'Unknown' },
       });
       throw new AppError('Failed to list accounts', 500);
+    }
+  }
+
+  /**
+   * Obtener ledger diario totalizado con estado CXC/CXP
+   * CXC = Cuentas por Cobrar (balance positivo = nos deben)
+   * CXP = Cuentas por Pagar (balance negativo = debemos)
+   */
+  static async getDailyLedgerSummary(
+    accountId: string,
+    filters: { from?: Date; to?: Date } = {}
+  ) {
+    try {
+      const account = await AccountsRepository.getAccountById(accountId);
+      if (!account) {
+        throw new AppError('Account not found', 404);
+      }
+
+      // Obtener snapshots diarios
+      const from = filters.from || new Date(new Date().getFullYear(), 0, 1);
+      const to = filters.to || new Date();
+
+      const snapshots = await AccountsRepository.getDailySnapshots(accountId, from, to);
+
+      // Obtener todas las entradas del período para detalles
+      const entries = await prisma.ledgerEntry.findMany({
+        where: {
+          accountId,
+          date: { gte: from, lte: to },
+        },
+        orderBy: { date: 'asc' },
+      });
+
+      // Agrupar entradas por día
+      const entriesByDate: Record<string, LedgerEntry[]> = {};
+      entries.forEach(entry => {
+        const dateStr = entry.date.toISOString().split('T')[0];
+        if (!entriesByDate[dateStr]) {
+          entriesByDate[dateStr] = [];
+        }
+        entriesByDate[dateStr].push(entry);
+      });
+
+      // Determinar estado actual
+      const currentBalance = parseFloat(account.balance.toString());
+      const debtStatus = currentBalance > 0 ? 'CXC' : currentBalance < 0 ? 'CXP' : 'BALANCE';
+      const debtAmount = Math.abs(currentBalance);
+
+      return {
+        account: {
+          id: account.id,
+          ownerType: account.ownerType,
+          ownerId: account.ownerId,
+          currency: account.currency,
+        },
+        debtStatus: {
+          status: debtStatus,
+          amount: debtAmount,
+          description:
+            debtStatus === 'CXC'
+              ? `Cuentas por Cobrar (nos deben ${debtAmount})`
+              : debtStatus === 'CXP'
+                ? `Cuentas por Pagar (debemos ${debtAmount})`
+                : 'Balance cuadrado',
+        },
+        dailySummary: snapshots.map(snapshot => ({
+          date: snapshot.date.toISOString().split('T')[0],
+          opening: parseFloat(snapshot.opening.toString()),
+          debit: parseFloat(snapshot.debit.toString()),
+          credit: parseFloat(snapshot.credit.toString()),
+          closing: parseFloat(snapshot.closing.toString()),
+          entries: (entriesByDate[snapshot.date.toISOString().split('T')[0]] || []).map(e => ({
+            id: e.id,
+            type: e.type,
+            amount: parseFloat(e.valueSigned.toString()),
+            referenceType: e.referenceType,
+            referenceId: e.referenceId,
+            note: e.note,
+          })),
+        })),
+        summary: {
+          totalDebit: snapshots.reduce(
+            (sum, s) => sum + parseFloat(s.debit.toString()),
+            0
+          ),
+          totalCredit: snapshots.reduce(
+            (sum, s) => sum + parseFloat(s.credit.toString()),
+            0
+          ),
+          currentBalance: currentBalance,
+        },
+      };
+    } catch (error) {
+      logger.error({
+        layer: 'service',
+        action: 'DAILY_LEDGER_SUMMARY_FAIL',
+        payload: { accountId, error: error instanceof Error ? error.message : 'Unknown' },
+      });
+      if (error instanceof AppError) throw error;
+      throw new AppError('Failed to get daily ledger summary', 500);
+    }
+  }
+
+  /**
+   * Registrar documento de pago entre cuentas
+   * Crea entradas TRANSFER en ambas cuentas y reduce la deuda
+   */
+  static async createPaymentDocument(
+    paymentData: {
+      fromAccountId: string;
+      toAccountId: string;
+      amount: number | Prisma.Decimal;
+      docNumber: string;
+      date: Date;
+      description?: string;
+      receiptUrl?: string;
+      requestId?: string;
+      createdBy: string;
+    }
+  ) {
+    const amount = new Prisma.Decimal(paymentData.amount);
+
+    // Verificar idempotencia
+    if (paymentData.requestId) {
+      const existing = await prisma.paymentDocument.findFirst({
+        where: { requestId: paymentData.requestId },
+      });
+      if (existing) {
+        return existing;
+      }
+    }
+
+    try {
+      // Crear documento de pago y entradas ledger en una transacción
+      const result = await prisma.$transaction(async tx => {
+        // Crear documento de pago
+        const paymentDoc = await tx.paymentDocument.create({
+          data: {
+            fromAccountId: paymentData.fromAccountId,
+            toAccountId: paymentData.toAccountId,
+            amount,
+            docNumber: paymentData.docNumber,
+            date: paymentData.date,
+            description: paymentData.description,
+            receiptUrl: paymentData.receiptUrl,
+            requestId: paymentData.requestId,
+            createdBy: paymentData.createdBy,
+          },
+        });
+
+        // Crear entrada TRANSFER en cuenta origen (salida = negativo)
+        const fromEntry = await tx.ledgerEntry.create({
+          data: {
+            accountId: paymentData.fromAccountId,
+            type: LedgerType.TRANSFER,
+            valueSigned: amount.negated(),
+            referenceType: ReferenceType.OTHER,
+            referenceId: paymentDoc.id,
+            note: `Payment document ${paymentDoc.docNumber} to account`,
+            createdBy: paymentData.createdBy,
+            date: paymentData.date,
+          },
+        });
+
+        // Crear entrada TRANSFER en cuenta destino (entrada = positivo)
+        const toEntry = await tx.ledgerEntry.create({
+          data: {
+            accountId: paymentData.toAccountId,
+            type: LedgerType.TRANSFER,
+            valueSigned: amount,
+            referenceType: ReferenceType.OTHER,
+            referenceId: paymentDoc.id,
+            note: `Payment document ${paymentDoc.docNumber} from account`,
+            createdBy: paymentData.createdBy,
+            date: paymentData.date,
+          },
+        });
+
+        // Actualizar balances de ambas cuentas
+        await tx.account.update({
+          where: { id: paymentData.fromAccountId },
+          data: { balance: { decrement: amount } },
+        });
+
+        await tx.account.update({
+          where: { id: paymentData.toAccountId },
+          data: { balance: { increment: amount } },
+        });
+
+        return { paymentDoc, fromEntry, toEntry };
+      });
+
+      // Registrar en activity log
+      await ActivityService.log({
+        userId: paymentData.createdBy,
+        action: ActivityType.LEDGER_ADD,
+        targetType: 'PAYMENT_DOCUMENT',
+        targetId: result.paymentDoc.id,
+        details: {
+          fromAccountId: paymentData.fromAccountId,
+          toAccountId: paymentData.toAccountId,
+          amount: amount.toString(),
+          docNumber: paymentData.docNumber,
+        },
+        requestId: paymentData.requestId,
+        layer: 'service',
+      });
+
+      return {
+        paymentDocumentId: result.paymentDoc.id,
+        fromAccountId: result.paymentDoc.fromAccountId,
+        toAccountId: result.paymentDoc.toAccountId,
+        amount: parseFloat(amount.toString()),
+        docNumber: result.paymentDoc.docNumber,
+        date: result.paymentDoc.date,
+        createdAt: result.paymentDoc.createdAt,
+      };
+    } catch (error) {
+      logger.error({
+        layer: 'service',
+        action: 'PAYMENT_DOCUMENT_CREATE_FAIL',
+        payload: {
+          fromAccountId: paymentData.fromAccountId,
+          toAccountId: paymentData.toAccountId,
+          amount: amount.toString(),
+          error: error instanceof Error ? error.message : 'Unknown',
+        },
+      });
+      throw new AppError('Failed to create payment document', 500);
     }
   }
 
