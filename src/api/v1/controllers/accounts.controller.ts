@@ -18,6 +18,7 @@ import {
   updateAccountSchema,
   createPaymentDocumentSchema,
   createAccountSchema,
+  closeDaySchema,
 } from '../validators/accounts.validator';
 import logger from '../../../core/logger';
 
@@ -268,6 +269,20 @@ export class AccountsController {
         createdBy: req.user!.id,
       });
       sendSuccess(res, paymentDoc, 201);
+    } catch (error) {
+      sendError(res, error);
+    }
+  }
+
+  static async closeDay(req: RequestWithUser, res: Response) {
+    try {
+      const accountId = req.params.accountId;
+      const data = closeDaySchema.parse(req.body);
+      const result = await AccountsService.closeDay(accountId, {
+        date: data.date,
+        createdBy: req.user!.id,
+      });
+      sendSuccess(res, result, 201);
     } catch (error) {
       sendError(res, error);
     }

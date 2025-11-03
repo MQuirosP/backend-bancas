@@ -652,6 +652,132 @@ export class AccountsService {
   }
 
   /**
+   * Cierre diario: calcula saldo final del día actual y prepara apertura del siguiente
+   * Proceso:
+   * 1. Calcula saldo diario (debit/credit) desde todas las entradas del día
+   * 2. Crea snapshot con opening, debit, credit, closing
+   * 3. Crea ADJUSTMENT entry para el siguiente día con el saldo final (cierre del día anterior = apertura del siguiente)
+   */
+  static async closeDay(
+    accountId: string,
+    closeData: {
+      date: Date; // Fecha del cierre (ej: 02/11/2025)
+      createdBy: string;
+    }
+  ) {
+    try {
+      const account = await AccountsRepository.getAccountById(accountId);
+      if (!account) {
+        throw new AppError('Account not found', 404);
+      }
+
+      // Normalizar fecha al inicio del día (00:00:00)
+      const closeDate = new Date(closeData.date);
+      closeDate.setHours(0, 0, 0, 0);
+
+      // Obtener todas las entradas del día actual (excluyendo ADJUSTMENT de apertura)
+      const dayEntries = await prisma.ledgerEntry.findMany({
+        where: {
+          accountId,
+          date: closeDate,
+          type: { not: LedgerType.ADJUSTMENT }, // Excluir la entrada de apertura
+        },
+      });
+
+      // Calcular totales del día
+      let debit = new Prisma.Decimal(0);
+      let credit = new Prisma.Decimal(0);
+
+      dayEntries.forEach(entry => {
+        if (entry.valueSigned.isNegative()) {
+          debit = debit.minus(entry.valueSigned); // Resta = debit positivo
+        } else {
+          credit = credit.plus(entry.valueSigned); // Suma = credit positivo
+        }
+      });
+
+      // Obtener balance actual (es el cierre del día)
+      const currentBalance = account.balance;
+      const closingBalance = currentBalance;
+
+      // Opening = cierre del día anterior
+      // Para obtener el opening, necesitamos el balance ANTES de las entradas de hoy
+      const openingBalance = closingBalance.minus(credit).plus(debit);
+
+      // Crear snapshot del día
+      const snapshot = await AccountsRepository.createDailySnapshot(accountId, closeDate, {
+        opening: openingBalance,
+        debit,
+        credit,
+        closing: closingBalance,
+      });
+
+      // Si el cierre tiene un saldo != 0, crear ADJUSTMENT para el siguiente día
+      if (!closingBalance.isZero()) {
+        const nextDay = new Date(closeDate);
+        nextDay.setDate(nextDay.getDate() + 1);
+
+        // Crear ADJUSTMENT entry para el siguiente día con el saldo final
+        await AccountsRepository.addLedgerEntry(accountId, {
+          type: LedgerType.ADJUSTMENT,
+          valueSigned: closingBalance,
+          referenceType: ReferenceType.ADJUSTMENT_DOC,
+          referenceId: snapshot.id,
+          note: `Opening balance from ${closeDate.toISOString().split('T')[0]}: ${closingBalance.toString()} (${closingBalance.isPositive() ? 'CXC' : 'CXP'})`,
+          date: nextDay,
+          createdBy: closeData.createdBy,
+        });
+      }
+
+      // Registrar en activity log
+      await ActivityService.log({
+        userId: closeData.createdBy,
+        action: ActivityType.SNAPSHOT_CREATE,
+        targetType: 'DAILY_CLOSE',
+        targetId: snapshot.id,
+        details: {
+          accountId,
+          date: closeDate.toISOString().split('T')[0],
+          opening: openingBalance.toString(),
+          debit: debit.toString(),
+          credit: credit.toString(),
+          closing: closingBalance.toString(),
+        },
+        layer: 'service',
+      });
+
+      return {
+        snapshotId: snapshot.id,
+        date: closeDate.toISOString().split('T')[0],
+        opening: parseFloat(openingBalance.toString()),
+        debit: parseFloat(debit.toString()),
+        credit: parseFloat(credit.toString()),
+        closing: parseFloat(closingBalance.toString()),
+        debtStatus: {
+          status: closingBalance.isPositive() ? 'CXC' : closingBalance.isNegative() ? 'CXP' : 'BALANCE',
+          amount: Math.abs(parseFloat(closingBalance.toString())),
+        },
+        message:
+          !closingBalance.isZero()
+            ? `Closing recorded. Opening balance of ${closingBalance.toString()} (${closingBalance.isPositive() ? 'CXC' : 'CXP'}) prepared for next day.`
+            : 'Closing recorded with zero balance.',
+      };
+    } catch (error) {
+      logger.error({
+        layer: 'service',
+        action: 'DAILY_CLOSE_FAIL',
+        payload: {
+          accountId,
+          date: closeData.date.toISOString(),
+          error: error instanceof Error ? error.message : 'Unknown',
+        },
+      });
+      if (error instanceof AppError) throw error;
+      throw new AppError('Failed to close day', 500);
+    }
+  }
+
+  /**
    * Obtener snapshots diarios para rango de fechas
    */
   static async getDailySnapshots(accountId: string, from: Date, to: Date) {

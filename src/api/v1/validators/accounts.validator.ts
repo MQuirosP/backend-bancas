@@ -106,3 +106,7 @@ export const createAccountSchema = z.object({
   initialBalance: z.number().optional(),
   initialBalanceNote: z.string().optional(),
 });
+
+export const closeDaySchema = z.object({
+  date: z.string().transform(v => new Date(v)),
+});
