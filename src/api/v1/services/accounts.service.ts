@@ -1023,8 +1023,33 @@ export class AccountsService {
         pageSize: filters.pageSize,
       });
 
-      return {
-        accounts: result.items.map(account => {
+      // Para cada cuenta, calcular métricas agregadas (igual que dashboard)
+      const accountsWithMetrics = await Promise.all(
+        result.items.map(async account => {
+          // Obtener todas las entradas del ledger para la cuenta
+          const entries = await prisma.ledgerEntry.findMany({
+            where: { accountId: account.id },
+            select: {
+              type: true,
+              valueSigned: true,
+            },
+          });
+
+          // Calcular totales por tipo de movimiento
+          let totalSales = new Prisma.Decimal(0);
+          let totalPayouts = new Prisma.Decimal(0);
+          let totalCommissions = new Prisma.Decimal(0);
+
+          entries.forEach(entry => {
+            if (entry.type === LedgerType.SALE) {
+              totalSales = totalSales.plus(entry.valueSigned);
+            } else if (entry.type === LedgerType.PAYOUT) {
+              totalPayouts = totalPayouts.plus(entry.valueSigned.abs());
+            } else if (entry.type === LedgerType.COMMISSION) {
+              totalCommissions = totalCommissions.plus(entry.valueSigned);
+            }
+          });
+
           const balance = parseFloat(account.balance.toString());
           const debtStatus = balance > 0 ? 'CXC' : balance < 0 ? 'CXP' : 'BALANCE';
 
@@ -1033,9 +1058,15 @@ export class AccountsService {
             ownerType: account.ownerType,
             ownerId: account.ownerId,
             currency: account.currency,
-            balance,
             isActive: account.isActive,
             createdAt: account.createdAt,
+            balance,
+            metrics: {
+              totalSales: parseFloat(totalSales.toString()),
+              totalPayouts: parseFloat(totalPayouts.toString()),
+              totalCommissions: parseFloat(totalCommissions.toString()),
+              totalOperations: entries.length,
+            },
             debtStatus: {
               status: debtStatus,
               amount: Math.abs(balance),
@@ -1047,7 +1078,11 @@ export class AccountsService {
                     : 'Balance cuadrado',
             },
           };
-        }),
+        })
+      );
+
+      return {
+        accounts: accountsWithMetrics,
         pagination: {
           page: result.page,
           pageSize: result.pageSize,
