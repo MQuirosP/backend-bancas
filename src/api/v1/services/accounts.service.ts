@@ -1688,10 +1688,12 @@ export class AccountsService {
         return {
           id: `${m.accountId}-${m.date}`,
           accountId: m.accountId,
-          ownerType: normalizeOwnerType(m.ownerType),
-          ownerId: m.ownerId,
-          ownerName: m.ownerName,
-          ownerCode: m.ownerCode,
+          owner: {
+            type: normalizeOwnerType(m.ownerType),
+            id: m.ownerId,
+            name: m.ownerName,
+            code: m.ownerCode,
+          },
           period: {
             fromDate: new Date(m.date),
             toDate: new Date(m.date),
