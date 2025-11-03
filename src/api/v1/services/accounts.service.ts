@@ -1627,7 +1627,7 @@ export class AccountsService {
         ];
       }
 
-      // 3. Query tickets with jugadas
+      // 3. Query tickets with jugadas and include ventana/user for owner info
       const tickets = await prisma.ticket.findMany({
         where,
         include: {
@@ -1638,67 +1638,71 @@ export class AccountsService {
             },
             select: { payout: true },
           },
+          ventana: {
+            select: { id: true, name: true, code: true },
+          },
+          vendedor: {
+            select: { id: true, name: true, code: true },
+          },
         },
       });
 
-      // 4. Extract unique owner IDs
-      const ventanaIds = new Set<string>();
-      const vendedorIds = new Set<string>();
-      const metricsMap = new Map<string, { totalSales: number; totalPrizes: number }>();
+      // 4. Aggregate metrics by owner and date using included owner data
+      const metricsMap = new Map<string, {
+        ownerId: string;
+        ownerName: string;
+        ownerCode: string;
+        ownerType: string;
+        date: Date;
+        totalSales: number;
+        totalPrizes: number;
+      }>();
 
       for (const ticket of tickets) {
         const dateStr = ticket.createdAt.toISOString().split('T')[0];
-        const ownerId = ticket.ventanaId || ticket.vendedorId;
-        if (!ownerId) continue;
+        const dateObj = new Date(dateStr); // Store the Date object
 
-        if (ticket.ventanaId) ventanaIds.add(ticket.ventanaId);
-        if (ticket.vendedorId) vendedorIds.add(ticket.vendedorId);
+        let ownerId = '';
+        let ownerName = 'Unknown';
+        let ownerCode = '';
+        let ownerType = 'VENTANA';
+
+        if (ticket.ventana) {
+          ownerId = ticket.ventana.id;
+          ownerName = ticket.ventana.name;
+          ownerCode = ticket.ventana.code;
+          ownerType = 'VENTANA';
+        } else if (ticket.vendedor) {
+          ownerId = ticket.vendedor.id;
+          ownerName = ticket.vendedor.name;
+          ownerCode = ticket.vendedor.code || '';
+          ownerType = 'VENDEDOR';
+        } else {
+          continue; // Skip tickets with no owner
+        }
 
         const key = `${ownerId}-${dateStr}`;
         const totalPayout = ticket.jugadas.reduce((sum, j) => sum + (j.payout || 0), 0);
 
         if (!metricsMap.has(key)) {
-          metricsMap.set(key, { totalSales: 0, totalPrizes: 0 });
+          metricsMap.set(key, {
+            ownerId,
+            ownerName,
+            ownerCode,
+            ownerType,
+            date: dateObj,
+            totalSales: 0,
+            totalPrizes: 0,
+          });
         }
+
         const current = metricsMap.get(key)!;
         current.totalSales += Number(ticket.totalAmount);
         current.totalPrizes += totalPayout;
       }
 
-      // 5. Fetch ventanas and users
-      const ventanas = await prisma.ventana.findMany({
-        where: { id: { in: Array.from(ventanaIds) } },
-        select: { id: true, name: true, code: true },
-      });
-
-      const vendedores = await prisma.user.findMany({
-        where: { id: { in: Array.from(vendedorIds) } },
-        select: { id: true, name: true, code: true },
-      });
-
-      const ventanaMap = new Map(ventanas.map(v => [v.id, v]));
-      const vendedorMap = new Map(vendedores.map(u => [u.id, u]));
-
-      // 6. Build mayorizations array
-      const mayorizations = Array.from(metricsMap.entries()).map(([key, metrics]) => {
-        const [ownerId, dateStr] = key.split('-');
-
-        let ownerName = 'Unknown';
-        let ownerCode = '';
-        let ownerType = 'VENTANA';
-
-        if (ventanaMap.has(ownerId)) {
-          const v = ventanaMap.get(ownerId)!;
-          ownerName = v.name;
-          ownerCode = v.code;
-          ownerType = 'VENTANA';
-        } else if (vendedorMap.has(ownerId)) {
-          const u = vendedorMap.get(ownerId)!;
-          ownerName = u.name;
-          ownerCode = u.code || '';
-          ownerType = 'VENDEDOR';
-        }
-
+      // 5. Build mayorizations array from aggregated metrics
+      const mayorizations = Array.from(metricsMap.values()).map(metrics => {
         const totalSales = new Prisma.Decimal(metrics.totalSales);
         const totalPrizes = new Prisma.Decimal(metrics.totalPrizes);
         const netOperative = totalSales.minus(totalPrizes);
@@ -1712,11 +1716,11 @@ export class AccountsService {
         const debtAmount = netOperative.abs();
 
         return {
-          ownerId,
-          ownerName,
-          ownerCode,
-          ownerType: normalizeOwnerType(ownerType),
-          date: formatIsoLocal(new Date(dateStr)),
+          ownerId: metrics.ownerId,
+          ownerName: metrics.ownerName,
+          ownerCode: metrics.ownerCode,
+          ownerType: normalizeOwnerType(metrics.ownerType),
+          date: formatIsoLocal(metrics.date),
           totalSales: parseFloat(totalSales.toString()),
           totalPrizes: parseFloat(totalPrizes.toString()),
           netOperative: parseFloat(netOperative.toString()),
