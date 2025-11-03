@@ -68,14 +68,17 @@ export function resolveSalesCutoffMinutes(opts: {
 }
 
 // 3. Validar si un Date cae dentro de salesHours (si define)
-export function isWithinSalesHours(date: Date, rules?: RulesJson | null): boolean {
+import { getCRLocalComponents } from './businessDate'
+
+export function isWithinSalesHours(dateUtc: Date, rules?: RulesJson | null): boolean {
   if (!rules?.salesHours) return true // sin restricción => 24h
-  const day = date.getDay() // 0..6 (0=domingo)
-  const key = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][day] as keyof NonNullable<RulesJson['salesHours']>
+  const cr = getCRLocalComponents(dateUtc)
+  const key = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][cr.dow] as keyof NonNullable<RulesJson['salesHours']>
   const window = rules.salesHours[key]
   if (!window || (!window.start && !window.end)) return true
-  const hhmm = (d: Date) => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
-  const t = hhmm(date)
+  const hh = String(cr.hour).padStart(2,'0')
+  const mm = String(cr.minute).padStart(2,'0')
+  const t = `${hh}:${mm}`
   const ge = (a?: string) => !a || t >= a
   const le = (b?: string) => !b || t <= b
   return ge(window.start) && le(window.end)

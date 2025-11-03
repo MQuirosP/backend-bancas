@@ -148,6 +148,7 @@ model BancaLoteriaSetting {
 model Ticket {
   id            String       @id @default(uuid()) @db.Uuid
   ticketNumber  String       @unique @default(dbgenerated("generate_ticket_number()")) @db.VarChar(24)
+  businessDate  DateTime?    @db.Date
   loteriaId     String       @db.Uuid
   ventanaId     String       @db.Uuid
   vendedorId    String       @db.Uuid
@@ -185,6 +186,16 @@ model Ticket {
   @@index([vendedorId, createdAt])
   @@index([status, isWinner])
   @@index([paidById])
+}
+
+/// Contador diario de tickets por ventana basado en businessDate (CR)
+model TicketCounter {
+  businessDate DateTime @db.Date
+  ventanaId    String   @db.Uuid
+  last         Int      @default(0)
+
+  @@id([businessDate, ventanaId])
+  @@unique([businessDate, ventanaId, last])
 }
 
 model TicketPayment {

@@ -61,8 +61,14 @@ export const validateCierreBySellerQuery = validateQuery(
  */
 export const CierreExportQuerySchema = BaseCierreQuerySchema.extend({
   view: z
-    .enum(['total', '80', '85', '90', '92', '200', 'seller'])
-    .describe('Vista a exportar: total, bandas (80/85/90/92/200) o seller'),
+    .union([
+      z.literal('total'),
+      z.literal('seller'),
+      z
+        .string()
+        .regex(/^\d+$/, 'Vista numérica inválida: use un número de banda'),
+    ])
+    .describe('Vista a exportar: total, seller o un número de banda (dinámico)'),
   top: z.coerce
     .number()
     .int()

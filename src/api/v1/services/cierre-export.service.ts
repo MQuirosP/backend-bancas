@@ -10,7 +10,6 @@ import {
   VendedorMetrics,
   LoteriaType,
 } from '../types/cierre.types';
-import { BandaMultiplicador, ALL_BANDS } from '../config/commission-bands';
 
 /**
  * Servicio para exportar cierres a Excel (.xlsx)
@@ -41,7 +40,7 @@ export class CierreExportService {
     } else {
       // Vista por banda específica (80, 85, 90, 92, 200)
       const weeklyData = data as CierreWeeklyData;
-      const banda = parseInt(view) as BandaMultiplicador;
+      const banda = parseInt(view as string, 10);
       this.addBandSheet(workbook, weeklyData, banda);
     }
 
@@ -76,8 +75,12 @@ export class CierreExportService {
     this.styleHeaderRow(headerRow);
 
     // Datos por banda
-    for (const banda of ALL_BANDS) {
-      const bandaData = data.bands[banda];
+    const bandaKeys = Object.keys(data.bands)
+      .map((k) => Number(k))
+      .sort((a, b) => a - b);
+
+    for (const banda of bandaKeys) {
+      const bandaData = data.bands[String(banda)];
 
       if (bandaData) {
         this.addBandDataRows(sheet, banda, bandaData);
@@ -126,9 +129,9 @@ export class CierreExportService {
   private static addBandSheet(
     workbook: ExcelJS.Workbook,
     data: CierreWeeklyData,
-    banda: BandaMultiplicador
+    banda: number
   ): void {
-    const bandaData = data.bands[banda];
+    const bandaData = data.bands[String(banda)];
 
     if (!bandaData) {
       // Banda sin datos
@@ -243,7 +246,7 @@ export class CierreExportService {
    */
   private static addBandDataRows(
     sheet: ExcelJS.Worksheet,
-    banda: BandaMultiplicador,
+    banda: number,
     bandaData: BandaMetrics
   ): void {
     const loteriaNames = Object.keys(bandaData.loterias);

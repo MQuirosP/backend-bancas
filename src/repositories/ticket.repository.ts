@@ -3,7 +3,8 @@ import { Prisma, TicketStatus } from "@prisma/client";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { withTransactionRetry } from "../core/withTransactionRetry";
-import { resolveCommission } from "../services/commission.resolver";
+import CommissionResolver, { resolveCommissionFromPolicy } from "../services/commission/commission.resolver";
+import { getBusinessDateCRInfo, getCRDayRangeUTC } from "../utils/businessDate";
 
 type CreateTicketInput = {
   loteriaId: string;
@@ -166,21 +167,29 @@ export const TicketRepository = {
     const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
 
     // Toda la operación dentro de una transacción con retry y timeouts explícitos
+    // Pre-chequeo seguro: existencia de tabla TicketCounter (fuera de TX para evitar aborts)
+    let hasTicketCounter = false;
+    try {
+      const existsRows = await prisma.$queryRaw<{ present: boolean }[]>(
+        Prisma.sql`
+          SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema()
+              AND lower(table_name) = 'ticketcounter'
+          ) AS present;
+        `
+      );
+      hasTicketCounter = Boolean(existsRows?.[0]?.present);
+    } catch (e) {
+      // Si falla el chequeo, asumimos que NO existe para no arriesgar abortos dentro de la TX
+      hasTicketCounter = false;
+    }
+
     const ticket = await withTransactionRetry(
       async (tx) => {
-        // 1) Generador secuencial: función generate_ticket_number() retorna string
-        // Formato: TYYMMDD-XXXXXX-CC (ej: T250126-00000A-42)
-        const [seqRow] = await tx.$queryRawUnsafe<{ next_number: string }[]>(
-          `SELECT generate_ticket_number() AS next_number`
-        );
-        const nextNumber = seqRow?.next_number;
-        if (!nextNumber) {
-          throw new AppError(
-            "Failed to generate ticket number",
-            500,
-            "SEQ_ERROR"
-          );
-        }
+        // 1) Generación de businessDate CR y folio prefijado por 'TYYMMDD'
+        const nowUtc = new Date();
+        const cutoffHour = process.env.BUSINESS_CUTOFF_HOUR_CR || '06:00';
 
         // 2) Validación de FKs + reglas de la lotería + políticas de comisión
         const [loteria, sorteo, ventana, user] = await Promise.all([
@@ -190,7 +199,7 @@ export const TicketRepository = {
           }),
           tx.sorteo.findUnique({
             where: { id: sorteoId },
-            select: { id: true, status: true, loteriaId: true },
+            select: { id: true, status: true, loteriaId: true, scheduledAt: true },
           }),
           tx.ventana.findUnique({
             where: { id: ventanaId },
@@ -232,6 +241,52 @@ export const TicketRepository = {
             400,
             "SORTEO_LOTERIA_MISMATCH"
           );
+        }
+
+        // 2) Determinar businessDate CR priorizando sorteo.scheduledAt (fallback por cutoff)
+        const bd = getBusinessDateCRInfo({ scheduledAt: sorteo.scheduledAt, nowUtc, cutoffHour });
+
+        // 2.1) Incrementar contador diario por (businessDate, ventanaId) y obtener secuencia
+        let nextNumber: string;
+        let seqForLog: number | null = null;
+        if (hasTicketCounter) {
+          const seqRows = await tx.$queryRaw<{ last: number }[]>(
+            Prisma.sql`
+              INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
+              VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
+              ON CONFLICT ("businessDate", "ventanaId")
+              DO UPDATE SET "last" = "TicketCounter"."last" + 1
+              RETURNING "last";
+            `
+          );
+          const seq = (seqRows?.[0]?.last ?? 1) as number;
+          seqForLog = seq;
+          const seqPadded = String(seq).padStart(5, '0');
+          nextNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
+        } else {
+          // Fallback seguro: usar función legacy dentro de TX, sin provocar errores previos
+          logger.warn({
+            layer: 'repository',
+            action: 'TICKET_COUNTER_MISSING_FALLBACK',
+            payload: { note: 'Using legacy generate_ticket_number()', businessDateISO: bd.businessDateISO },
+          });
+          const [seqRow] = await tx.$queryRawUnsafe<{ next_number: string }[]>(
+            `SELECT generate_ticket_number() AS next_number`
+          );
+          if (!seqRow?.next_number) {
+            throw new AppError('Failed to generate ticket number (fallback)', 500, 'SEQ_ERROR');
+          }
+          // Reescribir el prefijo a CR (YYMMDD) preservando el sufijo generado por la función legacy
+          // Formato legacy: TYYMMDD-<BASE36(6)>-<CD2>
+          const raw = String(seqRow.next_number);
+          const firstDash = raw.indexOf('-');
+          if (firstDash > 0) {
+            const suffix = raw.substring(firstDash + 1); // <BASE36>-<CD2>
+            nextNumber = `T${bd.prefixYYMMDD}-${suffix}`;
+          } else {
+            // Si el formato inesperadamente no contiene '-', usa el valor como viene (último recurso)
+            nextNumber = raw;
+          }
         }
 
         // 3) Resolver X efectivo y asegurar fila Base
@@ -441,13 +496,12 @@ export const TicketRepository = {
         );
 
         // 7) Límite diario por vendedor
-        const dayStart = new Date();
-        dayStart.setHours(0, 0, 0, 0);
+        const crRange = getCRDayRangeUTC(now);
         const { _sum } = await tx.ticket.aggregate({
           _sum: { totalAmount: true },
           where: {
             vendedorId: userId,
-            createdAt: { gte: dayStart },
+            createdAt: { gte: crRange.fromAt, lt: crRange.toAtExclusive },
           },
         });
         const dailyTotal = _sum.totalAmount ?? 0;
@@ -503,6 +557,8 @@ export const TicketRepository = {
         // Normalizar clienteNombre: trim y default "CLIENTE CONTADO"
         const normalizedClienteNombre = (clienteNombre?.trim() || "CLIENTE CONTADO");
 
+        // Precalcular snapshot de comisión por jugada con policy del usuario (solo USER)
+        const userPolicy = (user?.commissionPolicyJson ?? null) as any;
         const createdTicket = await tx.ticket.create({
           data: {
             ticketNumber: nextNumber,
@@ -516,25 +572,23 @@ export const TicketRepository = {
             clienteNombre: normalizedClienteNombre,
             jugadas: {
               create: preparedJugadas.map((j) => {
-                // Resolver comisión para esta jugada
-                const commissionSnapshot = resolveCommission(
-                  {
-                    loteriaId,
-                    betType: j.type,
-                    finalMultiplierX: j.finalMultiplierX,
-                    amount: j.amount,
-                  },
-                  user.commissionPolicyJson,
-                  ventana.commissionPolicyJson,
-                  ventana.banca.commissionPolicyJson
-                );
+                // Resolver comisión únicamente desde policy del USER
+                const res = resolveCommissionFromPolicy(userPolicy, {
+                  userId,
+                  loteriaId,
+                  betType: j.type,
+                  finalMultiplierX: j.finalMultiplierX,
+                });
+
+                const commissionPercent = Math.round(res.percent); // normalizar entero
+                const commissionAmount = Math.round((j.amount * commissionPercent) / 100);
 
                 // Guardar para ActivityLog
                 commissionsDetails.push({
-                  origin: commissionSnapshot.commissionOrigin,
-                  ruleId: commissionSnapshot.commissionRuleId,
-                  percent: commissionSnapshot.commissionPercent,
-                  amount: commissionSnapshot.commissionAmount,
+                  origin: res.origin,
+                  ruleId: res.ruleId ?? null,
+                  percent: commissionPercent,
+                  amount: commissionAmount,
                   loteriaId,
                   betType: j.type,
                   multiplierX: j.finalMultiplierX,
@@ -547,10 +601,10 @@ export const TicketRepository = {
                   reventadoNumber: j.reventadoNumber ?? null,
                   amount: j.amount,
                   finalMultiplierX: j.finalMultiplierX,
-                  commissionPercent: commissionSnapshot.commissionPercent,
-                  commissionAmount: commissionSnapshot.commissionAmount,
-                  commissionOrigin: commissionSnapshot.commissionOrigin,
-                  commissionRuleId: commissionSnapshot.commissionRuleId,
+                  commissionPercent,
+                  commissionAmount,
+                  commissionOrigin: 'USER',
+                  commissionRuleId: res.ruleId ?? null,
                   ...(j.multiplierId
                     ? { multiplier: { connect: { id: j.multiplierId } } }
                     : {}),
@@ -559,6 +613,23 @@ export const TicketRepository = {
             },
           },
           include: { jugadas: true },
+        });
+
+        // Adjuntar businessDate info para persistirla fuera de la TX (evita abortos si falta la columna)
+        (createdTicket as any).__businessDateInfo = bd;
+
+        // Diagnóstico de folio
+        logger.info({
+          layer: 'repository',
+          action: 'TICKET_FOLIO_DIAG',
+          payload: {
+            createdAtUTC: new Date().toISOString(),
+            scheduledAt: sorteo.scheduledAt?.toISOString() ?? null,
+            businessDateISO: bd.businessDateISO,
+            prefixYYMMDD: bd.prefixYYMMDD,
+            counter: seqForLog,
+            ticketNumber: nextNumber,
+          },
         });
 
         // Almacenar commissionsDetails en el ticket para usarlo fuera de TX
@@ -576,6 +647,22 @@ export const TicketRepository = {
         timeoutMs: 20_000,
       }
     );
+
+    // 9.1) Persistir businessDate fuera de la transacción
+    const bdInfo = (ticket as any).__businessDateInfo as ReturnType<typeof getBusinessDateCRInfo> | undefined;
+    if (bdInfo) {
+      try {
+        await prisma.$executeRaw(
+          Prisma.sql`UPDATE "Ticket" SET "businessDate" = ${bdInfo.businessDate}::date WHERE id = ${ticket.id}::uuid`
+        );
+      } catch (e) {
+        logger.warn({
+          layer: 'repository',
+          action: 'BUSINESS_DATE_NOT_PERSISTED',
+          payload: { ticketId: ticket.id, reason: (e as Error).message, businessDateISO: bdInfo.businessDateISO },
+        });
+      }
+    }
 
     // ActivityLog fuera de la TX (no bloqueante)
     const commissionsDetailsForLog = (ticket as any).__commissionsDetails || [];

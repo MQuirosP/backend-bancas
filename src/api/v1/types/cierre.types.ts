@@ -1,12 +1,11 @@
-import { BandaMultiplicador } from '../config/commission-bands';
-
 /**
  * Tipos para el módulo de Cierre Operativo
  */
 
 export type LoteriaType = 'TICA' | 'PANAMA' | 'HONDURAS' | 'PRIMERA';
 export type CierreScope = 'mine' | 'all';
-export type CierreView = 'total' | '80' | '85' | '90' | '92' | '200' | 'seller';
+// Vista del export: total, seller o un valor numérico de banda dinámico
+export type CierreView = 'total' | 'seller' | string;
 
 /**
  * Filtros para consultas de cierre
@@ -64,7 +63,7 @@ export interface VendedorMetrics extends CeldaMetrics {
   vendedorNombre: string;
   ventanaId: string;
   ventanaNombre: string;
-  bands?: Record<BandaMultiplicador, CeldaMetrics>; // desglose por banda
+  bands?: Record<number, CeldaMetrics>; // desglose por banda (dinámico)
 }
 
 /**
@@ -72,7 +71,7 @@ export interface VendedorMetrics extends CeldaMetrics {
  */
 export interface CierreWeeklyData {
   totals: CeldaMetrics;
-  bands: Record<BandaMultiplicador, BandaMetrics>;
+  bands: Record<string, BandaMetrics>; // Dinámico: key = banda (80, 85, 90, 92, 200, etc.)
 }
 
 /**
@@ -89,6 +88,47 @@ export interface CierreBySellerData {
 export interface CierrePerformance {
   queryExecutionTime: number;
   totalQueries: number;
+}
+
+/**
+ * Ejemplo de anomalía (jugada sin multiplicador válido)
+ */
+export interface AnomalyExample {
+  jugadaId: string;
+  ticketId: string;
+  loteriaId: string;
+  loteriaNombre: string;
+  finalMultiplierX: number;
+  createdAt: string;
+  amount: number;
+}
+
+/**
+ * Información de anomalías detectadas
+ */
+export interface CierreAnomalies {
+  outOfBandCount: number;
+  examples: AnomalyExample[];
+}
+
+/**
+ * Banda utilizada en el periodo (multiplicador activo)
+ */
+export interface BandaUsada {
+  value: number;
+  loteriaId: string;
+  loteriaNombre: string;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+}
+
+/**
+ * Metadata de bandas utilizadas
+ */
+export interface BandsUsedMetadata {
+  byLoteria: Record<string, number[]>; // loteriaId -> [valores]
+  global: number[]; // todos los valores únicos
+  details: BandaUsada[]; // configuración completa
 }
 
 /**
@@ -122,7 +162,7 @@ export interface CierreExportQuery extends CierreWeeklyQuery {
  * Datos agregados por banda, lotería y turno (query raw)
  */
 export interface CierreAggregateRow {
-  banda: BandaMultiplicador;
+  banda: number; // Banda dinámica (exacta) o 200 para REVENTADO
   loteriaId: string;
   loteriaNombre: string;
   turno: string; // "19:30"
@@ -142,11 +182,20 @@ export interface VendedorAggregateRow {
   vendedorNombre: string;
   ventanaId: string;
   ventanaNombre: string;
-  banda?: BandaMultiplicador;
+  banda?: number; // Banda dinámica (exacta)
   totalVendida: number;
   ganado: number;
   comisionTotal: number;
   refuerzos: number;
   ticketsCount: number;
   jugadasCount: number;
+}
+
+/**
+ * Extras de metadatos calculados por el servicio para enriquecer la respuesta
+ */
+export interface CierreMetaExtras {
+  bandsUsed: BandsUsedMetadata;
+  configHash: string; // hash de configuración utilizada
+  anomalies: CierreAnomalies;
 }
