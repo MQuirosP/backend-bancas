@@ -336,7 +336,7 @@ export class AccountsController {
         toDate: queryRaw.toDate ? new Date(queryRaw.toDate) : undefined,
       };
       const result = await AccountsService.getMayorizationHistory(query, req.user!);
-      sendSuccess(res, result);
+      res.status(200).json({ success: true, ...result });
     } catch (error) {
       sendError(res, error);
     }
