@@ -1,6 +1,6 @@
-import prisma from '../../../../core/prismaClient';
+import prisma from '../core/prismaClient';
 import { Account, LedgerEntry, BankDeposit, DailyBalanceSnapshot, OwnerType, LedgerType, ReferenceType, Prisma } from '@prisma/client';
-import { AppError } from '../../../../core/errors';
+import { AppError } from '../core/errors';
 
 export class AccountsRepository {
   /**

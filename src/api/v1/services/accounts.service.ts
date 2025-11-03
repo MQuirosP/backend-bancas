@@ -2,7 +2,7 @@ import prisma from '../../../core/prismaClient';
 import { OwnerType, LedgerType, ReferenceType, Prisma, ActivityType, LedgerEntry } from '@prisma/client';
 import { AppError } from '../../../core/errors';
 import ActivityService from '../../../core/activity.service';
-import AccountsRepository from '../modules/accounts/accounts.repository';
+import AccountsRepository from '../../../repositories/accounts.repository';
 import logger from '../../../core/logger';
 import { resolveDateRange } from '../../../utils/dateRange';
 import { formatIsoLocal } from '../../../utils/datetime';
@@ -1636,7 +1636,7 @@ export class AccountsService {
               isWinner: true,
               deletedAt: null,
             },
-            select: { payout: true },
+            select: { payout: true, commissionAmount: true },
           },
           ventana: {
             select: { id: true, name: true, code: true },
@@ -1656,6 +1656,7 @@ export class AccountsService {
         date: Date;
         totalSales: number;
         totalPrizes: number;
+        totalCommission: number;
       }>();
 
       for (const ticket of tickets) {
@@ -1683,6 +1684,7 @@ export class AccountsService {
 
         const key = `${ownerId}-${dateStr}`;
         const totalPayout = ticket.jugadas.reduce((sum, j) => sum + (j.payout || 0), 0);
+        const totalCommissionAmount = ticket.jugadas.reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
 
         if (!metricsMap.has(key)) {
           metricsMap.set(key, {
@@ -1693,12 +1695,14 @@ export class AccountsService {
             date: dateObj,
             totalSales: 0,
             totalPrizes: 0,
+            totalCommission: 0,
           });
         }
 
         const current = metricsMap.get(key)!;
         current.totalSales += Number(ticket.totalAmount);
         current.totalPrizes += totalPayout;
+        current.totalCommission += totalCommissionAmount;
       }
 
       // 5. Build mayorizations array from aggregated metrics
@@ -1723,6 +1727,7 @@ export class AccountsService {
           date: formatIsoLocal(metrics.date),
           totalSales: parseFloat(totalSales.toString()),
           totalPrizes: parseFloat(totalPrizes.toString()),
+          totalCommission: parseFloat(new Prisma.Decimal(metrics.totalCommission).toString()),
           netOperative: parseFloat(netOperative.toString()),
           debtStatus,
           debtAmount: parseFloat(debtAmount.toString()),
