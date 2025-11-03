@@ -12,6 +12,7 @@ import {
   CierreScope,
   CierreView,
 } from '../types/cierre.types';
+import { createHash } from 'crypto';
 
 const TIMEZONE = 'America/Costa_Rica';
 
@@ -127,7 +128,7 @@ export const CierreController = {
     );
 
     // Ejecutar agregación (servicio retorna data + _performance)
-    const { _performance, ...data } = await CierreService.aggregateWeekly(filters);
+    const { _performance, _metaExtras, ...data } = await CierreService.aggregateWeekly(filters);
 
     // Construir effectiveFilters para meta
     const effectiveFilters: any = {
@@ -136,6 +137,17 @@ export const CierreController = {
     if (filters.ventanaId) effectiveFilters.ventanaId = filters.ventanaId;
     if (filters.loteriaId) effectiveFilters.loteriaId = filters.loteriaId;
 
+    // ETag y cache headers
+    const etagRawKey = `${filters.fromDate.toISOString()}:${filters.toDate.toISOString()}:${filters.scope}:${filters.ventanaId || ''}:${_metaExtras.configHash}`;
+    const etagVal = `W/"${createHash('sha1').update(etagRawKey).digest('hex')}"`;
+    res.setHeader('ETag', etagVal);
+    res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
+
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (ifNoneMatch && ifNoneMatch === etagVal) {
+      return res.status(304).end();
+    }
+
     // Retornar siguiendo estándar: success(res, data, meta)
     return success(res, data, {
       range: {
@@ -143,11 +155,15 @@ export const CierreController = {
         toAt: filters.toDate.toISOString(),
         tz: TIMEZONE,
       },
+      timezone: TIMEZONE,
       scope: filters.scope,
       effectiveFilters,
       queryExecutionTime: _performance.queryExecutionTime,
       totalQueries: _performance.totalQueries,
       generatedAt: new Date().toISOString(),
+      configHash: _metaExtras.configHash,
+      bandsUsed: _metaExtras.bandsUsed,
+      anomalies: _metaExtras.anomalies,
     });
   },
 
@@ -193,7 +209,7 @@ export const CierreController = {
     const orderBy = query.orderBy || 'totalVendida';
 
     // Ejecutar agregación (servicio retorna data + _performance)
-    const { _performance, ...data } = await CierreService.aggregateBySeller(
+    const { _performance, _metaExtras, ...data } = await CierreService.aggregateBySeller(
       filters,
       top,
       orderBy
@@ -208,6 +224,17 @@ export const CierreController = {
     if (filters.ventanaId) effectiveFilters.ventanaId = filters.ventanaId;
     if (filters.loteriaId) effectiveFilters.loteriaId = filters.loteriaId;
 
+    // ETag y cache headers
+    const etagRawKey = `${filters.fromDate.toISOString()}:${filters.toDate.toISOString()}:${filters.scope}:${filters.ventanaId || ''}:${_metaExtras.configHash}:seller:${top || ''}:${orderBy}`;
+    const etagVal = `W/"${createHash('sha1').update(etagRawKey).digest('hex')}"`;
+    res.setHeader('ETag', etagVal);
+    res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
+
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (ifNoneMatch && ifNoneMatch === etagVal) {
+      return res.status(304).end();
+    }
+
     // Retornar siguiendo estándar: success(res, data, meta)
     return success(res, data, {
       range: {
@@ -215,11 +242,15 @@ export const CierreController = {
         toAt: filters.toDate.toISOString(),
         tz: TIMEZONE,
       },
+      timezone: TIMEZONE,
       scope: filters.scope,
       effectiveFilters,
       queryExecutionTime: _performance.queryExecutionTime,
       totalQueries: _performance.totalQueries,
       generatedAt: new Date().toISOString(),
+      configHash: _metaExtras.configHash,
+      bandsUsed: _metaExtras.bandsUsed,
+      anomalies: _metaExtras.anomalies,
     });
   },
 
@@ -277,7 +308,7 @@ export const CierreController = {
     }
 
     // Remover _performance antes de exportar
-    const { _performance, ...data } = result;
+    const { _performance, _metaExtras, ...data } = result as any;
 
     // Generar workbook de Excel
     const workbook = await CierreExportService.generateWorkbook(data as any, view);
