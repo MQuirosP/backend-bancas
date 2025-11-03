@@ -18,6 +18,92 @@ export class AccountsService {
   }
 
   /**
+   * Crear cuenta con saldo inicial opcional
+   * Si se proporciona initialBalance, crea una entrada ADJUSTMENT para documentar el saldo de apertura
+   */
+  static async createAccount(
+    data: {
+      ownerType: OwnerType;
+      ownerId: string;
+      currency?: string;
+      initialBalance?: number | Prisma.Decimal;
+      initialBalanceNote?: string;
+      createdBy: string;
+    }
+  ) {
+    try {
+      // Crear cuenta usando getOrCreateAccount (verifica si ya existe)
+      const account = await AccountsRepository.getOrCreateAccount(
+        data.ownerType,
+        data.ownerId,
+        data.currency || 'CRC'
+      );
+
+      // Si se proporciona saldo inicial, crear entrada ADJUSTMENT
+      if (data.initialBalance !== undefined && data.initialBalance !== null) {
+        const initialBalanceAmount = new Prisma.Decimal(data.initialBalance);
+
+        // Crear entrada de ajuste para el saldo de apertura
+        await AccountsRepository.addLedgerEntry(account.id, {
+          type: LedgerType.ADJUSTMENT,
+          valueSigned: initialBalanceAmount,
+          referenceType: ReferenceType.ADJUSTMENT_DOC,
+          referenceId: account.id,
+          note:
+            data.initialBalanceNote ||
+            `Opening balance: ${initialBalanceAmount} (carried from previous day)`,
+          createdBy: data.createdBy,
+        });
+
+        // Registrar en activity log
+        await ActivityService.log({
+          userId: data.createdBy,
+          action: ActivityType.ACCOUNT_CREATE,
+          targetType: 'ACCOUNT',
+          targetId: account.id,
+          details: {
+            ownerType: data.ownerType,
+            ownerId: data.ownerId,
+            currency: data.currency || 'CRC',
+            initialBalance: initialBalanceAmount.toString(),
+          },
+          layer: 'service',
+        });
+      }
+
+      // Obtener cuenta actualizada con balance
+      const updatedAccount = await AccountsRepository.getAccountWithMetadata(account.id);
+      if (!updatedAccount) {
+        throw new AppError('Failed to create account', 500);
+      }
+
+      const balance = parseFloat(updatedAccount.balance.toString());
+
+      return {
+        id: updatedAccount.id,
+        ownerType: updatedAccount.ownerType,
+        ownerId: updatedAccount.ownerId,
+        currency: updatedAccount.currency,
+        balance,
+        isActive: updatedAccount.isActive,
+        createdAt: updatedAccount.createdAt,
+      };
+    } catch (error) {
+      logger.error({
+        layer: 'service',
+        action: 'CREATE_ACCOUNT_FAIL',
+        payload: {
+          ownerType: data.ownerType,
+          ownerId: data.ownerId,
+          error: error instanceof Error ? error.message : 'Unknown',
+        },
+      });
+      if (error instanceof AppError) throw error;
+      throw new AppError('Failed to create account', 500);
+    }
+  }
+
+  /**
    * Obtener detalles de cuenta
    */
   static async getAccountDetails(accountId: string) {

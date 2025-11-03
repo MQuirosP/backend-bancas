@@ -17,6 +17,7 @@ import {
   createDailySnapshotSchema,
   updateAccountSchema,
   createPaymentDocumentSchema,
+  createAccountSchema,
 } from '../validators/accounts.validator';
 import logger from '../../../core/logger';
 
@@ -57,6 +58,19 @@ export class AccountsController {
       const query = listAccountsQuerySchema.parse(req.query);
       const accounts = await AccountsService.listAccounts(query);
       sendSuccess(res, accounts);
+    } catch (error) {
+      sendError(res, error);
+    }
+  }
+
+  static async createAccount(req: RequestWithUser, res: Response) {
+    try {
+      const data = createAccountSchema.parse(req.body);
+      const account = await AccountsService.createAccount({
+        ...data,
+        createdBy: req.user!.id,
+      });
+      sendSuccess(res, account, 201);
     } catch (error) {
       sendError(res, error);
     }

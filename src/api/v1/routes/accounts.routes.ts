@@ -9,6 +9,7 @@ const router = Router();
 router.use(protect);
 
 // Cuentas
+router.post('/', requireAdmin, AccountsController.createAccount);
 router.get('/', AccountsController.listAccounts);
 router.get('/:accountId', AccountsController.getAccountDetails);
 router.get('/:accountId/balance', AccountsController.getBalance);
