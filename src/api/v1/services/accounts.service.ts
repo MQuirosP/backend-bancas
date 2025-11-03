@@ -1024,15 +1024,30 @@ export class AccountsService {
       });
 
       return {
-        accounts: result.items.map(account => ({
-          id: account.id,
-          ownerType: account.ownerType,
-          ownerId: account.ownerId,
-          currency: account.currency,
-          balance: parseFloat(account.balance.toString()),
-          isActive: account.isActive,
-          createdAt: account.createdAt,
-        })),
+        accounts: result.items.map(account => {
+          const balance = parseFloat(account.balance.toString());
+          const debtStatus = balance > 0 ? 'CXC' : balance < 0 ? 'CXP' : 'BALANCE';
+
+          return {
+            id: account.id,
+            ownerType: account.ownerType,
+            ownerId: account.ownerId,
+            currency: account.currency,
+            balance,
+            isActive: account.isActive,
+            createdAt: account.createdAt,
+            debtStatus: {
+              status: debtStatus,
+              amount: Math.abs(balance),
+              description:
+                debtStatus === 'CXC'
+                  ? `Le debemos ${Math.abs(balance)} al listero`
+                  : debtStatus === 'CXP'
+                    ? `El listero nos debe ${Math.abs(balance)}`
+                    : 'Balance cuadrado',
+            },
+          };
+        }),
         pagination: {
           page: result.page,
           pageSize: result.pageSize,
