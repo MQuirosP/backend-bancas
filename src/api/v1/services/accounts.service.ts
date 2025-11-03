@@ -1643,7 +1643,7 @@ export class AccountsService {
           a."id" as "accountId",
           a."ownerType",
           a."ownerId",
-          COALESCE(v."name", u."name", a."ownerId") as "ownerName",
+          COALESCE(v."name", u."name", 'Unknown') as "ownerName",
           COALESCE(v."code", u."code", '') as "ownerCode",
           DATE(t."createdAt") as "date",
           COALESCE(SUM(t."totalAmount"), 0)::NUMERIC as "totalSales",
