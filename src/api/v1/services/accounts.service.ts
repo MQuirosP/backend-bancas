@@ -1595,134 +1595,138 @@ export class AccountsService {
         fromDate.setDate(fromDate.getDate() - 30); // Default 30 days
       }
 
-      // 2. Get all accounts based on RBAC
-      let accountIds: string[] = [];
+      // 2. Build ticket filter based on RBAC and owner filters
+      let ticketWhere: any = {
+        deletedAt: null,
+        status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] },
+        createdAt: {
+          gte: fromDate,
+          lte: toDate,
+        },
+      };
+
+      // Apply RBAC filter
       if (user.role === 'VENTANA') {
-        const accounts = await prisma.account.findMany({
-          where: {
-            ownerType: 'VENTANA',
-            ownerId: user.ventanaId,
-          },
-          select: { id: true },
-        });
-        accountIds = accounts.map(a => a.id);
+        ticketWhere.ventanaId = user.ventanaId;
       } else if (user.role === 'VENDEDOR') {
-        const accounts = await prisma.account.findMany({
-          where: {
-            ownerType: 'VENDEDOR',
-            ownerId: user.id,
+        ticketWhere.vendedorId = user.id;
+      }
+
+      // Apply owner type filter
+      if (filters.ownerType === 'VENTANA') {
+        ticketWhere.ventanaId = { not: null };
+        if (filters.ownerId) {
+          ticketWhere.ventanaId = filters.ownerId;
+        }
+      } else if (filters.ownerType === 'VENDEDOR') {
+        ticketWhere.vendedorId = { not: null };
+        if (filters.ownerId) {
+          ticketWhere.vendedorId = filters.ownerId;
+        }
+      } else if (filters.ownerId) {
+        // If only ownerId is provided, match either ventanaId or vendedorId
+        ticketWhere.OR = [
+          { ventanaId: filters.ownerId },
+          { vendedorId: filters.ownerId },
+        ];
+      }
+
+      // 3. Get all relevant tickets with their metrics
+      const tickets = await prisma.ticket.findMany({
+        where: ticketWhere,
+        include: {
+          jugadas: {
+            where: {
+              isWinner: true,
+              deletedAt: null,
+            },
+            select: {
+              payout: true,
+            },
           },
-          select: { id: true },
-        });
-        accountIds = accounts.map(a => a.id);
-      }
-      // ADMIN sees all
-
-      // 3. Build owner filter SQL
-      let ownerFilterSQL = '';
-      let ownerFilterParams: any[] = [];
-
-      if (filters.ownerType) {
-        ownerFilterSQL = `AND a."ownerType" = $${ownerFilterParams.length + 1}::text`;
-        ownerFilterParams.push(filters.ownerType);
-      }
-
-      if (filters.ownerId) {
-        ownerFilterSQL += ` AND a."ownerId" = $${ownerFilterParams.length + 1}::uuid`;
-        ownerFilterParams.push(filters.ownerId);
-      }
-
-      if (user.role !== 'ADMIN' && accountIds.length > 0) {
-        ownerFilterSQL += ` AND a."id" = ANY($${ownerFilterParams.length + 1}::uuid[])`;
-        ownerFilterParams.push(accountIds);
-      }
-
-      // 4. Get accounts with owner info
-      const accountsQuery = `
-        SELECT
-          a."id" as "accountId",
-          a."ownerType",
-          a."ownerId",
-          COALESCE(v."name", u."name", 'Unknown') as "ownerName",
-          COALESCE(v."code", u."code", '') as "ownerCode"
-        FROM "Account" a
-        LEFT JOIN "Ventana" v ON a."ownerType" = 'VENTANA' AND a."ownerId" = v."id"
-        LEFT JOIN "User" u ON a."ownerType" = 'VENDEDOR' AND a."ownerId" = u."id"
-        WHERE 1=1 ${ownerFilterSQL}
-      `;
-
-      const accounts = await prisma.$queryRawUnsafe<any[]>(
-        accountsQuery,
-        ...ownerFilterParams
-      );
-
-      // 5. Get ticket metrics per date and owner
-      const ticketsQuery = `
-        SELECT
-          CASE
-            WHEN t."ventanaId" IS NOT NULL THEN t."ventanaId"
-            ELSE t."vendedorId"
-          END as "ownerId",
-          DATE(t."createdAt") as "date",
-          SUM(t."totalAmount")::NUMERIC as "totalSales",
-          COALESCE(SUM(CASE WHEN j."isWinner" THEN j."payout" ELSE 0 END), 0)::NUMERIC as "totalPrizes"
-        FROM "Ticket" t
-        LEFT JOIN "Jugada" j ON t."id" = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
-        WHERE t."deletedAt" IS NULL
-          AND t."status" IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND DATE(t."createdAt") >= DATE($1::TIMESTAMP)
-          AND DATE(t."createdAt") <= DATE($2::TIMESTAMP)
-        GROUP BY CASE WHEN t."ventanaId" IS NOT NULL THEN t."ventanaId" ELSE t."vendedorId" END, DATE(t."createdAt")
-      `;
-
-      const ticketsMetrics = await prisma.$queryRawUnsafe<any[]>(
-        ticketsQuery,
-        fromDate,
-        toDate
-      );
-
-      // 6. Map tickets metrics by owner and date
-      const metricsMap = new Map<string, any>();
-      ticketsMetrics.forEach(m => {
-        const key = `${m.ownerId}-${m.date}`;
-        metricsMap.set(key, m);
+        },
       });
 
-      // 7. Combine accounts with ticket metrics
-      const metrics = accounts.flatMap(account => {
-        const dates = new Set<string>();
+      // 4. Get all relevant ventanas and users
+      const ventanasIds = new Set<string>();
+      const usersIds = new Set<string>();
 
-        // Find all dates for this account from ticket metrics
-        ticketsMetrics.forEach(m => {
-          if (m.ownerId === account.ownerId) {
-            dates.add(m.date);
-          }
-        });
+      tickets.forEach(t => {
+        if (t.ventanaId) ventanasIds.add(t.ventanaId);
+        if (t.vendedorId) usersIds.add(t.vendedorId);
+      });
 
-        // If no dates found, return account with zero metrics
-        if (dates.size === 0) {
-          return [{
-            ...account,
-            date: new Date(toDate.toISOString().split('T')[0]),
-            totalSales: 0,
-            totalPrizes: 0
-          }];
+      const ventanas = await prisma.ventana.findMany({
+        where: { id: { in: Array.from(ventanasIds) } },
+        select: { id: true, name: true, code: true },
+      });
+
+      const users = await prisma.user.findMany({
+        where: { id: { in: Array.from(usersIds) } },
+        select: { id: true, name: true, code: true },
+      });
+
+      // 5. Create maps for quick lookup
+      const ventanaMap = new Map(ventanas.map(v => [v.id, v]));
+      const userMap = new Map(users.map(u => [u.id, u]));
+
+      // 6. Group tickets by owner and date
+      const metricsMap = new Map<string, { totalSales: Prisma.Decimal; totalPrizes: Prisma.Decimal }>();
+
+      tickets.forEach(t => {
+        const ownerId = t.ventanaId || t.vendedorId;
+        const dateStr = t.createdAt.toISOString().split('T')[0];
+        const key = `${ownerId}-${dateStr}`;
+
+        const totalPayout = t.jugadas.reduce((sum, j) => sum + (j.payout || 0), 0);
+
+        if (!metricsMap.has(key)) {
+          metricsMap.set(key, {
+            totalSales: new Prisma.Decimal(0),
+            totalPrizes: new Prisma.Decimal(0),
+          });
         }
 
-        // Return entries for each date
-        return Array.from(dates).map(date => {
-          const key = `${account.ownerId}-${date}`;
-          const metrics = metricsMap.get(key);
-          return {
-            ...account,
-            date,
-            totalSales: metrics?.totalSales || 0,
-            totalPrizes: metrics?.totalPrizes || 0
-          };
+        const current = metricsMap.get(key)!;
+        current.totalSales = current.totalSales.plus(t.totalAmount);
+        current.totalPrizes = current.totalPrizes.plus(new Prisma.Decimal(totalPayout));
+      });
+
+      // 7. Build metrics array with owner info
+      const metrics: any[] = [];
+
+      metricsMap.forEach((metric, key) => {
+        const [ownerId, dateStr] = key.split('-');
+
+        let ownerName = 'Unknown';
+        let ownerCode = '';
+        let ownerType = 'VENTANA';
+
+        if (ventanaMap.has(ownerId)) {
+          const ventana = ventanaMap.get(ownerId)!;
+          ownerName = ventana.name;
+          ownerCode = ventana.code;
+          ownerType = 'VENTANA';
+        } else if (userMap.has(ownerId)) {
+          const user = userMap.get(ownerId)!;
+          ownerName = user.name;
+          ownerCode = user.code || '';
+          ownerType = 'VENDEDOR';
+        }
+
+        metrics.push({
+          accountId: '', // Will be populated later if needed
+          ownerType,
+          ownerId,
+          ownerName,
+          ownerCode,
+          date: dateStr,
+          totalSales: metric.totalSales,
+          totalPrizes: metric.totalPrizes,
         });
       });
 
-      // 5. Transform metrics to mayorizations
+      // 8. Transform metrics to mayorizations
       const mayorizations = metrics.map(m => {
         const totalSales = new Prisma.Decimal(m.totalSales || 0);
         const totalPrizes = new Prisma.Decimal(m.totalPrizes || 0);
@@ -1771,13 +1775,13 @@ export class AccountsService {
         };
       });
 
-      // 6. Apply debt status filter
+      // 9. Apply debt status filter
       let filtered = mayorizations;
       if (filters.debtStatus) {
         filtered = mayorizations.filter(m => m.debtStatus.status === filters.debtStatus);
       }
 
-      // 7. Apply sorting
+      // 10. Apply sorting
       const sortField = filters.orderBy || 'date';
       const sortOrder = filters.order || 'desc';
 
@@ -1803,13 +1807,13 @@ export class AccountsService {
         }
       });
 
-      // 8. Apply pagination
+      // 11. Apply pagination
       const pageSize = filters.pageSize || 20;
       const page = filters.page || 1;
       const skip = (page - 1) * pageSize;
       const paginatedMayorizations = filtered.slice(skip, skip + pageSize);
 
-      // 9. Calculate summary
+      // 12. Calculate summary
       const totalCXC = filtered
         .filter(m => m.debtStatus.status === 'CXC')
         .reduce((sum, m) => sum + m.debtStatus.amount, 0);
