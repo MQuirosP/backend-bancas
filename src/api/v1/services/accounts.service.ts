@@ -778,6 +778,132 @@ export class AccountsService {
   }
 
   /**
+   * Obtener resumen diario de cuenta para una fecha específica
+   * Retorna: opening, debit, credit, closing, y estado de deuda (CXC/CXP)
+   */
+  static async getDailySummary(accountId: string, date: Date) {
+    try {
+      const account = await AccountsRepository.getAccountById(accountId);
+      if (!account) {
+        throw new AppError('Account not found', 404);
+      }
+
+      // Normalizar fecha al inicio del día
+      const queryDate = new Date(date);
+      queryDate.setHours(0, 0, 0, 0);
+
+      // Obtener snapshot si existe
+      const snapshots = await AccountsRepository.getDailySnapshots(accountId, queryDate, queryDate);
+
+      if (snapshots.length === 0) {
+        // Si no hay snapshot, calcular desde entradas
+        const dayEntries = await prisma.ledgerEntry.findMany({
+          where: {
+            accountId,
+            date: queryDate,
+          },
+        });
+
+        let debit = new Prisma.Decimal(0);
+        let credit = new Prisma.Decimal(0);
+
+        dayEntries.forEach(entry => {
+          if (entry.valueSigned.isNegative()) {
+            debit = debit.minus(entry.valueSigned);
+          } else {
+            credit = credit.plus(entry.valueSigned);
+          }
+        });
+
+        // Si no hay movimientos, retornar estado actual
+        if (dayEntries.length === 0) {
+          const currentBalance = account.balance;
+          return {
+            date: queryDate.toISOString().split('T')[0],
+            opening: 0,
+            debit: 0,
+            credit: 0,
+            closing: parseFloat(currentBalance.toString()),
+            debtStatus: currentBalance.isPositive()
+              ? 'CXC'
+              : currentBalance.isNegative()
+                ? 'CXP'
+                : 'BALANCE',
+            debtAmount: Math.abs(parseFloat(currentBalance.toString())),
+            description:
+              currentBalance.isPositive()
+                ? `Le debemos ${Math.abs(parseFloat(currentBalance.toString()))} al listero`
+                : currentBalance.isNegative()
+                  ? `El listero nos debe ${Math.abs(parseFloat(currentBalance.toString()))}`
+                  : 'Balance cuadrado',
+            entries: [],
+          };
+        }
+
+        // Calcular opening como closing anterior
+        const opening = account.balance.minus(credit).plus(debit);
+
+        return {
+          date: queryDate.toISOString().split('T')[0],
+          opening: parseFloat(opening.toString()),
+          debit: parseFloat(debit.toString()),
+          credit: parseFloat(credit.toString()),
+          closing: parseFloat(account.balance.toString()),
+          debtStatus: account.balance.isPositive()
+            ? 'CXC'
+            : account.balance.isNegative()
+              ? 'CXP'
+              : 'BALANCE',
+          debtAmount: Math.abs(parseFloat(account.balance.toString())),
+          description:
+            account.balance.isPositive()
+              ? `Le debemos ${Math.abs(parseFloat(account.balance.toString()))} al listero`
+              : account.balance.isNegative()
+                ? `El listero nos debe ${Math.abs(parseFloat(account.balance.toString()))}`
+                : 'Balance cuadrado',
+          entries: dayEntries.length,
+        };
+      }
+
+      // Si existe snapshot, usarlo
+      const snapshot = snapshots[0];
+      const closing = snapshot.closing;
+
+      return {
+        date: snapshot.date.toISOString().split('T')[0],
+        opening: parseFloat(snapshot.opening.toString()),
+        debit: parseFloat(snapshot.debit.toString()),
+        credit: parseFloat(snapshot.credit.toString()),
+        closing: parseFloat(closing.toString()),
+        debtStatus: closing.isPositive()
+          ? 'CXC'
+          : closing.isNegative()
+            ? 'CXP'
+            : 'BALANCE',
+        debtAmount: Math.abs(parseFloat(closing.toString())),
+        description:
+          closing.isPositive()
+            ? `Le debemos ${Math.abs(parseFloat(closing.toString()))} al listero`
+            : closing.isNegative()
+              ? `El listero nos debe ${Math.abs(parseFloat(closing.toString()))}`
+              : 'Balance cuadrado',
+      };
+    } catch (error) {
+      logger.error({
+        layer: 'service',
+        action: 'DAILY_SUMMARY_FAIL',
+        payload: {
+          accountId,
+          date: date.toISOString(),
+          error: error instanceof Error ? error.message : 'Unknown',
+        },
+      });
+      if (error instanceof AppError) throw error;
+      throw new AppError('Failed to get daily summary', 500);
+    }
+  }
+
+  /**
    * Obtener snapshots diarios para rango de fechas
    */
   static async getDailySnapshots(accountId: string, from: Date, to: Date) {
