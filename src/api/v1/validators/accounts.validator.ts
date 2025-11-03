@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const listAccountsQuerySchema = z.object({
-  ownerType: z.enum(['BANCA', 'VENTANA', 'VENDEDOR']).optional(),
+  ownerType: z.enum(['BANCA', 'LISTERO', 'VENDEDOR']).optional().transform(v => v === 'LISTERO' ? 'VENTANA' : v),
   ownerId: z.string().optional(),
   isActive: z.enum(['true', 'false']).transform(v => v === 'true').optional(),
   page: z.string().default('1').transform(v => parseInt(v, 10)),
@@ -100,7 +100,7 @@ export const createPaymentDocumentSchema = z.object({
 });
 
 export const createAccountSchema = z.object({
-  ownerType: z.enum(['BANCA', 'VENTANA', 'VENDEDOR']),
+  ownerType: z.enum(['BANCA', 'LISTERO', 'VENDEDOR']).transform(v => v === 'LISTERO' ? 'VENTANA' : v),
   ownerId: z.string().min(1),
   currency: z.string().default('CRC'),
   initialBalance: z.number().optional(),
@@ -127,7 +127,7 @@ export const getMayorizationHistorySchema = z.object({
   period: z.enum(['today', 'yesterday', 'week', 'month', 'year', 'range']).optional(),
   fromDate: z.string().optional(),
   toDate: z.string().optional(),
-  ownerType: z.enum(['VENTANA', 'VENDEDOR']).optional(),
+  ownerType: z.enum(['LISTERO', 'VENDEDOR']).optional().transform(v => v === 'LISTERO' ? 'VENTANA' : v),
   ownerId: z.string().uuid().optional(),
   debtStatus: z.enum(['CXC', 'CXP', 'BALANCE']).optional(),
   isSettled: z.enum(['true', 'false']).transform(v => v === 'true').optional(),
