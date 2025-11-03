@@ -20,6 +20,9 @@ import {
   createAccountSchema,
   closeDaySchema,
   getDailySummarySchema,
+  calculateMayorizationSchema,
+  getMayorizationHistorySchema,
+  settleMayorizationSchema,
 } from '../validators/accounts.validator';
 import logger from '../../../core/logger';
 
@@ -294,6 +297,61 @@ export class AccountsController {
       const data = closeDaySchema.parse(req.body);
       const result = await AccountsService.closeDay(accountId, {
         date: data.date,
+        createdBy: req.user!.id,
+      });
+      sendSuccess(res, result, 201);
+    } catch (error) {
+      sendError(res, error);
+    }
+  }
+
+  static async calculateMajorization(req: RequestWithUser, res: Response) {
+    try {
+      const accountId = req.params.accountId;
+      const data = calculateMayorizationSchema.parse({
+        ...req.query,
+        accountId,
+      });
+      const result = await AccountsService.calculateMayorization(
+        data.accountId,
+        {
+          fromDate: data.fromDate,
+          toDate: data.toDate,
+          includeDesglose: data.includeDesglose,
+        },
+        req.user!.id
+      );
+      sendSuccess(res, result, 201);
+    } catch (error) {
+      sendError(res, error);
+    }
+  }
+
+  static async getMayorizationHistory(req: RequestWithUser, res: Response) {
+    try {
+      const queryRaw = getMayorizationHistorySchema.parse(req.query);
+      const query = {
+        ...queryRaw,
+        fromDate: queryRaw.fromDate ? new Date(queryRaw.fromDate) : undefined,
+        toDate: queryRaw.toDate ? new Date(queryRaw.toDate) : undefined,
+      };
+      const result = await AccountsService.getMayorizationHistory(query, req.user!);
+      sendSuccess(res, result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  }
+
+  static async settleMayorization(req: RequestWithUser, res: Response) {
+    try {
+      const bodyData = settleMayorizationSchema.parse(req.body);
+      const result = await AccountsService.settleMayorization(bodyData.mayorizationId, {
+        amount: bodyData.amount,
+        settlementType: bodyData.settlementType,
+        date: bodyData.date,
+        reference: bodyData.reference,
+        note: bodyData.note,
+        requestId: bodyData.requestId,
         createdBy: req.user!.id,
       });
       sendSuccess(res, result, 201);

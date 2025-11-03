@@ -658,6 +658,7 @@ model Account {
   dailySnapshots      DailyBalanceSnapshot[]
   paymentsFrom        PaymentDocument[]       @relation("PaymentFrom")
   paymentsTo          PaymentDocument[]       @relation("PaymentTo")
+  majorizations       MayorizationRecord[]    @relation("Majorizations")
 
   @@unique([ownerType, ownerId])
   @@index([ownerType])
@@ -678,7 +679,8 @@ model LedgerEntry {
   reversalOfEntryId   String?             @db.Uuid
   requestId           String?             @unique
 
-  account   Account @relation(fields: [accountId], references: [id])
+  account             Account @relation(fields: [accountId], references: [id])
+  settlementFor       MayorizationRecord? @relation("MayorizationSettlement")
 
   @@index([accountId])
   @@index([date])
@@ -740,4 +742,89 @@ model PaymentDocument {
   @@index([toAccountId])
   @@index([date])
   @@index([createdAt])
+}
+
+/// Registro histórico de mayorización de saldos pendientes (CXC/CXP)
+/// Una fila por período/cuenta que registra ventas, premios, comisiones
+model MayorizationRecord {
+  id              String   @id @default(cuid())
+
+  // Identificación
+  accountId       String   @db.Uuid
+  account         Account  @relation("Majorizations", fields: [accountId], references: [id], onDelete: Cascade)
+
+  ownerType       OwnerType  // VENTANA | VENDEDOR
+  ownerId         String   @db.Uuid
+  ownerName       String   // Denormalizado para búsquedas y respuestas rápidas
+
+  // Período
+  fromDate        DateTime @db.Date
+  toDate          DateTime @db.Date
+  computedAt      DateTime @default(now())
+
+  // MÉTRICAS CALCULADAS (snapshot del período)
+  totalSales      Decimal  // SUM(Ticket.totalAmount) en período
+  totalPrizes     Decimal  // SUM(Jugada.payout) donde isWinner=true en período
+  totalCommission Decimal  // SUM(Jugada.commissionAmount) donde isWinner=true
+  netOperative    Decimal  // totalSales - totalCommission
+
+  // ESTADO DE DEUDA
+  debtStatus      String   // 'CXC' | 'CXP' | 'BALANCE'
+  debtAmount      Decimal  // |netOperative|
+  debtDescription String   // Descripción amigable (ej: "Le debemos 150,000")
+
+  // LIQUIDACIÓN
+  isSettled       Boolean  @default(false)
+  settledDate     DateTime?
+  settledAmount   Decimal? // Monto liquidado (puede ser parcial)
+  settlementType  String?  // 'PAYMENT' | 'COLLECTION'
+  settlementRef   String?  // Referencia de cheque/documento/comprobante
+  settledBy       String?  // User.id que registró el pago
+
+  // TRAZABILIDAD
+  createdBy       String   @db.Uuid // User.id que ejecutó el cálculo
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // RELACIONES
+  entries              MayorizationEntry[]
+  settlementEntryId    String?  @db.Uuid @unique
+  settlementEntry      LedgerEntry?  @relation("MayorizationSettlement", fields: [settlementEntryId], references: [id])
+
+  // ÍNDICES para performance
+  @@unique([accountId, fromDate, toDate])
+  @@index([accountId])
+  @@index([ownerType, ownerId])
+  @@index([debtStatus])
+  @@index([isSettled])
+  @@index([fromDate, toDate])
+  @@index([createdAt])
+}
+
+/// Desglose de mayorización por lotería/banda (opcional, para análisis detallado)
+model MayorizationEntry {
+  id                  String @id @default(cuid())
+
+  mayorizationId      String
+  majorization        MayorizationRecord @relation(fields: [mayorizationId], references: [id], onDelete: Cascade)
+
+  loteriaId           String? @db.Uuid  // ID de lotería (opcional)
+  loteriaNombre       String?            // Nombre denormalizado
+
+  bandValue           Int?               // 80, 85, 90, 92, 200 (opcional)
+  turno               String?            // HH:MM (opcional)
+
+  // Métricas
+  totalVendida        Decimal
+  ganado              Decimal
+  comisionTotal       Decimal
+  netOperative        Decimal
+
+  ticketsCount        Int    // COUNT(DISTINCT tickets)
+  jugadasCount        Int    // COUNT(jugadas)
+
+  createdAt           DateTime @default(now())
+
+  @@index([mayorizationId])
+  @@index([loteriaId])
 }

@@ -1400,6 +1400,427 @@ export class AccountsService {
       throw new AppError('Failed to update account', 500);
     }
   }
+
+  /**
+   * Calcular mayorización (saldos pendientes) para un período y cuenta
+   * Basado en Ticket.totalAmount - Jugada.payout (donde isWinner=true)
+   */
+  static async calculateMayorization(
+    accountId: string,
+    filters: {
+      fromDate: Date;
+      toDate: Date;
+      includeDesglose?: boolean;
+    },
+    userId: string
+  ) {
+    try {
+      // 1. Validar cuenta existe
+      const account = await AccountsRepository.getAccountById(accountId);
+      if (!account) throw new AppError('Account not found', 404);
+
+      // 2. Obtener ownerId para la query
+      const ownerIdFilter = account.ownerId;
+
+      // 3. Query SQL que calcula totalSales + totalPrizes
+      const metrics = await prisma.$queryRawUnsafe<any[]>(`
+        SELECT
+          COALESCE(SUM(t."totalAmount"), 0)::NUMERIC as "totalSales",
+          COALESCE(SUM(CASE
+            WHEN j."isWinner" = true THEN j."payout"
+            ELSE 0
+          END), 0)::NUMERIC as "totalPrizes",
+          COALESCE(SUM(CASE
+            WHEN j."isWinner" = true THEN j."commissionAmount"
+            ELSE 0
+          END), 0)::NUMERIC as "totalCommission"
+        FROM "Ticket" t
+        LEFT JOIN "Jugada" j ON t."id" = j."ticketId"
+          AND j."isWinner" = true
+          AND j."deletedAt" IS NULL
+        WHERE
+          t."deletedAt" IS NULL
+          AND t."status" IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."createdAt" >= $1::TIMESTAMP
+          AND t."createdAt" <= $2::TIMESTAMP
+          AND (
+            (t."ventanaId" = $3::UUID AND $4 = 'VENTANA')
+            OR (t."vendedorId" = $3::UUID AND $4 = 'VENDEDOR')
+          )
+      `, filters.fromDate, filters.toDate, ownerIdFilter, account.ownerType);
+
+      const raw = metrics[0];
+      const totalSales = new Prisma.Decimal(raw.totalSales || 0);
+      const totalPrizes = new Prisma.Decimal(raw.totalPrizes || 0);
+      const totalCommission = new Prisma.Decimal(raw.totalCommission || 0);
+
+      // 4. Calcular neto operativo
+      const netOperative = totalSales.minus(totalCommission);
+
+      // 5. Determinar estado de deuda
+      const debtStatus = netOperative.isPositive()
+        ? 'CXC'
+        : netOperative.isNegative()
+          ? 'CXP'
+          : 'BALANCE';
+
+      const debtAmount = netOperative.abs();
+      const debtDescription = this.getDebtDescription(debtStatus, debtAmount);
+
+      // 6. Crear o actualizar MayorizationRecord
+      const mayorization = await prisma.mayorizationRecord.upsert({
+        where: {
+          accountId_fromDate_toDate: {
+            accountId,
+            fromDate: new Date(filters.fromDate.toDateString()),
+            toDate: new Date(filters.toDate.toDateString()),
+          },
+        },
+        create: {
+          accountId,
+          ownerType: account.ownerType,
+          ownerId: account.ownerId,
+          ownerName: account.ownerId, // TODO: buscar nombre real de Ventana o User
+          fromDate: new Date(filters.fromDate.toDateString()),
+          toDate: new Date(filters.toDate.toDateString()),
+          totalSales,
+          totalPrizes,
+          totalCommission,
+          netOperative,
+          debtStatus,
+          debtAmount,
+          debtDescription,
+          createdBy: userId,
+        },
+        update: {
+          totalSales,
+          totalPrizes,
+          totalCommission,
+          netOperative,
+          debtStatus,
+          debtAmount,
+          debtDescription,
+          computedAt: new Date(),
+        },
+      });
+
+      // 7. Registrar en ActivityLog
+      await ActivityService.log({
+        userId,
+        action: ActivityType.LEDGER_ADD,
+        targetType: 'MAJORIZATION',
+        targetId: mayorization.id,
+        details: {
+          accountId,
+          period: `${filters.fromDate.toISOString().split('T')[0]} - ${filters.toDate.toISOString().split('T')[0]}`,
+          totalSales: totalSales.toString(),
+          totalPrizes: totalPrizes.toString(),
+          netOperative: netOperative.toString(),
+          debtStatus,
+        },
+        layer: 'service',
+      });
+
+      return mayorization;
+
+    } catch (error) {
+      logger.error({
+        layer: 'service',
+        action: 'MAJORIZATION_CALC_FAIL',
+        payload: {
+          accountId,
+          error: error instanceof Error ? error.message : 'Unknown',
+        },
+      });
+      if (error instanceof AppError) throw error;
+      throw new AppError('Failed to calculate majorization', 500);
+    }
+  }
+
+  /**
+   * Obtener historial de mayorizaciones con filtros y paginación
+   */
+  static async getMayorizationHistory(
+    filters: {
+      period?: string;
+      fromDate?: Date;
+      toDate?: Date;
+      ownerType?: OwnerType;
+      ownerId?: string;
+      debtStatus?: string;
+      isSettled?: boolean;
+      page?: number;
+      pageSize?: number;
+      orderBy?: 'date' | 'debtAmount' | 'netOperative';
+      order?: 'asc' | 'desc';
+    },
+    user: any
+  ) {
+    try {
+      // Construir WHERE con RBAC
+      const where: Prisma.MayorizationRecordWhereInput = {};
+
+      // RBAC: filtrar según rol
+      if (user.role === 'VENTANA') {
+        where.accountId = {
+          in: await prisma.account.findMany({
+            where: {
+              ownerType: 'VENTANA',
+              ownerId: user.ventanaId,
+            },
+            select: { id: true },
+          }).then(accounts => accounts.map(a => a.id)),
+        };
+      } else if (user.role === 'VENDEDOR') {
+        where.accountId = {
+          in: await prisma.account.findMany({
+            where: {
+              ownerType: 'VENDEDOR',
+              ownerId: user.id,
+            },
+            select: { id: true },
+          }).then(accounts => accounts.map(a => a.id)),
+        };
+      }
+      // ADMIN ve todo
+
+      // Filtros adicionales
+      if (filters.ownerType) where.ownerType = filters.ownerType;
+      if (filters.ownerId) where.ownerId = filters.ownerId;
+      if (filters.debtStatus) where.debtStatus = filters.debtStatus;
+      if (filters.isSettled !== undefined) where.isSettled = filters.isSettled;
+
+      // Filtro de fechas
+      if (filters.fromDate || filters.toDate) {
+        where.fromDate = {};
+        if (filters.fromDate) where.fromDate.gte = filters.fromDate;
+        if (filters.toDate) where.fromDate.lte = filters.toDate;
+      }
+
+      // Paginación
+      const pageSize = filters.pageSize || 20;
+      const page = filters.page || 1;
+      const skip = (page - 1) * pageSize;
+
+      // Ordenamiento
+      const orderBy: Prisma.MayorizationRecordOrderByWithRelationInput = {};
+      const sortField = filters.orderBy || 'date';
+      const sortOrder = filters.order || 'desc';
+      if (sortField === 'date') orderBy.fromDate = sortOrder;
+      else if (sortField === 'debtAmount') orderBy.debtAmount = sortOrder;
+      else if (sortField === 'netOperative') orderBy.netOperative = sortOrder;
+
+      // Query
+      const [mayorizations, total] = await Promise.all([
+        prisma.mayorizationRecord.findMany({
+          where,
+          orderBy,
+          skip,
+          take: pageSize,
+          include: { entries: true },
+        }),
+        prisma.mayorizationRecord.count({ where }),
+      ]);
+
+      // Transformar respuesta
+      const transformed = mayorizations.map(m => ({
+        id: m.id,
+        accountId: m.accountId,
+        ownerType: m.ownerType,
+        ownerId: m.ownerId,
+        ownerName: m.ownerName,
+        period: {
+          fromDate: m.fromDate,
+          toDate: m.toDate,
+        },
+        metrics: {
+          totalSales: parseFloat(m.totalSales.toString()),
+          totalPrizes: parseFloat(m.totalPrizes.toString()),
+          totalCommission: parseFloat(m.totalCommission.toString()),
+          netOperative: parseFloat(m.netOperative.toString()),
+        },
+        debtStatus: {
+          status: m.debtStatus,
+          amount: parseFloat(m.debtAmount.toString()),
+          description: m.debtDescription,
+        },
+        settlement: {
+          isSettled: m.isSettled,
+          settledDate: m.settledDate,
+          settledAmount: m.settledAmount ? parseFloat(m.settledAmount.toString()) : null,
+          type: m.settlementType,
+          reference: m.settlementRef,
+        },
+        computedAt: m.computedAt,
+      }));
+
+      // Calcular summary
+      const cxcTotal = await prisma.mayorizationRecord.aggregate({
+        where: { ...where, debtStatus: 'CXC' },
+        _sum: { debtAmount: true },
+      });
+      const cxpTotal = await prisma.mayorizationRecord.aggregate({
+        where: { ...where, debtStatus: 'CXP' },
+        _sum: { debtAmount: true },
+      });
+
+      return {
+        mayorizations: transformed,
+        pagination: {
+          page,
+          pageSize,
+          total,
+          totalPages: Math.ceil(total / pageSize),
+        },
+        summary: {
+          totalCXC: parseFloat((cxcTotal._sum.debtAmount || new Prisma.Decimal(0)).toString()),
+          totalCXP: parseFloat((cxpTotal._sum.debtAmount || new Prisma.Decimal(0)).toString()),
+          balance: parseFloat(
+            ((cxcTotal._sum.debtAmount || new Prisma.Decimal(0))
+              .minus(cxpTotal._sum.debtAmount || new Prisma.Decimal(0)))
+              .toString()
+          ),
+        },
+      };
+
+    } catch (error) {
+      logger.error({
+        layer: 'service',
+        action: 'MAJORIZATION_HISTORY_FAIL',
+        payload: { error: error instanceof Error ? error.message : 'Unknown' },
+      });
+      throw new AppError('Failed to fetch majorization history', 500);
+    }
+  }
+
+  /**
+   * Registrar pago o cobro de una mayorización
+   */
+  static async settleMayorization(
+    mayorizationId: string,
+    data: {
+      amount: number | Prisma.Decimal;
+      settlementType: 'PAYMENT' | 'COLLECTION';
+      date: Date;
+      reference: string;
+      note?: string;
+      requestId?: string;
+      createdBy: string;
+    }
+  ) {
+    try {
+      // 1. Obtener mayorización
+      const mayorization = await prisma.mayorizationRecord.findUnique({
+        where: { id: mayorizationId },
+        include: { account: true },
+      });
+      if (!mayorization) throw new AppError('Majorization not found', 404);
+
+      const amount = new Prisma.Decimal(data.amount);
+
+      // 2. Validar idempotencia
+      if (data.requestId) {
+        const existing = await AccountsRepository.findEntryByRequestId(
+          mayorization.accountId,
+          data.requestId
+        );
+        if (existing) {
+          return {
+            mayorization,
+            ledgerEntry: existing,
+            newBalance: mayorization.account.balance,
+          };
+        }
+      }
+
+      // 3. Crear LEDGER ENTRY
+      const valueSigned = data.settlementType === 'PAYMENT'
+        ? amount.negated()
+        : amount;
+
+      const ledgerEntry = await AccountsRepository.addLedgerEntry(
+        mayorization.accountId,
+        {
+          type: LedgerType.ADJUSTMENT,
+          valueSigned,
+          referenceType: ReferenceType.ADJUSTMENT_DOC,
+          referenceId: mayorizationId,
+          note: `${data.settlementType} - Ref: ${data.reference}${data.note ? ' (' + data.note + ')' : ''}`,
+          requestId: data.requestId,
+          createdBy: data.createdBy,
+          date: data.date,
+        }
+      );
+
+      // 4. Actualizar MayorizationRecord
+      const updatedMajorization = await prisma.mayorizationRecord.update({
+        where: { id: mayorizationId },
+        data: {
+          isSettled: true,
+          settledDate: data.date,
+          settledAmount: amount,
+          settlementType: data.settlementType,
+          settlementRef: data.reference,
+          settlementEntryId: ledgerEntry.id,
+          settledBy: data.createdBy,
+        },
+        include: { account: true },
+      });
+
+      // 5. Registrar en ActivityLog
+      await ActivityService.log({
+        userId: data.createdBy,
+        action: ActivityType.LEDGER_ADD,
+        targetType: 'SETTLEMENT',
+        targetId: ledgerEntry.id,
+        details: {
+          mayorizationId,
+          accountId: mayorization.accountId,
+          type: data.settlementType,
+          amount: amount.toString(),
+          reference: data.reference,
+        },
+        requestId: data.requestId,
+        layer: 'service',
+      });
+
+      // 6. Obtener nuevo balance
+      const updatedAccount = await AccountsRepository.getAccountById(mayorization.accountId);
+
+      return {
+        mayorization: updatedMajorization,
+        ledgerEntry,
+        newBalance: updatedAccount!.balance,
+      };
+
+    } catch (error) {
+      logger.error({
+        layer: 'service',
+        action: 'SETTLEMENT_FAIL',
+        payload: {
+          mayorizationId,
+          error: error instanceof Error ? error.message : 'Unknown',
+        },
+      });
+      if (error instanceof AppError) throw error;
+      throw new AppError('Failed to settle majorization', 500);
+    }
+  }
+
+  private static getDebtDescription(status: string, amount: Prisma.Decimal): string {
+    const amountStr = parseFloat(amount.toString()).toLocaleString('es-CR', {
+      style: 'currency',
+      currency: 'CRC',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    });
+
+    return status === 'CXC'
+      ? `Le debemos ${amountStr} al listero`
+      : status === 'CXP'
+        ? `El listero nos debe ${amountStr}`
+        : 'Balance cuadrado';
+  }
 }
 
 export default AccountsService;
