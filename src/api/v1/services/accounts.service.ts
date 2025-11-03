@@ -4,6 +4,8 @@ import { AppError } from '../../../core/errors';
 import ActivityService from '../../../core/activity.service';
 import AccountsRepository from '../modules/accounts/accounts.repository';
 import logger from '../../../core/logger';
+import { resolveDateRange } from '../../../utils/dateRange';
+import { formatIsoLocal } from '../../../utils/datetime';
 
 /**
  * Helper to convert VENTANA to "Listero" for API responses
@@ -1585,52 +1587,65 @@ export class AccountsService {
     user: any
   ) {
     try {
-      // 1. Determine date range
-      let fromDate = filters.fromDate;
-      let toDate = filters.toDate;
+      // 1. Resolve date range using helper
+      const dateRange = resolveDateRange(filters.period || 'week',
+        filters.fromDate ? filters.fromDate.toISOString().split('T')[0] : undefined,
+        filters.toDate ? filters.toDate.toISOString().split('T')[0] : undefined
+      );
+      const fromDate = dateRange.fromAt;
+      const toDate = dateRange.toAt;
 
-      if (!fromDate || !toDate) {
-        const now = new Date();
-        toDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        fromDate = new Date(toDate);
-        fromDate.setDate(fromDate.getDate() - 30); // Default 30 days
-      }
-
-      // 2. Build WHERE clause for RBAC and filters
-      let whereClause = `
-        WHERE t."deletedAt" IS NULL
-        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-        AND t."createdAt" >= $1::TIMESTAMP
-        AND t."createdAt" <= $2::TIMESTAMP
-      `;
-      let params: any[] = [fromDate, toDate];
+      // 2. Build WHERE clause for RBAC and filters with proper parameter numbering
+      let whereFilters: any[] = [];
+      let paramCount = 1;
 
       // Apply RBAC
       if (user.role === 'VENTANA') {
-        whereClause += ` AND t."ventanaId" = $${params.length + 1}::UUID`;
-        params.push(user.ventanaId);
+        whereFilters.push(`t."ventanaId" = $${paramCount}::UUID`);
+        whereFilters.push(user.ventanaId);
+        paramCount++;
       } else if (user.role === 'VENDEDOR') {
-        whereClause += ` AND t."vendedorId" = $${params.length + 1}::UUID`;
-        params.push(user.id);
+        whereFilters.push(`t."vendedorId" = $${paramCount}::UUID`);
+        whereFilters.push(user.id);
+        paramCount++;
       }
 
       // Apply owner type filter
       if (filters.ownerType === 'VENTANA') {
-        whereClause += ` AND t."ventanaId" IS NOT NULL`;
+        whereFilters.push(`t."ventanaId" IS NOT NULL`);
         if (filters.ownerId) {
-          whereClause += ` AND t."ventanaId" = $${params.length + 1}::UUID`;
-          params.push(filters.ownerId);
+          whereFilters.push(`t."ventanaId" = $${paramCount}::UUID`);
+          whereFilters.push(filters.ownerId);
+          paramCount++;
         }
       } else if (filters.ownerType === 'VENDEDOR') {
-        whereClause += ` AND t."vendedorId" IS NOT NULL`;
+        whereFilters.push(`t."vendedorId" IS NOT NULL`);
         if (filters.ownerId) {
-          whereClause += ` AND t."vendedorId" = $${params.length + 1}::UUID`;
-          params.push(filters.ownerId);
+          whereFilters.push(`t."vendedorId" = $${paramCount}::UUID`);
+          whereFilters.push(filters.ownerId);
+          paramCount++;
         }
       } else if (filters.ownerId) {
-        whereClause += ` AND (t."ventanaId" = $${params.length + 1}::UUID OR t."vendedorId" = $${params.length + 1}::UUID)`;
-        params.push(filters.ownerId);
+        whereFilters.push(`(t."ventanaId" = $${paramCount}::UUID OR t."vendedorId" = $${paramCount}::UUID)`);
+        whereFilters.push(filters.ownerId);
+        paramCount++;
       }
+
+      // Build final parameters array
+      const sqlParams: any[] = [fromDate, toDate];
+      const whereConditions: string[] = [];
+
+      for (let i = 0; i < whereFilters.length; i++) {
+        if (typeof whereFilters[i] === 'string') {
+          whereConditions.push(whereFilters[i]);
+        } else {
+          sqlParams.push(whereFilters[i]);
+        }
+      }
+
+      const whereClause = whereConditions.length > 0
+        ? ` AND ${whereConditions.join(' AND ')}`
+        : '';
 
       // 3. Query mayorización by day with owner info from Ventana and User tables
       const raw = await prisma.$queryRaw<
@@ -1661,11 +1676,15 @@ export class AccountsService {
           LEFT JOIN "Ventana" v ON t."ventanaId" = v.id
           LEFT JOIN "User" u ON t."vendedorId" = u.id
           LEFT JOIN "Jugada" j ON t.id = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
+          WHERE t."deletedAt" IS NULL
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."createdAt" >= $1::TIMESTAMP
+          AND t."createdAt" <= $2::TIMESTAMP
           ${Prisma.raw(whereClause)}
           GROUP BY DATE(t."createdAt"), owner_id, owner_name, owner_code, owner_type
           ORDER BY DATE(t."createdAt") DESC
         `,
-        ...params
+        ...sqlParams
       );
 
       // 4. Transform to mayorizations
@@ -1687,7 +1706,7 @@ export class AccountsService {
           ownerName: row.owner_name,
           ownerCode: row.owner_code,
           ownerType: normalizeOwnerType(row.owner_type),
-          date: row.date,
+          date: formatIsoLocal(row.date),
           totalSales: parseFloat(totalSales.toString()),
           totalPrizes: parseFloat(totalPrizes.toString()),
           netOperative: parseFloat(netOperative.toString()),
