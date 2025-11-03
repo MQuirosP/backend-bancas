@@ -1637,39 +1637,90 @@ export class AccountsService {
         ownerFilterParams.push(accountIds);
       }
 
-      // 4. Query to get daily metrics per account with owner info
-      const metricsQuery = `
+      // 4. Get accounts with owner info
+      const accountsQuery = `
         SELECT
           a."id" as "accountId",
           a."ownerType",
           a."ownerId",
           COALESCE(v."name", u."name", 'Unknown') as "ownerName",
-          COALESCE(v."code", u."code", '') as "ownerCode",
-          DATE(t."createdAt") as "date",
-          COALESCE(SUM(t."totalAmount"), 0)::NUMERIC as "totalSales",
-          COALESCE(SUM(CASE WHEN j."isWinner" THEN j."payout" ELSE 0 END), 0)::NUMERIC as "totalPrizes"
+          COALESCE(v."code", u."code", '') as "ownerCode"
         FROM "Account" a
         LEFT JOIN "Ventana" v ON a."ownerType" = 'VENTANA' AND a."ownerId" = v."id"
         LEFT JOIN "User" u ON a."ownerType" = 'VENDEDOR' AND a."ownerId" = u."id"
-        LEFT JOIN "Ticket" t ON
-          ((a."ownerType" = 'VENTANA' AND t."ventanaId" = a."ownerId") OR
-           (a."ownerType" = 'VENDEDOR' AND t."vendedorId" = a."ownerId"))
-          AND t."deletedAt" IS NULL
+        WHERE 1=1 ${ownerFilterSQL}
+      `;
+
+      const accounts = await prisma.$queryRawUnsafe<any[]>(
+        accountsQuery,
+        ...ownerFilterParams
+      );
+
+      // 5. Get ticket metrics per date and owner
+      const ticketsQuery = `
+        SELECT
+          CASE
+            WHEN t."ventanaId" IS NOT NULL THEN t."ventanaId"
+            ELSE t."vendedorId"
+          END as "ownerId",
+          DATE(t."createdAt") as "date",
+          SUM(t."totalAmount")::NUMERIC as "totalSales",
+          COALESCE(SUM(CASE WHEN j."isWinner" THEN j."payout" ELSE 0 END), 0)::NUMERIC as "totalPrizes"
+        FROM "Ticket" t
+        LEFT JOIN "Jugada" j ON t."id" = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
+        WHERE t."deletedAt" IS NULL
           AND t."status" IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND DATE(t."createdAt") >= DATE($1::TIMESTAMP)
           AND DATE(t."createdAt") <= DATE($2::TIMESTAMP)
-        LEFT JOIN "Jugada" j ON t."id" = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
-        WHERE 1=1 ${ownerFilterSQL}
-        GROUP BY a."id", a."ownerType", a."ownerId", v."name", u."name", v."code", u."code", DATE(t."createdAt")
-        ORDER BY DATE(t."createdAt") DESC, a."ownerId" ASC
+        GROUP BY CASE WHEN t."ventanaId" IS NOT NULL THEN t."ventanaId" ELSE t."vendedorId" END, DATE(t."createdAt")
       `;
 
-      const metrics = await prisma.$queryRawUnsafe<any[]>(
-        metricsQuery,
+      const ticketsMetrics = await prisma.$queryRawUnsafe<any[]>(
+        ticketsQuery,
         fromDate,
-        toDate,
-        ...ownerFilterParams
+        toDate
       );
+
+      // 6. Map tickets metrics by owner and date
+      const metricsMap = new Map<string, any>();
+      ticketsMetrics.forEach(m => {
+        const key = `${m.ownerId}-${m.date}`;
+        metricsMap.set(key, m);
+      });
+
+      // 7. Combine accounts with ticket metrics
+      const metrics = accounts.flatMap(account => {
+        const dates = new Set<string>();
+
+        // Find all dates for this account from ticket metrics
+        ticketsMetrics.forEach(m => {
+          if (m.ownerId === account.ownerId) {
+            dates.add(m.date);
+          }
+        });
+
+        // If no dates found, return account with zero metrics
+        if (dates.size === 0) {
+          return [{
+            ...account,
+            date: new Date(toDate.toISOString().split('T')[0]),
+            totalSales: 0,
+            totalPrizes: 0
+          }];
+        }
+
+        // Return entries for each date
+        return Array.from(dates).map(date => {
+          const key = `${account.ownerId}-${date}`;
+          const metrics = metricsMap.get(key);
+          return {
+            ...account,
+            date,
+            totalSales: metrics?.totalSales || 0,
+            totalPrizes: metrics?.totalPrizes || 0
+          };
+        });
+      });
 
       // 5. Transform metrics to mayorizations
       const mayorizations = metrics.map(m => {
