@@ -87,3 +87,14 @@ export const createDailySnapshotSchema = z.object({
 export const updateAccountSchema = z.object({
   isActive: z.boolean().optional(),
 });
+
+export const createPaymentDocumentSchema = z.object({
+  fromAccountId: uuidSchema,
+  toAccountId: uuidSchema,
+  amount: z.number().positive(),
+  docNumber: z.string().min(1),
+  date: z.string().transform(v => new Date(v)),
+  description: z.string().optional(),
+  receiptUrl: z.string().url().optional(),
+  requestId: z.string().optional(),
+});

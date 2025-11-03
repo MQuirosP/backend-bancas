@@ -16,6 +16,7 @@ import {
   reverseEntrySchema,
   createDailySnapshotSchema,
   updateAccountSchema,
+  createPaymentDocumentSchema,
 } from '../validators/accounts.validator';
 import logger from '../../../core/logger';
 
@@ -228,6 +229,31 @@ export class AccountsController {
         req.user!.id
       );
       sendSuccess(res, statement);
+    } catch (error) {
+      sendError(res, error);
+    }
+  }
+
+  static async getDailyLedgerSummary(req: RequestWithUser, res: Response) {
+    try {
+      const params = getBalanceSummaryParamsSchema.parse({ accountId: req.params.accountId });
+      const from = req.query.from ? new Date(req.query.from as string) : undefined;
+      const to = req.query.to ? new Date(req.query.to as string) : undefined;
+      const summary = await AccountsService.getDailyLedgerSummary(params.accountId, { from, to });
+      sendSuccess(res, summary);
+    } catch (error) {
+      sendError(res, error);
+    }
+  }
+
+  static async createPaymentDocument(req: RequestWithUser, res: Response) {
+    try {
+      const data = createPaymentDocumentSchema.parse(req.body);
+      const paymentDoc = await AccountsService.createPaymentDocument({
+        ...data,
+        createdBy: req.user!.id,
+      });
+      sendSuccess(res, paymentDoc, 201);
     } catch (error) {
       sendError(res, error);
     }

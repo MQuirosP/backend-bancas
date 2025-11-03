@@ -24,8 +24,14 @@ router.post('/:accountId/entries/:entryId/reverse', requireAdmin, AccountsContro
 // Resumen
 router.get('/:accountId/summary', AccountsController.getBalanceSummary);
 
+// Ledger diario con estado CXC/CXP
+router.get('/:accountId/ledger-summary', AccountsController.getDailyLedgerSummary);
+
 // Depósitos
 router.post('/:accountId/deposits', AccountsController.createBankDeposit);
+
+// Documentos de pago entre cuentas
+router.post('/payments', AccountsController.createPaymentDocument);
 
 // Snapshots
 router.post('/:accountId/snapshots', AccountsController.createDailySnapshot);
