@@ -701,7 +701,7 @@ export const DashboardService = {
           u.name as vendedor_name,
           u."isActive" as is_active,
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
-          COALESCE(SUM(j."commissionAmount"), 0) as total_commissions,
+          COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j."commissionAmount" ELSE 0 END), 0) as total_commissions,
           COUNT(DISTINCT t.id) as total_tickets,
           COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets,
           CASE
@@ -710,7 +710,7 @@ export const DashboardService = {
           END as avg_ticket
         FROM "User" u
         JOIN "Ticket" t ON u.id = t."vendedorId"
-        LEFT JOIN "Jugada" j ON t.id = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
+        LEFT JOIN "Jugada" j ON t.id = j."ticketId" AND j."deletedAt" IS NULL
         WHERE u."isActive" = true
           AND t."deletedAt" IS NULL
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
