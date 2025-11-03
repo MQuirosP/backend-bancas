@@ -1041,15 +1041,15 @@ export class AccountsService {
       const params: any[] = [];
 
       if (filters.ownerType) {
-        whereClauseParts.push(`a."ownerType" = $${whereClauseParts.length}`);
+        whereClauseParts.push(`a."ownerType" = $${params.length + 1}::"OwnerType"`);
         params.push(filters.ownerType);
       }
       if (filters.ownerId) {
-        whereClauseParts.push(`a."ownerId" = $${whereClauseParts.length}`);
+        whereClauseParts.push(`a."ownerId" = $${params.length + 1}`);
         params.push(filters.ownerId);
       }
       if (filters.isActive !== undefined) {
-        whereClauseParts.push(`a."isActive" = $${whereClauseParts.length}`);
+        whereClauseParts.push(`a."isActive" = $${params.length + 1}`);
         params.push(filters.isActive);
       }
 
@@ -1075,7 +1075,7 @@ export class AccountsService {
         WHERE ${whereClauseParts.join(' AND ')}
         GROUP BY a.id, a."ownerType", a."ownerId", a.currency, a.balance, a."isActive", a."createdAt"
         ORDER BY a."createdAt" DESC
-        LIMIT $${whereClauseParts.length + 1} OFFSET $${whereClauseParts.length + 2}`,
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
         ...params
       );
 
