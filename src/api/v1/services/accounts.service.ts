@@ -1033,63 +1033,82 @@ export class AccountsService {
         },
       });
 
-      // Para cada cuenta, calcular métricas agregadas (igual que dashboard)
-      const accountsWithMetrics = await Promise.all(
-        result.items.map(async account => {
-          // Obtener todas las entradas del ledger para la cuenta
-          const entries = await prisma.ledgerEntry.findMany({
-            where: { accountId: account.id },
-            select: {
-              type: true,
-              valueSigned: true,
-            },
-          });
+      const pageSize = filters.pageSize || 20;
+      const page = filters.page || 1;
 
-          // Calcular totales por tipo de movimiento
-          let totalSales = new Prisma.Decimal(0);
-          let totalPayouts = new Prisma.Decimal(0);
-          let totalCommissions = new Prisma.Decimal(0);
+      // Build WHERE clause parts
+      const whereClauseParts: string[] = ['1=1'];
+      const params: any[] = [];
 
-          entries.forEach(entry => {
-            if (entry.type === LedgerType.SALE) {
-              totalSales = totalSales.plus(entry.valueSigned);
-            } else if (entry.type === LedgerType.PAYOUT) {
-              totalPayouts = totalPayouts.plus(entry.valueSigned.abs());
-            } else if (entry.type === LedgerType.COMMISSION) {
-              totalCommissions = totalCommissions.plus(entry.valueSigned);
-            }
-          });
+      if (filters.ownerType) {
+        whereClauseParts.push(`a."ownerType" = $${whereClauseParts.length}`);
+        params.push(filters.ownerType);
+      }
+      if (filters.ownerId) {
+        whereClauseParts.push(`a."ownerId" = $${whereClauseParts.length}`);
+        params.push(filters.ownerId);
+      }
+      if (filters.isActive !== undefined) {
+        whereClauseParts.push(`a."isActive" = $${whereClauseParts.length}`);
+        params.push(filters.isActive);
+      }
 
-          const balance = parseFloat(account.balance.toString());
-          const debtStatus = balance > 0 ? 'CXC' : balance < 0 ? 'CXP' : 'BALANCE';
+      // Add pagination params
+      params.push(pageSize);
+      params.push((page - 1) * pageSize);
 
-          return {
-            id: account.id,
-            ownerType: account.ownerType,
-            ownerId: account.ownerId,
-            currency: account.currency,
-            isActive: account.isActive,
-            createdAt: account.createdAt,
-            balance,
-            metrics: {
-              totalSales: parseFloat(totalSales.toString()),
-              totalPayouts: parseFloat(totalPayouts.toString()),
-              totalCommissions: parseFloat(totalCommissions.toString()),
-              totalOperations: entries.length,
-            },
-            debtStatus: {
-              status: debtStatus,
-              amount: Math.abs(balance),
-              description:
-                debtStatus === 'CXC'
-                  ? `Le debemos ${Math.abs(balance)} al listero`
-                  : debtStatus === 'CXP'
-                    ? `El listero nos debe ${Math.abs(balance)}`
-                    : 'Balance cuadrado',
-            },
-          };
-        })
+      const accountMetrics = await prisma.$queryRawUnsafe<any[]>(
+        `SELECT
+          a.id,
+          a."ownerType",
+          a."ownerId",
+          a.currency,
+          a.balance,
+          a."isActive",
+          a."createdAt",
+          COALESCE(SUM(CASE WHEN le.type = 'SALE' THEN le."valueSigned" ELSE 0 END), 0)::NUMERIC as "totalSalesAmount",
+          COALESCE(SUM(CASE WHEN le.type = 'PAYOUT' THEN ABS(le."valueSigned") ELSE 0 END), 0)::NUMERIC as "totalPayoutsAmount",
+          COALESCE(SUM(CASE WHEN le.type = 'COMMISSION' THEN le."valueSigned" ELSE 0 END), 0)::NUMERIC as "totalCommissionsAmount",
+          COUNT(le.id)::INTEGER as "totalOperations"
+        FROM "Account" a
+        LEFT JOIN "LedgerEntry" le ON a.id = le."accountId"
+        WHERE ${whereClauseParts.join(' AND ')}
+        GROUP BY a.id, a."ownerType", a."ownerId", a.currency, a.balance, a."isActive", a."createdAt"
+        ORDER BY a."createdAt" DESC
+        LIMIT $${whereClauseParts.length + 1} OFFSET $${whereClauseParts.length + 2}`,
+        ...params
       );
+
+      const accountsWithMetrics = accountMetrics.map(metric => {
+        const balance = parseFloat(metric.balance.toString());
+        const debtStatus = balance > 0 ? 'CXC' : balance < 0 ? 'CXP' : 'BALANCE';
+
+        return {
+          id: metric.id,
+          ownerType: metric.ownerType,
+          ownerId: metric.ownerId,
+          currency: metric.currency,
+          isActive: metric.isActive,
+          createdAt: metric.createdAt,
+          balance,
+          metrics: {
+            totalSales: parseFloat(metric.totalSalesAmount.toString()),
+            totalPayouts: parseFloat(metric.totalPayoutsAmount.toString()),
+            totalCommissions: parseFloat(metric.totalCommissionsAmount.toString()),
+            totalOperations: metric.totalOperations,
+          },
+          debtStatus: {
+            status: debtStatus,
+            amount: Math.abs(balance),
+            description:
+              debtStatus === 'CXC'
+                ? `Le debemos ${Math.abs(balance)} al listero`
+                : debtStatus === 'CXP'
+                  ? `El listero nos debe ${Math.abs(balance)}`
+                  : 'Balance cuadrado',
+          },
+        };
+      });
 
       return {
         accounts: accountsWithMetrics,
