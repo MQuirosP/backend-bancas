@@ -1023,6 +1023,16 @@ export class AccountsService {
         pageSize: filters.pageSize,
       });
 
+      logger.info({
+        layer: 'service',
+        action: 'LIST_ACCOUNTS_QUERY',
+        payload: {
+          filters,
+          found: result.items.length,
+          total: result.total
+        },
+      });
+
       // Para cada cuenta, calcular métricas agregadas (igual que dashboard)
       const accountsWithMetrics = await Promise.all(
         result.items.map(async account => {
