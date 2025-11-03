@@ -8,16 +8,19 @@ export const listAccountsQuerySchema = z.object({
   pageSize: z.string().default('20').transform(v => parseInt(v, 10)),
 });
 
+// UUID validation helper
+const uuidSchema = z.string().uuid('Invalid account ID format');
+
 export const getAccountDetailsParamsSchema = z.object({
-  accountId: z.string().min(1),
+  accountId: uuidSchema,
 });
 
 export const getBalanceParamsSchema = z.object({
-  accountId: z.string().min(1),
+  accountId: uuidSchema,
 });
 
 export const listLedgerEntriesQuerySchema = z.object({
-  accountId: z.string().min(1),
+  accountId: uuidSchema,
   type: z.string().optional().transform(v => v?.split(',').filter(Boolean)),
   from: z.string().optional().transform(v => v ? new Date(v) : undefined),
   to: z.string().optional().transform(v => v ? new Date(v) : undefined),
@@ -29,11 +32,11 @@ export const listLedgerEntriesQuerySchema = z.object({
 });
 
 export const getBalanceSummaryParamsSchema = z.object({
-  accountId: z.string().min(1),
+  accountId: uuidSchema,
 });
 
 export const getDailySnapshotsQuerySchema = z.object({
-  accountId: z.string().min(1),
+  accountId: uuidSchema,
   from: z.string().transform(v => new Date(v)),
   to: z.string().transform(v => new Date(v)),
 });

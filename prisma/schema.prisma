@@ -619,3 +619,101 @@ enum JobStatus {
   FAILED
   CANCELLED
 }
+
+enum OwnerType {
+  BANCA
+  VENTANA
+  VENDEDOR
+}
+
+enum LedgerType {
+  SALE
+  COMMISSION
+  PAYOUT
+  DEPOSIT
+  ADJUSTMENT
+  REVERSAL
+  TRANSFER
+}
+
+enum ReferenceType {
+  TICKET
+  PAYOUT_RECEIPT
+  DEPOSIT_RECEIPT
+  ADJUSTMENT_DOC
+  OTHER
+}
+
+model Account {
+  id            String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerType     OwnerType
+  ownerId       String                      @db.Uuid
+  currency      String                      @default("CRC") @db.VarChar(3)
+  balance       Decimal                     @default(0)
+  isActive      Boolean                     @default(true)
+  createdAt     DateTime                    @default(now())
+
+  ledgerEntries       LedgerEntry[]
+  bankDeposits        BankDeposit[]
+  dailySnapshots      DailyBalanceSnapshot[]
+
+  @@unique([ownerType, ownerId])
+  @@index([ownerType])
+  @@index([ownerId])
+}
+
+model LedgerEntry {
+  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId           String              @db.Uuid
+  type                LedgerType
+  valueSigned         Decimal
+  referenceType       ReferenceType?
+  referenceId         String?             @db.Uuid
+  note                String?
+  date                DateTime
+  createdAt           DateTime            @default(now())
+  createdBy           String              @db.Uuid
+  reversalOfEntryId   String?             @db.Uuid
+  requestId           String?             @unique
+
+  account   Account @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
+  @@index([date])
+  @@index([createdAt])
+}
+
+model BankDeposit {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId     String      @db.Uuid
+  date          DateTime
+  docNumber     String
+  amount        Decimal
+  bankName      String?
+  note          String?
+  receiptUrl    String?     @db.VarChar(500)
+  createdBy     String      @db.Uuid
+  createdAt     DateTime    @default(now())
+
+  account   Account @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
+  @@index([date])
+}
+
+model DailyBalanceSnapshot {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accountId String        @db.Uuid
+  date      DateTime      @db.Date
+  opening   Decimal
+  debit     Decimal
+  credit    Decimal
+  closing   Decimal
+  createdAt DateTime      @default(now())
+
+  account   Account @relation(fields: [accountId], references: [id])
+
+  @@unique([accountId, date])
+  @@index([accountId])
+  @@index([date])
+}
