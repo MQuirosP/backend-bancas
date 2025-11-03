@@ -3,7 +3,7 @@ services:
     name: backend-bancas
     runtime: node
     plan: starter
-    buildCommand: npm ci && npx prisma generate && npm run build
+    buildCommand: npm ci && npx prisma generate --schema prisma/schema.prisma && npm run build
     startCommand: node dist/index.js
     envVars:
       - key: NODE_ENV
