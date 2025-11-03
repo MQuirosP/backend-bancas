@@ -1454,10 +1454,28 @@ export class AccountsService {
       const totalPrizes = new Prisma.Decimal(raw.totalPrizes || 0);
       const totalCommission = new Prisma.Decimal(raw.totalCommission || 0);
 
-      // 4. Calcular neto operativo
-      const netOperative = totalSales.minus(totalCommission);
+      // 4. Obtener saldo anterior del día anterior para iniciar la mayorización
+      const dayBeforeFromDate = new Date(filters.fromDate);
+      dayBeforeFromDate.setDate(dayBeforeFromDate.getDate() - 1);
 
-      // 5. Determinar estado de deuda
+      const previousSnapshot = await prisma.dailyBalanceSnapshot.findUnique({
+        where: {
+          accountId_date: {
+            accountId,
+            date: new Date(dayBeforeFromDate.toDateString()),
+          },
+        },
+      });
+
+      const openingBalance = previousSnapshot?.closing || new Prisma.Decimal(0);
+
+      // 5. Calcular período neto (ventas - premios pagados)
+      const periodNeto = totalSales.minus(totalPrizes);
+
+      // 6. Calcular neto operativo CUMULATIVO (saldo anterior + período neto)
+      const netOperative = openingBalance.plus(periodNeto);
+
+      // 7. Determinar estado de deuda
       const debtStatus = netOperative.isPositive()
         ? 'CXC'
         : netOperative.isNegative()
@@ -1504,7 +1522,7 @@ export class AccountsService {
         },
       });
 
-      // 7. Registrar en ActivityLog
+      // 8. Registrar en ActivityLog
       await ActivityService.log({
         userId,
         action: ActivityType.LEDGER_ADD,
@@ -1513,8 +1531,10 @@ export class AccountsService {
         details: {
           accountId,
           period: `${filters.fromDate.toISOString().split('T')[0]} - ${filters.toDate.toISOString().split('T')[0]}`,
+          openingBalance: openingBalance.toString(),
           totalSales: totalSales.toString(),
           totalPrizes: totalPrizes.toString(),
+          periodNeto: periodNeto.toString(),
           netOperative: netOperative.toString(),
           debtStatus,
         },
