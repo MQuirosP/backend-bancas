@@ -51,6 +51,7 @@ interface GananciaResult {
     margin: number;
     tickets: number;
     winners: number;
+    isActive: boolean;
   }>;
 }
 
@@ -130,11 +131,12 @@ export const DashboardService = {
       `
     );
 
-    // Query: desglose completo por lotería
+    // Query: desglose completo por lotería (solo loterías activas)
     const byLoteriaResult = await prisma.$queryRaw<
       Array<{
         loteria_id: string;
         loteria_name: string;
+        is_active: boolean;
         total_sales: number;
         total_tickets: number;
         winning_tickets: number;
@@ -146,6 +148,7 @@ export const DashboardService = {
         SELECT
           l.id as loteria_id,
           l.name as loteria_name,
+          l."isActive" as is_active,
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
           COUNT(DISTINCT t.id) as total_tickets,
           COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets,
@@ -161,7 +164,8 @@ export const DashboardService = {
         LEFT JOIN "Jugada" j ON t.id = j."ticketId"
           AND j."isWinner" = true
           AND j."deletedAt" IS NULL
-        GROUP BY l.id, l.name
+        WHERE l."isActive" = true
+        GROUP BY l.id, l.name, l."isActive"
         ORDER BY total_sales DESC
       `
     );
@@ -219,6 +223,7 @@ export const DashboardService = {
           margin: parseFloat(loteriaMargin.toFixed(2)),
           tickets,
           winners,
+          isActive: row.is_active,
         };
       }),
     };
@@ -673,6 +678,7 @@ export const DashboardService = {
       Array<{
         vendedor_id: string;
         vendedor_name: string;
+        is_active: boolean;
         total_sales: number;
         total_commissions: number;
         total_tickets: number;
@@ -684,6 +690,7 @@ export const DashboardService = {
         SELECT
           u.id as vendedor_id,
           u.name as vendedor_name,
+          u."isActive" as is_active,
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
           COALESCE(SUM(j."commissionAmount"), 0) as total_commissions,
           COUNT(DISTINCT t.id) as total_tickets,
@@ -695,13 +702,14 @@ export const DashboardService = {
         FROM "User" u
         JOIN "Ticket" t ON u.id = t."vendedorId"
         LEFT JOIN "Jugada" j ON t.id = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
-        WHERE t."deletedAt" IS NULL
+        WHERE u."isActive" = true
+          AND t."deletedAt" IS NULL
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
           ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
           ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
-        GROUP BY u.id, u.name
+        GROUP BY u.id, u.name, u."isActive"
         ORDER BY ${orderClause} ${orderDirection}
         LIMIT ${pageSize}
         OFFSET ${offset}
@@ -714,7 +722,8 @@ export const DashboardService = {
         SELECT COUNT(DISTINCT u.id) as count
         FROM "User" u
         JOIN "Ticket" t ON u.id = t."vendedorId"
-        WHERE t."deletedAt" IS NULL
+        WHERE u."isActive" = true
+          AND t."deletedAt" IS NULL
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
@@ -734,6 +743,7 @@ export const DashboardService = {
         tickets: Number(row.total_tickets) || 0,
         winners: Number(row.winning_tickets) || 0,
         avgTicket: Number(row.avg_ticket) || 0,
+        isActive: row.is_active,
       })),
       pagination: {
         page,
