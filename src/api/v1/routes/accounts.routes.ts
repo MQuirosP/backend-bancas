@@ -38,6 +38,9 @@ router.post('/payments', AccountsController.createPaymentDocument);
 router.post('/:accountId/snapshots', AccountsController.createDailySnapshot);
 router.get('/:accountId/snapshots', AccountsController.getDailySnapshots);
 
+// Resumen diario
+router.get('/:accountId/daily-summary', AccountsController.getDailySummary);
+
 // Cierre diario
 router.post('/:accountId/daily-close', AccountsController.closeDay);
 

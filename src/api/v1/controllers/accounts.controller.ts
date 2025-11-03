@@ -19,6 +19,7 @@ import {
   createPaymentDocumentSchema,
   createAccountSchema,
   closeDaySchema,
+  getDailySummarySchema,
 } from '../validators/accounts.validator';
 import logger from '../../../core/logger';
 
@@ -269,6 +270,19 @@ export class AccountsController {
         createdBy: req.user!.id,
       });
       sendSuccess(res, paymentDoc, 201);
+    } catch (error) {
+      sendError(res, error);
+    }
+  }
+
+  static async getDailySummary(req: RequestWithUser, res: Response) {
+    try {
+      const params = getDailySummarySchema.parse({
+        accountId: req.params.accountId,
+        date: req.query.date as string,
+      });
+      const summary = await AccountsService.getDailySummary(params.accountId, params.date);
+      sendSuccess(res, summary);
     } catch (error) {
       sendError(res, error);
     }

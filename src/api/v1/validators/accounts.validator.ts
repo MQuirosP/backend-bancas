@@ -110,3 +110,8 @@ export const createAccountSchema = z.object({
 export const closeDaySchema = z.object({
   date: z.string().transform(v => new Date(v)),
 });
+
+export const getDailySummarySchema = z.object({
+  accountId: uuidSchema,
+  date: z.string().transform(v => new Date(v)),
+});
