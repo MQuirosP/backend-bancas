@@ -1566,6 +1566,7 @@ export class AccountsService {
 
   /**
    * Obtener historial de mayorizaciones calculadas dinámicamente desde Ticket/Jugada
+   * Retorna mayorización por día, agrupado por ventana/vendedor con nombres reales
    */
   static async getMayorizationHistory(
     filters: {
@@ -1595,141 +1596,82 @@ export class AccountsService {
         fromDate.setDate(fromDate.getDate() - 30); // Default 30 days
       }
 
-      // 2. Build ticket filter based on RBAC and owner filters
-      let ticketWhere: any = {
-        deletedAt: null,
-        status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] },
-        createdAt: {
-          gte: fromDate,
-          lte: toDate,
-        },
-      };
+      // 2. Build WHERE clause for RBAC and filters
+      let whereClause = `
+        WHERE t."deletedAt" IS NULL
+        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+        AND t."createdAt" >= $1::TIMESTAMP
+        AND t."createdAt" <= $2::TIMESTAMP
+      `;
+      let params: any[] = [fromDate, toDate];
 
-      // Apply RBAC filter
+      // Apply RBAC
       if (user.role === 'VENTANA') {
-        ticketWhere.ventanaId = user.ventanaId;
+        whereClause += ` AND t."ventanaId" = $${params.length + 1}::UUID`;
+        params.push(user.ventanaId);
       } else if (user.role === 'VENDEDOR') {
-        ticketWhere.vendedorId = user.id;
+        whereClause += ` AND t."vendedorId" = $${params.length + 1}::UUID`;
+        params.push(user.id);
       }
 
       // Apply owner type filter
       if (filters.ownerType === 'VENTANA') {
-        ticketWhere.ventanaId = { not: null };
+        whereClause += ` AND t."ventanaId" IS NOT NULL`;
         if (filters.ownerId) {
-          ticketWhere.ventanaId = filters.ownerId;
+          whereClause += ` AND t."ventanaId" = $${params.length + 1}::UUID`;
+          params.push(filters.ownerId);
         }
       } else if (filters.ownerType === 'VENDEDOR') {
-        ticketWhere.vendedorId = { not: null };
+        whereClause += ` AND t."vendedorId" IS NOT NULL`;
         if (filters.ownerId) {
-          ticketWhere.vendedorId = filters.ownerId;
+          whereClause += ` AND t."vendedorId" = $${params.length + 1}::UUID`;
+          params.push(filters.ownerId);
         }
       } else if (filters.ownerId) {
-        // If only ownerId is provided, match either ventanaId or vendedorId
-        ticketWhere.OR = [
-          { ventanaId: filters.ownerId },
-          { vendedorId: filters.ownerId },
-        ];
+        whereClause += ` AND (t."ventanaId" = $${params.length + 1}::UUID OR t."vendedorId" = $${params.length + 1}::UUID)`;
+        params.push(filters.ownerId);
       }
 
-      // 3. Get all relevant tickets with their metrics
-      const tickets = await prisma.ticket.findMany({
-        where: ticketWhere,
-        include: {
-          jugadas: {
-            where: {
-              isWinner: true,
-              deletedAt: null,
-            },
-            select: {
-              payout: true,
-            },
-          },
-        },
-      });
+      // 3. Query mayorización by day with owner info from Ventana and User tables
+      const raw = await prisma.$queryRaw<
+        Array<{
+          date: Date;
+          owner_id: string;
+          owner_name: string;
+          owner_code: string;
+          owner_type: string;
+          total_sales: number;
+          total_prizes: number;
+        }>
+      >(
+        Prisma.sql`
+          SELECT
+            DATE(t."createdAt") as date,
+            COALESCE(v.id, u.id) as owner_id,
+            COALESCE(v.name, u.name, 'Unknown') as owner_name,
+            COALESCE(v.code, u.code, '') as owner_code,
+            CASE
+              WHEN v.id IS NOT NULL THEN 'VENTANA'
+              WHEN u.id IS NOT NULL THEN 'VENDEDOR'
+              ELSE 'UNKNOWN'
+            END as owner_type,
+            COALESCE(SUM(t."totalAmount"), 0)::FLOAT as total_sales,
+            COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j.payout ELSE 0 END), 0)::FLOAT as total_prizes
+          FROM "Ticket" t
+          LEFT JOIN "Ventana" v ON t."ventanaId" = v.id
+          LEFT JOIN "User" u ON t."vendedorId" = u.id
+          LEFT JOIN "Jugada" j ON t.id = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
+          ${Prisma.raw(whereClause)}
+          GROUP BY DATE(t."createdAt"), owner_id, owner_name, owner_code, owner_type
+          ORDER BY DATE(t."createdAt") DESC
+        `,
+        ...params
+      );
 
-      // 4. Get all relevant ventanas and users
-      const ventanasIds = new Set<string>();
-      const usersIds = new Set<string>();
-
-      tickets.forEach(t => {
-        if (t.ventanaId) ventanasIds.add(t.ventanaId);
-        if (t.vendedorId) usersIds.add(t.vendedorId);
-      });
-
-      const ventanas = await prisma.ventana.findMany({
-        where: { id: { in: Array.from(ventanasIds) } },
-        select: { id: true, name: true, code: true },
-      });
-
-      const users = await prisma.user.findMany({
-        where: { id: { in: Array.from(usersIds) } },
-        select: { id: true, name: true, code: true },
-      });
-
-      // 5. Create maps for quick lookup
-      const ventanaMap = new Map(ventanas.map(v => [v.id, v]));
-      const userMap = new Map(users.map(u => [u.id, u]));
-
-      // 6. Group tickets by owner and date
-      const metricsMap = new Map<string, { totalSales: Prisma.Decimal; totalPrizes: Prisma.Decimal }>();
-
-      tickets.forEach(t => {
-        const ownerId = t.ventanaId || t.vendedorId;
-        const dateStr = t.createdAt.toISOString().split('T')[0];
-        const key = `${ownerId}-${dateStr}`;
-
-        const totalPayout = t.jugadas.reduce((sum, j) => sum + (j.payout || 0), 0);
-
-        if (!metricsMap.has(key)) {
-          metricsMap.set(key, {
-            totalSales: new Prisma.Decimal(0),
-            totalPrizes: new Prisma.Decimal(0),
-          });
-        }
-
-        const current = metricsMap.get(key)!;
-        current.totalSales = current.totalSales.plus(t.totalAmount);
-        current.totalPrizes = current.totalPrizes.plus(new Prisma.Decimal(totalPayout));
-      });
-
-      // 7. Build metrics array with owner info
-      const metrics: any[] = [];
-
-      metricsMap.forEach((metric, key) => {
-        const [ownerId, dateStr] = key.split('-');
-
-        let ownerName = 'Unknown';
-        let ownerCode = '';
-        let ownerType = 'VENTANA';
-
-        if (ventanaMap.has(ownerId)) {
-          const ventana = ventanaMap.get(ownerId)!;
-          ownerName = ventana.name;
-          ownerCode = ventana.code;
-          ownerType = 'VENTANA';
-        } else if (userMap.has(ownerId)) {
-          const user = userMap.get(ownerId)!;
-          ownerName = user.name;
-          ownerCode = user.code || '';
-          ownerType = 'VENDEDOR';
-        }
-
-        metrics.push({
-          accountId: '', // Will be populated later if needed
-          ownerType,
-          ownerId,
-          ownerName,
-          ownerCode,
-          date: dateStr,
-          totalSales: metric.totalSales,
-          totalPrizes: metric.totalPrizes,
-        });
-      });
-
-      // 8. Transform metrics to mayorizations
-      const mayorizations = metrics.map(m => {
-        const totalSales = new Prisma.Decimal(m.totalSales || 0);
-        const totalPrizes = new Prisma.Decimal(m.totalPrizes || 0);
+      // 4. Transform to mayorizations
+      const mayorizations = raw.map(row => {
+        const totalSales = new Prisma.Decimal(row.total_sales || 0);
+        const totalPrizes = new Prisma.Decimal(row.total_prizes || 0);
         const netOperative = totalSales.minus(totalPrizes);
 
         const debtStatus = netOperative.isPositive()
@@ -1741,47 +1683,27 @@ export class AccountsService {
         const debtAmount = netOperative.abs();
 
         return {
-          id: `${m.accountId}-${m.date}`,
-          accountId: m.accountId,
-          owner: {
-            type: normalizeOwnerType(m.ownerType),
-            id: m.ownerId,
-            name: m.ownerName,
-            code: m.ownerCode,
-          },
-          period: {
-            fromDate: new Date(m.date),
-            toDate: new Date(m.date),
-          },
-          metrics: {
-            totalSales: parseFloat(totalSales.toString()),
-            totalPrizes: parseFloat(totalPrizes.toString()),
-            totalCommission: 0,
-            netOperative: parseFloat(netOperative.toString()),
-          },
-          debtStatus: {
-            status: debtStatus,
-            amount: parseFloat(debtAmount.toString()),
-            description: this.getDebtDescription(debtStatus, debtAmount),
-          },
-          settlement: {
-            isSettled: false,
-            settledDate: null,
-            settledAmount: null,
-            type: null,
-            reference: null,
-          },
-          computedAt: new Date(),
+          ownerId: row.owner_id,
+          ownerName: row.owner_name,
+          ownerCode: row.owner_code,
+          ownerType: normalizeOwnerType(row.owner_type),
+          date: row.date,
+          totalSales: parseFloat(totalSales.toString()),
+          totalPrizes: parseFloat(totalPrizes.toString()),
+          netOperative: parseFloat(netOperative.toString()),
+          debtStatus,
+          debtAmount: parseFloat(debtAmount.toString()),
+          debtDescription: this.getDebtDescription(debtStatus, debtAmount),
         };
       });
 
-      // 9. Apply debt status filter
+      // 5. Apply debt status filter
       let filtered = mayorizations;
       if (filters.debtStatus) {
-        filtered = mayorizations.filter(m => m.debtStatus.status === filters.debtStatus);
+        filtered = mayorizations.filter(m => m.debtStatus === filters.debtStatus);
       }
 
-      // 10. Apply sorting
+      // 6. Apply sorting
       const sortField = filters.orderBy || 'date';
       const sortOrder = filters.order || 'desc';
 
@@ -1790,14 +1712,14 @@ export class AccountsService {
         let bVal: any;
 
         if (sortField === 'date') {
-          aVal = new Date(a.period.fromDate).getTime();
-          bVal = new Date(b.period.fromDate).getTime();
+          aVal = new Date(a.date).getTime();
+          bVal = new Date(b.date).getTime();
         } else if (sortField === 'debtAmount') {
-          aVal = a.debtStatus.amount;
-          bVal = b.debtStatus.amount;
+          aVal = a.debtAmount;
+          bVal = b.debtAmount;
         } else if (sortField === 'netOperative') {
-          aVal = a.metrics.netOperative;
-          bVal = b.metrics.netOperative;
+          aVal = a.netOperative;
+          bVal = b.netOperative;
         }
 
         if (sortOrder === 'asc') {
@@ -1807,23 +1729,23 @@ export class AccountsService {
         }
       });
 
-      // 11. Apply pagination
+      // 7. Apply pagination
       const pageSize = filters.pageSize || 20;
       const page = filters.page || 1;
       const skip = (page - 1) * pageSize;
       const paginatedMayorizations = filtered.slice(skip, skip + pageSize);
 
-      // 12. Calculate summary
+      // 8. Calculate summary
       const totalCXC = filtered
-        .filter(m => m.debtStatus.status === 'CXC')
-        .reduce((sum, m) => sum + m.debtStatus.amount, 0);
+        .filter(m => m.debtStatus === 'CXC')
+        .reduce((sum, m) => sum + m.debtAmount, 0);
 
       const totalCXP = filtered
-        .filter(m => m.debtStatus.status === 'CXP')
-        .reduce((sum, m) => sum + m.debtStatus.amount, 0);
+        .filter(m => m.debtStatus === 'CXP')
+        .reduce((sum, m) => sum + m.debtAmount, 0);
 
       return {
-        mayorizations: paginatedMayorizations,
+        data: paginatedMayorizations,
         pagination: {
           page,
           pageSize,
