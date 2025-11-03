@@ -5,6 +5,13 @@ import ActivityService from '../../../core/activity.service';
 import AccountsRepository from '../modules/accounts/accounts.repository';
 import logger from '../../../core/logger';
 
+/**
+ * Helper to convert VENTANA to "Listero" for API responses
+ */
+const normalizeOwnerType = (ownerType: string | OwnerType): string => {
+  return ownerType === 'VENTANA' ? 'Listero' : ownerType;
+};
+
 export class AccountsService {
   /**
    * Obtener o crear cuenta para propietario
@@ -81,7 +88,7 @@ export class AccountsService {
 
       return {
         id: updatedAccount.id,
-        ownerType: updatedAccount.ownerType,
+        ownerType: normalizeOwnerType(updatedAccount.ownerType),
         ownerId: updatedAccount.ownerId,
         currency: updatedAccount.currency,
         balance,
@@ -114,7 +121,7 @@ export class AccountsService {
     const balance = parseFloat(account.balance.toString());
     return {
       id: account.id,
-      ownerType: account.ownerType,
+      ownerType: normalizeOwnerType(account.ownerType),
       ownerId: account.ownerId,
       currency: account.currency,
       balance,
@@ -968,7 +975,7 @@ export class AccountsService {
 
       return {
         accountId,
-        ownerType: account.ownerType,
+        ownerType: normalizeOwnerType(account.ownerType),
         ownerId: account.ownerId,
         currency: account.currency,
         period: { from, to },
@@ -1085,7 +1092,7 @@ export class AccountsService {
 
         return {
           id: metric.id,
-          ownerType: metric.ownerType,
+          ownerType: normalizeOwnerType(metric.ownerType),
           ownerId: metric.ownerId,
           currency: metric.currency,
           isActive: metric.isActive,
@@ -1177,7 +1184,7 @@ export class AccountsService {
       return {
         account: {
           id: account.id,
-          ownerType: account.ownerType,
+          ownerType: normalizeOwnerType(account.ownerType),
           ownerId: account.ownerId,
           currency: account.currency,
         },
@@ -1681,7 +1688,7 @@ export class AccountsService {
         return {
           id: `${m.accountId}-${m.date}`,
           accountId: m.accountId,
-          ownerType: m.ownerType === 'VENTANA' ? 'Listero' : m.ownerType,
+          ownerType: normalizeOwnerType(m.ownerType),
           ownerId: m.ownerId,
           ownerName: m.ownerName,
           ownerCode: m.ownerCode,

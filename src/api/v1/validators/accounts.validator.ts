@@ -9,7 +9,7 @@ export const listAccountsQuerySchema = z.object({
 });
 
 // UUID validation helper
-const uuidSchema = z.string().uuid('Invalid account ID format');
+const uuidSchema = z.uuid('Invalid account ID format');
 
 export const getAccountDetailsParamsSchema = z.object({
   accountId: uuidSchema,
