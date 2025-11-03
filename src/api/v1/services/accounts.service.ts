@@ -1558,7 +1558,7 @@ export class AccountsService {
   }
 
   /**
-   * Obtener historial de mayorizaciones con filtros y paginación
+   * Obtener historial de mayorizaciones calculadas dinámicamente desde Ticket/Jugada
    */
   static async getMayorizationHistory(
     filters: {
@@ -1577,129 +1577,195 @@ export class AccountsService {
     user: any
   ) {
     try {
-      // Construir WHERE con RBAC
-      const where: Prisma.MayorizationRecordWhereInput = {};
+      // 1. Determine date range
+      let fromDate = filters.fromDate;
+      let toDate = filters.toDate;
 
-      // RBAC: filtrar según rol
+      if (!fromDate || !toDate) {
+        const now = new Date();
+        toDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        fromDate = new Date(toDate);
+        fromDate.setDate(fromDate.getDate() - 30); // Default 30 days
+      }
+
+      // 2. Get all accounts based on RBAC
+      let accountIds: string[] = [];
       if (user.role === 'VENTANA') {
-        where.accountId = {
-          in: await prisma.account.findMany({
-            where: {
-              ownerType: 'VENTANA',
-              ownerId: user.ventanaId,
-            },
-            select: { id: true },
-          }).then(accounts => accounts.map(a => a.id)),
-        };
+        const accounts = await prisma.account.findMany({
+          where: {
+            ownerType: 'VENTANA',
+            ownerId: user.ventanaId,
+          },
+          select: { id: true },
+        });
+        accountIds = accounts.map(a => a.id);
       } else if (user.role === 'VENDEDOR') {
-        where.accountId = {
-          in: await prisma.account.findMany({
-            where: {
-              ownerType: 'VENDEDOR',
-              ownerId: user.id,
-            },
-            select: { id: true },
-          }).then(accounts => accounts.map(a => a.id)),
+        const accounts = await prisma.account.findMany({
+          where: {
+            ownerType: 'VENDEDOR',
+            ownerId: user.id,
+          },
+          select: { id: true },
+        });
+        accountIds = accounts.map(a => a.id);
+      }
+      // ADMIN sees all
+
+      // 3. Build owner filter SQL
+      let ownerFilterSQL = '';
+      let ownerFilterParams: any[] = [];
+
+      if (filters.ownerType) {
+        ownerFilterSQL = `AND a."ownerType" = $${ownerFilterParams.length + 1}::text`;
+        ownerFilterParams.push(filters.ownerType);
+      }
+
+      if (filters.ownerId) {
+        ownerFilterSQL += ` AND a."ownerId" = $${ownerFilterParams.length + 1}::uuid`;
+        ownerFilterParams.push(filters.ownerId);
+      }
+
+      if (user.role !== 'ADMIN' && accountIds.length > 0) {
+        ownerFilterSQL += ` AND a."id" = ANY($${ownerFilterParams.length + 1}::uuid[])`;
+        ownerFilterParams.push(accountIds);
+      }
+
+      // 4. Query to get daily metrics per account
+      const metricsQuery = `
+        SELECT
+          a."id" as "accountId",
+          a."ownerType",
+          a."ownerId",
+          a."ownerId" as "ownerName",
+          DATE(t."createdAt") as "date",
+          COALESCE(SUM(t."totalAmount"), 0)::NUMERIC as "totalSales",
+          COALESCE(SUM(CASE WHEN j."isWinner" THEN j."payout" ELSE 0 END), 0)::NUMERIC as "totalPrizes"
+        FROM "Account" a
+        LEFT JOIN "Ticket" t ON
+          ((a."ownerType" = 'VENTANA' AND t."ventanaId" = a."ownerId") OR
+           (a."ownerType" = 'VENDEDOR' AND t."vendedorId" = a."ownerId"))
+          AND t."deletedAt" IS NULL
+          AND t."status" IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND DATE(t."createdAt") >= DATE($1::TIMESTAMP)
+          AND DATE(t."createdAt") <= DATE($2::TIMESTAMP)
+        LEFT JOIN "Jugada" j ON t."id" = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
+        WHERE 1=1 ${ownerFilterSQL}
+        GROUP BY a."id", a."ownerType", a."ownerId", DATE(t."createdAt")
+        ORDER BY DATE(t."createdAt") DESC, a."ownerId" ASC
+      `;
+
+      const metrics = await prisma.$queryRawUnsafe<any[]>(
+        metricsQuery,
+        fromDate,
+        toDate,
+        ...ownerFilterParams
+      );
+
+      // 5. Transform metrics to mayorizations
+      const mayorizations = metrics.map(m => {
+        const totalSales = new Prisma.Decimal(m.totalSales || 0);
+        const totalPrizes = new Prisma.Decimal(m.totalPrizes || 0);
+        const netOperative = totalSales.minus(totalPrizes);
+
+        const debtStatus = netOperative.isPositive()
+          ? 'CXC'
+          : netOperative.isNegative()
+            ? 'CXP'
+            : 'BALANCE';
+
+        const debtAmount = netOperative.abs();
+
+        return {
+          id: `${m.accountId}-${m.date}`,
+          accountId: m.accountId,
+          ownerType: m.ownerType,
+          ownerId: m.ownerId,
+          ownerName: m.ownerName,
+          period: {
+            fromDate: new Date(m.date),
+            toDate: new Date(m.date),
+          },
+          metrics: {
+            totalSales: parseFloat(totalSales.toString()),
+            totalPrizes: parseFloat(totalPrizes.toString()),
+            totalCommission: 0,
+            netOperative: parseFloat(netOperative.toString()),
+          },
+          debtStatus: {
+            status: debtStatus,
+            amount: parseFloat(debtAmount.toString()),
+            description: this.getDebtDescription(debtStatus, debtAmount),
+          },
+          settlement: {
+            isSettled: false,
+            settledDate: null,
+            settledAmount: null,
+            type: null,
+            reference: null,
+          },
+          computedAt: new Date(),
         };
-      }
-      // ADMIN ve todo
+      });
 
-      // Filtros adicionales
-      if (filters.ownerType) where.ownerType = filters.ownerType;
-      if (filters.ownerId) where.ownerId = filters.ownerId;
-      if (filters.debtStatus) where.debtStatus = filters.debtStatus;
-      if (filters.isSettled !== undefined) where.isSettled = filters.isSettled;
-
-      // Filtro de fechas
-      if (filters.fromDate || filters.toDate) {
-        where.fromDate = {};
-        if (filters.fromDate) where.fromDate.gte = filters.fromDate;
-        if (filters.toDate) where.fromDate.lte = filters.toDate;
+      // 6. Apply debt status filter
+      let filtered = mayorizations;
+      if (filters.debtStatus) {
+        filtered = mayorizations.filter(m => m.debtStatus.status === filters.debtStatus);
       }
 
-      // Paginación
+      // 7. Apply sorting
+      const sortField = filters.orderBy || 'date';
+      const sortOrder = filters.order || 'desc';
+
+      filtered.sort((a, b) => {
+        let aVal: any;
+        let bVal: any;
+
+        if (sortField === 'date') {
+          aVal = new Date(a.period.fromDate).getTime();
+          bVal = new Date(b.period.fromDate).getTime();
+        } else if (sortField === 'debtAmount') {
+          aVal = a.debtStatus.amount;
+          bVal = b.debtStatus.amount;
+        } else if (sortField === 'netOperative') {
+          aVal = a.metrics.netOperative;
+          bVal = b.metrics.netOperative;
+        }
+
+        if (sortOrder === 'asc') {
+          return aVal > bVal ? 1 : -1;
+        } else {
+          return aVal < bVal ? 1 : -1;
+        }
+      });
+
+      // 8. Apply pagination
       const pageSize = filters.pageSize || 20;
       const page = filters.page || 1;
       const skip = (page - 1) * pageSize;
+      const paginatedMayorizations = filtered.slice(skip, skip + pageSize);
 
-      // Ordenamiento
-      const orderBy: Prisma.MayorizationRecordOrderByWithRelationInput = {};
-      const sortField = filters.orderBy || 'date';
-      const sortOrder = filters.order || 'desc';
-      if (sortField === 'date') orderBy.fromDate = sortOrder;
-      else if (sortField === 'debtAmount') orderBy.debtAmount = sortOrder;
-      else if (sortField === 'netOperative') orderBy.netOperative = sortOrder;
+      // 9. Calculate summary
+      const totalCXC = filtered
+        .filter(m => m.debtStatus.status === 'CXC')
+        .reduce((sum, m) => sum + m.debtStatus.amount, 0);
 
-      // Query
-      const [mayorizations, total] = await Promise.all([
-        prisma.mayorizationRecord.findMany({
-          where,
-          orderBy,
-          skip,
-          take: pageSize,
-          include: { entries: true },
-        }),
-        prisma.mayorizationRecord.count({ where }),
-      ]);
-
-      // Transformar respuesta
-      const transformed = mayorizations.map(m => ({
-        id: m.id,
-        accountId: m.accountId,
-        ownerType: m.ownerType,
-        ownerId: m.ownerId,
-        ownerName: m.ownerName,
-        period: {
-          fromDate: m.fromDate,
-          toDate: m.toDate,
-        },
-        metrics: {
-          totalSales: parseFloat(m.totalSales.toString()),
-          totalPrizes: parseFloat(m.totalPrizes.toString()),
-          totalCommission: parseFloat(m.totalCommission.toString()),
-          netOperative: parseFloat(m.netOperative.toString()),
-        },
-        debtStatus: {
-          status: m.debtStatus,
-          amount: parseFloat(m.debtAmount.toString()),
-          description: m.debtDescription,
-        },
-        settlement: {
-          isSettled: m.isSettled,
-          settledDate: m.settledDate,
-          settledAmount: m.settledAmount ? parseFloat(m.settledAmount.toString()) : null,
-          type: m.settlementType,
-          reference: m.settlementRef,
-        },
-        computedAt: m.computedAt,
-      }));
-
-      // Calcular summary
-      const cxcTotal = await prisma.mayorizationRecord.aggregate({
-        where: { ...where, debtStatus: 'CXC' },
-        _sum: { debtAmount: true },
-      });
-      const cxpTotal = await prisma.mayorizationRecord.aggregate({
-        where: { ...where, debtStatus: 'CXP' },
-        _sum: { debtAmount: true },
-      });
+      const totalCXP = filtered
+        .filter(m => m.debtStatus.status === 'CXP')
+        .reduce((sum, m) => sum + m.debtStatus.amount, 0);
 
       return {
-        mayorizations: transformed,
+        mayorizations: paginatedMayorizations,
         pagination: {
           page,
           pageSize,
-          total,
-          totalPages: Math.ceil(total / pageSize),
+          total: filtered.length,
+          totalPages: Math.ceil(filtered.length / pageSize),
         },
         summary: {
-          totalCXC: parseFloat((cxcTotal._sum.debtAmount || new Prisma.Decimal(0)).toString()),
-          totalCXP: parseFloat((cxpTotal._sum.debtAmount || new Prisma.Decimal(0)).toString()),
-          balance: parseFloat(
-            ((cxcTotal._sum.debtAmount || new Prisma.Decimal(0))
-              .minus(cxpTotal._sum.debtAmount || new Prisma.Decimal(0)))
-              .toString()
-          ),
+          totalCXC,
+          totalCXP,
+          balance: totalCXC - totalCXP,
         },
       };
 
