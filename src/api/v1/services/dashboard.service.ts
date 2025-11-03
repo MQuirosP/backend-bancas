@@ -39,6 +39,7 @@ interface GananciaResult {
     tickets: number;
     winners: number;
     winRate: number;
+    isActive: boolean;
   }>;
   byLoteria: Array<{
     loteriaId: string;
@@ -90,11 +91,12 @@ export const DashboardService = {
    * Incluye desglose completo por ventana y lotería
    */
   async calculateGanancia(filters: DashboardFilters): Promise<GananciaResult> {
-    // Query: desglose completo por ventana
+    // Query: desglose completo por ventana (solo ventanas activas)
     const byVentanaResult = await prisma.$queryRaw<
       Array<{
         ventana_id: string;
         ventana_name: string;
+        is_active: boolean;
         total_sales: number;
         total_tickets: number;
         winning_tickets: number;
@@ -106,6 +108,7 @@ export const DashboardService = {
         SELECT
           v.id as ventana_id,
           v.name as ventana_name,
+          v."isActive" as is_active,
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
           COUNT(DISTINCT t.id) as total_tickets,
           COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets,
@@ -120,8 +123,9 @@ export const DashboardService = {
         LEFT JOIN "Jugada" j ON t.id = j."ticketId"
           AND j."isWinner" = true
           AND j."deletedAt" IS NULL
-        ${filters.ventanaId ? Prisma.sql`WHERE v.id = ${filters.ventanaId}` : Prisma.empty}
-        GROUP BY v.id, v.name
+        WHERE v."isActive" = true
+          ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}` : Prisma.empty}
+        GROUP BY v.id, v.name, v."isActive"
         ORDER BY total_sales DESC
       `
     );
@@ -194,6 +198,7 @@ export const DashboardService = {
           tickets,
           winners,
           winRate: parseFloat(winRate.toFixed(2)),
+          isActive: row.is_active,
         };
       }),
       byLoteria: byLoteriaResult.map(row => {
