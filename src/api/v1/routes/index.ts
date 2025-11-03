@@ -17,6 +17,7 @@ import commissionRoutes from "./commission.routes"
 import dashboardRoutes from "./dashboard.routes"
 import activityLogRoutes from "./activityLog.routes"
 import cierreRoutes from "./cierre.routes"
+import accountsRoutes from "./accounts.routes"
 
 const router = Router();
 
@@ -37,6 +38,7 @@ router.use("/ventas", ventaRoutes);
 router.use("/admin/dashboard", dashboardRoutes);
 router.use("/activity-logs", activityLogRoutes);
 router.use("/cierres", cierreRoutes);
+router.use("/accounts", accountsRoutes);
 router.use("/", commissionRoutes); // Commission routes include their own path prefixes
 
 export const apiV1Router = router;
