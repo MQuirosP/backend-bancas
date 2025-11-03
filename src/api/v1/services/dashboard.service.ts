@@ -63,6 +63,7 @@ interface CxCResult {
     totalSales: number;
     totalPaidOut: number;
     amount: number; // sales - payouts
+    isActive: boolean;
   }>;
 }
 
@@ -74,6 +75,7 @@ interface CxPResult {
     totalWinners: number;
     totalPaidOut: number;
     amount: number; // winners - sales (when positive)
+    isActive: boolean;
   }>;
 }
 
@@ -238,6 +240,7 @@ export const DashboardService = {
       Array<{
         ventana_id: string;
         ventana_name: string;
+        is_active: boolean;
         total_sales: number;
         total_paid: number;
       }>
@@ -246,6 +249,7 @@ export const DashboardService = {
         SELECT
           v.id as ventana_id,
           v.name as ventana_name,
+          v."isActive" as is_active,
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
           COALESCE(SUM(tp."amountPaid"), 0) as total_paid
         FROM "Ventana" v
@@ -259,7 +263,7 @@ export const DashboardService = {
           AND tp."createdAt" >= ${filters.fromDate}
           AND tp."createdAt" <= ${filters.toDate}
         ${filters.ventanaId ? Prisma.sql`WHERE v.id = ${filters.ventanaId}` : Prisma.empty}
-        GROUP BY v.id, v.name
+        GROUP BY v.id, v.name, v."isActive"
       `
     );
 
@@ -274,6 +278,7 @@ export const DashboardService = {
         totalSales,
         totalPaidOut,
         amount: amount > 0 ? amount : 0, // Solo mostrar si es positivo
+        isActive: row.is_active,
       };
     });
 
@@ -294,6 +299,7 @@ export const DashboardService = {
       Array<{
         ventana_id: string;
         ventana_name: string;
+        is_active: boolean;
         total_winners: number;
         total_paid: number;
       }>
@@ -302,6 +308,7 @@ export const DashboardService = {
         SELECT
           v.id as ventana_id,
           v.name as ventana_name,
+          v."isActive" as is_active,
           COALESCE(SUM(j."payout"), 0) as total_winners,
           COALESCE(SUM(tp."amountPaid"), 0) as total_paid
         FROM "Ventana" v
@@ -319,7 +326,7 @@ export const DashboardService = {
           AND tp."createdAt" >= ${filters.fromDate}
           AND tp."createdAt" <= ${filters.toDate}
         ${filters.ventanaId ? Prisma.sql`WHERE v.id = ${filters.ventanaId}` : Prisma.empty}
-        GROUP BY v.id, v.name
+        GROUP BY v.id, v.name, v."isActive"
       `
     );
 
@@ -334,6 +341,7 @@ export const DashboardService = {
         totalWinners,
         totalPaidOut,
         amount: amount > 0 ? amount : 0, // Solo mostrar si es positivo
+        isActive: row.is_active,
       };
     });
 
@@ -542,7 +550,7 @@ export const DashboardService = {
         bet_type: string;
         total_sales: number;
         potential_payout: number;
-        ticket_count: number;
+        ticket_count: bigint;
       }>
     >(
       Prisma.sql`
@@ -550,7 +558,7 @@ export const DashboardService = {
           j.number,
           j.type as bet_type,
           COALESCE(SUM(j.amount), 0) as total_sales,
-          COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j.payout ELSE 0 END), 0) as potential_payout,
+          COALESCE(SUM(j.amount * j."finalMultiplierX"), 0) as potential_payout,
           COUNT(DISTINCT t.id) as ticket_count
         FROM "Jugada" j
         JOIN "Ticket" t ON j."ticketId" = t.id
@@ -607,7 +615,7 @@ export const DashboardService = {
           l.id as loteria_id,
           l.name as loteria_name,
           COALESCE(SUM(j.amount), 0) as total_sales,
-          COALESCE(SUM(j.payout), 0) as potential_payout
+          COALESCE(SUM(j.amount * j."finalMultiplierX"), 0) as potential_payout
         FROM "Jugada" j
         JOIN "Ticket" t ON j."ticketId" = t.id
         JOIN "Loteria" l ON t."loteriaId" = l.id
@@ -627,13 +635,14 @@ export const DashboardService = {
       topNumbers: topNumbers.map(row => {
         const sales = Number(row.total_sales) || 0;
         const payout = Number(row.potential_payout) || 0;
+        const ticketCount = Number(row.ticket_count) || 0;
         return {
           number: row.number,
           betType: row.bet_type,
           sales,
           potentialPayout: payout,
-          ratio: sales > 0 ? (payout / sales) : 0,
-          ticketCount: Number(row.ticket_count) || 0,
+          ratio: sales > 0 ? parseFloat((payout / sales).toFixed(2)) : 0,
+          ticketCount,
         };
       }),
       heatmap: heatmap.map(row => ({
@@ -648,7 +657,7 @@ export const DashboardService = {
           loteriaName: row.loteria_name,
           sales,
           potentialPayout: payout,
-          ratio: sales > 0 ? (payout / sales) : 0,
+          ratio: sales > 0 ? parseFloat((payout / sales).toFixed(2)) : 0,
         };
       }),
     };
