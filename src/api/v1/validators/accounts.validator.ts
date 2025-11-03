@@ -98,3 +98,11 @@ export const createPaymentDocumentSchema = z.object({
   receiptUrl: z.string().url().optional(),
   requestId: z.string().optional(),
 });
+
+export const createAccountSchema = z.object({
+  ownerType: z.enum(['BANCA', 'VENTANA', 'VENDEDOR']),
+  ownerId: z.string().min(1),
+  currency: z.string().default('CRC'),
+  initialBalance: z.number().optional(),
+  initialBalanceNote: z.string().optional(),
+});
