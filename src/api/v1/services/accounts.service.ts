@@ -1630,17 +1630,20 @@ export class AccountsService {
         ownerFilterParams.push(accountIds);
       }
 
-      // 4. Query to get daily metrics per account
+      // 4. Query to get daily metrics per account with owner info
       const metricsQuery = `
         SELECT
           a."id" as "accountId",
           a."ownerType",
           a."ownerId",
-          a."ownerId" as "ownerName",
+          COALESCE(v."name", u."name", a."ownerId") as "ownerName",
+          COALESCE(v."code", u."code", '') as "ownerCode",
           DATE(t."createdAt") as "date",
           COALESCE(SUM(t."totalAmount"), 0)::NUMERIC as "totalSales",
           COALESCE(SUM(CASE WHEN j."isWinner" THEN j."payout" ELSE 0 END), 0)::NUMERIC as "totalPrizes"
         FROM "Account" a
+        LEFT JOIN "Ventana" v ON a."ownerType" = 'VENTANA' AND a."ownerId" = v."id"
+        LEFT JOIN "User" u ON a."ownerType" = 'VENDEDOR' AND a."ownerId" = u."id"
         LEFT JOIN "Ticket" t ON
           ((a."ownerType" = 'VENTANA' AND t."ventanaId" = a."ownerId") OR
            (a."ownerType" = 'VENDEDOR' AND t."vendedorId" = a."ownerId"))
@@ -1650,7 +1653,7 @@ export class AccountsService {
           AND DATE(t."createdAt") <= DATE($2::TIMESTAMP)
         LEFT JOIN "Jugada" j ON t."id" = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
         WHERE 1=1 ${ownerFilterSQL}
-        GROUP BY a."id", a."ownerType", a."ownerId", DATE(t."createdAt")
+        GROUP BY a."id", a."ownerType", a."ownerId", v."name", u."name", v."code", u."code", DATE(t."createdAt")
         ORDER BY DATE(t."createdAt") DESC, a."ownerId" ASC
       `;
 
@@ -1678,9 +1681,10 @@ export class AccountsService {
         return {
           id: `${m.accountId}-${m.date}`,
           accountId: m.accountId,
-          ownerType: m.ownerType,
+          ownerType: m.ownerType === 'VENTANA' ? 'Listero' : m.ownerType,
           ownerId: m.ownerId,
           ownerName: m.ownerName,
+          ownerCode: m.ownerCode,
           period: {
             fromDate: new Date(m.date),
             toDate: new Date(m.date),
