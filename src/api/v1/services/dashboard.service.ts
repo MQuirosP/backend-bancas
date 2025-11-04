@@ -127,7 +127,7 @@ export const DashboardService = {
           AND j."isWinner" = true
           AND j."deletedAt" IS NULL
         WHERE v."isActive" = true
-          ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
         GROUP BY v.id, v.name, v."isActive"
         ORDER BY total_sales DESC
       `
@@ -162,7 +162,7 @@ export const DashboardService = {
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
         LEFT JOIN "Jugada" j ON t.id = j."ticketId"
           AND j."isWinner" = true
           AND j."deletedAt" IS NULL
@@ -262,7 +262,7 @@ export const DashboardService = {
           AND tp."isReversed" = false
           AND tp."createdAt" >= ${filters.fromDate}
           AND tp."createdAt" <= ${filters.toDate}
-        ${filters.ventanaId ? Prisma.sql`WHERE v.id = ${filters.ventanaId}` : Prisma.empty}
+        ${filters.ventanaId ? Prisma.sql`WHERE v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
         GROUP BY v.id, v.name, v."isActive"
       `
     );
@@ -325,7 +325,7 @@ export const DashboardService = {
           AND tp."isReversed" = false
           AND tp."createdAt" >= ${filters.fromDate}
           AND tp."createdAt" <= ${filters.toDate}
-        ${filters.ventanaId ? Prisma.sql`WHERE v.id = ${filters.ventanaId}` : Prisma.empty}
+        ${filters.ventanaId ? Prisma.sql`WHERE v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
         GROUP BY v.id, v.name, v."isActive"
       `
     );
@@ -366,7 +366,7 @@ export const DashboardService = {
             AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${filters.fromDate}
             AND t."createdAt" <= ${filters.toDate}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
         `
       ),
       prisma.$queryRaw<Array<{ total: number }>>(
@@ -379,7 +379,7 @@ export const DashboardService = {
             AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${filters.fromDate}
             AND t."createdAt" <= ${filters.toDate}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
         `
       ),
       prisma.$queryRaw<Array<{ total: number }>>(
@@ -392,7 +392,7 @@ export const DashboardService = {
             AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${filters.fromDate}
             AND t."createdAt" <= ${filters.toDate}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
         `
       ),
       prisma.ticket.count({
@@ -516,8 +516,8 @@ export const DashboardService = {
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
         GROUP BY date_bucket
         ORDER BY date_bucket ASC
       `
@@ -567,8 +567,8 @@ export const DashboardService = {
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
           ${filters.betType ? Prisma.sql`AND j.type = ${filters.betType}` : Prisma.empty}
         GROUP BY j.number, j.type
         ORDER BY total_sales DESC
@@ -594,8 +594,8 @@ export const DashboardService = {
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
         GROUP BY j.number
         ORDER BY j.number ASC
       `
@@ -624,8 +624,8 @@ export const DashboardService = {
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
         GROUP BY l.id, l.name
         ORDER BY total_sales DESC
       `
@@ -716,8 +716,8 @@ export const DashboardService = {
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
         GROUP BY u.id, u.name, u."isActive"
         ORDER BY ${orderClause} ${orderDirection}
         LIMIT ${pageSize}
@@ -736,8 +736,8 @@ export const DashboardService = {
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
       `
     );
 
@@ -786,7 +786,7 @@ export const DashboardService = {
             AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${previousFromDate}
             AND t."createdAt" <= ${previousToDate}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
         `
       ),
       prisma.$queryRaw<Array<{ total: number }>>(
@@ -799,7 +799,7 @@ export const DashboardService = {
             AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${previousFromDate}
             AND t."createdAt" <= ${previousToDate}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
         `
       ),
     ]);

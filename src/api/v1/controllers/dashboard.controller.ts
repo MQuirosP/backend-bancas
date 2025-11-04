@@ -4,6 +4,7 @@ import { success } from "../../../utils/responses";
 import { AuthenticatedRequest } from "../../../core/types";
 import { Role } from "@prisma/client";
 import DashboardService from "../services/dashboard.service";
+import { DashboardExportService } from "../services/dashboard-export.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { validateVentanaUser } from "../../../utils/rbac";
 
@@ -27,7 +28,8 @@ export const DashboardController = {
     const query = req.query as any;
 
     // Resolver rango de fechas (usa el mismo patrón que Venta)
-    const date = query.date || 'today';
+    // Si se envía fromDate y toDate, usar automáticamente 'range'
+    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     // Aplicar RBAC
@@ -65,7 +67,8 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    const date = query.date || 'today';
+    // Si se envía fromDate y toDate, usar automáticamente 'range'
+    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     let ventanaId = query.ventanaId;
@@ -104,7 +107,8 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    const date = query.date || 'today';
+    // Si se envía fromDate y toDate, usar automáticamente 'range'
+    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     let ventanaId = query.ventanaId;
@@ -143,7 +147,8 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    const date = query.date || 'today';
+    // Si se envía fromDate y toDate, usar automáticamente 'range'
+    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     let ventanaId = query.ventanaId;
@@ -182,7 +187,8 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    const date = query.date || 'today';
+    // Si se envía fromDate y toDate, usar automáticamente 'range'
+    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     let ventanaId = query.ventanaId;
@@ -227,7 +233,8 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    const date = query.date || 'today';
+    // Si se envía fromDate y toDate, usar automáticamente 'range'
+    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     let ventanaId = query.ventanaId;
@@ -269,7 +276,8 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    const date = query.date || 'today';
+    // Si se envía fromDate y toDate, usar automáticamente 'range'
+    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     let ventanaId = query.ventanaId;
@@ -321,7 +329,8 @@ export const DashboardController = {
       throw new AppError("Formato inválido. Use: csv, xlsx, pdf", 422);
     }
 
-    const date = query.date || 'today';
+    // Si se envía fromDate y toDate, usar automáticamente 'range'
+    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     let ventanaId = query.ventanaId;
@@ -339,27 +348,82 @@ export const DashboardController = {
       scope: query.scope || 'all',
     });
 
-    // Por ahora, retornar JSON hasta implementar export real
-    // TODO: Implementar exportación a CSV/XLSX/PDF
     const timestamp = new Date().toISOString().split('T')[0];
     const filename = `dashboard-${timestamp}.${format}`;
 
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
     if (format === 'csv') {
-      res.setHeader('Content-Type', 'text/csv');
-      // TODO: Convertir a CSV
-      return res.send('CSV export not implemented yet');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      const csv = DashboardExportService.generateCSV(dashboard as any);
+      // Agregar BOM para UTF-8 en Excel
+      return res.send('\ufeff' + csv);
     } else if (format === 'xlsx') {
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      // TODO: Convertir a XLSX
-      return res.send('XLSX export not implemented yet');
+      const workbook = await DashboardExportService.generateWorkbook(dashboard as any);
+      await workbook.xlsx.write(res);
+      return res.end();
     } else if (format === 'pdf') {
+      // Configurar headers antes de generar el PDF
       res.setHeader('Content-Type', 'application/pdf');
-      // TODO: Convertir a PDF
-      return res.send('PDF export not implemented yet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      
+      const pdfDoc = DashboardExportService.generatePDF(dashboard as any);
+      
+      // getBuffer callback: (buffer) => void
+      // Nota: pdfmake getBuffer solo pasa el buffer, no un error como segundo parámetro
+      pdfDoc.getBuffer((buffer: Buffer) => {
+        try {
+          if (!buffer || buffer.length === 0) {
+            req.logger?.error({
+              layer: 'controller',
+              action: 'DASHBOARD_EXPORT_PDF_ERROR',
+              userId: req.user?.id,
+              requestId: req.requestId,
+              meta: { error: 'Buffer vacío o undefined' }
+            });
+            if (!res.headersSent) {
+              return res.status(500).json({ error: 'Error generando PDF: buffer vacío' });
+            }
+            return;
+          }
+          
+          // Verificar que los headers no se hayan enviado
+          if (res.headersSent) {
+            req.logger?.warn({
+              layer: 'controller',
+              action: 'DASHBOARD_EXPORT_PDF_HEADERS_SENT',
+              userId: req.user?.id,
+              requestId: req.requestId,
+            });
+            return;
+          }
+          
+          // Enviar el buffer del PDF como binary
+          res.writeHead(200, {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Content-Length': buffer.length,
+          });
+          res.end(buffer);
+        } catch (error: any) {
+          req.logger?.error({
+            layer: 'controller',
+            action: 'DASHBOARD_EXPORT_PDF_ERROR',
+            userId: req.user?.id,
+            requestId: req.requestId,
+            meta: { error: error.message, stack: error.stack }
+          });
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Error generando PDF', message: error.message });
+          }
+        }
+      });
+      
+      return;
     }
 
+    // Fallback: retornar JSON si el formato no es reconocido (no debería llegar aquí)
     return success(res, dashboard);
   },
 };
