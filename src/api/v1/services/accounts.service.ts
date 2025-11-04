@@ -1661,6 +1661,26 @@ export class AccountsService {
       }
 
       // 3. Query: Calculate totalSales, totalPrizes, totalCommission grouped by owner
+      let queryParams: any[] = [fromDate, toDate];
+      let whereClause = `
+        t."deletedAt" IS NULL
+        AND t."status" IN ('ACTIVE', 'EVALUATED', 'PAID')
+        AND t."createdAt" >= $1::TIMESTAMP
+        AND t."createdAt" <= $2::TIMESTAMP
+      `;
+
+      // Add owner filter if needed
+      if (ownerTypeFilter === 'VENTANA' && ownerIdFilter) {
+        queryParams.push(ownerIdFilter);
+        whereClause += ` AND t."ventanaId" = $${queryParams.length}::UUID`;
+      } else if (ownerTypeFilter === 'VENDEDOR' && ownerIdFilter) {
+        queryParams.push(ownerIdFilter);
+        whereClause += ` AND t."vendedorId" = $${queryParams.length}::UUID`;
+      } else if (ownerIdFilter) {
+        queryParams.push(ownerIdFilter);
+        whereClause += ` AND (t."ventanaId" = $${queryParams.length}::UUID OR t."vendedorId" = $${queryParams.length}::UUID)`;
+      }
+
       const rawData = await prisma.$queryRawUnsafe<any[]>(`
         SELECT
           CASE
@@ -1681,15 +1701,10 @@ export class AccountsService {
         FROM "Ticket" t
         LEFT JOIN "Jugada" j ON t."id" = j."ticketId"
           AND j."deletedAt" IS NULL
-        WHERE
-          t."deletedAt" IS NULL
-          AND t."status" IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND t."createdAt" >= $1::TIMESTAMP
-          AND t."createdAt" <= $2::TIMESTAMP
-          ${ownerTypeFilter === 'VENTANA' ? `AND t."ventanaId" = $3::UUID` : ownerTypeFilter === 'VENDEDOR' ? `AND t."vendedorId" = $3::UUID` : ownerIdFilter ? `AND (t."ventanaId" = $3::UUID OR t."vendedorId" = $3::UUID)` : ''}
+        WHERE ${whereClause}
         GROUP BY "ownerType", "ownerId"
         ORDER BY "totalSales" DESC
-      `, fromDate, toDate, ownerIdFilter || null);
+      `, ...queryParams);
 
       // 4. Fetch owner codes and names
       const ventanaIds = rawData
