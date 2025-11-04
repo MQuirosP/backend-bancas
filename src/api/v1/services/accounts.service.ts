@@ -1620,8 +1620,8 @@ export class AccountsService {
   }
 
   /**
-   * Get majorization history - reads ONLY from MayorizationRecord (persisted records)
-   * Does NOT calculate in-memory; history is pre-calculated via calculateMajorization endpoint
+   * Get majorization history - CALCULATES ON-DEMAND from tickets/jugadas
+   * Groups by ventana/vendedor and shows sales, prizes, commission, balance
    */
   static async getMayorizationHistory(
     filters: {
@@ -1648,117 +1648,143 @@ export class AccountsService {
       const fromDate = dateRange.fromAt;
       const toDate = dateRange.toAt;
 
-      // 2. Build query filter for MayorizationRecord
-      const where: any = {
-        computedAt: { gte: fromDate, lte: toDate },
-      };
+      // 2. Determine what to query based on RBAC
+      let ownerTypeFilter = filters.ownerType;
+      let ownerIdFilter = filters.ownerId;
 
-      // Apply RBAC
       if (user.role === 'VENTANA') {
-        where.ownerType = 'VENTANA';
-        where.ownerId = user.ventanaId;
+        ownerTypeFilter = 'VENTANA';
+        ownerIdFilter = user.ventanaId;
       } else if (user.role === 'VENDEDOR') {
-        where.ownerType = 'VENDEDOR';
-        where.ownerId = user.id;
+        ownerTypeFilter = 'VENDEDOR';
+        ownerIdFilter = user.id;
       }
 
-      // Apply owner type filter
-      if (filters.ownerType && !user.ventanaId && user.role !== 'VENTANA') {
-        where.ownerType = filters.ownerType;
-      }
+      // 3. Query: Calculate totalSales, totalPrizes, totalCommission grouped by owner
+      const rawData = await prisma.$queryRawUnsafe<any[]>(`
+        SELECT
+          CASE
+            WHEN t."ventanaId" IS NOT NULL THEN 'VENTANA'
+            ELSE 'VENDEDOR'
+          END as "ownerType",
+          COALESCE(t."ventanaId", t."vendedorId") as "ownerId",
+          COALESCE(SUM(t."totalAmount"), 0)::NUMERIC as "totalSales",
+          COALESCE(SUM(CASE
+            WHEN j."isWinner" = true THEN j."payout"
+            ELSE 0
+          END), 0)::NUMERIC as "totalPrizes",
+          COALESCE(SUM(CASE
+            WHEN j."isWinner" = true THEN j."commissionAmount"
+            ELSE 0
+          END), 0)::NUMERIC as "totalCommission",
+          MAX(t."createdAt") as "lastDate"
+        FROM "Ticket" t
+        LEFT JOIN "Jugada" j ON t."id" = j."ticketId"
+          AND j."deletedAt" IS NULL
+        WHERE
+          t."deletedAt" IS NULL
+          AND t."status" IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."createdAt" >= $1::TIMESTAMP
+          AND t."createdAt" <= $2::TIMESTAMP
+          ${ownerTypeFilter === 'VENTANA' ? `AND t."ventanaId" = $3::UUID` : ownerTypeFilter === 'VENDEDOR' ? `AND t."vendedorId" = $3::UUID` : ownerIdFilter ? `AND (t."ventanaId" = $3::UUID OR t."vendedorId" = $3::UUID)` : ''}
+        GROUP BY "ownerType", "ownerId"
+        ORDER BY "totalSales" DESC
+      `, fromDate, toDate, ownerIdFilter || null);
 
-      if (filters.ownerId && !user.ventanaId && user.role !== 'VENTANA') {
-        where.ownerId = filters.ownerId;
-      }
+      // 4. Fetch owner codes and names
+      const ventanaIds = rawData
+        .filter(r => r.ownerType === 'VENTANA')
+        .map(r => r.ownerId);
+      const vendedorIds = rawData
+        .filter(r => r.ownerType === 'VENDEDOR')
+        .map(r => r.ownerId);
 
-      // Apply debt status filter
-      if (filters.debtStatus) {
-        where.debtStatus = filters.debtStatus;
-      }
+      const [ventanas, vendedores] = await Promise.all([
+        ventanaIds.length > 0
+          ? prisma.ventana.findMany({
+              where: { id: { in: ventanaIds } },
+              select: { id: true, code: true, name: true },
+            })
+          : Promise.resolve([]),
+        vendedorIds.length > 0
+          ? prisma.user.findMany({
+              where: { id: { in: vendedorIds } },
+              select: { id: true, code: true, name: true },
+            })
+          : Promise.resolve([]),
+      ]);
 
-      // Apply settlement status filter
-      if (filters.isSettled !== undefined) {
-        where.isSettled = filters.isSettled;
-      }
+      const ventanaMap = new Map(ventanas.map(v => [v.id, v]));
+      const vendedorMap = new Map(vendedores.map(u => [u.id, u]));
 
-      // 3. Query from MayorizationRecord
+      // 5. Transform data
+      const data = rawData.map(row => {
+        const totalSales = new Prisma.Decimal(row.totalSales || 0);
+        const totalPrizes = new Prisma.Decimal(row.totalPrizes || 0);
+        const totalCommission = new Prisma.Decimal(row.totalCommission || 0);
+
+        const netOperative = totalSales.minus(totalPrizes);
+        const debtStatus = netOperative.isPositive()
+          ? 'CXC'
+          : netOperative.isNegative()
+            ? 'CXP'
+            : 'BALANCE';
+        const debtAmount = netOperative.abs();
+
+        const owner = row.ownerType === 'VENTANA'
+          ? ventanaMap.get(row.ownerId)
+          : vendedorMap.get(row.ownerId);
+
+        // Apply filters after calculation
+        if (filters.debtStatus && debtStatus !== filters.debtStatus) return null;
+
+        return {
+          id: `mayorization_${row.ownerId}_${toDate.toISOString().split('T')[0]}`,
+          ownerId: row.ownerId,
+          ownerCode: owner?.code || 'N/A',
+          ownerName: owner?.name || row.ownerId,
+          ownerType: row.ownerType,
+          date: formatIsoLocal(row.lastDate || toDate),
+          totalSales: parseFloat(totalSales.toString()),
+          totalPrizes: parseFloat(totalPrizes.toString()),
+          totalCommission: parseFloat(totalCommission.toString()),
+          netOperative: parseFloat(netOperative.toString()),
+          debtStatus,
+          debtAmount: parseFloat(debtAmount.toString()),
+          debtDescription: this.getDebtDescription(debtStatus, debtAmount),
+          status: 'OPEN',
+          isSettled: false,
+          settledDate: null,
+          settledAmount: null,
+          settlementType: null,
+          settlementRef: null,
+        };
+      }).filter(item => item !== null);
+
+      // 6. Apply pagination
       const pageSize = filters.pageSize || 20;
       const page = filters.page || 1;
       const skip = (page - 1) * pageSize;
 
-      const [records, total] = await Promise.all([
-        prisma.mayorizationRecord.findMany({
-          where,
-          skip,
-          take: pageSize,
-          orderBy: this.getSortOrder(filters.orderBy || 'date', filters.order || 'desc'),
-        }),
-        prisma.mayorizationRecord.count({ where }),
-      ]);
+      const paginatedData = data.slice(skip, skip + pageSize);
 
-      // 4. Fetch owner codes (Ventana or User)
-      const ownerIds = records.map(r => r.ownerId);
-      const ventanas = await prisma.ventana.findMany({
-        where: { id: { in: ownerIds } },
-        select: { id: true, code: true, name: true },
-      });
-      const users = await prisma.user.findMany({
-        where: { id: { in: ownerIds } },
-        select: { id: true, code: true, name: true },
-      });
-
-      const ventanaMap = new Map(ventanas.map(v => [v.id, v]));
-      const userMap = new Map(users.map(u => [u.id, u]));
-
-      // 5. Format response with owner codes
-      const data = records.map(record => {
-        const owner = record.ownerType === 'VENTANA'
-          ? ventanaMap.get(record.ownerId)
-          : userMap.get(record.ownerId);
-
-        return {
-          id: record.id,
-          ownerId: record.ownerId,
-          ownerCode: owner?.code || 'N/A',
-          ownerName: owner?.name || record.ownerName,
-          ownerType: normalizeOwnerType(record.ownerType),
-          date: formatIsoLocal(record.toDate || record.fromDate),
-          totalSales: parseFloat(record.totalSales.toString()),
-          totalPrizes: parseFloat(record.totalPrizes.toString()),
-          totalCommission: parseFloat(record.totalCommission.toString()),
-          netOperative: parseFloat(record.netOperative.toString()),
-          debtStatus: record.debtStatus,
-          debtAmount: parseFloat(record.debtAmount.toString()),
-          debtDescription: record.debtDescription,
-          status: record.isSettled ? 'SETTLED' : 'OPEN',
-          isSettled: record.isSettled,
-          settledDate: record.settledDate ? formatIsoLocal(record.settledDate) : null,
-          settledAmount: record.settledAmount ? parseFloat(record.settledAmount.toString()) : null,
-          settlementType: record.settlementType,
-          settlementRef: record.settlementRef,
-        };
-      });
-
-      // 5. Calculate summary
+      // 7. Calculate summary
       const summary = {
-        totalDebtAmount: records
+        totalDebtAmount: data
           .filter(r => r.debtStatus === 'CXC')
-          .reduce((sum, r) => sum + parseFloat(r.debtAmount.toString()), 0),
-        totalSettledAmount: records
-          .filter(r => r.isSettled)
-          .reduce((sum, r) => sum + parseFloat(r.settledAmount?.toString() || '0'), 0),
-        pendingSettlement: records
-          .filter(r => !r.isSettled)
-          .reduce((sum, r) => sum + parseFloat(r.debtAmount.toString()), 0),
+          .reduce((sum, r) => sum + r.debtAmount, 0),
+        totalSettledAmount: 0, // No settled yet (always OPEN in this view)
+        pendingSettlement: data
+          .reduce((sum, r) => sum + (r.debtStatus === 'CXC' ? r.debtAmount : 0), 0),
       };
 
       return {
-        data,
+        data: paginatedData,
         pagination: {
           page,
           pageSize,
-          total,
-          totalPages: Math.ceil(total / pageSize),
+          total: data.length,
+          totalPages: Math.ceil(data.length / pageSize),
         },
         summary,
       };
