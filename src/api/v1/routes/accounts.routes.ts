@@ -45,7 +45,7 @@ router.get('/:accountId/daily-summary', AccountsController.getDailySummary);
 router.post('/:accountId/daily-close', AccountsController.closeDay);
 
 // Mayorización de saldos pendientes
-router.post('/:accountId/majorization/calculate', AccountsController.calculateMajorization);
+router.post('/:accountId/mayorizations/calculate', AccountsController.calculateMajorization);
 router.get('/mayorizations/history', AccountsController.getMayorizationHistory);
 router.post('/mayorizations/settle', AccountsController.settleMayorization);
 

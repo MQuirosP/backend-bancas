@@ -25,35 +25,63 @@ import {
   settleMayorizationSchema,
 } from '../validators/accounts.validator';
 import logger from '../../../core/logger';
+import ActivityService from '../../../core/activity.service';
 
 const sendSuccess = (res: Response, data: any, statusCode: number = 200) => {
   res.status(statusCode).json({ success: true, data });
 };
 
-const sendError = (res: Response, error: any) => {
+const sendError = (res: Response, error: any, action: string = 'UNKNOWN_ACTION', userId?: string) => {
+  let statusCode = 500;
+  let message = 'Internal server error';
+  let code = 'INTERNAL_ERROR';
+  let details: any = undefined;
+
   if (error instanceof Error && 'statusCode' in error) {
     const appErr = error as any;
-    return res.status(appErr.statusCode).json({
-      success: false,
-      error: { message: appErr.message, code: appErr.statusCode },
-    });
+    statusCode = appErr.statusCode;
+    message = appErr.message;
+    code = appErr.code || appErr.statusCode;
+    details = appErr.details;
+  } else if (error instanceof ZodError) {
+    statusCode = 400;
+    message = 'Validation error';
+    code = 'VALIDATION_ERROR';
+    details = (error as any).errors || error.issues;
   }
 
-  if (error instanceof ZodError) {
-    return res.status(400).json({
-      success: false,
-      error: { message: 'Validation error', code: 'VALIDATION_ERROR' },
-    });
-  }
-
+  // Log error with context
   logger.error({
     layer: 'controller',
-    action: 'UNEXPECTED_ERROR',
-    payload: { error: error instanceof Error ? error.message : 'Unknown' },
+    action,
+    payload: {
+      statusCode,
+      message,
+      code,
+      details,
+      errorMsg: error instanceof Error ? error.message : String(error),
+    },
   });
-  return res.status(500).json({
+
+  // Log to activity for critical errors
+  if (userId && statusCode >= 400) {
+    ActivityService.log({
+      userId,
+      action: 'SYSTEM_ACTION',
+      targetType: 'ERROR',
+      details: {
+        controller_action: action,
+        http_status: statusCode,
+        error_code: code,
+        error_message: message,
+      },
+      layer: 'controller',
+    }).catch(e => logger.error({ layer: 'controller', action: 'ACTIVITY_LOG_ERROR', payload: { error: e.message } }));
+  }
+
+  return res.status(statusCode).json({
     success: false,
-    error: { message: 'Internal server error', code: 'INTERNAL_ERROR' },
+    error: { message, code },
   });
 };
 
@@ -328,23 +356,62 @@ export class AccountsController {
   }
 
   static async getMayorizationHistory(req: RequestWithUser, res: Response) {
+    const userId = req.user!.id;
+    const action = 'GET_MAYORIZATION_HISTORY';
+
     try {
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: {
+          userId,
+          query: req.query,
+        },
+      });
+
       const queryRaw = getMayorizationHistorySchema.parse(req.query);
       const query = {
         ...queryRaw,
         fromDate: queryRaw.fromDate ? new Date(queryRaw.fromDate) : undefined,
         toDate: queryRaw.toDate ? new Date(queryRaw.toDate) : undefined,
       };
+
       const result = await AccountsService.getMayorizationHistory(query, req.user!);
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: {
+          userId,
+          resultCount: result.data?.length || 0,
+          totalPages: result.pagination?.totalPages,
+        },
+      });
+
       res.status(200).json({ success: true, ...result });
     } catch (error) {
-      sendError(res, error);
+      sendError(res, error, action, userId);
     }
   }
 
   static async settleMayorization(req: RequestWithUser, res: Response) {
+    const userId = req.user!.id;
+    const action = 'SETTLE_MAYORIZATION';
+
     try {
       const bodyData = settleMayorizationSchema.parse(req.body);
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: {
+          userId,
+          mayorizationId: bodyData.mayorizationId,
+          amount: bodyData.amount,
+          settlementType: bodyData.settlementType,
+        },
+      });
+
       const result = await AccountsService.settleMayorization(bodyData.mayorizationId, {
         amount: bodyData.amount,
         settlementType: bodyData.settlementType,
@@ -352,11 +419,22 @@ export class AccountsController {
         reference: bodyData.reference,
         note: bodyData.note,
         requestId: bodyData.requestId,
-        createdBy: req.user!.id,
+        createdBy: userId,
       });
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: {
+          userId,
+          mayorizationId: bodyData.mayorizationId,
+          success: true,
+        },
+      });
+
       sendSuccess(res, result, 201);
     } catch (error) {
-      sendError(res, error);
+      sendError(res, error, action, userId);
     }
   }
 }
