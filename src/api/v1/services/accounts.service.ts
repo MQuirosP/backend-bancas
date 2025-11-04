@@ -1842,12 +1842,37 @@ export class AccountsService {
     }
   ) {
     try {
-      // 1. Obtener mayorización
+      // 1. Extraer UUID real del ID compuesto si necesario
+      // Formato: "mayorization_UUID_DATE" o solo "UUID"
+      let lookupId = mayorizationId;
+      if (mayorizationId.startsWith('mayorization_')) {
+        // Extraer UUID del formato compuesto
+        const parts = mayorizationId.split('_');
+        const uuidPart = parts.find(part => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(part));
+        if (uuidPart) {
+          lookupId = uuidPart;
+          logger.info({
+            layer: 'service',
+            action: 'MAYORIZATION_ID_EXTRACT',
+            payload: { originalId: mayorizationId, extractedId: lookupId },
+          });
+        }
+      }
+
+      // 2. Obtener mayorización
       const mayorization = await prisma.mayorizationRecord.findUnique({
-        where: { id: mayorizationId },
+        where: { id: lookupId },
         include: { account: true },
       });
-      if (!mayorization) throw new AppError('Majorization not found', 404);
+
+      if (!mayorization) {
+        logger.error({
+          layer: 'service',
+          action: 'MAYORIZATION_NOT_FOUND',
+          payload: { mayorizationId, lookupId, hint: 'Mayorization not persisted. Call POST /accounts/{accountId}/mayorizations/calculate first.' },
+        });
+        throw new AppError('Majorization not found. Please calculate mayorization first.', 404);
+      }
 
       // 1.5. Validar que esté OPEN
       if (mayorization.isSettled) {
