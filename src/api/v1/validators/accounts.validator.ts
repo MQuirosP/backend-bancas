@@ -137,28 +137,29 @@ export const getMayorizationHistorySchema = z.object({
   order: z.enum(['asc', 'desc']).optional(),
 });
 
-// Schema para mayorizationId que acepta UUID simple o formato compuesto mayorization_UUID_DATE
+// Schema para mayorizationId que acepta UUID simple o formato compuesto mayorization_{accountId}_{date}
 const mayorizationIdSchema = z.string().refine(
   (val) => {
-    // UUID simple válido
+    // UUID simple válido (ID real de MayorizationRecord)
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (uuidRegex.test(val)) return true;
     
-    // Formato compuesto mayorization_UUID_DATE
+    // Formato compuesto mayorization_{accountId}_{date} (ID temporal cuando no existe en BD)
     if (val.startsWith('mayorization_')) {
       const parts = val.split('_');
-      // Debe tener al menos 3 partes: mayorization, UUID, DATE
+      // Debe tener al menos 3 partes: mayorization, accountId (UUID), date (YYYY-MM-DD)
       if (parts.length >= 3) {
-        // Verificar que tenga un UUID válido en alguna parte
+        // Verificar que tenga un UUID válido (accountId) y una fecha válida
         const hasUuid = parts.some(part => uuidRegex.test(part));
-        return hasUuid;
+        const hasDate = parts.some(part => /^\d{4}-\d{2}-\d{2}$/.test(part));
+        return hasUuid && hasDate;
       }
     }
     
     return false;
   },
   {
-    message: 'mayorizationId must be a valid UUID or format mayorization_UUID_DATE',
+    message: 'mayorizationId must be a valid UUID (real ID) or format mayorization_{accountId}_{date} (temporal ID)',
   }
 ).optional();
 

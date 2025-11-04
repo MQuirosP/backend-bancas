@@ -1730,7 +1730,7 @@ export class AccountsService {
       const ventanaMap = new Map(ventanas.map(v => [v.id, v]));
       const vendedorMap = new Map(vendedores.map(u => [u.id, u]));
 
-      // 5. Transform data
+      // 5. Transform data - verificar si existe en BD y devolver id real o temporal
       const data = await Promise.all(rawData.map(async row => {
         const totalSales = new Prisma.Decimal(row.totalSales || 0);
         const totalPrizes = new Prisma.Decimal(row.totalPrizes || 0);
@@ -1754,27 +1754,78 @@ export class AccountsService {
         // Get real accountId
         const account = await AccountsRepository.getOrCreateAccount(row.ownerType as any, row.ownerId);
 
+        // Verificar si existe MayorizationRecord en BD por accountId + fromDate + toDate
+        // Usamos el toDate del filtro como fecha para verificar
+        const checkDate = new Date(toDate.toDateString());
+        const existingMayorization = await prisma.mayorizationRecord.findUnique({
+          where: {
+            accountId_fromDate_toDate: {
+              accountId: account.id,
+              fromDate: checkDate,
+              toDate: checkDate,
+            },
+          },
+        });
+
+        // Determinar el ID: real si existe en BD, temporal si no
+        const mayorizationId = existingMayorization 
+          ? existingMayorization.id 
+          : `mayorization_${account.id}_${checkDate.toISOString().split('T')[0]}`;
+
+        // Usar datos de BD si existe, sino usar datos calculados
+        const finalDate = existingMayorization 
+          ? formatIsoLocal(existingMayorization.toDate)
+          : formatIsoLocal(row.lastDate || toDate);
+        
+        const finalTotalSales = existingMayorization 
+          ? parseFloat(existingMayorization.totalSales.toString())
+          : parseFloat(totalSales.toString());
+        
+        const finalTotalPrizes = existingMayorization 
+          ? parseFloat(existingMayorization.totalPrizes.toString())
+          : parseFloat(totalPrizes.toString());
+        
+        const finalTotalCommission = existingMayorization 
+          ? parseFloat(existingMayorization.totalCommission.toString())
+          : parseFloat(totalCommission.toString());
+        
+        const finalNetOperative = existingMayorization 
+          ? parseFloat(existingMayorization.netOperative.toString())
+          : parseFloat(netOperative.toString());
+        
+        const finalDebtStatus = existingMayorization 
+          ? existingMayorization.debtStatus
+          : debtStatus;
+        
+        const finalDebtAmount = existingMayorization 
+          ? parseFloat(existingMayorization.debtAmount.toString())
+          : parseFloat(debtAmount.toString());
+        
+        const finalDebtDescription = existingMayorization 
+          ? existingMayorization.debtDescription
+          : this.getDebtDescription(debtStatus, debtAmount);
+
         return {
-          id: `mayorization_${row.ownerId}_${toDate.toISOString().split('T')[0]}`,
-          accountId: account.id,
+          id: mayorizationId,
+          accountId: account.id, // Siempre UUID real
           ownerId: row.ownerId,
           ownerCode: owner?.code || 'N/A',
           ownerName: owner?.name || row.ownerId,
           ownerType: row.ownerType,
-          date: formatIsoLocal(row.lastDate || toDate),
-          totalSales: parseFloat(totalSales.toString()),
-          totalPrizes: parseFloat(totalPrizes.toString()),
-          totalCommission: parseFloat(totalCommission.toString()),
-          netOperative: parseFloat(netOperative.toString()),
-          debtStatus,
-          debtAmount: parseFloat(debtAmount.toString()),
-          debtDescription: this.getDebtDescription(debtStatus, debtAmount),
-          status: 'OPEN',
-          isSettled: false,
-          settledDate: null,
-          settledAmount: null,
-          settlementType: null,
-          settlementRef: null,
+          date: finalDate,
+          totalSales: finalTotalSales,
+          totalPrizes: finalTotalPrizes,
+          totalCommission: finalTotalCommission,
+          netOperative: finalNetOperative,
+          debtStatus: finalDebtStatus,
+          debtAmount: finalDebtAmount,
+          debtDescription: finalDebtDescription,
+          status: existingMayorization?.isSettled ? 'SETTLED' : 'OPEN',
+          isSettled: existingMayorization?.isSettled || false,
+          settledDate: existingMayorization?.settledDate ? formatIsoLocal(existingMayorization.settledDate) : null,
+          settledAmount: existingMayorization?.settledAmount ? parseFloat(existingMayorization.settledAmount.toString()) : null,
+          settlementType: existingMayorization?.settlementType || null,
+          settlementRef: existingMayorization?.settlementRef || null,
         };
       })).then(results => results.filter(item => item !== null));
 
@@ -1849,68 +1900,73 @@ export class AccountsService {
     try {
       let mayorization: (Prisma.MayorizationRecordGetPayload<{ include: { account: true } }>) | null = null;
       let accountId = data.accountId;
-      let extractedMayorizationId: string | undefined = undefined;
+      let settlementDate = data.date;
 
-      // 1. Si hay mayorizationId, extraer UUID real del ID compuesto si necesario
+      // 1. Si hay mayorizationId, determinar si es formato compuesto o UUID
       if (mayorizationId) {
-        // Extraer UUID real del ID compuesto si necesario
-        // Formato: "mayorization_UUID_DATE" o solo "UUID"
-        let lookupId = mayorizationId;
         if (mayorizationId.startsWith('mayorization_')) {
-          // Extraer UUID del formato compuesto
+          // Formato compuesto: mayorization_{accountId}_{date}
           const parts = mayorizationId.split('_');
-          const uuidPart = parts.find(part => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(part));
-          if (uuidPart) {
-            lookupId = uuidPart;
-            extractedMayorizationId = uuidPart;
-            logger.info({
-              layer: 'service',
-              action: 'MAYORIZATION_ID_EXTRACT',
-              payload: { originalId: mayorizationId, extractedId: lookupId },
-            });
+          if (parts.length >= 3) {
+            // Extraer accountId (segundo elemento debe ser UUID)
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            const accountIdPart = parts.find(part => uuidRegex.test(part));
+            
+            if (accountIdPart) {
+              accountId = accountIdPart;
+              // Extraer fecha (último elemento después del accountId)
+              const datePart = parts[parts.length - 1];
+              if (datePart && /^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+                settlementDate = new Date(datePart);
+              }
+              
+              logger.info({
+                layer: 'service',
+                action: 'MAYORIZATION_COMPOUND_ID_PARSE',
+                payload: { 
+                  originalId: mayorizationId, 
+                  extractedAccountId: accountId,
+                  extractedDate: settlementDate.toISOString().split('T')[0]
+                },
+              });
+            }
           }
         } else {
-          // Es un UUID simple
-          extractedMayorizationId = mayorizationId;
-        }
-
-        // Buscar por mayorizationId
-        mayorization = await prisma.mayorizationRecord.findUnique({
-          where: { id: lookupId },
-          include: { account: true },
-        });
-
-        if (mayorization) {
-          accountId = mayorization.accountId;
-        }
-      }
-
-      // 2. Si no encuentra por mayorizationId y no tenemos accountId, intentar obtenerlo de las entradas de ledger
-      if (!mayorization && !accountId && extractedMayorizationId) {
-        // Buscar en entradas de ledger que referencien este mayorizationId (usar UUID extraído)
-        const ledgerEntry = await prisma.ledgerEntry.findFirst({
-          where: {
-            referenceId: extractedMayorizationId,
-            referenceType: ReferenceType.ADJUSTMENT_DOC,
-          },
-          select: {
-            accountId: true,
-          },
-        });
-
-        if (ledgerEntry) {
-          accountId = ledgerEntry.accountId;
-          logger.info({
-            layer: 'service',
-            action: 'ACCOUNT_ID_FROM_LEDGER',
-            payload: { mayorizationId: extractedMayorizationId, accountId },
+          // Es un UUID simple - buscar directamente por id
+          mayorization = await prisma.mayorizationRecord.findUnique({
+            where: { id: mayorizationId },
+            include: { account: true },
           });
+
+          if (mayorization) {
+            accountId = mayorization.accountId;
+          } else {
+            // Si no encuentra por UUID, intentar obtener accountId de entradas de ledger
+            const ledgerEntry = await prisma.ledgerEntry.findFirst({
+              where: {
+                referenceId: mayorizationId,
+                referenceType: ReferenceType.ADJUSTMENT_DOC,
+              },
+              select: {
+                accountId: true,
+              },
+            });
+
+            if (ledgerEntry) {
+              accountId = ledgerEntry.accountId;
+              logger.info({
+                layer: 'service',
+                action: 'ACCOUNT_ID_FROM_LEDGER',
+                payload: { mayorizationId, accountId },
+              });
+            }
+          }
         }
       }
 
-      // 3. Si no encuentra por mayorizationId, buscar por accountId + date
+      // 2. Buscar por accountId + date (si tenemos accountId)
       if (!mayorization && accountId) {
-        const dateString = new Date(data.date.toDateString());
+        const dateString = new Date(settlementDate.toDateString());
         mayorization = await prisma.mayorizationRecord.findUnique({
           where: {
             accountId_fromDate_toDate: {
@@ -1923,7 +1979,7 @@ export class AccountsService {
         });
       }
 
-      // 4. Si no existe, calcular y persistir automáticamente
+      // 3. Si no existe, calcular y persistir automáticamente
       if (!mayorization) {
         if (!accountId) {
           logger.error({
@@ -1941,24 +1997,24 @@ export class AccountsService {
           );
         }
 
-        // Calcular y persistir automáticamente
+        // Calcular y persistir automáticamente usando la fecha extraída o del payload
         logger.info({
           layer: 'service',
           action: 'MAYORIZATION_AUTO_CALCULATE',
-          payload: { accountId, date: data.date.toISOString() },
+          payload: { accountId, date: settlementDate.toISOString().split('T')[0] },
         });
 
         await AccountsService.calculateMayorization(
           accountId,
           {
-            fromDate: data.date,
-            toDate: data.date,
+            fromDate: settlementDate,
+            toDate: settlementDate,
           },
           data.createdBy
         );
 
-        // Re-buscar por accountId + date
-        const dateString = new Date(data.date.toDateString());
+        // Re-buscar por accountId + date usando settlementDate
+        const dateString = new Date(settlementDate.toDateString());
         mayorization = await prisma.mayorizationRecord.findUnique({
           where: {
             accountId_fromDate_toDate: {
