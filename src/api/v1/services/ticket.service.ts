@@ -280,37 +280,6 @@ export const TicketService = {
         payload: { ticketId: ticket.id, totalAmount: ticket.totalAmount, jugadas: ticket.jugadas.length },
       });
 
-      // Registrar entradas en ledger (non-blocking)
-      try {
-        const AccountsService = (await import('../services/accounts.service')).default;
-        const vendedorAccount = await AccountsService.getOrCreateAccount('VENDEDOR', effectiveVendedorId);
-        const ventanaAccount = await AccountsService.getOrCreateAccount('VENTANA', ventanaId);
-
-        await Promise.all([
-          AccountsService.addSaleEntry(vendedorAccount.id, {
-            ticketId: ticket.id,
-            amount: ticket.totalAmount,
-            requestId: `ticket:${ticket.id}:sale:vendedor:${requestId}`,
-            createdBy: userId,
-          }),
-          AccountsService.addSaleEntry(ventanaAccount.id, {
-            ticketId: ticket.id,
-            amount: ticket.totalAmount,
-            requestId: `ticket:${ticket.id}:sale:ventana:${requestId}`,
-            createdBy: userId,
-          }),
-        ]);
-      } catch (ledgerError) {
-        logger.warn({
-          layer: "service",
-          action: "LEDGER_HOOK_FAIL",
-          userId,
-          requestId,
-          payload: { ticketId: ticket.id, error: ledgerError instanceof Error ? ledgerError.message : 'Unknown' },
-        });
-        // No fallar el ticket creation si falla el ledger
-      }
-
       return response;
     } catch (err: any) {
       logger.error({
@@ -379,56 +348,6 @@ export const TicketService = {
       requestId,
       payload: { ticketId: id },
     });
-
-    // Reversar entradas de ledger (non-blocking)
-    try {
-      const AccountsService = (await import('../services/accounts.service')).default;
-      const vendedorAccount = await AccountsService.getOrCreateAccount('VENDEDOR', ticket.vendedorId);
-      const ventanaAccount = await AccountsService.getOrCreateAccount('VENTANA', ticket.ventanaId);
-
-      // Buscar entradas de SALE para reversar
-      const vendedorEntries = await AccountsService.listLedgerEntries(vendedorAccount.id, {
-        referenceType: 'TICKET',
-        pageSize: 1000,
-      });
-      const ventanaEntries = await AccountsService.listLedgerEntries(ventanaAccount.id, {
-        referenceType: 'TICKET',
-        pageSize: 1000,
-      });
-
-      const vendedorSaleEntry = vendedorEntries.entries.find(
-        e => e.referenceId === id && e.type === 'SALE'
-      );
-      const ventanaSaleEntry = ventanaEntries.entries.find(
-        e => e.referenceId === id && e.type === 'SALE'
-      );
-
-      await Promise.all([
-        vendedorSaleEntry
-          ? AccountsService.reverseEntry(vendedorAccount.id, vendedorSaleEntry.id, {
-              reason: `Ticket cancelled: ${id}`,
-              requestId: `ticket:${id}:reverse:vendedor:${requestId}`,
-              createdBy: userId,
-            })
-          : Promise.resolve(),
-        ventanaSaleEntry
-          ? AccountsService.reverseEntry(ventanaAccount.id, ventanaSaleEntry.id, {
-              reason: `Ticket cancelled: ${id}`,
-              requestId: `ticket:${id}:reverse:ventana:${requestId}`,
-              createdBy: userId,
-            })
-          : Promise.resolve(),
-      ]);
-    } catch (ledgerError) {
-      logger.warn({
-        layer: "service",
-        action: "LEDGER_REVERSE_FAIL",
-        userId,
-        requestId,
-        payload: { ticketId: id, error: ledgerError instanceof Error ? ledgerError.message : 'Unknown' },
-      });
-      // No fallar el cancel si falla el reversal
-    }
 
     return ticket;
   },
