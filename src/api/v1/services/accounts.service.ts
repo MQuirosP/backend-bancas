@@ -1731,7 +1731,7 @@ export class AccountsService {
       const vendedorMap = new Map(vendedores.map(u => [u.id, u]));
 
       // 5. Transform data
-      const data = rawData.map(row => {
+      const data = await Promise.all(rawData.map(async row => {
         const totalSales = new Prisma.Decimal(row.totalSales || 0);
         const totalPrizes = new Prisma.Decimal(row.totalPrizes || 0);
         const totalCommission = new Prisma.Decimal(row.totalCommission || 0);
@@ -1751,8 +1751,12 @@ export class AccountsService {
         // Apply filters after calculation
         if (filters.debtStatus && debtStatus !== filters.debtStatus) return null;
 
+        // Get real accountId
+        const account = await AccountsRepository.getOrCreateAccount(row.ownerType as any, row.ownerId);
+
         return {
           id: `mayorization_${row.ownerId}_${toDate.toISOString().split('T')[0]}`,
+          accountId: account.id,
           ownerId: row.ownerId,
           ownerCode: owner?.code || 'N/A',
           ownerName: owner?.name || row.ownerId,
@@ -1772,7 +1776,7 @@ export class AccountsService {
           settlementType: null,
           settlementRef: null,
         };
-      }).filter(item => item !== null);
+      })).then(results => results.filter(item => item !== null));
 
       // 6. Apply pagination
       const pageSize = filters.pageSize || 20;
