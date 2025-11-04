@@ -1693,13 +1693,11 @@ export class AccountsService {
             WHEN j."isWinner" = true THEN j."payout"
             ELSE 0
           END), 0)::NUMERIC as "totalPrizes",
-          COALESCE(SUM(CASE
-            WHEN j."isWinner" = true THEN j."commissionAmount"
-            ELSE 0
-          END), 0)::NUMERIC as "totalCommission",
+          COALESCE(SUM(j."commissionAmount"), 0)::NUMERIC as "totalCommission",
           MAX(t."createdAt") as "lastDate"
         FROM "Ticket" t
         LEFT JOIN "Jugada" j ON t."id" = j."ticketId"
+          AND j."isWinner" = true
           AND j."deletedAt" IS NULL
         WHERE ${whereClause}
         GROUP BY "ownerType", "ownerId"
