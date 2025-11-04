@@ -1494,7 +1494,23 @@ export class AccountsService {
       const debtAmount = netOperative.abs();
       const debtDescription = this.getDebtDescription(debtStatus, debtAmount);
 
-      // 6. Crear o actualizar MayorizationRecord
+      // 6. Fetch owner name (Ventana or User)
+      let ownerName = account.ownerId;
+      if (account.ownerType === 'VENTANA') {
+        const ventana = await prisma.ventana.findUnique({
+          where: { id: account.ownerId },
+          select: { name: true },
+        });
+        ownerName = ventana?.name || account.ownerId;
+      } else {
+        const user = await prisma.user.findUnique({
+          where: { id: account.ownerId },
+          select: { name: true },
+        });
+        ownerName = user?.name || account.ownerId;
+      }
+
+      // 7. Crear o actualizar MayorizationRecord
       const mayorization = await prisma.mayorizationRecord.upsert({
         where: {
           accountId_fromDate_toDate: {
@@ -1507,7 +1523,7 @@ export class AccountsService {
           accountId,
           ownerType: account.ownerType,
           ownerId: account.ownerId,
-          ownerName: account.ownerId, // TODO: buscar nombre real de Ventana o User
+          ownerName,
           fromDate: new Date(filters.fromDate.toDateString()),
           toDate: new Date(filters.toDate.toDateString()),
           totalSales,
@@ -1520,6 +1536,7 @@ export class AccountsService {
           createdBy: userId,
         },
         update: {
+          ownerName,
           totalSales,
           totalPrizes,
           totalCommission,
@@ -1531,7 +1548,18 @@ export class AccountsService {
         },
       });
 
-      // 8. Registrar en ActivityLog
+      // 8. Fetch owner code for response
+      const owner = account.ownerType === 'VENTANA'
+        ? await prisma.ventana.findUnique({
+            where: { id: account.ownerId },
+            select: { code: true },
+          })
+        : await prisma.user.findUnique({
+            where: { id: account.ownerId },
+            select: { code: true },
+          });
+
+      // 9. Registrar en ActivityLog
       await ActivityService.log({
         userId,
         action: ActivityType.LEDGER_ADD,
@@ -1539,18 +1567,43 @@ export class AccountsService {
         targetId: mayorization.id,
         details: {
           accountId,
+          ownerType: account.ownerType,
+          ownerId: account.ownerId,
+          ownerName,
           period: `${filters.fromDate.toISOString().split('T')[0]} - ${filters.toDate.toISOString().split('T')[0]}`,
           openingBalance: openingBalance.toString(),
           totalSales: totalSales.toString(),
           totalPrizes: totalPrizes.toString(),
+          totalCommission: totalCommission.toString(),
           periodNeto: periodNeto.toString(),
           netOperative: netOperative.toString(),
           debtStatus,
+          debtAmount: debtAmount.toString(),
         },
         layer: 'service',
       });
 
-      return mayorization;
+      // 10. Return response with all metrics
+      return {
+        id: mayorization.id,
+        accountId: mayorization.accountId,
+        ownerType: normalizeOwnerType(mayorization.ownerType),
+        ownerId: mayorization.ownerId,
+        ownerCode: owner?.code || 'N/A',
+        ownerName: mayorization.ownerName,
+        fromDate: formatIsoLocal(mayorization.fromDate),
+        toDate: formatIsoLocal(mayorization.toDate),
+        totalSales: parseFloat(mayorization.totalSales.toString()),
+        totalPrizes: parseFloat(mayorization.totalPrizes.toString()),
+        totalCommission: parseFloat(mayorization.totalCommission.toString()),
+        netOperative: parseFloat(mayorization.netOperative.toString()),
+        debtStatus: mayorization.debtStatus,
+        debtAmount: parseFloat(mayorization.debtAmount.toString()),
+        debtDescription: mayorization.debtDescription,
+        status: mayorization.isSettled ? 'SETTLED' : 'OPEN',
+        isSettled: mayorization.isSettled,
+        createdAt: mayorization.createdAt.toISOString(),
+      };
 
     } catch (error) {
       logger.error({
@@ -1643,27 +1696,48 @@ export class AccountsService {
         prisma.mayorizationRecord.count({ where }),
       ]);
 
-      // 4. Format response
-      const data = records.map(record => ({
-        id: record.id,
-        ownerId: record.ownerId,
-        ownerName: record.ownerName,
-        ownerType: normalizeOwnerType(record.ownerType),
-        date: formatIsoLocal(record.toDate || record.fromDate),
-        totalSales: parseFloat(record.totalSales.toString()),
-        totalPrizes: parseFloat(record.totalPrizes.toString()),
-        totalCommission: parseFloat(record.totalCommission.toString()),
-        netOperative: parseFloat(record.netOperative.toString()),
-        debtStatus: record.debtStatus,
-        debtAmount: parseFloat(record.debtAmount.toString()),
-        debtDescription: record.debtDescription,
-        status: record.isSettled ? 'SETTLED' : 'OPEN',
-        isSettled: record.isSettled,
-        settledDate: record.settledDate ? formatIsoLocal(record.settledDate) : null,
-        settledAmount: record.settledAmount ? parseFloat(record.settledAmount.toString()) : null,
-        settlementType: record.settlementType,
-        settlementRef: record.settlementRef,
-      }));
+      // 4. Fetch owner codes (Ventana or User)
+      const ownerIds = records.map(r => r.ownerId);
+      const ventanas = await prisma.ventana.findMany({
+        where: { id: { in: ownerIds } },
+        select: { id: true, code: true, name: true },
+      });
+      const users = await prisma.user.findMany({
+        where: { id: { in: ownerIds } },
+        select: { id: true, code: true, name: true },
+      });
+
+      const ventanaMap = new Map(ventanas.map(v => [v.id, v]));
+      const userMap = new Map(users.map(u => [u.id, u]));
+
+      // 5. Format response with owner codes
+      const data = records.map(record => {
+        const owner = record.ownerType === 'VENTANA'
+          ? ventanaMap.get(record.ownerId)
+          : userMap.get(record.ownerId);
+
+        return {
+          id: record.id,
+          ownerId: record.ownerId,
+          ownerCode: owner?.code || 'N/A',
+          ownerName: owner?.name || record.ownerName,
+          ownerType: normalizeOwnerType(record.ownerType),
+          date: formatIsoLocal(record.toDate || record.fromDate),
+          totalSales: parseFloat(record.totalSales.toString()),
+          totalPrizes: parseFloat(record.totalPrizes.toString()),
+          totalCommission: parseFloat(record.totalCommission.toString()),
+          netOperative: parseFloat(record.netOperative.toString()),
+          debtStatus: record.debtStatus,
+          debtAmount: parseFloat(record.debtAmount.toString()),
+          debtDescription: record.debtDescription,
+          status: record.isSettled ? 'SETTLED' : 'OPEN',
+          isSettled: record.isSettled,
+          settledDate: record.settledDate ? formatIsoLocal(record.settledDate) : null,
+          settledAmount: record.settledAmount ? parseFloat(record.settledAmount.toString()) : null,
+          settlementType: record.settlementType,
+          settlementRef: record.settlementRef,
+        };
+      });
 
       // 5. Calculate summary
       const summary = {
