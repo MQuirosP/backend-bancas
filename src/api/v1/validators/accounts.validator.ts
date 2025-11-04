@@ -137,12 +137,40 @@ export const getMayorizationHistorySchema = z.object({
   order: z.enum(['asc', 'desc']).optional(),
 });
 
+// Schema para mayorizationId que acepta UUID simple o formato compuesto mayorization_UUID_DATE
+const mayorizationIdSchema = z.string().refine(
+  (val) => {
+    // UUID simple válido
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (uuidRegex.test(val)) return true;
+    
+    // Formato compuesto mayorization_UUID_DATE
+    if (val.startsWith('mayorization_')) {
+      const parts = val.split('_');
+      // Debe tener al menos 3 partes: mayorization, UUID, DATE
+      if (parts.length >= 3) {
+        // Verificar que tenga un UUID válido en alguna parte
+        const hasUuid = parts.some(part => uuidRegex.test(part));
+        return hasUuid;
+      }
+    }
+    
+    return false;
+  },
+  {
+    message: 'mayorizationId must be a valid UUID or format mayorization_UUID_DATE',
+  }
+).optional();
+
 export const settleMayorizationSchema = z.object({
-  mayorizationId: uuidSchema,
+  mayorizationId: mayorizationIdSchema,
+  accountId: uuidSchema.optional(),
   amount: z.number().positive('Amount must be positive'),
   settlementType: z.enum(['PAYMENT', 'COLLECTION']),
   date: z.string().transform(v => new Date(v)),
   reference: z.string().min(1, 'Reference is required'),
   note: z.string().optional(),
   requestId: z.string().optional(),
+}).refine(data => data.mayorizationId || data.accountId, {
+  message: 'Either mayorizationId or accountId must be provided',
 });

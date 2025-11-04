@@ -1834,8 +1834,9 @@ export class AccountsService {
    * Registrar pago o cobro de una mayorización
    */
   static async settleMayorization(
-    mayorizationId: string,
+    mayorizationId: string | undefined,
     data: {
+      accountId?: string;
       amount: number | Prisma.Decimal;
       settlementType: 'PAYMENT' | 'COLLECTION';
       date: Date;
@@ -1846,36 +1847,137 @@ export class AccountsService {
     }
   ) {
     try {
-      // 1. Extraer UUID real del ID compuesto si necesario
-      // Formato: "mayorization_UUID_DATE" o solo "UUID"
-      let lookupId = mayorizationId;
-      if (mayorizationId.startsWith('mayorization_')) {
-        // Extraer UUID del formato compuesto
-        const parts = mayorizationId.split('_');
-        const uuidPart = parts.find(part => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(part));
-        if (uuidPart) {
-          lookupId = uuidPart;
+      let mayorization: (Prisma.MayorizationRecordGetPayload<{ include: { account: true } }>) | null = null;
+      let accountId = data.accountId;
+      let extractedMayorizationId: string | undefined = undefined;
+
+      // 1. Si hay mayorizationId, extraer UUID real del ID compuesto si necesario
+      if (mayorizationId) {
+        // Extraer UUID real del ID compuesto si necesario
+        // Formato: "mayorization_UUID_DATE" o solo "UUID"
+        let lookupId = mayorizationId;
+        if (mayorizationId.startsWith('mayorization_')) {
+          // Extraer UUID del formato compuesto
+          const parts = mayorizationId.split('_');
+          const uuidPart = parts.find(part => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(part));
+          if (uuidPart) {
+            lookupId = uuidPart;
+            extractedMayorizationId = uuidPart;
+            logger.info({
+              layer: 'service',
+              action: 'MAYORIZATION_ID_EXTRACT',
+              payload: { originalId: mayorizationId, extractedId: lookupId },
+            });
+          }
+        } else {
+          // Es un UUID simple
+          extractedMayorizationId = mayorizationId;
+        }
+
+        // Buscar por mayorizationId
+        mayorization = await prisma.mayorizationRecord.findUnique({
+          where: { id: lookupId },
+          include: { account: true },
+        });
+
+        if (mayorization) {
+          accountId = mayorization.accountId;
+        }
+      }
+
+      // 2. Si no encuentra por mayorizationId y no tenemos accountId, intentar obtenerlo de las entradas de ledger
+      if (!mayorization && !accountId && extractedMayorizationId) {
+        // Buscar en entradas de ledger que referencien este mayorizationId (usar UUID extraído)
+        const ledgerEntry = await prisma.ledgerEntry.findFirst({
+          where: {
+            referenceId: extractedMayorizationId,
+            referenceType: ReferenceType.ADJUSTMENT_DOC,
+          },
+          select: {
+            accountId: true,
+          },
+        });
+
+        if (ledgerEntry) {
+          accountId = ledgerEntry.accountId;
           logger.info({
             layer: 'service',
-            action: 'MAYORIZATION_ID_EXTRACT',
-            payload: { originalId: mayorizationId, extractedId: lookupId },
+            action: 'ACCOUNT_ID_FROM_LEDGER',
+            payload: { mayorizationId: extractedMayorizationId, accountId },
           });
         }
       }
 
-      // 2. Obtener mayorización
-      const mayorization = await prisma.mayorizationRecord.findUnique({
-        where: { id: lookupId },
-        include: { account: true },
-      });
-
-      if (!mayorization) {
-        logger.error({
-          layer: 'service',
-          action: 'MAYORIZATION_NOT_FOUND',
-          payload: { mayorizationId, lookupId, hint: 'Mayorization not persisted. Call POST /accounts/{accountId}/mayorizations/calculate first.' },
+      // 3. Si no encuentra por mayorizationId, buscar por accountId + date
+      if (!mayorization && accountId) {
+        const dateString = new Date(data.date.toDateString());
+        mayorization = await prisma.mayorizationRecord.findUnique({
+          where: {
+            accountId_fromDate_toDate: {
+              accountId: accountId,
+              fromDate: dateString,
+              toDate: dateString,
+            },
+          },
+          include: { account: true },
         });
-        throw new AppError('Majorization not found. Please calculate mayorization first.', 404);
+      }
+
+      // 4. Si no existe, calcular y persistir automáticamente
+      if (!mayorization) {
+        if (!accountId) {
+          logger.error({
+            layer: 'service',
+            action: 'MAYORIZATION_NOT_FOUND',
+            payload: { 
+              mayorizationId: mayorizationId || 'N/A', 
+              accountId: accountId || 'N/A', 
+              hint: 'Mayorization not found and accountId not provided. Cannot calculate automatically. Please provide accountId in the request body or calculate mayorization first using POST /accounts/{accountId}/mayorizations/calculate.' 
+            },
+          });
+          throw new AppError(
+            'Majorization not found. Please provide accountId in the request body or calculate mayorization first using POST /accounts/{accountId}/mayorizations/calculate.', 
+            404
+          );
+        }
+
+        // Calcular y persistir automáticamente
+        logger.info({
+          layer: 'service',
+          action: 'MAYORIZATION_AUTO_CALCULATE',
+          payload: { accountId, date: data.date.toISOString() },
+        });
+
+        await AccountsService.calculateMayorization(
+          accountId,
+          {
+            fromDate: data.date,
+            toDate: data.date,
+          },
+          data.createdBy
+        );
+
+        // Re-buscar por accountId + date
+        const dateString = new Date(data.date.toDateString());
+        mayorization = await prisma.mayorizationRecord.findUnique({
+          where: {
+            accountId_fromDate_toDate: {
+              accountId: accountId,
+              fromDate: dateString,
+              toDate: dateString,
+            },
+          },
+          include: { account: true },
+        });
+
+        if (!mayorization) {
+          logger.error({
+            layer: 'service',
+            action: 'MAYORIZATION_CALCULATION_FAILED',
+            payload: { accountId, date: data.date.toISOString() },
+          });
+          throw new AppError('Failed to calculate mayorization automatically', 500);
+        }
       }
 
       // 1.5. Validar que esté OPEN
@@ -1905,13 +2007,15 @@ export class AccountsService {
         ? amount.negated()
         : amount;
 
+      const resolvedMayorizationId = mayorization.id;
+
       const ledgerEntry = await AccountsRepository.addLedgerEntry(
         mayorization.accountId,
         {
           type: LedgerType.ADJUSTMENT,
           valueSigned,
           referenceType: ReferenceType.ADJUSTMENT_DOC,
-          referenceId: mayorizationId,
+          referenceId: resolvedMayorizationId,
           note: `${data.settlementType} - Ref: ${data.reference}${data.note ? ' (' + data.note + ')' : ''}`,
           requestId: data.requestId,
           createdBy: data.createdBy,
@@ -1921,7 +2025,7 @@ export class AccountsService {
 
       // 4. Actualizar MayorizationRecord
       const updatedMajorization = await prisma.mayorizationRecord.update({
-        where: { id: mayorizationId },
+        where: { id: resolvedMayorizationId },
         data: {
           isSettled: true,
           settledDate: data.date,
@@ -1941,7 +2045,7 @@ export class AccountsService {
         targetType: 'SETTLEMENT',
         targetId: ledgerEntry.id,
         details: {
-          mayorizationId,
+          mayorizationId: resolvedMayorizationId,
           accountId: mayorization.accountId,
           type: data.settlementType,
           amount: amount.toString(),
@@ -1965,7 +2069,8 @@ export class AccountsService {
         layer: 'service',
         action: 'SETTLEMENT_FAIL',
         payload: {
-          mayorizationId,
+          mayorizationId: mayorizationId || 'N/A',
+          accountId: data.accountId || 'N/A',
           error: error instanceof Error ? error.message : 'Unknown',
         },
       });

@@ -523,12 +523,14 @@ export class AccountsController {
         payload: {
           userId,
           mayorizationId: bodyData.mayorizationId,
+          accountId: bodyData.accountId,
           amount: bodyData.amount,
           settlementType: bodyData.settlementType,
         },
       });
 
       const result = await AccountsService.settleMayorization(bodyData.mayorizationId, {
+        accountId: bodyData.accountId,
         amount: bodyData.amount,
         settlementType: bodyData.settlementType,
         date: bodyData.date,
@@ -544,6 +546,7 @@ export class AccountsController {
         payload: {
           userId,
           mayorizationId: bodyData.mayorizationId,
+          accountId: bodyData.accountId,
           success: true,
         },
       });
