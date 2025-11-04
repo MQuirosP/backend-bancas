@@ -115,17 +115,14 @@ export const DashboardService = {
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
           COUNT(DISTINCT t.id) as total_tickets,
           COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets,
-          COALESCE(SUM(j."commissionAmount"), 0) as total_commissions,
-          COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j.payout ELSE 0 END), 0) as total_payouts
+          COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
+          COALESCE(SUM(t."totalPayout"), 0) as total_payouts
         FROM "Ventana" v
         LEFT JOIN "Ticket" t ON v.id = t."ventanaId"
           AND t."deletedAt" IS NULL
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
-        LEFT JOIN "Jugada" j ON t.id = j."ticketId"
-          AND j."isWinner" = true
-          AND j."deletedAt" IS NULL
         WHERE v."isActive" = true
           ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
         GROUP BY v.id, v.name, v."isActive"
@@ -154,8 +151,8 @@ export const DashboardService = {
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
           COUNT(DISTINCT t.id) as total_tickets,
           COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets,
-          COALESCE(SUM(j."commissionAmount"), 0) as total_commissions,
-          COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j.payout ELSE 0 END), 0) as total_payouts
+          COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
+          COALESCE(SUM(t."totalPayout"), 0) as total_payouts
         FROM "Loteria" l
         LEFT JOIN "Ticket" t ON l.id = t."loteriaId"
           AND t."deletedAt" IS NULL
@@ -163,9 +160,6 @@ export const DashboardService = {
           AND t."createdAt" >= ${filters.fromDate}
           AND t."createdAt" <= ${filters.toDate}
           ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        LEFT JOIN "Jugada" j ON t.id = j."ticketId"
-          AND j."isWinner" = true
-          AND j."deletedAt" IS NULL
         WHERE l."isActive" = true
         GROUP BY l.id, l.name, l."isActive"
         ORDER BY total_sales DESC
@@ -371,11 +365,10 @@ export const DashboardService = {
       ),
       prisma.$queryRaw<Array<{ total: number }>>(
         Prisma.sql`
-          SELECT COALESCE(SUM(j."payout"), 0) as total
-          FROM "Jugada" j
-          JOIN "Ticket" t ON j."ticketId" = t."id"
+          SELECT COALESCE(SUM(t."totalPayout"), 0) as total
+          FROM "Ticket" t
           WHERE t."deletedAt" IS NULL
-            AND j."isWinner" = true
+            AND t."isWinner" = true
             AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${filters.fromDate}
             AND t."createdAt" <= ${filters.toDate}
@@ -384,11 +377,9 @@ export const DashboardService = {
       ),
       prisma.$queryRaw<Array<{ total: number }>>(
         Prisma.sql`
-          SELECT COALESCE(SUM(j."commissionAmount"), 0) as total
-          FROM "Jugada" j
-          JOIN "Ticket" t ON j."ticketId" = t."id"
+          SELECT COALESCE(SUM(t."totalCommission"), 0) as total
+          FROM "Ticket" t
           WHERE t."deletedAt" IS NULL
-            AND j."isWinner" = true
             AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${filters.fromDate}
             AND t."createdAt" <= ${filters.toDate}
@@ -508,10 +499,9 @@ export const DashboardService = {
         SELECT
           ${dateFormat} as date_bucket,
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
-          COALESCE(SUM(j."commissionAmount"), 0) as total_commissions,
+          COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
           COUNT(DISTINCT t.id) as total_tickets
         FROM "Ticket" t
-        LEFT JOIN "Jugada" j ON t.id = j."ticketId" AND j."isWinner" = true AND j."deletedAt" IS NULL
         WHERE t."deletedAt" IS NULL
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
           AND t."createdAt" >= ${filters.fromDate}
@@ -701,7 +691,7 @@ export const DashboardService = {
           u.name as vendedor_name,
           u."isActive" as is_active,
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
-          COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j."commissionAmount" ELSE 0 END), 0) as total_commissions,
+          COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
           COUNT(DISTINCT t.id) as total_tickets,
           COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets,
           CASE
@@ -710,7 +700,6 @@ export const DashboardService = {
           END as avg_ticket
         FROM "User" u
         JOIN "Ticket" t ON u.id = t."vendedorId"
-        LEFT JOIN "Jugada" j ON t.id = j."ticketId" AND j."deletedAt" IS NULL
         WHERE u."isActive" = true
           AND t."deletedAt" IS NULL
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
@@ -791,11 +780,9 @@ export const DashboardService = {
       ),
       prisma.$queryRaw<Array<{ total: number }>>(
         Prisma.sql`
-          SELECT COALESCE(SUM(j."commissionAmount"), 0) as total
-          FROM "Jugada" j
-          JOIN "Ticket" t ON j."ticketId" = t."id"
+          SELECT COALESCE(SUM(t."totalCommission"), 0) as total
+          FROM "Ticket" t
           WHERE t."deletedAt" IS NULL
-            AND j."isWinner" = true
             AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
             AND t."createdAt" >= ${previousFromDate}
             AND t."createdAt" <= ${previousToDate}

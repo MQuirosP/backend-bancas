@@ -24,6 +24,7 @@
     "db:pull": "npx dotenv-cli -e .env.local -- prisma db pull",
     "prisma:seed": "npx dotenv-cli -e .env.local -- ts-node prisma/seed.ts",
     "prisma:seed:test": "npx dotenv-cli -e .env.test -- ts-node prisma/seed.ts",
+    "backfill:total-commission": "npx dotenv-cli -e .env.local -- ts-node src/scripts/ticket-backfill-total-commission.ts",
     "test": "npx dotenv-cli -e .env.test -- jest --runInBand --detectOpenHandles",
     "test:watch": "npx dotenv-cli -e .env.test -- jest --watch",
     "test:coverage": "npx dotenv-cli -e .env.test -- jest --coverage"
