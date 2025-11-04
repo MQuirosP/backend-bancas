@@ -499,7 +499,12 @@ export class AccountsController {
         },
       });
 
-      res.status(200).json({ success: true, ...result });
+      res.status(200).json({
+        success: true,
+        mayorizations: result.data,
+        pagination: result.pagination,
+        summary: result.summary,
+      });
     } catch (error) {
       sendError(res, error, action, userId);
     }
