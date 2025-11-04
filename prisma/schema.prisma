@@ -168,6 +168,7 @@ model Ticket {
   totalPayout      Float?    @default(0)     // Total de premios ganados
   totalPaid        Float?    @default(0)     // Total pagado acumulado
   remainingAmount  Float?    @default(0)     // Monto pendiente de pago
+  totalCommission  Float?    @default(0)     // Total de comisiones (suma de jugadas)
   lastPaymentAt    DateTime?                 // Fecha del último pago
   paidById         String?   @db.Uuid        // Usuario que realizó el último pago
   paymentMethod    String?                   // Método del último pago (cash|transfer|check)
@@ -595,15 +596,6 @@ enum ActivityType {
   TICKET_PAY_FINALIZE
   TICKET_STATUS_PAID
   SORTEO_OPEN
-  ACCOUNT_CREATE
-  ACCOUNT_UPDATE
-  LEDGER_ADD
-  LEDGER_REVERSE
-  DEPOSIT_CREATE
-  DEPOSIT_UPDATE
-  DEPOSIT_DELETE
-  STATEMENT_EXPORT
-  SNAPSHOT_CREATE
 }
 
 enum ExportFormat {
@@ -620,124 +612,4 @@ enum JobStatus {
   CANCELLED
 }
 
-enum OwnerType {
-  BANCA
-  VENTANA
-  VENDEDOR
-}
 
-enum LedgerType {
-  SALE
-  COMMISSION
-  PAYOUT
-  DEPOSIT
-  ADJUSTMENT
-  REVERSAL
-  TRANSFER
-}
-
-enum ReferenceType {
-  TICKET
-  PAYOUT_RECEIPT
-  DEPOSIT_RECEIPT
-  ADJUSTMENT_DOC
-  OTHER
-}
-
-model Account {
-  id            String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  ownerType     OwnerType
-  ownerId       String                      @db.Uuid
-  currency      String                      @default("CRC") @db.VarChar(3)
-  balance       Decimal                     @default(0)
-  isActive      Boolean                     @default(true)
-  createdAt     DateTime                    @default(now())
-
-  ledgerEntries       LedgerEntry[]
-  bankDeposits        BankDeposit[]
-  dailySnapshots      DailyBalanceSnapshot[]
-  paymentsFrom        PaymentDocument[]       @relation("PaymentFrom")
-  paymentsTo          PaymentDocument[]       @relation("PaymentTo")
-
-  @@unique([ownerType, ownerId])
-  @@index([ownerType])
-  @@index([ownerId])
-}
-
-model LedgerEntry {
-  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  accountId           String              @db.Uuid
-  type                LedgerType
-  valueSigned         Decimal
-  referenceType       ReferenceType?
-  referenceId         String?             @db.Uuid
-  note                String?
-  date                DateTime
-  createdAt           DateTime            @default(now())
-  createdBy           String              @db.Uuid
-  reversalOfEntryId   String?             @db.Uuid
-  requestId           String?             @unique
-
-  account   Account @relation(fields: [accountId], references: [id])
-
-  @@index([accountId])
-  @@index([date])
-  @@index([createdAt])
-}
-
-model BankDeposit {
-  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  accountId     String      @db.Uuid
-  date          DateTime
-  docNumber     String
-  amount        Decimal
-  bankName      String?
-  note          String?
-  receiptUrl    String?     @db.VarChar(500)
-  createdBy     String      @db.Uuid
-  createdAt     DateTime    @default(now())
-
-  account   Account @relation(fields: [accountId], references: [id])
-
-  @@index([accountId])
-  @@index([date])
-}
-
-model DailyBalanceSnapshot {
-  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  accountId String        @db.Uuid
-  date      DateTime      @db.Date
-  opening   Decimal
-  debit     Decimal
-  credit    Decimal
-  closing   Decimal
-  createdAt DateTime      @default(now())
-
-  account   Account @relation(fields: [accountId], references: [id])
-
-  @@unique([accountId, date])
-  @@index([accountId])
-  @@index([date])
-}
-
-model PaymentDocument {
-  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  fromAccountId     String      @db.Uuid
-  toAccountId       String      @db.Uuid
-  amount            Decimal
-  docNumber         String
-  date              DateTime
-  description       String?
-  receiptUrl        String?     @db.VarChar(500)
-  createdBy         String      @db.Uuid
-  createdAt         DateTime    @default(now())
-  requestId         String?     @unique
-
-  fromAccount Account @relation("PaymentFrom", fields: [fromAccountId], references: [id])
-  toAccount   Account @relation("PaymentTo", fields: [toAccountId], references: [id])
-
-  @@index([fromAccountId])
-  @@index([toAccountId])
-  @@index([date])
-  @@index([createdAt])
-}

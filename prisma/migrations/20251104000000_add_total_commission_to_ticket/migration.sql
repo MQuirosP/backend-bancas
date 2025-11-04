@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "totalCommission" DOUBLE PRECISION DEFAULT 0;
+

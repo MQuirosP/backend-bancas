@@ -258,6 +258,9 @@ export const TicketService = {
         },
       };
 
+      // Obtener número de jugadas (el ticket incluye jugadas pero TypeScript no lo infiere)
+      const jugadasCount = (ticket as any).jugadas?.length ?? jugadasIn.length;
+
       await ActivityService.log({
         userId,
         action: ActivityType.TICKET_CREATE,
@@ -266,7 +269,7 @@ export const TicketService = {
         details: {
           ticketNumber: ticket.ticketNumber,
           totalAmount: ticket.totalAmount,
-          jugadas: ticket.jugadas.length,
+          jugadas: jugadasCount,
         },
         requestId,
         layer: "service",
@@ -277,7 +280,7 @@ export const TicketService = {
         action: "TICKET_CREATE",
         userId,
         requestId,
-        payload: { ticketId: ticket.id, totalAmount: ticket.totalAmount, jugadas: ticket.jugadas.length },
+        payload: { ticketId: ticket.id, totalAmount: ticket.totalAmount, jugadas: jugadasCount },
       });
 
       return response;

@@ -559,6 +559,54 @@ export const TicketRepository = {
 
         // Precalcular snapshot de comisión por jugada con policy del usuario (solo USER)
         const userPolicy = (user?.commissionPolicyJson ?? null) as any;
+        
+        // Calcular comisiones para cada jugada y acumular totalCommission
+        const jugadasWithCommissions = preparedJugadas.map((j) => {
+          // Resolver comisión únicamente desde policy del USER
+          const res = resolveCommissionFromPolicy(userPolicy, {
+            userId,
+            loteriaId,
+            betType: j.type,
+            finalMultiplierX: j.finalMultiplierX,
+          });
+
+          const commissionPercent = Math.round(res.percent); // normalizar entero
+          const commissionAmount = Math.round((j.amount * commissionPercent) / 100);
+
+          // Guardar para ActivityLog
+          commissionsDetails.push({
+            origin: res.origin,
+            ruleId: res.ruleId ?? null,
+            percent: commissionPercent,
+            amount: commissionAmount,
+            loteriaId,
+            betType: j.type,
+            multiplierX: j.finalMultiplierX,
+            jugadaAmount: j.amount,
+          });
+
+          return {
+            type: j.type,
+            number: j.number,
+            reventadoNumber: j.reventadoNumber ?? null,
+            amount: j.amount,
+            finalMultiplierX: j.finalMultiplierX,
+            commissionPercent,
+            commissionAmount,
+            commissionOrigin: 'USER',
+            commissionRuleId: res.ruleId ?? null,
+            ...(j.multiplierId
+              ? { multiplier: { connect: { id: j.multiplierId } } }
+              : {}),
+          };
+        });
+        
+        // Calcular totalCommission sumando todas las comisiones de las jugadas
+        const totalCommission = jugadasWithCommissions.reduce(
+          (sum, j) => sum + (j.commissionAmount || 0),
+          0
+        );
+        
         const createdTicket = await tx.ticket.create({
           data: {
             ticketNumber: nextNumber,
@@ -567,49 +615,12 @@ export const TicketRepository = {
             ventanaId,
             vendedorId: userId,
             totalAmount: totalAmountTx,
+            totalCommission,
             status: TicketStatus.ACTIVE,
             isActive: true,
             clienteNombre: normalizedClienteNombre,
             jugadas: {
-              create: preparedJugadas.map((j) => {
-                // Resolver comisión únicamente desde policy del USER
-                const res = resolveCommissionFromPolicy(userPolicy, {
-                  userId,
-                  loteriaId,
-                  betType: j.type,
-                  finalMultiplierX: j.finalMultiplierX,
-                });
-
-                const commissionPercent = Math.round(res.percent); // normalizar entero
-                const commissionAmount = Math.round((j.amount * commissionPercent) / 100);
-
-                // Guardar para ActivityLog
-                commissionsDetails.push({
-                  origin: res.origin,
-                  ruleId: res.ruleId ?? null,
-                  percent: commissionPercent,
-                  amount: commissionAmount,
-                  loteriaId,
-                  betType: j.type,
-                  multiplierX: j.finalMultiplierX,
-                  jugadaAmount: j.amount,
-                });
-
-                return {
-                  type: j.type,
-                  number: j.number,
-                  reventadoNumber: j.reventadoNumber ?? null,
-                  amount: j.amount,
-                  finalMultiplierX: j.finalMultiplierX,
-                  commissionPercent,
-                  commissionAmount,
-                  commissionOrigin: 'USER',
-                  commissionRuleId: res.ruleId ?? null,
-                  ...(j.multiplierId
-                    ? { multiplier: { connect: { id: j.multiplierId } } }
-                    : {}),
-                };
-              }),
+              create: jugadasWithCommissions,
             },
           },
           include: { jugadas: true },
@@ -634,6 +645,9 @@ export const TicketRepository = {
 
         // Almacenar commissionsDetails en el ticket para usarlo fuera de TX
         (createdTicket as any).__commissionsDetails = commissionsDetails;
+        
+        // Almacenar jugadasWithCommissions para usarlo fuera de TX
+        (createdTicket as any).__jugadasCount = jugadasWithCommissions.length;
 
         return createdTicket;
       },
@@ -676,7 +690,7 @@ export const TicketRepository = {
           details: {
             ticketNumber: ticket.ticketNumber,
             totalAmount: ticket.totalAmount,
-            jugadas: ticket.jugadas.length,
+            jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
             commissions: commissionsDetailsForLog,
           },
         },
@@ -697,7 +711,7 @@ export const TicketRepository = {
         ticketId: ticket.id,
         ticketNumber: ticket.ticketNumber,
         totalAmount: ticket.totalAmount,
-        jugadas: ticket.jugadas.length,
+        jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
       },
     });
 
