@@ -97,15 +97,32 @@ export class AccountsController {
   }
 
   static async createAccount(req: RequestWithUser, res: Response) {
+    const userId = req.user!.id;
+    const action = 'CREATE_ACCOUNT';
+
     try {
       const data = createAccountSchema.parse(req.body);
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: { userId, ownerType: data.ownerType, ownerId: data.ownerId },
+      });
+
       const account = await AccountsService.createAccount({
         ...data,
-        createdBy: req.user!.id,
+        createdBy: userId,
       });
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: { userId, accountId: account.id, success: true },
+      });
+
       sendSuccess(res, account, 201);
     } catch (error) {
-      sendError(res, error);
+      sendError(res, error, action, userId);
     }
   }
 
@@ -154,58 +171,102 @@ export class AccountsController {
   }
 
   static async addSaleEntry(req: RequestWithUser, res: Response) {
+    const userId = req.user!.id;
+    const action = 'ADD_SALE_ENTRY';
+
     try {
       const accountId = req.params.accountId;
       const data = addSaleEntrySchema.parse(req.body);
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: { userId, accountId, ticketId: data.ticketId, amount: data.amount },
+      });
+
       const entry = await AccountsService.addSaleEntry(accountId, {
         ...data,
-        createdBy: req.user!.id,
+        createdBy: userId,
       });
+
       sendSuccess(res, entry, 201);
     } catch (error) {
-      sendError(res, error);
+      sendError(res, error, action, userId);
     }
   }
 
   static async addCommissionEntry(req: RequestWithUser, res: Response) {
+    const userId = req.user!.id;
+    const action = 'ADD_COMMISSION_ENTRY';
+
     try {
       const accountId = req.params.accountId;
       const data = addCommissionEntrySchema.parse(req.body);
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: { userId, accountId, ticketId: data.ticketId, commissionRate: data.commissionRate },
+      });
+
       const entry = await AccountsService.addCommissionEntry(accountId, {
         ...data,
-        createdBy: req.user!.id,
+        createdBy: userId,
       });
+
       sendSuccess(res, entry, 201);
     } catch (error) {
-      sendError(res, error);
+      sendError(res, error, action, userId);
     }
   }
 
   static async addPayoutEntry(req: RequestWithUser, res: Response) {
+    const userId = req.user!.id;
+    const action = 'ADD_PAYOUT_ENTRY';
+
     try {
       const accountId = req.params.accountId;
       const data = addPayoutEntrySchema.parse(req.body);
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: { userId, accountId, payoutId: data.payoutId, amount: data.amount },
+      });
+
       const entry = await AccountsService.addPayoutEntry(accountId, {
         ...data,
-        createdBy: req.user!.id,
+        createdBy: userId,
       });
+
       sendSuccess(res, entry, 201);
     } catch (error) {
-      sendError(res, error);
+      sendError(res, error, action, userId);
     }
   }
 
   static async reverseEntry(req: RequestWithUser, res: Response) {
+    const userId = req.user!.id;
+    const action = 'REVERSE_ENTRY';
+
     try {
       const { accountId, entryId } = req.params;
       const data = reverseEntrySchema.parse(req.body);
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: { userId, accountId, entryId, reason: data.reason },
+      });
+
       const reversal = await AccountsService.reverseEntry(accountId, entryId, {
         ...data,
-        createdBy: req.user!.id,
+        createdBy: userId,
       });
+
       sendSuccess(res, reversal, 201);
     } catch (error) {
-      sendError(res, error);
+      sendError(res, error, action, userId);
     }
   }
 
@@ -220,16 +281,27 @@ export class AccountsController {
   }
 
   static async createBankDeposit(req: RequestWithUser, res: Response) {
+    const userId = req.user!.id;
+    const action = 'CREATE_BANK_DEPOSIT';
+
     try {
       const accountId = req.params.accountId;
       const data = createBankDepositSchema.parse(req.body);
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: { userId, accountId, amount: data.amount, docNumber: data.docNumber },
+      });
+
       const deposit = await AccountsService.createBankDeposit(accountId, {
         ...data,
-        createdBy: req.user!.id,
+        createdBy: userId,
       });
+
       sendSuccess(res, deposit, 201);
     } catch (error) {
-      sendError(res, error);
+      sendError(res, error, action, userId);
     }
   }
 
@@ -320,26 +392,58 @@ export class AccountsController {
   }
 
   static async closeDay(req: RequestWithUser, res: Response) {
+    const userId = req.user!.id;
+    const action = 'CLOSE_DAY';
+
     try {
       const accountId = req.params.accountId;
       const data = closeDaySchema.parse(req.body);
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: { userId, accountId, date: data.date.toISOString().split('T')[0] },
+      });
+
       const result = await AccountsService.closeDay(accountId, {
         date: data.date,
-        createdBy: req.user!.id,
+        createdBy: userId,
       });
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: { userId, accountId, success: true },
+      });
+
       sendSuccess(res, result, 201);
     } catch (error) {
-      sendError(res, error);
+      sendError(res, error, action, userId);
     }
   }
 
   static async calculateMajorization(req: RequestWithUser, res: Response) {
+    const userId = req.user!.id;
+    const action = 'CALCULATE_MAYORIZATION';
+
     try {
       const accountId = req.params.accountId;
       const data = calculateMayorizationSchema.parse({
         ...req.query,
         accountId,
       });
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: {
+          userId,
+          accountId,
+          fromDate: data.fromDate.toISOString().split('T')[0],
+          toDate: data.toDate.toISOString().split('T')[0],
+        },
+      });
+
       const result = await AccountsService.calculateMayorization(
         data.accountId,
         {
@@ -347,11 +451,18 @@ export class AccountsController {
           toDate: data.toDate,
           includeDesglose: data.includeDesglose,
         },
-        req.user!.id
+        userId
       );
+
+      logger.info({
+        layer: 'controller',
+        action,
+        payload: { userId, accountId, success: true },
+      });
+
       sendSuccess(res, result, 201);
     } catch (error) {
-      sendError(res, error);
+      sendError(res, error, action, userId);
     }
   }
 
