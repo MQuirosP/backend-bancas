@@ -378,10 +378,10 @@ const SorteoRepository = {
         where,
         skip,
         take: pageSize,
-        // 🔑 Orden cronológico hacia el futuro
+        // 🔑 Orden cronológico descendente (más recientes primero)
         orderBy: [
-          { scheduledAt: 'asc' },
-          { createdAt: 'asc' }, // desempate estable
+          { scheduledAt: 'desc' },
+          { createdAt: 'desc' }, // desempate estable
         ],
         include: {
           loteria: { select: { id: true, name: true } },
