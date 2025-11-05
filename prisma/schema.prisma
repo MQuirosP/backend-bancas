@@ -261,6 +261,7 @@ model Sorteo {
   scheduledAt       DateTime
   status            SorteoStatus @default(SCHEDULED)
   winningNumber     String?
+  hasWinner         Boolean      @default(false)
   isActive          Boolean      @default(true)
   deletedAt         DateTime?
   deletedBy         String?

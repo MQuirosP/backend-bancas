@@ -260,6 +260,8 @@ const SorteoRepository = {
         ...reventadoWinners.map((j) => j.ticketId),
       ])
 
+      const hasWinner = winningTicketIds.size > 0
+
       // Primero: todos los tickets del sorteo -> evaluados, inactivos y no-ganadores
       await tx.ticket.updateMany({
         where: { sorteoId: id },
@@ -267,12 +269,18 @@ const SorteoRepository = {
       })
 
       // Luego: solo los ganadores -> isWinner = true
-      if (winningTicketIds.size > 0) {
+      if (hasWinner) {
         await tx.ticket.updateMany({
           where: { id: { in: Array.from(winningTicketIds) } },
           data: { isWinner: true },
         })
       }
+
+      // 3.5) Actualizar sorteo con hasWinner
+      await tx.sorteo.update({
+        where: { id },
+        data: { hasWinner },
+      })
 
       // Log útil
       logger.info({
@@ -284,6 +292,7 @@ const SorteoRepository = {
           extraMultiplierId,
           extraMultiplierX: extraX,
           winners: winningTicketIds.size,
+          hasWinner,
         },
       })
     })

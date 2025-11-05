@@ -28,10 +28,7 @@ export const VentaController = {
     const toDateStr = Array.isArray(toDate) ? toDate[0] : toDate;
     const dateStr = Array.isArray(date) ? date[0] : date;
 
-    // Resolver rango de fechas (CR → UTC)
-    const dateRange = resolveDateRange(dateStr, fromDateStr, toDateStr);
-
-    // Aplicar RBAC
+    // Aplicar RBAC primero para obtener effectiveFilters (incluye sorteoId)
     const context: AuthContext = {
       userId: req.user!.id,
       role: req.user!.role,
@@ -39,12 +36,31 @@ export const VentaController = {
     };
     const effectiveFilters = await applyRbacFilters(context, rest);
 
+    // Si hay sorteoId y no se especifican fechas explícitamente, ignorar el filtro de fecha
+    // Esto permite obtener todos los tickets del sorteo sin importar la fecha de creación
+    const hasSorteoId = effectiveFilters.sorteoId;
+    const hasExplicitDateRange = fromDateStr || toDateStr;
+
+    let dateRange: { fromAt: Date; toAt: Date; tz: string } | null = null;
+    
+    if (hasSorteoId && !hasExplicitDateRange) {
+      // No aplicar filtro de fecha cuando hay sorteoId y no hay fechas explícitas
+      dateRange = null;
+    } else {
+      // Resolver rango de fechas (CR → UTC) normalmente
+      dateRange = resolveDateRange(dateStr, fromDateStr, toDateStr);
+    }
+
     // Construir filtros finales para el servicio
     const filters: any = {
       ...effectiveFilters,
-      dateFrom: dateRange.fromAt,
-      dateTo: dateRange.toAt
     };
+
+    // Solo agregar filtros de fecha si dateRange fue resuelto
+    if (dateRange) {
+      filters.dateFrom = dateRange.fromAt;
+      filters.dateTo = dateRange.toAt;
+    }
 
     const result = await VentasService.list(Number(page), Number(pageSize), filters);
 
@@ -55,21 +71,24 @@ export const VentaController = {
         page,
         pageSize,
         effectiveFilters,
-        dateRange: {
+        dateRange: dateRange ? {
           fromAt: dateRange.fromAt.toISOString(),
           toAt: dateRange.toAt.toISOString(),
           tz: dateRange.tz
-        }
+        } : null,
+        skippedDateFilter: hasSorteoId && !hasExplicitDateRange
       },
     });
 
     return success(res, result.data, {
       ...result.meta,
-      range: {
-        fromAt: dateRange.fromAt.toISOString(),
-        toAt: dateRange.toAt.toISOString(),
-        tz: dateRange.tz
-      },
+      ...(dateRange ? {
+        range: {
+          fromAt: dateRange.fromAt.toISOString(),
+          toAt: dateRange.toAt.toISOString(),
+          tz: dateRange.tz
+        }
+      } : {}),
       effectiveFilters
     });
   },
