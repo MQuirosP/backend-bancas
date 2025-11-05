@@ -40,4 +40,5 @@ export const config = {
     backoffMaxMs: Number(parsed.data.TX_BACKOFF_MAX_MS),
     isolationLevel: 'Serializable' as const,
   },
+  trustProxy: parsed.data.TRUST_PROXY ?? 1, // Por defecto: 1 proxy (Render, Heroku, etc.)
 }

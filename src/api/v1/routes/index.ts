@@ -17,6 +17,7 @@ import commissionRoutes from "./commission.routes"
 import dashboardRoutes from "./dashboard.routes"
 import activityLogRoutes from "./activityLog.routes"
 import cierreRoutes from "./cierre.routes"
+import commissionsRoutes from "./commissions.routes"
 // TODO: Rehacer módulo de accounts
 // import accountsRoutes from "./accounts.routes"
 
@@ -39,8 +40,9 @@ router.use("/ventas", ventaRoutes);
 router.use("/admin/dashboard", dashboardRoutes);
 router.use("/activity-logs", activityLogRoutes);
 router.use("/cierres", cierreRoutes);
+router.use("/commissions", commissionsRoutes);
 // TODO: Rehacer módulo de accounts
 // router.use("/accounts", accountsRoutes);
-router.use("/", commissionRoutes); // Commission routes include their own path prefixes
+router.use("/", commissionRoutes); // Commission routes include their own path prefixes (políticas de comisión)
 
 export const apiV1Router = router;

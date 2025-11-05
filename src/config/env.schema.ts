@@ -17,4 +17,8 @@ export const EnvSchema = z.object({
   TX_MAX_RETRIES: z.coerce.number().int().min(0).default(3),
   TX_BACKOFF_MIN_MS: z.coerce.number().int().min(0).default(250),
   TX_BACKOFF_MAX_MS: z.coerce.number().int().min(0).default(600),
+
+  // Trust proxy: número de proxies confiables (0 = deshabilitado, 1 = un proxy, etc.)
+  // Para Render/Heroku: 1, para nginx + load balancer: 2
+  TRUST_PROXY: z.coerce.number().int().min(0).max(10).optional(),
 });
