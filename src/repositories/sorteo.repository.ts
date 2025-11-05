@@ -137,10 +137,6 @@ const SorteoRepository = {
         where: { id },
         data: { status: SorteoStatus.CLOSED },
       });
-      await tx.ticket.updateMany({
-        where: { sorteoId: id },
-        data: { isActive: false },
-      });
       return closed;
     });
     logger.info({
@@ -262,10 +258,10 @@ const SorteoRepository = {
 
       const hasWinner = winningTicketIds.size > 0
 
-      // Primero: todos los tickets del sorteo -> evaluados, inactivos y no-ganadores
+      // Primero: todos los tickets del sorteo -> evaluados y no-ganadores
       await tx.ticket.updateMany({
         where: { sorteoId: id },
-        data: { status: 'EVALUATED', isActive: false, isWinner: false },
+        data: { status: 'EVALUATED', isWinner: false },
       })
 
       // Luego: solo los ganadores -> isWinner = true
