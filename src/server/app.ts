@@ -16,9 +16,11 @@ import { requireJson } from '../middlewares/contentTypeJson.middleware'
 
 const app = express()
 
-// Trust proxy: necesario cuando se despliega detrás de un proxy (Render, nginx, etc.)
-// Permite que express-rate-limit identifique correctamente las IPs reales
-app.set('trust proxy', true)
+// Trust proxy: configuración segura para rate limiting
+// Número de proxies confiables (0 = deshabilitado, 1 = un proxy como Render/Heroku, 2 = nginx + load balancer)
+// Por defecto: 1 (común en Render, Heroku, etc.)
+// ⚠️ NO usar `true` ya que permite eludir el rate limiting basado en IP
+app.set('trust proxy', config.trustProxy)
 
 // middlewares (order matters)
 app.use(requestIdMiddleware)
