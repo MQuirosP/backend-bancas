@@ -304,7 +304,6 @@ export const SorteoService = {
           where: { id: t.id },
           data: { 
             status: "EVALUATED", 
-            isActive: false, 
             isWinner: tIsWinner,
             ...(tIsWinner ? { 
               totalPayout,
