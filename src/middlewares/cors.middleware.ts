@@ -4,9 +4,19 @@ import { Request } from 'express'
 import { config } from '../config'
 
 const corsOptions: CorsOptionsDelegate<Request> = (req, cb) => {
-  const origin = (req.headers.origin || '').replace(/\/+$/, '')
+  const origin = (req.headers.origin || '').trim().replace(/\/+$/, '')
   const allowAll = config.cors.allowAll
   const ok = origin && config.cors.origins.includes(origin)
+
+  // Debug logging (puedes remover después)
+  if (origin && !allowAll && !ok) {
+    console.log('[CORS DEBUG]', {
+      receivedOrigin: origin,
+      allowedOrigins: config.cors.origins,
+      matches: ok,
+      allowAll,
+    })
+  }
 
   cb(null, {
     origin: allowAll ? true : ok ? origin : false,
