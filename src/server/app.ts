@@ -16,6 +16,10 @@ import { requireJson } from '../middlewares/contentTypeJson.middleware'
 
 const app = express()
 
+// Trust proxy: necesario cuando se despliega detrás de un proxy (Render, nginx, etc.)
+// Permite que express-rate-limit identifique correctamente las IPs reales
+app.set('trust proxy', true)
+
 // middlewares (order matters)
 app.use(requestIdMiddleware)
 app.use(attachRequestLogger)
