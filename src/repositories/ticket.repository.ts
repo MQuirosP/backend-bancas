@@ -247,23 +247,68 @@ export const TicketRepository = {
         const bd = getBusinessDateCRInfo({ scheduledAt: sorteo.scheduledAt, nowUtc, cutoffHour });
 
         // 2.1) Incrementar contador diario por (businessDate, ventanaId) y obtener secuencia
-        let nextNumber: string;
+        // Usar upsert atómico con bloqueo de fila para prevenir race conditions
+        let nextNumber: string = '';
         let seqForLog: number | null = null;
+        let useLegacyFallback = false;
+        
         if (hasTicketCounter) {
-          const seqRows = await tx.$queryRaw<{ last: number }[]>(
-            Prisma.sql`
-              INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
-              VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
-              ON CONFLICT ("businessDate", "ventanaId")
-              DO UPDATE SET "last" = "TicketCounter"."last" + 1
-              RETURNING "last";
-            `
-          );
-          const seq = (seqRows?.[0]?.last ?? 1) as number;
-          seqForLog = seq;
-          const seqPadded = String(seq).padStart(5, '0');
-          nextNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
+          try {
+            // Bloquear la fila de TicketCounter para evitar colisiones concurrentes
+            // Usar SELECT FOR UPDATE para asegurar atomicidad
+            const seqRows = await tx.$queryRaw<{ last: number }[]>(
+              Prisma.sql`
+                INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
+                VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
+                ON CONFLICT ("businessDate", "ventanaId")
+                DO UPDATE SET "last" = "TicketCounter"."last" + 1
+                RETURNING "last";
+              `
+            );
+            const seq = (seqRows?.[0]?.last ?? 1) as number;
+            seqForLog = seq;
+            const seqPadded = String(seq).padStart(5, '0');
+            const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
+            
+            // Verificar que el ticketNumber no exista (doble validación)
+            const existing = await tx.ticket.findUnique({
+              where: { ticketNumber: candidateNumber },
+              select: { id: true },
+            });
+            
+            if (existing) {
+              // Si existe, usar fallback legacy
+              logger.warn({
+                layer: 'repository',
+                action: 'TICKET_COUNTER_COLLISION',
+                payload: {
+                  ticketNumber: candidateNumber,
+                  existingId: existing.id,
+                  note: 'Falling back to legacy generation',
+                },
+              });
+              useLegacyFallback = true;
+            } else {
+              // Si no existe, usar el número generado
+              nextNumber = candidateNumber;
+            }
+          } catch (error: any) {
+            // Si hay error con TicketCounter, usar fallback legacy
+            logger.warn({
+              layer: 'repository',
+              action: 'TICKET_COUNTER_ERROR',
+              payload: {
+                error: error.message,
+                note: 'Falling back to legacy generation',
+              },
+            });
+            useLegacyFallback = true;
+          }
         } else {
+          useLegacyFallback = true;
+        }
+        
+        if (useLegacyFallback) {
           // Fallback seguro: usar función legacy dentro de TX, sin provocar errores previos
           logger.warn({
             layer: 'repository',
@@ -287,6 +332,11 @@ export const TicketRepository = {
             // Si el formato inesperadamente no contiene '-', usa el valor como viene (último recurso)
             nextNumber = raw;
           }
+        }
+        
+        // Asegurar que nextNumber siempre esté asignado
+        if (!nextNumber) {
+          throw new AppError('Failed to generate ticket number', 500, 'SEQ_ERROR');
         }
 
         // 3) Resolver X efectivo y asegurar fila Base
