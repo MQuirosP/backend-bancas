@@ -65,11 +65,13 @@ export async function withTransactionRetry<T>(
       const retryable =
         code === "P2034" || // deadlock / write-conflict (pg "could not serialize")
         code === "P2028" || // error de API de transacción (iniciar/recuperar tx)
+        code === "P2002" || // unique constraint violation (puede ser por ticketNumber en concurrencia)
         /write conflict/i.test(msg) ||
         /could not serialize access due to concurrent update/i.test(msg) ||
         /deadlock/i.test(msg) ||
         /Transaction already closed/i.test(msg) ||
-        /Transaction not found/i.test(msg);
+        /Transaction not found/i.test(msg) ||
+        /Unique constraint failed/i.test(msg);
 
       if (retryable && attempt < maxRetries) {
         const backoff = nextDelayMs(attempt, backoffMinMs, backoffMaxMs);
