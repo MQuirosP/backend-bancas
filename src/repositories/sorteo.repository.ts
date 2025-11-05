@@ -393,6 +393,7 @@ const SorteoRepository = {
       where: { id },
       data: {
         isActive: false,
+        status: SorteoStatus.CLOSED,
         // campos de borrado lógico deprecated: no se usan
       },
     });

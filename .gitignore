@@ -71,6 +71,10 @@ apply-*.bat
 apply-*.ps1
 apply-*.sh
 
+# Scripts de backfill (scripts de migración de datos)
+src/scripts/*-backfill-*.ts
+src/scripts/*backfill*.ts
+
 # Documentación generada automáticamente
 # Toda la carpeta docs/ contiene documentación de trabajo y no debe versionarse
 docs/
