@@ -163,7 +163,7 @@ export async function applyRbacFilters(
         select: { ventanaId: true }
       });
 
-      if (!vendedor || vendedor.ventanaId !== context.ventanaId) {
+      if (!vendedor || vendedor.ventanaId !== ventanaId) {
         throw new AppError('Cannot access that vendedor', 403, {
           code: 'RBAC_002',
           details: [
@@ -179,7 +179,8 @@ export async function applyRbacFilters(
     }
 
     // Si solicita un ventanaId diferente, rechazar
-    if (requestFilters.ventanaId && requestFilters.ventanaId !== context.ventanaId) {
+    // Usar ventanaId (que puede venir del JWT o de la BD) en lugar de context.ventanaId
+    if (requestFilters.ventanaId && requestFilters.ventanaId !== ventanaId) {
       throw new AppError('Cannot access that ventana', 403, {
         code: 'RBAC_001',
         details: [

@@ -30,6 +30,14 @@ router.put(
 );
 
 router.patch(
+  "/:id",
+  requireAdmin,
+  validateParams(MultiplierIdParamSchema),
+  validateBody(UpdateMultiplierSchema),
+  MultiplierController.update
+);
+
+router.patch(
   "/:id/restore",
   requireAdmin,
   validateParams(MultiplierIdParamSchema),
