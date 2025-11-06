@@ -270,7 +270,8 @@ export function resolveCommission(
   }
 
   // Fallback: Sin comisión (0%)
-  logger.info({
+  // Cambiar a DEBUG para evitar logs excesivos cuando no hay políticas configuradas
+  logger.debug({
     layer: "service",
     action: "COMMISSION_RESOLVED",
     payload: {

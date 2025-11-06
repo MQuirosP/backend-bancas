@@ -6,10 +6,33 @@ export const RestrictionRuleIdParamSchema = z.object({
   id: z.uuid("id inválido (UUID)"),
 }).strict();
 
-const NUMBER_0_999 = z
+// Validación para número individual (00-99 para restricciones de números)
+const NUMBER_00_99 = z
   .string()
   .trim()
-  .regex(/^\d{1,3}$/, "number debe ser un entero de 1 a 3 dígitos (0..999)");
+  .regex(/^\d{2}$/, "number debe ser de 2 dígitos (00-99)")
+  .refine((val) => {
+    const num = Number(val);
+    return num >= 0 && num <= 99;
+  }, "number debe estar entre 00 y 99");
+
+// Validación para number: acepta string (legacy) o array de strings
+const NUMBER_VALIDATOR = z.union([
+  NUMBER_00_99, // string legacy
+  z.array(NUMBER_00_99).min(1).max(100), // array de strings
+]).refine(
+  (val) => {
+    // Si es array, validar que no haya duplicados
+    if (Array.isArray(val)) {
+      const unique = [...new Set(val)];
+      return unique.length === val.length;
+    }
+    return true;
+  },
+  {
+    message: "No se permiten números duplicados en el array",
+  }
+);
 
 // --- Helpers lógicos ---
 const hasScope = (d: any) => !!(d.bancaId || d.ventanaId || d.userId);
@@ -22,7 +45,7 @@ export const CreateRestrictionRuleSchema = z.object({
   ventanaId: z.uuid().optional(),
   userId: z.uuid().optional(),
 
-  number: NUMBER_0_999.optional(),
+  number: NUMBER_VALIDATOR.optional(),
   maxAmount: z.coerce.number().positive().optional(),
   maxTotal: z.coerce.number().positive().optional(),
   salesCutoffMinutes: z.coerce.number().int().min(0).max(30).optional(),
@@ -61,12 +84,14 @@ export const CreateRestrictionRuleSchema = z.object({
 });
 
 // UPDATE
+// Nota: PATCH solo acepta string (no array) según recomendación del documento
+// Si se necesita cambiar múltiples números, eliminar y recrear
 export const UpdateRestrictionRuleSchema = z.object({
   bancaId: z.uuid().optional(),
   ventanaId: z.uuid().optional(),
   userId: z.uuid().optional(),
 
-  number: NUMBER_0_999.optional(),
+  number: NUMBER_00_99.optional(), // Solo string en PATCH, no array
   maxAmount: z.coerce.number().positive().optional(),
   maxTotal: z.coerce.number().positive().optional(),
   salesCutoffMinutes: z.coerce.number().int().min(0).max(30).optional(),

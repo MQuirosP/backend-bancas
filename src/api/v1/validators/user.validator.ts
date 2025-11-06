@@ -128,6 +128,7 @@ export const listUsersQuerySchema = z
       .trim()
       .optional()
       .transform((v) => (v && v.length > 0 ? v : undefined)),
+    isActive: z.coerce.boolean().optional(),
   })
   .strict()
 

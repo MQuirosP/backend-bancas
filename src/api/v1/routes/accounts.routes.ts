@@ -1,52 +1,35 @@
-import { Router } from 'express';
-import { protect } from '../../../middlewares/auth.middleware';
-import { requireAdmin } from '../../../middlewares/roleGuards.middleware';
-// TODO: Rehacer módulo de accounts
-// import AccountsController from '../controllers/accounts.controller';
+// src/api/v1/routes/accounts.routes.ts
+import { Router } from "express";
+import { AccountsController } from "../controllers/accounts.controller";
+import {
+  validateGetStatementQuery,
+  validateCreatePaymentBody,
+  validateGetPaymentHistoryQuery,
+  validateReversePaymentBody,
+} from "../validators/accounts.validator";
+import { protect, restrictTo } from "../../../middlewares/auth.middleware";
+import { Role } from "@prisma/client";
 
 const router = Router();
 
-// TODO: Rehacer módulo de accounts
-// Proteger todas las rutas
+// Autenticación y autorización (todos los endpoints requieren JWT)
 router.use(protect);
+router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.ADMIN));
 
-// Cuentas
-// router.post('/', requireAdmin, AccountsController.createAccount);
-// router.get('/', AccountsController.listAccounts);
-// router.get('/:accountId', AccountsController.getAccountDetails);
-// router.get('/:accountId/balance', AccountsController.getBalance);
-// router.put('/:accountId', requireAdmin, AccountsController.updateAccount);
+// 1) Obtener estado de cuenta día a día del mes
+// GET /accounts/statement
+router.get("/statement", validateGetStatementQuery, AccountsController.getStatement);
 
-// Entradas ledger
-// router.get('/:accountId/entries', AccountsController.listLedgerEntries);
-// router.post('/:accountId/entries/sale', AccountsController.addSaleEntry);
-// router.post('/:accountId/entries/commission', AccountsController.addCommissionEntry);
-// router.post('/:accountId/entries/payout', AccountsController.addPayoutEntry);
-// router.post('/:accountId/entries/:entryId/reverse', requireAdmin, AccountsController.reverseEntry);
+// 2) Registrar pago o cobro
+// POST /accounts/payment
+router.post("/payment", validateCreatePaymentBody, AccountsController.createPayment);
 
-// Resumen
-// router.get('/:accountId/summary', AccountsController.getBalanceSummary);
+// 3) Obtener historial de pagos/cobros de un día
+// GET /accounts/payment-history
+router.get("/payment-history", validateGetPaymentHistoryQuery, AccountsController.getPaymentHistory);
 
-// Ledger diario con estado CXC/CXP
-// router.get('/:accountId/ledger-summary', AccountsController.getDailyLedgerSummary);
-
-// Depósitos
-// router.post('/:accountId/deposits', AccountsController.createBankDeposit);
-
-// Documentos de pago entre cuentas
-// router.post('/payments', AccountsController.createPaymentDocument);
-
-// Snapshots
-// router.post('/:accountId/snapshots', AccountsController.createDailySnapshot);
-// router.get('/:accountId/snapshots', AccountsController.getDailySnapshots);
-
-// Resumen diario
-// router.get('/:accountId/daily-summary', AccountsController.getDailySummary);
-
-// Cierre diario
-// router.post('/:accountId/daily-close', AccountsController.closeDay);
-
-// Exportar
-// router.get('/:accountId/statement/export', AccountsController.exportStatement);
+// 4) Revertir un pago/cobro
+// POST /accounts/reverse-payment
+router.post("/reverse-payment", validateReversePaymentBody, AccountsController.reversePayment);
 
 export default router;

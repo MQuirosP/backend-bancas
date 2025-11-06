@@ -3,7 +3,7 @@ export type CreateRestrictionRuleInput = {
   ventanaId?: string;
   userId?: string;
   isActive?: boolean;
-  number?: string;          // "0".."999"
+  number?: string | string[];  // "00".."99" o array de strings (legacy: string, nuevo: string[])
   maxAmount?: number;       // > 0
   maxTotal?: number;        // > 0
   salesCutoffMinutes?: number,
