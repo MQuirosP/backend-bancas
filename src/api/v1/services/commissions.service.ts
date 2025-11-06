@@ -69,6 +69,10 @@ export const CommissionsService = {
           whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
         }
         // Si scope=mine, el RBAC ya aplicó el filtro de vendedorId
+        // También aplicar ventanaId si está presente (para filtrar vendedores de una ventana específica)
+        if (filters.ventanaId) {
+          whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+        }
       } else if (filters.dimension === "ventana") {
         if (filters.ventanaId) {
           // Filtrar por ventana específica (ADMIN con filtro)
@@ -383,6 +387,10 @@ export const CommissionsService = {
       if (filters.dimension === "vendedor") {
         if (filters.vendedorId) {
           whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+        }
+        // También aplicar ventanaId si está presente (para filtrar vendedores de una ventana específica)
+        if (filters.ventanaId) {
+          whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
         }
       } else if (filters.dimension === "ventana") {
         if (filters.ventanaId) {
@@ -796,6 +804,10 @@ export const CommissionsService = {
       if (filters.dimension === "vendedor") {
         if (filters.vendedorId) {
           whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+        }
+        // También aplicar ventanaId si está presente (para filtrar vendedores de una ventana específica)
+        if (filters.ventanaId) {
+          whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
         }
       } else if (filters.dimension === "ventana") {
         if (filters.ventanaId) {
