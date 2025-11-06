@@ -20,12 +20,26 @@ interface AccountsFilters {
 
 /**
  * Obtiene el rango de fechas del mes
+ * FIX: Si el mes consultado es el mes actual, limita endDate a hoy para excluir días futuros
  */
 function getMonthDateRange(month: string): { startDate: Date; endDate: Date; daysInMonth: number } {
   const [year, monthNum] = month.split("-").map(Number);
   const startDate = new Date(Date.UTC(year, monthNum - 1, 1, 0, 0, 0, 0));
-  const endDate = new Date(Date.UTC(year, monthNum, 0, 23, 59, 59, 999));
-  const daysInMonth = endDate.getDate();
+  
+  // Obtener fecha actual en UTC
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+  
+  // Calcular último día del mes consultado
+  const monthEndDate = new Date(Date.UTC(year, monthNum, 0, 23, 59, 59, 999));
+  
+  // Si el mes consultado es el mes actual, limitar a hoy
+  // Si es un mes pasado, usar el último día de ese mes
+  // Si es un mes futuro, usar el último día del mes consultado (aunque no debería pasar)
+  const isCurrentMonth = year === now.getUTCFullYear() && monthNum === now.getUTCMonth() + 1;
+  const endDate = isCurrentMonth ? (today < startDate ? startDate : today) : monthEndDate;
+  
+  const daysInMonth = monthEndDate.getDate();
   return { startDate, endDate, daysInMonth };
 }
 
@@ -35,6 +49,48 @@ function getMonthDateRange(month: string): { startDate: Date; endDate: Date; day
 function getDateForDay(month: string, day: number): Date {
   const [year, monthNum] = month.split("-").map(Number);
   return new Date(Date.UTC(year, monthNum - 1, day, 0, 0, 0, 0));
+}
+
+/**
+ * Helper: Calcula si un estado de cuenta está saldado
+ * CRÍTICO: Solo está saldado si hay tickets Y el saldo es cero Y hay pagos/cobros registrados
+ */
+function calculateIsSettled(
+  ticketCount: number,
+  remainingBalance: number,
+  totalPaid: number,
+  totalCollected: number
+): boolean {
+  const hasPayments = totalPaid > 0 || totalCollected > 0;
+  return ticketCount > 0 
+    && Math.abs(remainingBalance) < 0.01 
+    && hasPayments;
+}
+
+/**
+ * Helper: Construye filtro de tickets por fecha usando businessDate (prioridad) o createdAt (fallback)
+ * FIX: Usa businessDate si existe, fallback a createdAt para tickets antiguos sin businessDate
+ */
+function buildTicketDateFilter(date: Date): any {
+  // Normalizar fecha a inicio del día UTC
+  const dateStart = new Date(date.getTime());
+  dateStart.setUTCHours(0, 0, 0, 0);
+  const dateEnd = new Date(dateStart.getTime() + 24 * 60 * 60 * 1000);
+
+  return {
+    OR: [
+      // Prioridad: businessDate (fecha de negocio correcta)
+      { businessDate: dateStart },
+      // Fallback: createdAt para tickets antiguos sin businessDate
+      {
+        businessDate: null,
+        createdAt: {
+          gte: dateStart,
+          lt: dateEnd,
+        },
+      },
+    ],
+  };
 }
 
 /**
@@ -126,19 +182,18 @@ async function calculateDayStatement(
   vendedorId?: string
 ) {
   // Construir WHERE clause
+  // FIX: Usar businessDate en lugar de createdAt para agrupar correctamente por día de negocio
+  const dateFilter = buildTicketDateFilter(date);
   const where: any = {
-    createdAt: {
-      gte: new Date(date.getTime()),
-      lt: new Date(date.getTime() + 24 * 60 * 60 * 1000),
-    },
+    ...dateFilter,
     deletedAt: null,
     status: { not: "CANCELLED" },
   };
 
-  if (ventanaId) {
+  // FIX: Validación defensiva - asegurar que ventanaId coincide en dimensión "ventana"
+  if (dimension === "ventana" && ventanaId) {
     where.ventanaId = ventanaId;
-  }
-  if (vendedorId) {
+  } else if (dimension === "vendedor" && vendedorId) {
     where.vendedorId = vendedorId;
   }
 
@@ -221,11 +276,20 @@ async function calculateDayStatement(
       },
     });
 
+    // FIX: Validación defensiva - asegurar que todas las jugadas pertenecen a la ventana correcta
+    // Esto previene bugs donde se pasen jugadas de otra ventana
+    const validJugadas = jugadas.filter((j) => {
+      if (dimension === "ventana" && ventanaId) {
+        return j.ticket.ventanaId === ventanaId;
+      }
+      return true; // Para vendedor, no hay validación adicional necesaria aquí
+    });
+
     // Separar jugadas por origen de comisión
-    const jugadasFromVentanaOrBanca = jugadas.filter(
+    const jugadasFromVentanaOrBanca = validJugadas.filter(
       (j) => j.commissionOrigin === "VENTANA" || j.commissionOrigin === "BANCA"
     );
-    const jugadasFromUser = jugadas.filter((j) => j.commissionOrigin === "USER");
+    const jugadasFromUser = validJugadas.filter((j) => j.commissionOrigin === "USER");
 
     // Sumar directamente las comisiones que ya son de ventana/banca
     totalListeroCommission = jugadasFromVentanaOrBanca.reduce(
@@ -386,25 +450,54 @@ async function calculateDayStatement(
   // Calcular saldo
   const balance = totalSales - totalPayouts;
 
-  // Si no hay tickets, no crear statement (retornar valores por defecto)
+  // Si no hay tickets, retornar valores por defecto sin crear statement
+  // FIX: No crear fechas nuevas cada vez para mantener consistencia
   if (ticketCount === 0) {
-    return {
+    // Intentar obtener statement existente si existe
+    const existingStatement = await AccountStatementRepository.findByDate(date, {
+      ventanaId,
+      vendedorId,
+    });
+
+    if (existingStatement) {
+      // Si existe, retornar el existente
+      return {
+        ...existingStatement,
+        totalSales: 0,
+        totalPayouts: 0,
+        listeroCommission: 0,
+        vendedorCommission: 0,
+        balance: 0,
+        totalPaid: existingStatement.totalPaid || 0,
+        totalCollected: await AccountPaymentRepository.getTotalCollected(existingStatement.id),
+        remainingBalance: existingStatement.remainingBalance || 0,
+        isSettled: false,
+        canEdit: true,
+        ticketCount: 0,
+      };
+    }
+
+    // Si no existe, crear statement para tener un id
+    const newStatement = await AccountStatementRepository.findOrCreate({
       date,
       month,
-      ventanaId: ventanaId || null,
-      vendedorId: vendedorId || null,
+      ventanaId,
+      vendedorId,
+    });
+    
+    return {
+      ...newStatement,
       totalSales: 0,
       totalPayouts: 0,
       listeroCommission: 0,
       vendedorCommission: 0,
       balance: 0,
       totalPaid: 0,
+      totalCollected: 0,
       remainingBalance: 0,
       isSettled: false, // No está saldado si no hay tickets
       canEdit: true,
       ticketCount: 0,
-      createdAt: new Date(),
-      updatedAt: new Date(),
     };
   }
 
@@ -420,19 +513,12 @@ async function calculateDayStatement(
   const totalPaid = await AccountPaymentRepository.getTotalPaid(statement.id);
   const totalCollected = await AccountPaymentRepository.getTotalCollected(statement.id);
 
-  // Calcular saldo restante según el documento: remainingBalance = baseBalance - totalPaid + totalCollected
-  const remainingBalance = balance - totalPaid + totalCollected;
+  // Calcular saldo restante: remainingBalance = balance - totalCollected + totalPaid
+  // Lógica: Payment reduce deuda (suma), Collection reduce crédito (resta)
+  const remainingBalance = balance - totalCollected + totalPaid;
 
-  // Determinar si está saldado
-  // CRÍTICO: Solo está saldado si hay tickets Y el saldo es cero Y hay pagos/cobros registrados
-  // IMPORTANTE: No marcar como saldado si no hay pagos registrados, incluso si balance = 0
-  // Esto evita confusión cuando un listero ve su propio estado de cuenta (no puede registrar pagos de sí mismo)
-  // Un día solo está saldado si:
-  // 1. Hay tickets
-  // 2. El saldo restante es cero (o muy cercano)
-  // 3. Hay al menos un pago o cobro registrado (totalPaid > 0 o totalCollected > 0)
-  const hasPayments = totalPaid > 0 || totalCollected > 0;
-  const isSettled = ticketCount > 0 && Math.abs(remainingBalance) < 0.01 && hasPayments;
+  // FIX: Usar helper para cálculo consistente de isSettled
+  const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
   const canEdit = !isSettled;
 
   await AccountStatementRepository.update(statement.id, {
@@ -456,6 +542,7 @@ async function calculateDayStatement(
     vendedorCommission: totalVendedorCommission,
     balance,
     totalPaid,
+    totalCollected, // Agregar totalCollected al objeto retornado
     remainingBalance,
     isSettled,
     canEdit,
@@ -502,6 +589,7 @@ export const AccountsService = {
           },
         }
       )) as Array<{
+        id: string;
         date: Date;
         ventanaId: string | null;
         vendedorId: string | null;
@@ -523,11 +611,29 @@ export const AccountsService = {
 
       // Filtrar por dimensión
       let filteredStatements = statementsWithRelations.filter((s) => {
-        if (dimension === "ventana") {
-          return s.ventanaId !== null && s.vendedorId === null;
-        } else {
-          return s.vendedorId !== null && s.ventanaId === null;
+        // Filtrar por dimensión
+        const matchesDimension = dimension === "ventana" 
+          ? (s.ventanaId !== null && s.vendedorId === null)
+          : (s.vendedorId !== null && s.ventanaId === null);
+        
+        if (!matchesDimension) return false;
+        
+        // FIX: Excluir días futuros cuando el mes consultado es el mes actual
+        const statementDate = new Date(s.date);
+        statementDate.setUTCHours(0, 0, 0, 0);
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+        
+        // Si el mes del statement es el mes actual, solo incluir hasta hoy
+        const isCurrentMonth = statementDate.getUTCFullYear() === today.getUTCFullYear() &&
+                               statementDate.getUTCMonth() === today.getUTCMonth();
+        
+        if (isCurrentMonth) {
+          return statementDate <= today;
         }
+        
+        // Para meses pasados o futuros, incluir todos los días
+        return true;
       });
 
       // Si no hay statements existentes, calcular basándose en tickets del mes
@@ -539,12 +645,24 @@ export const AccountsService = {
         });
 
         // Obtener todas las ventanas/vendedores que tienen tickets en el mes
+        // FIX: Usar businessDate si existe, fallback a createdAt
         const tickets = await prisma.ticket.findMany({
           where: {
-            createdAt: {
-              gte: startDate,
-              lte: endDate,
-            },
+            OR: [
+              {
+                businessDate: {
+                  gte: startDate,
+                  lte: endDate,
+                },
+              },
+              {
+                businessDate: null,
+                createdAt: {
+                  gte: startDate,
+                  lte: endDate,
+                },
+              },
+            ],
             deletedAt: null,
             status: { not: "CANCELLED" },
           },
@@ -552,6 +670,7 @@ export const AccountsService = {
             id: true,
             ventanaId: true,
             vendedorId: true,
+            businessDate: true,
             createdAt: true,
           },
         });
@@ -560,7 +679,10 @@ export const AccountsService = {
         const statementsMap = new Map<string, any>();
 
         for (const ticket of tickets) {
-          const ticketDate = new Date(ticket.createdAt);
+          // FIX: Usar businessDate si existe, fallback a createdAt
+          const ticketDate = ticket.businessDate 
+            ? new Date(ticket.businessDate)
+            : new Date(ticket.createdAt);
           ticketDate.setUTCHours(0, 0, 0, 0);
           const dateKey = ticketDate.toISOString().split("T")[0];
 
@@ -586,8 +708,24 @@ export const AccountsService = {
         }
 
         // Calcular statements para cada día/ventana o día/vendedor
+        // FIX: Filtrar días futuros antes de calcular statements
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+        
         const calculatedStatements = [];
         for (const [key, statementInfo] of statementsMap) {
+          // Excluir días futuros cuando el mes consultado es el mes actual
+          const statementDate = new Date(statementInfo.date);
+          statementDate.setUTCHours(0, 0, 0, 0);
+          
+          const isCurrentMonth = statementDate.getUTCFullYear() === today.getUTCFullYear() &&
+                                 statementDate.getUTCMonth() === today.getUTCMonth();
+          
+          if (isCurrentMonth && statementDate > today) {
+            // Saltar días futuros del mes actual
+            continue;
+          }
+          
           const calculated = await calculateDayStatement(
             statementInfo.date,
             month,
@@ -646,7 +784,15 @@ export const AccountsService = {
 
       // Formatear respuesta - retornar directamente el array en lugar de data.data
       // Incluir campos según la dimensión (omitir campos null innecesarios)
-      const statements = filteredStatements.map((s) => {
+      // Calcular totalCollected para cada statement dinámicamente
+      const statementsWithTotalCollected = await Promise.all(
+        filteredStatements.map(async (s) => {
+          const totalCollected = await AccountPaymentRepository.getTotalCollected(s.id);
+          return { ...s, totalCollected };
+        })
+      );
+
+      const statements = statementsWithTotalCollected.map((s) => {
         const base = {
           date: s.date.toISOString().split("T")[0],
           totalSales: s.totalSales,
@@ -655,6 +801,7 @@ export const AccountsService = {
           vendedorCommission: s.vendedorCommission,
           balance: s.balance,
           totalPaid: s.totalPaid,
+          totalCollected: s.totalCollected, // Agregar campo totalCollected
           remainingBalance: s.remainingBalance,
           isSettled: s.isSettled,
           canEdit: s.canEdit,
@@ -681,15 +828,16 @@ export const AccountsService = {
       });
 
       const totals = {
-        totalSales: filteredStatements.reduce((sum, s) => sum + s.totalSales, 0),
-        totalPayouts: filteredStatements.reduce((sum, s) => sum + s.totalPayouts, 0),
-        totalListeroCommission: filteredStatements.reduce((sum, s) => sum + s.listeroCommission, 0),
-        totalVendedorCommission: filteredStatements.reduce((sum, s) => sum + s.vendedorCommission, 0),
-        totalBalance: filteredStatements.reduce((sum, s) => sum + s.balance, 0),
-        totalPaid: filteredStatements.reduce((sum, s) => sum + s.totalPaid, 0),
-        totalRemainingBalance: filteredStatements.reduce((sum, s) => sum + s.remainingBalance, 0),
-        settledDays: filteredStatements.filter((s) => s.isSettled).length,
-        pendingDays: filteredStatements.filter((s) => !s.isSettled).length,
+        totalSales: statementsWithTotalCollected.reduce((sum, s) => sum + s.totalSales, 0),
+        totalPayouts: statementsWithTotalCollected.reduce((sum, s) => sum + s.totalPayouts, 0),
+        totalListeroCommission: statementsWithTotalCollected.reduce((sum, s) => sum + s.listeroCommission, 0),
+        totalVendedorCommission: statementsWithTotalCollected.reduce((sum, s) => sum + s.vendedorCommission, 0),
+        totalBalance: statementsWithTotalCollected.reduce((sum, s) => sum + s.balance, 0),
+        totalPaid: statementsWithTotalCollected.reduce((sum, s) => sum + s.totalPaid, 0),
+        totalCollected: statementsWithTotalCollected.reduce((sum, s) => sum + s.totalCollected, 0), // Agregar totalCollected a totales
+        totalRemainingBalance: statementsWithTotalCollected.reduce((sum, s) => sum + s.remainingBalance, 0),
+        settledDays: statementsWithTotalCollected.filter((s) => s.isSettled).length,
+        pendingDays: statementsWithTotalCollected.filter((s) => !s.isSettled).length,
       };
 
       const meta = {
@@ -709,32 +857,81 @@ export const AccountsService = {
 
     // Calcular estados de cuenta solo para días que tienen tickets (cuando hay ventanaId o vendedorId específico)
     // Primero obtener los días que tienen tickets para evitar calcular días vacíos
+    // FIX: Usar businessDate si existe, fallback a createdAt
     const ticketsWithDates = await prisma.ticket.findMany({
       where: {
-        createdAt: {
-          gte: startDate,
-          lte: endDate,
-        },
+        OR: [
+          {
+            businessDate: {
+              gte: startDate,
+              lte: endDate,
+            },
+          },
+          {
+            businessDate: null,
+            createdAt: {
+              gte: startDate,
+              lte: endDate,
+            },
+          },
+        ],
         deletedAt: null,
         status: { not: "CANCELLED" },
         ...(ventanaId ? { ventanaId } : {}),
         ...(vendedorId ? { vendedorId } : {}),
       },
       select: {
+        businessDate: true,
         createdAt: true,
       },
     });
 
     // Extraer días únicos
+    // FIX: Usar businessDate si existe, fallback a createdAt
+    // FIX: Excluir días futuros cuando el mes consultado es el mes actual
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    
     const uniqueDays = new Set<string>();
     for (const ticket of ticketsWithDates) {
-      const ticketDate = new Date(ticket.createdAt);
+      const ticketDate = ticket.businessDate 
+        ? new Date(ticket.businessDate)
+        : new Date(ticket.createdAt);
       ticketDate.setUTCHours(0, 0, 0, 0);
+      
+      // Excluir días futuros cuando el mes consultado es el mes actual
+      const isCurrentMonth = ticketDate.getUTCFullYear() === today.getUTCFullYear() &&
+                             ticketDate.getUTCMonth() === today.getUTCMonth();
+      
+      if (isCurrentMonth && ticketDate > today) {
+        // Saltar días futuros del mes actual
+        continue;
+      }
+      
       uniqueDays.add(ticketDate.toISOString().split("T")[0]);
     }
 
     // Calcular statements solo para días con tickets
-    const statements = [];
+    const statements: Array<{
+      id: string;
+      date: Date;
+      month: string;
+      ventanaId: string | null;
+      vendedorId: string | null;
+      totalSales: number;
+      totalPayouts: number;
+      listeroCommission: number;
+      vendedorCommission: number;
+      balance: number;
+      totalPaid: number;
+      totalCollected: number;
+      remainingBalance: number;
+      isSettled: boolean;
+      canEdit: boolean;
+      ticketCount: number;
+      createdAt: Date;
+      updatedAt: Date;
+    }> = [];
     for (const dateStr of uniqueDays) {
       const date = new Date(dateStr + "T00:00:00.000Z");
       const statement = await calculateDayStatement(date, month, dimension, ventanaId, vendedorId);
@@ -828,7 +1025,15 @@ export const AccountsService = {
 
     // Formatear respuesta - retornar directamente el array en lugar de data.data
     // Incluir campos según la dimensión (omitir campos null innecesarios)
-    const formattedStatements = statements.map((s) => {
+    // Calcular totalCollected para cada statement dinámicamente
+    const statementsWithTotalCollected = await Promise.all(
+      statements.map(async (s) => {
+        const totalCollected = await AccountPaymentRepository.getTotalCollected(s.id);
+        return { ...s, totalCollected };
+      })
+    );
+
+    const formattedStatements = statementsWithTotalCollected.map((s) => {
       const dateStr = s.date.toISOString().split("T")[0];
       const statementWithRelations = statementsMap.get(dateStr);
       
@@ -840,6 +1045,7 @@ export const AccountsService = {
         vendedorCommission: s.vendedorCommission,
         balance: s.balance,
         totalPaid: s.totalPaid,
+        totalCollected: s.totalCollected, // Agregar campo totalCollected
         remainingBalance: s.remainingBalance,
         isSettled: s.isSettled,
         canEdit: s.canEdit,
@@ -874,6 +1080,7 @@ export const AccountsService = {
       totalVendedorCommission: formattedStatements.reduce((sum, s) => sum + s.vendedorCommission, 0),
       totalBalance: formattedStatements.reduce((sum, s) => sum + s.balance, 0),
       totalPaid: formattedStatements.reduce((sum, s) => sum + s.totalPaid, 0),
+      totalCollected: formattedStatements.reduce((sum, s) => sum + s.totalCollected, 0), // Agregar totalCollected a totales
       totalRemainingBalance: formattedStatements.reduce((sum, s) => sum + s.remainingBalance, 0),
       settledDays: formattedStatements.filter((s) => s.isSettled).length,
       pendingDays: formattedStatements.filter((s) => !s.isSettled).length,
@@ -935,23 +1142,34 @@ export const AccountsService = {
       throw new AppError("El estado de cuenta ya está saldado", 400, "STATEMENT_SETTLED");
     }
 
-    // Validar tipo de pago según saldo
-    const remainingBalance = statement.remainingBalance || 0;
-    if (remainingBalance < 0) {
+    // FIX: Recalcular remainingBalance actualizado antes de validar
+    // Esto asegura que la validación use el saldo más reciente, no uno desactualizado
+    const baseBalance = statement.totalSales - statement.totalPayouts;
+    const currentTotalPaid = await AccountPaymentRepository.getTotalPaid(statement.id);
+    const currentTotalCollected = await AccountPaymentRepository.getTotalCollected(statement.id);
+    // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
+    const currentRemainingBalance = baseBalance - currentTotalCollected + currentTotalPaid;
+
+    // Validar tipo de pago según saldo actualizado
+    if (currentRemainingBalance < 0) {
       // CxP (Cuenta por Pagar) - solo permite payment
       if (data.type !== "payment") {
         throw new AppError("Solo se permiten pagos cuando el saldo es negativo", 400, "INVALID_PAYMENT_TYPE");
       }
-      if (data.amount > Math.abs(remainingBalance)) {
-        throw new AppError(`El monto excede el saldo pendiente (${Math.abs(remainingBalance)})`, 400, "AMOUNT_EXCEEDS_BALANCE");
+      // FIX: Permitir pagar hasta el saldo exacto (con tolerancia para redondeos)
+      const maxAmount = Math.abs(currentRemainingBalance) + 0.01;
+      if (data.amount > maxAmount) {
+        throw new AppError(`El monto excede el saldo pendiente (${Math.abs(currentRemainingBalance).toFixed(2)})`, 400, "AMOUNT_EXCEEDS_BALANCE");
       }
-    } else if (remainingBalance > 0) {
+    } else if (currentRemainingBalance > 0) {
       // CxC (Cuenta por Cobrar) - solo permite collection
       if (data.type !== "collection") {
         throw new AppError("Solo se permiten cobros cuando el saldo es positivo", 400, "INVALID_PAYMENT_TYPE");
       }
-      if (data.amount > remainingBalance) {
-        throw new AppError(`El monto excede el saldo pendiente (${remainingBalance})`, 400, "AMOUNT_EXCEEDS_BALANCE");
+      // FIX: Permitir cobrar hasta el saldo exacto (con tolerancia para redondeos)
+      const maxAmount = currentRemainingBalance + 0.01;
+      if (data.amount > maxAmount) {
+        throw new AppError(`El monto excede el saldo pendiente (${currentRemainingBalance.toFixed(2)})`, 400, "AMOUNT_EXCEEDS_BALANCE");
       }
     }
 
@@ -976,12 +1194,12 @@ export const AccountsService = {
     const newTotalPaid = await AccountPaymentRepository.getTotalPaid(statement.id);
     const newTotalCollected = await AccountPaymentRepository.getTotalCollected(statement.id);
 
-    // Calcular saldo base del día (sin pagos/cobros)
-    const baseBalance = statement.totalSales - statement.totalPayouts;
-
-    // Recalcular saldo restante según el documento: remainingBalance = baseBalance - totalPaid + totalCollected
-    const newRemainingBalance = baseBalance - newTotalPaid + newTotalCollected;
-    const isSettled = Math.abs(newRemainingBalance) < 0.01;
+    // FIX: Reutilizar baseBalance ya calculado arriba (línea 1039)
+    // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
+    const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
+    
+    // FIX: Usar helper para cálculo consistente de isSettled (incluye validación de hasPayments y ticketCount)
+    const isSettled = calculateIsSettled(statement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
     await AccountStatementRepository.update(statement.id, {
       totalPaid: newTotalPaid,
@@ -1055,42 +1273,38 @@ export const AccountsService = {
       vendedorId: payment.vendedorId ?? undefined,
     });
 
-    // Obtener todos los pagos activos del día (no revertidos)
-    const activePayments = await AccountPaymentRepository.findActiveByDate(
-      payment.date,
-      {
-        ventanaId: payment.ventanaId ?? undefined,
-        vendedorId: payment.vendedorId ?? undefined,
-      }
-    );
-
     // Calcular saldo base del día (sin pagos/cobros)
     const baseBalance = statement.totalSales - statement.totalPayouts;
 
-    // Calcular total de pagos y cobros activos (ya están filtrados por findActiveByDate)
-    const totalPaid = activePayments
-      .filter((p) => p.type === "payment")
-      .reduce((sum, p) => sum + p.amount, 0);
-    const totalCollected = activePayments
-      .filter((p) => p.type === "collection")
-      .reduce((sum, p) => sum + p.amount, 0);
+    // FIX: Eliminar cálculo redundante - usar directamente el repositorio para obtener totales actuales
+    const currentTotalPaid = await AccountPaymentRepository.getTotalPaid(statement.id);
+    const currentTotalCollected = await AccountPaymentRepository.getTotalCollected(statement.id);
 
     // Calcular saldo actual (con todos los pagos activos)
-    const currentBalance = baseBalance - totalPaid + totalCollected;
+    // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
+    const currentRemainingBalance = baseBalance - currentTotalCollected + currentTotalPaid;
 
     // Calcular saldo después de revertir este pago
     let balanceAfterReversal: number;
     if (payment.type === "payment") {
       // Si es un pago, al revertirlo se suma al saldo (se quita el pago)
-      balanceAfterReversal = currentBalance + payment.amount;
+      balanceAfterReversal = currentRemainingBalance + payment.amount;
     } else {
       // Si es un cobro, al revertirlo se resta del saldo (se quita el cobro)
-      balanceAfterReversal = currentBalance - payment.amount;
+      balanceAfterReversal = currentRemainingBalance - payment.amount;
     }
 
     // CRÍTICO: Validar que el día NO quede saldado
+    // FIX: Validar usando la misma lógica que isSettled (incluye hasPayments)
+    // Después de revertir, si no quedan pagos activos, no debería quedar saldado
+    const remainingPaymentsAfterReversal = 
+      (payment.type === "payment" ? currentTotalPaid - payment.amount : currentTotalPaid) +
+      (payment.type === "collection" ? currentTotalCollected - payment.amount : currentTotalCollected);
+    const hasPaymentsAfterReversal = remainingPaymentsAfterReversal > 0;
     const absBalance = Math.abs(balanceAfterReversal);
-    if (absBalance <= 0.01) {
+    
+    // No permitir revertir si quedaría saldado (balance ≈ 0 Y hay pagos restantes)
+    if (absBalance <= 0.01 && hasPaymentsAfterReversal) {
       throw new AppError(
         "No se puede revertir este pago porque el día quedaría saldado. El saldo resultante sería cero o muy cercano a cero.",
         400,
@@ -1105,10 +1319,11 @@ export const AccountsService = {
     const newTotalPaid = await AccountPaymentRepository.getTotalPaid(statement.id);
     const newTotalCollected = await AccountPaymentRepository.getTotalCollected(statement.id);
 
-    // Recalcular saldo restante según el documento: remainingBalance = baseBalance - totalPaid + totalCollected
-    // (baseBalance ya fue calculado arriba)
-    const newRemainingBalance = baseBalance - newTotalPaid + newTotalCollected;
-    const isSettled = Math.abs(newRemainingBalance) < 0.01;
+    // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
+    const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
+    
+    // FIX: Usar helper para cálculo consistente de isSettled (incluye validación de hasPayments y ticketCount)
+    const isSettled = calculateIsSettled(statement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
     // Actualizar estado de cuenta
     await AccountStatementRepository.update(statement.id, {
