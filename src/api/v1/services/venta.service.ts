@@ -319,6 +319,22 @@ export const VentasService = {
       commissionTotal: number;
       totalWinningTickets: number;
       totalPaidTickets: number;
+      // Campos adicionales para vendedor (opcionales)
+      winningTicketsCount?: number;
+      paidTicketsCount?: number;
+      unpaidTicketsCount?: number;
+      totalPaid?: number;
+      pendingPayment?: number;
+      avgTicketAmount?: number;
+      winRate?: number;
+      payoutRate?: number;
+      commissionAmount?: number;
+      lastTicketAt?: string;
+      firstTicketAt?: string;
+      activityDays?: number;
+      vendedorCode?: string;
+      status?: 'active' | 'inactive';
+      ventanaName?: string;
     }>
   > {
     try {
@@ -436,7 +452,20 @@ export const VentasService = {
           });
           const vendedores = await prisma.user.findMany({
             where: { id: { in: vendedorIds } },
-            select: { id: true, name: true, username: true },
+            select: { 
+              id: true, 
+              name: true, 
+              username: true,
+              code: true,
+              isActive: true,
+              ventanaId: true,
+              ventana: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
           });
           const vendedorMap = new Map(vendedores.map((v) => [v.id, v]));
 
@@ -445,17 +474,101 @@ export const VentasService = {
             where: { ticket: { vendedorId: { in: vendedorIds }, ...where } },
             _sum: { payout: true, commissionAmount: true },
           });
-          const ticketIds = jugadasAgg.map((p) => p.ticketId);
-          const tickets = await prisma.ticket.findMany({
-            where: { id: { in: ticketIds } },
-            select: { id: true, vendedorId: true, isWinner: true, status: true },
+          // Obtener todos los tickets del vendedor para cálculos adicionales
+          const allTickets = await prisma.ticket.findMany({
+            where: { 
+              vendedorId: { in: vendedorIds },
+              ...where,
+            },
+            select: { 
+              id: true, 
+              vendedorId: true, 
+              isWinner: true, 
+              status: true,
+              createdAt: true,
+              businessDate: true,
+              totalAmount: true,
+            },
           });
+
+          const ticketIds = jugadasAgg.map((p) => p.ticketId);
+          const tickets = allTickets.filter((t) => ticketIds.includes(t.id));
+          
           const payoutByVendedor = new Map<string, number>();
           const commissionByVendedor = new Map<string, number>();
           const winningTicketsByVendedor = new Map<string, number>();
           const paidTicketsByVendedor = new Map<string, number>();
+          const unpaidTicketsByVendedor = new Map<string, number>();
+          const totalPaidByVendedor = new Map<string, number>();
+          const pendingPaymentByVendedor = new Map<string, number>();
+          const lastTicketAtByVendedor = new Map<string, Date>();
+          const firstTicketAtByVendedor = new Map<string, Date>();
+          const ticketDatesByVendedor = new Map<string, Set<string>>();
 
-          tickets.forEach((t) => {
+          // Calcular payout total de tickets ganadores y pagos
+          const winningTickets = allTickets.filter((t) => t.isWinner);
+          const payoutByTicket = new Map<string, number>();
+          const paidByTicket = new Map<string, number>();
+
+          if (winningTickets.length > 0) {
+            const winningTicketIds = winningTickets.map((t) => t.id);
+            
+            // Obtener payouts de jugadas ganadoras
+            const winningJugadas = await prisma.jugada.findMany({
+              where: {
+                ticketId: { in: winningTicketIds },
+                ticket: { vendedorId: { in: vendedorIds }, ...where },
+              },
+              select: {
+                ticketId: true,
+                payout: true,
+              },
+            });
+
+            winningJugadas.forEach((j) => {
+              const currentPayout = payoutByTicket.get(j.ticketId) ?? 0;
+              payoutByTicket.set(j.ticketId, currentPayout + (j.payout ?? 0));
+            });
+
+            // Calcular pagos desde TicketPayment
+            const ticketPayments = await prisma.ticketPayment.findMany({
+              where: {
+                ticketId: { in: winningTicketIds },
+                isReversed: false,
+              },
+              select: {
+                ticketId: true,
+                amountPaid: true,
+              },
+            });
+
+            ticketPayments.forEach((tp) => {
+              const currentPaid = paidByTicket.get(tp.ticketId) ?? 0;
+              paidByTicket.set(tp.ticketId, currentPaid + tp.amountPaid);
+            });
+          }
+
+          // Calcular totalPaid y pendingPayment por vendedor
+          allTickets.forEach((t) => {
+            if (t.isWinner) {
+              const ticketPaid = paidByTicket.get(t.id) ?? 0;
+              const ticketPayout = payoutByTicket.get(t.id) ?? 0;
+              
+              totalPaidByVendedor.set(
+                t.vendedorId,
+                (totalPaidByVendedor.get(t.vendedorId) ?? 0) + ticketPaid
+              );
+              
+              // Pending payment = payout - paid
+              const pending = Math.max(0, ticketPayout - ticketPaid);
+              pendingPaymentByVendedor.set(
+                t.vendedorId,
+                (pendingPaymentByVendedor.get(t.vendedorId) ?? 0) + pending
+              );
+            }
+          });
+
+          allTickets.forEach((t) => {
             const jugada = jugadasAgg.find((p) => p.ticketId === t.id);
             const payout = jugada?._sum.payout ?? 0;
             const commission = jugada?._sum.commissionAmount ?? 0;
@@ -470,24 +583,79 @@ export const VentasService = {
             // Count paid tickets
             if (t.status === 'PAID') {
               paidTicketsByVendedor.set(t.vendedorId, (paidTicketsByVendedor.get(t.vendedorId) ?? 0) + 1);
+            } else if (t.isWinner) {
+              // Count unpaid winning tickets
+              unpaidTicketsByVendedor.set(t.vendedorId, (unpaidTicketsByVendedor.get(t.vendedorId) ?? 0) + 1);
+            }
+
+            // Track ticket dates
+            const ticketDate = t.businessDate || t.createdAt;
+            const dateKey = new Date(ticketDate).toISOString().split('T')[0];
+            if (!ticketDatesByVendedor.has(t.vendedorId)) {
+              ticketDatesByVendedor.set(t.vendedorId, new Set());
+            }
+            ticketDatesByVendedor.get(t.vendedorId)!.add(dateKey);
+
+            // Track last and first ticket dates
+            const currentLast = lastTicketAtByVendedor.get(t.vendedorId);
+            if (!currentLast || ticketDate > currentLast) {
+              lastTicketAtByVendedor.set(t.vendedorId, ticketDate);
+            }
+
+            const currentFirst = firstTicketAtByVendedor.get(t.vendedorId);
+            if (!currentFirst || ticketDate < currentFirst) {
+              firstTicketAtByVendedor.set(t.vendedorId, ticketDate);
             }
           });
+
 
           return result.map((r) => {
             const vendedor = vendedorMap.get(r.vendedorId);
             const ventasTotal = r._sum.totalAmount ?? 0;
             const payoutTotal = payoutByVendedor.get(r.vendedorId) ?? 0;
             const commissionTotal = commissionByVendedor.get(r.vendedorId) ?? 0;
+            const ticketsCount = r._count.id;
+            const winningTicketsCount = winningTicketsByVendedor.get(r.vendedorId) ?? 0;
+            const paidTicketsCount = paidTicketsByVendedor.get(r.vendedorId) ?? 0;
+            const unpaidTicketsCount = unpaidTicketsByVendedor.get(r.vendedorId) ?? 0;
+            const totalPaid = totalPaidByVendedor.get(r.vendedorId) ?? 0;
+            const pendingPayment = pendingPaymentByVendedor.get(r.vendedorId) ?? 0;
+            
+            // Calcular métricas derivadas
+            const avgTicketAmount = ticketsCount > 0 ? ventasTotal / ticketsCount : 0;
+            const winRate = ticketsCount > 0 ? (winningTicketsCount / ticketsCount) * 100 : 0;
+            const payoutRate = ventasTotal > 0 ? (payoutTotal / ventasTotal) * 100 : 0;
+            const activityDays = ticketDatesByVendedor.get(r.vendedorId)?.size ?? 0;
+            
+            const lastTicketAt = lastTicketAtByVendedor.get(r.vendedorId);
+            const firstTicketAt = firstTicketAtByVendedor.get(r.vendedorId);
+
             return {
               key: r.vendedorId,
               name: vendedor?.name ?? "Desconocido",
               ventasTotal,
-              ticketsCount: r._count.id,
+              ticketsCount,
               payoutTotal,
               neto: ventasTotal - payoutTotal,
               commissionTotal,
-              totalWinningTickets: winningTicketsByVendedor.get(r.vendedorId) ?? 0,
-              totalPaidTickets: paidTicketsByVendedor.get(r.vendedorId) ?? 0,
+              totalWinningTickets: winningTicketsCount,
+              totalPaidTickets: paidTicketsCount,
+              // Campos adicionales para vendedor
+              winningTicketsCount,
+              paidTicketsCount,
+              unpaidTicketsCount,
+              totalPaid,
+              pendingPayment,
+              avgTicketAmount: Math.round(avgTicketAmount * 100) / 100, // Redondear a 2 decimales
+              winRate: Math.round(winRate * 100) / 100, // Redondear a 2 decimales
+              payoutRate: Math.round(payoutRate * 100) / 100, // Redondear a 2 decimales
+              commissionAmount: commissionTotal, // Alias para consistencia con propuesta
+              lastTicketAt: lastTicketAt ? lastTicketAt.toISOString() : undefined,
+              firstTicketAt: firstTicketAt ? firstTicketAt.toISOString() : undefined,
+              activityDays,
+              vendedorCode: vendedor?.code ?? undefined,
+              status: vendedor?.isActive ? 'active' : 'inactive' as 'active' | 'inactive',
+              ventanaName: vendedor?.ventana?.name ?? undefined,
             };
           });
         }
