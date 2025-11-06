@@ -562,7 +562,7 @@ export const CommissionsService = {
             multiplierId: m.multiplierId,
             multiplierName: m.multiplierName,
             multiplierPercentage: m.commissionCount > 0
-              ? Math.round((m.commissionSum / m.commissionCount) * 100) / 100
+              ? Math.round(m.commissionSum / m.commissionCount)
               : 0,
             totalSales: m.totalSales,
             totalTickets: m.totalTickets.size,
@@ -706,7 +706,8 @@ export const CommissionsService = {
         }
         
         // Para VENDEDOR: usar el porcentaje y monto almacenado (del vendedor)
-        const multiplierPercentage = Math.round((row.commission_percent || 0) * 100) / 100;
+        // commission_percent ya está en formato 0-100, redondear a entero
+        const multiplierPercentage = Math.round(row.commission_percent || 0);
         const totalCommission = parseFloat(row.total_commission);
         
         const multiplier = {
@@ -936,7 +937,7 @@ export const CommissionsService = {
               ticketNumber: row.ticket_number,
               totalAmount: row.total_amount,
               commissionAmount: ticketCommissions.totalCommission,
-              commissionPercentage: Math.round(avgPercent * 100) / 100,
+              commissionPercentage: Math.round(avgPercent),
               createdAt: row.created_at.toISOString(),
               vendedorName: row.vendedor_name || undefined,
               ventanaName: row.ventana_name || undefined,
@@ -947,13 +948,14 @@ export const CommissionsService = {
       }
 
       // Para VENDEDOR: usar los valores almacenados (del vendedor)
+      // commission_percent ya está en formato 0-100, redondear a entero
       return {
         data: data.map((row) => ({
           ticketId: row.ticket_id,
           ticketNumber: row.ticket_number,
           totalAmount: row.total_amount,
           commissionAmount: row.commission_amount,
-          commissionPercentage: Math.round((row.commission_percent || 0) * 100) / 100,
+          commissionPercentage: Math.round(row.commission_percent || 0),
           createdAt: row.created_at.toISOString(),
           vendedorName: row.vendedor_name || undefined,
           ventanaName: row.ventana_name || undefined,

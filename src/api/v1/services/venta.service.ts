@@ -766,6 +766,9 @@ export const VentasService = {
         whereConditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}` : Prisma.empty;
 
       // Query SQL crudo para agrupar por time bucket con comisiones
+      // IMPORTANTE: Usar t."totalCommission" en lugar de SUM(j."commissionAmount")
+      // para evitar duplicación cuando un ticket tiene múltiples jugadas
+      // El LEFT JOIN con Jugada haría que SUM(t."totalAmount") se multiplique por número de jugadas
       const result = await prisma.$queryRaw<
         Array<{
           ts: Date;
@@ -778,12 +781,11 @@ export const VentasService = {
           DATE_TRUNC(${truncFormat}, t."createdAt") as ts,
           SUM(t."totalAmount")::text as "ventasTotal",
           COUNT(DISTINCT t.id)::text as "ticketsCount",
-          COALESCE(SUM(j."commissionAmount"), 0)::text as "commissionTotal"
+          COALESCE(SUM(t."totalCommission"), 0)::text as "commissionTotal"
         FROM "Ticket" t
-        LEFT JOIN "Jugada" j ON j."ticketId" = t.id
         ${whereClause}
         GROUP BY ts
-        ORDER BY ts ASC
+        ORDER BY ts DESC
       `;
 
       logger.info({
