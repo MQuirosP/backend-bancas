@@ -1,3 +1,77 @@
+## 🚀 v1.1.1 - Accounts Statement Fixes & Restrictions Array Support
+
+📅 **Fecha:** 2025-11-06
+🔖 **Rama:** `master`
+
+### 🐛 Bug Fixes (CRÍTICOS)
+
+- **Cálculo incorrecto de `totalPayouts` en accounts statement**
+  - Antes: Usaba `totalPaid` de tickets (lo pagado, no lo ganado)
+  - Ahora: Usa `payout` de jugadas ganadoras (total de premios ganados)
+  - Impacto: Corrige el cálculo de `balance` y `remainingBalance` en estados de cuenta
+  - Afecta: `/api/v1/accounts/statement`
+
+- **Lógica incorrecta de `isSettled` en accounts statement**
+  - Antes: Marcaba como saldado si `remainingBalance ≈ 0`, incluso sin pagos registrados
+  - Ahora: Solo marca como saldado si hay pagos/cobros registrados (`totalPaid > 0` o `totalCollected > 0`)
+  - Impacto: Evita confusión cuando un listero ve su propio estado de cuenta (no puede registrar pagos de sí mismo)
+  - Afecta: `/api/v1/accounts/statement`
+
+- **Cálculo incorrecto de comisiones del listero cuando `dimension=ventana`**
+  - Antes: Recalculaba comisiones para todas las jugadas, incluso si ya estaban guardadas
+  - Ahora: Usa `commissionOrigin` para optimizar:
+    - Si `commissionOrigin === "VENTANA"` o `"BANCA"`: usa directamente `commissionAmount`
+    - Si `commissionOrigin === "USER"`: calcula comisión de la ventana usando políticas
+  - Impacto: Muestra correctamente las comisiones del listero en estados de cuenta
+  - Afecta: `/api/v1/accounts/statement?dimension=ventana`
+
+- **Comisiones excluían jugadas no ganadoras**
+  - Antes: Filtraba solo jugadas ganadoras (`isWinner: true`) para calcular comisiones
+  - Ahora: Incluye TODAS las jugadas (las comisiones se aplican a todas, no solo a ganadoras)
+  - Impacto: Los montos de comisiones ahora coinciden con el dashboard (`admin/reportes/cuentas`)
+  - Afecta: `/api/v1/accounts/statement`
+
+### ✳️ Nuevas funcionalidades
+
+- **Soporte para array de números en restricciones**
+  - Endpoint `POST /api/v1/restrictions` ahora acepta `number` como `string | string[]`
+  - Permite crear múltiples restricciones con la misma regla para diferentes números en una sola operación
+  - Validaciones: formato (00-99), sin duplicados, máximo 100 elementos
+  - Compatibilidad legacy: sigue aceptando `number` como `string`
+  - Endpoint `PATCH /api/v1/restrictions/:id` solo acepta `string` (no array) según recomendación
+  - Documentación: `docs/BACKEND_RESTRICTIONS_NUMBERS_ARRAY.md`
+
+### ⚙️ Mejoras
+
+- **Optimización de cálculo de comisiones**
+  - Usa `commissionOrigin` para evitar recálculos innecesarios
+  - Separa jugadas por origen de comisión para procesamiento eficiente
+  - Reduce consultas a la base de datos cuando las comisiones ya están guardadas
+
+- **Mejora en lógica de `isSettled`**
+  - Validación más estricta: requiere pagos registrados para marcar como saldado
+  - Evita confusión cuando no hay movimientos registrados
+  - Mejora la experiencia del usuario al ver estados de cuenta
+
+### 📦 Archivos modificados
+
+- `src/api/v1/services/accounts.service.ts` - Correcciones en cálculo de comisiones y `isSettled`
+- `src/api/v1/validators/restrictionRule.validator.ts` - Soporte para array de números
+- `src/api/v1/dto/restrictionRule.dto.ts` - Actualización de tipos
+- `src/api/v1/services/restrictionRule.service.ts` - Lógica para crear múltiples restricciones
+
+### 🧪 Checklist de validación
+
+- ✅ `totalPayouts` calculado correctamente (payout de jugadas ganadoras)
+- ✅ `isSettled` solo `true` cuando hay pagos registrados
+- ✅ Comisiones del listero correctas cuando `dimension=ventana`
+- ✅ Comisiones incluyen todas las jugadas (no solo ganadoras)
+- ✅ Montos de comisiones coinciden con dashboard
+- ✅ Soporte para array de números en restricciones funciona correctamente
+- ✅ Compatibilidad legacy mantenida (string sigue funcionando)
+
+---
+
 ## 🚀 v1.1.0 - Dashboard API, Payment Tracking & RBAC Security Fixes
 
 📅 **Fecha:** 2025-10-29

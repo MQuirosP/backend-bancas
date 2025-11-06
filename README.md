@@ -495,6 +495,10 @@ Sistema de control de acceso basado en roles con validación jerárquica.
 - Limita montos por número o por ticket.
 - Prioridad: **User (100) > Ventana (10) > Banca (1)**.
 - Soporta `appliesToDate` y `appliesToHour`.
+- **Nuevo en v1.1.1**: Soporte para array de números en `POST /api/v1/restrictions`
+  - Permite crear múltiples restricciones en una sola operación
+  - Formato: `number: ["00", "01", "23"]` o `number: "00"` (legacy)
+  - Validación: números de 2 dígitos (00-99), sin duplicados, máximo 100 elementos
 
 ---
 
