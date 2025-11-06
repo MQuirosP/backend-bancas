@@ -1,117 +1,84 @@
-import { z } from 'zod';
+// src/api/v1/validators/accounts.validator.ts
+import { z } from "zod";
+import { validateQuery, validateBody } from "../../../middlewares/validate.middleware";
 
-export const listAccountsQuerySchema = z.object({
-  ownerType: z.enum(['BANCA', 'VENTANA', 'VENDEDOR']).optional(),
-  ownerId: z.string().optional(),
-  isActive: z.enum(['true', 'false']).transform(v => v === 'true').optional(),
-  page: z.string().default('1').transform(v => parseInt(v, 10)),
-  pageSize: z.string().default('20').transform(v => parseInt(v, 10)),
-});
+/**
+ * Schema para query parameters de GET /accounts/statement
+ */
+export const GetStatementQuerySchema = z
+  .object({
+    month: z.string().regex(/^\d{4}-\d{2}$/, "El mes debe ser en formato YYYY-MM"),
+    scope: z.enum(["mine", "ventana", "all"]),
+    dimension: z.enum(["ventana", "vendedor"]),
+    ventanaId: z.string().uuid().optional(),
+    vendedorId: z.string().uuid().optional(),
+    sort: z.enum(["asc", "desc"]).optional().default("desc"),
+  })
+  .strict();
 
-// UUID validation helper
-const uuidSchema = z.string().uuid('Invalid account ID format');
+/**
+ * Schema para body de POST /accounts/payment
+ */
+export const CreatePaymentBodySchema = z
+  .object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD"),
+    ventanaId: z.string().uuid().optional(),
+    vendedorId: z.string().uuid().optional(),
+    amount: z.number().positive("El monto debe ser positivo"),
+    type: z.enum(["payment", "collection"]),
+    method: z.enum(["cash", "transfer", "check", "other"]),
+    notes: z.string().optional(),
+    isFinal: z.boolean().optional().default(false),
+    idempotencyKey: z.string().uuid().optional(),
+  })
+  .refine(
+    (data) => {
+      // Debe tener ventanaId o vendedorId, pero no ambos
+      return (data.ventanaId && !data.vendedorId) || (!data.ventanaId && data.vendedorId);
+    },
+    {
+      message: "Debe proporcionar ventanaId o vendedorId, pero no ambos",
+    }
+  )
+  .strict();
 
-export const getAccountDetailsParamsSchema = z.object({
-  accountId: uuidSchema,
-});
+/**
+ * Schema para query parameters de GET /accounts/payment-history
+ */
+export const GetPaymentHistoryQuerySchema = z
+  .object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD"),
+    ventanaId: z.string().uuid().optional(),
+    vendedorId: z.string().uuid().optional(),
+  })
+  .strict();
 
-export const getBalanceParamsSchema = z.object({
-  accountId: uuidSchema,
-});
+/**
+ * Schema para body de POST /accounts/reverse-payment
+ */
+export const ReversePaymentBodySchema = z
+  .object({
+    paymentId: z.string().uuid("El ID del pago debe ser un UUID válido"),
+    reason: z.string().min(5, "La razón debe tener al menos 5 caracteres").optional(),
+  })
+  .strict();
 
-export const listLedgerEntriesQuerySchema = z.object({
-  accountId: uuidSchema,
-  type: z.string().optional().transform(v => v?.split(',').filter(Boolean)),
-  from: z.string().optional().transform(v => v ? new Date(v) : undefined),
-  to: z.string().optional().transform(v => v ? new Date(v) : undefined),
-  referenceType: z.string().optional(),
-  page: z.string().default('1').transform(v => parseInt(v, 10)),
-  pageSize: z.string().default('20').transform(v => parseInt(v, 10)),
-  sort: z.enum(['date', 'createdAt']).default('date'),
-  order: z.enum(['asc', 'desc']).default('desc'),
-});
+/**
+ * Middleware de validación para GET /accounts/statement
+ */
+export const validateGetStatementQuery = validateQuery(GetStatementQuerySchema);
 
-export const getBalanceSummaryParamsSchema = z.object({
-  accountId: uuidSchema,
-});
+/**
+ * Middleware de validación para POST /accounts/payment
+ */
+export const validateCreatePaymentBody = validateBody(CreatePaymentBodySchema);
 
-export const getDailySnapshotsQuerySchema = z.object({
-  accountId: uuidSchema,
-  from: z.string().transform(v => new Date(v)),
-  to: z.string().transform(v => new Date(v)),
-});
+/**
+ * Middleware de validación para GET /accounts/payment-history
+ */
+export const validateGetPaymentHistoryQuery = validateQuery(GetPaymentHistoryQuerySchema);
 
-export const addSaleEntrySchema = z.object({
-  ticketId: z.string().min(1),
-  amount: z.number().positive(),
-  requestId: z.string().optional(),
-});
-
-export const addCommissionEntrySchema = z.object({
-  saleAmount: z.number().positive(),
-  commissionRate: z.number().min(0).max(1),
-  ticketId: z.string().min(1),
-  requestId: z.string().optional(),
-});
-
-export const addPayoutEntrySchema = z.object({
-  amount: z.number().positive(),
-  payoutId: z.string().min(1),
-  reason: z.string().optional(),
-  requestId: z.string().optional(),
-});
-
-export const createBankDepositSchema = z.object({
-  date: z.string().transform(v => new Date(v)),
-  docNumber: z.string().min(1),
-  amount: z.number().positive(),
-  bankName: z.string().optional(),
-  note: z.string().optional(),
-  receiptUrl: z.string().url().optional(),
-  requestId: z.string().optional(),
-});
-
-export const reverseEntrySchema = z.object({
-  reason: z.string().min(1),
-  requestId: z.string().optional(),
-});
-
-export const createDailySnapshotSchema = z.object({
-  date: z.string().transform(v => new Date(v)),
-  opening: z.number(),
-  debit: z.number(),
-  credit: z.number(),
-  closing: z.number(),
-});
-
-export const updateAccountSchema = z.object({
-  isActive: z.boolean().optional(),
-});
-
-export const createPaymentDocumentSchema = z.object({
-  fromAccountId: uuidSchema,
-  toAccountId: uuidSchema,
-  amount: z.number().positive(),
-  docNumber: z.string().min(1),
-  date: z.string().transform(v => new Date(v)),
-  description: z.string().optional(),
-  receiptUrl: z.string().url().optional(),
-  requestId: z.string().optional(),
-});
-
-export const createAccountSchema = z.object({
-  ownerType: z.enum(['BANCA', 'VENTANA', 'VENDEDOR']),
-  ownerId: z.string().min(1),
-  currency: z.string().default('CRC'),
-  initialBalance: z.number().optional(),
-  initialBalanceNote: z.string().optional(),
-});
-
-export const closeDaySchema = z.object({
-  date: z.string().transform(v => new Date(v)),
-});
-
-export const getDailySummarySchema = z.object({
-  accountId: uuidSchema,
-  date: z.string().transform(v => new Date(v)),
-});
+/**
+ * Middleware de validación para POST /accounts/reverse-payment
+ */
+export const validateReversePaymentBody = validateBody(ReversePaymentBodySchema);

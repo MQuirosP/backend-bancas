@@ -50,6 +50,10 @@ export const UserController = {
       role: (req.query.role as Role) ?? undefined,
       search:
         typeof req.query.search === "string" ? req.query.search : undefined,
+      isActive:
+        req.query.isActive !== undefined
+          ? String(req.query.isActive) === "true"
+          : undefined,
     };
 
     // Scoping por rol: VENTANA solo ve sus vendedores activos

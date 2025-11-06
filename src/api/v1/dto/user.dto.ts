@@ -30,4 +30,5 @@ export interface ListUsersQuery {
   pageSize?: number;
   role?: Role;
   search?: string;
+  isActive?: boolean;
 }

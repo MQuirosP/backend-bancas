@@ -3,7 +3,7 @@ import { Prisma, TicketStatus } from "@prisma/client";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { withTransactionRetry } from "../core/withTransactionRetry";
-import CommissionResolver, { resolveCommissionFromPolicy } from "../services/commission/commission.resolver";
+import { resolveCommission } from "../services/commission.resolver";
 import { getBusinessDateCRInfo, getCRDayRangeUTC } from "../utils/businessDate";
 
 type CreateTicketInput = {
@@ -607,28 +607,32 @@ export const TicketRepository = {
         // Normalizar clienteNombre: trim y default "CLIENTE CONTADO"
         const normalizedClienteNombre = (clienteNombre?.trim() || "CLIENTE CONTADO");
 
-        // Precalcular snapshot de comisión por jugada con policy del usuario (solo USER)
+        // Obtener políticas de comisión jerárquica (USER → VENTANA → BANCA)
         const userPolicy = (user?.commissionPolicyJson ?? null) as any;
+        const ventanaPolicy = (ventana?.commissionPolicyJson ?? null) as any;
+        const bancaPolicy = (ventana?.banca?.commissionPolicyJson ?? null) as any;
         
         // Calcular comisiones para cada jugada y acumular totalCommission
         const jugadasWithCommissions = preparedJugadas.map((j) => {
-          // Resolver comisión únicamente desde policy del USER
-          const res = resolveCommissionFromPolicy(userPolicy, {
-            userId,
-            loteriaId,
-            betType: j.type,
-            finalMultiplierX: j.finalMultiplierX,
-          });
-
-          const commissionPercent = Math.round(res.percent); // normalizar entero
-          const commissionAmount = Math.round((j.amount * commissionPercent) / 100);
+          // Resolver comisión con prioridad jerárquica: USER → VENTANA → BANCA
+          const res = resolveCommission(
+            {
+              loteriaId,
+              betType: j.type,
+              finalMultiplierX: j.finalMultiplierX,
+              amount: j.amount,
+            },
+            userPolicy,
+            ventanaPolicy,
+            bancaPolicy
+          );
 
           // Guardar para ActivityLog
           commissionsDetails.push({
-            origin: res.origin,
-            ruleId: res.ruleId ?? null,
-            percent: commissionPercent,
-            amount: commissionAmount,
+            origin: res.commissionOrigin,
+            ruleId: res.commissionRuleId ?? null,
+            percent: res.commissionPercent,
+            amount: res.commissionAmount,
             loteriaId,
             betType: j.type,
             multiplierX: j.finalMultiplierX,
@@ -641,10 +645,10 @@ export const TicketRepository = {
             reventadoNumber: j.reventadoNumber ?? null,
             amount: j.amount,
             finalMultiplierX: j.finalMultiplierX,
-            commissionPercent,
-            commissionAmount,
-            commissionOrigin: 'USER',
-            commissionRuleId: res.ruleId ?? null,
+            commissionPercent: res.commissionPercent,
+            commissionAmount: res.commissionAmount,
+            commissionOrigin: res.commissionOrigin,
+            commissionRuleId: res.commissionRuleId ?? null,
             ...(j.multiplierId
               ? { multiplier: { connect: { id: j.multiplierId } } }
               : {}),
