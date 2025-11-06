@@ -161,7 +161,7 @@ export const AccountPaymentRepository = {
 
   /**
    * Obtiene total pagado (solo payments) de un statement
-   * Según el documento: remainingBalance = baseBalance - totalPaid + totalCollected
+   * Fórmula correcta: remainingBalance = baseBalance - totalCollected + totalPaid
    * Este método retorna solo totalPaid (suma de payments)
    */
   async getTotalPaid(accountStatementId: string) {
@@ -181,7 +181,7 @@ export const AccountPaymentRepository = {
 
   /**
    * Obtiene total cobrado (solo collections) de un statement
-   * Según el documento: remainingBalance = baseBalance - totalPaid + totalCollected
+   * Fórmula correcta: remainingBalance = baseBalance - totalCollected + totalPaid
    */
   async getTotalCollected(accountStatementId: string) {
     const collections = await prisma.accountPayment.findMany({
