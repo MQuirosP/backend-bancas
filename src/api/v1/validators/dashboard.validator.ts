@@ -46,6 +46,9 @@ export const DashboardQuerySchema = z
 
     // Cache
     refresh: z.enum(["true", "false"]).transform(v => v === "true").optional(),
+
+    // Para evitar caché del navegador (ignorado)
+    _: z.string().optional(),
   })
   .strict();
 

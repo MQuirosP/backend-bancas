@@ -129,6 +129,7 @@ export const listUsersQuerySchema = z
       .optional()
       .transform((v) => (v && v.length > 0 ? v : undefined)),
     isActive: z.coerce.boolean().optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
 

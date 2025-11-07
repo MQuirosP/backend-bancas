@@ -61,6 +61,7 @@ export const ListVentanasQuerySchema = z
     pageSize: z.coerce.number().int().min(1).max(100).optional(),
     search: z.string().trim().min(1).max(100).optional(),
     isActive: z.coerce.boolean().optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
     // si más adelante agregas bancaId como filtro:
     // bancaId: z.string().uuid().optional(),
   })

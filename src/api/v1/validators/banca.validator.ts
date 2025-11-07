@@ -28,6 +28,7 @@ export const ListBancasQuerySchema = z.object({
       .max(100, 'Máximo 100 caracteres')
       .optional(),
   isActive: z.coerce.boolean().optional(),
+  _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
 
 export const ReasonBodySchema = z.object({

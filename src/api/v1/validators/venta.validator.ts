@@ -30,6 +30,7 @@ export const ListVentasQuerySchema = z
     sorteoId: z.uuid().optional(),
     search: z.string().trim().min(1).max(100).optional(),
     orderBy: z.string().optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
 
@@ -53,6 +54,7 @@ export const VentasSummaryQuerySchema = z
     vendedorId: z.uuid().optional(),
     loteriaId: z.uuid().optional(),
     sorteoId: z.uuid().optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
 
@@ -80,6 +82,7 @@ export const VentasBreakdownQuerySchema = z
     vendedorId: z.uuid().optional(),
     loteriaId: z.uuid().optional(),
     sorteoId: z.uuid().optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
 
@@ -105,6 +108,7 @@ export const VentasTimeseriesQuerySchema = z
     vendedorId: z.uuid().optional(),
     loteriaId: z.uuid().optional(),
     sorteoId: z.uuid().optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
 
@@ -119,6 +123,7 @@ export const FacetsQuerySchema = z
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
 

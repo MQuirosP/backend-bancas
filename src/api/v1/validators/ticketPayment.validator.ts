@@ -64,6 +64,7 @@ export const ListPaymentsQuerySchema = z.object({
   // Ordenamiento
   sortBy: z.enum(['createdAt', 'amountPaid', 'updatedAt']).optional().default('createdAt'),
   sortOrder: z.enum(['asc', 'desc']).optional().default('desc'),
+  _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
 
 export type ListPaymentsQuery = z.infer<typeof ListPaymentsQuerySchema>;

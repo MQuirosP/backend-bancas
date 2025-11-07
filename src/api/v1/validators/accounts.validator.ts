@@ -13,6 +13,7 @@ export const GetStatementQuerySchema = z
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
     sort: z.enum(["asc", "desc"]).optional().default("desc"),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
 
@@ -50,6 +51,7 @@ export const GetPaymentHistoryQuerySchema = z
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD"),
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
 
