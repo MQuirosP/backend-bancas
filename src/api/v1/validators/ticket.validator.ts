@@ -68,6 +68,7 @@ export const ListTicketsQuerySchema = z
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
 

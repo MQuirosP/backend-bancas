@@ -20,6 +20,7 @@ export const CommissionsListQuerySchema = z
     // Filtros opcionales (solo para ADMIN)
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
   .refine(
@@ -52,6 +53,7 @@ export const CommissionsDetailQuerySchema = z
     // Filtros opcionales (solo para ADMIN)
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
 
@@ -79,6 +81,7 @@ export const CommissionsTicketsQuerySchema = z
     // Paginación
     page: z.coerce.number().int().min(1).optional().default(1),
     pageSize: z.coerce.number().int().min(1).max(100).optional().default(20),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
 

@@ -25,6 +25,7 @@ const BaseCierreQuerySchema = z.object({
     .optional()
     .default('all')
     .describe('Alcance: mine (mi ventana) o all (global)'),
+  _: z.string().optional().describe('Para evitar caché del navegador (ignorado)'),
 });
 
 /**

@@ -31,4 +31,5 @@ export const ListVendedoresQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
   search: z.string().trim().min(1).optional(),
   ventanaId: z.uuid("ventanaId inválido").optional(),
+  _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();

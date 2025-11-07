@@ -21,12 +21,14 @@ export const listLoteriaQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
   isActive: z.coerce.boolean().optional(),
   search: z.string().trim().min(1).max(100).optional(),
+  _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
 
 export const previewScheduleQuerySchema = z.object({
   start: z.coerce.date().optional(),             // ISO opcional; default = ahora
   days: z.coerce.number().int().min(1).max(31).optional(),   // default 7
-  limit: z.coerce.number().int().min(1).max(1000).optional() // top 200 por default
+  limit: z.coerce.number().int().min(1).max(1000).optional(), // top 200 por default
+  _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
 
 // Body para seed_sorteos: subset de fechas específicas (ISO). Opcional.

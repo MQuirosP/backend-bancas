@@ -133,6 +133,7 @@ export const ListRestrictionRuleQuerySchema = z.object({
 
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
 
 // opcional: body para delete/restore
