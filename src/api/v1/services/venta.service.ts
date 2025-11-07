@@ -173,7 +173,14 @@ export const VentasService = {
    * 2) Resumen ejecutivo (KPI)
    * GET /ventas/summary
    */
-  async summary(filters: VentasFilters = {}): Promise<{
+  async summary(
+    filters: VentasFilters = {},
+    options?: {
+      userId?: string;
+      role?: string;
+      scope?: string;
+    }
+  ): Promise<{
     ventasTotal: number;
     ticketsCount: number;
     jugadasCount: number;
@@ -187,6 +194,8 @@ export const VentasService = {
     remainingAmount: number;     // Pendiente de pago (antes totalPending)
     paidTicketsCount: number;    // Tickets completamente pagados
     unpaidTicketsCount: number;  // Tickets con pago pendiente
+    // Campos adicionales solo para VENDEDOR con scope='mine' (opcionales)
+    pendingPayment?: number;     // Total pendiente de pago en tickets EVALUATED
   }> {
     try {
       const where = buildWhereClause(filters);
@@ -260,6 +269,27 @@ export const VentasService = {
       const neto = ventasTotal - payoutTotal;
       const netoDespuesComision = neto - commissionTotal;
 
+      // Calcular pendingPayment solo para VENDEDOR con scope='mine'
+      // pendingPayment = suma de remainingAmount de tickets con isWinner=true y status='EVALUATED'
+      let pendingPayment: number | undefined = undefined;
+      if (options?.role === 'VENDEDOR' && options?.scope === 'mine' && options?.userId) {
+        const evaluatedWinnerWhere = {
+          ...where,
+          isWinner: true,
+          status: 'EVALUATED' as const,
+          vendedorId: options.userId, // Asegurar que es del vendedor
+        };
+
+        const evaluatedStats = await prisma.ticket.aggregate({
+          where: evaluatedWinnerWhere,
+          _sum: {
+            remainingAmount: true,
+          },
+        });
+
+        pendingPayment = evaluatedStats._sum.remainingAmount ?? 0;
+      }
+
       logger.info({
         layer: "service",
         action: "VENTA_SUMMARY",
@@ -271,11 +301,13 @@ export const VentasService = {
           totalPaid,
           remainingAmount,
           paidTicketsCount: paidCount,
-          unpaidTicketsCount: unpaidCount
+          unpaidTicketsCount: unpaidCount,
+          pendingPayment,
+          isVendedorMine: options?.role === 'VENDEDOR' && options?.scope === 'mine',
         },
       });
 
-      return {
+      const result: any = {
         ventasTotal,
         ticketsCount: ticketsAgg._count.id,
         jugadasCount: jugadasAgg._count.id,
@@ -290,6 +322,13 @@ export const VentasService = {
         paidTicketsCount: paidCount,
         unpaidTicketsCount: unpaidCount,
       };
+
+      // Agregar campos adicionales solo para VENDEDOR con scope='mine'
+      if (options?.role === 'VENDEDOR' && options?.scope === 'mine') {
+        result.pendingPayment = pendingPayment;
+      }
+
+      return result;
     } catch (err: any) {
       logger.error({
         layer: "service",
