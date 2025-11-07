@@ -128,7 +128,16 @@ export const VentaController = {
       dateTo: dateRange.toAt
     };
 
-    const result = await VentasService.summary(filters);
+    // Determinar si es scope='mine' para VENDEDOR
+    // Cuando el usuario es VENDEDOR, applyRbacFilters automáticamente filtra por vendedorId = userId
+    // Esto es equivalente a scope='mine'
+    const scope = req.user!.role === 'VENDEDOR' ? 'mine' : rest.scope || 'all';
+
+    const result = await VentasService.summary(filters, {
+      userId: req.user!.id,
+      role: req.user!.role,
+      scope,
+    });
 
     req.logger?.info({
       layer: "controller",
