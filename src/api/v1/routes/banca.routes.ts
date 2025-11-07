@@ -26,6 +26,14 @@ router.put(
   BancaController.update
 );
 
+router.patch(
+  "/:id",
+  requireAdmin,
+  validateParams(BancaIdParamSchema),
+  validateBody(UpdateBancaSchema),
+  BancaController.update
+);
+
 router.delete(
   "/:id",
   requireAdmin,
