@@ -13,24 +13,42 @@ type VentanaCreateParams = {
   phone?: string;
   email?: string;
   isActive?: boolean;
+  settings?: Record<string, any> | null;
 };
 
-type VentanaUpdateParams = Partial<VentanaCreateParams>;
+type VentanaUpdateParams = Partial<Omit<VentanaCreateParams, "bancaId" | "code">> & {
+  code?: string | null;
+  settings?: Record<string, any> | null;
+};
+
+function mapSettingsValue(
+  settings: Record<string, any> | null | undefined
+): Prisma.NullableJsonNullValueInput | Prisma.InputJsonValue | undefined {
+  if (settings === undefined) return undefined;
+  return settings === null ? Prisma.JsonNull : (settings as Prisma.InputJsonValue);
+}
 
 const VentanaRepository = {
   async create(data: VentanaCreateParams) {
-    const ventana = await prisma.ventana.create({
-      data: {
-        name: data.name,
-        code: data.code,
-        commissionMarginX: data.commissionMarginX,
-        address: data.address,
-        phone: data.phone,
-        email: data.email,
-        isActive: data.isActive ?? true,
-        banca: { connect: { id: data.bancaId } },
-      },
-    });
+    const createData: Prisma.VentanaCreateInput = {
+      name: data.name,
+      code: data.code,
+      commissionMarginX: data.commissionMarginX,
+      address: data.address ?? null,
+      phone: data.phone ?? null,
+      email: data.email ?? null,
+      isActive: data.isActive ?? true,
+      banca: { connect: { id: data.bancaId } },
+    };
+
+    if (data.settings !== undefined) {
+      const settingsValue = mapSettingsValue(data.settings);
+      if (settingsValue !== undefined) {
+        createData.settings = settingsValue;
+      }
+    }
+
+    const ventana = await prisma.ventana.create({ data: createData });
     logger.info({
       layer: "repository",
       action: "VENTANA_CREATE_DB",
@@ -54,9 +72,26 @@ const VentanaRepository = {
   },
 
   async update(id: string, data: VentanaUpdateParams) {
+    const updateData: Prisma.VentanaUpdateInput = {};
+
+    if (data.name !== undefined) updateData.name = data.name;
+    if (data.code !== undefined) updateData.code = data.code ?? undefined;
+    if (data.commissionMarginX !== undefined) updateData.commissionMarginX = data.commissionMarginX;
+    if (data.address !== undefined) updateData.address = data.address ?? null;
+    if (data.phone !== undefined) updateData.phone = data.phone ?? null;
+    if (data.email !== undefined) updateData.email = data.email ?? null;
+    if (data.isActive !== undefined) updateData.isActive = data.isActive;
+
+    if (data.settings !== undefined) {
+      const settingsValue = mapSettingsValue(data.settings);
+      if (settingsValue !== undefined) {
+        updateData.settings = settingsValue;
+      }
+    }
+
     const ventana = await prisma.ventana.update({
       where: { id },
-      data,
+      data: updateData,
     });
     logger.info({
       layer: "repository",

@@ -7,6 +7,7 @@ export type CreateVentanaInput = {
   phone?: string;
   email?: string;
   isActive?: boolean;
+  settings?: Record<string, any> | null;
 };
 
 export type UpdateVentanaInput = Partial<CreateVentanaInput>;

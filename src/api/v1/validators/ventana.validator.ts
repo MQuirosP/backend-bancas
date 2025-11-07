@@ -1,5 +1,28 @@
 import { z } from "zod";
 
+const emptyToNull = (value: unknown) => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  return value;
+};
+
+const PrintSettingsSchema = z
+  .object({
+    name: z.string().trim().max(100).nullable().optional(),
+    phone: z.string().trim().max(32).nullable().optional(),
+    width: z.union([z.literal(58), z.literal(88)]).nullable().optional(),
+    footer: z.string().trim().max(200).nullable().optional(),
+    barcode: z.boolean().nullable().optional(),
+  })
+  .strict();
+
+const VentanaSettingsSchema = z
+  .object({
+    print: PrintSettingsSchema.optional(),
+    theme: z.enum(["light", "dark"]).nullable().optional(),
+  })
+  .strict();
+
 export const VentanaIdParamSchema = z
   .object({
     id: z.string().uuid("id inválido (UUID)"),
@@ -35,20 +58,21 @@ export const CreateVentanaSchema = z
       .max(255)
       .optional()
       .nullable()
-      .transform((v) => (v === "" ? null : (v ?? null))),
+      .transform(emptyToNull),
     phone: z
       .string()
       .trim()
       .max(20)
       .optional()
       .nullable()
-      .transform((v) => (v === "" ? null : (v ?? null))),
+      .transform(emptyToNull),
     email: z
       .email("email inválido")
       .trim()
       .optional()
       .nullable()
       .transform((v) => (v === "" ? null : (v ?? null))),
+    settings: VentanaSettingsSchema.nullable().optional(),
   })
   .strict();
 

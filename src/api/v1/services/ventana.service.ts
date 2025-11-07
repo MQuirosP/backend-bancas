@@ -73,6 +73,7 @@ export const VentanaService = {
     }
 
     const toUpdate: any = { ...data };
+    delete toUpdate.bancaId;
 
     // settings: merge parcial con los settings existentes
     if ((data as any).settings !== undefined) {

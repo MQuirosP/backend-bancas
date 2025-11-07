@@ -1,0 +1,58 @@
+warning: in the working copy of 'src/api/v1/validators/ventana.validator.ts', CRLF will be replaced by LF the next time Git touches it
+[1mdiff --git a/src/api/v1/validators/ventana.validator.ts b/src/api/v1/validators/ventana.validator.ts[m
+[1mindex 4a7e9ec..3f2a27e 100644[m
+[1m--- a/src/api/v1/validators/ventana.validator.ts[m
+[1m+++ b/src/api/v1/validators/ventana.validator.ts[m
+[36m@@ -1,5 +1,28 @@[m
+ import { z } from "zod";[m
+ [m
+[32m+[m[32mconst emptyToNull = (value: unknown) => {[m
+[32m+[m[32m  if (value === undefined || value === null) return null;[m
+[32m+[m[32m  if (typeof value === "string" && value.trim() === "") return null;[m
+[32m+[m[32m  return value;[m
+[32m+[m[32m};[m
+[32m+[m
+[32m+[m[32mconst PrintSettingsSchema = z[m
+[32m+[m[32m  .object({[m
+[32m+[m[32m    name: z.string().trim().max(100).nullable().optional(),[m
+[32m+[m[32m    phone: z.string().trim().max(32).nullable().optional(),[m
+[32m+[m[32m    width: z.union([z.literal(58), z.literal(88)]).nullable().optional(),[m
+[32m+[m[32m    footer: z.string().trim().max(200).nullable().optional(),[m
+[32m+[m[32m    barcode: z.boolean().nullable().optional(),[m
+[32m+[m[32m  })[m
+[32m+[m[32m  .strict();[m
+[32m+[m
+[32m+[m[32mconst VentanaSettingsSchema = z[m
+[32m+[m[32m  .object({[m
+[32m+[m[32m    print: PrintSettingsSchema.optional(),[m
+[32m+[m[32m    theme: z.enum(["light", "dark"]).nullable().optional(),[m
+[32m+[m[32m  })[m
+[32m+[m[32m  .strict();[m
+[32m+[m
+ export const VentanaIdParamSchema = z[m
+   .object({[m
+     id: z.string().uuid("id inválido (UUID)"),[m
+[36m@@ -35,20 +58,21 @@[m [mexport const CreateVentanaSchema = z[m
+       .max(255)[m
+       .optional()[m
+       .nullable()[m
+[31m-      .transform((v) => (v === "" ? null : (v ?? null))),[m
+[32m+[m[32m      .transform(emptyToNull),[m
+     phone: z[m
+       .string()[m
+       .trim()[m
+       .max(20)[m
+       .optional()[m
+       .nullable()[m
+[31m-      .transform((v) => (v === "" ? null : (v ?? null))),[m
+[32m+[m[32m      .transform(emptyToNull),[m
+     email: z[m
+       .email("email inválido")[m
+       .trim()[m
+       .optional()[m
+       .nullable()[m
+       .transform((v) => (v === "" ? null : (v ?? null))),[m
+[32m+[m[32m    settings: VentanaSettingsSchema.nullable().optional(),[m
+   })[m
+   .strict();[m
+ [m
