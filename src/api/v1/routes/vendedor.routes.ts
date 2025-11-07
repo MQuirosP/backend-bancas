@@ -37,6 +37,14 @@ router.put(
   VendedorController.update
 );
 
+router.patch(
+  "/:id",
+  requireAdminOrVentana,
+  validateParams(VendedorIdParamSchema),
+  validateBody(UpdateVendedorSchema),
+  VendedorController.update
+);
+
 router.delete(
   "/:id",
   requireAdminOrVentana,
