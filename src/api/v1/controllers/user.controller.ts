@@ -48,54 +48,46 @@ export const UserController = {
   async list(req: Request, res: Response) {
     const currentUser = (req as any)?.user;
 
-    // --- Obtener isActive ya validado y parseado por el middleware Zod ---
-    // El middleware validateQuery ya ha convertido req.query.isActive a boolean
-    const isActiveParam: boolean | undefined = req.query.isActive as any;
+    // Valores directamente del query validado por Zod
+    let page = req.query.page ? Number(req.query.page) : 1;
+    let pageSize = req.query.pageSize ? Number(req.query.pageSize) : 10;
+    let role = (req.query.role as Role) ?? undefined;
+    let search = typeof req.query.search === "string" ? req.query.search : undefined;
+    let isActive = req.query.isActive as any; // Ya es boolean | undefined
 
-    const queryParams: any = {
-      page: req.query.page ? Number(req.query.page) : undefined,
-      pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
-      role: (req.query.role as Role) ?? undefined,
-      search:
-        typeof req.query.search === "string" ? req.query.search : undefined,
-      isActive: isActiveParam,
-    };
+    // Si es VENTANA: solo vendedores de su ventana
+    if (currentUser?.role === Role.VENTANA) {
+      role = Role.VENDEDOR;
 
-    // Scoping por rol: VENTANA solo ve sus vendedores activos (o el valor explícito)
-    if (currentUser && currentUser.role === Role.VENTANA) {
-      const hasExplicitIsActive = typeof isActiveParam === "boolean";
-      let ventanaId = currentUser.ventanaId || null;
+      // Si no especificó isActive, default = true
+      if (isActive === undefined) {
+        isActive = true;
+      }
 
+      // Obtener ventanaId
+      let ventanaId = currentUser.ventanaId;
       if (!ventanaId) {
-        const userWithVentana = await prisma.user.findUnique({
+        const user = await prisma.user.findUnique({
           where: { id: currentUser.id },
           select: { ventanaId: true },
         });
-        ventanaId = userWithVentana?.ventanaId ?? null;
-
-        if (ventanaId) {
-          (req as any)?.logger?.warn?.({
-            layer: "controller",
-            action: "VENTANA_ID_LOADED_FROM_DB",
-            userId: currentUser.id,
-            payload: { ventanaId },
-          });
-          currentUser.ventanaId = ventanaId;
-        }
+        ventanaId = user?.ventanaId ?? null;
       }
 
       if (!ventanaId) {
         throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
       }
 
-      Object.assign(queryParams, {
-        role: Role.VENDEDOR,
-        ventanaId,
-        isActive: hasExplicitIsActive ? isActiveParam : true,
+      const { data, meta } = await UserService.list({
+        page, pageSize, role, search, isActive, ventanaId,
       });
+      return success(res, data, meta);
     }
 
-    const { data, meta } = await UserService.list(queryParams);
+    // Si es ADMIN: sin restricciones
+    const { data, meta } = await UserService.list({
+      page, pageSize, role, search, isActive,
+    });
     return success(res, data, meta);
   }
   ,
