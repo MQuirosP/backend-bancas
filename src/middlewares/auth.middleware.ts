@@ -4,6 +4,7 @@ import { config } from "../config";
 import { AppError } from "../core/errors";
 import { AuthenticatedRequest } from "../core/types";
 import { Role } from "@prisma/client";
+import prisma from "../core/prismaClient";
 
 export const protect = (
   req: AuthenticatedRequest,
@@ -60,6 +61,112 @@ export const restrictToAdminOrSelf = (req: Request, _res: Response, next: NextFu
 
   if (!isAdmin && !isSelf) {
     throw new AppError("Forbidden", 403);
+  }
+
+  next();
+};
+
+export const restrictToAdminSelfOrVentanaVendor = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+) => {
+  const authUser = (req as any)?.user;
+  const targetId = req.params.id;
+
+  if (!authUser) {
+    throw new AppError("Unauthorized", 401);
+  }
+
+  if (!targetId) {
+    throw new AppError("User id is required", 400);
+  }
+
+  if (authUser.role === Role.ADMIN || authUser.id === targetId) {
+    return next();
+  }
+
+  if (authUser.role !== Role.VENTANA) {
+    throw new AppError("Forbidden", 403);
+  }
+
+  const actor = await prisma.user.findUnique({
+    where: { id: authUser.id },
+    select: { ventanaId: true },
+  });
+
+  if (!actor?.ventanaId) {
+    throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
+  }
+
+  const target = await prisma.user.findUnique({
+    where: { id: targetId },
+    select: { role: true, ventanaId: true },
+  });
+
+  if (!target) {
+    throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+  }
+
+  if (target.role !== Role.VENDEDOR || target.ventanaId !== actor.ventanaId) {
+    throw new AppError(
+      "Solo puedes gestionar usuarios vendedores de tu ventana",
+      403,
+      "FORBIDDEN"
+    );
+  }
+
+  next();
+};
+
+export const restrictToCommissionAdminSelfOrVentanaVendor = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+) => {
+  const authUser = (req as any)?.user;
+  const targetId = req.params.id;
+
+  if (!authUser) {
+    throw new AppError("Unauthorized", 401);
+  }
+
+  if (!targetId) {
+    throw new AppError("User id is required", 400);
+  }
+
+  if (authUser.role === Role.ADMIN || authUser.id === targetId) {
+    return next();
+  }
+
+  if (authUser.role !== Role.VENTANA) {
+    throw new AppError("Forbidden", 403);
+  }
+
+  const actor = await prisma.user.findUnique({
+    where: { id: authUser.id },
+    select: { ventanaId: true },
+  });
+
+  if (!actor?.ventanaId) {
+    throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
+  }
+
+  const target = await prisma.user.findUnique({
+    where: { id: targetId },
+    select: { role: true, ventanaId: true },
+  });
+
+  if (!target) {
+    throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+  }
+
+  if (target.role !== Role.VENDEDOR || target.ventanaId !== actor.ventanaId) {
+    throw new AppError(
+      "Solo puedes gestionar políticas de usuarios vendedores de tu ventana",
+      403,
+      "FORBIDDEN"
+    );
   }
 
   next();

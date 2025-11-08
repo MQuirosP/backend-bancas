@@ -70,7 +70,11 @@ export const AuthService = {
     }
 
     const accessToken = jwt.sign(
-      { sub: user.id, role: user.role },
+      {
+        sub: user.id,
+        role: user.role,
+        ventanaId: user.ventanaId ?? null,
+      },
       ACCESS_SECRET,
       { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
     );
@@ -107,7 +111,11 @@ export const AuthService = {
       if (!user) throw new AppError('User not found', 404);
 
       const accessToken = jwt.sign(
-        { sub: user.id, role: user.role },
+        {
+          sub: user.id,
+          role: user.role,
+          ventanaId: user.ventanaId ?? null,
+        },
         ACCESS_SECRET,
         { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
       );
