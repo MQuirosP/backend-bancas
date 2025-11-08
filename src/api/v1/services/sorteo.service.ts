@@ -17,12 +17,35 @@ const FINAL_STATES: Set<SorteoStatus> = new Set([
 ]);
 const EVALUABLE_STATES = new Set<SorteoStatus>([SorteoStatus.OPEN]);
 
-function serializeSorteo<T extends { scheduledAt?: Date | null }>(sorteo: T) {
+function extractReventadoEnabled(loteria: any): boolean {
+  if (!loteria || typeof loteria !== "object") return false;
+  const rules = (loteria as any)?.rulesJson;
+  if (!rules || typeof rules !== "object") return false;
+  try {
+    return Boolean((rules as any)?.reventadoConfig?.enabled);
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeLoteria(loteria: any) {
+  if (!loteria || typeof loteria !== "object") return loteria;
+  const { rulesJson, ...rest } = loteria;
+  return rest;
+}
+
+function serializeSorteo<T extends { scheduledAt?: Date | null; loteria?: any }>(sorteo: T) {
   if (!sorteo) return sorteo;
-  return {
+  const reventadoEnabled = extractReventadoEnabled(sorteo.loteria);
+  const serialized = {
     ...sorteo,
     scheduledAt: sorteo.scheduledAt ? formatIsoLocal(sorteo.scheduledAt) : null,
+    reventadoEnabled,
   };
+  if (sorteo.loteria) {
+    (serialized as any).loteria = sanitizeLoteria(sorteo.loteria);
+  }
+  return serialized;
 }
 
 function serializeSorteos<T extends { scheduledAt?: Date | null }>(sorteos: T[]) {
