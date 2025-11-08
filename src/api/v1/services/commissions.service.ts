@@ -53,13 +53,19 @@ export const CommissionsService = {
     try {
       // Resolver rango de fechas
       const dateRange = resolveDateRange(date, fromDate, toDate);
+      const COSTA_RICA_OFFSET_HOURS = -6;
+      const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
+      const fromDateCr = new Date(dateRange.fromAt.getTime() + offsetMs);
+      const toDateCr = new Date(dateRange.toAt.getTime() + offsetMs);
+      const fromDateStr = fromDateCr.toISOString().split("T")[0];
+      const toDateStr = toDateCr.toISOString().split("T")[0];
 
       // Construir filtros WHERE dinámicos según RBAC
       const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."isActive" = true`,
         Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t."createdAt" >= ${dateRange.fromAt}`,
-        Prisma.sql`t."createdAt" <= ${dateRange.toAt}`,
+        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
+        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
       ];
 
       // Aplicar filtros de RBAC según scope
@@ -99,7 +105,7 @@ export const CommissionsService = {
         // Solo incluir ventanas que tienen tickets en el periodo (según scope)
         const result = await prisma.$queryRaw<
           Array<{
-            date: Date;
+            business_date: Date;
             ventana_id: string;
             ventana_name: string;
             total_sales: string;
@@ -108,7 +114,10 @@ export const CommissionsService = {
           }>
         >`
           SELECT
-            DATE_TRUNC('day', ((t."createdAt"::TIMESTAMP WITHOUT TIME ZONE AT TIME ZONE 'UTC')::TIMESTAMP WITH TIME ZONE AT TIME ZONE 'America/Costa_Rica'))::date as date,
+            COALESCE(
+              t."businessDate",
+              DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+            ) as business_date,
             v.id as ventana_id,
             v.name as ventana_name,
             COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
@@ -117,8 +126,8 @@ export const CommissionsService = {
           FROM "Ticket" t
           INNER JOIN "Ventana" v ON v.id = t."ventanaId"
           ${whereClause}
-          GROUP BY DATE_TRUNC('day', ((t."createdAt"::TIMESTAMP WITHOUT TIME ZONE AT TIME ZONE 'UTC')::TIMESTAMP WITH TIME ZONE AT TIME ZONE 'America/Costa_Rica'))::date, v.id, v.name
-          ORDER BY date DESC, v.name ASC
+          GROUP BY business_date, v.id, v.name
+          ORDER BY business_date DESC, v.name ASC
         `;
 
         logger.info({
@@ -147,7 +156,7 @@ export const CommissionsService = {
           // Usar zona horaria de Costa Rica para el agrupamiento por fecha
           const jugadas = await prisma.$queryRaw<
             Array<{
-              date: Date;
+              business_date: Date;
               ventana_id: string;
               ventana_name: string;
               ticket_id: string;
@@ -158,7 +167,10 @@ export const CommissionsService = {
             }>
           >`
             SELECT
-              DATE_TRUNC('day', ((t."createdAt"::TIMESTAMP WITHOUT TIME ZONE AT TIME ZONE 'UTC')::TIMESTAMP WITH TIME ZONE AT TIME ZONE 'America/Costa_Rica'))::date as date,
+              COALESCE(
+                t."businessDate",
+                DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+              ) as business_date,
               t."ventanaId" as ventana_id,
               v.name as ventana_name,
               t.id as ticket_id,
@@ -194,7 +206,7 @@ export const CommissionsService = {
             });
             const commission = Math.round((jugada.amount * ventanaCommission.percent) / 100);
 
-            const dateKey = jugada.date.toISOString().split("T")[0]; // YYYY-MM-DD
+            const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
             const key = `${dateKey}_${jugada.ventana_id}`;
 
             if (!byDateAndVentana.has(key)) {
@@ -234,7 +246,7 @@ export const CommissionsService = {
         }
 
         return result.map((r) => ({
-          date: r.date.toISOString().split("T")[0], // YYYY-MM-DD
+          date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
           ventanaId: r.ventana_id,
           ventanaName: r.ventana_name,
           totalSales: parseFloat(r.total_sales),
@@ -246,7 +258,7 @@ export const CommissionsService = {
         // Solo incluir vendedores que tienen tickets en el periodo (según scope)
         const result = await prisma.$queryRaw<
           Array<{
-            date: Date;
+            business_date: Date;
             vendedor_id: string;
             vendedor_name: string;
             total_sales: string;
@@ -255,7 +267,10 @@ export const CommissionsService = {
           }>
         >`
           SELECT
-            DATE_TRUNC('day', ((t."createdAt"::TIMESTAMP WITHOUT TIME ZONE AT TIME ZONE 'UTC')::TIMESTAMP WITH TIME ZONE AT TIME ZONE 'America/Costa_Rica'))::date as date,
+            COALESCE(
+              t."businessDate",
+              DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+            ) as business_date,
             u.id as vendedor_id,
             u.name as vendedor_name,
             COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
@@ -264,8 +279,8 @@ export const CommissionsService = {
           FROM "Ticket" t
           INNER JOIN "User" u ON u.id = t."vendedorId"
           ${whereClause}
-          GROUP BY DATE_TRUNC('day', ((t."createdAt"::TIMESTAMP WITHOUT TIME ZONE AT TIME ZONE 'UTC')::TIMESTAMP WITH TIME ZONE AT TIME ZONE 'America/Costa_Rica'))::date, u.id, u.name
-          ORDER BY date DESC, u.name ASC
+          GROUP BY business_date, u.id, u.name
+          ORDER BY business_date DESC, u.name ASC
         `;
 
         logger.info({
@@ -282,7 +297,7 @@ export const CommissionsService = {
         });
 
         return result.map((r) => ({
-          date: r.date.toISOString().split("T")[0], // YYYY-MM-DD
+          date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
           vendedorId: r.vendedor_id,
           vendedorName: r.vendedor_name,
           totalSales: parseFloat(r.total_sales),
@@ -293,21 +308,24 @@ export const CommissionsService = {
         // Sin dimensión: solo agrupar por día
         const result = await prisma.$queryRaw<
           Array<{
-            date: Date;
+            business_date: Date;
             total_sales: string;
             total_tickets: string;
             total_commission: string;
           }>
         >`
           SELECT
-            DATE_TRUNC('day', ((t."createdAt"::TIMESTAMP WITHOUT TIME ZONE AT TIME ZONE 'UTC')::TIMESTAMP WITH TIME ZONE AT TIME ZONE 'America/Costa_Rica'))::date as date,
+            COALESCE(
+              t."businessDate",
+              DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+            ) as business_date,
             COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
             COUNT(DISTINCT t.id)::text as total_tickets,
             COALESCE(SUM(t."totalCommission"), 0)::text as total_commission
           FROM "Ticket" t
           ${whereClause}
-          GROUP BY DATE_TRUNC('day', ((t."createdAt"::TIMESTAMP WITHOUT TIME ZONE AT TIME ZONE 'UTC')::TIMESTAMP WITH TIME ZONE AT TIME ZONE 'America/Costa_Rica'))::date
-          ORDER BY date DESC
+          GROUP BY business_date
+          ORDER BY business_date DESC
         `;
 
         logger.info({
@@ -324,7 +342,7 @@ export const CommissionsService = {
         });
 
         return result.map((r) => ({
-          date: r.date.toISOString().split("T")[0], // YYYY-MM-DD
+          date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
           totalSales: parseFloat(r.total_sales),
           totalTickets: parseInt(r.total_tickets, 10),
           totalCommission: parseFloat(r.total_commission),
@@ -374,13 +392,19 @@ export const CommissionsService = {
     try {
       // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
+      const COSTA_RICA_OFFSET_HOURS = -6;
+      const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
+      const fromDateCr = new Date(dateRange.fromAt.getTime() + offsetMs);
+      const toDateCr = new Date(dateRange.toAt.getTime() + offsetMs);
+      const fromDateStr = fromDateCr.toISOString().split("T")[0];
+      const toDateStr = toDateCr.toISOString().split("T")[0];
 
       // Construir filtros WHERE dinámicos según RBAC
       const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."isActive" = true`,
         Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t."createdAt" >= ${dateRange.fromAt}`,
-        Prisma.sql`t."createdAt" <= ${dateRange.toAt}`,
+        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
+        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
       ];
 
       // Aplicar filtros de RBAC según dimension
@@ -774,6 +798,12 @@ export const CommissionsService = {
 
       // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
+      const COSTA_RICA_OFFSET_HOURS = -6;
+      const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
+      const fromDateCr = new Date(dateRange.fromAt.getTime() + offsetMs);
+      const toDateCr = new Date(dateRange.toAt.getTime() + offsetMs);
+      const fromDateStr = fromDateCr.toISOString().split("T")[0];
+      const toDateStr = toDateCr.toISOString().split("T")[0];
 
       // Si dimension=ventana, obtener la política de comisiones del usuario VENTANA
       let ventanaUserPolicy: any = null;
@@ -789,8 +819,8 @@ export const CommissionsService = {
       const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."isActive" = true`,
         Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t."createdAt" >= ${dateRange.fromAt}`,
-        Prisma.sql`t."createdAt" <= ${dateRange.toAt}`,
+        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
+        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
         Prisma.sql`t."loteriaId" = ${loteriaId}::uuid`,
       ];
 

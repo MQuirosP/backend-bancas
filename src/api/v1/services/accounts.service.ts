@@ -171,6 +171,8 @@ async function calculateCommissionsForTicket(
   return { listeroCommission, vendedorCommission };
 }
 
+type DayStatement = Awaited<ReturnType<typeof calculateDayStatement>>;
+
 /**
  * Calcula y actualiza el estado de cuenta para un día específico
  */
@@ -609,7 +611,7 @@ export const AccountsService = {
       }>;
 
       // Filtrar por dimensión
-      let filteredStatements = statementsWithRelations.filter((s) => {
+      const existingStatementsForDimension = statementsWithRelations.filter((s) => {
         // Filtrar por dimensión
         const matchesDimension = dimension === "ventana" 
           ? (s.ventanaId !== null && s.vendedorId === null)
@@ -635,7 +637,114 @@ export const AccountsService = {
         return true;
       });
 
-      // Si no hay statements existentes, calcular basándose en tickets del mes
+      // Recalcular cualquier statement existente para garantizar datos frescos
+      let filteredStatements: DayStatement[] = await Promise.all(
+        existingStatementsForDimension.map(async (s) => {
+          const statementDate = new Date(s.date);
+          statementDate.setUTCHours(0, 0, 0, 0);
+
+          const recalculated = await calculateDayStatement(
+            statementDate,
+            month,
+            dimension,
+            s.ventanaId ?? undefined,
+            s.vendedorId ?? undefined
+          );
+
+          return recalculated;
+        })
+      );
+
+      // Detectar días/targets del mes que tienen tickets pero aún no existen como statements
+      const existingKeys = new Set<string>();
+      for (const s of filteredStatements) {
+        const dateKey = s.date.toISOString().split("T")[0];
+        const targetId = dimension === "ventana" ? s.ventanaId : s.vendedorId;
+        if (targetId) {
+          existingKeys.add(`${dateKey}-${targetId}`);
+        }
+      }
+
+      const ticketsInMonth = await prisma.ticket.findMany({
+        where: {
+          OR: [
+            {
+              businessDate: {
+                gte: startDate,
+                lte: endDate,
+              },
+            },
+            {
+              businessDate: null,
+              createdAt: {
+                gte: startDate,
+                lte: endDate,
+              },
+            },
+          ],
+          deletedAt: null,
+          status: { not: "CANCELLED" },
+        },
+        select: {
+          ventanaId: true,
+          vendedorId: true,
+          businessDate: true,
+          createdAt: true,
+        },
+      });
+
+      const pendingStatements = new Map<string, { date: Date; ventanaId?: string; vendedorId?: string }>();
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+
+      for (const ticket of ticketsInMonth) {
+        const ticketDate = ticket.businessDate
+          ? new Date(ticket.businessDate)
+          : new Date(ticket.createdAt);
+        ticketDate.setUTCHours(0, 0, 0, 0);
+
+        const isCurrentMonth = ticketDate.getUTCFullYear() === today.getUTCFullYear() &&
+          ticketDate.getUTCMonth() === today.getUTCMonth();
+        if (isCurrentMonth && ticketDate > today) {
+          continue;
+        }
+
+        const dateKey = ticketDate.toISOString().split("T")[0];
+        if (dimension === "ventana") {
+          if (!ticket.ventanaId) continue;
+          const key = `${dateKey}-${ticket.ventanaId}`;
+          if (existingKeys.has(key) || pendingStatements.has(key)) continue;
+          pendingStatements.set(key, {
+            date: ticketDate,
+            ventanaId: ticket.ventanaId,
+          });
+        } else {
+          if (!ticket.vendedorId) continue;
+          const key = `${dateKey}-${ticket.vendedorId}`;
+          if (existingKeys.has(key) || pendingStatements.has(key)) continue;
+          pendingStatements.set(key, {
+            date: ticketDate,
+            vendedorId: ticket.vendedorId,
+          });
+        }
+      }
+
+      if (pendingStatements.size > 0) {
+        const additionalStatements: DayStatement[] = [];
+        for (const info of pendingStatements.values()) {
+          const calculated = await calculateDayStatement(
+            info.date,
+            month,
+            dimension,
+            info.ventanaId,
+            info.vendedorId
+          );
+          additionalStatements.push(calculated);
+        }
+        filteredStatements = filteredStatements.concat(additionalStatements);
+      }
+
+      // Si no hay statements existentes (después de filtrar), calcular basándose en tickets del mes
       if (filteredStatements.length === 0) {
         logger.info({
           layer: "service",
@@ -781,17 +890,66 @@ export const AccountsService = {
         }
       }
 
-      // Formatear respuesta - retornar directamente el array en lugar de data.data
-      // Incluir campos según la dimensión (omitir campos null innecesarios)
-      // Calcular totalCollected para cada statement dinámicamente
-      const statementsWithTotalCollected = await Promise.all(
-        filteredStatements.map(async (s) => {
-          const totalCollected = await AccountPaymentRepository.getTotalCollected(s.id);
-          return { ...s, totalCollected };
-        })
-      );
+      // Mapear info de ventana/vendedor existente
+      const ventanaInfoMap = new Map<string, { id: string; name: string | null; code: string | null }>();
+      const vendedorInfoMap = new Map<string, { id: string; name: string | null; code: string | null }>();
 
-      const statements = statementsWithTotalCollected.map((s) => {
+      for (const s of statementsWithRelations) {
+        if (s.ventana) {
+          ventanaInfoMap.set(s.ventana.id, {
+            id: s.ventana.id,
+            name: s.ventana.name,
+            code: s.ventana.code,
+          });
+        }
+        if (s.vendedor) {
+          vendedorInfoMap.set(s.vendedor.id, {
+            id: s.vendedor.id,
+            name: s.vendedor.name,
+            code: s.vendedor.code,
+          });
+        }
+      }
+
+      // Cargar info faltante
+      const ventanaIdsNeeded = new Set<string>();
+      const vendedorIdsNeeded = new Set<string>();
+      for (const s of filteredStatements) {
+        if (s.ventanaId) ventanaIdsNeeded.add(s.ventanaId);
+        if (s.vendedorId) vendedorIdsNeeded.add(s.vendedorId);
+      }
+
+      const ventanaIdsToFetch = Array.from(ventanaIdsNeeded).filter((id) => !ventanaInfoMap.has(id));
+      if (ventanaIdsToFetch.length > 0) {
+        const ventanas = await prisma.ventana.findMany({
+          where: { id: { in: ventanaIdsToFetch } },
+          select: { id: true, name: true, code: true },
+        });
+        for (const ventana of ventanas) {
+          ventanaInfoMap.set(ventana.id, {
+            id: ventana.id,
+            name: ventana.name,
+            code: ventana.code,
+          });
+        }
+      }
+
+      const vendedorIdsToFetch = Array.from(vendedorIdsNeeded).filter((id) => !vendedorInfoMap.has(id));
+      if (vendedorIdsToFetch.length > 0) {
+        const vendedores = await prisma.user.findMany({
+          where: { id: { in: vendedorIdsToFetch } },
+          select: { id: true, name: true, code: true },
+        });
+        for (const vendedor of vendedores) {
+          vendedorInfoMap.set(vendedor.id, {
+            id: vendedor.id,
+            name: vendedor.name,
+            code: vendedor.code || null,
+          });
+        }
+      }
+
+      const statements = filteredStatements.map((s) => {
         const base = {
           date: s.date.toISOString().split("T")[0],
           totalSales: s.totalSales,
@@ -800,7 +958,7 @@ export const AccountsService = {
           vendedorCommission: s.vendedorCommission,
           balance: s.balance,
           totalPaid: s.totalPaid,
-          totalCollected: s.totalCollected, // Agregar campo totalCollected
+          totalCollected: s.totalCollected,
           remainingBalance: s.remainingBalance,
           isSettled: s.isSettled,
           canEdit: s.canEdit,
@@ -813,30 +971,30 @@ export const AccountsService = {
           return {
             ...base,
             ventanaId: s.ventanaId,
-            ventanaName: s.ventana?.name || null,
-            ventanaCode: s.ventana?.code || null,
+            ventanaName: s.ventanaId ? ventanaInfoMap.get(s.ventanaId)?.name || null : null,
+            ventanaCode: s.ventanaId ? ventanaInfoMap.get(s.ventanaId)?.code || null : null,
           };
         } else {
           return {
             ...base,
             vendedorId: s.vendedorId,
-            vendedorName: s.vendedor?.name || null,
-            vendedorCode: s.vendedor?.code || null,
+            vendedorName: s.vendedorId ? vendedorInfoMap.get(s.vendedorId)?.name || null : null,
+            vendedorCode: s.vendedorId ? vendedorInfoMap.get(s.vendedorId)?.code || null : null,
           };
         }
       });
 
       const totals = {
-        totalSales: statementsWithTotalCollected.reduce((sum, s) => sum + s.totalSales, 0),
-        totalPayouts: statementsWithTotalCollected.reduce((sum, s) => sum + s.totalPayouts, 0),
-        totalListeroCommission: statementsWithTotalCollected.reduce((sum, s) => sum + s.listeroCommission, 0),
-        totalVendedorCommission: statementsWithTotalCollected.reduce((sum, s) => sum + s.vendedorCommission, 0),
-        totalBalance: statementsWithTotalCollected.reduce((sum, s) => sum + s.balance, 0),
-        totalPaid: statementsWithTotalCollected.reduce((sum, s) => sum + s.totalPaid, 0),
-        totalCollected: statementsWithTotalCollected.reduce((sum, s) => sum + s.totalCollected, 0), // Agregar totalCollected a totales
-        totalRemainingBalance: statementsWithTotalCollected.reduce((sum, s) => sum + s.remainingBalance, 0),
-        settledDays: statementsWithTotalCollected.filter((s) => s.isSettled).length,
-        pendingDays: statementsWithTotalCollected.filter((s) => !s.isSettled).length,
+        totalSales: filteredStatements.reduce((sum, s) => sum + s.totalSales, 0),
+        totalPayouts: filteredStatements.reduce((sum, s) => sum + s.totalPayouts, 0),
+        totalListeroCommission: filteredStatements.reduce((sum, s) => sum + s.listeroCommission, 0),
+        totalVendedorCommission: filteredStatements.reduce((sum, s) => sum + s.vendedorCommission, 0),
+        totalBalance: filteredStatements.reduce((sum, s) => sum + s.balance, 0),
+        totalPaid: filteredStatements.reduce((sum, s) => sum + s.totalPaid, 0),
+        totalCollected: filteredStatements.reduce((sum, s) => sum + s.totalCollected, 0),
+        totalRemainingBalance: filteredStatements.reduce((sum, s) => sum + s.remainingBalance, 0),
+        settledDays: filteredStatements.filter((s) => s.isSettled).length,
+        pendingDays: filteredStatements.filter((s) => !s.isSettled).length,
       };
 
       const meta = {
@@ -910,6 +1068,49 @@ export const AccountsService = {
       uniqueDays.add(ticketDate.toISOString().split("T")[0]);
     }
 
+    // Incluir días existentes en account_statements aunque no haya tickets recientes
+    const statementsWithRelations = (await AccountStatementRepository.findByMonth(
+      month,
+      { ventanaId, vendedorId },
+      {
+        sort: sort as "asc" | "desc",
+        include: {
+          ventana: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
+          vendedor: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
+        },
+      }
+    )) as Array<{
+      date: Date;
+      ventana?: { id: string; name: string; code: string } | null;
+      vendedor?: { id: string; name: string; code: string } | null;
+    }>;
+
+    for (const statement of statementsWithRelations) {
+      const statementDate = new Date(statement.date);
+      statementDate.setUTCHours(0, 0, 0, 0);
+
+      const isCurrentMonth = statementDate.getUTCFullYear() === today.getUTCFullYear() &&
+        statementDate.getUTCMonth() === today.getUTCMonth();
+
+      if (isCurrentMonth && statementDate > today) {
+        continue;
+      }
+
+      uniqueDays.add(statementDate.toISOString().split("T")[0]);
+    }
+
     // Calcular statements solo para días con tickets
     const statements: Array<{
       id: string;
@@ -943,35 +1144,6 @@ export const AccountsService = {
     } else {
       statements.sort((a, b) => b.date.getTime() - a.date.getTime());
     }
-
-    // Obtener estados de cuenta del repositorio con relaciones para obtener nombres y códigos
-    const statementsWithRelations = (await AccountStatementRepository.findByMonth(
-      month,
-      { ventanaId, vendedorId },
-      {
-        sort: sort as "asc" | "desc",
-        include: {
-          ventana: {
-            select: {
-              id: true,
-              name: true,
-              code: true,
-            },
-          },
-          vendedor: {
-            select: {
-              id: true,
-              name: true,
-              code: true,
-            },
-          },
-        },
-      }
-    )) as Array<{
-      date: Date;
-      ventana?: { id: string; name: string; code: string } | null;
-      vendedor?: { id: string; name: string; code: string } | null;
-    }>;
 
     // Crear un mapa de statements por fecha para acceso rápido
     const statementsMap = new Map(
@@ -1024,15 +1196,7 @@ export const AccountsService = {
 
     // Formatear respuesta - retornar directamente el array en lugar de data.data
     // Incluir campos según la dimensión (omitir campos null innecesarios)
-    // Calcular totalCollected para cada statement dinámicamente
-    const statementsWithTotalCollected = await Promise.all(
-      statements.map(async (s) => {
-        const totalCollected = await AccountPaymentRepository.getTotalCollected(s.id);
-        return { ...s, totalCollected };
-      })
-    );
-
-    const formattedStatements = statementsWithTotalCollected.map((s) => {
+    const formattedStatements = statements.map((s) => {
       const dateStr = s.date.toISOString().split("T")[0];
       const statementWithRelations = statementsMap.get(dateStr);
       
@@ -1044,7 +1208,7 @@ export const AccountsService = {
         vendedorCommission: s.vendedorCommission,
         balance: s.balance,
         totalPaid: s.totalPaid,
-        totalCollected: s.totalCollected, // Agregar campo totalCollected
+        totalCollected: s.totalCollected,
         remainingBalance: s.remainingBalance,
         isSettled: s.isSettled,
         canEdit: s.canEdit,
