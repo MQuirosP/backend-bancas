@@ -143,7 +143,7 @@ export const TicketService = {
         payload: {
           cutOff: { minutes: cutoff.minutes, source: cutoff.source },
           nowISO: now.toISOString(),
-          scheduledAtISO: sorteo.scheduledAt.toISOString(),
+          scheduledAtISO: sorteo.scheduledAt ? sorteo.scheduledAt.toISOString() : null,
           limitTimeISO: limitTime.toISOString(),
           effectiveLimitTimeISO: effectiveLimitTime.toISOString(),
           sorteoStatus: sorteo.status,
@@ -314,7 +314,7 @@ export const TicketService = {
     });
 
     // Enriquecer respuesta con configuraciones de impresión
-    return {
+    const enriched = {
       ...ticket,
       vendedor: ticket.vendedor ? {
         ...ticket.vendedor,
@@ -325,6 +325,7 @@ export const TicketService = {
         ...extractPrintConfig(ventanaData?.settings, ventanaData?.name || null, ventanaData?.phone || null),
       } : undefined,
     };
+    return enriched;
   },
 
   async list(page = 1, pageSize = 10, filters: any = {}): Promise<ReturnType<typeof TicketRepository.list>> {
@@ -411,7 +412,7 @@ export const TicketService = {
             requestId,
             payload: { ticketId, idempotencyKey: data.idempotencyKey },
           });
-          return existing.ticket;
+      return existing.ticket;
         }
       }
 

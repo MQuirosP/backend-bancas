@@ -5,6 +5,7 @@ import LoteriaService from "../services/loteria.service";
 import ActivityService from "../../../core/activity.service";
 import { success, created } from "../../../utils/responses";
 import { computeOccurrences } from "../../../utils/schedule";
+import { formatIsoLocal, parseCostaRicaDateTime } from "../../../utils/datetime";
 
 export const LoteriaController = {
   async create(req: Request, res: Response) {
@@ -181,7 +182,7 @@ export const LoteriaController = {
 
     async previewSchedule(req: Request, res: Response) {
     const loteriaId = req.params.id;
-    const start = req.query.start ? new Date(String(req.query.start)) : new Date();
+    const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : new Date();
     const days = req.query.days ? Number(req.query.days) : 7;
     const limit = req.query.limit ? Number(req.query.limit) : 200;
 
@@ -205,7 +206,7 @@ export const LoteriaController = {
     });
 
     const data = occurrences.map((o: any) => ({
-      scheduledAt: o.scheduledAt.toISOString(), // Dejar como está - el frontend espera ISO string
+      scheduledAt: formatIsoLocal(o.scheduledAt),
       name: o.name,
     }));
 
@@ -214,7 +215,7 @@ export const LoteriaController = {
 
   async seedSorteos(req: Request, res: Response) {
   const loteriaId = req.params.id
-  const start = req.query.start ? new Date(String(req.query.start)) : new Date()
+  const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : new Date()
   const days = req.query.days ? Number(req.query.days) : 7
   const dryRun = req.query.dryRun === "true"
 
@@ -226,7 +227,15 @@ export const LoteriaController = {
   }
 
   const subset: Date[] | undefined = Array.isArray((req as any).body?.scheduledDates)
-    ? (req as any).body.scheduledDates.map((d: any) => new Date(d)).filter((d: Date) => !isNaN(d.getTime()))
+    ? (req as any).body.scheduledDates
+        .map((d: any) => {
+          try {
+            return parseCostaRicaDateTime(d);
+          } catch {
+            return null;
+          }
+        })
+        .filter((d: Date | null): d is Date => !!d)
     : undefined
 
   const result = await LoteriaService.seedSorteosFromRules(loteriaId, start, days, dryRun, subset)

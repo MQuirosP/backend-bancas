@@ -4,6 +4,7 @@ import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { Prisma, SorteoStatus } from "@prisma/client";
 import { CreateSorteoDTO, UpdateSorteoDTO } from "../api/v1/dto/sorteo.dto";
+import { formatIsoLocal, parseCostaRicaDateTime } from "../utils/datetime";
 
 // ⬇️ helper para validar y obtener X del multiplier extra
 async function resolveExtraMultiplierX(
@@ -47,7 +48,9 @@ async function resolveExtraMultiplierX(
 const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
   name: d.name,
   scheduledAt:
-    d.scheduledAt instanceof Date ? d.scheduledAt : new Date(d.scheduledAt),
+    d.scheduledAt instanceof Date
+      ? new Date(d.scheduledAt.getTime())
+      : parseCostaRicaDateTime(d.scheduledAt),
   loteria: { connect: { id: d.loteriaId } },
   // extraOutcomeCode, extraMultiplierId/X se quedan nulos al crear
 });
@@ -56,8 +59,8 @@ const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
   // ✅ ÚNICAMENTE se permite reprogramar la fecha/hora (más name/isActive si lo quieres)
   scheduledAt: d.scheduledAt
     ? d.scheduledAt instanceof Date
-      ? d.scheduledAt
-      : new Date(d.scheduledAt)
+      ? new Date(d.scheduledAt.getTime())
+      : parseCostaRicaDateTime(d.scheduledAt)
     : undefined,
   name: d.name ?? undefined,
   ...(d.loteriaId ? { loteria: { connect: { id: d.loteriaId } } } : {}),
@@ -468,7 +471,7 @@ const SorteoRepository = {
       .filter(ts => afterSet.has(ts) && !existingBefore.has(ts))
     const skippedTs = items.map(it => it.ts).filter(ts => !createdTs.includes(ts))
 
-    const fmt = (ts: number) => new Date(ts).toISOString()
+    const fmt = (ts: number) => formatIsoLocal(new Date(ts))
 
     logger.info({
       layer: "repository",

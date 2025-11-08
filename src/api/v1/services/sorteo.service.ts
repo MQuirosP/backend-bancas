@@ -1,9 +1,5 @@
 // src/modules/sorteos/services/sorteo.service.ts
-import {
-  ActivityType,
-  Prisma,
-  SorteoStatus,
-} from "@prisma/client";
+import { ActivityType, Prisma, SorteoStatus } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import ActivityService from "../../../core/activity.service";
@@ -13,12 +9,25 @@ import {
   EvaluateSorteoDTO,
   UpdateSorteoDTO,
 } from "../dto/sorteo.dto";
+import { formatIsoLocal } from "../../../utils/datetime";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
   SorteoStatus.CLOSED,
 ]);
 const EVALUABLE_STATES = new Set<SorteoStatus>([SorteoStatus.OPEN]);
+
+function serializeSorteo<T extends { scheduledAt?: Date | null }>(sorteo: T) {
+  if (!sorteo) return sorteo;
+  return {
+    ...sorteo,
+    scheduledAt: sorteo.scheduledAt ? formatIsoLocal(sorteo.scheduledAt) : null,
+  };
+}
+
+function serializeSorteos<T extends { scheduledAt?: Date | null }>(sorteos: T[]) {
+  return sorteos.map((s) => serializeSorteo(s));
+}
 
 export const SorteoService = {
   async create(data: CreateSorteoDTO, userId: string) {
@@ -47,7 +56,7 @@ export const SorteoService = {
       details,
     });
 
-    return s;
+    return serializeSorteo(s);
   },
 
   async update(id: string, data: UpdateSorteoDTO, userId: string) {
@@ -93,7 +102,7 @@ export const SorteoService = {
       details,
     });
 
-    return s;
+    return serializeSorteo(s);
   },
 
   async open(id: string, userId: string) {
@@ -118,7 +127,7 @@ export const SorteoService = {
       details,
     });
 
-    return s;
+    return serializeSorteo(s);
   },
 
   async close(id: string, userId: string) {
@@ -350,7 +359,8 @@ export const SorteoService = {
     });
 
     // 5) Devolver sorteo evaluado (con include si lo prefieres)
-    return prisma.sorteo.findUnique({ where: { id } });
+    const evaluated = await prisma.sorteo.findUnique({ where: { id } });
+    return evaluated ? serializeSorteo(evaluated) : evaluated;
   },
 
   async remove(id: string, userId: string, reason?: string) {
@@ -367,7 +377,7 @@ export const SorteoService = {
       details: details as Prisma.InputJsonObject,
     });
 
-    return s;
+    return serializeSorteo(s);
   },
 
   async list(params: {
@@ -396,7 +406,7 @@ export const SorteoService = {
 
     const totalPages = Math.ceil(total / ps);
     return {
-      data,
+      data: serializeSorteos(data),
       meta: {
         total,
         page: p,
@@ -411,7 +421,7 @@ export const SorteoService = {
   async findById(id: string) {
     const sorteo = await SorteoRepository.findById(id);
     if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
-    return sorteo;
+    return serializeSorteo(sorteo);
   },
 };
 

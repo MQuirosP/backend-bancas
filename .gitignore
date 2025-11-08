@@ -75,6 +75,9 @@ apply-*.sh
 src/scripts/*-backfill-*.ts
 src/scripts/*backfill*.ts
 
+# Scripts manuales (no versionar)
+scripts/
+
 # Documentación generada automáticamente
 # Toda la carpeta docs/ contiene documentación de trabajo y no debe versionarse
 docs/

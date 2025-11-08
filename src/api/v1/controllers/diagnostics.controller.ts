@@ -4,6 +4,7 @@ import prisma from "../../../core/prismaClient";
 import { AuthenticatedRequest } from "../../../core/types";
 import { AppError } from "../../../core/errors";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
+import { formatIsoLocal } from "../../../utils/datetime";
 
 const CUTOFF_GRACE_MS = 5000;
 
@@ -48,13 +49,13 @@ export const DiagnosticsController = {
       success: true,
       data: {
         input: { userId, ventanaId, sorteoId },
-        now: now.toISOString(),
-        scheduledAt: sorteo.scheduledAt.toISOString(),
+        now: formatIsoLocal(now),
+        scheduledAt: formatIsoLocal(sorteo.scheduledAt),
         cutoffMinutes: cutoff.minutes,
         cutoffSource: cutoff.source,
         graceMs: CUTOFF_GRACE_MS,
-        limitTime: limitTime.toISOString(),
-        effectiveLimitTime: effectiveLimitTime.toISOString(),
+        limitTime: formatIsoLocal(limitTime),
+        effectiveLimitTime: formatIsoLocal(effectiveLimitTime),
         secondsUntilLimit: Math.max(0, Math.ceil((effectiveLimitTime.getTime() - now.getTime()) / 1000)),
         secondsUntilScheduled: Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 1000)),
         sorteoStatus: sorteo.status,
