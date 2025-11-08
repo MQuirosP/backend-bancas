@@ -98,6 +98,18 @@ export const updateUserSchema = z
   })
   .strict()
 
+// Parser correcto para booleanos desde query strings
+const queryBoolean = z.preprocess((v) => {
+  if (typeof v === 'boolean') return v;
+  if (v === undefined || v === null || v === '') return undefined;
+  if (typeof v !== 'string') return v;
+
+  const s = v.toLowerCase().trim();
+  if (s === 'true' || s === '1' || s === 'yes') return true;
+  if (s === 'false' || s === '0' || s === 'no') return false;
+  return undefined; // Si no es un booleano válido, undefined
+}, z.boolean().optional());
+
 export const listUsersQuerySchema = z
   .object({
     page: z.coerce.number().int().min(1).optional(),
@@ -108,7 +120,7 @@ export const listUsersQuerySchema = z
       .trim()
       .optional()
       .transform((v) => (v && v.length > 0 ? v : undefined)),
-    isActive: z.coerce.boolean().optional(),
+    isActive: queryBoolean,
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()

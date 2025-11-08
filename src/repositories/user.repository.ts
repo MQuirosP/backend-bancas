@@ -1,5 +1,6 @@
 // src/repositories/user.repository.ts
 import prisma from '../core/prismaClient';
+import logger from '../core/logger';
 import { Prisma, Role } from '@prisma/client';
 
 export const UserRepository = {
