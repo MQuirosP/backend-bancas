@@ -50,10 +50,51 @@ async function ensureVentanaActiveOrThrow(ventanaId: string) {
   if (!v.banca || !v.banca.isActive) throw new AppError('Parent Banca inactive', 409);
 }
 
+async function getActorVentanaId(actorId: string) {
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { ventanaId: true },
+  });
+  if (!actor || !actor.ventanaId) {
+    throw new AppError('No tienes una ventana asignada', 403);
+  }
+  return actor.ventanaId;
+}
+
 export const UserService = {
-  async create(dto: CreateUserDTO, createdByUserId?: string) {
+  async create(dto: CreateUserDTO, actor?: { id: string; role: Role }) {
+    const actingRole = actor?.role ?? Role.ADMIN;
+    const actorId = actor?.id;
+    let enforcedVentanaId: string | null = null;
+
+    if (actingRole === Role.VENTANA) {
+      if (dto.role && dto.role !== Role.VENDEDOR) {
+        throw new AppError('Solo puedes crear usuarios vendedores', 403);
+      }
+      const forbiddenFields = ['isActive', 'code', 'role', 'ventanaId'] as const;
+      for (const field of forbiddenFields) {
+        if ((dto as any)[field] !== undefined) {
+          throw new AppError(`Campo no permitido para VENTANA: ${field}`, 403);
+        }
+      }
+      if (!actorId) {
+        throw new AppError('No autenticado', 401);
+      }
+      enforcedVentanaId = await getActorVentanaId(actorId);
+      await ensureVentanaActiveOrThrow(enforcedVentanaId);
+      dto = {
+        name: dto.name,
+        email: dto.email ?? undefined,
+        phone: dto.phone ?? undefined,
+        username: dto.username,
+        password: dto.password,
+        role: Role.VENDEDOR,
+        ventanaId: enforcedVentanaId,
+      } as CreateUserDTO;
+    }
+
     const username = dto.username.trim();
-    const role: Role = (dto.role as Role) ?? Role.VENTANA;
+    const role: Role = actingRole === Role.VENTANA ? Role.VENDEDOR : ((dto.role as Role) ?? Role.VENTANA);
     const email = dto.email ? dto.email.trim().toLowerCase() : null;
     const code = dto.code?.trim() ? dto.code.trim() : null;
     const phone = dto.phone !== undefined ? normalizePhone(dto.phone) : null;
@@ -92,9 +133,9 @@ export const UserService = {
       phone,
       password: hashed,
       role,
-      ventanaId: role === Role.ADMIN ? null : dto.ventanaId!,
+      ventanaId: role === Role.ADMIN ? null : (enforcedVentanaId ?? dto.ventanaId!),
       code,                 
-      isActive,             
+      isActive: actingRole === Role.VENTANA ? true : isActive,             
     });
 
     const result = await prisma.user.findUnique({
@@ -107,9 +148,9 @@ export const UserService = {
     });
 
     // Log de auditoría
-    if (result && createdByUserId) {
+    if (result && actorId) {
       await ActivityService.log({
-        userId: createdByUserId,
+        userId: actorId,
         action: ActivityType.USER_CREATE,
         targetType: 'USER',
         targetId: result.id,
@@ -160,7 +201,12 @@ export const UserService = {
     };
   },
 
-  async update(id: string, dto: UpdateUserDTO, updatedByUserId?: string) {
+  async update(id: string, dto: UpdateUserDTO, actor?: { id: string; role: Role }) {
+    const actingRole = actor?.role ?? Role.ADMIN;
+    const actorId = actor?.id;
+    let actorVentanaId: string | null = null;
+    const editingSelf = actorId === id;
+
     // Cargar actual para comparaciones
     const current = await prisma.user.findUnique({
       where: { id },
@@ -169,6 +215,20 @@ export const UserService = {
       },
     });
     if (!current) throw new AppError('User not found', 404);
+
+    if (actingRole === Role.VENTANA) {
+      if (!actorId) throw new AppError('No autenticado', 401);
+      actorVentanaId = await getActorVentanaId(actorId);
+      if (!editingSelf && current.ventanaId !== actorVentanaId) {
+        throw new AppError('No puedes modificar usuarios de otra ventana', 403);
+      }
+      const forbiddenForVentana: Array<keyof UpdateUserDTO> = ['role', 'ventanaId', 'settings', 'code'];
+      for (const field of forbiddenForVentana) {
+        if ((dto as any)[field] !== undefined) {
+          throw new AppError(`Campo no permitido para VENTANA: ${field}`, 403);
+        }
+      }
+    }
 
     const toUpdate: any = {};
 
@@ -202,6 +262,9 @@ export const UserService = {
 
     // role ↔ ventanaId
     if (dto.role) {
+      if (actingRole === Role.VENTANA) {
+        throw new AppError('No puedes cambiar el rol', 403);
+      }
       const newRole = dto.role as Role;
       toUpdate.role = newRole;
 
@@ -216,6 +279,9 @@ export const UserService = {
         toUpdate.ventanaId = effectiveVentanaId;
       }
     } else if (dto.ventanaId !== undefined) {
+      if (actingRole === Role.VENTANA) {
+        throw new AppError('No puedes cambiar la ventana asociada', 403);
+      }
       // Cambian solo ventanaId (sin cambiar role): validar si el role actual lo requiere
       if (current.role === Role.ADMIN) {
         // Admin no debería estar ligado a ventana
@@ -228,10 +294,21 @@ export const UserService = {
     }
 
     // toggle de actividad (deprecated isDeleted → usar isActive inverso)
-    if (dto.isActive !== undefined) toUpdate.isActive = dto.isActive;
+    if (dto.isActive !== undefined) {
+      if (actingRole === Role.VENTANA && !editingSelf) {
+        toUpdate.isActive = dto.isActive;
+      } else if (actingRole !== Role.VENTANA) {
+        toUpdate.isActive = dto.isActive;
+      } else if (actingRole === Role.VENTANA && editingSelf) {
+        throw new AppError('No puedes modificar tu propio estado', 403);
+      }
+    }
 
     // settings: merge parcial con los settings existentes
     if (dto.settings !== undefined) {
+      if (actingRole === Role.VENTANA) {
+        throw new AppError('No puedes modificar settings', 403);
+      }
       // Obtener settings actuales (pueden ser null)
       const currentUser = await prisma.user.findUnique({
         where: { id },
@@ -262,9 +339,9 @@ export const UserService = {
     });
 
     // Log de auditoría
-    if (result && updatedByUserId && Object.keys(toUpdate).length > 0) {
+    if (result && actorId && Object.keys(toUpdate).length > 0) {
       await ActivityService.log({
-        userId: updatedByUserId,
+        userId: actorId,
         action: ActivityType.USER_UPDATE,
         targetType: 'USER',
         targetId: id,
@@ -275,7 +352,29 @@ export const UserService = {
     return result!;
   },
 
-  async softDelete(id: string, deletedBy: string, deletedReason?: string) {
+  async softDelete(
+    id: string,
+    actor?: { id: string; role: Role },
+    deletedBy?: string,
+    deletedReason?: string
+  ) {
+    const actingRole = actor?.role ?? Role.ADMIN;
+    const actorId = deletedBy ?? actor?.id;
+
+    const current = await prisma.user.findUnique({
+      where: { id },
+      select: { ventanaId: true },
+    });
+    if (!current) throw new AppError('User not found', 404);
+
+    if (actingRole === Role.VENTANA) {
+      if (!actorId) throw new AppError('No autenticado', 401);
+      const actorVentanaId = await getActorVentanaId(actorId);
+      if (current.ventanaId !== actorVentanaId) {
+        throw new AppError('No puedes eliminar usuarios de otra ventana', 403);
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id },
       data: {
@@ -285,18 +384,37 @@ export const UserService = {
     });
 
     // Log de auditoría
-    await ActivityService.log({
-      userId: deletedBy,
-      action: ActivityType.USER_DELETE,
-      targetType: 'USER',
-      targetId: id,
-      details: { reason: deletedReason },
-    });
+    if (actorId) {
+      await ActivityService.log({
+        userId: actorId,
+        action: ActivityType.USER_DELETE,
+        targetType: 'USER',
+        targetId: id,
+        details: { reason: deletedReason },
+      });
+    }
 
     return user;
   },
 
-  async restore(id: string, restoredByUserId?: string) {
+  async restore(id: string, actor?: { id: string; role: Role }) {
+    const actingRole = actor?.role ?? Role.ADMIN;
+    const actorId = actor?.id;
+
+    const current = await prisma.user.findUnique({
+      where: { id },
+      select: { ventanaId: true },
+    });
+    if (!current) throw new AppError('User not found', 404);
+
+    if (actingRole === Role.VENTANA) {
+      if (!actorId) throw new AppError('No autenticado', 401);
+      const actorVentanaId = await getActorVentanaId(actorId);
+      if (current.ventanaId !== actorVentanaId) {
+        throw new AppError('No puedes restaurar usuarios de otra ventana', 403);
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id },
       data: { isActive: true },
@@ -304,9 +422,9 @@ export const UserService = {
     });
 
     // Log de auditoría
-    if (restoredByUserId) {
+    if (actorId) {
       await ActivityService.log({
-        userId: restoredByUserId,
+        userId: actorId,
         action: ActivityType.USER_RESTORE,
         targetType: 'USER',
         targetId: id,
