@@ -383,7 +383,7 @@ const SorteoRepository = {
           { createdAt: 'desc' }, // desempate estable
         ],
         include: {
-          loteria: { select: { id: true, name: true } },
+          loteria: { select: { id: true, name: true, rulesJson: true } },
           extraMultiplier: { select: { id: true, name: true, valueX: true } },
         },
       }),
