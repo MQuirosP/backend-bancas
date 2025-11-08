@@ -78,16 +78,12 @@ export const UserController = {
         throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
       }
 
-      const { data, meta } = await UserService.list({
-        page, pageSize, role, search, isActive, ventanaId,
-      });
+      const { data, meta } = await UserService.list({ page, pageSize, role, search, isActive, ventanaId });
       return success(res, data, meta);
     }
 
     // Si es ADMIN: sin restricciones
-    const { data, meta } = await UserService.list({
-      page, pageSize, role, search, isActive,
-    });
+    const { data, meta } = await UserService.list({ page, pageSize, role, search, isActive });
     return success(res, data, meta);
   }
   ,
