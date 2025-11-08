@@ -6,16 +6,22 @@
  * por lo que todos los Date objects deben usar hora local directamente.
  */
 
-// Zona horaria de Costa Rica: GMT-6 (UTC-6)
-// Costa Rica no usa horario de verano (DST), por lo que siempre es -6 horas
-const COSTA_RICA_OFFSET_HOURS = -6;
+// Zona horaria de Costa Rica: GMT-6 (UTC-6) sin DST
+export const COSTA_RICA_OFFSET_HOURS = -6;
+const COSTA_RICA_OFFSET_MS = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
 
-// Normaliza entrada a Date. Acepta Date o ISO string.
+function shiftToCostaRica(date: Date): Date {
+  return new Date(date.getTime() + COSTA_RICA_OFFSET_MS);
+}
+
+function shiftFromCostaRica(date: Date): Date {
+  return new Date(date.getTime() - COSTA_RICA_OFFSET_MS);
+}
+
+// Normaliza entrada a Date. Acepta Date o ISO string interpretado en hora local (CR).
 export function toLocalDate(input: Date | string): Date {
   if (input instanceof Date) return new Date(input.getTime());
-  const d = new Date(input);
-  if (isNaN(d.getTime())) throw new Error(`Invalid date: ${input}`);
-  return d;
+  return parseCostaRicaDateTime(input);
 }
 
 // Compara por instante (ms desde epoch)
@@ -25,31 +31,32 @@ export function sameInstant(a: Date | string, b: Date | string): boolean {
 
 // ISO string (sin 'Z', hora local)
 export function formatIsoLocal(d: Date | string): string {
-  const date = toLocalDate(d);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
-  const ms = String(date.getMilliseconds()).padStart(3, '0');
+  const utcDate = toLocalDate(d);
+  const local = shiftToCostaRica(utcDate);
+  const year = local.getUTCFullYear();
+  const month = String(local.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(local.getUTCDate()).padStart(2, '0');
+  const hours = String(local.getUTCHours()).padStart(2, '0');
+  const minutes = String(local.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(local.getUTCSeconds()).padStart(2, '0');
+  const ms = String(local.getUTCMilliseconds()).padStart(3, '0');
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${ms}`;
 }
 
 // Inicio de día en hora local
 export function startOfLocalDay(d: Date | string): Date {
-  const x = toLocalDate(d);
-  const out = new Date(x.getTime());
-  out.setHours(0, 0, 0, 0);
-  return out;
+  const original = toLocalDate(d);
+  const local = shiftToCostaRica(original);
+  local.setUTCHours(0, 0, 0, 0);
+  return shiftFromCostaRica(local);
 }
 
 // Agregar días en hora local
 export function addLocalDays(d: Date | string, days: number): Date {
-  const x = toLocalDate(d);
-  const out = new Date(x.getTime());
-  out.setDate(out.getDate() + days);
-  return out;
+  const original = toLocalDate(d);
+  const local = shiftToCostaRica(original);
+  local.setUTCDate(local.getUTCDate() + days);
+  return shiftFromCostaRica(local);
 }
 
 /**
@@ -74,12 +81,10 @@ export function atLocalTime(baseDate: Date | string, hhmm: string): Date {
   }
   
   // Empezar con el inicio del día en hora local
-  const base = startOfLocalDay(baseDate);
-  
-  // Establecer hora local directamente (sin conversión UTC)
-  base.setHours(localHour, localMinute, 0, 0);
-  
-  return base;
+  const start = startOfLocalDay(baseDate);
+  const local = shiftToCostaRica(start);
+  local.setUTCHours(localHour, localMinute, 0, 0);
+  return shiftFromCostaRica(local);
 }
 
 // Pequeño buffer en ms a ambos lados de un rango para consultas por frontera
@@ -107,4 +112,63 @@ export const addUtcDays = addLocalDays;
 
 /** @deprecated Usar atLocalTime() en su lugar */
 export const atUtcTime = atLocalTime;
+
+/**
+ * Parser robusto para strings ISO sin zona (tratadas como hora local Costa Rica).
+ */
+export function parseCostaRicaDateTime(input: string | Date): Date {
+  if (input instanceof Date) return new Date(input.getTime());
+
+  const raw = input.trim();
+  if (!raw) throw new Error(`Invalid date: ${input}`);
+
+  // Si viene con 'Z' o offset explícito, delegar al parser estándar
+  if (/[zZ]$/.test(raw) || /[+-]\d\d:\d\d$/.test(raw)) {
+    const parsed = new Date(raw);
+    if (isNaN(parsed.getTime())) throw new Error(`Invalid date: ${input}`);
+    return parsed;
+  }
+
+  const [datePart, timePartRaw] = raw.split(/[T\s]/);
+  if (!datePart) throw new Error(`Invalid date: ${input}`);
+
+  const [yearStr, monthStr, dayStr] = datePart.split("-");
+  const year = Number.parseInt(yearStr ?? "0", 10);
+  const month = Number.parseInt(monthStr ?? "0", 10);
+  const day = Number.parseInt(dayStr ?? "0", 10);
+
+  const timePart = timePartRaw ?? "00:00:00";
+  const [mainTime, msPartRaw] = timePart.split(".");
+  const [hourStr, minuteStr, secondStr] = mainTime.split(":");
+
+  const hours = Number.parseInt(hourStr ?? "0", 10);
+  const minutes = Number.parseInt(minuteStr ?? "0", 10);
+  const seconds = Number.parseInt(secondStr ?? "0", 10);
+  const msPart = msPartRaw ? (msPartRaw + "000").slice(0, 3) : "000";
+  const milliseconds = Number.parseInt(msPart, 10);
+
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes) ||
+    !Number.isFinite(seconds) ||
+    !Number.isFinite(milliseconds)
+  ) {
+    throw new Error(`Invalid date: ${input}`);
+  }
+
+  const utcMillis = Date.UTC(
+    year,
+    month - 1,
+    day,
+    hours - COSTA_RICA_OFFSET_HOURS,
+    minutes,
+    seconds,
+    milliseconds
+  );
+
+  return new Date(utcMillis);
+}
 

@@ -4,6 +4,7 @@ import { AppError } from "../../../core/errors";
 import { PaginatedResult, buildMeta, getSkipTake } from "../../../utils/pagination";
 import { Prisma } from "@prisma/client";
 import logger from "../../../core/logger";
+import { formatIsoLocal } from "../../../utils/datetime";
 
 /**
  * Interfaz para filtros estándar de ventas
@@ -1105,7 +1106,7 @@ export const VentasService = {
         loterias,
         sorteos: sorteos.map((s) => ({
           ...s,
-          scheduledAt: s.scheduledAt.toISOString(),
+          scheduledAt: formatIsoLocal(s.scheduledAt),
         })),
       };
     } catch (err: any) {

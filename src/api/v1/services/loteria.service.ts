@@ -260,7 +260,7 @@ export const LoteriaService = {
         skipped: [],
         alreadyExists: [],
         preview: subset.map(o => ({ name: o.name, scheduledAt: formatIsoLocal(o.scheduledAt) })),
-        processedSubset: (scheduledDates ?? []).map(formatIsoLocal),
+        processedSubset: (scheduledDates ?? []).map((d) => formatIsoLocal(d)),
       }
     }
 
