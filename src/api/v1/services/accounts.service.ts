@@ -199,7 +199,7 @@ async function calculateDayStatement(
 
   // Usar agregaciones de Prisma para calcular totales directamente en la base de datos
   // Esto es mucho más eficiente que traer todos los tickets y jugadas a memoria
-  const [ticketAgg, jugadaAggAll, jugadaAggWinners] = await Promise.all([
+  const [ticketAgg, jugadaAggVendor, jugadaAggWinners] = await Promise.all([
     // Agregaciones de tickets
     prisma.ticket.aggregate({
       where,
@@ -217,7 +217,7 @@ async function calculateDayStatement(
       where: {
         ticket: where,
         deletedAt: null,
-        // Sin filtro isWinner para comisiones (todas las jugadas tienen comisión)
+        commissionOrigin: "USER",
       },
       _sum: {
         commissionAmount: true,
@@ -242,9 +242,8 @@ async function calculateDayStatement(
   // totalPaid de tickets es lo que se ha pagado, pero totalPayouts debe ser el total de premios ganados
   const totalPayouts = jugadaAggWinners._sum.payout || 0;
   const ticketCount = ticketAgg._count.id || 0;
-  // IMPORTANTE: totalVendedorCommission debe incluir TODAS las jugadas, no solo ganadoras
-  // Las comisiones se aplican a todas las jugadas, no solo a las ganadoras
-  const totalVendedorCommission = jugadaAggAll._sum.commissionAmount || 0;
+  // FIX: Solo sumar comisiones del vendedor (commissionOrigin === "USER")
+  const totalVendedorCommission = jugadaAggVendor._sum.commissionAmount || 0;
 
   // Calcular comisiones según dimensión
   let totalListeroCommission = 0;
@@ -1129,22 +1128,23 @@ export const AccountsService = {
       }
     }
 
-    // Obtener o crear estado de cuenta
-    const statement = await AccountStatementRepository.findOrCreate({
-      date: paymentDate,
+    // Recalcular el estado de cuenta antes de validar el pago
+    const dimension: "ventana" | "vendedor" = data.ventanaId ? "ventana" : "vendedor";
+    const statement = await calculateDayStatement(
+      paymentDate,
       month,
-      ventanaId: data.ventanaId,
-      vendedorId: data.vendedorId,
-    });
+      dimension,
+      data.ventanaId ?? undefined,
+      data.vendedorId ?? undefined
+    );
 
     // Validar que se puede editar
     if (!statement.canEdit) {
       throw new AppError("El estado de cuenta ya está saldado", 400, "STATEMENT_SETTLED");
     }
 
-    // FIX: Recalcular remainingBalance actualizado antes de validar
-    // Esto asegura que la validación use el saldo más reciente, no uno desactualizado
-    const baseBalance = statement.totalSales - statement.totalPayouts;
+    // FIX: Usar el saldo recalculado del statement para validar pagos/cobros
+    const baseBalance = statement.balance || 0;
     const currentTotalPaid = await AccountPaymentRepository.getTotalPaid(statement.id);
     const currentTotalCollected = await AccountPaymentRepository.getTotalCollected(statement.id);
     // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid

@@ -1,6 +1,10 @@
 import { Router } from "express";
 import UserController from "../controllers/user.controller";
-import { protect, restrictTo, restrictToAdminOrSelf } from "../../../middlewares/auth.middleware";
+import {
+  protect,
+  restrictTo,
+  restrictToAdminSelfOrVentanaVendor,
+} from "../../../middlewares/auth.middleware";
 import {
   validateBody,
   validateParams,
@@ -30,7 +34,7 @@ router.post(
 router.patch(
   "/:id",
   protect,
-  restrictToAdminOrSelf,
+  restrictToAdminSelfOrVentanaVendor,
   validateParams(idParamSchema),
   validateBody(updateUserSchema),
   UserController.update
@@ -69,7 +73,7 @@ router.get(
 router.get(
   "/:id",
   protect,
-  restrictTo(Role.ADMIN),
+  restrictToAdminSelfOrVentanaVendor,
   validateParams(idParamSchema),
   UserController.getById
 );

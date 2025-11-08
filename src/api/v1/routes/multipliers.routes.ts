@@ -9,7 +9,7 @@ import {
   MultiplierIdParamSchema,
   ToggleMultiplierSchema,
 } from "../validators/multiplier.validator";
-import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
+import { requireAdmin, requireAdminOrVentana } from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
 
@@ -17,7 +17,12 @@ router.use(protect);
 
 router.post("/", requireAdmin, validateBody(CreateMultiplierSchema), MultiplierController.create);
 
-router.get("/", requireAdmin, validateQuery(ListMultipliersQuerySchema), MultiplierController.list);
+router.get(
+  "/",
+  requireAdminOrVentana,
+  validateQuery(ListMultipliersQuerySchema),
+  MultiplierController.list
+);
 
 router.get("/:id", requireAdmin, validateParams(MultiplierIdParamSchema), MultiplierController.getById);
 
