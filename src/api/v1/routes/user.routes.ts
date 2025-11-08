@@ -23,7 +23,7 @@ const idParamSchema = z.object({ id: z.uuid("Invalid user id") });
 router.post(
   "/",
   protect,
-  restrictTo(Role.ADMIN),
+  restrictTo(Role.ADMIN, Role.VENTANA),
   validateBody(createUserSchema),
   UserController.create
 );
@@ -38,14 +38,14 @@ router.patch(
 router.delete(
   "/:id",
   protect,
-  restrictTo(Role.ADMIN),
+  restrictTo(Role.ADMIN, Role.VENTANA),
   validateParams(idParamSchema),
   UserController.remove
 );
 router.patch(
   "/:id/restore",
   protect,
-  restrictTo(Role.ADMIN),
+  restrictTo(Role.ADMIN, Role.VENTANA),
   validateParams(idParamSchema),
   UserController.restore
 );

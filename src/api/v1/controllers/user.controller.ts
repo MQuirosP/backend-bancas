@@ -7,10 +7,11 @@ import { success, created } from "../../../utils/responses";
 
 export const UserController = {
   async create(req: Request, res: Response) {
-    const actorId = (req as any)?.user?.id ?? null;
+    const actor = (req as any)?.user ?? null;
+    const actorId = actor?.id ?? null;
     const requestId = (req as any)?.requestId ?? null;
 
-    const user = await UserService.create(req.body);
+    const user = await UserService.create(req.body, actor ?? undefined);
 
     (req as any)?.logger?.info({
       layer: "controller",
@@ -70,10 +71,11 @@ export const UserController = {
   },
 
   async update(req: Request, res: Response) {
-    const actorId = (req as any)?.user?.id ?? null;
+    const actor = (req as any)?.user ?? null;
+    const actorId = actor?.id ?? null;
     const requestId = (req as any)?.requestId ?? null;
 
-    const user = await UserService.update(req.params.id, req.body);
+    const user = await UserService.update(req.params.id, req.body, actor ?? undefined);
 
     (req as any)?.logger?.info({
       layer: "controller",
@@ -109,13 +111,15 @@ export const UserController = {
   },
 
   async remove(req: Request, res: Response) {
-    const actorId = (req as any)?.user?.id ?? null;
+    const actor = (req as any)?.user ?? null;
+    const actorId = actor?.id ?? null;
     const requestId = (req as any)?.requestId ?? null;
 
     const user = await UserService.softDelete(
       req.params.id,
-      actorId!,
-      "Deleted by admin"
+      actor ?? undefined,
+      actorId ?? undefined,
+      actor?.role === Role.ADMIN ? "Deleted by admin" : "Deleted by ventana"
     );
 
     (req as any)?.logger?.info({
@@ -139,10 +143,11 @@ export const UserController = {
   },
 
   async restore(req: Request, res: Response) {
-    const actorId = (req as any)?.user?.id ?? null;
+    const actor = (req as any)?.user ?? null;
+    const actorId = actor?.id ?? null;
     const requestId = (req as any)?.requestId ?? null;
 
-    const user = await UserService.restore(req.params.id);
+    const user = await UserService.restore(req.params.id, actor ?? undefined);
 
     (req as any)?.logger?.info({
       layer: "controller",

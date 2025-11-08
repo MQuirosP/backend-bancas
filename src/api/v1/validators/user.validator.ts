@@ -60,28 +60,8 @@ export const createUserSchema = z
     username: z.string().trim().min(3).max(32),
     password: z.string().min(8),
     role: z.enum(['ADMIN', 'VENTANA', 'VENDEDOR']).optional(),
-    ventanaId: z.uuid('ventanaId inválido').nullable().optional(), // requerido condicional abajo
-    // code: z
-    //   .string()
-    //   .trim()
-    //   .min(2)
-    //   .max(32)
-    //   .optional(),
+    ventanaId: z.uuid('ventanaId inválido').nullable().optional(),
     isActive: z.boolean().optional(),
-  })
-  .superRefine((val, ctx) => {
-    const role = val.role ?? 'VENTANA'
-    if (role !== 'ADMIN') {
-      // Para no romper si viene '', conviértelo a null en un preprocess si lo deseas,
-      // aquí solo exige presencia válida cuando no es ADMIN:
-      if (!val.ventanaId || typeof val.ventanaId !== 'string' || val.ventanaId.trim().length === 0) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['ventanaId'],
-          message: 'Selecciona una ventana',
-        })
-      }
-    }
   })
   .strict()
 
