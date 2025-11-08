@@ -64,6 +64,10 @@ export const AuthService = {
       throw new AppError('Invalid credentials', 401);
     }
 
+    if (!user.isActive || user.deletedAt) {
+      throw new AppError('La cuenta está inactiva. Contacta al administrador.', 403, 'USER_INACTIVE');
+    }
+
     const match = await comparePassword(data.password, user.password);
     if (!match) {
       throw new AppError('Invalid credentials', 401);
