@@ -53,35 +53,55 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
   };
 
   if (filters.dateFrom || filters.dateTo) {
-    const fromDateStr = filters.dateFrom ? toCostaRicaDateString(filters.dateFrom) : null;
-    const toDateStr = filters.dateTo ? toCostaRicaDateString(filters.dateTo) : null;
+    const orConditions: Prisma.TicketWhereInput[] = [];
 
-    const businessRange: Prisma.DateTimeFilter = {};
-    const createdRange: Prisma.DateTimeFilter = {};
+    if (filters.dateFrom || filters.dateTo) {
+      const businessCondition: Prisma.TicketWhereInput = {};
+      const businessRange: Prisma.DateTimeFilter = {};
 
-    if (fromDateStr) {
-      businessRange.gte = new Date(`${fromDateStr}T00:00:00.000Z`);
-      createdRange.gte = new Date(`${fromDateStr}T06:00:00.000Z`);
-    }
-    if (toDateStr) {
-      businessRange.lte = new Date(`${toDateStr}T00:00:00.000Z`);
-      createdRange.lte = new Date(`${toDateStr}T05:59:59.999Z`);
-    }
+      if (filters.dateFrom) {
+        const fromDateStr = toCostaRicaDateString(filters.dateFrom);
+        businessRange.gte = new Date(`${fromDateStr}T00:00:00.000Z`);
+      }
+      if (filters.dateTo) {
+        const toDateStr = toCostaRicaDateString(filters.dateTo);
+        businessRange.lte = new Date(`${toDateStr}T00:00:00.000Z`);
+      }
 
-    const orConditions: Prisma.TicketWhereInput[] = [
-      { businessDate: businessRange },
-      {
+      if (Object.keys(businessRange).length > 0) {
+        businessCondition.businessDate = businessRange;
+        orConditions.push(businessCondition);
+      }
+
+      const createdCondition: Prisma.TicketWhereInput = {
         businessDate: null,
-        createdAt: createdRange,
-      },
-    ];
+      };
+      const createdRange: Prisma.DateTimeFilter = {};
 
-    const existingAnd = Array.isArray(where.AND)
-      ? where.AND
-      : where.AND
-      ? [where.AND]
-      : [];
-    where.AND = [...existingAnd, { OR: orConditions }];
+      if (filters.dateFrom) {
+        const fromDateStr = toCostaRicaDateString(filters.dateFrom);
+        createdRange.gte = new Date(`${fromDateStr}T06:00:00.000Z`);
+      }
+      if (filters.dateTo) {
+        const toDateStr = toCostaRicaDateString(filters.dateTo);
+        const endBase = new Date(`${toDateStr}T06:00:00.000Z`);
+        createdRange.lte = new Date(endBase.getTime() + 24 * 60 * 60 * 1000 - 1);
+      }
+
+      if (Object.keys(createdRange).length > 0) {
+        createdCondition.createdAt = createdRange;
+        orConditions.push(createdCondition);
+      }
+    }
+
+    if (orConditions.length > 0) {
+      const existingAnd = Array.isArray(where.AND)
+        ? where.AND
+        : where.AND
+        ? [where.AND]
+        : [];
+      where.AND = [...existingAnd, { OR: orConditions }];
+    }
   }
 
   // Filtro por status personalizado (si se solicita un status específico diferente)
@@ -158,7 +178,8 @@ function buildRawDateConditions(filters: VentasFilters) {
 
   if (toDateStr) {
     businessParts.push(Prisma.sql`t."businessDate" <= ${new Date(`${toDateStr}T00:00:00.000Z`)}`);
-    createdParts.push(Prisma.sql`t."createdAt" <= ${new Date(`${toDateStr}T05:59:59.999Z`)}`);
+    const endBase = new Date(`${toDateStr}T06:00:00.000Z`);
+    createdParts.push(Prisma.sql`t."createdAt" <= ${new Date(endBase.getTime() + 24 * 60 * 60 * 1000 - 1)}`);
   }
 
   const businessSql = businessParts.length ? combineSqlWithAnd(businessParts) : Prisma.sql`TRUE`;
@@ -1002,7 +1023,9 @@ export const VentasService = {
     }>
   > {
     try {
-      const truncFormat = granularity === "hour" ? "hour" : granularity === "week" ? "week" : "day";
+      const truncKeyword = Prisma.raw(
+        `'${granularity === "hour" ? "hour" : granularity === "week" ? "week" : "day"}'`
+      );
       const { dateCondition } = buildRawDateConditions(filters);
 
       const whereSqlParts: Prisma.Sql[] = [
@@ -1044,7 +1067,7 @@ export const VentasService = {
       >(
         Prisma.sql`
         SELECT
-          DATE_TRUNC(${Prisma.raw(truncFormat)}, COALESCE(
+          DATE_TRUNC(${truncKeyword}, COALESCE(
             t."businessDate",
             (t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${BUSINESS_TZ})
           )) as ts,
