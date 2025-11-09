@@ -25,16 +25,23 @@ interface DashboardFilters {
 }
 
 interface GananciaResult {
-  totalAmount: number;
+  totalAmount: number; // mantiene compatibilidad: comisiones totales (usuario + ventana)
   totalSales: number;
+  totalPayouts: number;
+  totalNet: number;
   margin: number;
+  commissionUserTotal: number;
+  commissionVentanaTotal: number;
   byVentana: Array<{
     ventanaId: string;
     ventanaName: string;
     sales: number;
-    amount: number;
+    amount: number; // compatibilidad: comisiones totales
     commissions: number;
+    commissionUser: number;
+    commissionVentana: number;
     payout: number;
+    net: number;
     margin: number;
     tickets: number;
     winners: number;
@@ -45,9 +52,12 @@ interface GananciaResult {
     loteriaId: string;
     loteriaName: string;
     sales: number;
-    amount: number;
+    amount: number; // compatibilidad: comisiones totales
     commissions: number;
+    commissionUser: number;
+    commissionVentana: number;
     payout: number;
+    net: number;
     margin: number;
     tickets: number;
     winners: number;
@@ -61,8 +71,11 @@ interface CxCResult {
     ventanaId: string;
     ventanaName: string;
     totalSales: number;
+    totalPayouts: number;
+    totalPaid: number;
     totalPaidOut: number;
-    amount: number; // sales - payouts
+    amount: number; // compatibilidad: saldo positivo (CxC)
+    remainingBalance: number;
     isActive: boolean;
   }>;
 }
@@ -72,9 +85,12 @@ interface CxPResult {
   byVentana: Array<{
     ventanaId: string;
     ventanaName: string;
-    totalWinners: number;
+    totalSales: number;
+    totalPayouts: number;
+    totalPaid: number;
     totalPaidOut: number;
-    amount: number; // winners - sales (when positive)
+    amount: number; // compatibilidad: saldo positivo (CxP)
+    remainingBalance: number;
     isActive: boolean;
   }>;
 }
@@ -83,9 +99,71 @@ interface DashboardSummary {
   totalSales: number;
   totalPayouts: number;
   totalCommissions: number;
+  commissionUser: number;
+  commissionVentana: number;
   totalTickets: number;
   winningTickets: number;
+  net: number;
   winRate: number;
+}
+
+const COSTA_RICA_OFFSET_HOURS = -6;
+
+function toCostaRicaDateString(date: Date): string {
+  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
+  const local = new Date(date.getTime() + offsetMs);
+  return local.toISOString().split("T")[0];
+}
+
+function getBusinessDateRangeStrings(filters: DashboardFilters) {
+  const fromDateStr = toCostaRicaDateString(filters.fromDate);
+  const toDateStr = toCostaRicaDateString(filters.toDate);
+  return { fromDateStr, toDateStr };
+}
+
+function ticketBusinessDateCondition(alias: string, fromDateStr: string, toDateStr: string) {
+  return Prisma.sql`
+    COALESCE(
+      ${Prisma.raw(`${alias}."businessDate"`)},
+      DATE((${Prisma.raw(`${alias}."createdAt"`)} AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+    ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+  `;
+}
+
+function buildTicketBaseFilters(
+  alias: string,
+  filters: DashboardFilters,
+  fromDateStr: string,
+  toDateStr: string
+) {
+  const conditions: Prisma.Sql[] = [
+    Prisma.sql`${Prisma.raw(`${alias}."deletedAt"`)} IS NULL`,
+    Prisma.sql`${Prisma.raw(`${alias}."status"`)} IN ('ACTIVE', 'EVALUATED', 'PAID')`,
+    ticketBusinessDateCondition(alias, fromDateStr, toDateStr),
+  ];
+
+  if (filters.ventanaId) {
+    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."ventanaId"`)} = ${filters.ventanaId}::uuid`);
+  }
+
+  if (filters.loteriaId) {
+    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."loteriaId"`)} = ${filters.loteriaId}::uuid`);
+  }
+
+  let combined = conditions[0];
+  for (let i = 1; i < conditions.length; i++) {
+    combined = Prisma.sql`${combined} AND ${conditions[i]}`;
+  }
+
+  return combined;
+}
+
+function parseDateStart(dateStr: string): Date {
+  return new Date(`${dateStr}T00:00:00.000Z`);
+}
+
+function parseDateEnd(dateStr: string): Date {
+  return new Date(`${dateStr}T23:59:59.999Z`);
 }
 
 export const DashboardService = {
@@ -94,97 +172,162 @@ export const DashboardService = {
    * Incluye desglose completo por ventana y lotería
    */
   async calculateGanancia(filters: DashboardFilters): Promise<GananciaResult> {
-    // Query: desglose completo por ventana (solo ventanas activas)
+    const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+
     const byVentanaResult = await prisma.$queryRaw<
       Array<{
         ventana_id: string;
         ventana_name: string;
         is_active: boolean;
         total_sales: number;
+        total_payouts: number;
         total_tickets: number;
         winning_tickets: number;
-        total_commissions: number;
-        total_payouts: number;
+        commission_user: number;
+        commission_ventana: number;
       }>
     >(
       Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT
+            t.id,
+            t."ventanaId",
+            t."loteriaId",
+            t."totalAmount",
+            t."totalPayout",
+            t."isWinner"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+        ),
+        sales_per_ventana AS (
+          SELECT
+            t."ventanaId" AS ventana_id,
+            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
+            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts,
+            COUNT(DISTINCT t.id) AS total_tickets,
+            COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) AS winning_tickets
+          FROM tickets_in_range t
+          GROUP BY t."ventanaId"
+        ),
+        commissions_per_ventana AS (
+          SELECT
+            t."ventanaId" AS ventana_id,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana
+          FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          GROUP BY t."ventanaId"
+        )
         SELECT
-          v.id as ventana_id,
-          v.name as ventana_name,
-          v."isActive" as is_active,
-          COALESCE(SUM(t."totalAmount"), 0) as total_sales,
-          COUNT(DISTINCT t.id) as total_tickets,
-          COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets,
-          COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
-          COALESCE(SUM(t."totalPayout"), 0) as total_payouts
+          v.id AS ventana_id,
+          v.name AS ventana_name,
+          v."isActive" AS is_active,
+          COALESCE(sp.total_sales, 0) AS total_sales,
+          COALESCE(sp.total_payouts, 0) AS total_payouts,
+          COALESCE(sp.total_tickets, 0) AS total_tickets,
+          COALESCE(sp.winning_tickets, 0) AS winning_tickets,
+          COALESCE(cp.commission_user, 0) AS commission_user,
+          COALESCE(cp.commission_ventana, 0) AS commission_ventana
         FROM "Ventana" v
-        LEFT JOIN "Ticket" t ON v.id = t."ventanaId"
-          AND t."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND t."createdAt" >= ${filters.fromDate}
-          AND t."createdAt" <= ${filters.toDate}
+        LEFT JOIN sales_per_ventana sp ON sp.ventana_id = v.id
+        LEFT JOIN commissions_per_ventana cp ON cp.ventana_id = v.id
         WHERE v."isActive" = true
           ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
-        GROUP BY v.id, v.name, v."isActive"
         ORDER BY total_sales DESC
       `
     );
 
-    // Query: desglose completo por lotería (solo loterías activas)
     const byLoteriaResult = await prisma.$queryRaw<
       Array<{
         loteria_id: string;
         loteria_name: string;
         is_active: boolean;
         total_sales: number;
+        total_payouts: number;
         total_tickets: number;
         winning_tickets: number;
-        total_commissions: number;
-        total_payouts: number;
+        commission_user: number;
+        commission_ventana: number;
       }>
     >(
       Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT
+            t.id,
+            t."ventanaId",
+            t."loteriaId",
+            t."totalAmount",
+            t."totalPayout",
+            t."isWinner"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+        ),
+        sales_per_loteria AS (
+          SELECT
+            t."loteriaId" AS loteria_id,
+            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
+            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts,
+            COUNT(DISTINCT t.id) AS total_tickets,
+            COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) AS winning_tickets
+          FROM tickets_in_range t
+          GROUP BY t."loteriaId"
+        ),
+        commissions_per_loteria AS (
+          SELECT
+            t."loteriaId" AS loteria_id,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana
+          FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          GROUP BY t."loteriaId"
+        )
         SELECT
-          l.id as loteria_id,
-          l.name as loteria_name,
-          l."isActive" as is_active,
-          COALESCE(SUM(t."totalAmount"), 0) as total_sales,
-          COUNT(DISTINCT t.id) as total_tickets,
-          COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets,
-          COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
-          COALESCE(SUM(t."totalPayout"), 0) as total_payouts
+          l.id AS loteria_id,
+          l.name AS loteria_name,
+          l."isActive" AS is_active,
+          COALESCE(sp.total_sales, 0) AS total_sales,
+          COALESCE(sp.total_payouts, 0) AS total_payouts,
+          COALESCE(sp.total_tickets, 0) AS total_tickets,
+          COALESCE(sp.winning_tickets, 0) AS winning_tickets,
+          COALESCE(cp.commission_user, 0) AS commission_user,
+          COALESCE(cp.commission_ventana, 0) AS commission_ventana
         FROM "Loteria" l
-        LEFT JOIN "Ticket" t ON l.id = t."loteriaId"
-          AND t."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND t."createdAt" >= ${filters.fromDate}
-          AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+        LEFT JOIN sales_per_loteria sp ON sp.loteria_id = l.id
+        LEFT JOIN commissions_per_loteria cp ON cp.loteria_id = l.id
         WHERE l."isActive" = true
-        GROUP BY l.id, l.name, l."isActive"
         ORDER BY total_sales DESC
       `
     );
 
-    // Calcular totales generales
-    const totalSales = byVentanaResult.reduce((sum, v) => sum + Number(v.total_sales), 0);
-    const totalTickets = byVentanaResult.reduce((sum, v) => sum + Number(v.total_tickets), 0);
-    const totalWinners = byVentanaResult.reduce((sum, v) => sum + Number(v.winning_tickets), 0);
-    const totalAmount = byVentanaResult.reduce((sum, v) => sum + Number(v.total_commissions), 0);
-
-    const margin = totalSales > 0 ? (totalAmount / totalSales) * 100 : 0;
+    const totalSales = byVentanaResult.reduce((sum, v) => sum + Number(v.total_sales || 0), 0);
+    const totalPayouts = byVentanaResult.reduce((sum, v) => sum + Number(v.total_payouts || 0), 0);
+    const commissionUserTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_user || 0), 0);
+    const commissionVentanaTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
+    const totalAmount = commissionUserTotal + commissionVentanaTotal;
+    const totalNet = totalSales - totalPayouts;
+    const margin = totalSales > 0 ? (totalNet / totalSales) * 100 : 0;
 
     return {
       totalAmount,
       totalSales,
+      totalPayouts,
+      totalNet,
       margin: parseFloat(margin.toFixed(2)),
-      byVentana: byVentanaResult.map(row => {
+      commissionUserTotal,
+      commissionVentanaTotal,
+      byVentana: byVentanaResult.map((row) => {
         const sales = Number(row.total_sales) || 0;
+        const payout = Number(row.total_payouts) || 0;
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
-        const commissions = Number(row.total_commissions) || 0;
-        const payout = Number(row.total_payouts) || 0;
-        const ventanaMargin = sales > 0 ? (commissions / sales) * 100 : 0;
+        const commissionUser = Number(row.commission_user) || 0;
+        const commissionVentana = Number(row.commission_ventana) || 0;
+        const commissions = commissionUser + commissionVentana;
+        const net = sales - payout;
+        const ventanaMargin = sales > 0 ? (net / sales) * 100 : 0;
         const winRate = tickets > 0 ? (winners / tickets) * 100 : 0;
 
         return {
@@ -193,7 +336,10 @@ export const DashboardService = {
           sales,
           amount: commissions,
           commissions,
+          commissionUser,
+          commissionVentana,
           payout,
+          net,
           margin: parseFloat(ventanaMargin.toFixed(2)),
           tickets,
           winners,
@@ -201,13 +347,16 @@ export const DashboardService = {
           isActive: row.is_active,
         };
       }),
-      byLoteria: byLoteriaResult.map(row => {
+      byLoteria: byLoteriaResult.map((row) => {
         const sales = Number(row.total_sales) || 0;
+        const payout = Number(row.total_payouts) || 0;
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
-        const commissions = Number(row.total_commissions) || 0;
-        const payout = Number(row.total_payouts) || 0;
-        const loteriaMargin = sales > 0 ? (commissions / sales) * 100 : 0;
+        const commissionUser = Number(row.commission_user) || 0;
+        const commissionVentana = Number(row.commission_ventana) || 0;
+        const commissions = commissionUser + commissionVentana;
+        const net = sales - payout;
+        const loteriaMargin = sales > 0 ? (net / sales) * 100 : 0;
 
         return {
           loteriaId: row.loteria_id,
@@ -215,7 +364,10 @@ export const DashboardService = {
           sales,
           amount: commissions,
           commissions,
+          commissionUser,
+          commissionVentana,
           payout,
+          net,
           margin: parseFloat(loteriaMargin.toFixed(2)),
           tickets,
           winners,
@@ -230,51 +382,88 @@ export const DashboardService = {
    * CxC = Total de ventas - Total de premios pagados
    */
   async calculateCxC(filters: DashboardFilters): Promise<CxCResult> {
-    const query = await prisma.$queryRaw<
-      Array<{
-        ventana_id: string;
-        ventana_name: string;
-        is_active: boolean;
-        total_sales: number;
-        total_paid: number;
-      }>
-    >(
-      Prisma.sql`
-        SELECT
-          v.id as ventana_id,
-          v.name as ventana_name,
-          v."isActive" as is_active,
-          COALESCE(SUM(t."totalAmount"), 0) as total_sales,
-          COALESCE(SUM(tp."amountPaid"), 0) as total_paid
-        FROM "Ventana" v
-        LEFT JOIN "Ticket" t ON v.id = t."ventanaId"
-          AND t."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND t."createdAt" >= ${filters.fromDate}
-          AND t."createdAt" <= ${filters.toDate}
-        LEFT JOIN "TicketPayment" tp ON t.id = tp."ticketId"
-          AND tp."isReversed" = false
-          AND tp."createdAt" >= ${filters.fromDate}
-          AND tp."createdAt" <= ${filters.toDate}
-        ${filters.ventanaId ? Prisma.sql`WHERE v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
-        GROUP BY v.id, v.name, v."isActive"
-      `
-    );
+    const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
+    const rangeStart = parseDateStart(fromDateStr);
+    const rangeEnd = parseDateEnd(toDateStr);
 
-    const byVentana = query.map((row) => {
-      const totalSales = Number(row.total_sales) || 0;
-      const totalPaidOut = Number(row.total_paid) || 0;
-      const amount = totalSales - totalPaidOut;
+    const where: Prisma.AccountStatementWhereInput = {
+      date: {
+        gte: rangeStart,
+        lte: rangeEnd,
+      },
+      vendedorId: null,
+    };
 
-      return {
-        ventanaId: row.ventana_id,
-        ventanaName: row.ventana_name,
-        totalSales,
-        totalPaidOut,
-        amount: amount > 0 ? amount : 0, // Solo mostrar si es positivo
-        isActive: row.is_active,
-      };
+    if (filters.ventanaId) {
+      where.ventanaId = filters.ventanaId;
+    } else {
+      where.ventanaId = { not: null };
+    }
+
+    const statements = await prisma.accountStatement.findMany({
+      where,
+      include: {
+        ventana: {
+          select: {
+            id: true,
+            name: true,
+            isActive: true,
+          },
+        },
+      },
     });
+
+    const aggregated = new Map<
+      string,
+      {
+        ventanaId: string;
+        ventanaName: string;
+        isActive: boolean;
+        totalSales: number;
+        totalPayouts: number;
+        totalPaid: number;
+        remainingBalance: number;
+      }
+    >();
+
+    for (const statement of statements) {
+      if (!statement.ventanaId) continue;
+      const key = statement.ventanaId;
+      const existing = aggregated.get(key) || {
+        ventanaId: key,
+        ventanaName: statement.ventana?.name || "Sin nombre",
+        isActive: statement.ventana?.isActive ?? true,
+        totalSales: 0,
+        totalPayouts: 0,
+        totalPaid: 0,
+        remainingBalance: 0,
+      };
+
+      existing.totalSales += statement.totalSales ?? 0;
+      existing.totalPayouts += statement.totalPayouts ?? 0;
+      existing.totalPaid += statement.totalPaid ?? 0;
+      existing.remainingBalance += statement.remainingBalance ?? 0;
+
+      aggregated.set(key, existing);
+    }
+
+    const byVentana = Array.from(aggregated.values())
+      .map((entry) => {
+        const amount = entry.remainingBalance > 0 ? entry.remainingBalance : 0;
+        const totalPaid = entry.totalPaid;
+        return {
+          ventanaId: entry.ventanaId,
+          ventanaName: entry.ventanaName,
+          totalSales: entry.totalSales,
+          totalPayouts: entry.totalPayouts,
+          totalPaid,
+          totalPaidOut: totalPaid,
+          amount,
+          remainingBalance: entry.remainingBalance,
+          isActive: entry.isActive,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
 
     const totalAmount = byVentana.reduce((sum, v) => sum + v.amount, 0);
 
@@ -289,55 +478,88 @@ export const DashboardService = {
    * CxP ocurre cuando ventana paga más de lo que vendió
    */
   async calculateCxP(filters: DashboardFilters): Promise<CxPResult> {
-    const query = await prisma.$queryRaw<
-      Array<{
-        ventana_id: string;
-        ventana_name: string;
-        is_active: boolean;
-        total_winners: number;
-        total_paid: number;
-      }>
-    >(
-      Prisma.sql`
-        SELECT
-          v.id as ventana_id,
-          v.name as ventana_name,
-          v."isActive" as is_active,
-          COALESCE(SUM(j."payout"), 0) as total_winners,
-          COALESCE(SUM(tp."amountPaid"), 0) as total_paid
-        FROM "Ventana" v
-        LEFT JOIN "Ticket" t ON v.id = t."ventanaId"
-          AND t."deletedAt" IS NULL
-          AND t.status IN ('EVALUATED', 'PAID')
-          AND t."isWinner" = true
-          AND t."createdAt" >= ${filters.fromDate}
-          AND t."createdAt" <= ${filters.toDate}
-        LEFT JOIN "Jugada" j ON t.id = j."ticketId"
-          AND j."isWinner" = true
-          AND j."deletedAt" IS NULL
-        LEFT JOIN "TicketPayment" tp ON t.id = tp."ticketId"
-          AND tp."isReversed" = false
-          AND tp."createdAt" >= ${filters.fromDate}
-          AND tp."createdAt" <= ${filters.toDate}
-        ${filters.ventanaId ? Prisma.sql`WHERE v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
-        GROUP BY v.id, v.name, v."isActive"
-      `
-    );
+    const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
+    const rangeStart = parseDateStart(fromDateStr);
+    const rangeEnd = parseDateEnd(toDateStr);
 
-    const byVentana = query.map((row) => {
-      const totalWinners = Number(row.total_winners) || 0;
-      const totalPaidOut = Number(row.total_paid) || 0;
-      const amount = totalPaidOut - totalWinners;
+    const where: Prisma.AccountStatementWhereInput = {
+      date: {
+        gte: rangeStart,
+        lte: rangeEnd,
+      },
+      vendedorId: null,
+    };
 
-      return {
-        ventanaId: row.ventana_id,
-        ventanaName: row.ventana_name,
-        totalWinners,
-        totalPaidOut,
-        amount: amount > 0 ? amount : 0, // Solo mostrar si es positivo
-        isActive: row.is_active,
-      };
+    if (filters.ventanaId) {
+      where.ventanaId = filters.ventanaId;
+    } else {
+      where.ventanaId = { not: null };
+    }
+
+    const statements = await prisma.accountStatement.findMany({
+      where,
+      include: {
+        ventana: {
+          select: {
+            id: true,
+            name: true,
+            isActive: true,
+          },
+        },
+      },
     });
+
+    const aggregated = new Map<
+      string,
+      {
+        ventanaId: string;
+        ventanaName: string;
+        isActive: boolean;
+        totalSales: number;
+        totalPayouts: number;
+        totalPaid: number;
+        remainingBalance: number;
+      }
+    >();
+
+    for (const statement of statements) {
+      if (!statement.ventanaId) continue;
+      const key = statement.ventanaId;
+      const existing = aggregated.get(key) || {
+        ventanaId: key,
+        ventanaName: statement.ventana?.name || "Sin nombre",
+        isActive: statement.ventana?.isActive ?? true,
+        totalSales: 0,
+        totalPayouts: 0,
+        totalPaid: 0,
+        remainingBalance: 0,
+      };
+
+      existing.totalSales += statement.totalSales ?? 0;
+      existing.totalPayouts += statement.totalPayouts ?? 0;
+      existing.totalPaid += statement.totalPaid ?? 0;
+      existing.remainingBalance += statement.remainingBalance ?? 0;
+
+      aggregated.set(key, existing);
+    }
+
+    const byVentana = Array.from(aggregated.values())
+      .map((entry) => {
+        const amount = entry.remainingBalance < 0 ? Math.abs(entry.remainingBalance) : 0;
+        const totalPaid = entry.totalPaid;
+        return {
+          ventanaId: entry.ventanaId,
+          ventanaName: entry.ventanaName,
+          totalSales: entry.totalSales,
+          totalPayouts: entry.totalPayouts,
+          totalPaid,
+          totalPaidOut: totalPaid,
+          amount,
+          remainingBalance: entry.remainingBalance,
+          isActive: entry.isActive,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
 
     const totalAmount = byVentana.reduce((sum, v) => sum + v.amount, 0);
 
@@ -351,78 +573,85 @@ export const DashboardService = {
    * Resumen general: totales de ventas, pagos, comisiones
    */
   async getSummary(filters: DashboardFilters): Promise<DashboardSummary> {
-    const [sales, payouts, commissions, tickets] = await Promise.all([
-      prisma.$queryRaw<Array<{ total: number }>>(
-        Prisma.sql`
-          SELECT COALESCE(SUM(t."totalAmount"), 0) as total
-          FROM "Ticket" t
-          WHERE t."deletedAt" IS NULL
-            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-            AND t."createdAt" >= ${filters.fromDate}
-            AND t."createdAt" <= ${filters.toDate}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        `
-      ),
-      prisma.$queryRaw<Array<{ total: number }>>(
-        Prisma.sql`
-          SELECT COALESCE(SUM(t."totalPayout"), 0) as total
-          FROM "Ticket" t
-          WHERE t."deletedAt" IS NULL
-            AND t."isWinner" = true
-            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-            AND t."createdAt" >= ${filters.fromDate}
-            AND t."createdAt" <= ${filters.toDate}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        `
-      ),
-      prisma.$queryRaw<Array<{ total: number }>>(
-        Prisma.sql`
-          SELECT COALESCE(SUM(t."totalCommission"), 0) as total
-          FROM "Ticket" t
-          WHERE t."deletedAt" IS NULL
-            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-            AND t."createdAt" >= ${filters.fromDate}
-            AND t."createdAt" <= ${filters.toDate}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        `
-      ),
-      prisma.ticket.count({
-        where: {
-          deletedAt: null,
-          status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] as any },
-          createdAt: {
-            gte: filters.fromDate,
-            lte: filters.toDate,
-          },
-          ...(filters.ventanaId && { ventanaId: filters.ventanaId }),
-        },
-      }),
-    ]);
+    const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
-    const winningTickets = await prisma.ticket.count({
-      where: {
-        deletedAt: null,
-        isWinner: true,
-        status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] as any },
-        createdAt: {
-          gte: filters.fromDate,
-          lte: filters.toDate,
-        },
-        ...(filters.ventanaId && { ventanaId: filters.ventanaId }),
-      },
-    });
+    const summaryRows = await prisma.$queryRaw<
+      Array<{
+        total_sales: number;
+        total_payouts: number;
+        total_tickets: number;
+        winning_tickets: number;
+        commission_user: number;
+        commission_ventana: number;
+      }>
+    >(
+      Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT
+            t.id,
+            t."totalAmount",
+            t."totalPayout",
+            t."isWinner"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+        ),
+        ticket_summary AS (
+          SELECT
+            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
+            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts,
+            COUNT(DISTINCT t.id) AS total_tickets,
+            COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) AS winning_tickets
+          FROM tickets_in_range t
+        ),
+        commission_summary AS (
+          SELECT
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana
+          FROM "Jugada" j
+          JOIN tickets_in_range t ON t.id = j."ticketId"
+          WHERE j."deletedAt" IS NULL
+        )
+        SELECT
+          ts.total_sales,
+          ts.total_payouts,
+          ts.total_tickets,
+          ts.winning_tickets,
+          COALESCE(cs.commission_user, 0) AS commission_user,
+          COALESCE(cs.commission_ventana, 0) AS commission_ventana
+        FROM ticket_summary ts
+        LEFT JOIN commission_summary cs ON TRUE
+      `
+    );
 
-    const totalSales = Number(sales[0]?.total) || 0;
-    const totalPayouts = Number(payouts[0]?.total) || 0;
-    const totalCommissions = Number(commissions[0]?.total) || 0;
-    const winRate = tickets > 0 ? (winningTickets / tickets) * 100 : 0;
+    const summary = summaryRows[0] || {
+      total_sales: 0,
+      total_payouts: 0,
+      total_tickets: 0,
+      winning_tickets: 0,
+      commission_user: 0,
+      commission_ventana: 0,
+    };
+
+    const totalSales = Number(summary.total_sales) || 0;
+    const totalPayouts = Number(summary.total_payouts) || 0;
+    const totalTickets = Number(summary.total_tickets) || 0;
+    const winningTickets = Number(summary.winning_tickets) || 0;
+    const commissionUser = Number(summary.commission_user) || 0;
+    const commissionVentana = Number(summary.commission_ventana) || 0;
+    const totalCommissions = commissionUser + commissionVentana;
+    const net = totalSales - totalPayouts;
+    const winRate = totalTickets > 0 ? (winningTickets / totalTickets) * 100 : 0;
 
     return {
       totalSales,
       totalPayouts,
       totalCommissions,
-      totalTickets: tickets,
+      commissionUser,
+      commissionVentana,
+      totalTickets,
       winningTickets,
+      net,
       winRate: parseFloat(winRate.toFixed(2)),
     };
   },
@@ -435,13 +664,34 @@ export const DashboardService = {
     let queryCount = 0;
 
     const [ganancia, cxc, cxp, summary, timeSeries, exposure, previousPeriod] = await Promise.all([
-      this.calculateGanancia(filters).then(r => { queryCount += 3; return r; }),
-      this.calculateCxC(filters).then(r => { queryCount += 1; return r; }),
-      this.calculateCxP(filters).then(r => { queryCount += 1; return r; }),
-      this.getSummary(filters).then(r => { queryCount += 4; return r; }),
-      this.getTimeSeries({ ...filters, interval: filters.interval || 'day' }).then(r => { queryCount += 1; return r; }),
-      this.calculateExposure(filters).then(r => { queryCount += 3; return r; }),
-      this.calculatePreviousPeriod(filters).then(r => { queryCount += 4; return r; }),
+      this.calculateGanancia(filters).then((r) => {
+        queryCount += 2;
+        return r;
+      }),
+      this.calculateCxC(filters).then((r) => {
+        queryCount += 1;
+        return r;
+      }),
+      this.calculateCxP(filters).then((r) => {
+        queryCount += 1;
+        return r;
+      }),
+      this.getSummary(filters).then((r) => {
+        queryCount += 1;
+        return r;
+      }),
+      this.getTimeSeries({ ...filters, interval: filters.interval || 'day' }).then((r) => {
+        queryCount += 1;
+        return r;
+      }),
+      this.calculateExposure(filters).then((r) => {
+        queryCount += 3;
+        return r;
+      }),
+      this.calculatePreviousPeriod(filters).then((r) => {
+        queryCount += 1;
+        return r;
+      }),
     ]);
 
     const alerts = this.generateAlerts({ ganancia, cxc, cxp, summary, exposure });
@@ -483,9 +733,19 @@ export const DashboardService = {
       }
     }
 
-    const dateFormat = interval === 'day'
-      ? Prisma.sql`DATE_TRUNC('day', t."createdAt")`
-      : Prisma.sql`DATE_TRUNC('hour', t."createdAt")`;
+    const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+
+    const dateFormat =
+      interval === 'day'
+        ? Prisma.sql`COALESCE(
+            t."businessDate",
+            DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+          )`
+        : Prisma.sql`DATE_TRUNC(
+            'hour',
+            (t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
+          )`;
 
     const result = await prisma.$queryRaw<
       Array<{
@@ -502,12 +762,7 @@ export const DashboardService = {
           COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
           COUNT(DISTINCT t.id) as total_tickets
         FROM "Ticket" t
-        WHERE t."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND t."createdAt" >= ${filters.fromDate}
-          AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        WHERE ${baseFilters}
         GROUP BY date_bucket
         ORDER BY date_bucket ASC
       `
@@ -533,7 +788,9 @@ export const DashboardService = {
   async calculateExposure(filters: DashboardFilters) {
     const topLimit = filters.top || 10;
 
-    // Top números con mayor venta - incluyendo ticket count y payout correctamente calculado
+    const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+
     const topNumbers = await prisma.$queryRaw<
       Array<{
         number: string;
@@ -544,29 +801,36 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT t.id
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+        ),
+        jugadas_in_range AS (
+          SELECT
+            j."ticketId",
+            j.number,
+            j.type,
+            j.amount,
+            j."finalMultiplierX"
+          FROM "Jugada" j
+          JOIN tickets_in_range tir ON tir.id = j."ticketId"
+          WHERE j."deletedAt" IS NULL
+        )
         SELECT
           j.number,
           j.type as bet_type,
           COALESCE(SUM(j.amount), 0) as total_sales,
           COALESCE(SUM(j.amount * j."finalMultiplierX"), 0) as potential_payout,
-          COUNT(DISTINCT t.id) as ticket_count
-        FROM "Jugada" j
-        JOIN "Ticket" t ON j."ticketId" = t.id
-        WHERE t."deletedAt" IS NULL
-          AND j."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND t."createdAt" >= ${filters.fromDate}
-          AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-          ${filters.betType ? Prisma.sql`AND j.type = ${filters.betType}` : Prisma.empty}
+          COUNT(DISTINCT j."ticketId") as ticket_count
+        FROM jugadas_in_range j
+        ${filters.betType ? Prisma.sql`WHERE j.type = ${filters.betType}` : Prisma.empty}
         GROUP BY j.number, j.type
         ORDER BY total_sales DESC
         LIMIT ${topLimit}
       `
     );
 
-    // Heatmap: ventas por número (00-99)
     const heatmap = await prisma.$queryRaw<
       Array<{
         number: string;
@@ -574,24 +838,29 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT t.id
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+        ),
+        jugadas_in_range AS (
+          SELECT
+            j."ticketId",
+            j.number,
+            j.amount
+          FROM "Jugada" j
+          JOIN tickets_in_range tir ON tir.id = j."ticketId"
+          WHERE j."deletedAt" IS NULL
+        )
         SELECT
           j.number,
           COALESCE(SUM(j.amount), 0) as total_sales
-        FROM "Jugada" j
-        JOIN "Ticket" t ON j."ticketId" = t.id
-        WHERE t."deletedAt" IS NULL
-          AND j."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND t."createdAt" >= ${filters.fromDate}
-          AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        FROM jugadas_in_range j
         GROUP BY j.number
         ORDER BY j.number ASC
       `
     );
 
-    // Exposición por lotería
     const byLoteria = await prisma.$queryRaw<
       Array<{
         loteria_id: string;
@@ -601,21 +870,30 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT
+            t.id,
+            t."loteriaId"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+        ),
+        jugadas_in_range AS (
+          SELECT
+            j."ticketId",
+            j.amount,
+            j."finalMultiplierX"
+          FROM "Jugada" j
+          JOIN tickets_in_range tir ON tir.id = j."ticketId"
+          WHERE j."deletedAt" IS NULL
+        )
         SELECT
           l.id as loteria_id,
           l.name as loteria_name,
           COALESCE(SUM(j.amount), 0) as total_sales,
           COALESCE(SUM(j.amount * j."finalMultiplierX"), 0) as potential_payout
-        FROM "Jugada" j
-        JOIN "Ticket" t ON j."ticketId" = t.id
-        JOIN "Loteria" l ON t."loteriaId" = l.id
-        WHERE t."deletedAt" IS NULL
-          AND j."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND t."createdAt" >= ${filters.fromDate}
-          AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        FROM jugadas_in_range j
+        JOIN tickets_in_range tir ON tir.id = j."ticketId"
+        JOIN "Loteria" l ON tir."loteriaId" = l.id
         GROUP BY l.id, l.name
         ORDER BY total_sales DESC
       `
@@ -673,6 +951,9 @@ export const DashboardService = {
 
     const orderDirection = order === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
 
+    const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+
     const result = await prisma.$queryRaw<
       Array<{
         vendedor_id: string;
@@ -686,28 +967,42 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT
+            t.id,
+            t."vendedorId",
+            t."totalAmount",
+            t."totalCommission",
+            t."isWinner"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+            AND t."vendedorId" IS NOT NULL
+        ),
+        vendedor_summary AS (
+          SELECT
+            t."vendedorId" AS vendedor_id,
+            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
+            COALESCE(SUM(t."totalCommission"), 0) AS total_commissions,
+            COUNT(DISTINCT t.id) AS total_tickets,
+            COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) AS winning_tickets
+          FROM tickets_in_range t
+          GROUP BY t."vendedorId"
+        )
         SELECT
           u.id as vendedor_id,
           u.name as vendedor_name,
           u."isActive" as is_active,
-          COALESCE(SUM(t."totalAmount"), 0) as total_sales,
-          COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
-          COUNT(DISTINCT t.id) as total_tickets,
-          COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets,
+          COALESCE(vs.total_sales, 0) as total_sales,
+          COALESCE(vs.total_commissions, 0) as total_commissions,
+          COALESCE(vs.total_tickets, 0) as total_tickets,
+          COALESCE(vs.winning_tickets, 0) as winning_tickets,
           CASE
-            WHEN COUNT(DISTINCT t.id) > 0 THEN COALESCE(SUM(t."totalAmount"), 0) / COUNT(DISTINCT t.id)
+            WHEN COALESCE(vs.total_tickets, 0) > 0 THEN COALESCE(vs.total_sales, 0) / COALESCE(vs.total_tickets, 0)
             ELSE 0
           END as avg_ticket
         FROM "User" u
-        JOIN "Ticket" t ON u.id = t."vendedorId"
+        JOIN vendedor_summary vs ON vs.vendedor_id = u.id
         WHERE u."isActive" = true
-          AND t."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND t."createdAt" >= ${filters.fromDate}
-          AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-        GROUP BY u.id, u.name, u."isActive"
         ORDER BY ${orderClause} ${orderDirection}
         LIMIT ${pageSize}
         OFFSET ${offset}
@@ -717,16 +1012,21 @@ export const DashboardService = {
     // Count total para paginación
     const totalCount = await prisma.$queryRaw<Array<{ count: bigint }>>(
       Prisma.sql`
-        SELECT COUNT(DISTINCT u.id) as count
-        FROM "User" u
-        JOIN "Ticket" t ON u.id = t."vendedorId"
-        WHERE u."isActive" = true
-          AND t."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-          AND t."createdAt" >= ${filters.fromDate}
-          AND t."createdAt" <= ${filters.toDate}
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        WITH tickets_in_range AS (
+          SELECT
+            t.id,
+            t."vendedorId"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+            AND t."vendedorId" IS NOT NULL
+        )
+        SELECT COUNT(*) as count
+        FROM (
+          SELECT DISTINCT u.id
+          FROM tickets_in_range t
+          JOIN "User" u ON u.id = t."vendedorId"
+          WHERE u."isActive" = true
+        ) active_vendedores
       `
     );
 
@@ -760,40 +1060,47 @@ export const DashboardService = {
     const previousFromDate = new Date(filters.fromDate.getTime() - diffMs);
     const previousToDate = new Date(filters.fromDate.getTime() - 1);
 
-    const previousFilters = {
+    const previousFilters: DashboardFilters = {
       ...filters,
       fromDate: previousFromDate,
       toDate: previousToDate,
     };
 
-    const [sales, commissions] = await Promise.all([
-      prisma.$queryRaw<Array<{ total: number }>>(
-        Prisma.sql`
-          SELECT COALESCE(SUM(t."totalAmount"), 0) as total
+    const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(previousFilters);
+    const baseFilters = buildTicketBaseFilters("t", previousFilters, fromDateStr, toDateStr);
+
+    const previousRows = await prisma.$queryRaw<
+      Array<{
+        total_sales: number;
+        total_commissions: number;
+      }>
+    >(
+      Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT
+            t."totalAmount",
+            t."totalCommission"
           FROM "Ticket" t
-          WHERE t."deletedAt" IS NULL
-            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-            AND t."createdAt" >= ${previousFromDate}
-            AND t."createdAt" <= ${previousToDate}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        `
-      ),
-      prisma.$queryRaw<Array<{ total: number }>>(
-        Prisma.sql`
-          SELECT COALESCE(SUM(t."totalCommission"), 0) as total
-          FROM "Ticket" t
-          WHERE t."deletedAt" IS NULL
-            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
-            AND t."createdAt" >= ${previousFromDate}
-            AND t."createdAt" <= ${previousToDate}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        `
-      ),
-    ]);
+          WHERE ${baseFilters}
+        ),
+        ticket_summary AS (
+          SELECT
+            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
+            COALESCE(SUM(t."totalCommission"), 0) AS total_commissions
+          FROM tickets_in_range t
+        )
+        SELECT
+          total_sales,
+          total_commissions
+        FROM ticket_summary
+      `
+    );
+
+    const row = previousRows[0] || { total_sales: 0, total_commissions: 0 };
 
     return {
-      sales: Number(sales[0]?.total) || 0,
-      commissions: Number(commissions[0]?.total) || 0,
+      sales: Number(row.total_sales) || 0,
+      commissions: Number(row.total_commissions) || 0,
       range: {
         fromAt: previousFromDate.toISOString(),
         toAt: previousToDate.toISOString(),
