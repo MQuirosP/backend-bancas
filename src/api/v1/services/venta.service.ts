@@ -1040,16 +1040,24 @@ export const VentasService = {
         whereSqlParts.push(Prisma.sql`t."status" = ${filters.status}`);
       }
       if (filters.ventanaId) {
-        whereSqlParts.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}`);
+        whereSqlParts.push(
+          Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`
+        );
       }
       if (filters.vendedorId) {
-        whereSqlParts.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}`);
+        whereSqlParts.push(
+          Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`
+        );
       }
       if (filters.loteriaId) {
-        whereSqlParts.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}`);
+        whereSqlParts.push(
+          Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`
+        );
       }
       if (filters.sorteoId) {
-        whereSqlParts.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}`);
+        whereSqlParts.push(
+          Prisma.sql`t."sorteoId" = CAST(${filters.sorteoId} AS uuid)`
+        );
       }
 
       let combinedWhere = whereSqlParts[0];
