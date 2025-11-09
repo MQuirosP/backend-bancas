@@ -6,9 +6,26 @@ import { Prisma } from "@prisma/client";
 import logger from "../../../core/logger";
 import { formatIsoLocal } from "../../../utils/datetime";
 
-/**
- * Interfaz para filtros estándar de ventas
- */
+const BUSINESS_TZ = 'America/Costa_Rica';
+const COSTA_RICA_OFFSET_HOURS = -6;
+
+function toCostaRicaDateString(date: Date): string {
+  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
+  const local = new Date(date.getTime() + offsetMs);
+  return local.toISOString().split("T")[0];
+}
+
+function combineSqlWithAnd(parts: Prisma.Sql[]): Prisma.Sql {
+  if (parts.length === 0) {
+    return Prisma.sql`TRUE`;
+  }
+  let combined = parts[0];
+  for (let i = 1; i < parts.length; i++) {
+    combined = Prisma.sql`${combined} AND ${parts[i]}`;
+  }
+  return combined;
+}
+
 export interface VentasFilters {
   dateFrom?: Date;
   dateTo?: Date;
@@ -28,6 +45,15 @@ export interface VentasFilters {
  * Nota: Usa deletedAt IS NULL para soft-delete, no isActive
  * Incluye todos los statuses (ACTIVE, EVALUATED, PAID, CANCELLED) excepto soft-deleted
  */
+const BUSINESS_TZ = 'America/Costa_Rica';
+const COSTA_RICA_OFFSET_HOURS = -6;
+
+function toCostaRicaDateString(date: Date): string {
+  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
+  const local = new Date(date.getTime() + offsetMs);
+  return local.toISOString().split("T")[0];
+}
+
 function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
   const where: Prisma.TicketWhereInput = {
     deletedAt: null, // Soft-delete: solo tickets no eliminados
@@ -35,11 +61,31 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
     // El filtro de status se aplica solo si se solicita explícitamente en filters.status
   };
 
-  // Filtro por fechas (createdAt)
   if (filters.dateFrom || filters.dateTo) {
-    where.createdAt = {};
-    if (filters.dateFrom) where.createdAt.gte = filters.dateFrom;
-    if (filters.dateTo) where.createdAt.lte = filters.dateTo;
+    const fromDateStr = filters.dateFrom ? toCostaRicaDateString(filters.dateFrom) : null;
+    const toDateStr = filters.dateTo ? toCostaRicaDateString(filters.dateTo) : null;
+
+    const businessRange: Prisma.DateTimeFilter = {};
+    const createdRange: Prisma.DateTimeFilter = {};
+
+    if (fromDateStr) {
+      businessRange.gte = new Date(`${fromDateStr}T00:00:00.000Z`);
+      createdRange.gte = new Date(`${fromDateStr}T06:00:00.000Z`);
+    }
+    if (toDateStr) {
+      businessRange.lte = new Date(`${toDateStr}T00:00:00.000Z`);
+      createdRange.lte = new Date(`${toDateStr}T05:59:59.999Z`);
+    }
+
+    const orConditions: Prisma.TicketWhereInput[] = [
+      { businessDate: businessRange },
+      {
+        businessDate: null,
+        createdAt: createdRange,
+      },
+    ];
+
+    where.AND = where.AND ? [...where.AND, { OR: orConditions }] : [{ OR: orConditions }];
   }
 
   // Filtro por status personalizado (si se solicita un status específico diferente)
@@ -96,6 +142,42 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
   }
 
   return where;
+}
+
+function buildRawDateConditions(filters: VentasFilters) {
+  if (!filters.dateFrom && !filters.dateTo) {
+    return { dateCondition: null };
+  }
+
+  const fromDateStr = filters.dateFrom ? toCostaRicaDateString(filters.dateFrom) : null;
+  const toDateStr = filters.dateTo ? toCostaRicaDateString(filters.dateTo) : null;
+
+  const businessParts: Prisma.Sql[] = [];
+  const createdParts: Prisma.Sql[] = [];
+
+  if (fromDateStr) {
+    businessParts.push(Prisma.sql`t."businessDate" >= ${new Date(`${fromDateStr}T00:00:00.000Z`)}`);
+    createdParts.push(Prisma.sql`t."createdAt" >= ${new Date(`${fromDateStr}T06:00:00.000Z`)}`);
+  }
+
+  if (toDateStr) {
+    businessParts.push(Prisma.sql`t."businessDate" <= ${new Date(`${toDateStr}T00:00:00.000Z`)}`);
+    createdParts.push(Prisma.sql`t."createdAt" <= ${new Date(`${toDateStr}T05:59:59.999Z`)}`);
+  }
+
+  const businessSql = businessParts.length ? combineSqlWithAnd(businessParts) : Prisma.sql`TRUE`;
+  const createdSql = createdParts.length ? combineSqlWithAnd(createdParts) : Prisma.sql`TRUE`;
+
+  const dateCondition = Prisma.sql`
+    (
+      (${businessSql})
+      OR (
+        t."businessDate" IS NULL AND ${createdSql}
+      )
+    )
+  `;
+
+  return { dateCondition };
 }
 
 /**
@@ -924,59 +1006,38 @@ export const VentasService = {
     }>
   > {
     try {
-      const where = buildWhereClause(filters);
+      const truncFormat = granularity === "hour" ? "hour" : granularity === "week" ? "week" : "day";
+      const { dateCondition } = buildRawDateConditions(filters);
 
-      // Determinar el formato de truncamiento SQL según granularidad
-      let truncFormat: string;
-      switch (granularity) {
-        case "hour":
-          truncFormat = "hour";
-          break;
-        case "day":
-          truncFormat = "day";
-          break;
-        case "week":
-          truncFormat = "week";
-          break;
-        default:
-          truncFormat = "day";
-      }
-
-      // Construir condiciones WHERE dinámicamente
-      const whereConditions: Prisma.Sql[] = [
+      const whereSqlParts: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED')` // Tickets activos o evaluados
+        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID')`
       ];
 
-      if (filters.dateFrom) {
-        whereConditions.push(Prisma.sql`t."createdAt" >= ${filters.dateFrom}`);
-      }
-      if (filters.dateTo) {
-        whereConditions.push(Prisma.sql`t."createdAt" <= ${filters.dateTo}`);
+      if (dateCondition) {
+        whereSqlParts.push(dateCondition);
       }
       if (filters.status) {
-        whereConditions.push(Prisma.sql`t."status" = ${filters.status}`);
+        whereSqlParts.push(Prisma.sql`t."status" = ${filters.status}`);
       }
       if (filters.ventanaId) {
-        whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}`);
+        whereSqlParts.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}`);
       }
       if (filters.vendedorId) {
-        whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}`);
+        whereSqlParts.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}`);
       }
       if (filters.loteriaId) {
-        whereConditions.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}`);
+        whereSqlParts.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}`);
       }
       if (filters.sorteoId) {
-        whereConditions.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}`);
+        whereSqlParts.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}`);
       }
 
-      const whereClause =
-        whereConditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}` : Prisma.empty;
+      let combinedWhere = whereSqlParts[0];
+      for (let i = 1; i < whereSqlParts.length; i++) {
+        combinedWhere = Prisma.sql`${combinedWhere} AND ${whereSqlParts[i]}`;
+      }
 
-      // Query SQL crudo para agrupar por time bucket con comisiones
-      // IMPORTANTE: Usar t."totalCommission" en lugar de SUM(j."commissionAmount")
-      // para evitar duplicación cuando un ticket tiene múltiples jugadas
-      // El LEFT JOIN con Jugada haría que SUM(t."totalAmount") se multiplique por número de jugadas
       const result = await prisma.$queryRaw<
         Array<{
           ts: Date;
@@ -984,17 +1045,22 @@ export const VentasService = {
           ticketsCount: string;
           commissionTotal: string;
         }>
-      >`
+      >(
+        Prisma.sql`
         SELECT
-          DATE_TRUNC(${truncFormat}, t."createdAt") as ts,
+          DATE_TRUNC(${Prisma.raw(truncFormat)}, COALESCE(
+            t."businessDate",
+            (t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${BUSINESS_TZ})
+          )) as ts,
           SUM(t."totalAmount")::text as "ventasTotal",
           COUNT(DISTINCT t.id)::text as "ticketsCount",
           COALESCE(SUM(t."totalCommission"), 0)::text as "commissionTotal"
         FROM "Ticket" t
-        ${whereClause}
+        WHERE ${combinedWhere}
         GROUP BY ts
         ORDER BY ts DESC
-      `;
+      `
+      );
 
       logger.info({
         layer: "service",
