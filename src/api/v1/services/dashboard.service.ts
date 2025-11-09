@@ -210,7 +210,7 @@ function buildTicketWhereInput(
   return baseWhere;
 }
 
-async function computeVentanaCommissionExtras(filters: DashboardFilters) {
+async function computeVentanaCommissionFromPolicies(filters: DashboardFilters) {
   const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
   const ticketWhere = buildTicketWhereInput(filters, fromDateStr, toDateStr);
 
@@ -246,7 +246,7 @@ async function computeVentanaCommissionExtras(filters: DashboardFilters) {
 
   const extrasByVentana = new Map<string, number>();
   const extrasByLoteria = new Map<string, number>();
-  let extraTotal = 0;
+  let totalVentanaCommission = 0;
 
   for (const jugada of jugadas) {
     const ticket = jugada.ticket;
@@ -267,22 +267,19 @@ async function computeVentanaCommissionExtras(filters: DashboardFilters) {
       bancaPolicy
     );
 
-    const ventanaAmount = resolution.commissionAmount || 0;
-    const vendedorAmount = jugada.commissionAmount || 0;
-    const extra = Math.max(0, parseFloat((ventanaAmount - vendedorAmount).toFixed(2)));
+    const ventanaAmount = parseFloat((resolution.commissionAmount || 0).toFixed(2));
+    if (ventanaAmount <= 0) continue;
 
-    if (extra <= 0) continue;
-
-    extraTotal += extra;
-    extrasByVentana.set(ticket.ventanaId, (extrasByVentana.get(ticket.ventanaId) || 0) + extra);
+    totalVentanaCommission += ventanaAmount;
+    extrasByVentana.set(ticket.ventanaId, (extrasByVentana.get(ticket.ventanaId) || 0) + ventanaAmount);
 
     if (ticket.loteriaId) {
-      extrasByLoteria.set(ticket.loteriaId, (extrasByLoteria.get(ticket.loteriaId) || 0) + extra);
+      extrasByLoteria.set(ticket.loteriaId, (extrasByLoteria.get(ticket.loteriaId) || 0) + ventanaAmount);
     }
   }
 
   return {
-    extraTotal,
+    totalVentanaCommission,
     extrasByVentana,
     extrasByLoteria,
   };
@@ -296,7 +293,11 @@ export const DashboardService = {
   async calculateGanancia(filters: DashboardFilters): Promise<GananciaResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
-    const { extraTotal, extrasByVentana, extrasByLoteria } = await computeVentanaCommissionExtras(filters);
+    const {
+      totalVentanaCommission,
+      extrasByVentana,
+      extrasByLoteria,
+    } = await computeVentanaCommissionFromPolicies(filters);
 
     const byVentanaResult = await prisma.$queryRaw<
       Array<{
@@ -429,7 +430,7 @@ export const DashboardService = {
     const totalPayouts = byVentanaResult.reduce((sum, v) => sum + Number(v.total_payouts || 0), 0);
     const commissionUserTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_user || 0), 0);
     const commissionVentanaRawTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
-    const commissionVentanaTotal = commissionVentanaRawTotal + extraTotal;
+    const commissionVentanaTotal = commissionVentanaRawTotal + totalVentanaCommission;
     const totalAmount = commissionUserTotal + commissionVentanaTotal;
     const totalNet = totalSales - totalPayouts;
     const margin = totalSales > 0 ? (totalNet / totalSales) * 100 : 0;
@@ -701,7 +702,7 @@ export const DashboardService = {
   async getSummary(filters: DashboardFilters): Promise<DashboardSummary> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
-    const { extraTotal } = await computeVentanaCommissionExtras(filters);
+    const { totalVentanaCommission } = await computeVentanaCommissionFromPolicies(filters);
 
     const summaryRows = await prisma.$queryRaw<
       Array<{
@@ -765,7 +766,7 @@ export const DashboardService = {
     const totalTickets = Number(summary.total_tickets) || 0;
     const winningTickets = Number(summary.winning_tickets) || 0;
     const commissionUser = Number(summary.commission_user) || 0;
-    const commissionVentana = (Number(summary.commission_ventana) || 0) + extraTotal;
+    const commissionVentana = (Number(summary.commission_ventana) || 0) + totalVentanaCommission;
     const totalCommissions = commissionUser + commissionVentana;
     const net = totalSales - totalPayouts;
     const winRate = totalTickets > 0 ? (winningTickets / totalTickets) * 100 : 0;
