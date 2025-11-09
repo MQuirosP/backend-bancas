@@ -6,7 +6,7 @@ import { Prisma } from "@prisma/client";
 import logger from "../../../core/logger";
 import { formatIsoLocal } from "../../../utils/datetime";
 
-const BUSINESS_TZ = 'America/Costa_Rica';
+const BUSINESS_TZ = "America/Costa_Rica";
 const COSTA_RICA_OFFSET_HOURS = -6;
 
 function toCostaRicaDateString(date: Date): string {
@@ -45,15 +45,6 @@ export interface VentasFilters {
  * Nota: Usa deletedAt IS NULL para soft-delete, no isActive
  * Incluye todos los statuses (ACTIVE, EVALUATED, PAID, CANCELLED) excepto soft-deleted
  */
-const BUSINESS_TZ = 'America/Costa_Rica';
-const COSTA_RICA_OFFSET_HOURS = -6;
-
-function toCostaRicaDateString(date: Date): string {
-  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
-  const local = new Date(date.getTime() + offsetMs);
-  return local.toISOString().split("T")[0];
-}
-
 function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
   const where: Prisma.TicketWhereInput = {
     deletedAt: null, // Soft-delete: solo tickets no eliminados
@@ -85,7 +76,12 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
       },
     ];
 
-    where.AND = where.AND ? [...where.AND, { OR: orConditions }] : [{ OR: orConditions }];
+    const existingAnd = Array.isArray(where.AND)
+      ? where.AND
+      : where.AND
+      ? [where.AND]
+      : [];
+    where.AND = [...existingAnd, { OR: orConditions }];
   }
 
   // Filtro por status personalizado (si se solicita un status específico diferente)
