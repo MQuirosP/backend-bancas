@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
+import { resolveCommission } from "../../../services/commission.resolver";
 
 /**
  * Dashboard Service
@@ -166,6 +167,127 @@ function parseDateEnd(dateStr: string): Date {
   return new Date(`${dateStr}T23:59:59.999Z`);
 }
 
+function buildTicketWhereInput(
+  filters: DashboardFilters,
+  fromDateStr: string,
+  toDateStr: string
+): Prisma.TicketWhereInput {
+  const rangeStart = parseDateStart(fromDateStr);
+  const rangeEnd = parseDateEnd(toDateStr);
+
+  const baseWhere: Prisma.TicketWhereInput = {
+    deletedAt: null,
+    status: { in: ["ACTIVE", "EVALUATED", "PAID"] },
+    AND: [
+      {
+        OR: [
+          {
+            businessDate: {
+              gte: rangeStart,
+              lte: rangeEnd,
+            },
+          },
+          {
+            businessDate: null,
+            createdAt: {
+              gte: rangeStart,
+              lte: rangeEnd,
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  if (filters.ventanaId) {
+    baseWhere.ventanaId = filters.ventanaId;
+  }
+
+  if (filters.loteriaId) {
+    baseWhere.loteriaId = filters.loteriaId;
+  }
+
+  return baseWhere;
+}
+
+async function computeVentanaCommissionExtras(filters: DashboardFilters) {
+  const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
+  const ticketWhere = buildTicketWhereInput(filters, fromDateStr, toDateStr);
+
+  const jugadas = await prisma.jugada.findMany({
+    where: {
+      deletedAt: null,
+      commissionOrigin: "USER",
+      ticket: ticketWhere,
+    },
+    select: {
+      amount: true,
+      commissionAmount: true,
+      type: true,
+      finalMultiplierX: true,
+      ticket: {
+        select: {
+          ventanaId: true,
+          loteriaId: true,
+          ventana: {
+            select: {
+              commissionPolicyJson: true,
+              banca: {
+                select: {
+                  commissionPolicyJson: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const extrasByVentana = new Map<string, number>();
+  const extrasByLoteria = new Map<string, number>();
+  let extraTotal = 0;
+
+  for (const jugada of jugadas) {
+    const ticket = jugada.ticket;
+    if (!ticket?.ventanaId) continue;
+
+    const ventanaPolicy = (ticket.ventana?.commissionPolicyJson as any) ?? null;
+    const bancaPolicy = (ticket.ventana?.banca?.commissionPolicyJson as any) ?? null;
+
+    const resolution = resolveCommission(
+      {
+        loteriaId: ticket.loteriaId,
+        betType: jugada.type as "NUMERO" | "REVENTADO",
+        finalMultiplierX: jugada.finalMultiplierX || 0,
+        amount: jugada.amount,
+      },
+      null,
+      ventanaPolicy,
+      bancaPolicy
+    );
+
+    const ventanaAmount = resolution.commissionAmount || 0;
+    const vendedorAmount = jugada.commissionAmount || 0;
+    const extra = Math.max(0, parseFloat((ventanaAmount - vendedorAmount).toFixed(2)));
+
+    if (extra <= 0) continue;
+
+    extraTotal += extra;
+    extrasByVentana.set(ticket.ventanaId, (extrasByVentana.get(ticket.ventanaId) || 0) + extra);
+
+    if (ticket.loteriaId) {
+      extrasByLoteria.set(ticket.loteriaId, (extrasByLoteria.get(ticket.loteriaId) || 0) + extra);
+    }
+  }
+
+  return {
+    extraTotal,
+    extrasByVentana,
+    extrasByLoteria,
+  };
+}
+
 export const DashboardService = {
   /**
    * Calcula ganancia: Sum de comisiones + premium retenido
@@ -174,6 +296,7 @@ export const DashboardService = {
   async calculateGanancia(filters: DashboardFilters): Promise<GananciaResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const { extraTotal, extrasByVentana, extrasByLoteria } = await computeVentanaCommissionExtras(filters);
 
     const byVentanaResult = await prisma.$queryRaw<
       Array<{
@@ -305,7 +428,8 @@ export const DashboardService = {
     const totalSales = byVentanaResult.reduce((sum, v) => sum + Number(v.total_sales || 0), 0);
     const totalPayouts = byVentanaResult.reduce((sum, v) => sum + Number(v.total_payouts || 0), 0);
     const commissionUserTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_user || 0), 0);
-    const commissionVentanaTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
+    const commissionVentanaRawTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
+    const commissionVentanaTotal = commissionVentanaRawTotal + extraTotal;
     const totalAmount = commissionUserTotal + commissionVentanaTotal;
     const totalNet = totalSales - totalPayouts;
     const margin = totalSales > 0 ? (totalNet / totalSales) * 100 : 0;
@@ -324,7 +448,8 @@ export const DashboardService = {
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
         const commissionUser = Number(row.commission_user) || 0;
-        const commissionVentana = Number(row.commission_ventana) || 0;
+        const commissionVentana =
+          (Number(row.commission_ventana) || 0) + (extrasByVentana.get(row.ventana_id) || 0);
         const commissions = commissionUser + commissionVentana;
         const net = sales - payout;
         const ventanaMargin = sales > 0 ? (net / sales) * 100 : 0;
@@ -353,7 +478,8 @@ export const DashboardService = {
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
         const commissionUser = Number(row.commission_user) || 0;
-        const commissionVentana = Number(row.commission_ventana) || 0;
+        const commissionVentana =
+          (Number(row.commission_ventana) || 0) + (extrasByLoteria.get(row.loteria_id) || 0);
         const commissions = commissionUser + commissionVentana;
         const net = sales - payout;
         const loteriaMargin = sales > 0 ? (net / sales) * 100 : 0;
@@ -575,6 +701,7 @@ export const DashboardService = {
   async getSummary(filters: DashboardFilters): Promise<DashboardSummary> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const { extraTotal } = await computeVentanaCommissionExtras(filters);
 
     const summaryRows = await prisma.$queryRaw<
       Array<{
@@ -638,7 +765,7 @@ export const DashboardService = {
     const totalTickets = Number(summary.total_tickets) || 0;
     const winningTickets = Number(summary.winning_tickets) || 0;
     const commissionUser = Number(summary.commission_user) || 0;
-    const commissionVentana = Number(summary.commission_ventana) || 0;
+    const commissionVentana = (Number(summary.commission_ventana) || 0) + extraTotal;
     const totalCommissions = commissionUser + commissionVentana;
     const net = totalSales - totalPayouts;
     const winRate = totalTickets > 0 ? (winningTickets / totalTickets) * 100 : 0;
