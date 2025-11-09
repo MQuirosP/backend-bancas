@@ -1,11 +1,12 @@
 // src/api/v1/services/accounts.service.ts
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import logger from "../../../core/logger";
 import { AccountStatementRepository } from "../../../repositories/accountStatement.repository";
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { resolveCommission } from "../../../services/commission.resolver";
+import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
 
 /**
  * Filtros para queries de accounts
@@ -66,6 +67,191 @@ function calculateIsSettled(
   return ticketCount > 0 
     && Math.abs(remainingBalance) < 0.01 
     && hasPayments;
+}
+
+async function computeListeroCommissionsForWhere(
+  ticketWhere: Prisma.TicketWhereInput
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+
+  const jugadas = await prisma.jugada.findMany({
+    where: {
+      ticket: ticketWhere,
+      deletedAt: null,
+    },
+    select: {
+      amount: true,
+      type: true,
+      finalMultiplierX: true,
+      ticket: {
+        select: {
+          loteriaId: true,
+          ventanaId: true,
+          ventana: {
+            select: {
+              commissionPolicyJson: true,
+              banca: {
+                select: {
+                  commissionPolicyJson: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (jugadas.length === 0) {
+    return result;
+  }
+
+  const ventanaIds = Array.from(
+    new Set(
+      jugadas
+        .map((j) => j.ticket.ventanaId)
+        .filter((id): id is string => typeof id === "string")
+    )
+  );
+
+  const ventanasWithBancas = ventanaIds.length
+    ? await prisma.ventana.findMany({
+        where: { id: { in: ventanaIds } },
+        select: {
+          id: true,
+          commissionPolicyJson: true,
+          banca: {
+            select: { commissionPolicyJson: true },
+          },
+        },
+      })
+    : [];
+
+  const ventanaUsers = ventanaIds.length
+    ? await prisma.user.findMany({
+        where: {
+          role: Role.VENTANA,
+          isActive: true,
+          deletedAt: null,
+          ventanaId: { in: ventanaIds },
+        },
+        select: {
+          id: true,
+          ventanaId: true,
+          commissionPolicyJson: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      })
+    : [];
+
+  const policiesMap = new Map<
+    string,
+    {
+      userPolicy: any;
+      ventanaPolicy: any;
+      bancaPolicy: any;
+      ventanaUserId: string | null;
+    }
+  >();
+
+  ventanasWithBancas.forEach((ventana) => {
+    policiesMap.set(ventana.id, {
+      userPolicy: null,
+      ventanaPolicy: ventana.commissionPolicyJson as any,
+      bancaPolicy: ventana.banca?.commissionPolicyJson as any,
+      ventanaUserId: null,
+    });
+  });
+
+  ventanaUsers.forEach((user) => {
+    if (!user.ventanaId) return;
+    const existing =
+      policiesMap.get(user.ventanaId) || {
+        userPolicy: null,
+        ventanaPolicy: null,
+        bancaPolicy: null,
+        ventanaUserId: null,
+      };
+    if (!existing.userPolicy) {
+      existing.userPolicy = user.commissionPolicyJson as any;
+      existing.ventanaUserId = user.id;
+    }
+    policiesMap.set(user.ventanaId, existing);
+  });
+
+  for (const jugada of jugadas) {
+    const ventanaId = jugada.ticket.ventanaId;
+    if (!ventanaId) continue;
+
+    const policies = policiesMap.get(ventanaId) || {
+      userPolicy: null,
+      ventanaPolicy: null,
+      bancaPolicy: null,
+      ventanaUserId: null,
+    };
+
+    const ventanaPolicy =
+      (jugada.ticket.ventana?.commissionPolicyJson as any) ?? policies.ventanaPolicy;
+    const bancaPolicy =
+      (jugada.ticket.ventana?.banca?.commissionPolicyJson as any) ?? policies.bancaPolicy;
+    const userPolicy = policies.userPolicy;
+    const ventanaUserId = policies.ventanaUserId ?? ventanaId;
+
+    // Actualizar cache en caso de que obtengamos políticas desde el ticket
+    policiesMap.set(ventanaId, {
+      userPolicy,
+      ventanaPolicy,
+      bancaPolicy,
+      ventanaUserId,
+    });
+
+    let commissionAmount = 0;
+
+    if (userPolicy) {
+      try {
+        const resolution = resolveCommissionFromPolicy(userPolicy as any, {
+          userId: ventanaUserId ?? ventanaId,
+          loteriaId: jugada.ticket.loteriaId,
+          betType: jugada.type as "NUMERO" | "REVENTADO",
+          finalMultiplierX: jugada.finalMultiplierX ?? null,
+        });
+        commissionAmount = Math.round((jugada.amount * resolution.percent) / 100);
+      } catch {
+        const fallback = resolveCommission(
+          {
+            loteriaId: jugada.ticket.loteriaId,
+            betType: jugada.type as "NUMERO" | "REVENTADO",
+            finalMultiplierX: jugada.finalMultiplierX || 0,
+            amount: jugada.amount,
+          },
+          null,
+          ventanaPolicy,
+          bancaPolicy
+        );
+        commissionAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
+      }
+    } else {
+      const fallback = resolveCommission(
+        {
+          loteriaId: jugada.ticket.loteriaId,
+          betType: jugada.type as "NUMERO" | "REVENTADO",
+          finalMultiplierX: jugada.finalMultiplierX || 0,
+          amount: jugada.amount,
+        },
+        null,
+        ventanaPolicy,
+        bancaPolicy
+      );
+      commissionAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
+    }
+
+    if (commissionAmount <= 0) continue;
+
+    result.set(ventanaId, (result.get(ventanaId) || 0) + commissionAmount);
+  }
+
+  return result;
 }
 
 /**
@@ -251,227 +437,17 @@ async function calculateDayStatement(
   // Calcular comisiones según dimensión
   let totalListeroCommission = 0;
 
+  const listeroMap = await computeListeroCommissionsForWhere(
+    where as Prisma.TicketWhereInput
+  );
+
   if (dimension === "ventana") {
-    const jugadas = await prisma.jugada.findMany({
-      where: {
-        ticket: where,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        amount: true,
-        commissionAmount: true,
-        commissionOrigin: true,
-        type: true,
-        finalMultiplierX: true,
-        ticket: {
-          select: {
-            loteriaId: true,
-            ventanaId: true,
-          },
-        },
-      },
-    });
-
-    const validJugadas = jugadas.filter((j) => {
-      if (ventanaId) {
-        return j.ticket.ventanaId === ventanaId;
-      }
-      return true;
-    });
-
-    const jugadasFromVentanaOrBanca = validJugadas.filter(
-      (j) => j.commissionOrigin === "VENTANA" || j.commissionOrigin === "BANCA"
-    );
-    const jugadasFromUser = validJugadas.filter((j) => j.commissionOrigin === "USER");
-
-    totalListeroCommission = jugadasFromVentanaOrBanca.reduce(
-      (sum, j) => sum + (j.commissionAmount || 0),
+    totalListeroCommission = listeroMap.get(ventanaId || "") ?? 0;
+  } else {
+    totalListeroCommission = Array.from(listeroMap.values()).reduce(
+      (sum, value) => sum + value,
       0
     );
-
-    if (jugadasFromUser.length > 0) {
-      const ventanaIds = new Set<string>();
-      for (const jugada of jugadasFromUser) {
-        if (jugada.ticket.ventanaId) {
-          ventanaIds.add(jugada.ticket.ventanaId);
-        }
-      }
-
-      if (ventanaIds.size > 0) {
-        const ventanaIdList = Array.from(ventanaIds);
-        const ventanasWithBancas = await prisma.ventana.findMany({
-          where: { id: { in: ventanaIdList } },
-          select: {
-            id: true,
-            commissionPolicyJson: true,
-            banca: { select: { commissionPolicyJson: true } },
-          },
-        });
-
-        const ventanaUsers = await prisma.user.findMany({
-          where: {
-            role: Role.VENTANA,
-            isActive: true,
-            deletedAt: null,
-            ventanaId: { in: ventanaIdList },
-          },
-          select: {
-            ventanaId: true,
-            commissionPolicyJson: true,
-          },
-        });
-
-        const policiesMap = new Map<
-          string,
-          { userPolicy: any; ventanaPolicy: any; bancaPolicy: any }
-        >();
-
-        ventanasWithBancas.forEach((ventana) => {
-          policiesMap.set(ventana.id, {
-            userPolicy: null,
-            ventanaPolicy: ventana.commissionPolicyJson as any,
-            bancaPolicy: ventana.banca?.commissionPolicyJson as any,
-          });
-        });
-
-        ventanaUsers.forEach((user) => {
-          if (!user.ventanaId) return;
-          const existing =
-            policiesMap.get(user.ventanaId) || {
-              userPolicy: null,
-              ventanaPolicy: null,
-              bancaPolicy: null,
-            };
-          existing.userPolicy = user.commissionPolicyJson as any;
-          policiesMap.set(user.ventanaId, existing);
-        });
-
-        for (const jugada of jugadasFromUser) {
-          const targetVentanaId = jugada.ticket.ventanaId;
-          if (!targetVentanaId) continue;
-          const policies = policiesMap.get(targetVentanaId);
-          if (!policies) continue;
-
-          const res = resolveCommission(
-            {
-              loteriaId: jugada.ticket.loteriaId,
-              betType: jugada.type as "NUMERO" | "REVENTADO",
-              finalMultiplierX: jugada.finalMultiplierX || 0,
-              amount: jugada.amount,
-            },
-            policies.userPolicy,
-            policies.ventanaPolicy,
-            policies.bancaPolicy
-          );
-
-          totalListeroCommission += res.commissionAmount;
-        }
-      }
-    }
-  } else {
-    const jugadas = await prisma.jugada.findMany({
-      where: {
-        ticket: where,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        amount: true,
-        commissionAmount: true,
-        type: true,
-        finalMultiplierX: true,
-        ticket: {
-          select: {
-            loteriaId: true,
-            ventanaId: true,
-          },
-        },
-      },
-    });
-
-    // Obtener políticas de ventana/banca de una vez
-    const ventanaIds = new Set<string>();
-    for (const jugada of jugadas) {
-      if (jugada.ticket.ventanaId) {
-        ventanaIds.add(jugada.ticket.ventanaId);
-      }
-    }
-
-    if (ventanaIds.size > 0) {
-      const ventanaIdList = Array.from(ventanaIds);
-      const ventanasWithBancas = await prisma.ventana.findMany({
-        where: { id: { in: ventanaIdList } },
-        select: {
-          id: true,
-          commissionPolicyJson: true,
-          banca: { select: { commissionPolicyJson: true } },
-        },
-      });
-
-      const ventanaUsers = await prisma.user.findMany({
-        where: {
-          role: Role.VENTANA,
-          isActive: true,
-          deletedAt: null,
-          ventanaId: { in: ventanaIdList },
-        },
-        select: {
-          ventanaId: true,
-          commissionPolicyJson: true,
-        },
-      });
-
-      const policiesMap = new Map<
-        string,
-        { userPolicy: any; ventanaPolicy: any; bancaPolicy: any }
-      >();
-
-      ventanasWithBancas.forEach((ventana) => {
-        policiesMap.set(ventana.id, {
-          userPolicy: null,
-          ventanaPolicy: ventana.commissionPolicyJson as any,
-          bancaPolicy: ventana.banca?.commissionPolicyJson as any,
-        });
-      });
-
-      ventanaUsers.forEach((user) => {
-        if (!user.ventanaId) return;
-        const existing =
-          policiesMap.get(user.ventanaId) || {
-            userPolicy: null,
-            ventanaPolicy: null,
-            bancaPolicy: null,
-          };
-        existing.userPolicy = user.commissionPolicyJson as any;
-        policiesMap.set(user.ventanaId, existing);
-      });
-
-      // Calcular comisión del listero solo para las jugadas
-      for (const jugada of jugadas) {
-        const ventanaId = jugada.ticket.ventanaId;
-        if (!ventanaId) continue;
-
-        const policies = policiesMap.get(ventanaId);
-        if (!policies) continue;
-
-        const res = resolveCommission(
-          {
-            loteriaId: jugada.ticket.loteriaId,
-            betType: jugada.type as "NUMERO" | "REVENTADO",
-            finalMultiplierX: jugada.finalMultiplierX || 0,
-            amount: jugada.amount,
-          },
-          policies.userPolicy,
-          policies.ventanaPolicy,
-          policies.bancaPolicy
-        );
-
-        const ventanaCommissionAmount = res.commissionAmount;
-        const vendedorCommissionAmount = jugada.commissionAmount || 0;
-        totalListeroCommission += Math.max(0, ventanaCommissionAmount - vendedorCommissionAmount);
-      }
-    }
   }
 
   // Calcular saldo
