@@ -154,10 +154,16 @@ function ruleMatches(rule: CommissionRule, input: CommissionMatchInput): boolean
     return false;
   }
 
-  // El multiplicador debe estar dentro del rango (inclusivo)
-  const { min, max } = rule.multiplierRange;
-  if (input.finalMultiplierX < min || input.finalMultiplierX > max) {
-    return false;
+  // Para NUMERO las reglas pueden depender del rango de multiplicador.
+  // Para REVENTADO o cuando no se proporciona multiplicador, ignorar el rango.
+  if (rule.multiplierRange && (rule.betType === null || rule.betType === "NUMERO")) {
+    const multiplier = typeof input.finalMultiplierX === "number" ? input.finalMultiplierX : null;
+    if (multiplier !== null) {
+      const { min, max } = rule.multiplierRange;
+      if (multiplier < min || multiplier > max) {
+        return false;
+      }
+    }
   }
 
   return true;

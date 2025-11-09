@@ -1,7 +1,8 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { resolveCommission } from "../../../services/commission.resolver";
+import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
 
 /**
  * Dashboard Service
@@ -217,12 +218,10 @@ async function computeVentanaCommissionFromPolicies(filters: DashboardFilters) {
   const jugadas = await prisma.jugada.findMany({
     where: {
       deletedAt: null,
-      commissionOrigin: "USER",
       ticket: ticketWhere,
     },
     select: {
       amount: true,
-      commissionAmount: true,
       type: true,
       finalMultiplierX: true,
       ticket: {
@@ -244,6 +243,50 @@ async function computeVentanaCommissionFromPolicies(filters: DashboardFilters) {
     },
   });
 
+  if (jugadas.length === 0) {
+    return {
+      totalVentanaCommission: 0,
+      extrasByVentana: new Map<string, number>(),
+      extrasByLoteria: new Map<string, number>(),
+    };
+  }
+
+  const ventanaIds = Array.from(
+    new Set(
+      jugadas
+        .map((j) => j.ticket?.ventanaId)
+        .filter((id): id is string => typeof id === "string")
+    )
+  );
+
+  const ventanaUsers = ventanaIds.length
+    ? await prisma.user.findMany({
+        where: {
+          role: Role.VENTANA,
+          isActive: true,
+          deletedAt: null,
+          ventanaId: { in: ventanaIds },
+        },
+        select: {
+          id: true,
+          ventanaId: true,
+          commissionPolicyJson: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      })
+    : [];
+
+  const userPolicyByVentana = new Map<string, any>();
+  const ventanaUserIdByVentana = new Map<string, string>();
+  for (const user of ventanaUsers) {
+    if (!user.ventanaId) continue;
+    if (!userPolicyByVentana.has(user.ventanaId)) {
+      userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
+      ventanaUserIdByVentana.set(user.ventanaId, user.id);
+    }
+  }
+
   const extrasByVentana = new Map<string, number>();
   const extrasByLoteria = new Map<string, number>();
   let totalVentanaCommission = 0;
@@ -252,22 +295,51 @@ async function computeVentanaCommissionFromPolicies(filters: DashboardFilters) {
     const ticket = jugada.ticket;
     if (!ticket?.ventanaId) continue;
 
+    const userPolicyJson = userPolicyByVentana.get(ticket.ventanaId) ?? null;
+    const ventanaUserId = ventanaUserIdByVentana.get(ticket.ventanaId) ?? "";
     const ventanaPolicy = (ticket.ventana?.commissionPolicyJson as any) ?? null;
     const bancaPolicy = (ticket.ventana?.banca?.commissionPolicyJson as any) ?? null;
 
-    const resolution = resolveCommission(
-      {
-        loteriaId: ticket.loteriaId,
-        betType: jugada.type as "NUMERO" | "REVENTADO",
-        finalMultiplierX: jugada.finalMultiplierX || 0,
-        amount: jugada.amount,
-      },
-      null,
-      ventanaPolicy,
-      bancaPolicy
-    );
+    let ventanaAmount = 0;
 
-    const ventanaAmount = parseFloat((resolution.commissionAmount || 0).toFixed(2));
+    if (userPolicyJson) {
+      try {
+        const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+          userId: ventanaUserId,
+          loteriaId: ticket.loteriaId,
+          betType: jugada.type as "NUMERO" | "REVENTADO",
+          finalMultiplierX: jugada.finalMultiplierX ?? null,
+        });
+        ventanaAmount = Math.round((jugada.amount * resolution.percent) / 100);
+      } catch (err) {
+        const fallback = resolveCommission(
+          {
+            loteriaId: ticket.loteriaId,
+            betType: jugada.type as "NUMERO" | "REVENTADO",
+            finalMultiplierX: jugada.finalMultiplierX || 0,
+            amount: jugada.amount,
+          },
+          null,
+          ventanaPolicy,
+          bancaPolicy
+        );
+        ventanaAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
+      }
+    } else {
+      const fallback = resolveCommission(
+        {
+          loteriaId: ticket.loteriaId,
+          betType: jugada.type as "NUMERO" | "REVENTADO",
+          finalMultiplierX: jugada.finalMultiplierX || 0,
+          amount: jugada.amount,
+        },
+        null,
+        ventanaPolicy,
+        bancaPolicy
+      );
+      ventanaAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
+    }
+
     if (ventanaAmount <= 0) continue;
 
     totalVentanaCommission += ventanaAmount;
@@ -540,6 +612,12 @@ export const DashboardService = {
       },
     });
 
+    // Asegurar que todas las ventanas activas aparezcan aunque no tengan statement
+    const ventanas = await prisma.ventana.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, isActive: true },
+    });
+
     const aggregated = new Map<
       string,
       {
@@ -572,6 +650,20 @@ export const DashboardService = {
       existing.remainingBalance += statement.remainingBalance ?? 0;
 
       aggregated.set(key, existing);
+    }
+
+    for (const ventana of ventanas) {
+      if (!aggregated.has(ventana.id)) {
+        aggregated.set(ventana.id, {
+          ventanaId: ventana.id,
+          ventanaName: ventana.name,
+          isActive: ventana.isActive,
+          totalSales: 0,
+          totalPayouts: 0,
+          totalPaid: 0,
+          remainingBalance: 0,
+        });
+      }
     }
 
     const byVentana = Array.from(aggregated.values())
@@ -636,6 +728,11 @@ export const DashboardService = {
       },
     });
 
+    const ventanas = await prisma.ventana.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, isActive: true },
+    });
+
     const aggregated = new Map<
       string,
       {
@@ -668,6 +765,20 @@ export const DashboardService = {
       existing.remainingBalance += statement.remainingBalance ?? 0;
 
       aggregated.set(key, existing);
+    }
+
+    for (const ventana of ventanas) {
+      if (!aggregated.has(ventana.id)) {
+        aggregated.set(ventana.id, {
+          ventanaId: ventana.id,
+          ventanaName: ventana.name,
+          isActive: ventana.isActive,
+          totalSales: 0,
+          totalPayouts: 0,
+          totalPaid: 0,
+          remainingBalance: 0,
+        });
+      }
     }
 
     const byVentana = Array.from(aggregated.values())

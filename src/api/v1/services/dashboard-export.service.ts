@@ -197,7 +197,7 @@ export class DashboardExportService {
     sheet.addRow(['Pagos Totales', this.formatCurrency(data.summary.totalPayouts)]);
     sheet.addRow(['Comisiones Totales', this.formatCurrency(data.summary.totalCommissions)]);
     sheet.addRow(['Comisión Usuario', this.formatCurrency(data.summary.commissionUser)]);
-    sheet.addRow(['Comisión Ventana', this.formatCurrency(data.summary.commissionVentana)]);
+    sheet.addRow(['Comisión Listero', this.formatCurrency(data.summary.commissionVentana)]);
     sheet.addRow(['Total Tickets', data.summary.totalTickets]);
     sheet.addRow(['Tickets Ganadores', data.summary.winningTickets]);
     sheet.addRow(['Tasa de Ganancia', `${data.summary.winRate.toFixed(2)}%`]);
@@ -212,7 +212,7 @@ export class DashboardExportService {
     sheet.addRow(['Neto (Ventas - Pagos)', this.formatCurrency(data.ganancia.totalNet)]);
     sheet.addRow(['Margen', `${data.ganancia.margin.toFixed(2)}%`]);
     sheet.addRow(['Comisión Usuario (Total)', this.formatCurrency(data.ganancia.commissionUserTotal)]);
-    sheet.addRow(['Comisión Ventana (Total)', this.formatCurrency(data.ganancia.commissionVentanaTotal)]);
+    sheet.addRow(['Comisión Listero (Total)', this.formatCurrency(data.ganancia.commissionVentanaTotal)]);
     sheet.addRow([]);
 
     // CxC y CxP
@@ -266,9 +266,9 @@ export class DashboardExportService {
 
     // Por Ventana
     if (ganancia.byVentana && ganancia.byVentana.length > 0) {
-      sheet.addRow(['Ganancia por Ventana']);
+      sheet.addRow(['Ganancia por Listero']);
       const ventanaHeader = sheet.addRow([
-        'Ventana',
+        'Listero',
         'Ventas',
         'Comisiones',
         'Comisión Usuario',
@@ -380,7 +380,7 @@ export class DashboardExportService {
 
     if (cxc.byVentana && cxc.byVentana.length > 0) {
       const header = sheet.addRow([
-        'Ventana',
+        'Listero',
         'Ventas Totales',
         'Pagos Totales (Payouts)',
         'Pagos Registrados',
@@ -431,7 +431,7 @@ export class DashboardExportService {
 
     if (cxp.byVentana && cxp.byVentana.length > 0) {
       const header = sheet.addRow([
-        'Ventana',
+        'Listero',
         'Ventas Totales',
         'Pagos Totales (Payouts)',
         'Pagos Registrados',
@@ -641,8 +641,8 @@ export class DashboardExportService {
 
     // Ganancia por Ventana
     if (data.ganancia.byVentana && data.ganancia.byVentana.length > 0) {
-      lines.push('=== GANANCIA POR VENTANA ===');
-      lines.push('Ventana,Ventas,Comisiones,Comisión Usuario,Comisión Ventana,Payout,Ganancia (Comisiones),Neto (Ventas - Pagos),Margen %,Tickets,Ganadores');
+      lines.push('=== GANANCIA POR LISTEROS ===');
+      lines.push('Listero,Ventas,Comisiones,Comisión Usuario,Comisión Listero,Payout,Ganancia (Comisiones),Neto (Ventas - Pagos),Margen %,Tickets,Ganadores');
       data.ganancia.byVentana.forEach(v => {
         lines.push([
           v.ventanaName,
@@ -664,7 +664,7 @@ export class DashboardExportService {
     // CxC
     if (data.cxc.byVentana && data.cxc.byVentana.length > 0) {
       lines.push('=== CUENTAS POR COBRAR ===');
-      lines.push('Ventana,Ventas Totales,Pagos Totales (Payouts),Pagos Registrados,Saldo Pendiente,Monto CxC');
+      lines.push('Listero,Ventas Totales,Pagos Totales (Payouts),Pagos Registrados,Saldo Pendiente,Monto CxC');
       data.cxc.byVentana.forEach(v => {
         lines.push([
           v.ventanaName,
@@ -681,7 +681,7 @@ export class DashboardExportService {
     // CxP
     if (data.cxp.byVentana && data.cxp.byVentana.length > 0) {
       lines.push('=== CUENTAS POR PAGAR ===');
-      lines.push('Ventana,Ventas Totales,Pagos Totales (Payouts),Pagos Registrados,Saldo Pendiente,Monto CxP');
+      lines.push('Listero,Ventas Totales,Pagos Totales (Payouts),Pagos Registrados,Saldo Pendiente,Monto CxP');
       data.cxp.byVentana.forEach(v => {
         lines.push([
           v.ventanaName,
@@ -816,7 +816,7 @@ export class DashboardExportService {
       ['Neto (Ventas - Pagos)', formatCurrency(data.summary.net)],
       ['Comisiones Totales', formatCurrency(data.summary.totalCommissions)],
       ['Comisión Usuario', formatCurrency(data.summary.commissionUser)],
-      ['Comisión Ventana', formatCurrency(data.summary.commissionVentana)],
+      ['Comisión Listero', formatCurrency(data.summary.commissionVentana)],
       ['Total Tickets', data.summary.totalTickets.toString()],
       ['Tickets Ganadores', data.summary.winningTickets.toString()],
       ['Tasa de Ganancia', `${data.summary.winRate.toFixed(2)}%`]
@@ -845,7 +845,7 @@ export class DashboardExportService {
       ['Neto (Ventas - Pagos)', formatCurrency(data.ganancia.totalNet)],
       ['Margen', `${data.ganancia.margin.toFixed(2)}%`],
       ['Comisión Usuario Total', formatCurrency(data.ganancia.commissionUserTotal)],
-      ['Comisión Ventana Total', formatCurrency(data.ganancia.commissionVentanaTotal)],
+      ['Comisión Listero Total', formatCurrency(data.ganancia.commissionVentanaTotal)],
       ['CxC Total', formatCurrency(data.cxc.totalAmount)],
       ['CxP Total', formatCurrency(data.cxp.totalAmount)]
     ];
@@ -873,18 +873,18 @@ export class DashboardExportService {
     // Ganancia por Ventana
     if (data.ganancia.byVentana && data.ganancia.byVentana.length > 0) {
       content.push({
-        text: 'Ganancia por Ventana',
+        text: 'Ganancia por Listero',
         style: 'sectionHeader',
         margin: [0, 10, 0, 10]
       });
 
       const gananciaTableBody: any[] = [
         [
-          { text: 'Ventana', style: 'tableHeader', bold: true },
+          { text: 'Listero', style: 'tableHeader', bold: true },
           { text: 'Ventas', style: 'tableHeader', bold: true },
           { text: 'Comisiones', style: 'tableHeader', bold: true },
           { text: 'Comisión Usuario', style: 'tableHeader', bold: true },
-          { text: 'Comisión Ventana', style: 'tableHeader', bold: true },
+          { text: 'Comisión Listero', style: 'tableHeader', bold: true },
           { text: 'Payout', style: 'tableHeader', bold: true },
           { text: 'Ganancia (Comisiones)', style: 'tableHeader', bold: true },
           { text: 'Neto', style: 'tableHeader', bold: true },
@@ -945,7 +945,7 @@ export class DashboardExportService {
 
       const cxcTableBody: any[] = [
         [
-          { text: 'Ventana', style: 'tableHeader', bold: true },
+          { text: 'Listero', style: 'tableHeader', bold: true },
           { text: 'Ventas Totales', style: 'tableHeader', bold: true },
           { text: 'Pagos Totales (Payouts)', style: 'tableHeader', bold: true },
           { text: 'Pagos Registrados', style: 'tableHeader', bold: true },
@@ -1000,7 +1000,7 @@ export class DashboardExportService {
 
       const cxpTableBody: any[] = [
         [
-          { text: 'Ventana', style: 'tableHeader', bold: true },
+          { text: 'Listero', style: 'tableHeader', bold: true },
           { text: 'Ventas Totales', style: 'tableHeader', bold: true },
           { text: 'Pagos Totales (Payouts)', style: 'tableHeader', bold: true },
           { text: 'Pagos Registrados', style: 'tableHeader', bold: true },
