@@ -13,14 +13,21 @@ interface DashboardExportData {
   ganancia: {
     totalAmount: number;
     totalSales: number;
+    totalPayouts: number;
+    totalNet: number;
     margin: number;
+    commissionUserTotal: number;
+    commissionVentanaTotal: number;
     byVentana: Array<{
       ventanaId: string;
       ventanaName: string;
       sales: number;
       amount: number;
       commissions: number;
+      commissionUser: number;
+      commissionVentana: number;
       payout: number;
+      net: number;
       margin: number;
       tickets: number;
       winners: number;
@@ -33,11 +40,13 @@ interface DashboardExportData {
       sales: number;
       amount: number;
       commissions: number;
+      commissionUser: number;
+      commissionVentana: number;
       payout: number;
+      net: number;
       margin: number;
       tickets: number;
       winners: number;
-      winRate: number;
       isActive: boolean;
     }>;
   };
@@ -47,7 +56,10 @@ interface DashboardExportData {
       ventanaId: string;
       ventanaName: string;
       totalSales: number;
+      totalPayouts: number;
+      totalPaid: number;
       totalPaidOut: number;
+      remainingBalance: number;
       amount: number;
       isActive: boolean;
     }>;
@@ -57,8 +69,11 @@ interface DashboardExportData {
     byVentana: Array<{
       ventanaId: string;
       ventanaName: string;
-      totalWinners: number;
+      totalSales: number;
+      totalPayouts: number;
+      totalPaid: number;
       totalPaidOut: number;
+      remainingBalance: number;
       amount: number;
       isActive: boolean;
     }>;
@@ -67,6 +82,9 @@ interface DashboardExportData {
     totalSales: number;
     totalPayouts: number;
     totalCommissions: number;
+    commissionUser: number;
+    commissionVentana: number;
+    net: number;
     totalTickets: number;
     winningTickets: number;
     winRate: number;
@@ -161,8 +179,8 @@ export class DashboardExportService {
     // Información del rango de fechas
     if (data.meta?.range) {
       sheet.addRow(['Rango de Fechas']);
-      sheet.addRow(['Desde:', data.meta.range.fromAt]);
-      sheet.addRow(['Hasta:', data.meta.range.toAt]);
+      sheet.addRow(['Desde:', this.formatDateTime(data.meta.range.fromAt)]);
+      sheet.addRow(['Hasta:', this.formatDateTime(data.meta.range.toAt)]);
       sheet.addRow(['Zona Horaria:', data.meta.range.tz]);
       sheet.addRow([]);
     }
@@ -178,16 +196,23 @@ export class DashboardExportService {
     sheet.addRow(['Ventas Totales', this.formatCurrency(data.summary.totalSales)]);
     sheet.addRow(['Pagos Totales', this.formatCurrency(data.summary.totalPayouts)]);
     sheet.addRow(['Comisiones Totales', this.formatCurrency(data.summary.totalCommissions)]);
+    sheet.addRow(['Comisión Usuario', this.formatCurrency(data.summary.commissionUser)]);
+    sheet.addRow(['Comisión Ventana', this.formatCurrency(data.summary.commissionVentana)]);
     sheet.addRow(['Total Tickets', data.summary.totalTickets]);
     sheet.addRow(['Tickets Ganadores', data.summary.winningTickets]);
     sheet.addRow(['Tasa de Ganancia', `${data.summary.winRate.toFixed(2)}%`]);
+    sheet.addRow(['Neto (Ventas - Pagos)', this.formatCurrency(data.summary.net)]);
     sheet.addRow([]);
 
     // Totales de Ganancia
     sheet.addRow(['Ganancia']);
     sheet.addRow(['Total Ganancia', this.formatCurrency(data.ganancia.totalAmount)]);
     sheet.addRow(['Total Ventas', this.formatCurrency(data.ganancia.totalSales)]);
+    sheet.addRow(['Total Pagos', this.formatCurrency(data.ganancia.totalPayouts)]);
+    sheet.addRow(['Neto (Ventas - Pagos)', this.formatCurrency(data.ganancia.totalNet)]);
     sheet.addRow(['Margen', `${data.ganancia.margin.toFixed(2)}%`]);
+    sheet.addRow(['Comisión Usuario (Total)', this.formatCurrency(data.ganancia.commissionUserTotal)]);
+    sheet.addRow(['Comisión Ventana (Total)', this.formatCurrency(data.ganancia.commissionVentanaTotal)]);
     sheet.addRow([]);
 
     // CxC y CxP
@@ -232,7 +257,11 @@ export class DashboardExportService {
     sheet.addRow(['Resumen de Ganancia']);
     sheet.addRow(['Total Ganancia', this.formatCurrency(ganancia.totalAmount)]);
     sheet.addRow(['Total Ventas', this.formatCurrency(ganancia.totalSales)]);
+    sheet.addRow(['Total Pagos', this.formatCurrency(ganancia.totalPayouts)]);
+    sheet.addRow(['Neto (Ventas - Pagos)', this.formatCurrency(ganancia.totalNet)]);
     sheet.addRow(['Margen', `${ganancia.margin.toFixed(2)}%`]);
+    sheet.addRow(['Comisión Usuario Total', this.formatCurrency(ganancia.commissionUserTotal)]);
+    sheet.addRow(['Comisión Ventana Total', this.formatCurrency(ganancia.commissionVentanaTotal)]);
     sheet.addRow([]);
 
     // Por Ventana
@@ -242,8 +271,11 @@ export class DashboardExportService {
         'Ventana',
         'Ventas',
         'Comisiones',
+        'Comisión Usuario',
+        'Comisión Ventana',
         'Payout',
-        'Ganancia',
+        'Ganancia (Comisiones)',
+        'Neto (Ventas - Pagos)',
         'Margen (%)',
         'Tickets',
         'Ganadores',
@@ -257,8 +289,11 @@ export class DashboardExportService {
           v.ventanaName,
           this.formatCurrency(v.sales),
           this.formatCurrency(v.commissions),
+          this.formatCurrency(v.commissionUser),
+          this.formatCurrency(v.commissionVentana),
           this.formatCurrency(v.payout),
           this.formatCurrency(v.amount),
+          this.formatCurrency(v.net),
           v.margin.toFixed(2),
           v.tickets,
           v.winners,
@@ -272,8 +307,11 @@ export class DashboardExportService {
         'TOTAL',
         this.formatCurrency(ganancia.byVentana.reduce((sum, v) => sum + v.sales, 0)),
         this.formatCurrency(ganancia.byVentana.reduce((sum, v) => sum + v.commissions, 0)),
+        this.formatCurrency(ganancia.byVentana.reduce((sum, v) => sum + v.commissionUser, 0)),
+        this.formatCurrency(ganancia.byVentana.reduce((sum, v) => sum + v.commissionVentana, 0)),
         this.formatCurrency(ganancia.byVentana.reduce((sum, v) => sum + v.payout, 0)),
         this.formatCurrency(ganancia.byVentana.reduce((sum, v) => sum + v.amount, 0)),
+        this.formatCurrency(ganancia.byVentana.reduce((sum, v) => sum + v.net, 0)),
         '',
         ganancia.byVentana.reduce((sum, v) => sum + v.tickets, 0),
         ganancia.byVentana.reduce((sum, v) => sum + v.winners, 0),
@@ -291,8 +329,11 @@ export class DashboardExportService {
         'Lotería',
         'Ventas',
         'Comisiones',
+        'Comisión Usuario',
+        'Comisión Ventana',
         'Payout',
-        'Ganancia',
+        'Ganancia (Comisiones)',
+        'Neto (Ventas - Pagos)',
         'Margen (%)',
         'Tickets',
         'Ganadores',
@@ -309,8 +350,11 @@ export class DashboardExportService {
           l.loteriaName,
           this.formatCurrency(l.sales),
           this.formatCurrency(l.commissions),
+          this.formatCurrency(l.commissionUser ?? 0),
+          this.formatCurrency(l.commissionVentana ?? 0),
           this.formatCurrency(l.payout),
           this.formatCurrency(l.amount),
+          this.formatCurrency(l.net ?? 0),
           (l.margin || 0).toFixed(2),
           l.tickets || 0,
           l.winners || 0,
@@ -338,7 +382,9 @@ export class DashboardExportService {
       const header = sheet.addRow([
         'Ventana',
         'Ventas Totales',
-        'Pagos Totales',
+        'Pagos Totales (Payouts)',
+        'Pagos Registrados',
+        'Saldo Pendiente',
         'Monto CxC',
         'Estado',
       ]);
@@ -348,7 +394,9 @@ export class DashboardExportService {
         sheet.addRow([
           v.ventanaName,
           this.formatCurrency(v.totalSales),
-          this.formatCurrency(v.totalPaidOut),
+          this.formatCurrency(v.totalPayouts),
+          this.formatCurrency(v.totalPaid),
+          this.formatCurrency(v.remainingBalance),
           this.formatCurrency(v.amount),
           v.isActive ? 'Activa' : 'Inactiva',
         ]);
@@ -358,7 +406,9 @@ export class DashboardExportService {
       const totalRow = sheet.addRow([
         'TOTAL',
         this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.totalSales, 0)),
-        this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.totalPaidOut, 0)),
+        this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.totalPayouts, 0)),
+        this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.totalPaid, 0)),
+        this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.remainingBalance, 0)),
         this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.amount, 0)),
         '',
       ]);
@@ -382,8 +432,10 @@ export class DashboardExportService {
     if (cxp.byVentana && cxp.byVentana.length > 0) {
       const header = sheet.addRow([
         'Ventana',
-        'Total Ganadores',
-        'Pagos Totales',
+        'Ventas Totales',
+        'Pagos Totales (Payouts)',
+        'Pagos Registrados',
+        'Saldo Pendiente',
         'Monto CxP',
         'Estado',
       ]);
@@ -392,8 +444,10 @@ export class DashboardExportService {
       cxp.byVentana.forEach(v => {
         sheet.addRow([
           v.ventanaName,
-          v.totalWinners,
-          this.formatCurrency(v.totalPaidOut),
+          this.formatCurrency(v.totalSales),
+          this.formatCurrency(v.totalPayouts),
+          this.formatCurrency(v.totalPaid),
+          this.formatCurrency(v.remainingBalance),
           this.formatCurrency(v.amount),
           v.isActive ? 'Activa' : 'Inactiva',
         ]);
@@ -402,8 +456,10 @@ export class DashboardExportService {
       // Total
       const totalRow = sheet.addRow([
         'TOTAL',
-        cxp.byVentana.reduce((sum, v) => sum + v.totalWinners, 0),
-        this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.totalPaidOut, 0)),
+        this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.totalSales, 0)),
+        this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.totalPayouts, 0)),
+        this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.totalPaid, 0)),
+        this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.remainingBalance, 0)),
         this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.amount, 0)),
         '',
       ]);
@@ -556,18 +612,28 @@ export class DashboardExportService {
     // Resumen Ejecutivo
     lines.push('=== RESUMEN EJECUTIVO ===');
     if (data.meta?.range) {
-      lines.push(`Rango: ${data.meta.range.fromAt} - ${data.meta.range.toAt}`);
+      const fromStr = this.formatDateTime(data.meta.range.fromAt);
+      const toStr = this.formatDateTime(data.meta.range.toAt);
+      lines.push(`Rango: ${fromStr} - ${toStr}`);
       lines.push('');
     }
     lines.push('Métrica,Valor');
     lines.push(`Ventas Totales,${this.formatCurrency(data.summary.totalSales)}`);
     lines.push(`Pagos Totales,${this.formatCurrency(data.summary.totalPayouts)}`);
     lines.push(`Comisiones Totales,${this.formatCurrency(data.summary.totalCommissions)}`);
+    lines.push(`Comisión Usuario,${this.formatCurrency(data.summary.commissionUser)}`);
+    lines.push(`Comisión Ventana,${this.formatCurrency(data.summary.commissionVentana)}`);
     lines.push(`Total Tickets,${data.summary.totalTickets}`);
     lines.push(`Tickets Ganadores,${data.summary.winningTickets}`);
     lines.push(`Tasa de Ganancia,${data.summary.winRate.toFixed(2)}%`);
+    lines.push(`Neto (Ventas - Pagos),${this.formatCurrency(data.summary.net)}`);
     lines.push('');
     lines.push(`Ganancia Total,${this.formatCurrency(data.ganancia.totalAmount)}`);
+    lines.push(`Ventas Totales,${this.formatCurrency(data.ganancia.totalSales)}`);
+    lines.push(`Pagos Totales,${this.formatCurrency(data.ganancia.totalPayouts)}`);
+    lines.push(`Neto (Ventas - Pagos),${this.formatCurrency(data.ganancia.totalNet)}`);
+    lines.push(`Comisión Usuario Total,${this.formatCurrency(data.ganancia.commissionUserTotal)}`);
+    lines.push(`Comisión Ventana Total,${this.formatCurrency(data.ganancia.commissionVentanaTotal)}`);
     lines.push(`CxC Total,${this.formatCurrency(data.cxc.totalAmount)}`);
     lines.push(`CxP Total,${this.formatCurrency(data.cxp.totalAmount)}`);
     lines.push('');
@@ -576,14 +642,17 @@ export class DashboardExportService {
     // Ganancia por Ventana
     if (data.ganancia.byVentana && data.ganancia.byVentana.length > 0) {
       lines.push('=== GANANCIA POR VENTANA ===');
-      lines.push('Ventana,Ventas,Comisiones,Payout,Ganancia,Margen %,Tickets,Ganadores');
+      lines.push('Ventana,Ventas,Comisiones,Comisión Usuario,Comisión Ventana,Payout,Ganancia (Comisiones),Neto (Ventas - Pagos),Margen %,Tickets,Ganadores');
       data.ganancia.byVentana.forEach(v => {
         lines.push([
           v.ventanaName,
           this.formatCurrency(v.sales),
           this.formatCurrency(v.commissions),
+          this.formatCurrency(v.commissionUser),
+          this.formatCurrency(v.commissionVentana),
           this.formatCurrency(v.payout),
           this.formatCurrency(v.amount),
+          this.formatCurrency(v.net),
           v.margin.toFixed(2),
           v.tickets,
           v.winners,
@@ -595,12 +664,14 @@ export class DashboardExportService {
     // CxC
     if (data.cxc.byVentana && data.cxc.byVentana.length > 0) {
       lines.push('=== CUENTAS POR COBRAR ===');
-      lines.push('Ventana,Ventas Totales,Pagos Totales,Monto CxC');
+      lines.push('Ventana,Ventas Totales,Pagos Totales (Payouts),Pagos Registrados,Saldo Pendiente,Monto CxC');
       data.cxc.byVentana.forEach(v => {
         lines.push([
           v.ventanaName,
           this.formatCurrency(v.totalSales),
-          this.formatCurrency(v.totalPaidOut),
+          this.formatCurrency(v.totalPayouts),
+          this.formatCurrency(v.totalPaid),
+          this.formatCurrency(v.remainingBalance),
           this.formatCurrency(v.amount),
         ].join(','));
       });
@@ -610,12 +681,14 @@ export class DashboardExportService {
     // CxP
     if (data.cxp.byVentana && data.cxp.byVentana.length > 0) {
       lines.push('=== CUENTAS POR PAGAR ===');
-      lines.push('Ventana,Total Ganadores,Pagos Totales,Monto CxP');
+      lines.push('Ventana,Ventas Totales,Pagos Totales (Payouts),Pagos Registrados,Saldo Pendiente,Monto CxP');
       data.cxp.byVentana.forEach(v => {
         lines.push([
           v.ventanaName,
-          v.totalWinners,
-          this.formatCurrency(v.totalPaidOut),
+          this.formatCurrency(v.totalSales),
+          this.formatCurrency(v.totalPayouts),
+          this.formatCurrency(v.totalPaid),
+          this.formatCurrency(v.remainingBalance),
           this.formatCurrency(v.amount),
         ].join(','));
       });
@@ -717,14 +790,14 @@ export class DashboardExportService {
       content.push({
         text: [
           { text: 'Rango: ', bold: true },
-          `${new Date(data.meta.range.fromAt).toLocaleDateString('es-CR')} - ${new Date(data.meta.range.toAt).toLocaleDateString('es-CR')}`
+          `${this.formatDateTime(data.meta.range.fromAt)} - ${this.formatDateTime(data.meta.range.toAt)}`
         ],
         margin: [0, 0, 0, 5]
       });
       content.push({
         text: [
           { text: 'Generado: ', bold: true },
-          new Date(data.meta.generatedAt).toLocaleString('es-CR')
+          this.formatDateTime(data.meta.generatedAt)
         ],
         margin: [0, 0, 0, 15]
       });
@@ -737,92 +810,65 @@ export class DashboardExportService {
       margin: [0, 10, 0, 10]
     });
 
-    content.push({
-      columns: [
-        {
-          width: '*',
-          text: [
-            { text: 'Ventas Totales: ', bold: true },
-            formatCurrency(data.summary.totalSales)
-          ]
-        },
-        {
-          width: '*',
-          text: [
-            { text: 'Pagos Totales: ', bold: true },
-            formatCurrency(data.summary.totalPayouts)
-          ]
-        }
-      ],
-      margin: [0, 0, 0, 5]
+    const summaryRows: Array<string[]> = [
+      ['Ventas Totales', formatCurrency(data.summary.totalSales)],
+      ['Pagos Totales', formatCurrency(data.summary.totalPayouts)],
+      ['Neto (Ventas - Pagos)', formatCurrency(data.summary.net)],
+      ['Comisiones Totales', formatCurrency(data.summary.totalCommissions)],
+      ['Comisión Usuario', formatCurrency(data.summary.commissionUser)],
+      ['Comisión Ventana', formatCurrency(data.summary.commissionVentana)],
+      ['Total Tickets', data.summary.totalTickets.toString()],
+      ['Tickets Ganadores', data.summary.winningTickets.toString()],
+      ['Tasa de Ganancia', `${data.summary.winRate.toFixed(2)}%`]
+    ];
+
+    summaryRows.forEach(pair => {
+      content.push({
+        columns: [
+          {
+            width: '*',
+            text: [
+              { text: `${pair[0]}: `, bold: true },
+              pair[1]
+            ]
+          },
+          { width: '*', text: '' }
+        ],
+        margin: [0, 0, 0, 5]
+      });
     });
 
-    content.push({
-      columns: [
-        {
-          width: '*',
-          text: [
-            { text: 'Comisiones Totales: ', bold: true },
-            formatCurrency(data.summary.totalCommissions)
-          ]
-        },
-        {
-          width: '*',
-          text: [
-            { text: 'Total Tickets: ', bold: true },
-            data.summary.totalTickets.toString()
-          ]
-        }
-      ],
-      margin: [0, 0, 0, 5]
+    const gananciaSummaryRows: Array<string[]> = [
+      ['Ganancia Total', formatCurrency(data.ganancia.totalAmount)],
+      ['Ventas Totales', formatCurrency(data.ganancia.totalSales)],
+      ['Pagos Totales', formatCurrency(data.ganancia.totalPayouts)],
+      ['Neto (Ventas - Pagos)', formatCurrency(data.ganancia.totalNet)],
+      ['Margen', `${data.ganancia.margin.toFixed(2)}%`],
+      ['Comisión Usuario Total', formatCurrency(data.ganancia.commissionUserTotal)],
+      ['Comisión Ventana Total', formatCurrency(data.ganancia.commissionVentanaTotal)],
+      ['CxC Total', formatCurrency(data.cxc.totalAmount)],
+      ['CxP Total', formatCurrency(data.cxp.totalAmount)]
+    ];
+
+    gananciaSummaryRows.forEach(pair => {
+      content.push({
+        columns: [
+          {
+            width: '*',
+            text: [
+              { text: `${pair[0]}: `, bold: true },
+              pair[1]
+            ]
+          },
+          { width: '*', text: '' },
+          { width: '*', text: '' },
+          { width: '*', text: '' }
+        ],
+        margin: [0, 0, 0, 5]
+      });
     });
 
-    content.push({
-      columns: [
-        {
-          width: '*',
-          text: [
-            { text: 'Tickets Ganadores: ', bold: true },
-            data.summary.winningTickets.toString()
-          ]
-        },
-        {
-          width: '*',
-          text: [
-            { text: 'Tasa de Ganancia: ', bold: true },
-            `${data.summary.winRate.toFixed(2)}%`
-          ]
-        }
-      ],
-      margin: [0, 0, 0, 5]
-    });
-
-    content.push({
-      columns: [
-        {
-          width: '*',
-          text: [
-            { text: 'Ganancia Total: ', bold: true, fontSize: 12 },
-            { text: formatCurrency(data.ganancia.totalAmount), fontSize: 12 }
-          ]
-        },
-        {
-          width: '*',
-          text: [
-            { text: 'CxC Total: ', bold: true },
-            formatCurrency(data.cxc.totalAmount)
-          ]
-        },
-        {
-          width: '*',
-          text: [
-            { text: 'CxP Total: ', bold: true },
-            formatCurrency(data.cxp.totalAmount)
-          ]
-        }
-      ],
-      margin: [0, 10, 0, 15]
-    });
+    content.push({ text: '', margin: [0, 10, 0, 5] });
 
     // Ganancia por Ventana
     if (data.ganancia.byVentana && data.ganancia.byVentana.length > 0) {
@@ -837,8 +883,11 @@ export class DashboardExportService {
           { text: 'Ventana', style: 'tableHeader', bold: true },
           { text: 'Ventas', style: 'tableHeader', bold: true },
           { text: 'Comisiones', style: 'tableHeader', bold: true },
+          { text: 'Comisión Usuario', style: 'tableHeader', bold: true },
+          { text: 'Comisión Ventana', style: 'tableHeader', bold: true },
           { text: 'Payout', style: 'tableHeader', bold: true },
-          { text: 'Ganancia', style: 'tableHeader', bold: true },
+          { text: 'Ganancia (Comisiones)', style: 'tableHeader', bold: true },
+          { text: 'Neto', style: 'tableHeader', bold: true },
           { text: 'Margen %', style: 'tableHeader', bold: true }
         ]
       ];
@@ -848,8 +897,11 @@ export class DashboardExportService {
           v.ventanaName,
           formatCurrency(v.sales),
           formatCurrency(v.commissions),
+          formatCurrency(v.commissionUser),
+          formatCurrency(v.commissionVentana),
           formatCurrency(v.payout),
           formatCurrency(v.amount),
+          formatCurrency(v.net),
           `${v.margin.toFixed(2)}%`
         ]);
       });
@@ -859,15 +911,18 @@ export class DashboardExportService {
         { text: 'TOTAL', bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.ganancia.byVentana.reduce((sum, v) => sum + v.sales, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.ganancia.byVentana.reduce((sum, v) => sum + v.commissions, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.ganancia.byVentana.reduce((sum, v) => sum + v.commissionUser, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.ganancia.byVentana.reduce((sum, v) => sum + v.commissionVentana, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.ganancia.byVentana.reduce((sum, v) => sum + v.payout, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.ganancia.byVentana.reduce((sum, v) => sum + v.amount, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.ganancia.byVentana.reduce((sum, v) => sum + v.net, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: '', fillColor: '#F2F2F2' }
       ]);
 
       content.push({
         table: {
           headerRows: 1,
-          widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto'],
+          widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
           body: gananciaTableBody
         },
         layout: {
@@ -892,7 +947,9 @@ export class DashboardExportService {
         [
           { text: 'Ventana', style: 'tableHeader', bold: true },
           { text: 'Ventas Totales', style: 'tableHeader', bold: true },
-          { text: 'Pagos Totales', style: 'tableHeader', bold: true },
+          { text: 'Pagos Totales (Payouts)', style: 'tableHeader', bold: true },
+          { text: 'Pagos Registrados', style: 'tableHeader', bold: true },
+          { text: 'Saldo Pendiente', style: 'tableHeader', bold: true },
           { text: 'Monto CxC', style: 'tableHeader', bold: true }
         ]
       ];
@@ -901,7 +958,9 @@ export class DashboardExportService {
         cxcTableBody.push([
           v.ventanaName,
           formatCurrency(v.totalSales),
-          formatCurrency(v.totalPaidOut),
+          formatCurrency(v.totalPayouts),
+          formatCurrency(v.totalPaid),
+          formatCurrency(v.remainingBalance),
           formatCurrency(v.amount)
         ]);
       });
@@ -909,14 +968,16 @@ export class DashboardExportService {
       cxcTableBody.push([
         { text: 'TOTAL', bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.totalSales, 0)), bold: true, fillColor: '#F2F2F2' },
-        { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.totalPaidOut, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.totalPayouts, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.totalPaid, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.remainingBalance, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.amount, 0)), bold: true, fillColor: '#F2F2F2' }
       ]);
 
       content.push({
         table: {
           headerRows: 1,
-          widths: ['*', 'auto', 'auto', 'auto'],
+          widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto'],
           body: cxcTableBody
         },
         layout: {
@@ -940,8 +1001,10 @@ export class DashboardExportService {
       const cxpTableBody: any[] = [
         [
           { text: 'Ventana', style: 'tableHeader', bold: true },
-          { text: 'Total Ganadores', style: 'tableHeader', bold: true },
-          { text: 'Pagos Totales', style: 'tableHeader', bold: true },
+          { text: 'Ventas Totales', style: 'tableHeader', bold: true },
+          { text: 'Pagos Totales (Payouts)', style: 'tableHeader', bold: true },
+          { text: 'Pagos Registrados', style: 'tableHeader', bold: true },
+          { text: 'Saldo Pendiente', style: 'tableHeader', bold: true },
           { text: 'Monto CxP', style: 'tableHeader', bold: true }
         ]
       ];
@@ -949,23 +1012,27 @@ export class DashboardExportService {
       data.cxp.byVentana.forEach(v => {
         cxpTableBody.push([
           v.ventanaName,
-          v.totalWinners.toString(),
-          formatCurrency(v.totalPaidOut),
+          formatCurrency(v.totalSales),
+          formatCurrency(v.totalPayouts),
+          formatCurrency(v.totalPaid),
+          formatCurrency(v.remainingBalance),
           formatCurrency(v.amount)
         ]);
       });
 
       cxpTableBody.push([
         { text: 'TOTAL', bold: true, fillColor: '#F2F2F2' },
-        { text: data.cxp.byVentana.reduce((sum, v) => sum + v.totalWinners, 0).toString(), bold: true, fillColor: '#F2F2F2' },
-        { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.totalPaidOut, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.totalSales, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.totalPayouts, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.totalPaid, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.remainingBalance, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.amount, 0)), bold: true, fillColor: '#F2F2F2' }
       ]);
 
       content.push({
         table: {
           headerRows: 1,
-          widths: ['*', 'auto', 'auto', 'auto'],
+          widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto'],
           body: cxpTableBody
         },
         layout: {
@@ -1121,6 +1188,19 @@ export class DashboardExportService {
    */
   private static formatCurrency(value: number): string {
     return `₡${value.toLocaleString('es-CR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+
+  private static formatDateTime(value: string): string {
+    if (!value) return '';
+    const date = new Date(value);
+    return date.toLocaleString('es-CR', {
+      timeZone: 'America/Costa_Rica',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   }
 
   private static styleSheetHeader(sheet: ExcelJS.Worksheet): void {
