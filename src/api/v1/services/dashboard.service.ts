@@ -143,11 +143,11 @@ function buildTicketBaseFilters(
   ];
 
   if (filters.ventanaId) {
-    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."ventanaId"`)} = ${filters.ventanaId}::uuid`);
+    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."ventanaId"`)} = ${filters.ventanaId}`);
   }
 
   if (filters.loteriaId) {
-    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."loteriaId"`)} = ${filters.loteriaId}::uuid`);
+    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."loteriaId"`)} = ${filters.loteriaId}`);
   }
 
   let combined = conditions[0];
