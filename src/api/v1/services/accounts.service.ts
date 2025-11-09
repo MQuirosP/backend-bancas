@@ -1,4 +1,5 @@
 // src/api/v1/services/accounts.service.ts
+import { Role } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import logger from "../../../core/logger";
@@ -251,11 +252,6 @@ async function calculateDayStatement(
   let totalListeroCommission = 0;
 
   if (dimension === "ventana") {
-    // Para ventana, necesitamos la comisión del listero (ventana)
-    // La comisión guardada en jugadas puede ser del vendedor (USER), ventana (VENTANA) o banca (BANCA)
-    // Si commissionOrigin es "VENTANA" o "BANCA", usar directamente commissionAmount
-    // Si commissionOrigin es "USER", necesitamos calcular la comisión de la ventana
-    // Obtener jugadas con commissionOrigin para optimizar
     const jugadas = await prisma.jugada.findMany({
       where: {
         ticket: where,
@@ -265,7 +261,7 @@ async function calculateDayStatement(
         id: true,
         amount: true,
         commissionAmount: true,
-        commissionOrigin: true, // Para saber si es USER, VENTANA o BANCA
+        commissionOrigin: true,
         type: true,
         finalMultiplierX: true,
         ticket: {
@@ -277,30 +273,24 @@ async function calculateDayStatement(
       },
     });
 
-    // FIX: Validación defensiva - asegurar que todas las jugadas pertenecen a la ventana correcta
-    // Esto previene bugs donde se pasen jugadas de otra ventana
     const validJugadas = jugadas.filter((j) => {
-      if (dimension === "ventana" && ventanaId) {
+      if (ventanaId) {
         return j.ticket.ventanaId === ventanaId;
       }
-      return true; // Para vendedor, no hay validación adicional necesaria aquí
+      return true;
     });
 
-    // Separar jugadas por origen de comisión
     const jugadasFromVentanaOrBanca = validJugadas.filter(
       (j) => j.commissionOrigin === "VENTANA" || j.commissionOrigin === "BANCA"
     );
     const jugadasFromUser = validJugadas.filter((j) => j.commissionOrigin === "USER");
 
-    // Sumar directamente las comisiones que ya son de ventana/banca
     totalListeroCommission = jugadasFromVentanaOrBanca.reduce(
       (sum, j) => sum + (j.commissionAmount || 0),
       0
     );
 
-    // Para jugadas con comisión del vendedor (USER), calcular la comisión de la ventana
     if (jugadasFromUser.length > 0) {
-      // Obtener políticas de ventana/banca de una vez
       const ventanaIds = new Set<string>();
       for (const jugada of jugadasFromUser) {
         if (jugada.ticket.ventanaId) {
@@ -309,39 +299,60 @@ async function calculateDayStatement(
       }
 
       if (ventanaIds.size > 0) {
+        const ventanaIdList = Array.from(ventanaIds);
         const ventanasWithBancas = await prisma.ventana.findMany({
-          where: {
-            id: { in: Array.from(ventanaIds) },
-          },
+          where: { id: { in: ventanaIdList } },
           select: {
             id: true,
             commissionPolicyJson: true,
-            banca: {
-              select: {
-                commissionPolicyJson: true,
-              },
-            },
+            banca: { select: { commissionPolicyJson: true } },
           },
         });
 
-        // Crear mapa de políticas
-        const policiesMap = new Map<string, { ventanaPolicy: any; bancaPolicy: any }>();
-        for (const ventana of ventanasWithBancas) {
+        const ventanaUsers = await prisma.user.findMany({
+          where: {
+            role: Role.VENTANA,
+            isActive: true,
+            deletedAt: null,
+            ventanaId: { in: ventanaIdList },
+          },
+          select: {
+            ventanaId: true,
+            commissionPolicyJson: true,
+          },
+        });
+
+        const policiesMap = new Map<
+          string,
+          { userPolicy: any; ventanaPolicy: any; bancaPolicy: any }
+        >();
+
+        ventanasWithBancas.forEach((ventana) => {
           policiesMap.set(ventana.id, {
+            userPolicy: null,
             ventanaPolicy: ventana.commissionPolicyJson as any,
             bancaPolicy: ventana.banca?.commissionPolicyJson as any,
           });
-        }
+        });
 
-        // Calcular comisión de la ventana solo para jugadas con comisión del vendedor
+        ventanaUsers.forEach((user) => {
+          if (!user.ventanaId) return;
+          const existing =
+            policiesMap.get(user.ventanaId) || {
+              userPolicy: null,
+              ventanaPolicy: null,
+              bancaPolicy: null,
+            };
+          existing.userPolicy = user.commissionPolicyJson as any;
+          policiesMap.set(user.ventanaId, existing);
+        });
+
         for (const jugada of jugadasFromUser) {
-          const ventanaId = jugada.ticket.ventanaId;
-          if (!ventanaId) continue;
-
-          const policies = policiesMap.get(ventanaId);
+          const targetVentanaId = jugada.ticket.ventanaId;
+          if (!targetVentanaId) continue;
+          const policies = policiesMap.get(targetVentanaId);
           if (!policies) continue;
 
-          // Calcular comisión de la ventana (sin considerar USER)
           const res = resolveCommission(
             {
               loteriaId: jugada.ticket.loteriaId,
@@ -349,7 +360,7 @@ async function calculateDayStatement(
               finalMultiplierX: jugada.finalMultiplierX || 0,
               amount: jugada.amount,
             },
-            null, // No considerar USER
+            policies.userPolicy,
             policies.ventanaPolicy,
             policies.bancaPolicy
           );
@@ -359,12 +370,6 @@ async function calculateDayStatement(
       }
     }
   } else {
-    // Para vendedor, necesitamos calcular la comisión del listero
-    // La comisión guardada es del vendedor, necesitamos calcular la de la ventana
-    // OPTIMIZACIÓN: Solo obtener jugadas necesarias para calcular comisión del listero
-    // Si hay muchas jugadas, esto puede ser lento, pero es mejor que traer todos los tickets
-    
-    // Obtener solo las jugadas necesarias con información mínima
     const jugadas = await prisma.jugada.findMany({
       where: {
         ticket: where,
@@ -394,29 +399,53 @@ async function calculateDayStatement(
     }
 
     if (ventanaIds.size > 0) {
+      const ventanaIdList = Array.from(ventanaIds);
       const ventanasWithBancas = await prisma.ventana.findMany({
-        where: {
-          id: { in: Array.from(ventanaIds) },
-        },
+        where: { id: { in: ventanaIdList } },
         select: {
           id: true,
           commissionPolicyJson: true,
-          banca: {
-            select: {
-              commissionPolicyJson: true,
-            },
-          },
+          banca: { select: { commissionPolicyJson: true } },
         },
       });
 
-      // Crear mapa de políticas
-      const policiesMap = new Map<string, { ventanaPolicy: any; bancaPolicy: any }>();
-      for (const ventana of ventanasWithBancas) {
+      const ventanaUsers = await prisma.user.findMany({
+        where: {
+          role: Role.VENTANA,
+          isActive: true,
+          deletedAt: null,
+          ventanaId: { in: ventanaIdList },
+        },
+        select: {
+          ventanaId: true,
+          commissionPolicyJson: true,
+        },
+      });
+
+      const policiesMap = new Map<
+        string,
+        { userPolicy: any; ventanaPolicy: any; bancaPolicy: any }
+      >();
+
+      ventanasWithBancas.forEach((ventana) => {
         policiesMap.set(ventana.id, {
+          userPolicy: null,
           ventanaPolicy: ventana.commissionPolicyJson as any,
           bancaPolicy: ventana.banca?.commissionPolicyJson as any,
         });
-      }
+      });
+
+      ventanaUsers.forEach((user) => {
+        if (!user.ventanaId) return;
+        const existing =
+          policiesMap.get(user.ventanaId) || {
+            userPolicy: null,
+            ventanaPolicy: null,
+            bancaPolicy: null,
+          };
+        existing.userPolicy = user.commissionPolicyJson as any;
+        policiesMap.set(user.ventanaId, existing);
+      });
 
       // Calcular comisión del listero solo para las jugadas
       for (const jugada of jugadas) {
@@ -426,7 +455,6 @@ async function calculateDayStatement(
         const policies = policiesMap.get(ventanaId);
         if (!policies) continue;
 
-        // Calcular comisión de la ventana
         const res = resolveCommission(
           {
             loteriaId: jugada.ticket.loteriaId,
@@ -434,15 +462,13 @@ async function calculateDayStatement(
             finalMultiplierX: jugada.finalMultiplierX || 0,
             amount: jugada.amount,
           },
-          null,
+          policies.userPolicy,
           policies.ventanaPolicy,
           policies.bancaPolicy
         );
 
         const ventanaCommissionAmount = res.commissionAmount;
         const vendedorCommissionAmount = jugada.commissionAmount || 0;
-
-        // Comisión del listero = diferencia entre ventana y vendedor
         totalListeroCommission += Math.max(0, ventanaCommissionAmount - vendedorCommissionAmount);
       }
     }
