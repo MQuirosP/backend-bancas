@@ -6,6 +6,7 @@ import {
   UpdateRestrictionRuleInput,
 } from "../dto/restrictionRule.dto";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
+import prisma from "../../../core/prismaClient";
 
 /**
  * Normaliza y valida el campo number
@@ -58,6 +59,75 @@ function normalizeAndValidateNumbers(
 
 export const RestrictionRuleService = {
   async create(actorId: string, data: CreateRestrictionRuleInput) {
+    const isLotteryRule = Boolean(data.loteriaId || data.multiplierId);
+
+    if (isLotteryRule) {
+      if (!data.loteriaId || !data.multiplierId) {
+        throw new AppError(
+          "Para restricciones de lotería/multiplicador se requiere loteriaId y multiplierId",
+          400
+        );
+      }
+
+      const multiplier = await prisma.loteriaMultiplier.findUnique({
+        where: { id: data.multiplierId },
+        select: {
+          id: true,
+          loteriaId: true,
+          isActive: true,
+          name: true,
+        },
+      });
+
+      if (!multiplier) {
+        throw new AppError("Multiplicador no encontrado", 404);
+      }
+
+      if (multiplier.loteriaId !== data.loteriaId) {
+        throw new AppError(
+          "El multiplicador no pertenece a la lotería indicada",
+          400
+        );
+      }
+
+      if (!multiplier.isActive) {
+        throw new AppError(
+          "El multiplicador indicado está inactivo",
+          400
+        );
+      }
+
+      const message =
+        (data.message && data.message.trim()) ||
+        `El multiplicador '${multiplier.name ?? ""}' está restringido para esta lotería.`;
+
+      const created = await RestrictionRuleRepository.create({
+        bancaId: data.bancaId ?? null,
+        ventanaId: data.ventanaId ?? null,
+        userId: data.userId ?? null,
+        number: null,
+        maxAmount: null,
+        maxTotal: null,
+        salesCutoffMinutes: null,
+        appliesToDate: data.appliesToDate ?? null,
+        appliesToHour: data.appliesToHour ?? null,
+        loteriaId: data.loteriaId,
+        multiplierId: data.multiplierId,
+        message,
+      });
+
+      await ActivityService.log({
+        userId: actorId,
+        action: ActivityType.SYSTEM_ACTION,
+        targetType: "RESTRICTION_RULE",
+        targetId: created.id,
+        details: { created },
+        layer: "service",
+      });
+
+      return created;
+    }
+
     // Normalizar number a array
     const numbers = normalizeAndValidateNumbers(data.number);
     
@@ -69,6 +139,9 @@ export const RestrictionRuleService = {
       const created = await RestrictionRuleRepository.create({
         ...baseData,
         number: null,
+        message: data.message?.trim() ?? null,
+        loteriaId: null,
+        multiplierId: null,
       });
       await ActivityService.log({
         userId: actorId,
@@ -87,6 +160,9 @@ export const RestrictionRuleService = {
         RestrictionRuleRepository.create({
           ...baseData,
           number: num, // Cada registro tiene un solo número
+          message: data.message?.trim() ?? null,
+          loteriaId: null,
+          multiplierId: null,
         })
       )
     );
@@ -110,7 +186,59 @@ export const RestrictionRuleService = {
   },
 
   async update(actorId: string, id: string, data: UpdateRestrictionRuleInput) {
-    const updated = await RestrictionRuleRepository.update(id, data);
+    const current = await RestrictionRuleRepository.findById(id);
+    if (!current) throw new AppError("RestrictionRule not found", 404);
+
+    const loteriaId = data.loteriaId ?? current.loteriaId ?? null;
+    const multiplierId = data.multiplierId ?? current.multiplierId ?? null;
+    const isLotteryRule = Boolean(loteriaId || multiplierId);
+
+    if (isLotteryRule) {
+      if (!loteriaId || !multiplierId) {
+        throw new AppError(
+          "Para restricciones de lotería/multiplicador se requiere loteriaId y multiplierId",
+          400
+        );
+      }
+
+      const multiplier = await prisma.loteriaMultiplier.findUnique({
+        where: { id: multiplierId },
+        select: {
+          id: true,
+          loteriaId: true,
+          isActive: true,
+          name: true,
+        },
+      });
+
+      if (!multiplier) {
+        throw new AppError("Multiplicador no encontrado", 404);
+      }
+      if (multiplier.loteriaId !== loteriaId) {
+        throw new AppError(
+          "El multiplicador no pertenece a la lotería indicada",
+          400
+        );
+      }
+      if (!multiplier.isActive) {
+        throw new AppError(
+          "El multiplicador indicado está inactivo",
+          400
+        );
+      }
+    }
+
+    const payload: UpdateRestrictionRuleInput = {
+      ...data,
+      message:
+        data.message === undefined
+          ? undefined
+          : data.message === null
+            ? null
+            : data.message.trim(),
+    };
+
+    const updated = await RestrictionRuleRepository.update(id, payload);
     await ActivityService.log({
       userId: actorId,
       action: ActivityType.SYSTEM_ACTION,

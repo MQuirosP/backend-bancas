@@ -49,7 +49,12 @@ interface PaymentHistoryEntry {
 }
 
 export const TicketService = {
-  async create(data: any, userId: string, requestId?: string) {
+  async create(
+    data: any,
+    userId: string,
+    requestId?: string,
+    actorRole: Role = Role.VENDEDOR
+  ) {
     try {
       const { loteriaId, sorteoId } = data;
       if (!loteriaId || !sorteoId) throw new AppError("Missing loteriaId/sorteoId", 400);
@@ -211,7 +216,7 @@ export const TicketService = {
       }
 
       // 🧩 Normalizar para repo
-      const ticket = await TicketRepository.create(
+      const { ticket, warnings } = await TicketRepository.create(
         {
           loteriaId,
           sorteoId,
@@ -232,7 +237,8 @@ export const TicketService = {
             };
           }),
         } as any,
-        effectiveVendedorId
+        effectiveVendedorId,
+        { actorRole }
       );
 
       // 🖨️ Obtener configuraciones de impresión del vendedor y ventana
@@ -282,6 +288,20 @@ export const TicketService = {
         requestId,
         payload: { ticketId: ticket.id, totalAmount: ticket.totalAmount, jugadas: jugadasCount },
       });
+
+      if (warnings && warnings.length > 0) {
+        logger.warn({
+          layer: "service",
+          action: "TICKET_CREATE_WARNINGS",
+          userId,
+          requestId,
+          payload: { warnings },
+        });
+      }
+
+      if (warnings && warnings.length > 0) {
+        (response as any).warnings = warnings;
+      }
 
       return response;
     } catch (err: any) {

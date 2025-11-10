@@ -129,6 +129,7 @@ model Loteria {
   sorteos             Sorteo[]
   tickets             Ticket[]
   multiplierOverrides MultiplierOverride[]
+  restrictionRules    RestrictionRule[]
 
   @@index([name])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_loteria_name_trgm", type: Gin)
@@ -318,10 +319,18 @@ model RestrictionRule {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   salesCutoffMinutes Int?
+  loteriaId          String?   @db.Uuid
+  multiplierId       String?   @db.Uuid
+  message            String?   @db.VarChar(255)
 
   banca   Banca?   @relation(fields: [bancaId], references: [id])
   user    User?    @relation(fields: [userId], references: [id])
   ventana Ventana? @relation(fields: [ventanaId], references: [id])
+  loteria Loteria? @relation(fields: [loteriaId], references: [id])
+  multiplier LoteriaMultiplier? @relation(fields: [multiplierId], references: [id])
+
+  @@index([loteriaId])
+  @@index([multiplierId])
 }
 
 model LoteriaMultiplier {
@@ -339,6 +348,7 @@ model LoteriaMultiplier {
   jugadasAtSale    Jugada[] @relation("JugadaMultiplierAtSale")
   loteria          Loteria  @relation(fields: [loteriaId], references: [id])
   appliedInSorteos Sorteo[] @relation("SorteoExtraMultiplier")
+  restrictionRules RestrictionRule[]
 
   @@index([loteriaId, kind, isActive])
   @@index([appliesToSorteoId])

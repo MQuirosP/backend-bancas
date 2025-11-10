@@ -10,7 +10,12 @@ import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
     const userId = req.user!.id;
-    const result = await TicketService.create(req.body, userId, req.requestId);
+    const result = await TicketService.create(
+      req.body,
+      userId,
+      req.requestId,
+      req.user!.role
+    );
     return success(res, result);
   },
 
