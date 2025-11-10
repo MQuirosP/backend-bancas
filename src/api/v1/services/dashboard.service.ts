@@ -76,6 +76,8 @@ interface CxCResult {
     totalPayouts: number;
     totalPaid: number;
     totalPaidOut: number;
+    totalCollected: number;
+    totalPaidToCustomer: number;
     amount: number; // compatibilidad: saldo positivo (CxC)
     remainingBalance: number;
     isActive: boolean;
@@ -91,6 +93,8 @@ interface CxPResult {
     totalPayouts: number;
     totalPaid: number;
     totalPaidOut: number;
+    totalCollected: number;
+    totalPaidToCustomer: number;
     amount: number; // compatibilidad: saldo positivo (CxP)
     remainingBalance: number;
     isActive: boolean;
@@ -617,6 +621,9 @@ export const DashboardService = {
       where: { isActive: true },
       select: { id: true, name: true, isActive: true },
     });
+    const ventanaInfoMap = new Map(
+      ventanas.map((v) => [v.id, { name: v.name, isActive: v.isActive }])
+    );
 
     const aggregated = new Map<
       string,
@@ -627,49 +634,133 @@ export const DashboardService = {
         totalSales: number;
         totalPayouts: number;
         totalPaid: number;
+        totalCollected: number;
+        totalPaidToCustomer: number;
         remainingBalance: number;
       }
     >();
 
+    const ensureEntry = (
+      ventanaId: string,
+      fallbackName?: string,
+      fallbackIsActive?: boolean
+    ) => {
+      let entry = aggregated.get(ventanaId);
+      if (!entry) {
+        const info = ventanaInfoMap.get(ventanaId);
+        entry = {
+          ventanaId,
+          ventanaName: fallbackName ?? info?.name ?? "Sin nombre",
+          isActive: fallbackIsActive ?? info?.isActive ?? true,
+          totalSales: 0,
+          totalPayouts: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+          totalPaidToCustomer: 0,
+          remainingBalance: 0,
+        };
+        aggregated.set(ventanaId, entry);
+      } else {
+        // Actualizar nombre/estado si recibimos datos más recientes
+        if (fallbackName && entry.ventanaName !== fallbackName) {
+          entry.ventanaName = fallbackName;
+        }
+        if (typeof fallbackIsActive === "boolean") {
+          entry.isActive = fallbackIsActive;
+        }
+      }
+      return entry;
+    };
+
     for (const statement of statements) {
       if (!statement.ventanaId) continue;
       const key = statement.ventanaId;
-      const existing = aggregated.get(key) || {
-        ventanaId: key,
-        ventanaName: statement.ventana?.name || "Sin nombre",
-        isActive: statement.ventana?.isActive ?? true,
-        totalSales: 0,
-        totalPayouts: 0,
-        totalPaid: 0,
-        remainingBalance: 0,
-      };
+      const existing = ensureEntry(
+        key,
+        statement.ventana?.name,
+        statement.ventana?.isActive ?? undefined
+      );
 
       existing.totalSales += statement.totalSales ?? 0;
       existing.totalPayouts += statement.totalPayouts ?? 0;
       existing.totalPaid += statement.totalPaid ?? 0;
       existing.remainingBalance += statement.remainingBalance ?? 0;
+    }
 
-      aggregated.set(key, existing);
+    const accountPaymentWhere: Prisma.AccountPaymentWhereInput = {
+      date: {
+        gte: rangeStart,
+        lte: rangeEnd,
+      },
+      vendedorId: null,
+      isReversed: false,
+      type: "collection",
+    };
+    if (filters.ventanaId) {
+      accountPaymentWhere.ventanaId = filters.ventanaId;
+    } else {
+      accountPaymentWhere.ventanaId = { not: null };
+    }
+
+    const collections = await prisma.accountPayment.findMany({
+      where: accountPaymentWhere,
+      select: {
+        ventanaId: true,
+        amount: true,
+      },
+    });
+
+    for (const collection of collections) {
+      if (!collection.ventanaId) continue;
+      const entry = ensureEntry(collection.ventanaId);
+      entry.totalCollected += collection.amount ?? 0;
+    }
+
+    const ticketRelationFilter: Prisma.TicketWhereInput = {
+      deletedAt: null,
+    };
+    if (filters.ventanaId) {
+      ticketRelationFilter.ventanaId = filters.ventanaId;
+    }
+
+    const ticketPayments = await prisma.ticketPayment.findMany({
+      where: {
+        isReversed: false,
+        paymentDate: {
+          gte: rangeStart,
+          lte: rangeEnd,
+        },
+        ticket: {
+          is: ticketRelationFilter,
+        },
+      },
+      select: {
+        amountPaid: true,
+        ticket: {
+          select: {
+            ventanaId: true,
+          },
+        },
+      },
+    });
+
+    for (const payment of ticketPayments) {
+      const ventanaId = payment.ticket?.ventanaId;
+      if (!ventanaId) continue;
+      const entry = ensureEntry(ventanaId);
+      entry.totalPaidToCustomer += payment.amountPaid ?? 0;
     }
 
     for (const ventana of ventanas) {
-      if (!aggregated.has(ventana.id)) {
-        aggregated.set(ventana.id, {
-          ventanaId: ventana.id,
-          ventanaName: ventana.name,
-          isActive: ventana.isActive,
-          totalSales: 0,
-          totalPayouts: 0,
-          totalPaid: 0,
-          remainingBalance: 0,
-        });
-      }
+      ensureEntry(ventana.id, ventana.name, ventana.isActive);
     }
 
     const byVentana = Array.from(aggregated.values())
       .map((entry) => {
         const amount = entry.remainingBalance > 0 ? entry.remainingBalance : 0;
         const totalPaid = entry.totalPaid;
+        const totalCollected = entry.totalCollected;
+        const totalPaidToCustomer = entry.totalPaidToCustomer;
         return {
           ventanaId: entry.ventanaId,
           ventanaName: entry.ventanaName,
@@ -677,6 +768,8 @@ export const DashboardService = {
           totalPayouts: entry.totalPayouts,
           totalPaid,
           totalPaidOut: totalPaid,
+          totalCollected,
+          totalPaidToCustomer,
           amount,
           remainingBalance: entry.remainingBalance,
           isActive: entry.isActive,
@@ -732,6 +825,9 @@ export const DashboardService = {
       where: { isActive: true },
       select: { id: true, name: true, isActive: true },
     });
+    const ventanaInfoMap = new Map(
+      ventanas.map((v) => [v.id, { name: v.name, isActive: v.isActive }])
+    );
 
     const aggregated = new Map<
       string,
@@ -742,49 +838,132 @@ export const DashboardService = {
         totalSales: number;
         totalPayouts: number;
         totalPaid: number;
+        totalCollected: number;
+        totalPaidToCustomer: number;
         remainingBalance: number;
       }
     >();
 
+    const ensureEntry = (
+      ventanaId: string,
+      fallbackName?: string,
+      fallbackIsActive?: boolean
+    ) => {
+      let entry = aggregated.get(ventanaId);
+      if (!entry) {
+        const info = ventanaInfoMap.get(ventanaId);
+        entry = {
+          ventanaId,
+          ventanaName: fallbackName ?? info?.name ?? "Sin nombre",
+          isActive: fallbackIsActive ?? info?.isActive ?? true,
+          totalSales: 0,
+          totalPayouts: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+          totalPaidToCustomer: 0,
+          remainingBalance: 0,
+        };
+        aggregated.set(ventanaId, entry);
+      } else {
+        if (fallbackName && entry.ventanaName !== fallbackName) {
+          entry.ventanaName = fallbackName;
+        }
+        if (typeof fallbackIsActive === "boolean") {
+          entry.isActive = fallbackIsActive;
+        }
+      }
+      return entry;
+    };
+
     for (const statement of statements) {
       if (!statement.ventanaId) continue;
       const key = statement.ventanaId;
-      const existing = aggregated.get(key) || {
-        ventanaId: key,
-        ventanaName: statement.ventana?.name || "Sin nombre",
-        isActive: statement.ventana?.isActive ?? true,
-        totalSales: 0,
-        totalPayouts: 0,
-        totalPaid: 0,
-        remainingBalance: 0,
-      };
+      const existing = ensureEntry(
+        key,
+        statement.ventana?.name,
+        statement.ventana?.isActive ?? undefined
+      );
 
       existing.totalSales += statement.totalSales ?? 0;
       existing.totalPayouts += statement.totalPayouts ?? 0;
       existing.totalPaid += statement.totalPaid ?? 0;
       existing.remainingBalance += statement.remainingBalance ?? 0;
+    }
 
-      aggregated.set(key, existing);
+    const accountPaymentWhere: Prisma.AccountPaymentWhereInput = {
+      date: {
+        gte: rangeStart,
+        lte: rangeEnd,
+      },
+      vendedorId: null,
+      isReversed: false,
+      type: "collection",
+    };
+    if (filters.ventanaId) {
+      accountPaymentWhere.ventanaId = filters.ventanaId;
+    } else {
+      accountPaymentWhere.ventanaId = { not: null };
+    }
+
+    const collections = await prisma.accountPayment.findMany({
+      where: accountPaymentWhere,
+      select: {
+        ventanaId: true,
+        amount: true,
+      },
+    });
+
+    for (const collection of collections) {
+      if (!collection.ventanaId) continue;
+      const entry = ensureEntry(collection.ventanaId);
+      entry.totalCollected += collection.amount ?? 0;
+    }
+
+    const ticketRelationFilter: Prisma.TicketWhereInput = {
+      deletedAt: null,
+    };
+    if (filters.ventanaId) {
+      ticketRelationFilter.ventanaId = filters.ventanaId;
+    }
+
+    const ticketPayments = await prisma.ticketPayment.findMany({
+      where: {
+        isReversed: false,
+        paymentDate: {
+          gte: rangeStart,
+          lte: rangeEnd,
+        },
+        ticket: {
+          is: ticketRelationFilter,
+        },
+      },
+      select: {
+        amountPaid: true,
+        ticket: {
+          select: {
+            ventanaId: true,
+          },
+        },
+      },
+    });
+
+    for (const payment of ticketPayments) {
+      const ventanaId = payment.ticket?.ventanaId;
+      if (!ventanaId) continue;
+      const entry = ensureEntry(ventanaId);
+      entry.totalPaidToCustomer += payment.amountPaid ?? 0;
     }
 
     for (const ventana of ventanas) {
-      if (!aggregated.has(ventana.id)) {
-        aggregated.set(ventana.id, {
-          ventanaId: ventana.id,
-          ventanaName: ventana.name,
-          isActive: ventana.isActive,
-          totalSales: 0,
-          totalPayouts: 0,
-          totalPaid: 0,
-          remainingBalance: 0,
-        });
-      }
+      ensureEntry(ventana.id, ventana.name, ventana.isActive);
     }
 
     const byVentana = Array.from(aggregated.values())
       .map((entry) => {
         const amount = entry.remainingBalance < 0 ? Math.abs(entry.remainingBalance) : 0;
         const totalPaid = entry.totalPaid;
+        const totalCollected = entry.totalCollected;
+        const totalPaidToCustomer = entry.totalPaidToCustomer;
         return {
           ventanaId: entry.ventanaId,
           ventanaName: entry.ventanaName,
@@ -792,6 +971,8 @@ export const DashboardService = {
           totalPayouts: entry.totalPayouts,
           totalPaid,
           totalPaidOut: totalPaid,
+          totalCollected,
+          totalPaidToCustomer,
           amount,
           remainingBalance: entry.remainingBalance,
           isActive: entry.isActive,
