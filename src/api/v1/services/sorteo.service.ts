@@ -175,7 +175,7 @@ export const SorteoService = {
       details,
     });
 
-    return s;
+    return serializeSorteo(s);
   },
 
   async evaluate(id: string, body: EvaluateSorteoDTO, userId: string) {
@@ -346,6 +346,13 @@ export const SorteoService = {
         });
       }
 
+      await tx.sorteo.update({
+        where: { id },
+        data: {
+          hasWinner: winningTicketIds.size > 0,
+        },
+      });
+
       // 3.5 Auditoría
       await tx.activityLog.create({
         data: {
@@ -381,8 +388,8 @@ export const SorteoService = {
       },
     });
 
-    // 5) Devolver sorteo evaluado (con include si lo prefieres)
-    const evaluated = await prisma.sorteo.findUnique({ where: { id } });
+    // 5) Devolver sorteo evaluado (con include para mantener reventadoEnabled)
+    const evaluated = await SorteoRepository.findById(id);
     return evaluated ? serializeSorteo(evaluated) : evaluated;
   },
 
