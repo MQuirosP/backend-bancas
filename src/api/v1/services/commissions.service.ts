@@ -49,6 +49,9 @@ export const CommissionsService = {
     totalSales: number;
     totalTickets: number;
     totalCommission: number;
+    totalPayouts: number;
+    commissionListero?: number;
+    commissionVendedor?: number;
   }>> {
     try {
       // Resolver rango de fechas
@@ -109,6 +112,7 @@ export const CommissionsService = {
             ventana_id: string;
             ventana_name: string;
             total_sales: string;
+            total_payouts: string;
             total_tickets: string;
             total_commission: string;
           }>
@@ -121,6 +125,7 @@ export const CommissionsService = {
             v.id as ventana_id,
             v.name as ventana_name,
             COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
+            COALESCE(SUM(t."totalPayout"), 0)::text as total_payouts,
             COUNT(DISTINCT t.id)::text as total_tickets,
             COALESCE(SUM(t."totalCommission"), 0)::text as total_commission
           FROM "Ticket" t
@@ -155,16 +160,18 @@ export const CommissionsService = {
           // Obtener todas las jugadas del periodo para calcular todo desde ellas
           // Usar zona horaria de Costa Rica para el agrupamiento por fecha
           const jugadas = await prisma.$queryRaw<
-            Array<{
-              business_date: Date;
-              ventana_id: string;
-              ventana_name: string;
-              ticket_id: string;
-              amount: number;
-              type: string;
-              finalMultiplierX: number;
-              loteriaId: string;
-            }>
+          Array<{
+            business_date: Date;
+            ventana_id: string;
+            ventana_name: string;
+            ticket_id: string;
+            amount: number;
+            type: string;
+            finalMultiplierX: number;
+            loteriaId: string;
+            ticket_total_payout: number | null;
+            commission_amount: number | null;
+          }>
           >`
             SELECT
               COALESCE(
@@ -177,7 +184,9 @@ export const CommissionsService = {
               j.amount,
               j.type,
               j."finalMultiplierX",
-              t."loteriaId"
+              t."loteriaId",
+              t."totalPayout" as ticket_total_payout,
+              j."commissionAmount" as commission_amount
             FROM "Ticket" t
             INNER JOIN "Jugada" j ON j."ticketId" = t.id
             INNER JOIN "Ventana" v ON v.id = t."ventanaId"
@@ -191,8 +200,11 @@ export const CommissionsService = {
               ventanaId: string;
               ventanaName: string;
               totalSales: number;
+              totalPayouts: number;
               totalTickets: Set<string>;
-              totalCommission: number;
+              commissionListero: number;
+              commissionVendedor: number;
+              payoutTickets: Set<string>;
             }
           >();
 
@@ -209,32 +221,45 @@ export const CommissionsService = {
             const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
             const key = `${dateKey}_${jugada.ventana_id}`;
 
-            if (!byDateAndVentana.has(key)) {
-              byDateAndVentana.set(key, {
+            let entry = byDateAndVentana.get(key);
+            if (!entry) {
+              entry = {
                 ventanaId: jugada.ventana_id,
                 ventanaName: jugada.ventana_name,
                 totalSales: 0,
-                totalTickets: new Set(),
-                totalCommission: 0,
-              });
+                totalPayouts: 0,
+                totalTickets: new Set<string>(),
+                commissionListero: 0,
+                commissionVendedor: 0,
+                payoutTickets: new Set<string>(),
+              };
+              byDateAndVentana.set(key, entry);
             }
 
-            const entry = byDateAndVentana.get(key)!;
             entry.totalSales += jugada.amount;
             entry.totalTickets.add(jugada.ticket_id);
-            entry.totalCommission += commission;
+            entry.commissionListero += commission;
+            entry.commissionVendedor += Number(jugada.commission_amount || 0);
+            if (!entry.payoutTickets.has(jugada.ticket_id)) {
+              entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+              entry.payoutTickets.add(jugada.ticket_id);
+            }
           }
 
           // Convertir a formato de respuesta
           return Array.from(byDateAndVentana.entries()).map(([key, entry]) => {
             const date = key.split("_")[0];
+            const totalCommission = entry.commissionListero + entry.commissionVendedor;
             return {
               date, // YYYY-MM-DD
               ventanaId: entry.ventanaId,
               ventanaName: entry.ventanaName,
               totalSales: entry.totalSales,
               totalTickets: entry.totalTickets.size,
-              totalCommission: entry.totalCommission,
+              totalCommission,
+              totalPayouts: entry.totalPayouts,
+              commissionListero: entry.commissionListero,
+              commissionVendedor: entry.commissionVendedor,
             };
           }).sort((a, b) => {
             // Ordenar por fecha DESC, luego por nombre de ventana ASC
@@ -245,14 +270,20 @@ export const CommissionsService = {
           });
         }
 
-        return result.map((r) => ({
-          date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
-          ventanaId: r.ventana_id,
-          ventanaName: r.ventana_name,
-          totalSales: parseFloat(r.total_sales),
-          totalTickets: parseInt(r.total_tickets, 10),
-          totalCommission: parseFloat(r.total_commission),
-        }));
+        return result.map((r) => {
+          const commissionVendedor = parseFloat(r.total_commission);
+          return {
+            date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
+            ventanaId: r.ventana_id,
+            ventanaName: r.ventana_name,
+            totalSales: parseFloat(r.total_sales),
+            totalTickets: parseInt(r.total_tickets, 10),
+            totalCommission: commissionVendedor,
+            totalPayouts: parseFloat(r.total_payouts),
+            commissionListero: 0,
+            commissionVendedor,
+          };
+        });
       } else if (filters.dimension === "vendedor") {
         // Agrupar por día Y por vendedor
         // Solo incluir vendedores que tienen tickets en el periodo (según scope)
@@ -262,6 +293,7 @@ export const CommissionsService = {
             vendedor_id: string;
             vendedor_name: string;
             total_sales: string;
+            total_payouts: string;
             total_tickets: string;
             total_commission: string;
           }>
@@ -274,6 +306,7 @@ export const CommissionsService = {
             u.id as vendedor_id,
             u.name as vendedor_name,
             COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
+            COALESCE(SUM(t."totalPayout"), 0)::text as total_payouts,
             COUNT(DISTINCT t.id)::text as total_tickets,
             COALESCE(SUM(t."totalCommission"), 0)::text as total_commission
           FROM "Ticket" t
@@ -296,20 +329,27 @@ export const CommissionsService = {
           },
         });
 
-        return result.map((r) => ({
-          date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
-          vendedorId: r.vendedor_id,
-          vendedorName: r.vendedor_name,
-          totalSales: parseFloat(r.total_sales),
-          totalTickets: parseInt(r.total_tickets, 10),
-          totalCommission: parseFloat(r.total_commission),
-        }));
+        return result.map((r) => {
+          const commissionVendedor = parseFloat(r.total_commission);
+          return {
+            date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
+            vendedorId: r.vendedor_id,
+            vendedorName: r.vendedor_name,
+            totalSales: parseFloat(r.total_sales),
+            totalTickets: parseInt(r.total_tickets, 10),
+            totalCommission: commissionVendedor,
+            totalPayouts: parseFloat(r.total_payouts),
+            commissionListero: 0,
+            commissionVendedor,
+          };
+        });
       } else {
         // Sin dimensión: solo agrupar por día
         const result = await prisma.$queryRaw<
           Array<{
             business_date: Date;
             total_sales: string;
+            total_payouts: string;
             total_tickets: string;
             total_commission: string;
           }>
@@ -320,6 +360,7 @@ export const CommissionsService = {
               DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
             ) as business_date,
             COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
+            COALESCE(SUM(t."totalPayout"), 0)::text as total_payouts,
             COUNT(DISTINCT t.id)::text as total_tickets,
             COALESCE(SUM(t."totalCommission"), 0)::text as total_commission
           FROM "Ticket" t
@@ -344,8 +385,11 @@ export const CommissionsService = {
         return result.map((r) => ({
           date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
           totalSales: parseFloat(r.total_sales),
+          totalPayouts: parseFloat(r.total_payouts),
           totalTickets: parseInt(r.total_tickets, 10),
           totalCommission: parseFloat(r.total_commission),
+          commissionListero: undefined,
+          commissionVendedor: undefined,
         }));
       }
     } catch (err: any) {
