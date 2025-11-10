@@ -147,17 +147,11 @@ async function ensureBaseMultiplierRow(
   });
   if (existing) return existing.id;
 
-  const created = await tx.loteriaMultiplier.create({
-    data: {
-      loteriaId,
-      name: "Base",
-      valueX: 0,
-      isActive: true,
-      kind: "NUMERO",
-    },
-    select: { id: true },
-  });
-  return created.id;
+  throw new AppError(
+    `No existe un multiplicador Base activo. Crea uno manualmente para la lotería ${loteriaId}.`,
+    500,
+    "BASE_MULTIPLIER_MISSING"
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
