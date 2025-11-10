@@ -9,6 +9,9 @@ export type CreateRestrictionRuleInput = {
   salesCutoffMinutes?: number,
   appliesToDate?: Date;     // coaccionado por schema
   appliesToHour?: number;   // 0..23
+  loteriaId?: string;
+  multiplierId?: string;
+  message?: string | null;
 };
 
 export type UpdateRestrictionRuleInput = Partial<CreateRestrictionRuleInput>;

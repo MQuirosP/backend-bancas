@@ -26,21 +26,32 @@ type ListParams = {
   hasCutoff?: boolean | string;
   /** si 'true' lista solo reglas de montos */
   hasAmount?: boolean | string;
+  loteriaId?: string;
+  multiplierId?: string;
 };
 
 const includeLabels = {
-  banca:   { select: { id: true, name: true, code: true } },
+  banca: { select: { id: true, name: true, code: true } },
   ventana: { select: { id: true, name: true, code: true } },
-  user:    { select: { id: true, name: true, username: true } },
+  user: { select: { id: true, name: true, username: true } },
+  loteria: { select: { id: true, name: true } },
+  multiplier: { select: { id: true, name: true, valueX: true, kind: true } },
 } as const;
 
 export const RestrictionRuleRepository = {
   async create(data: any) {
-    return prisma.restrictionRule.create({ data });
+    return prisma.restrictionRule.create({
+      data,
+      include: includeLabels,
+    });
   },
 
   async update(id: string, data: any) {
-    return prisma.restrictionRule.update({ where: { id }, data });
+    return prisma.restrictionRule.update({
+      where: { id },
+      data,
+      include: includeLabels,
+    });
   },
 
   async softDelete(id: string, _actorId: string, _reason?: string) {
@@ -48,6 +59,7 @@ export const RestrictionRuleRepository = {
     return prisma.restrictionRule.update({
       where: { id },
       data: { isActive: false, updatedAt: new Date() },
+      include: includeLabels,
     });
   },
 
@@ -55,6 +67,7 @@ export const RestrictionRuleRepository = {
     return prisma.restrictionRule.update({
       where: { id },
       data: { isActive: true },
+      include: includeLabels,
     });
   },
 
@@ -79,6 +92,8 @@ export const RestrictionRuleRepository = {
       pageSize = 20,
       hasCutoff,
       hasAmount,
+      loteriaId,
+      multiplierId,
     } = params;
 
     const _page = Math.max(1, Number(page) || 1);
@@ -109,6 +124,8 @@ export const RestrictionRuleRepository = {
     if (ventanaId) where.ventanaId = ventanaId;
     if (userId) where.userId = userId;
     if (number) where.number = number;
+    if (loteriaId) where.loteriaId = loteriaId;
+    if (multiplierId) where.multiplierId = multiplierId;
 
     if (_hasCutoff && _hasAmount) {
       // ambas clases de reglas

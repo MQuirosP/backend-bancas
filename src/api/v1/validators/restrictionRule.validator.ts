@@ -38,21 +38,28 @@ const NUMBER_VALIDATOR = z.union([
 const hasScope = (d: any) => !!(d.bancaId || d.ventanaId || d.userId);
 const isAmountRule = (d: any) => d.maxAmount != null || d.maxTotal != null;
 const isCutoffRule = (d: any) => d.salesCutoffMinutes != null;
+const isLotteryMultiplierRule = (d: any) => d.loteriaId != null || d.multiplierId != null;
 
 // CREATE
-export const CreateRestrictionRuleSchema = z.object({
-  bancaId: z.uuid().optional(),
-  ventanaId: z.uuid().optional(),
-  userId: z.uuid().optional(),
+export const CreateRestrictionRuleSchema = z
+  .object({
+    bancaId: z.uuid().optional(),
+    ventanaId: z.uuid().optional(),
+    userId: z.uuid().optional(),
 
-  number: NUMBER_VALIDATOR.optional(),
-  maxAmount: z.coerce.number().positive().optional(),
-  maxTotal: z.coerce.number().positive().optional(),
-  salesCutoffMinutes: z.coerce.number().int().min(0).max(30).optional(),
+    restrictionType: z.string().optional(),
 
-  appliesToDate: z.coerce.date().optional(),
-  appliesToHour: z.coerce.number().int().min(0).max(23).optional(),
-})
+    number: NUMBER_VALIDATOR.optional(),
+    maxAmount: z.coerce.number().positive().optional(),
+    maxTotal: z.coerce.number().positive().optional(),
+    salesCutoffMinutes: z.coerce.number().int().min(0).max(30).optional(),
+
+    appliesToDate: z.coerce.date().optional(),
+    appliesToHour: z.coerce.number().int().min(0).max(23).optional(),
+    loteriaId: z.uuid().optional(),
+    multiplierId: z.uuid().optional(),
+    message: z.string().trim().min(1).max(255).optional(),
+  })
 .strict()
 .superRefine((data, ctx) => {
   if (!hasScope(data)) {
@@ -65,12 +72,14 @@ export const CreateRestrictionRuleSchema = z.object({
 
   const amount = isAmountRule(data);
   const cutoff = isCutoffRule(data);
+  const lotteryMult = isLotteryMultiplierRule(data);
 
-  if ((amount ? 1 : 0) + (cutoff ? 1 : 0) !== 1) {
+  const totalKinds = (amount ? 1 : 0) + (cutoff ? 1 : 0) + (lotteryMult ? 1 : 0);
+  if (totalKinds !== 1) {
     ctx.addIssue({
       code: "custom",
       path: ["(root)"],
-      message: "Defina maxAmount/maxTotal o salesCutoffMinutes (exclusivo).",
+      message: "Debe definir exactamente un tipo de restricción: montos, cutoff o lotería/multiplicador.",
     });
   }
 
@@ -80,6 +89,30 @@ export const CreateRestrictionRuleSchema = z.object({
       path: ["number"],
       message: "Para salesCutoffMinutes, number debe omitirse.",
     });
+  }
+
+  if (lotteryMult) {
+    if (!data.loteriaId || !data.multiplierId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["(root)"],
+        message: "Para restringir por lotería/multiplicador debe indicar loteriaId y multiplierId.",
+      });
+    }
+    if (amount || cutoff) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["(root)"],
+        message: "No puede combinar lotería/multiplicador con montos o cutoff en la misma regla.",
+      });
+    }
+    if (data.number != null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["number"],
+        message: "Las reglas de lotería/multiplicador no aceptan el campo number.",
+      });
+    }
   }
 });
 
@@ -91,6 +124,8 @@ export const UpdateRestrictionRuleSchema = z.object({
   ventanaId: z.uuid().optional(),
   userId: z.uuid().optional(),
 
+  restrictionType: z.string().optional(),
+
   number: NUMBER_00_99.optional(), // Solo string en PATCH, no array
   maxAmount: z.coerce.number().positive().optional(),
   maxTotal: z.coerce.number().positive().optional(),
@@ -98,17 +133,21 @@ export const UpdateRestrictionRuleSchema = z.object({
 
   appliesToDate: z.coerce.date().optional(),
   appliesToHour: z.coerce.number().int().min(0).max(23).optional(),
+  loteriaId: z.uuid().optional(),
+  multiplierId: z.uuid().optional(),
+  message: z.string().trim().min(1).max(255).optional().nullable(),
 })
 .strict()
 .superRefine((data, ctx) => {
   const amount = isAmountRule(data);
   const cutoff = isCutoffRule(data);
+  const lotteryMult = isLotteryMultiplierRule(data);
 
-  if (amount && cutoff) {
+  if ([amount, cutoff, lotteryMult].filter(Boolean).length > 1) {
     ctx.addIssue({
       code: "custom",
       path: ["(root)"],
-      message: "No puede enviar salesCutoffMinutes junto con maxAmount/maxTotal.",
+      message: "No puede combinar distintos tipos de restricción en la misma regla.",
     });
   }
   if (cutoff && data.number != null) {
@@ -116,6 +155,20 @@ export const UpdateRestrictionRuleSchema = z.object({
       code: "custom",
       path: ["number"],
       message: "Para salesCutoffMinutes, number debe omitirse.",
+    });
+  }
+  if (lotteryMult && data.number != null) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["number"],
+      message: "Las reglas de lotería/multiplicador no aceptan el campo number.",
+    });
+  }
+  if (lotteryMult && (data.loteriaId == null || data.multiplierId == null)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["(root)"],
+      message: "Debe indicar loteriaId y multiplierId cuando actualiza una restricción de lotería/multiplicador.",
     });
   }
 });

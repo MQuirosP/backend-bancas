@@ -1,5 +1,5 @@
 import prisma from "../core/prismaClient";
-import { Prisma, TicketStatus } from "@prisma/client";
+import { Prisma, TicketStatus, Role } from "@prisma/client";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { withTransactionRetry } from "../core/withTransactionRetry";
@@ -21,6 +21,22 @@ type CreateTicketInput = {
     finalMultiplierX?: number; // resuelto en repo para NUMERO; 0 para REVENTADO
   }>;
 };
+
+type TicketWarning = {
+  code: "LOTTERY_MULTIPLIER_RESTRICTED";
+  restrictedButAllowed: boolean;
+  ruleId: string;
+  scope: "USER" | "VENTANA" | "BANCA";
+  loteriaId: string;
+  loteriaName?: string | null;
+  multiplierId: string;
+  multiplierName?: string | null;
+  message: string;
+};
+
+type RestrictionRuleWithRelations = Prisma.RestrictionRuleGetPayload<{
+  include: { loteria: true; multiplier: true };
+}>;
 
 function isSameLocalDay(a: Date, b: Date) {
   return (
@@ -159,8 +175,13 @@ async function ensureBaseMultiplierRow(
 // ────────────────────────────────────────────────────────────────────────────────
 
 export const TicketRepository = {
-  async create(data: CreateTicketInput, userId: string) {
+  async create(
+    data: CreateTicketInput,
+    userId: string,
+    options?: { actorRole?: Role }
+  ) {
     const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
+    const actorRole = options?.actorRole ?? Role.VENDEDOR;
 
     // Toda la operación dentro de una transacción con retry y timeouts explícitos
     // Pre-chequeo seguro: existencia de tabla TicketCounter (fuera de TX para evitar aborts)
@@ -181,8 +202,11 @@ export const TicketRepository = {
       hasTicketCounter = false;
     }
 
-    const ticket = await withTransactionRetry(
+    const { ticket, warnings } = await withTransactionRetry(
       async (tx) => {
+        const warnings: TicketWarning[] = [];
+        const warningRuleIds = new Set<string>();
+
         // 1) Generación de businessDate CR y folio prefijado por 'TYYMMDD'
         const nowUtc = new Date();
         const cutoffHour = (process.env.BUSINESS_CUTOFF_HOUR_CR || '00:00').trim();
@@ -191,7 +215,7 @@ export const TicketRepository = {
         const [loteria, sorteo, ventana, user] = await Promise.all([
           tx.loteria.findUnique({
             where: { id: loteriaId },
-            select: { id: true, isActive: true, rulesJson: true },
+            select: { id: true, name: true, isActive: true, rulesJson: true },
           }),
           tx.sorteo.findUnique({
             where: { id: sorteoId },
@@ -238,6 +262,8 @@ export const TicketRepository = {
             "SORTEO_LOTERIA_MISMATCH"
           );
         }
+
+        const loteriaName = loteria.name ?? null;
 
         // 2) Determinar businessDate CR priorizando sorteo.scheduledAt (fallback por cutoff)
         const bd = getBusinessDateCRInfo({ scheduledAt: sorteo.scheduledAt, nowUtc, cutoffHour });
@@ -361,9 +387,13 @@ export const TicketRepository = {
             isActive: true,
             OR: [{ userId }, { ventanaId }, { bancaId }],
           },
+          include: {
+            loteria: true,
+            multiplier: true,
+          },
         });
 
-        const applicable = candidateRules
+        const applicable: RestrictionRuleWithRelations[] = candidateRules
           .filter((r) => {
             if (
               r.appliesToDate &&
@@ -387,6 +417,10 @@ export const TicketRepository = {
           })
           .sort((a, b) => b.score - a.score)
           .map((x) => x.r);
+
+        const lotteryMultiplierRules = applicable.filter(
+          (rule) => rule.loteriaId && rule.multiplierId
+        );
 
         // 5) Validaciones con rulesJson de la Lotería
         const RJ = (loteria.rulesJson ?? {}) as any;
@@ -518,6 +552,7 @@ export const TicketRepository = {
             isActive: boolean;
             kind: "NUMERO" | "REVENTADO";
             loteriaId: string;
+            name?: string | null;
           }
         >();
 
@@ -528,6 +563,7 @@ export const TicketRepository = {
             },
             select: {
               id: true,
+              name: true,
               valueX: true,
               isActive: true,
               kind: true,
@@ -538,6 +574,7 @@ export const TicketRepository = {
           for (const m of multipliers) {
             multiplierCache.set(m.id, {
               id: m.id,
+              name: m.name,
               valueX: m.valueX,
               isActive: m.isActive,
               kind: m.kind as "NUMERO" | "REVENTADO",
@@ -609,6 +646,60 @@ export const TicketRepository = {
               "INVALID_MULTIPLIER_VALUE"
             );
           }
+
+          const matchingRule = lotteryMultiplierRules.find(
+            (rule) =>
+              rule.loteriaId === loteriaId &&
+              rule.multiplierId === j.multiplierId
+          );
+
+          if (matchingRule) {
+            const ruleScope: "USER" | "VENTANA" | "BANCA" =
+              matchingRule.userId
+                ? "USER"
+                : matchingRule.ventanaId
+                ? "VENTANA"
+                : "BANCA";
+
+            const loteriaNameForWarning =
+              matchingRule.loteria?.name ?? loteriaName;
+            const multiplierNameForWarning =
+              multiplier.name ?? matchingRule.multiplier?.name ?? null;
+
+            const defaultMessage = multiplier.name
+              ? `El multiplicador '${multiplier.name}' está restringido para esta lotería.`
+              : "El multiplicador seleccionado está restringido para esta lotería.";
+            const message =
+              (matchingRule.message && matchingRule.message.trim()) || defaultMessage;
+
+            if (actorRole === Role.ADMIN) {
+              if (!warningRuleIds.has(matchingRule.id)) {
+                warnings.push({
+                  code: "LOTTERY_MULTIPLIER_RESTRICTED",
+                  restrictedButAllowed: true,
+                  ruleId: matchingRule.id,
+                  scope: ruleScope,
+                  loteriaId,
+                  loteriaName: loteriaNameForWarning,
+                  multiplierId: j.multiplierId,
+                  multiplierName: multiplierNameForWarning,
+                  message,
+                });
+                warningRuleIds.add(matchingRule.id);
+              }
+            } else {
+              throw new AppError(message, 400, {
+                code: "LOTTERY_MULTIPLIER_RESTRICTED",
+                ruleId: matchingRule.id,
+                scope: ruleScope,
+                loteriaId,
+                loteriaName: loteriaNameForWarning,
+                multiplierId: j.multiplierId,
+                multiplierName: multiplierNameForWarning,
+              });
+            }
+          }
+
           return {
             type: "NUMERO" as const,
             number: j.number,
@@ -837,7 +928,7 @@ export const TicketRepository = {
         // Almacenar jugadasWithCommissions para usarlo fuera de TX
         (createdTicket as any).__jugadasCount = jugadasWithCommissions.length;
 
-        return createdTicket;
+        return { ticket: createdTicket, warnings };
       },
       {
         // ✔️ opciones explícitas para robustez bajo carga
@@ -915,7 +1006,11 @@ export const TicketRepository = {
       },
     });
 
-    return ticket;
+    delete (ticket as any).__commissionsDetails;
+    delete (ticket as any).__jugadasCount;
+    delete (ticket as any).__businessDateInfo;
+
+    return { ticket, warnings };
   },
 
   async getById(id: string) {
