@@ -70,7 +70,21 @@ const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
 
 const SorteoRepository = {
   async create(data: CreateSorteoDTO) {
-    const s = await prisma.sorteo.create({ data: toPrismaCreate(data) });
+    const s = await prisma.sorteo.create({
+      data: toPrismaCreate(data),
+      include: {
+        loteria: {
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
+          },
+        },
+        extraMultiplier: {
+          select: { id: true, name: true, valueX: true },
+        },
+      },
+    });
     logger.info({
       layer: "repository",
       action: "SORTEO_CREATE_DB",
@@ -93,6 +107,18 @@ const SorteoRepository = {
     const s = await prisma.sorteo.update({
       where: { id },
       data: toPrismaUpdate(data),
+      include: {
+        loteria: {
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
+          },
+        },
+        extraMultiplier: {
+          select: { id: true, name: true, valueX: true },
+        },
+      },
     });
     logger.info({
       layer: "repository",
@@ -114,6 +140,18 @@ const SorteoRepository = {
     const s = await prisma.sorteo.update({
       where: { id },
       data: { status: SorteoStatus.OPEN },
+      include: {
+        loteria: {
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
+          },
+        },
+        extraMultiplier: {
+          select: { id: true, name: true, valueX: true },
+        },
+      },
     });
     logger.info({
       layer: "repository",
@@ -139,6 +177,18 @@ const SorteoRepository = {
       const closed = await tx.sorteo.update({
         where: { id },
         data: { status: SorteoStatus.CLOSED },
+        include: {
+          loteria: {
+            select: {
+              id: true,
+              name: true,
+              rulesJson: true,
+            },
+          },
+          extraMultiplier: {
+            select: { id: true, name: true, valueX: true },
+          },
+        },
       });
       return closed;
     });
@@ -403,6 +453,18 @@ const SorteoRepository = {
         isActive: false,
         status: SorteoStatus.CLOSED,
         // campos de borrado lógico deprecated: no se usan
+      },
+      include: {
+        loteria: {
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
+          },
+        },
+        extraMultiplier: {
+          select: { id: true, name: true, valueX: true },
+        },
       },
     });
 

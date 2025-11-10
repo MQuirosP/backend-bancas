@@ -44,12 +44,6 @@ router.patch(
 );
 router.patch("/:id/open", requireAdmin, validateIdParam, SorteoController.open);
 router.patch(
-  "/:id/close",
-  requireAdmin,
-  validateIdParam,
-  SorteoController.close
-);
-router.patch(
   "/:id/evaluate",
   requireAdmin,
   validateIdParam,

@@ -545,23 +545,107 @@ export const TicketRepository = {
           0
         );
 
-        // 7) Límite diario por vendedor
-        const crRange = getCRDayRangeUTC(now);
-        const { _sum } = await tx.ticket.aggregate({
-          _sum: { totalAmount: true },
-          where: {
-            vendedorId: userId,
-            createdAt: { gte: crRange.fromAt, lt: crRange.toAtExclusive },
-          },
-        });
-        const dailyTotal = _sum.totalAmount ?? 0;
-        const MAX_DAILY_TOTAL = Number(process.env.SALES_DAILY_MAX ?? 1000);
-        if (dailyTotal + totalAmountTx > MAX_DAILY_TOTAL) {
-          throw new AppError(
-            "Daily sales limit exceeded",
-            400,
-            "LIMIT_VIOLATION"
-          );
+        // 7) Límite diario por vendedor (solo reglas globales + fallback env)
+        const globalLimitRule = applicable.find(
+          (rule) => !rule.number && typeof rule.maxTotal === "number" && rule.maxTotal !== null
+        );
+
+        const ruleDailyLimit =
+          globalLimitRule && typeof globalLimitRule.maxTotal === "number"
+            ? Number(globalLimitRule.maxTotal)
+            : null;
+
+        const envDailyLimitRaw = //Number(process.env.SALES_DAILY_MAX ?? 0);
+        const envDailyLimit =
+          Number.isFinite(envDailyLimitRaw) && envDailyLimitRaw > 0
+            ? envDailyLimitRaw
+            : null;
+
+        let effectiveDailyLimit: number | null = null;
+        let dailyLimitSource: {
+          tipo: "REGLA_GLOBAL" | "ENTORNO";
+          reglaId?: string;
+          alcance?: "USUARIO" | "VENTANA" | "BANCA" | "GLOBAL";
+        } | null = null;
+
+        if (ruleDailyLimit != null && ruleDailyLimit > 0) {
+          effectiveDailyLimit =
+            envDailyLimit != null ? Math.min(ruleDailyLimit, envDailyLimit) : ruleDailyLimit;
+
+          let alcance: "USUARIO" | "VENTANA" | "BANCA" | "GLOBAL" = "GLOBAL";
+          if (globalLimitRule?.userId) {
+            alcance = "USUARIO";
+          } else if (globalLimitRule?.ventanaId) {
+            alcance = "VENTANA";
+          } else if (globalLimitRule?.bancaId) {
+            alcance = "BANCA";
+          }
+
+          dailyLimitSource = {
+            tipo: "REGLA_GLOBAL",
+            reglaId: globalLimitRule?.id,
+            alcance,
+          };
+        } else if (envDailyLimit != null) {
+          effectiveDailyLimit = envDailyLimit;
+          dailyLimitSource = { tipo: "ENTORNO" };
+        }
+
+        if (effectiveDailyLimit != null) {
+          const crRange = getCRDayRangeUTC(now);
+          const { _sum } = await tx.ticket.aggregate({
+            _sum: { totalAmount: true },
+            where: {
+              vendedorId: userId,
+              createdAt: { gte: crRange.fromAt, lt: crRange.toAtExclusive },
+            },
+          });
+          const dailyTotal = _sum.totalAmount ?? 0;
+          const projectedTotal = dailyTotal + totalAmountTx;
+          if (projectedTotal > effectiveDailyLimit) {
+            let detalleFuente: string | null = null;
+            if (dailyLimitSource?.tipo === "REGLA_GLOBAL") {
+              const alcanceLabelMap: Record<string, string> = {
+                USUARIO: "usuario",
+                VENTANA: "ventana",
+                BANCA: "banca",
+                GLOBAL: "global",
+              };
+              const alcanceLabel =
+                dailyLimitSource.alcance && alcanceLabelMap[dailyLimitSource.alcance]
+                  ? alcanceLabelMap[dailyLimitSource.alcance]
+                  : "global";
+              detalleFuente = `regla ${alcanceLabel} ${dailyLimitSource.reglaId ?? ""}`.trim();
+            } else if (dailyLimitSource?.tipo === "ENTORNO") {
+              detalleFuente = "configuración del sistema";
+            }
+
+            const mensajeDetallado = [
+              "Límite diario de ventas excedido.",
+              detalleFuente ? `Fuente: ${detalleFuente}.` : null,
+              `Límite aplicado: ${effectiveDailyLimit.toLocaleString("es-CR")}.`,
+              `Total acumulado: ${dailyTotal.toLocaleString("es-CR")}.`,
+              `Intento actual: ${totalAmountTx.toLocaleString("es-CR")}.`,
+              `Total proyectado: ${projectedTotal.toLocaleString("es-CR")}.`,
+            ]
+              .filter(Boolean)
+              .join(" ");
+
+            throw new AppError(
+              mensajeDetallado,
+              400,
+              {
+                code: "LIMIT_VIOLATION",
+                limiteAplicado: effectiveDailyLimit,
+                limiteRegla: ruleDailyLimit ?? null,
+                limiteEntorno: envDailyLimit ?? null,
+                totalAcumulado: dailyTotal,
+                montoTicket: totalAmountTx,
+                totalProyectado: projectedTotal,
+                fuente: dailyLimitSource,
+              }
+            );
+          }
         }
 
         // 8) Aplicar primera regla aplicable (si hay)
