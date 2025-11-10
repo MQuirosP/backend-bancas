@@ -189,7 +189,7 @@ export const TicketRepository = {
       async (tx) => {
         // 1) Generación de businessDate CR y folio prefijado por 'TYYMMDD'
         const nowUtc = new Date();
-        const cutoffHour = process.env.BUSINESS_CUTOFF_HOUR_CR || '06:00';
+        const cutoffHour = (process.env.BUSINESS_CUTOFF_HOUR_CR || '00:00').trim();
 
         // 2) Validación de FKs + reglas de la lotería + políticas de comisión
         const [loteria, sorteo, ventana, user] = await Promise.all([

@@ -12,9 +12,21 @@ export const AccountStatementRepository = {
     ventanaId?: string;
     vendedorId?: string;
   }) {
-    const where = data.ventanaId
-      ? { date: data.date, ventanaId: data.ventanaId }
-      : { date: data.date, vendedorId: data.vendedorId };
+    const where: Prisma.AccountStatementWhereInput = {};
+
+    if (data.ventanaId) {
+      where.date = data.date;
+      where.ventanaId = data.ventanaId;
+      where.vendedorId = null;
+    } else if (data.vendedorId) {
+      where.date = data.date;
+      where.vendedorId = data.vendedorId;
+      where.ventanaId = null;
+    } else {
+      where.date = data.date;
+      where.ventanaId = null;
+      where.vendedorId = null;
+    }
 
     const existing = await prisma.accountStatement.findFirst({
       where,
@@ -48,6 +60,8 @@ export const AccountStatementRepository = {
     isSettled?: boolean;
     canEdit?: boolean;
     ticketCount?: number;
+    ventanaId?: string | null;
+    vendedorId?: string | null;
   }) {
     return await prisma.accountStatement.update({
       where: { id },

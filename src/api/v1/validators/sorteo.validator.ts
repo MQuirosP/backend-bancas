@@ -25,6 +25,10 @@ export const EvaluateSorteoSchema = z.object({
   extraOutcomeCode: z.string().trim().min(1).max(50).nullable().optional(),
 }).strict();
 
+export const RevertSorteoSchema = z.object({
+  reason: z.string().trim().min(3).max(200).optional(),
+}).strict();
+
 // ✅ NUEVO: query para listar
 export const ListSorteosQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
@@ -48,6 +52,8 @@ export const validateUpdateSorteo = (req: Request, res: Response, next: NextFunc
   validateBody(UpdateSorteoSchema)(req, res, next);
 export const validateEvaluateSorteo = (req: Request, res: Response, next: NextFunction) =>
   validateBody(EvaluateSorteoSchema)(req, res, next);
+export const validateRevertSorteo = (req: Request, res: Response, next: NextFunction) =>
+  validateBody(RevertSorteoSchema)(req, res, next);
 
 // ✅ export helper para rutas
 export const validateListSorteosQuery = (req: Request, res: Response, next: NextFunction) =>

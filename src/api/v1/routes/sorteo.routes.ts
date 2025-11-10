@@ -7,6 +7,7 @@ import {
   validateEvaluateSorteo,
   validateIdParam,
   validateListSorteosQuery,
+  validateRevertSorteo,
 } from "../validators/sorteo.validator";
 import { protect } from "../../../middlewares/auth.middleware";
 import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
@@ -49,6 +50,13 @@ router.patch(
   validateIdParam,
   validateEvaluateSorteo,
   SorteoController.evaluate
+);
+router.patch(
+  "/:id/revert-evaluation",
+  requireAdmin,
+  validateIdParam,
+  validateRevertSorteo,
+  SorteoController.revertEvaluation
 );
 router.delete("/:id", requireAdmin, validateIdParam, SorteoController.delete);
 
