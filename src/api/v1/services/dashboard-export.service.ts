@@ -59,6 +59,8 @@ interface DashboardExportData {
       totalPayouts: number;
       totalPaid: number;
       totalPaidOut: number;
+      totalCollected: number;
+      totalPaidToCustomer: number;
       remainingBalance: number;
       amount: number;
       isActive: boolean;
@@ -73,6 +75,8 @@ interface DashboardExportData {
       totalPayouts: number;
       totalPaid: number;
       totalPaidOut: number;
+      totalCollected: number;
+      totalPaidToCustomer: number;
       remainingBalance: number;
       amount: number;
       isActive: boolean;
@@ -382,8 +386,10 @@ export class DashboardExportService {
       const header = sheet.addRow([
         'Listero',
         'Ventas Totales',
-        'Pagos Totales (Payouts)',
-        'Pagos Registrados',
+        'Premios Generados',
+        'Pagado (Cliente)',
+        'Cobros Listero',
+        'Pagado a Listero',
         'Saldo Pendiente',
         'Monto CxC',
         'Estado',
@@ -395,6 +401,8 @@ export class DashboardExportService {
           v.ventanaName,
           this.formatCurrency(v.totalSales),
           this.formatCurrency(v.totalPayouts),
+          this.formatCurrency(v.totalPaidToCustomer),
+          this.formatCurrency(v.totalCollected),
           this.formatCurrency(v.totalPaid),
           this.formatCurrency(v.remainingBalance),
           this.formatCurrency(v.amount),
@@ -407,6 +415,8 @@ export class DashboardExportService {
         'TOTAL',
         this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.totalSales, 0)),
         this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.totalPayouts, 0)),
+        this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.totalPaidToCustomer, 0)),
+        this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.totalCollected, 0)),
         this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.totalPaid, 0)),
         this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.remainingBalance, 0)),
         this.formatCurrency(cxc.byVentana.reduce((sum, v) => sum + v.amount, 0)),
@@ -433,8 +443,10 @@ export class DashboardExportService {
       const header = sheet.addRow([
         'Listero',
         'Ventas Totales',
-        'Pagos Totales (Payouts)',
-        'Pagos Registrados',
+        'Premios Generados',
+        'Pagado (Cliente)',
+        'Cobros Listero',
+        'Pagado a Listero',
         'Saldo Pendiente',
         'Monto CxP',
         'Estado',
@@ -446,6 +458,8 @@ export class DashboardExportService {
           v.ventanaName,
           this.formatCurrency(v.totalSales),
           this.formatCurrency(v.totalPayouts),
+          this.formatCurrency(v.totalPaidToCustomer),
+          this.formatCurrency(v.totalCollected),
           this.formatCurrency(v.totalPaid),
           this.formatCurrency(v.remainingBalance),
           this.formatCurrency(v.amount),
@@ -458,6 +472,8 @@ export class DashboardExportService {
         'TOTAL',
         this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.totalSales, 0)),
         this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.totalPayouts, 0)),
+        this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.totalPaidToCustomer, 0)),
+        this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.totalCollected, 0)),
         this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.totalPaid, 0)),
         this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.remainingBalance, 0)),
         this.formatCurrency(cxp.byVentana.reduce((sum, v) => sum + v.amount, 0)),
@@ -664,12 +680,14 @@ export class DashboardExportService {
     // CxC
     if (data.cxc.byVentana && data.cxc.byVentana.length > 0) {
       lines.push('=== CUENTAS POR COBRAR ===');
-      lines.push('Listero,Ventas Totales,Pagos Totales (Payouts),Pagos Registrados,Saldo Pendiente,Monto CxC');
+      lines.push('Listero,Ventas Totales,Premios Generados,Pagado (Cliente),Cobros Listero,Pagado a Listero,Saldo Pendiente,Monto CxC');
       data.cxc.byVentana.forEach(v => {
         lines.push([
           v.ventanaName,
           this.formatCurrency(v.totalSales),
           this.formatCurrency(v.totalPayouts),
+          this.formatCurrency(v.totalPaidToCustomer),
+          this.formatCurrency(v.totalCollected),
           this.formatCurrency(v.totalPaid),
           this.formatCurrency(v.remainingBalance),
           this.formatCurrency(v.amount),
@@ -681,12 +699,14 @@ export class DashboardExportService {
     // CxP
     if (data.cxp.byVentana && data.cxp.byVentana.length > 0) {
       lines.push('=== CUENTAS POR PAGAR ===');
-      lines.push('Listero,Ventas Totales,Pagos Totales (Payouts),Pagos Registrados,Saldo Pendiente,Monto CxP');
+      lines.push('Listero,Ventas Totales,Premios Generados,Pagado (Cliente),Cobros Listero,Pagado a Listero,Saldo Pendiente,Monto CxP');
       data.cxp.byVentana.forEach(v => {
         lines.push([
           v.ventanaName,
           this.formatCurrency(v.totalSales),
           this.formatCurrency(v.totalPayouts),
+          this.formatCurrency(v.totalPaidToCustomer),
+          this.formatCurrency(v.totalCollected),
           this.formatCurrency(v.totalPaid),
           this.formatCurrency(v.remainingBalance),
           this.formatCurrency(v.amount),
@@ -947,10 +967,13 @@ export class DashboardExportService {
         [
           { text: 'Listero', style: 'tableHeader', bold: true },
           { text: 'Ventas Totales', style: 'tableHeader', bold: true },
-          { text: 'Pagos Totales (Payouts)', style: 'tableHeader', bold: true },
-          { text: 'Pagos Registrados', style: 'tableHeader', bold: true },
+          { text: 'Premios Generados', style: 'tableHeader', bold: true },
+          { text: 'Pagado (Cliente)', style: 'tableHeader', bold: true },
+          { text: 'Cobros Listero', style: 'tableHeader', bold: true },
+          { text: 'Pagado a Listero', style: 'tableHeader', bold: true },
           { text: 'Saldo Pendiente', style: 'tableHeader', bold: true },
-          { text: 'Monto CxC', style: 'tableHeader', bold: true }
+          { text: 'Monto CxC', style: 'tableHeader', bold: true },
+          { text: 'Estado', style: 'tableHeader', bold: true },
         ]
       ];
 
@@ -959,9 +982,12 @@ export class DashboardExportService {
           v.ventanaName,
           formatCurrency(v.totalSales),
           formatCurrency(v.totalPayouts),
+          formatCurrency(v.totalPaidToCustomer),
+          formatCurrency(v.totalCollected),
           formatCurrency(v.totalPaid),
           formatCurrency(v.remainingBalance),
-          formatCurrency(v.amount)
+          formatCurrency(v.amount),
+          v.isActive ? 'Activa' : 'Inactiva',
         ]);
       });
 
@@ -969,15 +995,18 @@ export class DashboardExportService {
         { text: 'TOTAL', bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.totalSales, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.totalPayouts, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.totalPaidToCustomer, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.totalCollected, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.totalPaid, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.remainingBalance, 0)), bold: true, fillColor: '#F2F2F2' },
-        { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.amount, 0)), bold: true, fillColor: '#F2F2F2' }
+        { text: formatCurrency(data.cxc.byVentana.reduce((sum, v) => sum + v.amount, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: '', fillColor: '#F2F2F2' },
       ]);
 
       content.push({
         table: {
           headerRows: 1,
-          widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto'],
+          widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
           body: cxcTableBody
         },
         layout: {
@@ -1002,10 +1031,13 @@ export class DashboardExportService {
         [
           { text: 'Listero', style: 'tableHeader', bold: true },
           { text: 'Ventas Totales', style: 'tableHeader', bold: true },
-          { text: 'Pagos Totales (Payouts)', style: 'tableHeader', bold: true },
-          { text: 'Pagos Registrados', style: 'tableHeader', bold: true },
+          { text: 'Premios Generados', style: 'tableHeader', bold: true },
+          { text: 'Pagado (Cliente)', style: 'tableHeader', bold: true },
+          { text: 'Cobros Listero', style: 'tableHeader', bold: true },
+          { text: 'Pagado a Listero', style: 'tableHeader', bold: true },
           { text: 'Saldo Pendiente', style: 'tableHeader', bold: true },
-          { text: 'Monto CxP', style: 'tableHeader', bold: true }
+          { text: 'Monto CxP', style: 'tableHeader', bold: true },
+          { text: 'Estado', style: 'tableHeader', bold: true },
         ]
       ];
 
@@ -1014,9 +1046,12 @@ export class DashboardExportService {
           v.ventanaName,
           formatCurrency(v.totalSales),
           formatCurrency(v.totalPayouts),
+          formatCurrency(v.totalPaidToCustomer),
+          formatCurrency(v.totalCollected),
           formatCurrency(v.totalPaid),
           formatCurrency(v.remainingBalance),
-          formatCurrency(v.amount)
+          formatCurrency(v.amount),
+          v.isActive ? 'Activa' : 'Inactiva',
         ]);
       });
 
@@ -1024,15 +1059,18 @@ export class DashboardExportService {
         { text: 'TOTAL', bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.totalSales, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.totalPayouts, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.totalPaidToCustomer, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.totalCollected, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.totalPaid, 0)), bold: true, fillColor: '#F2F2F2' },
         { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.remainingBalance, 0)), bold: true, fillColor: '#F2F2F2' },
-        { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.amount, 0)), bold: true, fillColor: '#F2F2F2' }
+        { text: formatCurrency(data.cxp.byVentana.reduce((sum, v) => sum + v.amount, 0)), bold: true, fillColor: '#F2F2F2' },
+        { text: '', fillColor: '#F2F2F2' },
       ]);
 
       content.push({
         table: {
           headerRows: 1,
-          widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto'],
+          widths: ['*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
           body: cxpTableBody
         },
         layout: {
