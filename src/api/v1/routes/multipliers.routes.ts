@@ -9,7 +9,11 @@ import {
   MultiplierIdParamSchema,
   ToggleMultiplierSchema,
 } from "../validators/multiplier.validator";
-import { requireAdmin, requireAdminOrVentana } from "../../../middlewares/roleGuards.middleware";
+import {
+  requireAdmin,
+  requireAdminOrVentana,
+  requireAdminVentanaOrVendedor,
+} from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
 
@@ -19,7 +23,7 @@ router.post("/", requireAdmin, validateBody(CreateMultiplierSchema), MultiplierC
 
 router.get(
   "/",
-  requireAdminOrVentana,
+  requireAdminVentanaOrVendedor,
   validateQuery(ListMultipliersQuerySchema),
   MultiplierController.list
 );

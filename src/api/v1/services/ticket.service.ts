@@ -227,7 +227,7 @@ export const TicketService = {
               number,
               reventadoNumber: isNumero ? null : number,
               amount: j.amount,
-              multiplierId: "",
+              multiplierId: isNumero ? ((j as any).multiplierId ?? null) : null,
               finalMultiplierX: 0,
             };
           }),
