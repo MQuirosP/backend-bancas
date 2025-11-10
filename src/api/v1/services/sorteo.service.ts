@@ -410,6 +410,30 @@ export const SorteoService = {
     return serializeSorteo(s);
   },
 
+  async revertEvaluation(id: string, userId: string, reason?: string) {
+    const existing = await SorteoRepository.findById(id);
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+    if (existing.status !== SorteoStatus.EVALUATED) {
+      throw new AppError("Solo se puede revertir un sorteo evaluado", 409);
+    }
+
+    const reverted = await SorteoRepository.revertEvaluation(id);
+
+    await ActivityService.log({
+      userId,
+      action: ActivityType.SORTEO_REOPEN,
+      targetType: "SORTEO",
+      targetId: id,
+      details: {
+        reason: reason ?? null,
+        previousWinningNumber: existing.winningNumber,
+        previousExtraMultiplierId: existing.extraMultiplierId,
+      },
+    });
+
+    return serializeSorteo(reverted);
+  },
+
   async list(params: {
     loteriaId?: string;
     page?: number;

@@ -2,7 +2,7 @@
 import prisma from "../core/prismaClient";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
-import { Prisma, SorteoStatus } from "@prisma/client";
+import { Prisma, SorteoStatus, TicketStatus } from "@prisma/client";
 import { CreateSorteoDTO, UpdateSorteoDTO } from "../api/v1/dto/sorteo.dto";
 import { formatIsoLocal, parseCostaRicaDateTime } from "../utils/datetime";
 
@@ -198,6 +198,204 @@ const SorteoRepository = {
       payload: { sorteoId: id },
     });
     return s;
+  },
+
+  async revertEvaluation(id: string) {
+    const sorteo = await prisma.$transaction(async (tx) => {
+      const current = await tx.sorteo.findUnique({
+        where: { id },
+        select: { id: true, status: true },
+      });
+      if (!current) throw new AppError("Sorteo no encontrado", 404);
+      if (current.status !== SorteoStatus.EVALUATED) {
+        throw new AppError("Solo se puede revertir un sorteo evaluado", 409);
+      }
+
+      const tickets = await tx.ticket.findMany({
+        where: { sorteoId: id },
+        select: {
+          id: true,
+          ventanaId: true,
+          vendedorId: true,
+          businessDate: true,
+          createdAt: true,
+        },
+      });
+
+      const paymentsDeleted = await tx.ticketPayment.deleteMany({
+        where: { ticket: { sorteoId: id } },
+      });
+
+      await tx.jugada.updateMany({
+        where: { ticket: { sorteoId: id } },
+        data: {
+          isWinner: false,
+          payout: 0,
+        },
+      });
+
+      await tx.jugada.updateMany({
+        where: {
+          ticket: { sorteoId: id },
+          type: "REVENTADO",
+        },
+        data: {
+          finalMultiplierX: 0,
+          multiplierId: null,
+        },
+      });
+
+      await tx.ticket.updateMany({
+        where: {
+          sorteoId: id,
+          status: TicketStatus.EVALUATED,
+        },
+        data: {
+          status: TicketStatus.ACTIVE,
+          isWinner: false,
+          totalPayout: 0,
+          totalPaid: 0,
+          remainingAmount: 0,
+          lastPaymentAt: null,
+          paidById: null,
+          paymentMethod: null,
+          paymentNotes: null,
+          paymentHistory: Prisma.JsonNull,
+        },
+      });
+
+      await tx.ticket.updateMany({
+        where: {
+          sorteoId: id,
+          status: TicketStatus.PAID,
+        },
+        data: {
+          status: TicketStatus.ACTIVE,
+          isWinner: false,
+          totalPayout: 0,
+          totalPaid: 0,
+          remainingAmount: 0,
+          lastPaymentAt: null,
+          paidById: null,
+          paymentMethod: null,
+          paymentNotes: null,
+          paymentHistory: Prisma.JsonNull,
+        },
+      });
+
+      const ventanaTargets = new Map<string, { ventanaId: string; date: Date }>();
+      const vendedorTargets = new Map<string, { vendedorId: string; date: Date }>();
+
+      for (const ticket of tickets) {
+        const baseDate = ticket.businessDate ? new Date(ticket.businessDate) : new Date(ticket.createdAt);
+        baseDate.setUTCHours(0, 0, 0, 0);
+        if (ticket.ventanaId) {
+          const key = `${ticket.ventanaId}-${baseDate.toISOString()}`;
+          if (!ventanaTargets.has(key)) {
+            ventanaTargets.set(key, { ventanaId: ticket.ventanaId, date: baseDate });
+          }
+        }
+        if (ticket.vendedorId) {
+          const key = `${ticket.vendedorId}-${baseDate.toISOString()}`;
+          if (!vendedorTargets.has(key)) {
+            vendedorTargets.set(key, { vendedorId: ticket.vendedorId, date: baseDate });
+          }
+        }
+      }
+
+      const statementIds: Array<{ id: string; balance: number }> = [];
+
+      if (ventanaTargets.size > 0) {
+        const ventanaStatements = await tx.accountStatement.findMany({
+          where: {
+            OR: Array.from(ventanaTargets.values()).map(({ ventanaId, date }) => ({
+              date,
+              ventanaId,
+              vendedorId: null,
+            })),
+          },
+          select: { id: true, balance: true },
+        });
+        statementIds.push(...ventanaStatements);
+      }
+
+      if (vendedorTargets.size > 0) {
+        const vendedorStatements = await tx.accountStatement.findMany({
+          where: {
+            OR: Array.from(vendedorTargets.values()).map(({ vendedorId, date }) => ({
+              date,
+              vendedorId,
+              ventanaId: null,
+            })),
+          },
+          select: { id: true, balance: true },
+        });
+        statementIds.push(...vendedorStatements);
+      }
+
+      let accountPaymentsDeleted = 0;
+      if (statementIds.length > 0) {
+        const ids = statementIds.map((s) => s.id);
+        const res = await tx.accountPayment.deleteMany({
+          where: {
+            accountStatementId: { in: ids },
+          },
+        });
+        accountPaymentsDeleted = res.count;
+
+        await Promise.all(
+          statementIds.map((stmt) =>
+            tx.accountStatement.update({
+              where: { id: stmt.id },
+              data: {
+                totalPaid: 0,
+                remainingBalance: stmt.balance,
+                isSettled: false,
+                canEdit: true,
+              },
+            })
+          )
+        );
+      }
+
+      const updated = await tx.sorteo.update({
+        where: { id },
+        data: {
+          status: SorteoStatus.OPEN,
+          winningNumber: null,
+          extraOutcomeCode: null,
+          extraMultiplierX: null,
+          hasWinner: false,
+          extraMultiplier: { disconnect: true },
+        },
+        include: {
+          loteria: {
+            select: {
+              id: true,
+              name: true,
+              rulesJson: true,
+            },
+          },
+          extraMultiplier: {
+            select: { id: true, name: true, valueX: true },
+          },
+        },
+      });
+
+      logger.info({
+        layer: "repository",
+        action: "SORTEO_REVERT_EVALUATION_DB",
+        payload: {
+          sorteoId: id,
+          paymentsDeleted: paymentsDeleted.count,
+          accountPaymentsDeleted,
+        },
+      });
+
+      return updated;
+    });
+
+    return sorteo;
   },
 
   // ⬇️ evaluate ahora paga jugadas y asigna multiplierId a REVENTADO ganadores

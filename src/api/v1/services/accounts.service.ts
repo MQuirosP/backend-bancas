@@ -20,6 +20,22 @@ interface AccountsFilters {
   sort?: "asc" | "desc";
 }
 
+const COSTA_RICA_UTC_OFFSET_HOURS = 6; // Costa Rica está en UTC-6, así que 00:00 local = 06:00 UTC
+
+function toCostaRicaISODate(date: Date): string {
+  return new Date(
+    Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      COSTA_RICA_UTC_OFFSET_HOURS,
+      0,
+      0,
+      0
+    )
+  ).toISOString();
+}
+
 /**
  * Obtiene el rango de fechas del mes
  * FIX: Si el mes consultado es el mes actual, limita endDate a hoy para excluir días futuros
@@ -363,7 +379,7 @@ type DayStatement = Awaited<ReturnType<typeof calculateDayStatement>>;
 /**
  * Calcula y actualiza el estado de cuenta para un día específico
  */
-async function calculateDayStatement(
+export async function calculateDayStatement(
   date: Date,
   month: string,
   dimension: "ventana" | "vendedor",
@@ -524,6 +540,9 @@ async function calculateDayStatement(
   const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
   const canEdit = !isSettled;
 
+  const effectiveVentanaId = ventanaId ?? statement.ventanaId ?? null;
+  const effectiveVendedorId = vendedorId ?? statement.vendedorId ?? null;
+
   await AccountStatementRepository.update(statement.id, {
     totalSales,
     totalPayouts,
@@ -535,6 +554,8 @@ async function calculateDayStatement(
     isSettled,
     canEdit,
     ticketCount,
+    ventanaId: effectiveVentanaId,
+    vendedorId: effectiveVendedorId,
   });
 
   return {
@@ -550,6 +571,8 @@ async function calculateDayStatement(
     isSettled,
     canEdit,
     ticketCount,
+    ventanaId: effectiveVentanaId,
+    vendedorId: effectiveVendedorId,
   };
 }
 
@@ -567,6 +590,9 @@ export const AccountsService = {
 
     // Si scope=all y no hay ventanaId/vendedorId, obtener estados existentes
     // Si no hay estados existentes, calcular basándose en tickets del mes
+    const ventanaInfoMap = new Map<string, { id: string; name: string | null; code: string | null }>();
+    const vendedorInfoMap = new Map<string, { id: string; name: string | null; code: string | null }>();
+
     if (!ventanaId && !vendedorId) {
       // Obtener todos los estados de cuenta existentes del mes
       const statementsWithRelations = (await AccountStatementRepository.findByMonth(
@@ -893,9 +919,6 @@ export const AccountsService = {
       }
 
       // Mapear info de ventana/vendedor existente
-      const ventanaInfoMap = new Map<string, { id: string; name: string | null; code: string | null }>();
-      const vendedorInfoMap = new Map<string, { id: string; name: string | null; code: string | null }>();
-
       for (const s of statementsWithRelations) {
         if (s.ventana) {
           ventanaInfoMap.set(s.ventana.id, {
@@ -921,7 +944,9 @@ export const AccountsService = {
         if (s.vendedorId) vendedorIdsNeeded.add(s.vendedorId);
       }
 
-      const ventanaIdsToFetch = Array.from(ventanaIdsNeeded).filter((id) => !ventanaInfoMap.has(id));
+      const ventanaIdsToFetch = Array.from(ventanaIdsNeeded).filter(
+        (id) => !ventanaInfoMap.has(id)
+      );
       if (ventanaIdsToFetch.length > 0) {
         const ventanas = await prisma.ventana.findMany({
           where: { id: { in: ventanaIdsToFetch } },
@@ -936,7 +961,9 @@ export const AccountsService = {
         }
       }
 
-      const vendedorIdsToFetch = Array.from(vendedorIdsNeeded).filter((id) => !vendedorInfoMap.has(id));
+      const vendedorIdsToFetch = Array.from(vendedorIdsNeeded).filter(
+        (id) => !vendedorInfoMap.has(id)
+      );
       if (vendedorIdsToFetch.length > 0) {
         const vendedores = await prisma.user.findMany({
           where: { id: { in: vendedorIdsToFetch } },
@@ -1199,11 +1226,12 @@ export const AccountsService = {
     // Formatear respuesta - retornar directamente el array en lugar de data.data
     // Incluir campos según la dimensión (omitir campos null innecesarios)
     const formattedStatements = statements.map((s) => {
-      const dateStr = s.date.toISOString().split("T")[0];
-      const statementWithRelations = statementsMap.get(dateStr);
-      
+      const dateISOCR = toCostaRicaISODate(s.date);
+      const dateKey = dateISOCR.split("T")[0];
+      const statementWithRelations = statementsMap.get(dateKey);
+
       const base = {
-        date: dateStr,
+        date: dateISOCR,
         totalSales: s.totalSales,
         totalPayouts: s.totalPayouts,
         listeroCommission: s.listeroCommission,
@@ -1220,24 +1248,34 @@ export const AccountsService = {
       };
 
       if (dimension === "ventana") {
+        const info =
+          (s.ventanaId && ventanaInfoMap.get(s.ventanaId)) ||
+          ventanaInfo ||
+          statementWithRelations?.ventana ||
+          null;
+
         return {
           ...base,
-          ventanaId: s.ventanaId,
-          ventanaName: statementWithRelations?.ventana?.name || ventanaInfo?.name || null,
-          ventanaCode: statementWithRelations?.ventana?.code || ventanaInfo?.code || null,
+          ventanaId: s.ventanaId ?? ventanaId ?? null,
+          ventanaName: info?.name ?? null,
+          ventanaCode: info?.code ?? null,
         };
       } else {
+        const info =
+          (s.vendedorId && vendedorInfoMap.get(s.vendedorId)) ||
+          vendedorInfo ||
+          statementWithRelations?.vendedor ||
+          null;
+
         return {
           ...base,
-          vendedorId: s.vendedorId,
-          vendedorName: statementWithRelations?.vendedor?.name || vendedorInfo?.name || null,
-          vendedorCode: statementWithRelations?.vendedor?.code || vendedorInfo?.code || null,
+          vendedorId: s.vendedorId ?? vendedorId ?? null,
+          vendedorName: info?.name ?? null,
+          vendedorCode: info?.code ?? null,
         };
       }
     });
 
-    // Calcular totales SOLO de los statements retornados (no de todos los del mes en la BD)
-    // Esto asegura que los totales coincidan con los statements mostrados
     const totals = {
       totalSales: formattedStatements.reduce((sum, s) => sum + s.totalSales, 0),
       totalPayouts: formattedStatements.reduce((sum, s) => sum + s.totalPayouts, 0),
@@ -1245,7 +1283,7 @@ export const AccountsService = {
       totalVendedorCommission: formattedStatements.reduce((sum, s) => sum + s.vendedorCommission, 0),
       totalBalance: formattedStatements.reduce((sum, s) => sum + s.balance, 0),
       totalPaid: formattedStatements.reduce((sum, s) => sum + s.totalPaid, 0),
-      totalCollected: formattedStatements.reduce((sum, s) => sum + s.totalCollected, 0), // Agregar totalCollected a totales
+      totalCollected: formattedStatements.reduce((sum, s) => sum + s.totalCollected, 0),
       totalRemainingBalance: formattedStatements.reduce((sum, s) => sum + s.remainingBalance, 0),
       settledDays: formattedStatements.filter((s) => s.isSettled).length,
       pendingDays: formattedStatements.filter((s) => !s.isSettled).length,
@@ -1257,7 +1295,7 @@ export const AccountsService = {
       endDate: endDate.toISOString().split("T")[0],
       dimension,
       totalDays: daysInMonth,
-      daysWithStatements: formattedStatements.length, // Días que realmente tienen statements
+      daysWithStatements: formattedStatements.length,
     };
 
     return {

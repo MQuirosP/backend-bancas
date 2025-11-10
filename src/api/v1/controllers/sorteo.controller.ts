@@ -128,4 +128,13 @@ export const SorteoController = {
     res.json({ success: true, data: s });
   },
 
+  async revertEvaluation(req: AuthenticatedRequest, res: Response) {
+    const s = await SorteoService.revertEvaluation(
+      req.params.id,
+      req.user!.id,
+      req.body?.reason
+    );
+    res.json({ success: true, data: s });
+  },
+
 };
