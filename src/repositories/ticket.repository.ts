@@ -555,7 +555,7 @@ export const TicketRepository = {
             ? Number(globalLimitRule.maxTotal)
             : null;
 
-        const envDailyLimitRaw = //Number(process.env.SALES_DAILY_MAX ?? 0);
+        const envDailyLimitRaw = Number(process.env.SALES_DAILY_MAX ?? 0);
         const envDailyLimit =
           Number.isFinite(envDailyLimitRaw) && envDailyLimitRaw > 0
             ? envDailyLimitRaw
@@ -601,38 +601,9 @@ export const TicketRepository = {
             },
           });
           const dailyTotal = _sum.totalAmount ?? 0;
-          const projectedTotal = dailyTotal + totalAmountTx;
-          if (projectedTotal > effectiveDailyLimit) {
-            let detalleFuente: string | null = null;
-            if (dailyLimitSource?.tipo === "REGLA_GLOBAL") {
-              const alcanceLabelMap: Record<string, string> = {
-                USUARIO: "usuario",
-                VENTANA: "ventana",
-                BANCA: "banca",
-                GLOBAL: "global",
-              };
-              const alcanceLabel =
-                dailyLimitSource.alcance && alcanceLabelMap[dailyLimitSource.alcance]
-                  ? alcanceLabelMap[dailyLimitSource.alcance]
-                  : "global";
-              detalleFuente = `regla ${alcanceLabel} ${dailyLimitSource.reglaId ?? ""}`.trim();
-            } else if (dailyLimitSource?.tipo === "ENTORNO") {
-              detalleFuente = "configuración del sistema";
-            }
-
-            const mensajeDetallado = [
-              "Límite diario de ventas excedido.",
-              detalleFuente ? `Fuente: ${detalleFuente}.` : null,
-              `Límite aplicado: ${effectiveDailyLimit.toLocaleString("es-CR")}.`,
-              `Total acumulado: ${dailyTotal.toLocaleString("es-CR")}.`,
-              `Intento actual: ${totalAmountTx.toLocaleString("es-CR")}.`,
-              `Total proyectado: ${projectedTotal.toLocaleString("es-CR")}.`,
-            ]
-              .filter(Boolean)
-              .join(" ");
-
+          if (dailyTotal + totalAmountTx > effectiveDailyLimit) {
             throw new AppError(
-              mensajeDetallado,
+              "Límite diario de ventas excedido",
               400,
               {
                 code: "LIMIT_VIOLATION",
@@ -641,7 +612,7 @@ export const TicketRepository = {
                 limiteEntorno: envDailyLimit ?? null,
                 totalAcumulado: dailyTotal,
                 montoTicket: totalAmountTx,
-                totalProyectado: projectedTotal,
+                totalProyectado: dailyTotal + totalAmountTx,
                 fuente: dailyLimitSource,
               }
             );
