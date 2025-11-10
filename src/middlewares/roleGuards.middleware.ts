@@ -15,6 +15,7 @@ export const requireRole =
 /** Azúcares sintácticos */
 export const requireAdmin = requireRole(Role.ADMIN);
 export const requireAdminOrVentana = requireRole(Role.ADMIN, Role.VENTANA);
+export const requireAdminVentanaOrVendedor = requireRole(Role.ADMIN, Role.VENTANA, Role.VENDEDOR);
 
 /** Cualquiera autenticado */
 export const requireAuth = (req: AuthenticatedRequest, _res: Response, next: NextFunction) => {

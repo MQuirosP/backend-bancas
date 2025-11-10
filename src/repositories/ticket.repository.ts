@@ -140,12 +140,14 @@ async function resolveBaseMultiplierX(
 async function ensureBaseMultiplierRow(
   tx: Prisma.TransactionClient,
   loteriaId: string
-): Promise<string> {
+): Promise<{ id: string; valueX: number }> {
   const existing = await tx.loteriaMultiplier.findFirst({
     where: { loteriaId, isActive: true, name: "Base" },
-    select: { id: true },
+    select: { id: true, valueX: true },
   });
-  if (existing) return existing.id;
+  if (existing && typeof existing.valueX === "number" && existing.valueX > 0) {
+    return { id: existing.id, valueX: existing.valueX };
+  }
 
   throw new AppError(
     `No existe un multiplicador Base activo. Crea uno manualmente para la lotería ${loteriaId}.`,
@@ -346,11 +348,6 @@ export const TicketRepository = {
           }
         );
 
-        const baseMultiplierRowId = await ensureBaseMultiplierRow(
-          tx,
-          loteriaId
-        );
-
         logger.info({
           layer: "ticket",
           action: "BASE_MULTIPLIER_RESOLVED",
@@ -505,6 +502,50 @@ export const TicketRepository = {
         }
 
         // 6) Normalizar jugadas + total
+        const numeroMultiplierIds = Array.from(
+          new Set(
+            jugadas
+              .filter((j) => j.type === "NUMERO" && j.multiplierId)
+              .map((j) => j.multiplierId!) // validated later
+          )
+        );
+
+        const multiplierCache = new Map<
+          string,
+          {
+            id: string;
+            valueX: number;
+            isActive: boolean;
+            kind: "NUMERO" | "REVENTADO";
+            loteriaId: string;
+          }
+        >();
+
+        if (numeroMultiplierIds.length > 0) {
+          const multipliers = await tx.loteriaMultiplier.findMany({
+            where: {
+              id: { in: numeroMultiplierIds },
+            },
+            select: {
+              id: true,
+              valueX: true,
+              isActive: true,
+              kind: true,
+              loteriaId: true,
+            },
+          });
+
+          for (const m of multipliers) {
+            multiplierCache.set(m.id, {
+              id: m.id,
+              valueX: m.valueX,
+              isActive: m.isActive,
+              kind: m.kind as "NUMERO" | "REVENTADO",
+              loteriaId: m.loteriaId,
+            });
+          }
+        }
+
         const preparedJugadas = jugadas.map((j) => {
           if (j.type === "REVENTADO") {
             if (!j.reventadoNumber || j.reventadoNumber !== j.number) {
@@ -524,13 +565,57 @@ export const TicketRepository = {
             };
           }
           // NUMERO
+          if (!j.multiplierId) {
+            throw new AppError(
+              "Debe seleccionar un multiplicador para jugadas tipo NUMERO",
+              400,
+              "MISSING_MULTIPLIER_ID"
+            );
+          }
+          const multiplier = multiplierCache.get(j.multiplierId);
+          if (!multiplier) {
+            throw new AppError(
+              `Multiplicador inválido para jugada NUMERO`,
+              400,
+              "INVALID_MULTIPLIER"
+            );
+          }
+          if (multiplier.kind !== "NUMERO") {
+            throw new AppError(
+              `Multiplicador incompatible con jugada NUMERO`,
+              400,
+              "INVALID_MULTIPLIER_KIND"
+            );
+          }
+          if (multiplier.loteriaId !== loteriaId) {
+            throw new AppError(
+              `Multiplicador no pertenece a la lotería`,
+              400,
+              "INVALID_MULTIPLIER_LOTERIA"
+            );
+          }
+          if (!multiplier.isActive) {
+            throw new AppError(
+              `Multiplicador inactivo`,
+              400,
+              "INACTIVE_MULTIPLIER"
+            );
+          }
+          const multiplierX = multiplier.valueX;
+          if (typeof multiplierX !== "number" || multiplierX <= 0) {
+            throw new AppError(
+              `Multiplicador con valor inválido`,
+              400,
+              "INVALID_MULTIPLIER_VALUE"
+            );
+          }
           return {
             type: "NUMERO" as const,
             number: j.number,
             reventadoNumber: null,
             amount: j.amount,
-            finalMultiplierX: effectiveBaseX, // congelado en venta
-            multiplierId: baseMultiplierRowId, // "Base"
+            finalMultiplierX: multiplierX, // congelado en venta
+            multiplierId: j.multiplierId,
           };
         });
 
