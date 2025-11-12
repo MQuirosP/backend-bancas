@@ -12,7 +12,7 @@ const CUTOFF_GRACE_MS = 5000;
 
 /**
  * Extrae la configuración de impresión de un usuario/ventana
- * Retorna un objeto con printName, printPhone, printWidth, printFooter, printBarcode
+ * Retorna un objeto con printName, printPhone, printWidth, printFooter, printBarcode, printBluetoothMacAddress
  */
 function extractPrintConfig(settings: any, defaultName: string | null, defaultPhone: string | null) {
   const printSettings = (settings as any)?.print ?? {};
@@ -22,6 +22,7 @@ function extractPrintConfig(settings: any, defaultName: string | null, defaultPh
     printWidth: printSettings.width ?? null,
     printFooter: printSettings.footer ?? null,
     printBarcode: printSettings.barcode ?? true,
+    printBluetoothMacAddress: printSettings.bluetoothMacAddress ?? null,
   };
 }
 
