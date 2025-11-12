@@ -26,6 +26,9 @@ const phoneOptional = z.preprocess(
 
 // ==================== USER SETTINGS (definir antes de updateUserSchema) ====================
 
+const bluetoothMacRegex = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/
+const bluetoothMacCompactRegex = /^[0-9A-Fa-f]{8}$/
+
 /**
  * Configuraciones de impresión para usuario/ventana
  */
@@ -36,6 +39,15 @@ const PrintSettingsSchema = z
     width: z.union([z.literal(58), z.literal(88)]).nullable().optional(), // 58mm o 88mm
     footer: z.string().trim().max(200).nullable().optional(), // Máximo 200 caracteres
     barcode: z.boolean().nullable().optional(),
+    bluetoothMacAddress: z
+      .string()
+      .trim()
+      .nullable()
+      .optional()
+      .refine(
+        (value) => !value || bluetoothMacRegex.test(value) || bluetoothMacCompactRegex.test(value),
+        'Formato inválido. Usa AA:BB:CC:DD:EE:FF o AABBCCDD'
+      ),
   })
   .strict()
 
