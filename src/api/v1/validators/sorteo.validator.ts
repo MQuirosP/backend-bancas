@@ -58,3 +58,16 @@ export const validateRevertSorteo = (req: Request, res: Response, next: NextFunc
 // ✅ export helper para rutas
 export const validateListSorteosQuery = (req: Request, res: Response, next: NextFunction) =>
   validateQuery(ListSorteosQuerySchema)(req, res, next);
+
+// ✅ Query schema para evaluated-summary
+export const EvaluatedSummaryQuerySchema = z.object({
+  date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
+  fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
+  toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
+  scope: z.enum(["mine"]).optional().default("mine"), // Solo 'mine' para vendedor
+  loteriaId: z.uuid().optional(),
+  _: z.string().optional(), // Para evitar caché del navegador (ignorado)
+}).strict();
+
+export const validateEvaluatedSummaryQuery = (req: Request, res: Response, next: NextFunction) =>
+  validateQuery(EvaluatedSummaryQuerySchema)(req, res, next);

@@ -8,6 +8,7 @@ import {
   validateIdParam,
   validateListSorteosQuery,
   validateRevertSorteo,
+  validateEvaluatedSummaryQuery,
 } from "../validators/sorteo.validator";
 import { protect } from "../../../middlewares/auth.middleware";
 import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
@@ -61,7 +62,10 @@ router.patch(
 router.delete("/:id", requireAdmin, validateIdParam, SorteoController.delete);
 
 // Lecturas
+// IMPORTANTE: Las rutas literales deben ir ANTES de las rutas con parámetros
+router.get("/evaluated-summary", validateEvaluatedSummaryQuery, SorteoController.evaluatedSummary);
 router.get("/", validateListSorteosQuery, SorteoController.list);
-router.get("/:id", validateIdParam, SorteoController.findById);
+// Usar regex para que :id solo acepte UUIDs (evita conflictos con rutas literales)
+router.get("/:id([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", validateIdParam, SorteoController.findById);
 
 export default router;
