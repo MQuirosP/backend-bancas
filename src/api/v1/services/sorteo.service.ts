@@ -10,6 +10,8 @@ import {
   UpdateSorteoDTO,
 } from "../dto/sorteo.dto";
 import { formatIsoLocal } from "../../../utils/datetime";
+import { resolveDateRange } from "../../../utils/dateRange";
+import logger from "../../../core/logger";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
@@ -50,6 +52,32 @@ function serializeSorteo<T extends { scheduledAt?: Date | null; loteria?: any }>
 
 function serializeSorteos<T extends { scheduledAt?: Date | null }>(sorteos: T[]) {
   return sorteos.map((s) => serializeSorteo(s));
+}
+
+/**
+ * Formatea una hora en formato 12h con AM/PM
+ * Ejemplo: "14:30" → "2:30PM", "09:15" → "9:15AM"
+ */
+function formatTime12h(date: Date): string {
+  const local = new Date(date.getTime() - 6 * 60 * 60 * 1000); // Convertir a CR time
+  let hours = local.getUTCHours();
+  const minutes = local.getUTCMinutes();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12; // 0 debe ser 12
+  const minutesStr = String(minutes).padStart(2, '0');
+  return `${hours}:${minutesStr}${ampm}`;
+}
+
+/**
+ * Extrae la fecha en formato YYYY-MM-DD de un Date
+ */
+function formatDateOnly(date: Date): string {
+  const local = new Date(date.getTime() - 6 * 60 * 60 * 1000); // Convertir a CR time
+  const year = local.getUTCFullYear();
+  const month = String(local.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(local.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export const SorteoService = {
@@ -476,6 +504,212 @@ export const SorteoService = {
     const sorteo = await SorteoRepository.findById(id);
     if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
     return serializeSorteo(sorteo);
+  },
+
+  /**
+   * Obtiene resumen de sorteos evaluados con datos financieros agregados
+   * GET /api/v1/sorteos/evaluated-summary
+   */
+  async evaluatedSummary(
+    params: {
+      date?: string;
+      fromDate?: string;
+      toDate?: string;
+      scope?: string;
+      loteriaId?: string;
+    },
+    vendedorId: string
+  ) {
+    try {
+      // Resolver rango de fechas
+      const dateRange = resolveDateRange(
+        params.date || "today",
+        params.fromDate,
+        params.toDate
+      );
+
+      // Construir filtro para sorteos EVALUATED
+      const sorteoWhere: Prisma.SorteoWhereInput = {
+        status: SorteoStatus.EVALUATED,
+        scheduledAt: {
+          gte: dateRange.fromAt,
+          lte: dateRange.toAt,
+        },
+        ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+        // Solo sorteos donde el vendedor tiene tickets
+        tickets: {
+          some: {
+            vendedorId,
+            deletedAt: null,
+          },
+        },
+      };
+
+      // Obtener sorteos evaluados ordenados por scheduledAt DESC
+      const sorteos = await prisma.sorteo.findMany({
+        where: sorteoWhere,
+        include: {
+          loteria: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+        orderBy: {
+          scheduledAt: "desc",
+        },
+      });
+
+      // Obtener datos financieros agregados por sorteo
+      const sorteoIds = sorteos.map((s) => s.id);
+      
+      // Agregar datos financieros por sorteo
+      const financialData = await prisma.ticket.groupBy({
+        by: ["sorteoId"],
+        where: {
+          sorteoId: { in: sorteoIds },
+          vendedorId,
+          deletedAt: null,
+        },
+        _sum: {
+          totalAmount: true,
+          totalCommission: true,
+          totalPayout: true,
+        },
+        _count: {
+          id: true,
+        },
+      });
+
+      // Obtener conteos de tickets ganadores y pagados
+      const winningTicketsData = await prisma.ticket.groupBy({
+        by: ["sorteoId"],
+        where: {
+          sorteoId: { in: sorteoIds },
+          vendedorId,
+          isWinner: true,
+          deletedAt: null,
+        },
+        _count: {
+          id: true,
+        },
+      });
+
+      const paidTicketsData = await prisma.ticket.groupBy({
+        by: ["sorteoId"],
+        where: {
+          sorteoId: { in: sorteoIds },
+          vendedorId,
+          status: "PAID",
+          deletedAt: null,
+        },
+        _count: {
+          id: true,
+        },
+      });
+
+      // Crear mapas para acceso rápido
+      const financialMap = new Map(
+        financialData.map((f) => [
+          f.sorteoId,
+          {
+            totalSales: f._sum.totalAmount || 0,
+            totalCommission: f._sum.totalCommission || 0,
+            totalPrizes: f._sum.totalPayout || 0,
+            ticketCount: f._count.id,
+          },
+        ])
+      );
+
+      const winningMap = new Map(
+        winningTicketsData.map((w) => [w.sorteoId, w._count.id])
+      );
+
+      const paidMap = new Map(
+        paidTicketsData.map((p) => [p.sorteoId, p._count.id])
+      );
+
+      // Construir respuesta con cálculos
+      let accumulated = 0;
+      const data = sorteos.map((sorteo) => {
+        const financial = financialMap.get(sorteo.id) || {
+          totalSales: 0,
+          totalCommission: 0,
+          totalPrizes: 0,
+          ticketCount: 0,
+        };
+
+        // Calcular isReventado
+        const isReventado =
+          (sorteo.extraMultiplierId !== null &&
+            sorteo.extraMultiplierId !== undefined) ||
+          (sorteo.extraMultiplierX !== null &&
+            sorteo.extraMultiplierX !== undefined &&
+            sorteo.extraMultiplierX > 0);
+
+        // Calcular subtotal
+        const subtotal =
+          financial.totalSales -
+          financial.totalCommission -
+          financial.totalPrizes;
+
+        // Calcular accumulated (desde el más reciente)
+        accumulated = accumulated + subtotal;
+
+        const winningCount = winningMap.get(sorteo.id) || 0;
+        const paidCount = paidMap.get(sorteo.id) || 0;
+        const unpaidCount = winningCount - paidCount;
+
+        return {
+          sorteoId: sorteo.id,
+          sorteoName: sorteo.name,
+          scheduledAt: formatIsoLocal(sorteo.scheduledAt),
+          date: formatDateOnly(sorteo.scheduledAt),
+          time: formatTime12h(sorteo.scheduledAt),
+          loteriaId: sorteo.loteriaId,
+          loteriaName: sorteo.loteria?.name || "Desconocida",
+          winningNumber: sorteo.winningNumber,
+          isReventado,
+          totalSales: financial.totalSales,
+          totalCommission: financial.totalCommission,
+          totalPrizes: financial.totalPrizes,
+          ticketCount: financial.ticketCount,
+          subtotal,
+          accumulated,
+          winningTicketsCount: winningCount,
+          paidTicketsCount: paidCount,
+          unpaidTicketsCount: unpaidCount,
+        };
+      });
+
+      // Calcular totales agregados
+      const totals = {
+        totalSales: data.reduce((sum, s) => sum + s.totalSales, 0),
+        totalCommission: data.reduce((sum, s) => sum + s.totalCommission, 0),
+        totalPrizes: data.reduce((sum, s) => sum + s.totalPrizes, 0),
+        totalSubtotal: data.reduce((sum, s) => sum + s.subtotal, 0),
+        totalTickets: data.reduce((sum, s) => sum + s.ticketCount, 0),
+      };
+
+      return {
+        data,
+        meta: {
+          totals,
+          dateFilter: params.date || "today",
+          ...(params.fromDate ? { fromDate: params.fromDate } : {}),
+          ...(params.toDate ? { toDate: params.toDate } : {}),
+          totalSorteos: sorteos.length,
+        },
+      };
+    } catch (err: any) {
+      logger.error({
+        layer: "service",
+        action: "SORTEO_EVALUATED_SUMMARY_FAIL",
+        payload: { message: err.message, params },
+      });
+      throw err;
+    }
   },
 };
 

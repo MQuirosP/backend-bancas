@@ -137,4 +137,32 @@ export const SorteoController = {
     res.json({ success: true, data: s });
   },
 
+  async evaluatedSummary(req: AuthenticatedRequest, res: Response) {
+    const { date, fromDate, toDate, scope, loteriaId } = req.query as any;
+    
+    // Validar scope (solo 'mine' permitido)
+    if (scope && scope !== 'mine') {
+      return res.status(400).json({
+        success: false,
+        error: "scope debe ser 'mine'",
+      });
+    }
+
+    // Obtener vendedorId del usuario autenticado
+    const vendedorId = req.user!.id;
+
+    const result = await SorteoService.evaluatedSummary(
+      {
+        date,
+        fromDate,
+        toDate,
+        scope: scope || 'mine',
+        loteriaId,
+      },
+      vendedorId
+    );
+
+    res.json({ success: true, ...result });
+  },
+
 };
