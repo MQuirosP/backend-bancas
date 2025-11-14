@@ -631,8 +631,10 @@ export const SorteoService = {
       );
 
       // Construir respuesta con cálculos
+      // IMPORTANTE: El acumulado se calcula del más reciente hacia el más antiguo
+      // Los sorteos ya están ordenados por scheduledAt DESC (más reciente primero)
       let accumulated = 0;
-      const data = sorteos.map((sorteo) => {
+      const data = sorteos.map((sorteo, index) => {
         const financial = financialMap.get(sorteo.id) || {
           totalSales: 0,
           totalCommission: 0,
@@ -654,8 +656,15 @@ export const SorteoService = {
           financial.totalCommission -
           financial.totalPrizes;
 
-        // Calcular accumulated (desde el más reciente)
-        accumulated = accumulated + subtotal;
+        // Calcular accumulated: suma desde el más reciente (índice 0) hacia el más antiguo
+        // accumulated[n] = subtotal[n] + accumulated[n-1], donde accumulated[0] = subtotal[0]
+        if (index === 0) {
+          // Primer sorteo (más reciente): accumulated = subtotal
+          accumulated = subtotal;
+        } else {
+          // Sorteos subsiguientes: accumulated = subtotal + accumulated anterior
+          accumulated = accumulated + subtotal;
+        }
 
         const winningCount = winningMap.get(sorteo.id) || 0;
         const paidCount = paidMap.get(sorteo.id) || 0;
