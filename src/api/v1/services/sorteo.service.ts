@@ -545,7 +545,8 @@ export const SorteoService = {
         },
       };
 
-      // Obtener sorteos evaluados ordenados por scheduledAt DESC
+      // Obtener sorteos evaluados ordenados por scheduledAt ASC (más antiguo primero)
+      // para calcular el acumulado correctamente del más antiguo hacia el más reciente
       const sorteos = await prisma.sorteo.findMany({
         where: sorteoWhere,
         include: {
@@ -557,7 +558,7 @@ export const SorteoService = {
           },
         },
         orderBy: {
-          scheduledAt: "desc",
+          scheduledAt: "asc", // ASC para calcular acumulado del más antiguo al más reciente
         },
       });
 
@@ -631,10 +632,10 @@ export const SorteoService = {
       );
 
       // Construir respuesta con cálculos
-      // IMPORTANTE: El acumulado se calcula del más reciente hacia el más antiguo
-      // Los sorteos ya están ordenados por scheduledAt DESC (más reciente primero)
+      // IMPORTANTE: El acumulado se calcula del más antiguo hacia el más reciente
+      // Los sorteos están ordenados por scheduledAt ASC (más antiguo primero) para el cálculo
       let accumulated = 0;
-      const data = sorteos.map((sorteo, index) => {
+      const dataWithAccumulated = sorteos.map((sorteo) => {
         const financial = financialMap.get(sorteo.id) || {
           totalSales: 0,
           totalCommission: 0,
@@ -656,15 +657,10 @@ export const SorteoService = {
           financial.totalCommission -
           financial.totalPrizes;
 
-        // Calcular accumulated: suma desde el más reciente (índice 0) hacia el más antiguo
+        // Calcular accumulated: suma desde el más antiguo hacia el más reciente
         // accumulated[n] = subtotal[n] + accumulated[n-1], donde accumulated[0] = subtotal[0]
-        if (index === 0) {
-          // Primer sorteo (más reciente): accumulated = subtotal
-          accumulated = subtotal;
-        } else {
-          // Sorteos subsiguientes: accumulated = subtotal + accumulated anterior
-          accumulated = accumulated + subtotal;
-        }
+        // Esto representa el saldo acumulado desde el inicio hasta ese sorteo
+        accumulated = accumulated + subtotal;
 
         const winningCount = winningMap.get(sorteo.id) || 0;
         const paidCount = paidMap.get(sorteo.id) || 0;
@@ -673,7 +669,7 @@ export const SorteoService = {
         return {
           sorteoId: sorteo.id,
           sorteoName: sorteo.name,
-          scheduledAt: formatIsoLocal(sorteo.scheduledAt),
+          scheduledAt: sorteo.scheduledAt, // Guardar Date para ordenar después
           date: formatDateOnly(sorteo.scheduledAt),
           time: formatTime12h(sorteo.scheduledAt),
           loteriaId: sorteo.loteriaId,
@@ -691,6 +687,15 @@ export const SorteoService = {
           unpaidTicketsCount: unpaidCount,
         };
       });
+
+      // Ordenar por scheduledAt DESC (más reciente primero) para la respuesta
+      // pero manteniendo el acumulado ya calculado correctamente
+      const data = dataWithAccumulated
+        .sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime())
+        .map((item) => ({
+          ...item,
+          scheduledAt: formatIsoLocal(item.scheduledAt), // Formatear después de ordenar
+        }));
 
       // Calcular totales agregados
       const totals = {
