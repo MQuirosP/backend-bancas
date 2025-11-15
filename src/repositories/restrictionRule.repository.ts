@@ -1,10 +1,15 @@
 // src/repositories/restrictionRule.repository.ts
 import prisma from "../core/prismaClient";
+import { getCRLocalComponents } from "../utils/businessDate";
+import { SalesService } from "../api/v1/services/sales.service";
 
 export type EffectiveRestriction = {
   source: "USER" | "VENTANA" | "BANCA" | null;
   maxAmount: number | null;
   maxTotal: number | null;
+  baseAmount?: number | null;
+  salesPercentage?: number | null;
+  appliesToVendedor?: boolean | null;
 };
 
 export type CutoffSource = "USER" | "VENTANA" | "BANCA" | "DEFAULT";
@@ -26,6 +31,8 @@ type ListParams = {
   hasCutoff?: boolean | string;
   /** si 'true' lista solo reglas de montos */
   hasAmount?: boolean | string;
+  /** si 'true' lista solo reglas automáticas por fecha */
+  hasAutoDate?: boolean | string;
   loteriaId?: string;
   multiplierId?: string;
 };
@@ -40,8 +47,29 @@ const includeLabels = {
 
 export const RestrictionRuleRepository = {
   async create(data: any) {
+    // Filtrar solo los campos válidos del schema de Prisma
+    const validData: any = {
+      bancaId: data.bancaId ?? null,
+      ventanaId: data.ventanaId ?? null,
+      userId: data.userId ?? null,
+      number: data.number ?? null,
+      maxAmount: data.maxAmount ?? null,
+      maxTotal: data.maxTotal ?? null,
+      baseAmount: data.baseAmount ?? null,
+      salesPercentage: data.salesPercentage ?? null,
+      appliesToVendedor: data.appliesToVendedor ?? false,
+      appliesToDate: data.appliesToDate ?? null,
+      appliesToHour: data.appliesToHour ?? null,
+      isActive: data.isActive ?? true,
+      isAutoDate: data.isAutoDate ?? false,
+      salesCutoffMinutes: data.salesCutoffMinutes ?? null,
+      message: data.message ?? null,
+      loteriaId: data.loteriaId ?? null,
+      multiplierId: data.multiplierId ?? null,
+    };
+    
     return prisma.restrictionRule.create({
-      data,
+      data: validData,
       include: includeLabels,
     });
   },
@@ -87,11 +115,12 @@ export const RestrictionRuleRepository = {
       ventanaId,
       userId,
       number,
-      isActive = true, // por defecto solo activas
+      isActive, // Zod ya parsea esto a boolean, pero puede venir como string desde query params
       page = 1,
       pageSize = 20,
       hasCutoff,
       hasAmount,
+      hasAutoDate,
       loteriaId,
       multiplierId,
     } = params;
@@ -101,52 +130,61 @@ export const RestrictionRuleRepository = {
     const skip = (_page - 1) * _pageSize;
     const take = _pageSize;
 
-    // ✅ parseo correcto de boolean desde string
-    const _isActive =
-      typeof isActive === "string"
-        ? isActive.toLowerCase() === "true"
-        : Boolean(isActive);
-
-    const _hasCutoff =
-      typeof hasCutoff === "string"
-        ? hasCutoff.toLowerCase() === "true"
-        : Boolean(hasCutoff);
-
-    const _hasAmount =
-      typeof hasAmount === "string"
-        ? hasAmount.toLowerCase() === "true"
-        : Boolean(hasAmount);
+    // ✅ Zod ya parsea correctamente los booleanos con enum + transform
+    // Si no viene isActive, usar true por defecto (solo activas)
+    const _isActive = isActive !== undefined ? isActive : true;
+    
+    // Los otros filtros de tipo son opcionales y Zod los parsea correctamente
+    const _hasCutoff = hasCutoff === true;
+    const _hasAmount = hasAmount === true;
+    const _hasAutoDate = hasAutoDate !== undefined ? hasAutoDate : undefined;
 
     const where: any = {};
-    // por default aplicamos isActive (true), pero si lo envían como string/boolean, respetamos:
-    if (_isActive !== undefined) where.isActive = _isActive;
+    // Aplicar filtro isActive siempre (por defecto true si no se especifica)
+    where.isActive = _isActive;
     if (bancaId) where.bancaId = bancaId;
     if (ventanaId) where.ventanaId = ventanaId;
     if (userId) where.userId = userId;
     if (number) where.number = number;
-    if (loteriaId) where.loteriaId = loteriaId;
-    if (multiplierId) where.multiplierId = multiplierId;
+    
+    // Determinar si hay algún filtro de tipo especificado
+    const hasAnyTypeFilter = _hasCutoff || _hasAmount || _hasAutoDate !== undefined || loteriaId || multiplierId;
+    
+    // Solo aplicar filtros de tipo si se especifican explícitamente
+    if (hasAnyTypeFilter) {
+      // Filtro para restricciones automáticas por fecha
+      if (_hasAutoDate !== undefined) {
+        where.isAutoDate = _hasAutoDate;
+      }
 
-    if (_hasCutoff && _hasAmount) {
-      // ambas clases de reglas
-      where.OR = [
-        { AND: [{ salesCutoffMinutes: { not: null } }, { number: null }] },
-        { OR: [{ maxAmount: { not: null } }, { maxTotal: { not: null } }] },
-      ];
-    } else if (_hasCutoff) {
-      // solo cutoff: sin number
-      where.AND = [
-        ...(where.AND ?? []),
-        { salesCutoffMinutes: { not: null } },
-        { number: null },
-      ];
-    } else if (_hasAmount) {
-      // solo montos
-      where.OR = [
-        ...(where.OR ?? []),
-        { maxAmount: { not: null } },
-        { maxTotal: { not: null } },
-      ];
+      // Filtros de lotería/multiplicador
+      if (loteriaId) where.loteriaId = loteriaId;
+      if (multiplierId) where.multiplierId = multiplierId;
+
+      if (_hasCutoff && _hasAmount) {
+        // ambas clases de reglas
+        where.OR = [
+          { AND: [{ salesCutoffMinutes: { not: null } }, { number: null }] },
+          { OR: [{ maxAmount: { not: null } }, { maxTotal: { not: null } }] },
+        ];
+      } else if (_hasCutoff) {
+        // solo cutoff: sin number
+        where.AND = [
+          ...(where.AND ?? []),
+          { salesCutoffMinutes: { not: null } },
+          { number: null },
+        ];
+      } else if (_hasAmount) {
+        // solo montos (incluye automáticas con maxAmount/maxTotal)
+        where.OR = [
+          ...(where.OR ?? []),
+          { maxAmount: { not: null } },
+          { maxTotal: { not: null } },
+        ];
+      }
+    } else {
+      // Si NO hay filtros de tipo, no aplicar ningún filtro de tipo (retornar TODAS las restricciones)
+      // Esto incluye automáticas, de montos, de cutoff, y de lotería/multiplicador
     }
 
     const [data, total] = await prisma.$transaction([
@@ -174,6 +212,7 @@ export const RestrictionRuleRepository = {
   /**
    * Límites de montos efectivos (USER > VENTANA > BANCA), con soporte de number y ventana temporal.
    * Solo considera reglas activas.
+   * Ahora incluye soporte para isAutoDate y límites dinámicos (baseAmount + salesPercentage).
    */
   async getEffectiveLimits(params: {
     bancaId: string;
@@ -183,10 +222,18 @@ export const RestrictionRuleRepository = {
     at?: Date;
   }): Promise<EffectiveRestriction> {
     const { bancaId, ventanaId, userId } = params;
-    const number = params.number?.trim() || null;
+    let number = params.number?.trim() || null;
     const at = params.at ?? new Date();
     const hour = at.getHours();
     const dateOnly = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+
+    // Si hay un número, también buscar restricciones automáticas por fecha
+    let autoDateNumber: string | null = null;
+    if (number) {
+      // Obtener día del mes actual en CR
+      const crComponents = getCRLocalComponents(at);
+      autoDateNumber = String(crComponents.day).padStart(2, "0");
+    }
 
     const whereTime = {
       AND: [
@@ -195,22 +242,54 @@ export const RestrictionRuleRepository = {
       ],
     };
 
-    // 🔎 reglas específicas (con number)
+    // Construir condiciones para buscar reglas específicas
+    // Incluye número directo Y restricciones automáticas por fecha
+    const numberConditions: any[] = [];
+    if (number) {
+      numberConditions.push({ number });
+    }
+    if (autoDateNumber) {
+      numberConditions.push({ 
+        isAutoDate: true, 
+        number: autoDateNumber 
+      });
+    }
+
+    const numberWhere = numberConditions.length > 0 
+      ? { OR: numberConditions }
+      : { number: null };
+
+    // 🔎 reglas específicas (con number o isAutoDate)
     const [userSpecific, ventanaSpecific, bancaSpecific] = await Promise.all([
       userId
         ? prisma.restrictionRule.findFirst({
-            where: { userId, number, isActive: true, ...whereTime },
+            where: { 
+              userId, 
+              isActive: true, 
+              ...whereTime,
+              ...(number ? numberWhere : { number: null }),
+            },
             orderBy: { updatedAt: "desc" },
           })
         : Promise.resolve(null),
       ventanaId
         ? prisma.restrictionRule.findFirst({
-            where: { ventanaId, number, isActive: true, ...whereTime },
+            where: { 
+              ventanaId, 
+              isActive: true, 
+              ...whereTime,
+              ...(number ? numberWhere : { number: null }),
+            },
             orderBy: { updatedAt: "desc" },
           })
         : Promise.resolve(null),
       prisma.restrictionRule.findFirst({
-        where: { bancaId, number, isActive: true, ...whereTime },
+        where: { 
+          bancaId, 
+          isActive: true, 
+          ...whereTime,
+          ...(number ? numberWhere : { number: null }),
+        },
         orderBy: { updatedAt: "desc" },
       }),
     ]);
@@ -243,6 +322,9 @@ export const RestrictionRuleRepository = {
             source: scope,
             maxAmount: r.maxAmount ?? null,
             maxTotal: r.maxTotal ?? null,
+            baseAmount: r.baseAmount ?? null,
+            salesPercentage: r.salesPercentage ?? null,
+            appliesToVendedor: r.appliesToVendedor ?? null,
           }
         : null;
 

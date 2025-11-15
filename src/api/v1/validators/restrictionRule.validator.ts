@@ -49,9 +49,13 @@ export const CreateRestrictionRuleSchema = z
 
     restrictionType: z.string().optional(),
 
+    isAutoDate: z.coerce.boolean().optional(), // Si true, number se actualiza automáticamente al día del mes
     number: NUMBER_VALIDATOR.optional(),
     maxAmount: z.coerce.number().positive().optional(),
     maxTotal: z.coerce.number().positive().optional(),
+    baseAmount: z.coerce.number().nonnegative().optional(), // Monto base (>= 0)
+    salesPercentage: z.coerce.number().min(0).max(100).optional(), // Porcentaje 0-100
+    appliesToVendedor: z.coerce.boolean().optional(), // Si aplica por vendedor
     salesCutoffMinutes: z.coerce.number().int().min(0).max(30).optional(),
 
     appliesToDate: z.coerce.date().optional(),
@@ -113,6 +117,66 @@ export const CreateRestrictionRuleSchema = z
         message: "Las reglas de lotería/multiplicador no aceptan el campo number.",
       });
     }
+    if (data.isAutoDate) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["isAutoDate"],
+        message: "Las reglas de lotería/multiplicador no pueden usar isAutoDate.",
+      });
+    }
+  }
+
+  // Validación: isAutoDate solo puede usarse con restricciones de montos (amount)
+  if (data.isAutoDate && !amount) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["isAutoDate"],
+      message: "isAutoDate solo puede usarse con restricciones de montos (maxAmount o maxTotal).",
+    });
+  }
+
+  // Validación: si isAutoDate es true, number debe ser null o no especificarse
+  if (data.isAutoDate && data.number != null) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["number"],
+      message: "Si isAutoDate es true, number debe omitirse (se actualiza automáticamente al día del mes).",
+    });
+  }
+
+  // Validaciones para porcentaje de ventas
+  const hasPercentageFields = data.baseAmount != null || data.salesPercentage != null;
+  
+  if (hasPercentageFields && !amount) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["baseAmount"],
+      message: "baseAmount y salesPercentage solo pueden usarse con restricciones de montos (maxAmount o maxTotal).",
+    });
+  }
+
+  if (data.salesPercentage != null && (data.salesPercentage < 0 || data.salesPercentage > 100)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["salesPercentage"],
+      message: "salesPercentage debe estar entre 0 y 100.",
+    });
+  }
+
+  if (data.baseAmount != null && data.baseAmount < 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["baseAmount"],
+      message: "baseAmount debe ser mayor o igual a 0.",
+    });
+  }
+
+  if (data.appliesToVendedor && data.salesPercentage == null) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["appliesToVendedor"],
+      message: "appliesToVendedor solo tiene sentido cuando salesPercentage está presente.",
+    });
   }
 });
 
@@ -126,9 +190,14 @@ export const UpdateRestrictionRuleSchema = z.object({
 
   restrictionType: z.string().optional(),
 
+  isActive: z.coerce.boolean().optional(), // Estado activo/inactivo
+  isAutoDate: z.coerce.boolean().optional(), // Si true, number se actualiza automáticamente al día del mes
   number: NUMBER_00_99.optional(), // Solo string en PATCH, no array
   maxAmount: z.coerce.number().positive().optional(),
   maxTotal: z.coerce.number().positive().optional(),
+  baseAmount: z.coerce.number().nonnegative().optional(), // Monto base (>= 0)
+  salesPercentage: z.coerce.number().min(0).max(100).optional(), // Porcentaje 0-100
+  appliesToVendedor: z.coerce.boolean().optional(), // Si aplica por vendedor
   salesCutoffMinutes: z.coerce.number().int().min(0).max(30).optional(),
 
   appliesToDate: z.coerce.date().optional(),
@@ -171,18 +240,67 @@ export const UpdateRestrictionRuleSchema = z.object({
       message: "Debe indicar loteriaId y multiplierId cuando actualiza una restricción de lotería/multiplicador.",
     });
   }
+  if (lotteryMult && data.isAutoDate) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["isAutoDate"],
+      message: "Las reglas de lotería/multiplicador no pueden usar isAutoDate.",
+    });
+  }
+
+  // Validación: isAutoDate solo puede usarse con restricciones de montos (amount)
+  if (data.isAutoDate && !amount && !cutoff) {
+    // Permitir si es una actualización parcial y no se está cambiando el tipo
+    // Esta validación es más permisiva en UPDATE
+  }
+
+  // Validación: si isAutoDate es true, number debe ser null o no especificarse
+  if (data.isAutoDate && data.number != null) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["number"],
+      message: "Si isAutoDate es true, number debe omitirse (se actualiza automáticamente al día del mes).",
+    });
+  }
+
+  // Validaciones para porcentaje de ventas en UPDATE
+  if (data.salesPercentage != null && (data.salesPercentage < 0 || data.salesPercentage > 100)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["salesPercentage"],
+      message: "salesPercentage debe estar entre 0 y 100.",
+    });
+  }
+
+  if (data.baseAmount != null && data.baseAmount < 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["baseAmount"],
+      message: "baseAmount debe ser mayor o igual a 0.",
+    });
+  }
+
+  if (data.appliesToVendedor && data.salesPercentage == null) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["appliesToVendedor"],
+      message: "appliesToVendedor solo tiene sentido cuando salesPercentage está presente.",
+    });
+  }
 });
 
-// LIST (query)  ✅ acepta hasAmount / hasCutoff y usa isActive
+// LIST (query)  ✅ acepta hasAmount / hasCutoff / hasAutoDate y usa isActive
 export const ListRestrictionRuleQuerySchema = z.object({
   bancaId: z.uuid().optional(),
   ventanaId: z.uuid().optional(),
   userId: z.uuid().optional(),
   number: z.string().trim().min(1).optional(),
 
-  isActive: z.coerce.boolean().optional(),     // ← reemplaza isDeleted
-  hasCutoff: z.coerce.boolean().optional(),    // ← NUEVO
-  hasAmount: z.coerce.boolean().optional(),    // ← NUEVO
+  // Parseo explícito de booleanos desde string (evita problemas con z.coerce.boolean)
+  isActive: z.enum(["true", "false"]).transform(v => v === "true").optional(),
+  hasCutoff: z.enum(["true", "false"]).transform(v => v === "true").optional(),
+  hasAmount: z.enum(["true", "false"]).transform(v => v === "true").optional(),
+  hasAutoDate: z.enum(["true", "false"]).transform(v => v === "true").optional(),
 
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
