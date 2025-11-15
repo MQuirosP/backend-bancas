@@ -5,6 +5,7 @@ import { AppError } from "../core/errors";
 import { withTransactionRetry } from "../core/withTransactionRetry";
 import { resolveCommission } from "../services/commission.resolver";
 import { getBusinessDateCRInfo, getCRDayRangeUTC } from "../utils/businessDate";
+import { CommissionContext, preCalculateCommissions } from "../utils/commissionPrecalc";
 
 type CreateTicketInput = {
   loteriaId: string;
@@ -1003,6 +1004,710 @@ export const TicketRepository = {
         ventanaId,
         vendedorId: userId,
         jugadas,
+      },
+    });
+
+    delete (ticket as any).__commissionsDetails;
+    delete (ticket as any).__jugadasCount;
+    delete (ticket as any).__businessDateInfo;
+
+    return { ticket, warnings };
+  },
+
+  /**
+   * Método optimizado de creación de tickets
+   * - Pre-calcula comisiones fuera de la transacción (usando contexto cacheado)
+   * - Usa batch creation para jugadas
+   * - Timeout dinámico según número de jugadas
+   */
+  async createOptimized(
+    data: Omit<CreateTicketInput, 'totalAmount'>,
+    userId: string,
+    options?: {
+      actorRole?: Role;
+      commissionContext?: CommissionContext;
+      scheduledAt?: Date | null;
+    }
+  ) {
+    const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
+    const actorRole = options?.actorRole ?? Role.VENDEDOR;
+    const commissionContext = options?.commissionContext;
+    const scheduledAt = options?.scheduledAt;
+
+    // Calcular timeout dinámico basado en número de jugadas
+    const baseTimeout = 10_000; // 10s base
+    const perJugadaTimeout = 200; // 200ms por jugada
+    const maxTimeout = 60_000; // Máximo 60s
+    const dynamicTimeout = Math.min(
+      baseTimeout + (jugadas.length * perJugadaTimeout),
+      maxTimeout
+    );
+
+    logger.info({
+      layer: 'repository',
+      action: 'TICKET_CREATE_OPTIMIZED_START',
+      payload: {
+        jugadasCount: jugadas.length,
+        dynamicTimeout,
+        hasCommissionContext: !!commissionContext,
+      },
+    });
+
+    // Pre-chequeo de TicketCounter (igual que método original)
+    let hasTicketCounter = false;
+    try {
+      const existsRows = await prisma.$queryRaw<{ present: boolean }[]>(
+        Prisma.sql`
+          SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema()
+              AND lower(table_name) = 'ticketcounter'
+          ) AS present;
+        `
+      );
+      hasTicketCounter = Boolean(existsRows?.[0]?.present);
+    } catch (e) {
+      hasTicketCounter = false;
+    }
+
+    const { ticket, warnings } = await withTransactionRetry(
+      async (tx) => {
+        const warnings: TicketWarning[] = [];
+        const warningRuleIds = new Set<string>();
+
+        // 1) Generación de businessDate CR
+        const nowUtc = new Date();
+        const cutoffHour = (process.env.BUSINESS_CUTOFF_HOUR_CR || '00:00').trim();
+
+        // 2) Validación de FKs + reglas de la lotería
+        const [loteria, sorteo, ventana, user] = await Promise.all([
+          tx.loteria.findUnique({
+            where: { id: loteriaId },
+            select: { id: true, name: true, isActive: true, rulesJson: true },
+          }),
+          tx.sorteo.findUnique({
+            where: { id: sorteoId },
+            select: { id: true, status: true, loteriaId: true, scheduledAt: true },
+          }),
+          tx.ventana.findUnique({
+            where: { id: ventanaId },
+            select: {
+              id: true,
+              bancaId: true,
+              commissionPolicyJson: true,
+              banca: {
+                select: {
+                  commissionPolicyJson: true,
+                },
+              },
+            },
+          }),
+          tx.user.findUnique({
+            where: { id: userId },
+            select: { id: true, commissionPolicyJson: true },
+          }),
+        ]);
+
+        if (!user) throw new AppError("Seller (vendedor) not found", 404, "FK_VIOLATION");
+        if (!loteria || loteria.isActive === false) throw new AppError("Lotería not found", 404, "FK_VIOLATION");
+        if (!sorteo) throw new AppError("Sorteo not found", 404, "FK_VIOLATION");
+        if (!ventana) throw new AppError("Ventana not found", 404, "FK_VIOLATION");
+
+        if (sorteo.loteriaId !== loteriaId) {
+          throw new AppError("El sorteo no pertenece a la lotería indicada", 400, "SORTEO_LOTERIA_MISMATCH");
+        }
+
+        const loteriaName = loteria.name ?? null;
+
+        // 3) Determinar businessDate CR
+        const bd = getBusinessDateCRInfo({
+          scheduledAt: scheduledAt ?? sorteo.scheduledAt,
+          nowUtc,
+          cutoffHour,
+        });
+
+        // 4) Generar número de ticket (igual que método original)
+        let nextNumber: string = '';
+        let seqForLog: number | null = null;
+        let useLegacyFallback = false;
+
+        if (hasTicketCounter) {
+          try {
+            const seqRows = await tx.$queryRaw<{ last: number }[]>(
+              Prisma.sql`
+                INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
+                VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
+                ON CONFLICT ("businessDate", "ventanaId")
+                DO UPDATE SET "last" = "TicketCounter"."last" + 1
+                RETURNING "last";
+              `
+            );
+            const seq = (seqRows?.[0]?.last ?? 1) as number;
+            seqForLog = seq;
+            const seqPadded = String(seq).padStart(5, '0');
+            const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
+
+            const existing = await tx.ticket.findUnique({
+              where: { ticketNumber: candidateNumber },
+              select: { id: true },
+            });
+
+            if (existing) {
+              useLegacyFallback = true;
+            } else {
+              nextNumber = candidateNumber;
+            }
+          } catch (error: any) {
+            useLegacyFallback = true;
+          }
+        } else {
+          useLegacyFallback = true;
+        }
+
+        if (useLegacyFallback) {
+          const [seqRow] = await tx.$queryRawUnsafe<{ next_number: string }[]>(
+            `SELECT generate_ticket_number() AS next_number`
+          );
+          if (!seqRow?.next_number) {
+            throw new AppError('Failed to generate ticket number (fallback)', 500, 'SEQ_ERROR');
+          }
+          const raw = String(seqRow.next_number);
+          const firstDash = raw.indexOf('-');
+          if (firstDash > 0) {
+            const suffix = raw.substring(firstDash + 1);
+            nextNumber = `T${bd.prefixYYMMDD}-${suffix}`;
+          } else {
+            nextNumber = raw;
+          }
+        }
+
+        if (!nextNumber) {
+          throw new AppError('Failed to generate ticket number', 500, 'SEQ_ERROR');
+        }
+
+        // 5) Resolver multiplicador base
+        const bancaId = ventana.bancaId;
+        const { valueX: effectiveBaseX, source } = await resolveBaseMultiplierX(tx, {
+          bancaId,
+          loteriaId,
+          userId,
+          ventanaId,
+        });
+
+        // 6) Búsqueda de reglas de restricción (simplificada)
+        const now = new Date();
+        const candidateRules = await tx.restrictionRule.findMany({
+          where: {
+            isActive: true,
+            OR: [{ userId }, { ventanaId }, { bancaId }],
+          },
+          include: {
+            loteria: true,
+            multiplier: true,
+          },
+        });
+
+        const applicable: RestrictionRuleWithRelations[] = candidateRules
+          .filter((r) => {
+            if (r.appliesToDate && !isSameLocalDay(new Date(r.appliesToDate), now)) return false;
+            if (typeof r.appliesToHour === "number" && r.appliesToHour !== now.getHours()) return false;
+            return true;
+          })
+          .map((r) => {
+            let score = 0;
+            if (r.bancaId) score += 1;
+            if (r.ventanaId) score += 10;
+            if (r.userId) score += 100;
+            if (r.number) score += 1000;
+            return { r, score };
+          })
+          .sort((a, b) => b.score - a.score)
+          .map((x) => x.r);
+
+        const lotteryMultiplierRules = applicable.filter(
+          (rule) => rule.loteriaId && rule.multiplierId
+        );
+
+        // 7) Validaciones de rulesJson (simplificadas, ya validadas en service)
+        const RJ = (loteria.rulesJson ?? {}) as any;
+        const numberRange =
+          RJ.numberRange &&
+          typeof RJ.numberRange.min === "number" &&
+          typeof RJ.numberRange.max === "number"
+            ? { min: RJ.numberRange.min, max: RJ.numberRange.max }
+            : { min: 0, max: 99 };
+
+        const minBetAmount = typeof RJ.minBetAmount === "number" ? RJ.minBetAmount : undefined;
+        const maxBetAmount = typeof RJ.maxBetAmount === "number" ? RJ.maxBetAmount : undefined;
+        const maxNumbersPerTicket =
+          typeof RJ.maxNumbersPerTicket === "number" ? RJ.maxNumbersPerTicket : undefined;
+
+        // Validaciones rápidas (ya validadas en service, pero verificamos por seguridad)
+        for (const j of jugadas) {
+          const num = Number(j.number);
+          if (Number.isNaN(num) || num < numberRange.min || num > numberRange.max) {
+            throw new AppError(
+              `Número fuera de rango permitido (${numberRange.min}..${numberRange.max}): ${j.number}`,
+              400,
+              "NUMBER_OUT_OF_RANGE"
+            );
+          }
+          if (typeof minBetAmount === "number" && j.amount < minBetAmount) {
+            throw new AppError(`Monto mínimo por jugada: ${minBetAmount}`, 400, "BET_MIN_VIOLATION");
+          }
+          if (typeof maxBetAmount === "number" && j.amount > maxBetAmount) {
+            throw new AppError(`Monto máximo por jugada: ${maxBetAmount}`, 400, "BET_MAX_VIOLATION");
+          }
+        }
+
+        if (typeof maxNumbersPerTicket === "number") {
+          const uniqueNumeros = new Set(
+            jugadas.filter((j) => j.type === "NUMERO").map((j) => j.number)
+          );
+          if (uniqueNumeros.size > maxNumbersPerTicket) {
+            throw new AppError(
+              `Máximo de números por ticket: ${maxNumbersPerTicket}`,
+              400,
+              "MAX_NUMBERS_PER_TICKET"
+            );
+          }
+        }
+
+        // 8) Normalizar jugadas y obtener multiplicadores
+        const numeroMultiplierIds = Array.from(
+          new Set(
+            jugadas
+              .filter((j) => j.type === "NUMERO" && j.multiplierId)
+              .map((j) => j.multiplierId!)
+          )
+        );
+
+        const multiplierCache = new Map<
+          string,
+          {
+            id: string;
+            valueX: number;
+            isActive: boolean;
+            kind: "NUMERO" | "REVENTADO";
+            loteriaId: string;
+            name?: string | null;
+          }
+        >();
+
+        if (numeroMultiplierIds.length > 0) {
+          const multipliers = await tx.loteriaMultiplier.findMany({
+            where: { id: { in: numeroMultiplierIds } },
+            select: {
+              id: true,
+              name: true,
+              valueX: true,
+              isActive: true,
+              kind: true,
+              loteriaId: true,
+            },
+          });
+
+          for (const m of multipliers) {
+            multiplierCache.set(m.id, {
+              id: m.id,
+              name: m.name,
+              valueX: m.valueX,
+              isActive: m.isActive,
+              kind: m.kind as "NUMERO" | "REVENTADO",
+              loteriaId: m.loteriaId,
+            });
+          }
+        }
+
+        const preparedJugadas = jugadas.map((j) => {
+          if (j.type === "REVENTADO") {
+            return {
+              type: "REVENTADO" as const,
+              number: j.number,
+              reventadoNumber: j.reventadoNumber,
+              amount: j.amount,
+              finalMultiplierX: 0,
+              multiplierId: null,
+            };
+          }
+
+          // NUMERO
+          if (!j.multiplierId) {
+            throw new AppError("Debe seleccionar un multiplicador para jugadas tipo NUMERO", 400, "MISSING_MULTIPLIER_ID");
+          }
+
+          const multiplier = multiplierCache.get(j.multiplierId);
+          if (!multiplier) {
+            throw new AppError(`Multiplicador inválido para jugada NUMERO`, 400, "INVALID_MULTIPLIER");
+          }
+          if (multiplier.kind !== "NUMERO") {
+            throw new AppError(`Multiplicador incompatible con jugada NUMERO`, 400, "INVALID_MULTIPLIER_KIND");
+          }
+          if (multiplier.loteriaId !== loteriaId) {
+            throw new AppError(`Multiplicador no pertenece a la lotería`, 400, "INVALID_MULTIPLIER_LOTERIA");
+          }
+          if (!multiplier.isActive) {
+            throw new AppError(`Multiplicador inactivo`, 400, "INACTIVE_MULTIPLIER");
+          }
+
+          const multiplierX = multiplier.valueX;
+          if (typeof multiplierX !== "number" || multiplierX <= 0) {
+            throw new AppError(`Multiplicador con valor inválido`, 400, "INVALID_MULTIPLIER_VALUE");
+          }
+
+          const matchingRule = lotteryMultiplierRules.find(
+            (rule) => rule.loteriaId === loteriaId && rule.multiplierId === j.multiplierId
+          );
+
+          if (matchingRule) {
+            const ruleScope: "USER" | "VENTANA" | "BANCA" = matchingRule.userId
+              ? "USER"
+              : matchingRule.ventanaId
+              ? "VENTANA"
+              : "BANCA";
+
+            const loteriaNameForWarning = matchingRule.loteria?.name ?? loteriaName;
+            const multiplierNameForWarning = multiplier.name ?? matchingRule.multiplier?.name ?? null;
+            const defaultMessage = multiplier.name
+              ? `El multiplicador '${multiplier.name}' está restringido para esta lotería.`
+              : "El multiplicador seleccionado está restringido para esta lotería.";
+            const message = (matchingRule.message && matchingRule.message.trim()) || defaultMessage;
+
+            if (actorRole === Role.ADMIN) {
+              if (!warningRuleIds.has(matchingRule.id)) {
+                warnings.push({
+                  code: "LOTTERY_MULTIPLIER_RESTRICTED",
+                  restrictedButAllowed: true,
+                  ruleId: matchingRule.id,
+                  scope: ruleScope,
+                  loteriaId,
+                  loteriaName: loteriaNameForWarning,
+                  multiplierId: j.multiplierId,
+                  multiplierName: multiplierNameForWarning,
+                  message,
+                });
+                warningRuleIds.add(matchingRule.id);
+              }
+            } else {
+              throw new AppError(message, 400, {
+                code: "LOTTERY_MULTIPLIER_RESTRICTED",
+                ruleId: matchingRule.id,
+                scope: ruleScope,
+                loteriaId,
+                loteriaName: loteriaNameForWarning,
+                multiplierId: j.multiplierId,
+                multiplierName: multiplierNameForWarning,
+              });
+            }
+          }
+
+          return {
+            type: "NUMERO" as const,
+            number: j.number,
+            reventadoNumber: null,
+            amount: j.amount,
+            finalMultiplierX: multiplierX,
+            multiplierId: j.multiplierId,
+          };
+        });
+
+        const totalAmountTx = preparedJugadas.reduce((acc, j) => acc + j.amount, 0);
+
+        // 9) Validar límite diario
+        const globalLimitRule = applicable.find(
+          (rule) => !rule.number && typeof rule.maxTotal === "number" && rule.maxTotal !== null
+        );
+
+        const ruleDailyLimit =
+          globalLimitRule && typeof globalLimitRule.maxTotal === "number"
+            ? Number(globalLimitRule.maxTotal)
+            : null;
+
+        const envDailyLimitRaw = Number(process.env.SALES_DAILY_MAX ?? 0);
+        const envDailyLimit =
+          Number.isFinite(envDailyLimitRaw) && envDailyLimitRaw > 0 ? envDailyLimitRaw : null;
+
+        let effectiveDailyLimit: number | null = null;
+        if (ruleDailyLimit != null && ruleDailyLimit > 0) {
+          effectiveDailyLimit = envDailyLimit != null ? Math.min(ruleDailyLimit, envDailyLimit) : ruleDailyLimit;
+        } else if (envDailyLimit != null) {
+          effectiveDailyLimit = envDailyLimit;
+        }
+
+        if (effectiveDailyLimit != null) {
+          const crRange = getCRDayRangeUTC(now);
+          const { _sum } = await tx.ticket.aggregate({
+            _sum: { totalAmount: true },
+            where: {
+              vendedorId: userId,
+              createdAt: { gte: crRange.fromAt, lt: crRange.toAtExclusive },
+            },
+          });
+          const dailyTotal = _sum.totalAmount ?? 0;
+          if (dailyTotal + totalAmountTx > effectiveDailyLimit) {
+            throw new AppError("Límite diario de ventas excedido", 400, {
+              code: "LIMIT_VIOLATION",
+              limiteAplicado: effectiveDailyLimit,
+              totalAcumulado: dailyTotal,
+              montoTicket: totalAmountTx,
+            });
+          }
+        }
+
+        // 10) Aplicar primera regla aplicable
+        if (applicable.length > 0) {
+          const rule = applicable[0];
+          if (rule.number) {
+            const sumForNumber = preparedJugadas
+              .filter((j) => j.number === rule.number)
+              .reduce((acc, j) => acc + j.amount, 0);
+
+            if (rule.maxAmount && sumForNumber > rule.maxAmount) {
+              throw new AppError(`Number ${rule.number} exceeded maxAmount (${rule.maxAmount})`, 400);
+            }
+            if (rule.maxTotal && totalAmountTx > rule.maxTotal) {
+              throw new AppError(`Ticket total exceeded maxTotal (${rule.maxTotal})`, 400);
+            }
+          } else {
+            if (rule.maxAmount) {
+              const maxBet = Math.max(...preparedJugadas.map((j) => j.amount));
+              if (maxBet > rule.maxAmount) {
+                throw new AppError(`Bet amount exceeded maxAmount (${rule.maxAmount})`, 400);
+              }
+            }
+            if (rule.maxTotal && totalAmountTx > rule.maxTotal) {
+              throw new AppError(`Ticket total exceeded maxTotal (${rule.maxTotal})`, 400);
+            }
+          }
+        }
+
+        // 11) 🚀 OPTIMIZACIÓN: Calcular comisiones usando contexto cacheado
+        const commissionsDetails: any[] = [];
+        let jugadasWithCommissions: Array<{
+          type: "NUMERO" | "REVENTADO";
+          number: string;
+          reventadoNumber: string | null;
+          amount: number;
+          finalMultiplierX: number;
+          commissionPercent: number;
+          commissionAmount: number;
+          commissionOrigin: "USER" | "VENTANA" | "BANCA" | null;
+          commissionRuleId: string | null;
+          multiplierId: string | null;
+        }>;
+
+        if (commissionContext) {
+          // Usar pre-cálculo optimizado
+          const preCalculated = preCalculateCommissions(preparedJugadas, loteriaId, commissionContext);
+          
+          // Crear mapa de número -> multiplierId para NUMERO jugadas
+          const numeroMultiplierMap = new Map<string, string | null>();
+          for (const pj of preparedJugadas) {
+            if (pj.type === "NUMERO") {
+              numeroMultiplierMap.set(pj.number, pj.multiplierId);
+            }
+          }
+          
+          jugadasWithCommissions = preCalculated.map((j) => ({
+            ...j,
+            reventadoNumber: j.type === "REVENTADO" ? j.number : null,
+            multiplierId: j.type === "NUMERO" ? (numeroMultiplierMap.get(j.number) ?? null) : null,
+          }));
+
+          // Preparar detalles para ActivityLog
+          for (const j of preCalculated) {
+            commissionsDetails.push({
+              origin: j.commissionOrigin,
+              ruleId: j.commissionRuleId ?? null,
+              percent: j.commissionPercent,
+              amount: j.commissionAmount,
+              loteriaId,
+              betType: j.type,
+              multiplierX: j.finalMultiplierX,
+              jugadaAmount: j.amount,
+            });
+          }
+        } else {
+          // Fallback al método original (sin optimización)
+          const userPolicy = user?.commissionPolicyJson ?? null;
+          const ventanaPolicy = ventana?.commissionPolicyJson ?? null;
+          const bancaPolicy = ventana?.banca?.commissionPolicyJson ?? null;
+
+          jugadasWithCommissions = preparedJugadas.map((j) => {
+            const res = resolveCommission(
+              {
+                loteriaId,
+                betType: j.type,
+                finalMultiplierX: j.finalMultiplierX,
+                amount: j.amount,
+              },
+              userPolicy,
+              ventanaPolicy,
+              bancaPolicy
+            );
+
+            commissionsDetails.push({
+              origin: res.commissionOrigin,
+              ruleId: res.commissionRuleId ?? null,
+              percent: res.commissionPercent,
+              amount: res.commissionAmount,
+              loteriaId,
+              betType: j.type,
+              multiplierX: j.finalMultiplierX,
+              jugadaAmount: j.amount,
+            });
+
+            return {
+              type: j.type,
+              number: j.number,
+              reventadoNumber: j.reventadoNumber ?? null,
+              amount: j.amount,
+              finalMultiplierX: j.finalMultiplierX,
+              commissionPercent: res.commissionPercent,
+              commissionAmount: res.commissionAmount,
+              commissionOrigin: res.commissionOrigin,
+              commissionRuleId: res.commissionRuleId ?? null,
+              multiplierId: j.multiplierId ?? null,
+            };
+          });
+        }
+
+        const totalCommission = jugadasWithCommissions.reduce(
+          (sum, j) => sum + (j.commissionAmount || 0),
+          0
+        );
+
+        const normalizedClienteNombre = (clienteNombre?.trim() || "CLIENTE CONTADO");
+
+        // 12) Crear ticket primero
+        const createdTicket = await tx.ticket.create({
+          data: {
+            ticketNumber: nextNumber,
+            loteriaId,
+            sorteoId,
+            ventanaId,
+            vendedorId: userId,
+            totalAmount: totalAmountTx,
+            totalCommission,
+            status: TicketStatus.ACTIVE,
+            isActive: true,
+            clienteNombre: normalizedClienteNombre,
+          },
+        });
+
+        // 13) 🚀 OPTIMIZACIÓN: Crear jugadas en batches
+        const BATCH_SIZE = 20;
+        for (let i = 0; i < jugadasWithCommissions.length; i += BATCH_SIZE) {
+          const batch = jugadasWithCommissions.slice(i, i + BATCH_SIZE);
+          await tx.jugada.createMany({
+            data: batch.map((j) => ({
+              ticketId: createdTicket.id,
+              type: j.type,
+              number: j.number,
+              reventadoNumber: j.reventadoNumber,
+              amount: j.amount,
+              finalMultiplierX: j.finalMultiplierX,
+              commissionPercent: j.commissionPercent,
+              commissionAmount: j.commissionAmount,
+              commissionOrigin: j.commissionOrigin,
+              commissionRuleId: j.commissionRuleId,
+              multiplierId: j.multiplierId,
+            })),
+          });
+        }
+
+        // 14) Obtener ticket completo con jugadas
+        const ticketWithJugadas = await tx.ticket.findUnique({
+          where: { id: createdTicket.id },
+          include: { jugadas: true },
+        });
+
+        if (!ticketWithJugadas) {
+          throw new AppError("Failed to retrieve created ticket", 500);
+        }
+
+        // Adjuntar datos para uso fuera de TX
+        (ticketWithJugadas as any).__businessDateInfo = bd;
+        (ticketWithJugadas as any).__commissionsDetails = commissionsDetails;
+        (ticketWithJugadas as any).__jugadasCount = jugadasWithCommissions.length;
+
+        logger.info({
+          layer: 'repository',
+          action: 'TICKET_FOLIO_DIAG',
+          payload: {
+            createdAtUTC: new Date().toISOString(),
+            scheduledAt: sorteo.scheduledAt?.toISOString() ?? null,
+            businessDateISO: bd.businessDateISO,
+            prefixYYMMDD: bd.prefixYYMMDD,
+            counter: seqForLog,
+            ticketNumber: nextNumber,
+            optimized: true,
+          },
+        });
+
+        return { ticket: ticketWithJugadas, warnings };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+        maxRetries: 3,
+        backoffMinMs: 150,
+        backoffMaxMs: 2_000,
+        maxWaitMs: 10_000,
+        timeoutMs: dynamicTimeout,
+      }
+    );
+
+    // Persistir businessDate fuera de la transacción
+    const bdInfo = (ticket as any).__businessDateInfo as ReturnType<typeof getBusinessDateCRInfo> | undefined;
+    if (bdInfo) {
+      try {
+        await prisma.$executeRaw(
+          Prisma.sql`UPDATE "Ticket" SET "businessDate" = ${bdInfo.businessDate}::date WHERE id = ${ticket.id}::uuid`
+        );
+      } catch (e) {
+        logger.warn({
+          layer: 'repository',
+          action: 'BUSINESS_DATE_NOT_PERSISTED',
+          payload: { ticketId: ticket.id, reason: (e as Error).message, businessDateISO: bdInfo.businessDateISO },
+        });
+      }
+    }
+
+    // ActivityLog fuera de la TX (no bloqueante)
+    const commissionsDetailsForLog = (ticket as any).__commissionsDetails || [];
+    prisma.activityLog
+      .create({
+        data: {
+          userId,
+          action: "TICKET_CREATE",
+          targetType: "TICKET",
+          targetId: ticket.id,
+          details: {
+            ticketNumber: ticket.ticketNumber,
+            totalAmount: ticket.totalAmount,
+            jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
+            commissions: commissionsDetailsForLog,
+            optimized: true,
+          },
+        },
+      })
+      .catch((err) =>
+        logger.warn({
+          layer: "activityLog",
+          action: "ASYNC_FAIL",
+          payload: { message: err.message },
+        })
+      );
+
+    logger.info({
+      layer: "repository",
+      action: "TICKET_CREATE_OPTIMIZED_SUCCESS",
+      payload: {
+        ticketId: ticket.id,
+        ticketNumber: ticket.ticketNumber,
+        totalAmount: ticket.totalAmount,
+        jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
+        dynamicTimeout,
       },
     });
 
