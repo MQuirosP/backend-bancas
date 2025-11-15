@@ -41,6 +41,7 @@ export const ListSorteosQuerySchema = z.object({
   date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional(),
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
+  groupBy: z.enum(["hour", "loteria-hour"]).optional(),
   _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
 
