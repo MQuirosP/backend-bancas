@@ -888,7 +888,7 @@ export const SorteoService = {
       // Obtener datos financieros agregados por sorteo
       const sorteoIds = sorteos.map((s) => s.id);
       
-      // Agregar datos financieros por sorteo
+      // Agregar datos financieros por sorteo (todos los tickets)
       const financialData = await prisma.ticket.groupBy({
         by: ["sorteoId"],
         where: {
@@ -903,6 +903,20 @@ export const SorteoService = {
         },
         _count: {
           id: true,
+        },
+      });
+
+      // Obtener premios ganados solo de tickets ganadores
+      const prizesData = await prisma.ticket.groupBy({
+        by: ["sorteoId"],
+        where: {
+          sorteoId: { in: sorteoIds },
+          vendedorId,
+          isWinner: true,
+          deletedAt: null,
+        },
+        _sum: {
+          totalPayout: true,
         },
       });
 
@@ -934,13 +948,17 @@ export const SorteoService = {
       });
 
       // Crear mapas para acceso rápido
+      const prizesMap = new Map(
+        prizesData.map((p) => [p.sorteoId, p._sum.totalPayout || 0])
+      );
+
       const financialMap = new Map(
         financialData.map((f) => [
           f.sorteoId,
           {
             totalSales: f._sum.totalAmount || 0,
             totalCommission: f._sum.totalCommission || 0,
-            totalPrizes: f._sum.totalPayout || 0,
+            totalPrizes: prizesMap.get(f.sorteoId) || 0, // Usar premios solo de tickets ganadores
             ticketCount: f._count.id,
           },
         ])
