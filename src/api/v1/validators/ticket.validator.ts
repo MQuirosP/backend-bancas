@@ -60,6 +60,8 @@ export const ListTicketsQuerySchema = z
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID"]).optional(),
     isActive: z.coerce.boolean().optional(),
     sorteoId: z.uuid().optional(),
+    loteriaId: z.uuid().optional(),
+    multiplierId: z.uuid().optional(),
     ventanaId: z.uuid("ventanaId inválido").optional(),
     vendedorId: z.uuid("vendedorId inválido").optional(),
     search: z.string().trim().min(1).max(100).optional(),

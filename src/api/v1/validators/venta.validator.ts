@@ -28,6 +28,7 @@ export const ListVentasQuerySchema = z
     vendedorId: z.uuid().optional(),
     loteriaId: z.uuid().optional(),
     sorteoId: z.uuid().optional(),
+    multiplierId: z.uuid().optional(),
     search: z.string().trim().min(1).max(100).optional(),
     orderBy: z.string().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)

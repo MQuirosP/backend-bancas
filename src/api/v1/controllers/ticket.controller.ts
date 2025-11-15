@@ -62,14 +62,28 @@ export const TicketController = {
     });
 
     // Resolver rango de fechas (mismo patrón que Venta/Dashboard)
-    const dateRange = resolveDateRange(date, fromDate, toDate);
+    // Regla especial: cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha
+    const hasSorteoId = effectiveFilters.sorteoId;
+    const hasExplicitDateRange = fromDate || toDate;
+
+    let dateRange: { fromAt: Date; toAt: Date; tz: string; description?: string } | null = null;
+    
+    if (hasSorteoId && !hasExplicitDateRange) {
+      // NO aplicar filtro de fecha cuando hay sorteoId y no hay fechas explícitas
+      dateRange = null;
+    } else {
+      // Resolver rango de fechas normalmente
+      dateRange = resolveDateRange(date, fromDate, toDate);
+    }
 
     // Build final filters for service
     // IMPORTANT: Map vendedorId → userId for backward compatibility with repository
     const filters: any = {
       ...effectiveFilters,
-      dateFrom: dateRange.fromAt,
-      dateTo: dateRange.toAt
+      ...(dateRange ? {
+        dateFrom: dateRange.fromAt,
+        dateTo: dateRange.toAt
+      } : {})
     };
 
     // Repository expects 'userId' but RBAC returns 'vendedorId'
