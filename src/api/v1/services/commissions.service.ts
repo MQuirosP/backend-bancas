@@ -1,5 +1,5 @@
 // src/api/v1/services/commissions.service.ts
-import { Prisma } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { PaginatedResult, buildMeta, getSkipTake } from "../../../utils/pagination";
@@ -158,6 +158,13 @@ export const CommissionsService = {
         // Ahora: Todo se calcula desde jugadas individuales para consistencia
         // ============================================================================
         if (filters.dimension === "ventana" && ventanaUserPolicy) {
+          // Obtener el ventanaId del usuario VENTANA para aplicar su política solo a su ventana
+          const ventanaUser = await prisma.user.findUnique({
+            where: { id: ventanaUserId || "" },
+            select: { ventanaId: true },
+          });
+          const targetVentanaId = ventanaUser?.ventanaId;
+
           // Obtener todas las jugadas del periodo para calcular todo desde ellas
           // Usar zona horaria de Costa Rica para el agrupamiento por fecha
           const jugadas = await prisma.$queryRaw<
@@ -170,6 +177,8 @@ export const CommissionsService = {
             type: string;
             finalMultiplierX: number;
             loteriaId: string;
+            ventana_policy: any;
+            banca_policy: any;
             ticket_total_payout: number | null;
             commission_amount: number | null;
           }>
@@ -186,11 +195,14 @@ export const CommissionsService = {
               j.type,
               j."finalMultiplierX",
               t."loteriaId",
+              v."commissionPolicyJson" as ventana_policy,
+              b."commissionPolicyJson" as banca_policy,
               t."totalPayout" as ticket_total_payout,
               j."commissionAmount" as commission_amount
             FROM "Ticket" t
             INNER JOIN "Jugada" j ON j."ticketId" = t.id
             INNER JOIN "Ventana" v ON v.id = t."ventanaId"
+            INNER JOIN "Banca" b ON b.id = v."bancaId"
             ${whereClause}
           `;
 
@@ -210,14 +222,35 @@ export const CommissionsService = {
           >();
 
           for (const jugada of jugadas) {
-            // Calcular comisión usando la política del usuario VENTANA
-            const ventanaCommission = resolveCommissionFromPolicy(ventanaUserPolicy, {
-              userId: ventanaUserId || "",
-              loteriaId: jugada.loteriaId,
-              betType: jugada.type as "NUMERO" | "REVENTADO",
-              finalMultiplierX: jugada.finalMultiplierX || null,
-            });
-            const commission = Math.round((jugada.amount * ventanaCommission.percent) / 100);
+            let commission = 0;
+
+            // Si esta jugada pertenece a la ventana del usuario VENTANA, usar su política de usuario
+            // Si no, usar directamente las políticas de ventana/banca (las políticas son por ventana, no por usuario)
+            if (targetVentanaId && jugada.ventana_id === targetVentanaId) {
+              // Usar la política del usuario VENTANA específico (solo para su ventana)
+              const ventanaCommission = resolveCommissionFromPolicy(ventanaUserPolicy, {
+                userId: ventanaUserId || "",
+                loteriaId: jugada.loteriaId,
+                betType: jugada.type as "NUMERO" | "REVENTADO",
+                finalMultiplierX: jugada.finalMultiplierX || null,
+              });
+              commission = Math.round((jugada.amount * ventanaCommission.percent) / 100);
+            } else {
+              // Para otras ventanas, usar directamente las políticas de ventana/banca
+              // Las políticas son por ventana (Ventana.commissionPolicyJson), no por usuario VENTANA
+              const ventanaCommission = resolveCommission(
+                {
+                  loteriaId: jugada.loteriaId,
+                  betType: jugada.type as "NUMERO" | "REVENTADO",
+                  finalMultiplierX: jugada.finalMultiplierX || 0,
+                  amount: jugada.amount,
+                },
+                null, // No hay política de usuario VENTANA para esta ventana
+                jugada.ventana_policy, // Política de ventana (Ventana.commissionPolicyJson)
+                jugada.banca_policy // Política de banca (Banca.commissionPolicyJson)
+              );
+              commission = Math.round(ventanaCommission.commissionAmount);
+            }
 
             const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
             const key = `${dateKey}_${jugada.ventana_id}`;
@@ -278,6 +311,7 @@ export const CommissionsService = {
         // ============================================================================
         // Antes: Usaba totalCommission del ticket (snapshot del vendedor) - INCORRECTO
         // Ahora: Calcula desde políticas de ventana/banca usando resolveCommission con fallback
+        // IMPORTANTE: Buscar usuarios VENTANA por ventana individualmente (como en dashboard)
         // ============================================================================
         if (filters.dimension === "ventana" && !ventanaUserPolicy) {
           // Obtener todas las jugadas del periodo con políticas de ventana y banca
@@ -320,6 +354,37 @@ export const CommissionsService = {
             ${whereClause}
           `;
 
+          // Obtener usuarios VENTANA por ventana (similar a dashboard)
+          const ventanaIds = Array.from(new Set(jugadas.map((j) => j.ventana_id)));
+          const ventanaUsers = ventanaIds.length
+            ? await prisma.user.findMany({
+                where: {
+                  role: Role.VENTANA,
+                  isActive: true,
+                  deletedAt: null,
+                  ventanaId: { in: ventanaIds },
+                },
+                select: {
+                  id: true,
+                  ventanaId: true,
+                  commissionPolicyJson: true,
+                  updatedAt: true,
+                },
+                orderBy: { updatedAt: "desc" },
+              })
+            : [];
+
+          // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
+          const userPolicyByVentana = new Map<string, any>();
+          const ventanaUserIdByVentana = new Map<string, string>();
+          for (const user of ventanaUsers) {
+            if (!user.ventanaId) continue;
+            if (!userPolicyByVentana.has(user.ventanaId)) {
+              userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
+              ventanaUserIdByVentana.set(user.ventanaId, user.id);
+            }
+          }
+
           // Agrupar jugadas por día y ventana, calculando comisiones desde políticas
           const byDateAndVentana = new Map<
             string,
@@ -336,21 +401,53 @@ export const CommissionsService = {
           >();
 
           for (const jugada of jugadas) {
-            // Calcular comisión usando políticas de ventana/banca como fallback
-            // resolveCommission tiene prioridad: USER → VENTANA → BANCA
-            // Como no hay USER (ventanaUserPolicy es null), usa VENTANA → BANCA
-            const ventanaCommission = resolveCommission(
-              {
-                loteriaId: jugada.loteriaId,
-                betType: jugada.type as "NUMERO" | "REVENTADO",
-                finalMultiplierX: jugada.finalMultiplierX || 0,
-                amount: jugada.amount,
-              },
-              null, // No hay política de usuario VENTANA
-              jugada.ventana_policy, // Política de ventana
-              jugada.banca_policy // Política de banca
-            );
-            const commission = Math.round((jugada.amount * ventanaCommission.commissionPercent) / 100);
+            // Obtener política de usuario VENTANA para esta ventana específica
+            const userPolicyJson = userPolicyByVentana.get(jugada.ventana_id) ?? null;
+            const ventanaUserId = ventanaUserIdByVentana.get(jugada.ventana_id) ?? "";
+
+            let commission = 0;
+
+            if (userPolicyJson) {
+              // Si hay política de usuario VENTANA, usarla (prioridad más alta)
+              try {
+                const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+                  userId: ventanaUserId,
+                  loteriaId: jugada.loteriaId,
+                  betType: jugada.type as "NUMERO" | "REVENTADO",
+                  finalMultiplierX: jugada.finalMultiplierX || null,
+                });
+                commission = Math.round((jugada.amount * resolution.percent) / 100);
+              } catch (err) {
+                // Si falla, usar fallback con políticas de ventana/banca
+                const fallback = resolveCommission(
+                  {
+                    loteriaId: jugada.loteriaId,
+                    betType: jugada.type as "NUMERO" | "REVENTADO",
+                    finalMultiplierX: jugada.finalMultiplierX || 0,
+                    amount: jugada.amount,
+                  },
+                  null,
+                  jugada.ventana_policy,
+                  jugada.banca_policy
+                );
+                commission = Math.round(fallback.commissionAmount);
+              }
+            } else {
+              // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
+              const ventanaCommission = resolveCommission(
+                {
+                  loteriaId: jugada.loteriaId,
+                  betType: jugada.type as "NUMERO" | "REVENTADO",
+                  finalMultiplierX: jugada.finalMultiplierX || 0,
+                  amount: jugada.amount,
+                },
+                null, // No hay política de usuario VENTANA
+                jugada.ventana_policy, // Política de ventana
+                jugada.banca_policy // Política de banca
+              );
+              // Usar commissionAmount directamente de resolveCommission para mantener consistencia
+              commission = Math.round(ventanaCommission.commissionAmount);
+            }
 
             const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
             const key = `${dateKey}_${jugada.ventana_id}`;
@@ -808,6 +905,8 @@ export const CommissionsService = {
       // ============================================================================
       // FIX: Cuando dimension=ventana y NO hay ventanaUserPolicy, calcular desde políticas de ventana/banca
       // ============================================================================
+      // IMPORTANTE: Buscar usuarios VENTANA por ventana individualmente (como en dashboard)
+      // ============================================================================
       if (filters.dimension === "ventana" && !ventanaUserPolicy) {
         // Obtener todas las jugadas individuales del periodo con políticas de ventana y banca
         const jugadas = await prisma.$queryRaw<
@@ -822,6 +921,7 @@ export const CommissionsService = {
             final_multiplier_x: number;
             amount: number;
             ticket_id: string;
+            ventana_id: string;
             ventana_policy: any;
             banca_policy: any;
           }>
@@ -837,6 +937,7 @@ export const CommissionsService = {
             j."finalMultiplierX" as final_multiplier_x,
             j.amount,
             t.id as ticket_id,
+            t."ventanaId" as ventana_id,
             v."commissionPolicyJson" as ventana_policy,
             b."commissionPolicyJson" as banca_policy
           FROM "Ticket" t
@@ -847,6 +948,37 @@ export const CommissionsService = {
           LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
           ${whereClause}
         `;
+
+        // Obtener usuarios VENTANA por ventana (similar a dashboard)
+        const ventanaIds = Array.from(new Set(jugadas.map((j) => j.ventana_id)));
+        const ventanaUsers = ventanaIds.length
+          ? await prisma.user.findMany({
+              where: {
+                role: Role.VENTANA,
+                isActive: true,
+                deletedAt: null,
+                ventanaId: { in: ventanaIds },
+              },
+              select: {
+                id: true,
+                ventanaId: true,
+                commissionPolicyJson: true,
+                updatedAt: true,
+              },
+              orderBy: { updatedAt: "desc" },
+            })
+          : [];
+
+        // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
+        const userPolicyByVentana = new Map<string, any>();
+        const ventanaUserIdByVentana = new Map<string, string>();
+        for (const user of ventanaUsers) {
+          if (!user.ventanaId) continue;
+          if (!userPolicyByVentana.has(user.ventanaId)) {
+            userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
+            ventanaUserIdByVentana.set(user.ventanaId, user.id);
+          }
+        }
 
         // Agrupar por lotería y multiplicador, calculando comisiones desde políticas
         const byLoteria = new Map<
@@ -872,20 +1004,57 @@ export const CommissionsService = {
 
         // Procesar cada jugada individualmente
         for (const jugada of jugadas) {
-          // Calcular comisión usando políticas de ventana/banca como fallback
-          const ventanaCommission = resolveCommission(
-            {
-              loteriaId: jugada.loteria_id,
-              betType: jugada.bet_type as "NUMERO" | "REVENTADO",
-              finalMultiplierX: jugada.final_multiplier_x || 0,
-              amount: jugada.amount,
-            },
-            null, // No hay política de usuario VENTANA
-            jugada.ventana_policy, // Política de ventana
-            jugada.banca_policy // Política de banca
-          );
-          const commission = Math.round((jugada.amount * ventanaCommission.commissionPercent) / 100);
-          const commissionPercent = ventanaCommission.commissionPercent;
+          // Obtener política de usuario VENTANA para esta ventana específica
+          const userPolicyJson = userPolicyByVentana.get(jugada.ventana_id) ?? null;
+          const ventanaUserId = ventanaUserIdByVentana.get(jugada.ventana_id) ?? "";
+
+          let commission = 0;
+          let commissionPercent = 0;
+
+          if (userPolicyJson) {
+            // Si hay política de usuario VENTANA, usarla (prioridad más alta)
+            try {
+              const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+                userId: ventanaUserId,
+                loteriaId: jugada.loteria_id,
+                betType: jugada.bet_type as "NUMERO" | "REVENTADO",
+                finalMultiplierX: jugada.final_multiplier_x || null,
+              });
+              commission = Math.round((jugada.amount * resolution.percent) / 100);
+              commissionPercent = resolution.percent;
+            } catch (err) {
+              // Si falla, usar fallback con políticas de ventana/banca
+              const fallback = resolveCommission(
+                {
+                  loteriaId: jugada.loteria_id,
+                  betType: jugada.bet_type as "NUMERO" | "REVENTADO",
+                  finalMultiplierX: jugada.final_multiplier_x || 0,
+                  amount: jugada.amount,
+                },
+                null,
+                jugada.ventana_policy,
+                jugada.banca_policy
+              );
+              commission = Math.round(fallback.commissionAmount);
+              commissionPercent = fallback.commissionPercent;
+            }
+          } else {
+            // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
+            const ventanaCommission = resolveCommission(
+              {
+                loteriaId: jugada.loteria_id,
+                betType: jugada.bet_type as "NUMERO" | "REVENTADO",
+                finalMultiplierX: jugada.final_multiplier_x || 0,
+                amount: jugada.amount,
+              },
+              null, // No hay política de usuario VENTANA
+              jugada.ventana_policy, // Política de ventana
+              jugada.banca_policy // Política de banca
+            );
+            // Usar commissionAmount directamente de resolveCommission para mantener consistencia
+            commission = Math.round(ventanaCommission.commissionAmount);
+            commissionPercent = ventanaCommission.commissionPercent;
+          }
 
           // Construir clave única para el multiplicador
           const multiplierKey = jugada.multiplier_id || `REVENTADO_${jugada.bet_type}`;
