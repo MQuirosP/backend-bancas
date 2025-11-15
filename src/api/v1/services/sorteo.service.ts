@@ -585,6 +585,10 @@ export const SorteoService = {
           TO_CHAR(
             s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
             'HH24:MI'
+          ),
+          TO_CHAR(
+            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+            'HH12:MI AM'
           )
       )
       SELECT
@@ -604,6 +608,8 @@ export const SorteoService = {
               s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
               'HH24:MI'
             ) = gs."hour24"
+            ${params.dateFrom ? Prisma.sql`AND s2."scheduledAt" >= ${params.dateFrom}` : Prisma.empty}
+            ${params.dateTo ? Prisma.sql`AND s2."scheduledAt" <= ${params.dateTo}` : Prisma.empty}
           ORDER BY s2."scheduledAt" DESC
           LIMIT 1
         ) as "mostRecentSorteoId"
@@ -750,6 +756,8 @@ export const SorteoService = {
               'HH24:MI'
             ) = gs."hour24"
             ${params.loteriaId ? Prisma.sql`AND s2."loteriaId" = ${params.loteriaId}::uuid` : Prisma.empty}
+            ${params.dateFrom ? Prisma.sql`AND s2."scheduledAt" >= ${params.dateFrom}` : Prisma.empty}
+            ${params.dateTo ? Prisma.sql`AND s2."scheduledAt" <= ${params.dateTo}` : Prisma.empty}
           ORDER BY s2."scheduledAt" DESC
           LIMIT 1
         ) as "mostRecentSorteoId"
