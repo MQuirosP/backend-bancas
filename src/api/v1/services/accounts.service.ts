@@ -520,17 +520,42 @@ export async function calculateDayStatement(
     };
   }
 
-  // Crear o actualizar estado de cuenta primero
+  // CRITICAL: Determinar el tipo de statement que necesitamos antes de buscar/crear
+  // El constraint requiere que solo uno de ventanaId o vendedorId sea no-null
+  const targetVentanaId = vendedorId ? null : (ventanaId ?? null);
+  const targetVendedorId = vendedorId ?? null;
+
+  // Crear o actualizar estado de cuenta primero con los valores correctos
   const statement = await AccountStatementRepository.findOrCreate({
     date,
     month,
-    ventanaId,
-    vendedorId,
+    ventanaId: targetVentanaId,
+    vendedorId: targetVendedorId,
   });
 
+  // CRITICAL: Si el statement encontrado tiene un tipo diferente al que necesitamos,
+  // debemos buscar el statement correcto o crear uno nuevo
+  // No podemos cambiar el tipo de un statement existente porque violaría los constraints únicos
+  let finalStatement = statement;
+  const statementIsVentana = statement.ventanaId !== null && statement.vendedorId === null;
+  const statementIsVendedor = statement.vendedorId !== null && statement.ventanaId === null;
+  const needsVentana = targetVentanaId !== null;
+  const needsVendedor = targetVendedorId !== null;
+
+  // Si el tipo no coincide, buscar el statement correcto
+  if ((needsVentana && !statementIsVentana) || (needsVendedor && !statementIsVendedor)) {
+    const correctStatement = await AccountStatementRepository.findOrCreate({
+      date,
+      month,
+      ventanaId: targetVentanaId,
+      vendedorId: targetVendedorId,
+    });
+    finalStatement = correctStatement;
+  }
+
   // Obtener total pagado y cobrado después de crear el statement
-  const totalPaid = await AccountPaymentRepository.getTotalPaid(statement.id);
-  const totalCollected = await AccountPaymentRepository.getTotalCollected(statement.id);
+  const totalPaid = await AccountPaymentRepository.getTotalPaid(finalStatement.id);
+  const totalCollected = await AccountPaymentRepository.getTotalCollected(finalStatement.id);
 
   // Calcular saldo restante: remainingBalance = balance - totalCollected + totalPaid
   // Lógica: Payment reduce deuda (suma), Collection reduce crédito (resta)
@@ -540,13 +565,7 @@ export async function calculateDayStatement(
   const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
   const canEdit = !isSettled;
 
-  // CRITICAL: El constraint requiere que solo uno de ventanaId o vendedorId sea no-null
-  // Si vendedorId está presente, solo establecer vendedorId (ventanaId = null)
-  // Si solo ventanaId está presente, solo establecer ventanaId (vendedorId = null)
-  const effectiveVentanaId = vendedorId ? null : (ventanaId ?? statement.ventanaId ?? null);
-  const effectiveVendedorId = vendedorId ?? statement.vendedorId ?? null;
-
-  await AccountStatementRepository.update(statement.id, {
+  await AccountStatementRepository.update(finalStatement.id, {
     totalSales,
     totalPayouts,
     listeroCommission: totalListeroCommission,
@@ -557,12 +576,11 @@ export async function calculateDayStatement(
     isSettled,
     canEdit,
     ticketCount,
-    ventanaId: effectiveVentanaId,
-    vendedorId: effectiveVendedorId,
+    // No cambiar ventanaId/vendedorId aquí - ya están correctos en finalStatement
   });
 
   return {
-    ...statement,
+    ...finalStatement,
     totalSales,
     totalPayouts,
     listeroCommission: totalListeroCommission,
