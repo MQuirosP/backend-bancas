@@ -119,10 +119,16 @@ export const SorteoController = {
       action: "SORTEO_LIST_RESULT",
       payload: {
         total: result.meta.total,
-        page: result.meta.page,
-        totalPages: result.meta.totalPages,
-        message: "Resultado de lista"
-      }
+        grouped: result.meta.grouped,
+        groupBy: result.meta.groupBy,
+        ...(result.meta.grouped
+          ? {}
+          : {
+              page: result.meta.page,
+              totalPages: result.meta.totalPages,
+            }),
+        message: "Resultado de lista",
+      },
     });
 
     res.json({ success: true, data: result.data, meta: result.meta });
