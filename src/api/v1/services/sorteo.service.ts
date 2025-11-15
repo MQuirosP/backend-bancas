@@ -575,7 +575,7 @@ export const SorteoService = {
           ) as "hour12",
           COUNT(*)::int as count,
           MAX(s."scheduledAt") as "mostRecentDate",
-          STRING_AGG(s.id::text, ',' ORDER BY s."scheduledAt" DESC) as "sorteoIds"
+          STRING_AGG(s.id::text, ',') as "sorteoIds"
         FROM "Sorteo" s
         INNER JOIN "Loteria" l ON l.id = s."loteriaId"
         ${whereClause}
@@ -625,16 +625,38 @@ export const SorteoService = {
     }>>(query);
 
     // Formatear respuesta
-    const data = results.map((row) => ({
-      loteriaId: row.loteriaId,
-      loteriaName: row.loteriaName,
-      hour: row.hour12.trim(), // Formato 12h para display (trim para quitar espacios)
-      hour24: row.hour24, // Formato 24h para ordenamiento
-      sorteoIds: row.sorteoIds.split(","), // Convertir string a array
-      count: row.count,
-      mostRecentSorteoId: row.mostRecentSorteoId,
-      mostRecentDate: formatDateOnly(row.mostRecentDate),
-    }));
+    // Ordenar sorteoIds por fecha (obtener IDs ordenados por scheduledAt DESC)
+    const data = await Promise.all(
+      results.map(async (row) => {
+        // Obtener IDs ordenados por fecha descendente
+        const sorteoIdsArray = row.sorteoIds.split(",");
+        const sorteosWithDates = await prisma.sorteo.findMany({
+          where: {
+            id: { in: sorteoIdsArray },
+            ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+          },
+          select: {
+            id: true,
+            scheduledAt: true,
+          },
+          orderBy: {
+            scheduledAt: "desc",
+          },
+        });
+        const sortedIds = sorteosWithDates.map((s) => s.id);
+
+        return {
+          loteriaId: row.loteriaId,
+          loteriaName: row.loteriaName,
+          hour: row.hour12.trim(), // Formato 12h para display (trim para quitar espacios)
+          hour24: row.hour24, // Formato 24h para ordenamiento
+          sorteoIds: sortedIds, // Array ordenado por fecha descendente
+          count: row.count,
+          mostRecentSorteoId: row.mostRecentSorteoId,
+          mostRecentDate: formatDateOnly(row.mostRecentDate),
+        };
+      })
+    );
 
     return {
       data,
@@ -704,7 +726,7 @@ export const SorteoService = {
           ) as "hour12",
           COUNT(*)::int as count,
           MAX(s."scheduledAt") as "mostRecentDate",
-          STRING_AGG(s.id::text, ',' ORDER BY s."scheduledAt" DESC) as "sorteoIds"
+          STRING_AGG(s.id::text, ',') as "sorteoIds"
         FROM "Sorteo" s
         ${whereClause}
         GROUP BY 
@@ -746,14 +768,36 @@ export const SorteoService = {
     }>>(query);
 
     // Formatear respuesta
-    const data = results.map((row) => ({
-      hour: row.hour12.trim(), // Formato 12h para display
-      hour24: row.hour24, // Formato 24h para ordenamiento
-      sorteoIds: row.sorteoIds.split(","), // Convertir string a array
-      count: row.count,
-      mostRecentSorteoId: row.mostRecentSorteoId,
-      mostRecentDate: formatDateOnly(row.mostRecentDate),
-    }));
+    // Ordenar sorteoIds por fecha (obtener IDs ordenados por scheduledAt DESC)
+    const data = await Promise.all(
+      results.map(async (row) => {
+        // Obtener IDs ordenados por fecha descendente
+        const sorteoIdsArray = row.sorteoIds.split(",");
+        const sorteosWithDates = await prisma.sorteo.findMany({
+          where: {
+            id: { in: sorteoIdsArray },
+            ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+          },
+          select: {
+            id: true,
+            scheduledAt: true,
+          },
+          orderBy: {
+            scheduledAt: "desc",
+          },
+        });
+        const sortedIds = sorteosWithDates.map((s) => s.id);
+
+        return {
+          hour: row.hour12.trim(), // Formato 12h para display
+          hour24: row.hour24, // Formato 24h para ordenamiento
+          sorteoIds: sortedIds, // Array ordenado por fecha descendente
+          count: row.count,
+          mostRecentSorteoId: row.mostRecentSorteoId,
+          mostRecentDate: formatDateOnly(row.mostRecentDate),
+        };
+      })
+    );
 
     return {
       data,
