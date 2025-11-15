@@ -173,11 +173,17 @@ export const AccountStatementRepository = {
       date,
     };
 
+    // CRITICAL: El constraint requiere que solo uno de ventanaId o vendedorId sea no-null
     if (filters.ventanaId) {
       where.ventanaId = filters.ventanaId;
-    }
-    if (filters.vendedorId) {
+      where.vendedorId = null; // Asegurar que vendedorId es null para statements de ventana
+    } else if (filters.vendedorId) {
       where.vendedorId = filters.vendedorId;
+      where.ventanaId = null; // Asegurar que ventanaId es null para statements de vendedor
+    } else {
+      // Si no se especifica ninguno, buscar statements sin ambos
+      where.ventanaId = null;
+      where.vendedorId = null;
     }
 
     return await prisma.accountStatement.findFirst({
