@@ -66,6 +66,7 @@ export const ListTicketsQuerySchema = z
     vendedorId: z.uuid("vendedorId inválido").optional(),
     search: z.string().trim().min(1).max(100).optional(),
     scope: z.enum(["mine", "all"]).optional().default("mine"),
+    winnersOnly: z.coerce.boolean().optional(),
 
     // Filtros de fecha (STANDARDIZADO - mismo patrón que Venta/Dashboard)
     // Fechas: date (today|yesterday|week|month|year|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range

@@ -1040,6 +1040,7 @@ export const TicketRepository = {
       userId?: string;
       dateFrom?: Date;
       dateTo?: Date;
+      winnersOnly?: boolean;
     } = {}
   ) {
     const skip = (page - 1) * pageSize;
@@ -1062,6 +1063,7 @@ export const TicketRepository = {
         : {}),
       ...(filters.userId ? { vendedorId: filters.userId } : {}),
       ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}), // ✅ ahora sí aplica
+      ...(filters.winnersOnly ? { isWinner: true } : {}),
       ...(filters.dateFrom || filters.dateTo
         ? {
             createdAt: {
