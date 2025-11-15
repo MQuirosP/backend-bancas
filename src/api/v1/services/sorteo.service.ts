@@ -978,7 +978,7 @@ export const SorteoService = {
       // IMPORTANTE: El acumulado se calcula del más antiguo hacia el más reciente
       // Los sorteos están ordenados por scheduledAt ASC (más antiguo primero) para el cálculo
       let accumulated = 0;
-      const dataWithAccumulated = sorteos.map((sorteo) => {
+      const dataWithAccumulated = sorteos.map((sorteo, index) => {
         const financial = financialMap.get(sorteo.id) || {
           totalSales: 0,
           totalCommission: 0,
@@ -1025,6 +1025,8 @@ export const SorteoService = {
           ticketCount: financial.ticketCount,
           subtotal,
           accumulated,
+          chronologicalIndex: index + 1, // Índice cronológico: 1 = más antiguo, n = más reciente
+          totalChronological: sorteos.length, // Total de sorteos para referencia del FE
           winningTicketsCount: winningCount,
           paidTicketsCount: paidCount,
           unpaidTicketsCount: unpaidCount,
