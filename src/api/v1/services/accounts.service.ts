@@ -522,10 +522,12 @@ export async function calculateDayStatement(
 
   // CRITICAL: Determinar el tipo de statement que necesitamos antes de buscar/crear
   // El constraint requiere que solo uno de ventanaId o vendedorId sea no-null
+  // Además, hay constraints únicos: (date, ventanaId) y (date, vendedorId)
   const targetVentanaId = vendedorId ? null : (ventanaId ?? null);
   const targetVendedorId = vendedorId ?? null;
 
   // Crear o actualizar estado de cuenta primero con los valores correctos
+  // findOrCreate ya maneja correctamente la búsqueda según ventanaId o vendedorId
   const statement = await AccountStatementRepository.findOrCreate({
     date,
     month,
@@ -533,24 +535,33 @@ export async function calculateDayStatement(
     vendedorId: targetVendedorId,
   });
 
-  // CRITICAL: Si el statement encontrado tiene un tipo diferente al que necesitamos,
-  // debemos buscar el statement correcto o crear uno nuevo
+  // CRITICAL: Verificar que el statement encontrado tiene el tipo correcto
   // No podemos cambiar el tipo de un statement existente porque violaría los constraints únicos
-  let finalStatement = statement;
   const statementIsVentana = statement.ventanaId !== null && statement.vendedorId === null;
   const statementIsVendedor = statement.vendedorId !== null && statement.ventanaId === null;
   const needsVentana = targetVentanaId !== null;
   const needsVendedor = targetVendedorId !== null;
 
-  // Si el tipo no coincide, buscar el statement correcto
+  // Si el tipo no coincide (caso edge: statement corrupto), buscar el correcto
+  let finalStatement = statement;
   if ((needsVentana && !statementIsVentana) || (needsVendedor && !statementIsVendedor)) {
-    const correctStatement = await AccountStatementRepository.findOrCreate({
-      date,
-      month,
-      ventanaId: targetVentanaId,
-      vendedorId: targetVendedorId,
+    // Buscar específicamente el statement correcto usando findByDate
+    const correctStatement = await AccountStatementRepository.findByDate(date, {
+      ventanaId: targetVentanaId ?? undefined,
+      vendedorId: targetVendedorId ?? undefined,
     });
-    finalStatement = correctStatement;
+    
+    if (correctStatement) {
+      finalStatement = correctStatement;
+    } else {
+      // Si no existe, crear uno nuevo (findOrCreate debería haberlo hecho, pero por seguridad)
+      finalStatement = await AccountStatementRepository.findOrCreate({
+        date,
+        month,
+        ventanaId: targetVentanaId,
+        vendedorId: targetVendedorId,
+      });
+    }
   }
 
   // Obtener total pagado y cobrado después de crear el statement
