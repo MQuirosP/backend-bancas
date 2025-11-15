@@ -471,31 +471,282 @@ export const SorteoService = {
     isActive?: boolean;
     dateFrom?: Date;
     dateTo?: Date;
+    groupBy?: "hour" | "loteria-hour";
   }) {
-    const p = params.page && params.page > 0 ? params.page : 1;
-    const ps = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
+    // Early return: sin groupBy, usar lógica existente
+    if (!params.groupBy) {
+      const p = params.page && params.page > 0 ? params.page : 1;
+      const ps = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
 
-    const { data, total } = await SorteoRepository.list({
-      page: p,
-      pageSize: ps,
-      loteriaId: params.loteriaId,
-      status: params.status,
-      search: params.search?.trim() || undefined,
-      isActive: params.isActive,
-      dateFrom: params.dateFrom,
-      dateTo: params.dateTo,
-    });
-
-    const totalPages = Math.ceil(total / ps);
-    return {
-      data: serializeSorteos(data),
-      meta: {
-        total,
+      const { data, total } = await SorteoRepository.list({
         page: p,
         pageSize: ps,
-        totalPages,
-        hasNextPage: p < totalPages,
-        hasPrevPage: p > 1,
+        loteriaId: params.loteriaId,
+        status: params.status,
+        search: params.search?.trim() || undefined,
+        isActive: params.isActive,
+        dateFrom: params.dateFrom,
+        dateTo: params.dateTo,
+      });
+
+      const totalPages = Math.ceil(total / ps);
+      return {
+        data: serializeSorteos(data),
+        meta: {
+          total,
+          page: p,
+          pageSize: ps,
+          totalPages,
+          hasNextPage: p < totalPages,
+          hasPrevPage: p > 1,
+          grouped: false,
+          groupBy: null,
+        },
+      };
+    }
+
+    // Con groupBy, usar query SQL optimizada
+    if (params.groupBy === "loteria-hour") {
+      return this.groupedByLoteriaHour(params);
+    }
+
+    if (params.groupBy === "hour") {
+      return this.groupedByHour(params);
+    }
+
+    throw new AppError(`Unsupported groupBy: ${params.groupBy}`, 400);
+  },
+
+  /**
+   * Agrupa sorteos por loteriaId + hora (extraída de scheduledAt)
+   * Usa SQL GROUP BY para eficiencia
+   */
+  async groupedByLoteriaHour(params: {
+    loteriaId?: string;
+    status?: SorteoStatus;
+    isActive?: boolean;
+    dateFrom?: Date;
+    dateTo?: Date;
+  }) {
+    // Construir condiciones WHERE
+    const whereConditions: Prisma.Sql[] = [
+      Prisma.sql`s."deletedAt" IS NULL`,
+    ];
+
+    if (params.loteriaId) {
+      whereConditions.push(Prisma.sql`s."loteriaId" = ${params.loteriaId}::uuid`);
+    }
+
+    if (params.status) {
+      whereConditions.push(Prisma.sql`s."status" = ${params.status}::text`);
+    }
+
+    if (params.isActive !== undefined) {
+      whereConditions.push(Prisma.sql`s."isActive" = ${params.isActive}`);
+    }
+
+    if (params.dateFrom || params.dateTo) {
+      if (params.dateFrom) {
+        whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom}`);
+      }
+      if (params.dateTo) {
+        whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo}`);
+      }
+    }
+
+    const whereClause = whereConditions.length
+      ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`
+      : Prisma.empty;
+
+    // Query SQL con GROUP BY (PostgreSQL)
+    const query = Prisma.sql`
+      SELECT
+        s."loteriaId",
+        l.name as "loteriaName",
+        TO_CHAR(
+          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+          'HH24:MI'
+        ) as "hour24",
+        TO_CHAR(
+          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+          'HH12:MI AM'
+        ) as "hour12",
+        COUNT(*)::int as count,
+        MAX(s."scheduledAt") as "mostRecentDate",
+        STRING_AGG(s.id::text, ',' ORDER BY s."scheduledAt" DESC) as "sorteoIds",
+        (
+          SELECT s2.id 
+          FROM "Sorteo" s2 
+          WHERE s2."loteriaId" = s."loteriaId"
+            AND s2."deletedAt" IS NULL
+            AND TO_CHAR(
+              s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+              'HH24:MI'
+            ) = TO_CHAR(
+              s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+              'HH24:MI'
+            )
+          ORDER BY s2."scheduledAt" DESC
+          LIMIT 1
+        ) as "mostRecentSorteoId"
+      FROM "Sorteo" s
+      INNER JOIN "Loteria" l ON l.id = s."loteriaId"
+      ${whereClause}
+      GROUP BY 
+        s."loteriaId",
+        l.name,
+        TO_CHAR(
+          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+          'HH24:MI'
+        )
+      ORDER BY 
+        l.name ASC,
+        "hour24" ASC
+    `;
+
+    const results = await prisma.$queryRaw<Array<{
+      loteriaId: string;
+      loteriaName: string;
+      hour24: string;
+      hour12: string;
+      count: number;
+      mostRecentDate: Date;
+      sorteoIds: string;
+      mostRecentSorteoId: string;
+    }>>(query);
+
+    // Formatear respuesta
+    const data = results.map((row) => ({
+      loteriaId: row.loteriaId,
+      loteriaName: row.loteriaName,
+      hour: row.hour12.trim(), // Formato 12h para display (trim para quitar espacios)
+      hour24: row.hour24, // Formato 24h para ordenamiento
+      sorteoIds: row.sorteoIds.split(","), // Convertir string a array
+      count: row.count,
+      mostRecentSorteoId: row.mostRecentSorteoId,
+      mostRecentDate: formatDateOnly(row.mostRecentDate),
+    }));
+
+    return {
+      data,
+      meta: {
+        total: data.length,
+        grouped: true,
+        groupBy: "loteria-hour",
+        ...(params.dateFrom ? { fromDate: formatDateOnly(params.dateFrom) } : {}),
+        ...(params.dateTo ? { toDate: formatDateOnly(params.dateTo) } : {}),
+      },
+    };
+  },
+
+  /**
+   * Agrupa sorteos solo por hora (útil cuando ya se filtró por loteriaId)
+   * Usa SQL GROUP BY para eficiencia
+   */
+  async groupedByHour(params: {
+    loteriaId?: string;
+    status?: SorteoStatus;
+    isActive?: boolean;
+    dateFrom?: Date;
+    dateTo?: Date;
+  }) {
+    // Construir condiciones WHERE
+    const whereConditions: Prisma.Sql[] = [
+      Prisma.sql`s."deletedAt" IS NULL`,
+    ];
+
+    if (params.loteriaId) {
+      whereConditions.push(Prisma.sql`s."loteriaId" = ${params.loteriaId}::uuid`);
+    }
+
+    if (params.status) {
+      whereConditions.push(Prisma.sql`s."status" = ${params.status}::text`);
+    }
+
+    if (params.isActive !== undefined) {
+      whereConditions.push(Prisma.sql`s."isActive" = ${params.isActive}`);
+    }
+
+    if (params.dateFrom || params.dateTo) {
+      if (params.dateFrom) {
+        whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom}`);
+      }
+      if (params.dateTo) {
+        whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo}`);
+      }
+    }
+
+    const whereClause = whereConditions.length
+      ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`
+      : Prisma.empty;
+
+    // Query SQL con GROUP BY solo por hora (PostgreSQL)
+    const query = Prisma.sql`
+      SELECT
+        TO_CHAR(
+          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+          'HH24:MI'
+        ) as "hour24",
+        TO_CHAR(
+          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+          'HH12:MI AM'
+        ) as "hour12",
+        COUNT(*)::int as count,
+        MAX(s."scheduledAt") as "mostRecentDate",
+        STRING_AGG(s.id::text, ',' ORDER BY s."scheduledAt" DESC) as "sorteoIds",
+        (
+          SELECT s2.id 
+          FROM "Sorteo" s2 
+          WHERE s2."deletedAt" IS NULL
+            AND TO_CHAR(
+              s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+              'HH24:MI'
+            ) = TO_CHAR(
+              s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+              'HH24:MI'
+            )
+            ${params.loteriaId ? Prisma.sql`AND s2."loteriaId" = ${params.loteriaId}::uuid` : Prisma.empty}
+          ORDER BY s2."scheduledAt" DESC
+          LIMIT 1
+        ) as "mostRecentSorteoId"
+      FROM "Sorteo" s
+      ${whereClause}
+      GROUP BY 
+        TO_CHAR(
+          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+          'HH24:MI'
+        )
+      ORDER BY 
+        "hour24" ASC
+    `;
+
+    const results = await prisma.$queryRaw<Array<{
+      hour24: string;
+      hour12: string;
+      count: number;
+      mostRecentDate: Date;
+      sorteoIds: string;
+      mostRecentSorteoId: string;
+    }>>(query);
+
+    // Formatear respuesta
+    const data = results.map((row) => ({
+      hour: row.hour12.trim(), // Formato 12h para display
+      hour24: row.hour24, // Formato 24h para ordenamiento
+      sorteoIds: row.sorteoIds.split(","), // Convertir string a array
+      count: row.count,
+      mostRecentSorteoId: row.mostRecentSorteoId,
+      mostRecentDate: formatDateOnly(row.mostRecentDate),
+    }));
+
+    return {
+      data,
+      meta: {
+        total: data.length,
+        grouped: true,
+        groupBy: "hour",
+        ...(params.dateFrom ? { fromDate: formatDateOnly(params.dateFrom) } : {}),
+        ...(params.dateTo ? { toDate: formatDateOnly(params.dateTo) } : {}),
       },
     };
   },

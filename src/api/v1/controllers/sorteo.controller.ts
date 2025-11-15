@@ -98,6 +98,10 @@ export const SorteoController = {
       });
     }
 
+    const groupBy = typeof req.query.groupBy === "string" 
+      ? (req.query.groupBy as "hour" | "loteria-hour" | undefined)
+      : undefined;
+
     const result = await SorteoService.list({
       loteriaId,
       page,
@@ -107,6 +111,7 @@ export const SorteoController = {
       isActive,
       dateFrom: dateFromResolved,
       dateTo: dateToResolved,
+      groupBy,
     });
 
     req.logger?.info({
