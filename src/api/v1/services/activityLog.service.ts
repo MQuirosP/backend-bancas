@@ -22,6 +22,7 @@ export const ActivityLogService = {
       targetId,
       startDate,
       endDate,
+      search,
     } = params;
 
     // Validar rango de fechas
@@ -45,6 +46,7 @@ export const ActivityLogService = {
       targetId,
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
+      search,
     });
 
     const totalPages = Math.ceil(total / pageSize);
