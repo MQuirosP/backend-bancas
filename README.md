@@ -587,5 +587,5 @@ Proyecto bajo licencia **MIT** (ver `LICENSE`).
 
 ---
 
-> 💡 *Versión actual:* `v1.1.0`
-> **Notas v1.1.0**: Dashboard API v1.0.0 con analytics completos; sistema de pagos en `/ventas/summary`; fixes de seguridad RBAC críticos; corrección de exclusión de tickets PAID en reportes.
+> 💡 *Versión actual:* `v1.2.0`
+> **Notas v1.2.0**: Endpoint `evaluated-summary` para sorteos evaluados; filtros avanzados en tickets (`loteriaId`, `sorteoId`, `multiplierId`, `winnersOnly`); agrupación de sorteos por hora (`groupBy`); correcciones de comisiones de listero; fix de timezone en timeseries; correcciones de AccountStatement; búsqueda en activity-logs.
