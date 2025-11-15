@@ -10,6 +10,7 @@ interface ListActivityLogsParams {
   targetId?: string;
   startDate?: Date;
   endDate?: Date;
+  search?: string;
 }
 
 const ActivityLogRepository = {
@@ -39,6 +40,7 @@ const ActivityLogRepository = {
       targetId,
       startDate,
       endDate,
+      search,
     } = params;
 
     const skip = (page - 1) * pageSize;
@@ -54,6 +56,24 @@ const ActivityLogRepository = {
               ...(startDate ? { gte: startDate } : {}),
               ...(endDate ? { lte: endDate } : {}),
             },
+          }
+        : {}),
+      ...(search
+        ? {
+            OR: [
+              // Buscar en action como string (el enum se convierte a string en la query)
+              { action: { in: Object.values(ActivityType).filter((a) => a.toLowerCase().includes(search.toLowerCase())) } as any },
+              { targetType: { contains: search, mode: 'insensitive' } },
+              { targetId: { contains: search, mode: 'insensitive' } },
+              {
+                user: {
+                  OR: [
+                    { name: { contains: search, mode: 'insensitive' } },
+                    { username: { contains: search, mode: 'insensitive' } },
+                  ],
+                },
+              },
+            ],
           }
         : {}),
     };

@@ -10,6 +10,7 @@ export const listActivityLogsQuerySchema = z.object({
   targetId: z.string().optional(),
   startDate: z.string().datetime().optional(),
   endDate: z.string().datetime().optional(),
+  search: z.string().min(1).optional(),
 });
 
 export const getActivityLogByIdParamSchema = z.object({
