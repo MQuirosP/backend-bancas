@@ -739,6 +739,10 @@ export const SorteoService = {
           TO_CHAR(
             s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
             'HH24:MI'
+          ),
+          TO_CHAR(
+            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+            'HH12:MI AM'
           )
       )
       SELECT
