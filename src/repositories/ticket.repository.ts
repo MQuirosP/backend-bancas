@@ -1033,6 +1033,8 @@ export const TicketRepository = {
       status?: TicketStatus;
       isActive?: boolean;
       sorteoId?: string;
+      loteriaId?: string;
+      multiplierId?: string;
       ventanaId?: string;
       search?: string;
       userId?: string;
@@ -1048,6 +1050,16 @@ export const TicketRepository = {
         ? { isActive: filters.isActive }
         : { isActive: filters.isActive }),
       ...(filters.sorteoId ? { sorteoId: filters.sorteoId } : {}),
+      ...(filters.loteriaId ? { loteriaId: filters.loteriaId } : {}),
+      ...(filters.multiplierId
+        ? {
+            jugadas: {
+              some: {
+                multiplierId: filters.multiplierId,
+              },
+            },
+          }
+        : {}),
       ...(filters.userId ? { vendedorId: filters.userId } : {}),
       ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}), // ✅ ahora sí aplica
       ...(filters.dateFrom || filters.dateTo
@@ -1100,7 +1112,19 @@ export const TicketRepository = {
           },
           ventana: { select: { id: true, name: true } },
           vendedor: { select: { id: true, name: true, role: true } },
-          jugadas: true,
+          jugadas: {
+            include: {
+              multiplier: {
+                select: {
+                  id: true,
+                  name: true,
+                  valueX: true,
+                  kind: true,
+                  isActive: true,
+                },
+              },
+            },
+          },
         },
         orderBy: { createdAt: "desc" },
       }),

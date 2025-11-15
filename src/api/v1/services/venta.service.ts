@@ -36,6 +36,7 @@ export interface VentasFilters {
   vendedorId?: string;
   loteriaId?: string;
   sorteoId?: string;
+  multiplierId?: string;
   search?: string;
   orderBy?: string;
 }
@@ -129,6 +130,13 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
   }
   if (filters.sorteoId) {
     where.sorteoId = filters.sorteoId;
+  }
+  if (filters.multiplierId) {
+    where.jugadas = {
+      some: {
+        multiplierId: filters.multiplierId,
+      },
+    };
   }
 
   // Búsqueda unificada (search)
@@ -243,6 +251,16 @@ export const VentasService = {
                 finalMultiplierX: true,
                 payout: true,
                 isWinner: true,
+                multiplierId: true,
+                multiplier: {
+                  select: {
+                    id: true,
+                    name: true,
+                    valueX: true,
+                    kind: true,
+                    isActive: true,
+                  },
+                },
               },
             },
           },
