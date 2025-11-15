@@ -559,49 +559,58 @@ export const SorteoService = {
       : Prisma.empty;
 
     // Query SQL con GROUP BY (PostgreSQL)
+    // Usar CTE para evitar problemas con GROUP BY en subquery
     const query = Prisma.sql`
+      WITH grouped_sorteos AS (
+        SELECT
+          s."loteriaId",
+          l.name as "loteriaName",
+          TO_CHAR(
+            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+            'HH24:MI'
+          ) as "hour24",
+          TO_CHAR(
+            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+            'HH12:MI AM'
+          ) as "hour12",
+          COUNT(*)::int as count,
+          MAX(s."scheduledAt") as "mostRecentDate",
+          STRING_AGG(s.id::text, ',' ORDER BY s."scheduledAt" DESC) as "sorteoIds"
+        FROM "Sorteo" s
+        INNER JOIN "Loteria" l ON l.id = s."loteriaId"
+        ${whereClause}
+        GROUP BY 
+          s."loteriaId",
+          l.name,
+          TO_CHAR(
+            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+            'HH24:MI'
+          )
+      )
       SELECT
-        s."loteriaId",
-        l.name as "loteriaName",
-        TO_CHAR(
-          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-          'HH24:MI'
-        ) as "hour24",
-        TO_CHAR(
-          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-          'HH12:MI AM'
-        ) as "hour12",
-        COUNT(*)::int as count,
-        MAX(s."scheduledAt") as "mostRecentDate",
-        STRING_AGG(s.id::text, ',' ORDER BY s."scheduledAt" DESC) as "sorteoIds",
+        gs."loteriaId",
+        gs."loteriaName",
+        gs."hour24",
+        gs."hour12",
+        gs.count,
+        gs."mostRecentDate",
+        gs."sorteoIds",
         (
           SELECT s2.id 
           FROM "Sorteo" s2 
-          WHERE s2."loteriaId" = s."loteriaId"
+          WHERE s2."loteriaId" = gs."loteriaId"
             AND s2."deletedAt" IS NULL
             AND TO_CHAR(
               s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
               'HH24:MI'
-            ) = TO_CHAR(
-              s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-              'HH24:MI'
-            )
+            ) = gs."hour24"
           ORDER BY s2."scheduledAt" DESC
           LIMIT 1
         ) as "mostRecentSorteoId"
-      FROM "Sorteo" s
-      INNER JOIN "Loteria" l ON l.id = s."loteriaId"
-      ${whereClause}
-      GROUP BY 
-        s."loteriaId",
-        l.name,
-        TO_CHAR(
-          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-          'HH24:MI'
-        )
+      FROM grouped_sorteos gs
       ORDER BY 
-        l.name ASC,
-        "hour24" ASC
+        gs."loteriaName" ASC,
+        gs."hour24" ASC
     `;
 
     const results = await prisma.$queryRaw<Array<{
@@ -681,19 +690,35 @@ export const SorteoService = {
       : Prisma.empty;
 
     // Query SQL con GROUP BY solo por hora (PostgreSQL)
+    // Usar CTE para evitar problemas con GROUP BY en subquery
     const query = Prisma.sql`
+      WITH grouped_sorteos AS (
+        SELECT
+          TO_CHAR(
+            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+            'HH24:MI'
+          ) as "hour24",
+          TO_CHAR(
+            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+            'HH12:MI AM'
+          ) as "hour12",
+          COUNT(*)::int as count,
+          MAX(s."scheduledAt") as "mostRecentDate",
+          STRING_AGG(s.id::text, ',' ORDER BY s."scheduledAt" DESC) as "sorteoIds"
+        FROM "Sorteo" s
+        ${whereClause}
+        GROUP BY 
+          TO_CHAR(
+            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+            'HH24:MI'
+          )
+      )
       SELECT
-        TO_CHAR(
-          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-          'HH24:MI'
-        ) as "hour24",
-        TO_CHAR(
-          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-          'HH12:MI AM'
-        ) as "hour12",
-        COUNT(*)::int as count,
-        MAX(s."scheduledAt") as "mostRecentDate",
-        STRING_AGG(s.id::text, ',' ORDER BY s."scheduledAt" DESC) as "sorteoIds",
+        gs."hour24",
+        gs."hour12",
+        gs.count,
+        gs."mostRecentDate",
+        gs."sorteoIds",
         (
           SELECT s2.id 
           FROM "Sorteo" s2 
@@ -701,23 +726,14 @@ export const SorteoService = {
             AND TO_CHAR(
               s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
               'HH24:MI'
-            ) = TO_CHAR(
-              s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-              'HH24:MI'
-            )
+            ) = gs."hour24"
             ${params.loteriaId ? Prisma.sql`AND s2."loteriaId" = ${params.loteriaId}::uuid` : Prisma.empty}
           ORDER BY s2."scheduledAt" DESC
           LIMIT 1
         ) as "mostRecentSorteoId"
-      FROM "Sorteo" s
-      ${whereClause}
-      GROUP BY 
-        TO_CHAR(
-          s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-          'HH24:MI'
-        )
+      FROM grouped_sorteos gs
       ORDER BY 
-        "hour24" ASC
+        gs."hour24" ASC
     `;
 
     const results = await prisma.$queryRaw<Array<{
