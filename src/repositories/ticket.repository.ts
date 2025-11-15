@@ -7,6 +7,77 @@ import { resolveCommission } from "../services/commission.resolver";
 import { getBusinessDateCRInfo, getCRDayRangeUTC } from "../utils/businessDate";
 import { CommissionContext, preCalculateCommissions } from "../utils/commissionPrecalc";
 
+/**
+ * Calcula el límite dinámico basado en baseAmount y salesPercentage
+ * Obtiene las ventas del día dentro de la transacción
+ */
+async function calculateDynamicLimit(
+  tx: Prisma.TransactionClient,
+  rule: {
+    baseAmount?: number | null;
+    salesPercentage?: number | null;
+    appliesToVendedor?: boolean | null;
+  },
+  context: {
+    userId: string;
+    ventanaId: string;
+    bancaId: string;
+    at: Date;
+  }
+): Promise<number> {
+  let dynamicLimit = 0;
+
+  // Monto base
+  if (rule.baseAmount != null && rule.baseAmount > 0) {
+    dynamicLimit += rule.baseAmount;
+  }
+
+  // Porcentaje de ventas
+  if (rule.salesPercentage != null && rule.salesPercentage > 0) {
+    const crRange = getCRDayRangeUTC(context.at);
+    
+    // Construir WHERE según appliesToVendedor
+    const where: Prisma.TicketWhereInput = {
+      deletedAt: null,
+      OR: [
+        {
+          businessDate: {
+            gte: crRange.fromAt,
+            lt: crRange.toAtExclusive,
+          },
+        },
+        {
+          businessDate: null,
+          createdAt: {
+            gte: crRange.fromAt,
+            lt: crRange.toAtExclusive,
+          },
+        },
+      ],
+    };
+
+    if (rule.appliesToVendedor) {
+      // Por vendedor individual
+      where.vendedorId = context.userId;
+    } else {
+      // Por ventana o banca (global)
+      where.ventanaId = context.ventanaId;
+    }
+
+    // Obtener ventas del día
+    const { _sum } = await tx.ticket.aggregate({
+      _sum: { totalAmount: true },
+      where,
+    });
+
+    const dailySales = Number(_sum.totalAmount) || 0;
+    const percentageAmount = (dailySales * rule.salesPercentage) / 100;
+    dynamicLimit += percentageAmount;
+  }
+
+  return dynamicLimit;
+}
+
 type CreateTicketInput = {
   loteriaId: string;
   sorteoId: string;
@@ -790,39 +861,101 @@ export const TicketRepository = {
           }
         }
 
-        // 8) Aplicar primera regla aplicable (si hay)
+        // 8) Aplicar primera regla aplicable (si hay) con soporte para límites dinámicos
         if (applicable.length > 0) {
-          const rule = applicable[0];
+          const rule = applicable[0] as any; // Cast para incluir nuevos campos
+          
+          // Calcular límite dinámico si hay baseAmount o salesPercentage
+          let dynamicLimit: number | null = null;
+          const hasDynamicFields = 
+            (rule.baseAmount != null && rule.baseAmount > 0) ||
+            (rule.salesPercentage != null && rule.salesPercentage > 0);
+          
+          if (hasDynamicFields) {
+            dynamicLimit = await calculateDynamicLimit(tx, {
+              baseAmount: rule.baseAmount,
+              salesPercentage: rule.salesPercentage,
+              appliesToVendedor: rule.appliesToVendedor,
+            }, {
+              userId,
+              ventanaId,
+              bancaId,
+              at: now,
+            });
+          }
+
           if (rule.number) {
             const sumForNumber = preparedJugadas
               .filter((j) => j.number === rule.number)
               .reduce((acc, j) => acc + j.amount, 0);
 
-            if (rule.maxAmount && sumForNumber > rule.maxAmount)
-              throw new AppError(
-                `Number ${rule.number} exceeded maxAmount (${rule.maxAmount})`,
-                400
-              );
+            // Calcular límite efectivo para maxAmount
+            let effectiveMaxAmount: number | null = null;
+            if (rule.maxAmount != null || dynamicLimit != null) {
+              const staticMaxAmount = rule.maxAmount ?? Infinity;
+              effectiveMaxAmount = dynamicLimit != null 
+                ? Math.min(staticMaxAmount, dynamicLimit)
+                : staticMaxAmount;
+            }
 
-            if (rule.maxTotal && totalAmountTx > rule.maxTotal)
+            if (effectiveMaxAmount != null && sumForNumber > effectiveMaxAmount) {
               throw new AppError(
-                `Ticket total exceeded maxTotal (${rule.maxTotal})`,
+                `Number ${rule.number} exceeded maxAmount (${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
                 400
               );
+            }
+
+            // Calcular límite efectivo para maxTotal
+            let effectiveMaxTotal: number | null = null;
+            if (rule.maxTotal != null || dynamicLimit != null) {
+              const staticMaxTotal = rule.maxTotal ?? Infinity;
+              effectiveMaxTotal = dynamicLimit != null
+                ? Math.min(staticMaxTotal, dynamicLimit)
+                : staticMaxTotal;
+            }
+
+            if (effectiveMaxTotal != null && totalAmountTx > effectiveMaxTotal) {
+              throw new AppError(
+                `Ticket total exceeded maxTotal (${effectiveMaxTotal.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
+                400
+              );
+            }
           } else {
-            if (rule.maxAmount) {
+            // Regla global (sin number)
+            // Calcular límite efectivo para maxAmount
+            let effectiveMaxAmount: number | null = null;
+            if (rule.maxAmount != null || dynamicLimit != null) {
+              const staticMaxAmount = rule.maxAmount ?? Infinity;
+              effectiveMaxAmount = dynamicLimit != null
+                ? Math.min(staticMaxAmount, dynamicLimit)
+                : staticMaxAmount;
+            }
+
+            if (effectiveMaxAmount != null) {
               const maxBet = Math.max(...preparedJugadas.map((j) => j.amount));
-              if (maxBet > rule.maxAmount)
+              if (maxBet > effectiveMaxAmount) {
                 throw new AppError(
-                  `Bet amount exceeded maxAmount (${rule.maxAmount})`,
+                  `Bet amount exceeded maxAmount (${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
                   400
                 );
+              }
             }
-            if (rule.maxTotal && totalAmountTx > rule.maxTotal)
+
+            // Calcular límite efectivo para maxTotal
+            let effectiveMaxTotal: number | null = null;
+            if (rule.maxTotal != null || dynamicLimit != null) {
+              const staticMaxTotal = rule.maxTotal ?? Infinity;
+              effectiveMaxTotal = dynamicLimit != null
+                ? Math.min(staticMaxTotal, dynamicLimit)
+                : staticMaxTotal;
+            }
+
+            if (effectiveMaxTotal != null && totalAmountTx > effectiveMaxTotal) {
               throw new AppError(
-                `Ticket total exceeded maxTotal (${rule.maxTotal})`,
+                `Ticket total exceeded maxTotal (${effectiveMaxTotal.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
                 400
               );
+            }
           }
         }
 
@@ -1454,29 +1587,100 @@ export const TicketRepository = {
           }
         }
 
-        // 10) Aplicar primera regla aplicable
+        // 10) Aplicar primera regla aplicable con soporte para límites dinámicos
         if (applicable.length > 0) {
-          const rule = applicable[0];
+          const rule = applicable[0] as any; // Cast para incluir nuevos campos
+          
+          // Calcular límite dinámico si hay baseAmount o salesPercentage
+          let dynamicLimit: number | null = null;
+          const hasDynamicFields = 
+            (rule.baseAmount != null && rule.baseAmount > 0) ||
+            (rule.salesPercentage != null && rule.salesPercentage > 0);
+          
+          if (hasDynamicFields) {
+            dynamicLimit = await calculateDynamicLimit(tx, {
+              baseAmount: rule.baseAmount,
+              salesPercentage: rule.salesPercentage,
+              appliesToVendedor: rule.appliesToVendedor,
+            }, {
+              userId,
+              ventanaId,
+              bancaId,
+              at: now,
+            });
+          }
+
           if (rule.number) {
             const sumForNumber = preparedJugadas
               .filter((j) => j.number === rule.number)
               .reduce((acc, j) => acc + j.amount, 0);
 
-            if (rule.maxAmount && sumForNumber > rule.maxAmount) {
-              throw new AppError(`Number ${rule.number} exceeded maxAmount (${rule.maxAmount})`, 400);
+            // Calcular límite efectivo para maxAmount
+            let effectiveMaxAmount: number | null = null;
+            if (rule.maxAmount != null || dynamicLimit != null) {
+              const staticMaxAmount = rule.maxAmount ?? Infinity;
+              effectiveMaxAmount = dynamicLimit != null 
+                ? Math.min(staticMaxAmount, dynamicLimit)
+                : staticMaxAmount;
             }
-            if (rule.maxTotal && totalAmountTx > rule.maxTotal) {
-              throw new AppError(`Ticket total exceeded maxTotal (${rule.maxTotal})`, 400);
+
+            if (effectiveMaxAmount != null && sumForNumber > effectiveMaxAmount) {
+              throw new AppError(
+                `Number ${rule.number} exceeded maxAmount (${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
+                400
+              );
+            }
+
+            // Calcular límite efectivo para maxTotal
+            let effectiveMaxTotal: number | null = null;
+            if (rule.maxTotal != null || dynamicLimit != null) {
+              const staticMaxTotal = rule.maxTotal ?? Infinity;
+              effectiveMaxTotal = dynamicLimit != null
+                ? Math.min(staticMaxTotal, dynamicLimit)
+                : staticMaxTotal;
+            }
+
+            if (effectiveMaxTotal != null && totalAmountTx > effectiveMaxTotal) {
+              throw new AppError(
+                `Ticket total exceeded maxTotal (${effectiveMaxTotal.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
+                400
+              );
             }
           } else {
-            if (rule.maxAmount) {
+            // Regla global (sin number)
+            // Calcular límite efectivo para maxAmount
+            let effectiveMaxAmount: number | null = null;
+            if (rule.maxAmount != null || dynamicLimit != null) {
+              const staticMaxAmount = rule.maxAmount ?? Infinity;
+              effectiveMaxAmount = dynamicLimit != null
+                ? Math.min(staticMaxAmount, dynamicLimit)
+                : staticMaxAmount;
+            }
+
+            if (effectiveMaxAmount != null) {
               const maxBet = Math.max(...preparedJugadas.map((j) => j.amount));
-              if (maxBet > rule.maxAmount) {
-                throw new AppError(`Bet amount exceeded maxAmount (${rule.maxAmount})`, 400);
+              if (maxBet > effectiveMaxAmount) {
+                throw new AppError(
+                  `Bet amount exceeded maxAmount (${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
+                  400
+                );
               }
             }
-            if (rule.maxTotal && totalAmountTx > rule.maxTotal) {
-              throw new AppError(`Ticket total exceeded maxTotal (${rule.maxTotal})`, 400);
+
+            // Calcular límite efectivo para maxTotal
+            let effectiveMaxTotal: number | null = null;
+            if (rule.maxTotal != null || dynamicLimit != null) {
+              const staticMaxTotal = rule.maxTotal ?? Infinity;
+              effectiveMaxTotal = dynamicLimit != null
+                ? Math.min(staticMaxTotal, dynamicLimit)
+                : staticMaxTotal;
+            }
+
+            if (effectiveMaxTotal != null && totalAmountTx > effectiveMaxTotal) {
+              throw new AppError(
+                `Ticket total exceeded maxTotal (${effectiveMaxTotal.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
+                400
+              );
             }
           }
         }
@@ -1960,3 +2164,4 @@ export const TicketRepository = {
 };
 
 export default TicketRepository;
+

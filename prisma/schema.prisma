@@ -87,22 +87,22 @@ model User {
   commissionPolicyJson Json? // Política de comisiones jerárquica
   settings             Json? // Configuraciones del usuario (print, theme, etc.)
 
-  activities          ActivityLog[]
-  refreshTokens       RefreshToken[]
-  restrictionRules    RestrictionRule[]
-  ticketsCreated      Ticket[]
-  ticketsPaid         Ticket[]             @relation("TicketPaidBy")
-  TicketPayment       TicketPayment[]
-  ventana             Ventana?             @relation(fields: [ventanaId], references: [id])
-  multiplierOverrides MultiplierOverride[]
-  savedReports        SavedReport[]
-  exportJobs          ExportJob[]
-  alerts              Alert[]
-  apiKeys             ApiKey[]
-  accountStatements   AccountStatement[]
-  accountPayments      AccountPayment[]
-  accountPaymentsPaid  AccountPayment[]              @relation("AccountPaymentPaidBy")
-  accountPaymentsReversed AccountPayment[]          @relation("AccountPaymentReversedBy")
+  activities              ActivityLog[]
+  refreshTokens           RefreshToken[]
+  restrictionRules        RestrictionRule[]
+  ticketsCreated          Ticket[]
+  ticketsPaid             Ticket[]             @relation("TicketPaidBy")
+  TicketPayment           TicketPayment[]
+  ventana                 Ventana?             @relation(fields: [ventanaId], references: [id])
+  multiplierOverrides     MultiplierOverride[]
+  savedReports            SavedReport[]
+  exportJobs              ExportJob[]
+  alerts                  Alert[]
+  apiKeys                 ApiKey[]
+  accountStatements       AccountStatement[]
+  accountPayments         AccountPayment[]
+  accountPaymentsPaid     AccountPayment[]     @relation("AccountPaymentPaidBy")
+  accountPaymentsReversed AccountPayment[]     @relation("AccountPaymentReversedBy")
 
   @@index([code])
   @@index([email])
@@ -170,17 +170,17 @@ model Ticket {
   isWinner      Boolean      @default(false)
   sorteoId      String       @db.Uuid
   clienteNombre String?      @default("CLIENTE CONTADO") @db.VarChar(100)
-  
+
   // Campos de pago unificados
-  totalPayout      Float?    @default(0)     // Total de premios ganados
-  totalPaid        Float?    @default(0)     // Total pagado acumulado
-  remainingAmount  Float?    @default(0)     // Monto pendiente de pago
-  totalCommission  Float?    @default(0)     // Total de comisiones (suma de jugadas)
-  lastPaymentAt    DateTime?                 // Fecha del último pago
-  paidById         String?   @db.Uuid        // Usuario que realizó el último pago
-  paymentMethod    String?                   // Método del último pago (cash|transfer|check)
-  paymentNotes     String?                   // Notas del último pago
-  paymentHistory   Json?                     // Historial completo de pagos
+  totalPayout     Float?    @default(0) // Total de premios ganados
+  totalPaid       Float?    @default(0) // Total pagado acumulado
+  remainingAmount Float?    @default(0) // Monto pendiente de pago
+  totalCommission Float?    @default(0) // Total de comisiones (suma de jugadas)
+  lastPaymentAt   DateTime? // Fecha del último pago
+  paidById        String?   @db.Uuid // Usuario que realizó el último pago
+  paymentMethod   String? // Método del último pago (cash|transfer|check)
+  paymentNotes    String? // Notas del último pago
+  paymentHistory  Json? // Historial completo de pagos
 
   jugadas       Jugada[]
   loteria       Loteria         @relation(fields: [loteriaId], references: [id])
@@ -316,6 +316,10 @@ model RestrictionRule {
   appliesToDate      DateTime?
   appliesToHour      Int?
   isActive           Boolean   @default(true)
+  isAutoDate         Boolean   @default(false)
+  baseAmount         Float? // Monto base para restricciones por porcentaje
+  salesPercentage    Float? // Porcentaje de ventas permitido (0-100)
+  appliesToVendedor  Boolean   @default(false) // Si aplica por vendedor o globalmente
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   salesCutoffMinutes Int?
@@ -323,14 +327,16 @@ model RestrictionRule {
   multiplierId       String?   @db.Uuid
   message            String?   @db.VarChar(255)
 
-  banca   Banca?   @relation(fields: [bancaId], references: [id])
-  user    User?    @relation(fields: [userId], references: [id])
-  ventana Ventana? @relation(fields: [ventanaId], references: [id])
-  loteria Loteria? @relation(fields: [loteriaId], references: [id])
+  banca      Banca?             @relation(fields: [bancaId], references: [id])
+  user       User?              @relation(fields: [userId], references: [id])
+  ventana    Ventana?           @relation(fields: [ventanaId], references: [id])
+  loteria    Loteria?           @relation(fields: [loteriaId], references: [id])
   multiplier LoteriaMultiplier? @relation(fields: [multiplierId], references: [id])
 
   @@index([loteriaId])
   @@index([multiplierId])
+  @@index([isAutoDate, isActive])
+  @@index([salesPercentage])
 }
 
 model LoteriaMultiplier {
@@ -345,9 +351,9 @@ model LoteriaMultiplier {
   updatedAt         DateTime       @updatedAt
   kind              MultiplierKind @default(NUMERO)
 
-  jugadasAtSale    Jugada[] @relation("JugadaMultiplierAtSale")
-  loteria          Loteria  @relation(fields: [loteriaId], references: [id])
-  appliedInSorteos Sorteo[] @relation("SorteoExtraMultiplier")
+  jugadasAtSale    Jugada[]          @relation("JugadaMultiplierAtSale")
+  loteria          Loteria           @relation(fields: [loteriaId], references: [id])
+  appliedInSorteos Sorteo[]          @relation("SorteoExtraMultiplier")
   restrictionRules RestrictionRule[]
 
   @@index([loteriaId, kind, isActive])
@@ -533,41 +539,41 @@ model Goal {
 }
 
 model AccountStatement {
-  id                   String    @id @default(uuid()) @db.Uuid
-  date                 DateTime  @db.Date
-  month                String    @db.VarChar(7) // YYYY-MM
-  ventanaId            String?   @db.Uuid
-  vendedorId           String?   @db.Uuid
-  
+  id         String   @id @default(uuid()) @db.Uuid
+  date       DateTime @db.Date
+  month      String   @db.VarChar(7) // YYYY-MM
+  ventanaId  String?  @db.Uuid
+  vendedorId String?  @db.Uuid
+
   // Totales del día
-  totalSales           Float     @default(0)
-  totalPayouts         Float     @default(0)
-  
+  totalSales   Float @default(0)
+  totalPayouts Float @default(0)
+
   // Comisiones (informativas)
-  listeroCommission    Float     @default(0)
-  vendedorCommission   Float     @default(0)
-  
+  listeroCommission  Float @default(0)
+  vendedorCommission Float @default(0)
+
   // Saldo y pagos
-  balance              Float     @default(0)
-  totalPaid            Float     @default(0)
-  remainingBalance     Float     @default(0)
-  
+  balance          Float @default(0)
+  totalPaid        Float @default(0)
+  remainingBalance Float @default(0)
+
   // Estado
-  isSettled            Boolean   @default(false)
-  canEdit              Boolean   @default(true)
-  
+  isSettled Boolean @default(false)
+  canEdit   Boolean @default(true)
+
   // Metadatos
-  ticketCount          Int       @default(0)
-  
+  ticketCount Int @default(0)
+
   // Timestamps
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // Relaciones
-  ventana              Ventana?  @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
-  vendedor             User?     @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
-  payments             AccountPayment[]
-  
+  ventana  Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
+  vendedor User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
+  payments AccountPayment[]
+
   @@unique([date, ventanaId], map: "account_statements_date_ventana_unique")
   @@unique([date, vendedorId], map: "account_statements_date_vendedor_unique")
   @@index([month])
@@ -578,49 +584,49 @@ model AccountStatement {
 }
 
 model AccountPayment {
-  id                   String    @id @default(uuid()) @db.Uuid
-  
+  id String @id @default(uuid()) @db.Uuid
+
   // Relación con estado de cuenta
-  accountStatementId   String    @db.Uuid
-  
+  accountStatementId String @db.Uuid
+
   // Identificación del día
-  date                 DateTime  @db.Date
-  month                String    @db.VarChar(7) // YYYY-MM
-  
+  date  DateTime @db.Date
+  month String   @db.VarChar(7) // YYYY-MM
+
   // Relaciones
-  ventanaId            String?   @db.Uuid
-  vendedorId           String?   @db.Uuid
-  
+  ventanaId  String? @db.Uuid
+  vendedorId String? @db.Uuid
+
   // Detalles del pago/cobro
-  amount               Float
-  type                 String    @db.VarChar(20) // 'payment' | 'collection'
-  method               String    @db.VarChar(20) // 'cash' | 'transfer' | 'check' | 'other'
-  notes                String?
-  
+  amount Float
+  type   String  @db.VarChar(20) // 'payment' | 'collection'
+  method String  @db.VarChar(20) // 'cash' | 'transfer' | 'check' | 'other'
+  notes  String?
+
   // Estado
-  isFinal              Boolean   @default(false)
-  isReversed           Boolean   @default(false)
-  reversedAt           DateTime?
-  reversedBy           String?   @db.Uuid
-  
+  isFinal    Boolean   @default(false)
+  isReversed Boolean   @default(false)
+  reversedAt DateTime?
+  reversedBy String?   @db.Uuid
+
   // Auditoría
-  paidById             String    @db.Uuid
-  paidByName           String    @db.VarChar(255)
-  
+  paidById   String @db.Uuid
+  paidByName String @db.VarChar(255)
+
   // Idempotencia
-  idempotencyKey       String?   @unique
-  
+  idempotencyKey String? @unique
+
   // Timestamps
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // Relaciones
-  accountStatement     AccountStatement @relation(fields: [accountStatementId], references: [id], onDelete: Cascade)
-  ventana              Ventana?        @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
-  vendedor             User?           @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
-  paidBy               User            @relation("AccountPaymentPaidBy", fields: [paidById], references: [id])
-  reversedByUser       User?           @relation("AccountPaymentReversedBy", fields: [reversedBy], references: [id])
-  
+  accountStatement AccountStatement @relation(fields: [accountStatementId], references: [id], onDelete: Cascade)
+  ventana          Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
+  vendedor         User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
+  paidBy           User             @relation("AccountPaymentPaidBy", fields: [paidById], references: [id])
+  reversedByUser   User?            @relation("AccountPaymentReversedBy", fields: [reversedBy], references: [id])
+
   @@index([accountStatementId])
   @@index([date])
   @@index([month])
@@ -730,5 +736,3 @@ enum JobStatus {
   FAILED
   CANCELLED
 }
-
-
