@@ -107,6 +107,7 @@ interface DashboardSummary {
   totalCommissions: number;
   commissionUser: number;
   commissionVentana: number;
+  commissionVentanaTotal: number; // Alias para compatibilidad con frontend
   totalTickets: number;
   winningTickets: number;
   net: number;
@@ -1069,6 +1070,7 @@ export const DashboardService = {
       totalCommissions,
       commissionUser,
       commissionVentana,
+      commissionVentanaTotal: commissionVentana, // Alias para compatibilidad con frontend
       totalTickets,
       winningTickets,
       net,
@@ -1488,39 +1490,81 @@ export const DashboardService = {
 
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(previousFilters);
     const baseFilters = buildTicketBaseFilters("t", previousFilters, fromDateStr, toDateStr);
+    
+    // Calcular comisiones de ventana desde políticas para el período anterior
+    const { totalVentanaCommission } = await computeVentanaCommissionFromPolicies(previousFilters);
 
     const previousRows = await prisma.$queryRaw<
       Array<{
         total_sales: number;
-        total_commissions: number;
+        total_payouts: number;
+        total_tickets: number;
+        winning_tickets: number;
+        commission_user: number;
+        commission_ventana: number;
       }>
     >(
       Prisma.sql`
         WITH tickets_in_range AS (
           SELECT
+            t.id,
             t."totalAmount",
-            t."totalCommission"
+            t."totalPayout",
+            t."isWinner"
           FROM "Ticket" t
           WHERE ${baseFilters}
         ),
         ticket_summary AS (
           SELECT
             COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
-            COALESCE(SUM(t."totalCommission"), 0) AS total_commissions
+            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts,
+            COUNT(DISTINCT t.id) AS total_tickets,
+            COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) AS winning_tickets
           FROM tickets_in_range t
+        ),
+        commission_summary AS (
+          SELECT
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana
+          FROM "Jugada" j
+          JOIN tickets_in_range t ON t.id = j."ticketId"
+          WHERE j."deletedAt" IS NULL
         )
         SELECT
-          total_sales,
-          total_commissions
-        FROM ticket_summary
+          ts.total_sales,
+          ts.total_payouts,
+          ts.total_tickets,
+          ts.winning_tickets,
+          COALESCE(cs.commission_user, 0) AS commission_user,
+          COALESCE(cs.commission_ventana, 0) AS commission_ventana
+        FROM ticket_summary ts
+        LEFT JOIN commission_summary cs ON TRUE
       `
     );
 
-    const row = previousRows[0] || { total_sales: 0, total_commissions: 0 };
+    const row = previousRows[0] || {
+      total_sales: 0,
+      total_payouts: 0,
+      total_tickets: 0,
+      winning_tickets: 0,
+      commission_user: 0,
+      commission_ventana: 0,
+    };
+
+    const commissionUser = Number(row.commission_user) || 0;
+    const commissionVentanaRaw = Number(row.commission_ventana) || 0;
+    const commissionVentana = commissionVentanaRaw + totalVentanaCommission;
+    const totalCommissions = commissionUser + commissionVentana;
 
     return {
       sales: Number(row.total_sales) || 0,
-      commissions: Number(row.total_commissions) || 0,
+      payouts: Number(row.total_payouts) || 0,
+      tickets: Number(row.total_tickets) || 0,
+      winners: Number(row.winning_tickets) || 0,
+      commissions: totalCommissions,
+      commissionUser,
+      commissionVentana,
+      commissionVentanaTotal: commissionVentana, // Alias para compatibilidad con frontend
       range: {
         fromAt: previousFromDate.toISOString(),
         toAt: previousToDate.toISOString(),
