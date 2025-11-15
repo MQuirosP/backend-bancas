@@ -112,12 +112,13 @@ export const TicketController = {
         scope,
         role: me.role,
         effectiveFilters,
-        dateRange: {
+        dateRange: dateRange ? {
           fromAt: dateRange.fromAt.toISOString(),
           toAt: dateRange.toAt.toISOString(),
           tz: dateRange.tz,
           description: dateRange.description,
-        }
+        } : null,
+        skippedDateFilter: hasSorteoId && !hasExplicitDateRange,
       }
     });
 
