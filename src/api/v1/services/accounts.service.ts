@@ -523,8 +523,9 @@ export async function calculateDayStatement(
   // CRITICAL: Determinar el tipo de statement que necesitamos antes de buscar/crear
   // El constraint requiere que solo uno de ventanaId o vendedorId sea no-null
   // Además, hay constraints únicos: (date, ventanaId) y (date, vendedorId)
-  const targetVentanaId = vendedorId ? null : (ventanaId ?? null);
-  const targetVendedorId = vendedorId ?? null;
+  // Convertir null a undefined para compatibilidad con TypeScript
+  const targetVentanaId = vendedorId ? undefined : (ventanaId ?? undefined);
+  const targetVendedorId = vendedorId ?? undefined;
 
   // Crear o actualizar estado de cuenta primero con los valores correctos
   // findOrCreate ya maneja correctamente la búsqueda según ventanaId o vendedorId
@@ -539,16 +540,16 @@ export async function calculateDayStatement(
   // No podemos cambiar el tipo de un statement existente porque violaría los constraints únicos
   const statementIsVentana = statement.ventanaId !== null && statement.vendedorId === null;
   const statementIsVendedor = statement.vendedorId !== null && statement.ventanaId === null;
-  const needsVentana = targetVentanaId !== null;
-  const needsVendedor = targetVendedorId !== null;
+  const needsVentana = targetVentanaId !== undefined;
+  const needsVendedor = targetVendedorId !== undefined;
 
   // Si el tipo no coincide (caso edge: statement corrupto), buscar el correcto
   let finalStatement = statement;
   if ((needsVentana && !statementIsVentana) || (needsVendedor && !statementIsVendedor)) {
     // Buscar específicamente el statement correcto usando findByDate
     const correctStatement = await AccountStatementRepository.findByDate(date, {
-      ventanaId: targetVentanaId ?? undefined,
-      vendedorId: targetVendedorId ?? undefined,
+      ventanaId: targetVentanaId,
+      vendedorId: targetVendedorId,
     });
     
     if (correctStatement) {
@@ -603,8 +604,8 @@ export async function calculateDayStatement(
     isSettled,
     canEdit,
     ticketCount,
-    ventanaId: effectiveVentanaId,
-    vendedorId: effectiveVendedorId,
+    ventanaId: finalStatement.ventanaId,
+    vendedorId: finalStatement.vendedorId,
   };
 }
 
