@@ -114,6 +114,9 @@ export const SorteoController = {
       groupBy,
     });
 
+    // Type guard para verificar si tiene paginación
+    const hasPagination = !result.meta.grouped && 'page' in result.meta;
+
     req.logger?.info({
       layer: "controller",
       action: "SORTEO_LIST_RESULT",
@@ -121,12 +124,12 @@ export const SorteoController = {
         total: result.meta.total,
         grouped: result.meta.grouped,
         groupBy: result.meta.groupBy,
-        ...(result.meta.grouped
-          ? {}
-          : {
-              page: result.meta.page,
-              totalPages: result.meta.totalPages,
-            }),
+        ...(hasPagination
+          ? {
+              page: (result.meta as any).page,
+              totalPages: (result.meta as any).totalPages,
+            }
+          : {}),
         message: "Resultado de lista",
       },
     });
