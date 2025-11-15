@@ -29,6 +29,27 @@ router.get(
   RestrictionRuleController.list
 );
 
+/**
+ * 🔒 ADMIN: Endpoint de monitoreo del cron job
+ * DEBE ir ANTES de /:id para evitar conflictos de rutas
+ * GET /api/v1/restrictions/cron-health
+ */
+router.get(
+  "/cron-health",
+  requireAdmin,
+  RestrictionRuleController.getCronHealth
+);
+
+/**
+ * 🔒 ADMIN: Ejecutar cron manualmente desde el frontend
+ * POST /api/v1/restrictions/cron-health/execute
+ */
+router.post(
+  "/cron-health/execute",
+  requireAdmin,
+  RestrictionRuleController.executeCronManually
+);
+
 router.get(
   "/:id",
   requireAuth,                          // ← antes requireAdmin

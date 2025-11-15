@@ -7,6 +7,7 @@ import {
 } from "../dto/restrictionRule.dto";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 import prisma from "../../../core/prismaClient";
+import { getCRLocalComponents } from "../../../utils/businessDate";
 
 /**
  * Normaliza y valida el campo number
@@ -128,17 +129,58 @@ export const RestrictionRuleService = {
       return created;
     }
 
+    // Si isAutoDate es true, crear una sola restricción sin number (se actualiza automáticamente)
+    if (data.isAutoDate) {
+      const created = await RestrictionRuleRepository.create({
+        bancaId: data.bancaId ?? null,
+        ventanaId: data.ventanaId ?? null,
+        userId: data.userId ?? null,
+        isActive: data.isActive ?? true,
+        isAutoDate: true,
+        number: null, // Se actualizará automáticamente por el cron job
+        maxAmount: data.maxAmount ?? null,
+        maxTotal: data.maxTotal ?? null,
+        baseAmount: data.baseAmount ?? null,
+        salesPercentage: data.salesPercentage ?? null,
+        appliesToVendedor: data.appliesToVendedor ?? false,
+        appliesToDate: data.appliesToDate ?? null,
+        appliesToHour: data.appliesToHour ?? null,
+        salesCutoffMinutes: null,
+        message: data.message?.trim() ?? null,
+        loteriaId: null,
+        multiplierId: null,
+      });
+      await ActivityService.log({
+        userId: actorId,
+        action: ActivityType.SYSTEM_ACTION,
+        targetType: "RESTRICTION_RULE",
+        targetId: created.id,
+        details: { created, isAutoDate: true },
+        layer: "service",
+      });
+      return created;
+    }
+
     // Normalizar number a array
     const numbers = normalizeAndValidateNumbers(data.number);
-    
-    // Extraer number del data para crear el payload base
-    const { number: _, ...baseData } = data;
     
     // Si no hay números, crear una sola restricción sin number
     if (numbers.length === 0) {
       const created = await RestrictionRuleRepository.create({
-        ...baseData,
+        bancaId: data.bancaId ?? null,
+        ventanaId: data.ventanaId ?? null,
+        userId: data.userId ?? null,
+        isActive: data.isActive ?? true,
+        isAutoDate: data.isAutoDate ?? false,
         number: null,
+        maxAmount: data.maxAmount ?? null,
+        maxTotal: data.maxTotal ?? null,
+        baseAmount: data.baseAmount ?? null,
+        salesPercentage: data.salesPercentage ?? null,
+        appliesToVendedor: data.appliesToVendedor ?? false,
+        appliesToDate: data.appliesToDate ?? null,
+        appliesToHour: data.appliesToHour ?? null,
+        salesCutoffMinutes: data.salesCutoffMinutes ?? null,
         message: data.message?.trim() ?? null,
         loteriaId: null,
         multiplierId: null,
@@ -158,8 +200,20 @@ export const RestrictionRuleService = {
     const restrictions = await Promise.all(
       numbers.map((num) =>
         RestrictionRuleRepository.create({
-          ...baseData,
+          bancaId: data.bancaId ?? null,
+          ventanaId: data.ventanaId ?? null,
+          userId: data.userId ?? null,
+          isActive: data.isActive ?? true,
+          isAutoDate: data.isAutoDate ?? false,
           number: num, // Cada registro tiene un solo número
+          maxAmount: data.maxAmount ?? null,
+          maxTotal: data.maxTotal ?? null,
+          baseAmount: data.baseAmount ?? null,
+          salesPercentage: data.salesPercentage ?? null,
+          appliesToVendedor: data.appliesToVendedor ?? false,
+          appliesToDate: data.appliesToDate ?? null,
+          appliesToHour: data.appliesToHour ?? null,
+          salesCutoffMinutes: data.salesCutoffMinutes ?? null,
           message: data.message?.trim() ?? null,
           loteriaId: null,
           multiplierId: null,
@@ -288,5 +342,112 @@ export const RestrictionRuleService = {
 
   async list(query: any) {
     return RestrictionRuleRepository.list(query);
+  },
+
+  async getCronHealth() {
+    // Ejecutar función SQL que retorna el estado del cron job
+    const result = await prisma.$queryRaw<
+      Array<{
+        job_name: string;
+        last_success: Date | null;
+        hours_since_last_run: number | null;
+        is_healthy: boolean;
+        expected_number: string;
+        current_number: string;
+        mismatch_detected: boolean;
+      }>
+    >`SELECT * FROM check_cron_health()`;
+
+    // Si no hay resultados, retornar un objeto por defecto
+    if (!result || result.length === 0) {
+      const crNow = getCRLocalComponents(new Date());
+      const expectedDay = String(crNow.day).padStart(2, "0");
+      return [
+        {
+          job_name: "update_auto_restrictions",
+          last_success: null,
+          hours_since_last_run: null,
+          is_healthy: false,
+          expected_number: expectedDay,
+          current_number: "N/A",
+          mismatch_detected: false,
+        },
+      ];
+    }
+
+    return result.map((row) => ({
+      job_name: row.job_name,
+      last_success: row.last_success,
+      hours_since_last_run: row.hours_since_last_run,
+      is_healthy: row.is_healthy,
+      expected_number: row.expected_number,
+      current_number: row.current_number,
+      mismatch_detected: row.mismatch_detected,
+    }));
+  },
+
+  async executeCronManually() {
+    // Ejecutar manualmente la función de actualización
+    try {
+      await prisma.$executeRawUnsafe(`SELECT update_auto_date_restrictions();`);
+      
+      // Obtener el último log para retornar información
+      const lastLog = await prisma.$queryRaw<Array<{
+        id: string;
+        job_name: string;
+        status: string;
+        executed_at: Date;
+        affected_rows: number | null;
+        effective_number: string | null;
+        error_message: string | null;
+      }>>`
+        SELECT id, job_name, status, executed_at, affected_rows, effective_number, error_message
+        FROM cron_execution_logs
+        WHERE job_name = 'update_auto_restrictions'
+        ORDER BY executed_at DESC
+        LIMIT 1
+      `;
+
+      if (lastLog && lastLog.length > 0) {
+        const log = lastLog[0];
+        return {
+          success: log.status === 'success',
+          executed_at: log.executed_at,
+          affected_rows: log.affected_rows,
+          effective_number: log.effective_number,
+          error_message: log.error_message,
+        };
+      }
+
+      return {
+        success: true,
+        executed_at: new Date(),
+        affected_rows: null,
+        effective_number: null,
+        error_message: null,
+      };
+    } catch (error: any) {
+      // Si hay error, obtener el último log de error
+      const lastErrorLog = await prisma.$queryRaw<Array<{
+        error_message: string | null;
+        executed_at: Date;
+      }>>`
+        SELECT error_message, executed_at
+        FROM cron_execution_logs
+        WHERE job_name = 'update_auto_restrictions'
+          AND status = 'error'
+        ORDER BY executed_at DESC
+        LIMIT 1
+      `;
+
+      throw new AppError(
+        error.message || 'Error ejecutando cron manualmente',
+        500,
+        {
+          error_message: lastErrorLog?.[0]?.error_message || error.message,
+          executed_at: lastErrorLog?.[0]?.executed_at || new Date(),
+        }
+      );
+    }
   },
 };

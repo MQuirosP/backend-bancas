@@ -43,4 +43,14 @@ export const RestrictionRuleController = {
     const result = await RestrictionRuleService.list(req.query as any);
     res.json({ success: true, data: result.data, meta: result.meta });
   },
+
+  async getCronHealth(req: AuthenticatedRequest, res: Response) {
+    const health = await RestrictionRuleService.getCronHealth();
+    res.json({ success: true, data: health });
+  },
+
+  async executeCronManually(req: AuthenticatedRequest, res: Response) {
+    const result = await RestrictionRuleService.executeCronManually();
+    res.json({ success: true, data: result });
+  },
 };
