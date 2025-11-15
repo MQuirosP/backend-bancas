@@ -122,6 +122,47 @@ function toCostaRicaDateString(date: Date): string {
   return local.toISOString().split("T")[0];
 }
 
+/**
+ * Formatea un Date a ISO 8601 con offset de Costa Rica (-06:00)
+ * El Date viene de PostgreSQL que ya aplicó AT TIME ZONE 'America/Costa_Rica'.
+ * PostgreSQL devuelve un timestamp sin timezone que representa CR time,
+ * pero Prisma lo interpreta como UTC. Necesitamos ajustarlo para formatearlo correctamente.
+ * 
+ * Ejemplo: "2025-01-14T00:00:00-06:00"
+ */
+function formatCostaRicaISO(date: Date): string {
+  // Cuando PostgreSQL devuelve un timestamp con AT TIME ZONE 'America/Costa_Rica',
+  // devuelve un timestamp sin timezone que representa CR time.
+  // Prisma lo interpreta como UTC, así que necesitamos ajustarlo.
+  // Si PostgreSQL devolvió "2025-01-14 00:00:00" (CR), Prisma lo convierte a
+  // un Date que representa "2025-01-14 00:00:00 UTC" (incorrecto, debería ser 06:00 UTC).
+  // Para corregirlo, restamos el offset para obtener la hora local de CR.
+  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
+  const crDate = new Date(date.getTime() - offsetMs);
+  
+  const year = crDate.getUTCFullYear();
+  const month = String(crDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(crDate.getUTCDate()).padStart(2, '0');
+  const hours = String(crDate.getUTCHours()).padStart(2, '0');
+  const minutes = String(crDate.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(crDate.getUTCSeconds()).padStart(2, '0');
+  
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}-06:00`;
+}
+
+/**
+ * Formatea un Date a YYYY-MM-DD en zona horaria de Costa Rica
+ */
+function formatCostaRicaDate(date: Date): string {
+  // Similar a formatCostaRicaISO, pero solo la fecha
+  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
+  const crDate = new Date(date.getTime() - offsetMs);
+  const year = crDate.getUTCFullYear();
+  const month = String(crDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(crDate.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function getBusinessDateRangeStrings(filters: DashboardFilters) {
   const fromDateStr = toCostaRicaDateString(filters.fromDate);
   const toDateStr = toCostaRicaDateString(filters.toDate);
@@ -1191,14 +1232,23 @@ export const DashboardService = {
     );
 
     return {
-      timeSeries: result.map(row => ({
-        date: row.date_bucket.toISOString(),
-        sales: Number(row.total_sales) || 0,
-        commissions: Number(row.total_commissions) || 0,
-        tickets: Number(row.total_tickets) || 0,
-      })),
+      timeSeries: result.map(row => {
+        // Formatear timestamp con offset de Costa Rica (-06:00)
+        const timestamp = formatCostaRicaISO(row.date_bucket);
+        // Formatear date como YYYY-MM-DD en zona horaria de Costa Rica
+        const date = formatCostaRicaDate(row.date_bucket);
+        
+        return {
+          date, // YYYY-MM-DD (fecha en CR)
+          timestamp, // YYYY-MM-DDTHH:mm:ss-06:00 (timestamp en CR)
+          sales: Number(row.total_sales) || 0,
+          commissions: Number(row.total_commissions) || 0,
+          tickets: Number(row.total_tickets) || 0,
+        };
+      }),
       meta: {
         interval,
+        timezone: 'America/Costa_Rica', // ✅ Indicar zona horaria usada
         dataPoints: result.length,
       },
     };
