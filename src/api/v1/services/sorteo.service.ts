@@ -880,9 +880,11 @@ export const SorteoService = {
             },
           },
         },
-        orderBy: {
-          scheduledAt: "asc", // ASC para calcular acumulado del más antiguo al más reciente
-        },
+        orderBy: [
+          { scheduledAt: "asc" }, // ASC para calcular acumulado del más antiguo al más reciente
+          { loteriaId: "asc" }, // Orden secundario por loteriaId para consistencia cuando hay misma hora
+          { id: "asc" }, // Orden terciario por ID para garantizar orden consistente
+        ],
       });
 
       // Obtener datos financieros agregados por sorteo
@@ -1030,13 +1032,29 @@ export const SorteoService = {
       });
 
       // Ordenar por scheduledAt DESC (más reciente primero) para la respuesta
-      // pero manteniendo el acumulado ya calculado correctamente
-      const data = dataWithAccumulated
-        .sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime())
-        .map((item) => ({
-          ...item,
-          scheduledAt: formatIsoLocal(item.scheduledAt), // Formatear después de ordenar
-        }));
+      // IMPORTANTE: El acumulado se calcula del más antiguo al más reciente,
+      // pero al ordenar DESC necesitamos mantener el acumulado correcto.
+      // El acumulado de cada sorteo es independiente del orden de visualización.
+      // Usamos el mismo criterio de ordenamiento secundario que en la consulta SQL
+      // para garantizar consistencia visual cuando hay sorteos a la misma hora.
+      const sortedData = dataWithAccumulated.sort((a, b) => {
+        const dateA = new Date(a.scheduledAt).getTime();
+        const dateB = new Date(b.scheduledAt).getTime();
+        if (dateA !== dateB) {
+          return dateB - dateA; // DESC por fecha (más reciente primero)
+        }
+        // Si tienen la misma fecha/hora, usar mismo orden que en SQL:
+        // primero por loteriaId, luego por sorteoId
+        if (a.loteriaId !== b.loteriaId) {
+          return a.loteriaId.localeCompare(b.loteriaId);
+        }
+        return a.sorteoId.localeCompare(b.sorteoId);
+      });
+
+      const data = sortedData.map((item) => ({
+        ...item,
+        scheduledAt: formatIsoLocal(item.scheduledAt), // Formatear después de ordenar
+      }));
 
       // Calcular totales agregados
       const totals = {
