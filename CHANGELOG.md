@@ -1,3 +1,147 @@
+## 🚀 v1.2.0 - Evaluated Summary, Advanced Filters & Timezone Fixes
+
+📅 **Fecha:** 2025-01-15
+🔖 **Rama:** `master`
+
+### ✳️ Nuevas funcionalidades
+
+- **Endpoint `GET /api/v1/sorteos/evaluated-summary`**
+  - Resumen financiero de sorteos evaluados con datos agregados
+  - Campos: `totalSales`, `totalCommission`, `totalPrizes`, `subtotal`, `accumulated`
+  - Flag `isReventado` basado en `extraMultiplierId` o `extraMultiplierX`
+  - Campo `winningNumber` del sorteo
+  - Campos `chronologicalIndex` y `totalChronological` para orden cronológico explícito
+  - Ordenamiento consistente: `scheduledAt ASC`, `loteriaId ASC`, `id ASC` para cálculo de acumulado
+  - Filtros: `date`, `fromDate`, `toDate`, `scope`, `loteriaId`
+  - Documentación: `docs/EJEMPLO_RESPUESTA_EVALUATED_SUMMARY.md`, `docs/GUIA_FE_EVALUATED_SUMMARY.md`
+
+- **Filtros avanzados en `GET /api/v1/tickets`**
+  - `loteriaId`: Filtrar por lotería específica
+  - `sorteoId`: Filtrar por sorteo específico (con regla especial: no aplicar fechas cuando hay `sorteoId`)
+  - `multiplierId`: Filtrar tickets con al menos una jugada con ese multiplicador (todas las jugadas se devuelven)
+  - `winnersOnly`: Filtrar solo tickets ganadores (`isWinner: true`)
+  - Relación `multiplier` incluida en `jugadas` para población completa
+  - Documentación: `docs/DETALLES_IMPLEMENTACION_FE.md`
+
+- **Agrupación de sorteos por hora (`groupBy`)**
+  - Parámetro `groupBy` en `GET /api/v1/sorteos`: `'loteria-hour'` o `'hour'`
+  - Agrupa sorteos por `loteriaId + hora` o solo por `hora` (cuando ya hay `loteriaId` filtrado)
+  - Extrae hora directamente de `scheduledAt` usando `TO_CHAR` en PostgreSQL
+  - Respuesta incluye: `loteriaId`, `hour`, `hour24`, `mostRecentSorteoId`, `sorteoIds`
+  - Optimizado con `GROUP BY` en SQL y CTEs para `mostRecentSorteoId`
+  - Documentación: `docs/DETALLES_SORTEOS_AGRUPADOS_FE.md`
+
+- **Búsqueda en `GET /api/v1/activity-logs`**
+  - Parámetro `search` para buscar en `action`, `targetType`, `targetId`, `user.name`, `user.username`
+  - Búsqueda case-insensitive con `OR` entre campos
+
+### 🐛 Bug Fixes (CRÍTICOS)
+
+- **Cálculo incorrecto de `totalPrizes` en `evaluated-summary`**
+  - Antes: Sumaba `totalPayout` de todos los tickets (incluyendo no ganadores con `totalPayout = 0`)
+  - Ahora: Suma `totalPayout` solo de tickets con `isWinner: true`
+  - Impacto: Corrige el cálculo de premios ganados en el resumen de sorteos evaluados
+
+- **Error aritmético en `accumulated` balance**
+  - Antes: Orden inconsistente cuando múltiples sorteos ocurrían a la misma hora
+  - Ahora: Orden determinístico con `scheduledAt ASC`, `loteriaId ASC`, `id ASC`
+  - Agregados campos `chronologicalIndex` y `totalChronological` para claridad del frontend
+  - Impacto: El acumulado se calcula correctamente del más antiguo al más reciente
+
+- **Comisiones de listero mostrando 0 cuando deberían tener valor**
+  - Antes: No se buscaban usuarios VENTANA por ventana individualmente cuando no había `ventanaUserPolicy` global
+  - Ahora: Busca usuarios VENTANA por ventana específica y aplica sus políticas correctamente
+  - Cuando `dimension=ventana` y hay `ventanaUserPolicy`: aplica política solo a la ventana del usuario VENTANA
+  - Para otras ventanas: usa políticas de ventana/banca directamente
+  - Impacto: Las comisiones de listero se calculan correctamente desde políticas activas
+
+- **`commissionVentanaTotal` faltante en `/admin/dashboard`**
+  - Antes: `getSummary` devolvía `commissionVentana` pero frontend buscaba `commissionVentanaTotal`
+  - Ahora: Agregado alias `commissionVentanaTotal` en `getSummary` para compatibilidad
+  - `calculatePreviousPeriod` ahora calcula `commissionVentana` desde políticas usando `computeVentanaCommissionFromPolicies`
+  - Impacto: La card "Comisión Listero" en el dashboard muestra valores correctos
+
+- **`totalCommission` incorrecto en `/api/v1/commissions`**
+  - Antes: No se calculaba correctamente según la dimensión (ventana vs vendedor)
+  - Ahora: `totalCommission = commissionListero` cuando `dimension=ventana`, `totalCommission = commissionVendedor` cuando `dimension=vendedor`
+  - Comisiones siempre calculadas desde políticas activas (no snapshot para ventana)
+  - Impacto: Los totales de comisión coinciden con el dashboard
+
+- **Constraint violations en `AccountStatement`**
+  - Antes: Violación de `@@check` constraint (`AccountStatement_one_relation_check`) y unique constraint (`P2002`)
+  - Ahora: Lógica refactorizada para asegurar solo uno de `ventanaId` o `vendedorId` es no-null
+  - `findByDate` explícitamente establece `ventanaId = null` cuando hay `vendedorId` y viceversa
+  - Verificación de tipo correcto antes de actualizar (evita actualizar ventana statement con datos de vendedor)
+  - Impacto: Elimina errores de constraint al calcular estados de cuenta
+
+- **Timestamps en zona horaria incorrecta en `GET /api/v1/admin/dashboard/timeseries`**
+  - Antes: Timestamps en UTC causaban que el frontend mostrara el día incorrecto
+  - Ahora: Timestamps formateados con offset `-06:00` explícito (`YYYY-MM-DDTHH:mm:ss-06:00`)
+  - Campo `date` como `YYYY-MM-DD` en zona horaria de Costa Rica
+  - Campo `timezone: 'America/Costa_Rica'` en `meta`
+  - Impacto: El frontend muestra correctamente el día al interpretar timestamps
+
+### ⚙️ Mejoras
+
+- **Optimización de queries SQL**
+  - Uso de CTEs (Common Table Expressions) para subqueries complejas
+  - `GROUP BY` optimizado con todas las expresiones necesarias
+  - Ordenamiento en JavaScript cuando `STRING_AGG` no requiere `ORDER BY`
+
+- **Type safety mejorado**
+  - Type guards para manejar `meta` con y sin paginación según `groupBy`
+  - Conversión explícita de `null` a `undefined` para compatibilidad con tipos TypeScript
+
+- **Precisión en cálculos de comisión**
+  - Uso de `commissionAmount` directamente de `resolveCommission` en lugar de recalcular
+  - `finalMultiplierX` siempre `number` (no `null`)
+
+- **Documentación completa**
+  - Múltiples documentos creados para frontend con ejemplos y guías de implementación
+  - Documentación de estructura de respuesta y cómo interpretar campos
+
+### 📦 Archivos modificados
+
+- `src/api/v1/services/sorteo.service.ts` - Endpoint `evaluated-summary`, agrupación por hora
+- `src/api/v1/services/dashboard.service.ts` - Fix timezone en timeseries, `commissionVentanaTotal`
+- `src/api/v1/services/commissions.service.ts` - Cálculo correcto de comisiones de listero
+- `src/api/v1/services/accounts.service.ts` - Fixes de constraints en AccountStatement
+- `src/api/v1/services/activityLog.service.ts` - Búsqueda en activity logs
+- `src/repositories/ticket.repository.ts` - Filtros avanzados (loteriaId, sorteoId, multiplierId, winnersOnly)
+- `src/repositories/accountStatement.repository.ts` - Fixes de constraints
+- `src/repositories/activityLog.repository.ts` - Implementación de búsqueda
+- `src/api/v1/controllers/ticket.controller.ts` - Regla especial para `sorteoId` (no aplicar fechas)
+- `src/api/v1/controllers/sorteo.controller.ts` - Endpoint `evaluated-summary`, manejo de `groupBy`
+- `src/api/v1/validators/ticket.validator.ts` - Validación de nuevos filtros
+- `src/api/v1/validators/sorteo.validator.ts` - Validación de `groupBy`
+- `src/api/v1/validators/activityLog.validator.ts` - Validación de `search`
+
+### 🧪 Checklist de validación
+
+- ✅ `evaluated-summary` devuelve datos financieros correctos
+- ✅ `totalPrizes` solo incluye tickets ganadores
+- ✅ `accumulated` se calcula correctamente del más antiguo al más reciente
+- ✅ Filtros de tickets funcionan correctamente (`loteriaId`, `sorteoId`, `multiplierId`, `winnersOnly`)
+- ✅ Regla especial para `sorteoId` (no aplicar fechas) funciona
+- ✅ Agrupación por hora devuelve grupos correctos
+- ✅ Comisiones de listero se calculan correctamente desde políticas
+- ✅ `commissionVentanaTotal` presente en dashboard
+- ✅ `totalCommission` correcto según dimensión en `/api/v1/commissions`
+- ✅ AccountStatement no genera constraint violations
+- ✅ Timestamps en timeseries muestran día correcto en frontend
+- ✅ Búsqueda en activity-logs funciona correctamente
+
+### 🎯 Resultado
+
+✅ **Endpoint `evaluated-summary` funcional** - Resumen financiero completo de sorteos evaluados
+✅ **Filtros avanzados en tickets** - 4 nuevos filtros para búsqueda precisa
+✅ **Agrupación de sorteos por hora** - Optimizada con SQL GROUP BY
+✅ **7 bugs críticos corregidos** - Comisiones, constraints, timezone, cálculos
+✅ **Documentación completa** - Múltiples guías para frontend
+✅ **TypeScript compilation 100%** - Sin errores
+
+---
+
 ## 🚀 v1.1.1 - Accounts Statement Fixes & Restrictions Array Support
 
 📅 **Fecha:** 2025-11-06
