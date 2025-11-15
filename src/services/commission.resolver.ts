@@ -53,7 +53,7 @@ export interface CommissionSnapshot {
  * Valida estructura básica y vigencia de una política
  * Retorna null si JSON es malformado (logea WARN)
  */
-function parseCommissionPolicy(
+export function parseCommissionPolicy(
   policyJson: any,
   origin: "USER" | "VENTANA" | "BANCA"
 ): CommissionPolicy | null {
@@ -173,7 +173,7 @@ function ruleMatches(rule: CommissionRule, input: CommissionMatchInput): boolean
  * Encuentra la PRIMERA regla que aplica en una política (first match wins)
  * Retorna { percent, ruleId } o null si no hay match
  */
-function findMatchingRule(
+export function findMatchingRule(
   policy: CommissionPolicy,
   input: CommissionMatchInput
 ): { percent: number; ruleId: string | null } | null {

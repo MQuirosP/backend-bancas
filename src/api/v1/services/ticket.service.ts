@@ -6,6 +6,7 @@ import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 import { isWithinSalesHours, validateTicketAgainstRules } from "../../../utils/loteriaRules";
+import { prepareCommissionContext, preCalculateCommissions } from "../../../utils/commissionPrecalc";
 
 const CUTOFF_GRACE_MS = 5000;
 // Updated: Added clienteNombre field support
@@ -216,30 +217,66 @@ export const TicketService = {
         throw new AppError(rulesCheck.reason, 400);
       }
 
-      // 🧩 Normalizar para repo
-      const { ticket, warnings } = await TicketRepository.create(
+      // 🚀 OPTIMIZACIÓN: Pre-calcular comisiones fuera de la transacción
+      // Obtener políticas de comisión (una sola vez)
+      const [user, ventanaWithBanca] = await Promise.all([
+        prisma.user.findUnique({
+          where: { id: effectiveVendedorId },
+          select: { commissionPolicyJson: true },
+        }),
+        prisma.ventana.findUnique({
+          where: { id: ventanaId },
+          select: {
+            commissionPolicyJson: true,
+            banca: {
+              select: {
+                commissionPolicyJson: true,
+              },
+            },
+          },
+        }),
+      ]);
+
+      // Preparar contexto de comisiones (parsear y cachear políticas)
+      const commissionContext = await prepareCommissionContext(
+        effectiveVendedorId,
+        ventanaId,
+        ventana.bancaId,
+        user?.commissionPolicyJson ?? null,
+        ventanaWithBanca?.commissionPolicyJson ?? null,
+        ventanaWithBanca?.banca?.commissionPolicyJson ?? null
+      );
+
+      // 🧩 Normalizar jugadas para repo (sin comisiones aún)
+      const normalizedJugadas = jugadasIn.map((j) => {
+        const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
+        const isNumero = type === "NUMERO";
+        const number = isNumero ? j.number! : (j.reventadoNumber ?? j.number)!;
+        return {
+          type,
+          number,
+          reventadoNumber: isNumero ? null : number,
+          amount: j.amount,
+          multiplierId: isNumero ? ((j as any).multiplierId ?? null) : null,
+          finalMultiplierX: 0, // Se calculará en el repo
+        };
+      });
+
+      // 🧩 Crear ticket con método optimizado
+      const { ticket, warnings } = await TicketRepository.createOptimized(
         {
           loteriaId,
           sorteoId,
           ventanaId,
-          totalAmount: 0,
           clienteNombre: data.clienteNombre ?? null,
-          jugadas: jugadasIn.map((j) => {
-            const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
-            const isNumero = type === "NUMERO";
-            const number = isNumero ? j.number! : (j.reventadoNumber ?? j.number)!;
-            return {
-              type,
-              number,
-              reventadoNumber: isNumero ? null : number,
-              amount: j.amount,
-              multiplierId: isNumero ? ((j as any).multiplierId ?? null) : null,
-              finalMultiplierX: 0,
-            };
-          }),
-        } as any,
+          jugadas: normalizedJugadas,
+        },
         effectiveVendedorId,
-        { actorRole }
+        {
+          actorRole,
+          commissionContext, // Pasar contexto para cálculo rápido
+          scheduledAt: sorteo.scheduledAt,
+        }
       );
 
       // 🖨️ Obtener configuraciones de impresión del vendedor y ventana
