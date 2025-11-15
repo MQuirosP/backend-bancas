@@ -540,7 +540,10 @@ export async function calculateDayStatement(
   const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
   const canEdit = !isSettled;
 
-  const effectiveVentanaId = ventanaId ?? statement.ventanaId ?? null;
+  // CRITICAL: El constraint requiere que solo uno de ventanaId o vendedorId sea no-null
+  // Si vendedorId está presente, solo establecer vendedorId (ventanaId = null)
+  // Si solo ventanaId está presente, solo establecer ventanaId (vendedorId = null)
+  const effectiveVentanaId = vendedorId ? null : (ventanaId ?? statement.ventanaId ?? null);
   const effectiveVendedorId = vendedorId ?? statement.vendedorId ?? null;
 
   await AccountStatementRepository.update(statement.id, {
