@@ -3,7 +3,6 @@ import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { resolveCommission } from "../../../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
-import { bancaFilterLogger } from "../../../utils/bancaFilterLogger";
 
 /**
  * Dashboard Service
@@ -198,19 +197,11 @@ function buildTicketBaseFilters(
 
   // Filtrar por banca activa (para ADMIN multibanca)
   if (filters.bancaId) {
-    bancaFilterLogger.log(`✅ Query - Aplicando filtro de banca en buildTicketBaseFilters`, {
-      bancaId: filters.bancaId,
-      alias,
-    });
     conditions.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "Ventana" v 
       WHERE v.id = ${Prisma.raw(`${alias}."ventanaId"`)} 
       AND v."bancaId" = ${filters.bancaId}::uuid
     )`);
-  } else {
-    bancaFilterLogger.log('⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)', {
-      alias,
-    });
   }
 
   if (filters.loteriaId) {
@@ -435,12 +426,6 @@ export const DashboardService = {
    * Incluye desglose completo por ventana y lotería
    */
   async calculateGanancia(filters: DashboardFilters): Promise<GananciaResult> {
-    // Log para debugging
-    bancaFilterLogger.log('💰 Service - calculateGanancia recibió filtros', {
-      bancaId: filters.bancaId || 'NINGUNA (ver todas)',
-      ventanaId: filters.ventanaId || 'NINGUNA',
-    });
-    
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
     const {

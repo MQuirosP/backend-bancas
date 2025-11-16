@@ -30,7 +30,4 @@ router.get("/exposure", validateDashboardQuery, DashboardController.getExposure)
 router.get("/vendedores", validateDashboardQuery, DashboardController.getVendedores);
 router.get("/export", validateDashboardQuery, DashboardController.exportDashboard);
 
-// Debug endpoint (solo para desarrollo)
-router.get("/debug-banca", DashboardController.debugBanca);
-
 export default router;

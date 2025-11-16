@@ -8,7 +8,6 @@ import { DashboardExportService } from "../services/dashboard-export.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { validateVentanaUser } from "../../../utils/rbac";
 import prisma from "../../../core/prismaClient";
-import { bancaFilterLogger } from "../../../utils/bancaFilterLogger";
 
 // Nota: Usa el mismo patrón que Venta/Sales módulo
 // date: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'range'
@@ -28,40 +27,8 @@ async function applyDashboardRbac(req: AuthenticatedRequest, query: any) {
   } else if (req.user!.role === Role.ADMIN) {
     // ADMIN: filtrar por banca activa si está disponible
     // IMPORTANTE: Solo usar bancaId si tiene valor (no null)
-    bancaFilterLogger.log('🔍 Controller - bancaContext recibido', req.bancaContext);
-    
     if (req.bancaContext?.bancaId) {
       bancaId = req.bancaContext.bancaId;
-      
-      bancaFilterLogger.log('✅ Controller - Usando bancaId', { bancaId });
-      
-      // Log para debugging
-      req.logger?.info({
-        layer: 'controller',
-        action: 'DASHBOARD_RBAC_BANCA_FILTER',
-        userId: req.user!.id,
-        payload: {
-          bancaId,
-          bancaContext: req.bancaContext,
-          header: req.headers['x-active-banca-id'],
-        },
-      });
-    } else {
-      // Sin filtro - ver todas las bancas
-      bancaFilterLogger.log('⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas', {
-        bancaContext: req.bancaContext,
-      });
-      
-      req.logger?.info({
-        layer: 'controller',
-        action: 'DASHBOARD_RBAC_NO_FILTER',
-        userId: req.user!.id,
-        payload: {
-          bancaContext: req.bancaContext,
-          header: req.headers['x-active-banca-id'],
-          message: 'No banca filter - showing all bancas',
-        },
-      });
     }
   }
   
@@ -90,14 +57,6 @@ export const DashboardController = {
 
     // Aplicar RBAC
     const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
-
-    // Log para debugging
-    bancaFilterLogger.log('📊 Dashboard - Filtros aplicados', {
-      ventanaId: ventanaId || 'NINGUNA',
-      bancaId: bancaId || 'NINGUNA (ver todas)',
-      userRole: req.user?.role,
-      userId: req.user?.id,
-    });
 
     const result = await DashboardService.getFullDashboard({
       fromDate: dateRange.fromAt,
@@ -464,67 +423,6 @@ export const DashboardController = {
     return success(res, dashboard);
   },
 
-  /**
-   * GET /api/v1/admin/dashboard/debug-banca
-   * Endpoint de debugging para ver el estado del filtro de banca
-   */
-  async debugBanca(req: AuthenticatedRequest, res: Response) {
-    if (!req.user) throw new AppError("Unauthorized", 401);
-
-    if (req.user.role !== Role.ADMIN) {
-      throw new AppError("Solo ADMIN puede usar este endpoint", 403);
-    }
-
-    const headerLower = req.headers['x-active-banca-id'] as string | undefined;
-    const headerUpper = req.headers['X-Active-Banca-Id'] as string | undefined;
-    const requestedBancaId = headerLower || headerUpper || undefined;
-
-    // Obtener información de la banca si existe
-    let bancaInfo = null;
-    if (requestedBancaId) {
-      try {
-        const banca = await prisma.banca.findUnique({
-          where: { id: requestedBancaId },
-          select: {
-            id: true,
-            name: true,
-            isActive: true,
-          },
-        });
-        bancaInfo = banca;
-      } catch (error) {
-        // Ignorar errores
-      }
-    }
-
-    // Aplicar RBAC para ver qué filtros se aplicarían
-    const { ventanaId, bancaId } = await applyDashboardRbac(req, req.query as any);
-
-    return success(res, {
-      debug: {
-        headers: {
-          'x-active-banca-id': headerLower,
-          'X-Active-Banca-Id': headerUpper,
-          requestedBancaId,
-        },
-        middleware: {
-          bancaContext: req.bancaContext,
-        },
-        controller: {
-          ventanaId,
-          bancaId,
-        },
-        bancaInfo,
-        user: {
-          id: req.user.id,
-          role: req.user.role,
-        },
-        message: bancaId 
-          ? `Filtro activo: Solo se mostrarán datos de la banca ${bancaId}` 
-          : 'Sin filtro: Se mostrarán datos de todas las bancas',
-      },
-    });
-  },
 };
 
 export default DashboardController;
