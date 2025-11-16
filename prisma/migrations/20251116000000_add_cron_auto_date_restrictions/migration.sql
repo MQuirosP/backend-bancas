@@ -208,14 +208,14 @@ BEGIN
   PERFORM cron.schedule(
     'update_auto_restrictions_daily',
     '0 6 * * *',  -- 6 AM UTC = medianoche CR
-    $$SELECT update_auto_date_restrictions();$$
+    'SELECT update_auto_date_restrictions();'
   );
   
   -- Job de verificación: ejecutar cada 6 horas
   PERFORM cron.schedule(
     'verify_auto_restrictions',
     '0 */6 * * *',  -- Cada 6 horas
-    $$SELECT verify_auto_restrictions();$$
+    'SELECT verify_auto_restrictions();'
   );
 EXCEPTION
   WHEN OTHERS THEN

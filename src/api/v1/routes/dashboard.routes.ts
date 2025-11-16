@@ -1,12 +1,16 @@
 import { Router } from "express";
 import { protect } from "../../../middlewares/auth.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import DashboardController from "../controllers/dashboard.controller";
 import { validateDashboardQuery } from "../validators/dashboard.validator";
 
 const router = Router();
 
-// Middleware de autenticación
+// Middleware de autenticación PRIMERO
 router.use(protect);
+
+// Middleware de contexto de banca DESPUÉS de protect (para que req.user esté disponible)
+router.use(bancaContextMiddleware);
 
 /**
  * Dashboard endpoints
@@ -25,5 +29,8 @@ router.get("/timeseries", validateDashboardQuery, DashboardController.getTimeSer
 router.get("/exposure", validateDashboardQuery, DashboardController.getExposure);
 router.get("/vendedores", validateDashboardQuery, DashboardController.getVendedores);
 router.get("/export", validateDashboardQuery, DashboardController.exportDashboard);
+
+// Debug endpoint (solo para desarrollo)
+router.get("/debug-banca", DashboardController.debugBanca);
 
 export default router;

@@ -43,3 +43,8 @@ export const loginSchema = z.object({
     .min(6, "Password must be at least 6 characters long")
     .max(100, "Password must be at most 100 characters long"),
 });
+
+// Schema para establecer banca activa
+export const setActiveBancaSchema = z.object({
+  bancaId: z.string().uuid('bancaId debe ser un UUID válido'),
+});

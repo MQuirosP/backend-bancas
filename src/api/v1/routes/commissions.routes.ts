@@ -7,6 +7,7 @@ import {
   validateCommissionsTicketsQuery,
 } from "../validators/commissions.validator";
 import { protect, restrictTo } from "../../../middlewares/auth.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import { Role } from "@prisma/client";
 
 const router = Router();
@@ -14,6 +15,9 @@ const router = Router();
 // Autenticación y autorización (todos los endpoints requieren JWT)
 router.use(protect);
 router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.ADMIN));
+
+// Middleware de contexto de banca DESPUÉS de protect (para que req.user esté disponible)
+router.use(bancaContextMiddleware);
 
 // 1) Lista de comisiones por periodo
 // GET /api/v1/commissions

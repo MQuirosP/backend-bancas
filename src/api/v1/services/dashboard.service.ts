@@ -3,6 +3,7 @@ import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { resolveCommission } from "../../../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
+import { bancaFilterLogger } from "../../../utils/bancaFilterLogger";
 
 /**
  * Dashboard Service
@@ -13,6 +14,7 @@ interface DashboardFilters {
   fromDate: Date;
   toDate: Date;
   ventanaId?: string; // Para RBAC
+  bancaId?: string; // Para filtrar por banca activa (ADMIN multibanca)
   loteriaId?: string; // Filtro por lotería
   betType?: 'NUMERO' | 'REVENTADO'; // Filtro por tipo de apuesta
   scope?: 'all' | 'byVentana';
@@ -194,6 +196,23 @@ function buildTicketBaseFilters(
     conditions.push(Prisma.sql`${Prisma.raw(`${alias}."ventanaId"`)} = ${filters.ventanaId}`);
   }
 
+  // Filtrar por banca activa (para ADMIN multibanca)
+  if (filters.bancaId) {
+    bancaFilterLogger.log(`✅ Query - Aplicando filtro de banca en buildTicketBaseFilters`, {
+      bancaId: filters.bancaId,
+      alias,
+    });
+    conditions.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "Ventana" v 
+      WHERE v.id = ${Prisma.raw(`${alias}."ventanaId"`)} 
+      AND v."bancaId" = ${filters.bancaId}::uuid
+    )`);
+  } else {
+    bancaFilterLogger.log('⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)', {
+      alias,
+    });
+  }
+
   if (filters.loteriaId) {
     conditions.push(Prisma.sql`${Prisma.raw(`${alias}."loteriaId"`)} = ${filters.loteriaId}`);
   }
@@ -248,6 +267,13 @@ function buildTicketWhereInput(
 
   if (filters.ventanaId) {
     baseWhere.ventanaId = filters.ventanaId;
+  }
+
+  // Filtrar por banca activa (para ADMIN multibanca)
+  if (filters.bancaId) {
+    baseWhere.ventana = {
+      bancaId: filters.bancaId,
+    };
   }
 
   if (filters.loteriaId) {
@@ -409,6 +435,12 @@ export const DashboardService = {
    * Incluye desglose completo por ventana y lotería
    */
   async calculateGanancia(filters: DashboardFilters): Promise<GananciaResult> {
+    // Log para debugging
+    bancaFilterLogger.log('💰 Service - calculateGanancia recibió filtros', {
+      bancaId: filters.bancaId || 'NINGUNA (ver todas)',
+      ventanaId: filters.ventanaId || 'NINGUNA',
+    });
+    
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
     const {
@@ -442,6 +474,13 @@ export const DashboardService = {
           FROM "Ticket" t
           WHERE ${baseFilters}
         ),
+        ventanas_filtradas AS (
+          SELECT v.id, v.name, v."isActive"
+          FROM "Ventana" v
+          WHERE v."isActive" = true
+            ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
+            ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+        ),
         sales_per_ventana AS (
           SELECT
             t."ventanaId" AS ventana_id,
@@ -472,11 +511,9 @@ export const DashboardService = {
           COALESCE(sp.winning_tickets, 0) AS winning_tickets,
           COALESCE(cp.commission_user, 0) AS commission_user,
           COALESCE(cp.commission_ventana, 0) AS commission_ventana
-        FROM "Ventana" v
+        FROM ventanas_filtradas v
         LEFT JOIN sales_per_ventana sp ON sp.ventana_id = v.id
         LEFT JOIN commissions_per_ventana cp ON cp.ventana_id = v.id
-        WHERE v."isActive" = true
-          ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
         ORDER BY total_sales DESC
       `
     );
@@ -645,6 +682,13 @@ export const DashboardService = {
       where.ventanaId = { not: null };
     }
 
+    // Filtrar por banca activa si está disponible
+    if (filters.bancaId) {
+      where.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
+
     const statements = await prisma.accountStatement.findMany({
       where,
       include: {
@@ -659,8 +703,13 @@ export const DashboardService = {
     });
 
     // Asegurar que todas las ventanas activas aparezcan aunque no tengan statement
+    // Filtrar por banca si está disponible
+    const ventanaWhere: any = { isActive: true };
+    if (filters.bancaId) {
+      ventanaWhere.bancaId = filters.bancaId;
+    }
     const ventanas = await prisma.ventana.findMany({
-      where: { isActive: true },
+      where: ventanaWhere,
       select: { id: true, name: true, isActive: true },
     });
     const ventanaInfoMap = new Map(
@@ -743,6 +792,12 @@ export const DashboardService = {
     } else {
       accountPaymentWhere.ventanaId = { not: null };
     }
+    // Filtrar por banca activa si está disponible
+    if (filters.bancaId) {
+      accountPaymentWhere.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
 
     const collections = await prisma.accountPayment.findMany({
       where: accountPaymentWhere,
@@ -763,6 +818,12 @@ export const DashboardService = {
     };
     if (filters.ventanaId) {
       ticketRelationFilter.ventanaId = filters.ventanaId;
+    }
+    // Filtrar por banca activa si está disponible
+    if (filters.bancaId) {
+      ticketRelationFilter.ventana = {
+        bancaId: filters.bancaId,
+      };
     }
 
     const ticketPayments = await prisma.ticketPayment.findMany({
@@ -850,6 +911,13 @@ export const DashboardService = {
       where.ventanaId = { not: null };
     }
 
+    // Filtrar por banca activa si está disponible
+    if (filters.bancaId) {
+      where.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
+
     const statements = await prisma.accountStatement.findMany({
       where,
       include: {
@@ -863,8 +931,13 @@ export const DashboardService = {
       },
     });
 
+    // Filtrar por banca si está disponible
+    const ventanaWhere: any = { isActive: true };
+    if (filters.bancaId) {
+      ventanaWhere.bancaId = filters.bancaId;
+    }
     const ventanas = await prisma.ventana.findMany({
-      where: { isActive: true },
+      where: ventanaWhere,
       select: { id: true, name: true, isActive: true },
     });
     const ventanaInfoMap = new Map(
@@ -946,6 +1019,12 @@ export const DashboardService = {
     } else {
       accountPaymentWhere.ventanaId = { not: null };
     }
+    // Filtrar por banca activa si está disponible
+    if (filters.bancaId) {
+      accountPaymentWhere.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
 
     const collections = await prisma.accountPayment.findMany({
       where: accountPaymentWhere,
@@ -966,6 +1045,12 @@ export const DashboardService = {
     };
     if (filters.ventanaId) {
       ticketRelationFilter.ventanaId = filters.ventanaId;
+    }
+    // Filtrar por banca activa si está disponible
+    if (filters.bancaId) {
+      ticketRelationFilter.ventana = {
+        bancaId: filters.bancaId,
+      };
     }
 
     const ticketPayments = await prisma.ticketPayment.findMany({

@@ -21,11 +21,19 @@ export const BancaController = {
     res.json({ success: true, data: banca });
   },
 
-  async findAll(req: Request, res: Response) {
+  async findAll(req: AuthenticatedRequest, res: Response) {
     const page = req.query.page ? Number(req.query.page) : undefined;
     const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
     const search = req.query.search?.toString().trim();
-    const result = await BancaService.findAll(page, pageSize, search);
+    const user = req.user;
+    const result = await BancaService.findAll(
+      page, 
+      pageSize, 
+      search, 
+      undefined, 
+      user?.id, 
+      user?.role
+    );
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 

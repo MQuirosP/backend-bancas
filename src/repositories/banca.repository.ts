@@ -100,7 +100,7 @@ const BancaRepository = {
     return banca;
   },
 
-  async list(page = 1, pageSize = 10, search = "", isActive?: boolean) {
+  async list(page = 1, pageSize = 10, search = "", isActive?: boolean, allowedBancaIds?: string[]) {
     const skip = (page - 1) * pageSize;
     const s = typeof search === "string" ? search.trim() : "";
 
@@ -115,6 +115,11 @@ const BancaRepository = {
 
     if (isActive !== undefined) {
       where.isActive = isActive;
+    }
+
+    // Filtrar por bancas permitidas si se proporciona
+    if (allowedBancaIds && allowedBancaIds.length > 0) {
+      where.id = { in: allowedBancaIds };
     }
 
     const [data, total] = await Promise.all([

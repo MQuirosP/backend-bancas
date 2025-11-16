@@ -39,6 +39,7 @@ export const CommissionsService = {
       dimension: string;
       ventanaId?: string;
       vendedorId?: string;
+      bancaId?: string; // Para ADMIN multibanca (filtro de vista)
     },
     ventanaUserId?: string // ID del usuario VENTANA cuando dimension=ventana
   ): Promise<Array<{
@@ -71,6 +72,15 @@ export const CommissionsService = {
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
       ];
+
+      // Filtrar por banca activa (para ADMIN multibanca)
+      if (filters.bancaId) {
+        whereConditions.push(Prisma.sql`EXISTS (
+          SELECT 1 FROM "Ventana" v 
+          WHERE v.id = t."ventanaId" 
+          AND v."bancaId" = ${filters.bancaId}::uuid
+        )`);
+      }
 
       // Aplicar filtros de RBAC según scope
       if (filters.dimension === "vendedor") {
@@ -649,6 +659,7 @@ export const CommissionsService = {
       dimension: string;
       ventanaId?: string;
       vendedorId?: string;
+      bancaId?: string; // Para ADMIN multibanca (filtro de vista)
     },
     ventanaUserId?: string // ID del usuario VENTANA cuando dimension=ventana
   ): Promise<
@@ -685,6 +696,15 @@ export const CommissionsService = {
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
       ];
+
+      // Filtrar por banca activa (para ADMIN multibanca)
+      if (filters.bancaId) {
+        whereConditions.push(Prisma.sql`EXISTS (
+          SELECT 1 FROM "Ventana" v 
+          WHERE v.id = t."ventanaId" 
+          AND v."bancaId" = ${filters.bancaId}::uuid
+        )`);
+      }
 
       // Aplicar filtros de RBAC según dimension
       if (filters.dimension === "vendedor") {
@@ -1328,6 +1348,7 @@ export const CommissionsService = {
       dimension: string;
       ventanaId?: string;
       vendedorId?: string;
+      bancaId?: string; // Para ADMIN multibanca (filtro de vista)
     },
     ventanaUserId?: string // ID del usuario VENTANA cuando dimension=ventana
   ): Promise<PaginatedResult<{
