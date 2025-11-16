@@ -22,7 +22,7 @@ const corsOptions: CorsOptionsDelegate<Request> = (req, cb) => {
     origin: allowAll ? true : ok ? origin : false,
     credentials: true,
     methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-    allowedHeaders: ['Content-Type','Authorization','X-Requested-With'],
+    allowedHeaders: ['Content-Type','Authorization','X-Requested-With','X-Active-Banca-Id'],
     exposedHeaders: ['Content-Length','X-Request-Id'],
     maxAge: 86400,
   })

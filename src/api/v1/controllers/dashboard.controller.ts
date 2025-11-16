@@ -7,10 +7,33 @@ import DashboardService from "../services/dashboard.service";
 import { DashboardExportService } from "../services/dashboard-export.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { validateVentanaUser } from "../../../utils/rbac";
+import prisma from "../../../core/prismaClient";
 
 // Nota: Usa el mismo patrón que Venta/Sales módulo
 // date: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'range'
 // Si range: requiere fromDate y toDate en YYYY-MM-DD
+
+/**
+ * Helper para aplicar RBAC y obtener filtros de banca/ventana
+ */
+async function applyDashboardRbac(req: AuthenticatedRequest, query: any) {
+  let ventanaId = query.ventanaId;
+  let bancaId: string | undefined = undefined;
+  
+  if (req.user!.role === Role.VENTANA) {
+    // VENTANA solo ve su dashboard
+    const validatedVentanaId = await validateVentanaUser(req.user!.role, req.user!.ventanaId, req.user!.id);
+    ventanaId = validatedVentanaId!;
+  } else if (req.user!.role === Role.ADMIN) {
+    // ADMIN: filtrar por banca activa si está disponible
+    // IMPORTANTE: Solo usar bancaId si tiene valor (no null)
+    if (req.bancaContext?.bancaId) {
+      bancaId = req.bancaContext.bancaId;
+    }
+  }
+  
+  return { ventanaId, bancaId };
+}
 
 export const DashboardController = {
   /**
@@ -33,19 +56,13 @@ export const DashboardController = {
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     // Aplicar RBAC
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      // VENTANA solo ve su dashboard
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    } else if (req.user.role !== Role.ADMIN) {
-      throw new AppError("No autorizado", 403);
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.getFullDashboard({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
       interval: query.interval,
@@ -71,16 +88,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateGanancia({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
     });
 
     return success(res, {
@@ -111,16 +125,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateCxC({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
     });
 
     return success(res, {
@@ -151,16 +162,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateCxP({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
     });
 
     return success(res, {
@@ -191,11 +199,7 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     // Mapear granularity a interval (frontend compatibility)
     const interval = query.interval || query.granularity || 'day';
@@ -204,6 +208,7 @@ export const DashboardController = {
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
       interval,
@@ -237,16 +242,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateExposure({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
       top: query.top ? parseInt(query.top) : 10,
@@ -280,16 +282,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.getVendedores({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
       top: query.top ? parseInt(query.top) : undefined,
@@ -333,16 +332,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const dashboard = await DashboardService.getFullDashboard({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
       scope: query.scope || 'all',
@@ -426,6 +422,7 @@ export const DashboardController = {
     // Fallback: retornar JSON si el formato no es reconocido (no debería llegar aquí)
     return success(res, dashboard);
   },
+
 };
 
 export default DashboardController;

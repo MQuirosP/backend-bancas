@@ -70,11 +70,13 @@ export const BancaService = {
     return banca;
   },
 
-  async findAll(page?: number, pageSize?: number, search?: string, isActive?: boolean) {
+  async findAll(page?: number, pageSize?: number, search?: string, isActive?: boolean, userId?: string, userRole?: string) {
     const p = page && page > 0 ? page : 1;
     const ps = pageSize && pageSize > 0 ? pageSize : 10;
 
-    const { data, total } = await BancaRepository.list(p, ps, search, isActive);
+    // ADMIN ve todas las bancas (sin filtro de asignación)
+    // VENTANA/VENDEDOR ven solo su banca (se filtra en el repositorio si es necesario)
+    const { data, total } = await BancaRepository.list(p, ps, search, isActive, undefined);
     const totalPages = Math.ceil(total / ps);
 
     return {

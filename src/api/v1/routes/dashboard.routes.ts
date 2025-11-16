@@ -1,12 +1,16 @@
 import { Router } from "express";
 import { protect } from "../../../middlewares/auth.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import DashboardController from "../controllers/dashboard.controller";
 import { validateDashboardQuery } from "../validators/dashboard.validator";
 
 const router = Router();
 
-// Middleware de autenticación
+// Middleware de autenticación PRIMERO
 router.use(protect);
+
+// Middleware de contexto de banca DESPUÉS de protect (para que req.user esté disponible)
+router.use(bancaContextMiddleware);
 
 /**
  * Dashboard endpoints

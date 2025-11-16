@@ -40,7 +40,14 @@ export const RestrictionRuleController = {
   },
 
   async list(req: AuthenticatedRequest, res: Response) {
-    const result = await RestrictionRuleService.list(req.query as any);
+    const query = req.query as any;
+    
+    // Si es ADMIN con banca activa, agregar filtro de bancaId
+    if (req.user!.role === 'ADMIN' && req.bancaContext?.bancaId && req.bancaContext.hasAccess) {
+      query.bancaId = req.bancaContext.bancaId;
+    }
+    
+    const result = await RestrictionRuleService.list(query);
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 

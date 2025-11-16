@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { protect, restrictTo } from '../../../middlewares/auth.middleware';
+import { bancaContextMiddleware } from '../../../middlewares/bancaContext.middleware';
 import { CierreController } from '../controllers/cierre.controller';
 import {
   validateCierreWeeklyQuery,
@@ -20,6 +21,9 @@ router.use(protect);
 
 // Middleware de autorización (solo ADMIN y VENTANA)
 router.use(restrictTo(Role.ADMIN, Role.VENTANA));
+
+// Middleware de contexto de banca DESPUÉS de protect (para que req.user esté disponible)
+router.use(bancaContextMiddleware);
 
 /**
  * GET /api/v1/cierres/weekly

@@ -32,7 +32,8 @@ export const VentaController = {
     const context: AuthContext = {
       userId: req.user!.id,
       role: req.user!.role,
-      ventanaId: req.user!.ventanaId
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null,
     };
     const effectiveFilters = await applyRbacFilters(context, rest);
 
@@ -117,7 +118,8 @@ export const VentaController = {
     const context: AuthContext = {
       userId: req.user!.id,
       role: req.user!.role,
-      ventanaId: req.user!.ventanaId
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null,
     };
     const effectiveFilters = await applyRbacFilters(context, rest);
 
@@ -336,7 +338,8 @@ export const VentaController = {
     const context: AuthContext = {
       userId: req.user!.id,
       role: req.user!.role,
-      ventanaId: req.user!.ventanaId
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null,
     };
     const effectiveFilters = await applyRbacFilters(context, rest);
 
@@ -398,7 +401,8 @@ export const VentaController = {
     const context: AuthContext = {
       userId: req.user!.id,
       role: req.user!.role,
-      ventanaId: req.user!.ventanaId
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null,
     };
     const effectiveFilters = await applyRbacFilters(context, rest);
 

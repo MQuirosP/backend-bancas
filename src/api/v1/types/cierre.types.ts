@@ -17,6 +17,7 @@ export interface CierreFilters {
   scope: CierreScope;
   loteriaId?: string;
   vendedorId?: string;
+  bancaId?: string; // Para ADMIN multibanca (filtro de vista)
 }
 
 /**
