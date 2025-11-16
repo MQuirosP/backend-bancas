@@ -28,8 +28,6 @@
     "normalize:legacy-tickets": "npx dotenv-cli -e .env.local -- ts-node src/scripts/normalize-legacy-tickets.ts",
     "normalize:legacy-tickets:dry-run": "npx dotenv-cli -e .env.local -- ts-node src/scripts/normalize-legacy-tickets.ts --dry-run",
     "check:legacy-tickets": "npx dotenv-cli -e .env.local -- ts-node src/scripts/check-legacy-tickets.ts",
-    "debug:banca-filter": "node scripts/view-banca-filter-logs.js",
-    "debug:banca-filter:clear": "node scripts/clear-banca-filter-logs.js",
     "maintenance": "npx dotenv-cli -e .env.local -- ts-node src/tools/maintenance/index.ts",
     "test": "npx dotenv-cli -e .env.test -- jest --runInBand --detectOpenHandles",
     "test:watch": "npx dotenv-cli -e .env.test -- jest --watch",
