@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { bancaContextMiddleware } from '../../../middlewares/bancaContext.middleware';
 import authRoutes from './auth.routes';
 import userRoutes from './user.routes';
 import ticketRoutes from './ticket.routes';
@@ -22,6 +23,9 @@ import accountsRoutes from "./accounts.routes"
 import salesRoutes from "./sales.routes"
 
 const router = Router();
+
+// NOTA: bancaContextMiddleware se aplica en cada sub-router DESPUÉS de protect
+// para asegurar que req.user esté disponible
 
 router.use('/auth', authRoutes);
 router.use('/users', userRoutes);

@@ -7,10 +7,66 @@ import DashboardService from "../services/dashboard.service";
 import { DashboardExportService } from "../services/dashboard-export.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { validateVentanaUser } from "../../../utils/rbac";
+import prisma from "../../../core/prismaClient";
+import { bancaFilterLogger } from "../../../utils/bancaFilterLogger";
 
 // Nota: Usa el mismo patrón que Venta/Sales módulo
 // date: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'range'
 // Si range: requiere fromDate y toDate en YYYY-MM-DD
+
+/**
+ * Helper para aplicar RBAC y obtener filtros de banca/ventana
+ */
+async function applyDashboardRbac(req: AuthenticatedRequest, query: any) {
+  let ventanaId = query.ventanaId;
+  let bancaId: string | undefined = undefined;
+  
+  if (req.user!.role === Role.VENTANA) {
+    // VENTANA solo ve su dashboard
+    const validatedVentanaId = await validateVentanaUser(req.user!.role, req.user!.ventanaId, req.user!.id);
+    ventanaId = validatedVentanaId!;
+  } else if (req.user!.role === Role.ADMIN) {
+    // ADMIN: filtrar por banca activa si está disponible
+    // IMPORTANTE: Solo usar bancaId si tiene valor (no null)
+    bancaFilterLogger.log('🔍 Controller - bancaContext recibido', req.bancaContext);
+    
+    if (req.bancaContext?.bancaId) {
+      bancaId = req.bancaContext.bancaId;
+      
+      bancaFilterLogger.log('✅ Controller - Usando bancaId', { bancaId });
+      
+      // Log para debugging
+      req.logger?.info({
+        layer: 'controller',
+        action: 'DASHBOARD_RBAC_BANCA_FILTER',
+        userId: req.user!.id,
+        payload: {
+          bancaId,
+          bancaContext: req.bancaContext,
+          header: req.headers['x-active-banca-id'],
+        },
+      });
+    } else {
+      // Sin filtro - ver todas las bancas
+      bancaFilterLogger.log('⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas', {
+        bancaContext: req.bancaContext,
+      });
+      
+      req.logger?.info({
+        layer: 'controller',
+        action: 'DASHBOARD_RBAC_NO_FILTER',
+        userId: req.user!.id,
+        payload: {
+          bancaContext: req.bancaContext,
+          header: req.headers['x-active-banca-id'],
+          message: 'No banca filter - showing all bancas',
+        },
+      });
+    }
+  }
+  
+  return { ventanaId, bancaId };
+}
 
 export const DashboardController = {
   /**
@@ -33,19 +89,21 @@ export const DashboardController = {
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     // Aplicar RBAC
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      // VENTANA solo ve su dashboard
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    } else if (req.user.role !== Role.ADMIN) {
-      throw new AppError("No autorizado", 403);
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+
+    // Log para debugging
+    bancaFilterLogger.log('📊 Dashboard - Filtros aplicados', {
+      ventanaId: ventanaId || 'NINGUNA',
+      bancaId: bancaId || 'NINGUNA (ver todas)',
+      userRole: req.user?.role,
+      userId: req.user?.id,
+    });
 
     const result = await DashboardService.getFullDashboard({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
       interval: query.interval,
@@ -71,16 +129,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateGanancia({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
     });
 
     return success(res, {
@@ -111,16 +166,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateCxC({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
     });
 
     return success(res, {
@@ -151,16 +203,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateCxP({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
     });
 
     return success(res, {
@@ -191,11 +240,7 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     // Mapear granularity a interval (frontend compatibility)
     const interval = query.interval || query.granularity || 'day';
@@ -204,6 +249,7 @@ export const DashboardController = {
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
       interval,
@@ -237,16 +283,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateExposure({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
       top: query.top ? parseInt(query.top) : 10,
@@ -280,16 +323,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.getVendedores({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
       top: query.top ? parseInt(query.top) : undefined,
@@ -333,16 +373,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    let ventanaId = query.ventanaId;
-    if (req.user.role === Role.VENTANA) {
-      const validatedVentanaId = await validateVentanaUser(req.user.role, req.user.ventanaId, req.user.id);
-      ventanaId = validatedVentanaId!;
-    }
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
     const dashboard = await DashboardService.getFullDashboard({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
       scope: query.scope || 'all',
@@ -425,6 +462,68 @@ export const DashboardController = {
 
     // Fallback: retornar JSON si el formato no es reconocido (no debería llegar aquí)
     return success(res, dashboard);
+  },
+
+  /**
+   * GET /api/v1/admin/dashboard/debug-banca
+   * Endpoint de debugging para ver el estado del filtro de banca
+   */
+  async debugBanca(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    if (req.user.role !== Role.ADMIN) {
+      throw new AppError("Solo ADMIN puede usar este endpoint", 403);
+    }
+
+    const headerLower = req.headers['x-active-banca-id'] as string | undefined;
+    const headerUpper = req.headers['X-Active-Banca-Id'] as string | undefined;
+    const requestedBancaId = headerLower || headerUpper || undefined;
+
+    // Obtener información de la banca si existe
+    let bancaInfo = null;
+    if (requestedBancaId) {
+      try {
+        const banca = await prisma.banca.findUnique({
+          where: { id: requestedBancaId },
+          select: {
+            id: true,
+            name: true,
+            isActive: true,
+          },
+        });
+        bancaInfo = banca;
+      } catch (error) {
+        // Ignorar errores
+      }
+    }
+
+    // Aplicar RBAC para ver qué filtros se aplicarían
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, req.query as any);
+
+    return success(res, {
+      debug: {
+        headers: {
+          'x-active-banca-id': headerLower,
+          'X-Active-Banca-Id': headerUpper,
+          requestedBancaId,
+        },
+        middleware: {
+          bancaContext: req.bancaContext,
+        },
+        controller: {
+          ventanaId,
+          bancaId,
+        },
+        bancaInfo,
+        user: {
+          id: req.user.id,
+          role: req.user.role,
+        },
+        message: bancaId 
+          ? `Filtro activo: Solo se mostrarán datos de la banca ${bancaId}` 
+          : 'Sin filtro: Se mostrarán datos de todas las bancas',
+      },
+    });
   },
 };
 

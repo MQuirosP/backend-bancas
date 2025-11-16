@@ -13,6 +13,7 @@ import { corsMiddleware } from '../middlewares/cors.middleware'
 import { attachRequestLogger } from '../middlewares/attachLogger.middleware'
 import { apiV1Router } from '../api/v1/routes'
 import { requireJson } from '../middlewares/contentTypeJson.middleware'
+import { bancaContextMiddleware } from '../middlewares/bancaContext.middleware'
 
 const app = express()
 

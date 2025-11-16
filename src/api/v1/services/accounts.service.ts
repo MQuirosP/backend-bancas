@@ -17,6 +17,7 @@ interface AccountsFilters {
   dimension: "ventana" | "vendedor";
   ventanaId?: string;
   vendedorId?: string;
+  bancaId?: string; // Para ADMIN multibanca
   sort?: "asc" | "desc";
 }
 
@@ -384,7 +385,8 @@ export async function calculateDayStatement(
   month: string,
   dimension: "ventana" | "vendedor",
   ventanaId?: string,
-  vendedorId?: string
+  vendedorId?: string,
+  bancaId?: string
 ) {
   // Construir WHERE clause
   // FIX: Usar businessDate en lugar de createdAt para agrupar correctamente por día de negocio
@@ -394,6 +396,13 @@ export async function calculateDayStatement(
     deletedAt: null,
     status: { not: "CANCELLED" },
   };
+
+  // Filtrar por banca activa (para ADMIN multibanca)
+  if (bancaId) {
+    where.ventana = {
+      bancaId: bancaId,
+    };
+  }
 
   // FIX: Validación defensiva - asegurar que ventanaId coincide en dimensión "ventana"
   if (dimension === "ventana" && ventanaId) {
@@ -618,7 +627,7 @@ export const AccountsService = {
    * Obtiene el estado de cuenta día a día del mes
    */
   async getStatement(filters: AccountsFilters) {
-    const { month, dimension, ventanaId, vendedorId, sort = "desc" } = filters;
+    const { month, dimension, ventanaId, vendedorId, bancaId, sort = "desc" } = filters;
     const { startDate, endDate, daysInMonth } = getMonthDateRange(month);
 
     // Si scope=all y no hay ventanaId/vendedorId, obtener estados existentes
@@ -709,7 +718,8 @@ export const AccountsService = {
             month,
             dimension,
             s.ventanaId ?? undefined,
-            s.vendedorId ?? undefined
+            s.vendedorId ?? undefined,
+            bancaId
           );
 
           return recalculated;
@@ -798,7 +808,8 @@ export const AccountsService = {
             month,
             dimension,
             info.ventanaId,
-            info.vendedorId
+            info.vendedorId,
+            bancaId
           );
           additionalStatements.push(calculated);
         }
@@ -900,7 +911,8 @@ export const AccountsService = {
             month,
             dimension,
             statementInfo.ventanaId || undefined,
-            statementInfo.vendedorId || undefined
+            statementInfo.vendedorId || undefined,
+            bancaId
           );
 
           // Obtener relaciones para nombres y códigos
@@ -1196,7 +1208,7 @@ export const AccountsService = {
     }> = [];
     for (const dateStr of uniqueDays) {
       const date = new Date(dateStr + "T00:00:00.000Z");
-      const statement = await calculateDayStatement(date, month, dimension, ventanaId, vendedorId);
+      const statement = await calculateDayStatement(date, month, dimension, ventanaId, vendedorId, bancaId);
       statements.push(statement);
     }
 

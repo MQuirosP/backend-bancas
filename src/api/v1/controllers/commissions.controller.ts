@@ -49,11 +49,12 @@ export const CommissionsController = {
       rest.scope = "mine";
     }
 
-    // Aplicar RBAC para obtener filtros efectivos
+    // Aplicar RBAC para obtener filtros efectivos (incluye filtro de banca activa)
     const context: AuthContext = {
       userId: req.user.id,
       role: req.user.role,
       ventanaId: req.user.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null,
     };
     const effectiveFilters = await applyRbacFilters(context, rest);
 
@@ -63,6 +64,7 @@ export const CommissionsController = {
       dimension: string;
       ventanaId?: string;
       vendedorId?: string;
+      bancaId?: string;
     } = {
       scope: scope as string,
       dimension: dimension as string,
@@ -74,6 +76,9 @@ export const CommissionsController = {
     }
     if (effectiveFilters.vendedorId) {
       filters.vendedorId = effectiveFilters.vendedorId;
+    }
+    if (effectiveFilters.bancaId) {
+      filters.bancaId = effectiveFilters.bancaId;
     }
 
     // Resolver rango de fechas
@@ -174,6 +179,7 @@ export const CommissionsController = {
       dimension: string;
       ventanaId?: string;
       vendedorId?: string;
+      bancaId?: string;
     } = {
       scope: scope as string,
       dimension: dimension as string,
@@ -185,6 +191,9 @@ export const CommissionsController = {
     }
     if (effectiveFilters.vendedorId) {
       filters.vendedorId = effectiveFilters.vendedorId;
+    }
+    if (effectiveFilters.bancaId) {
+      filters.bancaId = effectiveFilters.bancaId;
     }
 
     // Resolver rango de fechas (un solo día)
@@ -300,6 +309,7 @@ export const CommissionsController = {
       dimension: string;
       ventanaId?: string;
       vendedorId?: string;
+      bancaId?: string;
     } = {
       scope: scope as string,
       dimension: dimension as string,
@@ -311,6 +321,9 @@ export const CommissionsController = {
     }
     if (effectiveFilters.vendedorId) {
       filters.vendedorId = effectiveFilters.vendedorId;
+    }
+    if (effectiveFilters.bancaId) {
+      filters.bancaId = effectiveFilters.bancaId;
     }
 
     // Resolver rango de fechas (un solo día)

@@ -150,6 +150,7 @@ export class CierreService {
         FROM "Jugada" j
         INNER JOIN "Ticket" t ON j."ticketId" = t.id
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
         WHERE
           t."deletedAt" IS NULL
           AND j."deletedAt" IS NULL
@@ -292,6 +293,11 @@ export class CierreService {
     conditions.push(Prisma.sql`t."createdAt" <= ${filters.toDate}`);
 
     // Filtro de ventana
+    // Filtrar por banca activa (para ADMIN multibanca)
+    if (filters.bancaId) {
+      conditions.push(Prisma.sql`v."bancaId" = ${filters.bancaId}::uuid`);
+    }
+
     if (filters.ventanaId) {
       conditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
     }
@@ -593,6 +599,14 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
   const conditions: Prisma.Sql[] = [];
   conditions.push(Prisma.sql`t."createdAt" >= ${filters.fromDate}`);
   conditions.push(Prisma.sql`t."createdAt" <= ${filters.toDate}`);
+  // Filtrar por banca activa (para ADMIN multibanca)
+  if (filters.bancaId) {
+    conditions.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "Ventana" v 
+      WHERE v.id = t."ventanaId" 
+      AND v."bancaId" = ${filters.bancaId}::uuid
+    )`);
+  }
   if (filters.ventanaId) conditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
   if (filters.loteriaId) conditions.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
   if (filters.vendedorId) conditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
