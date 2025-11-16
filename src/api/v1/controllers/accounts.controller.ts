@@ -9,6 +9,7 @@ import prisma from "../../../core/prismaClient";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
+import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
 
 export const AccountsController = {
   /**
@@ -102,14 +103,28 @@ export const AccountsController = {
 
     // ADMIN puede usar cualquier scope y dimension
     if (user.role === Role.ADMIN) {
-      const filters = {
+      // Aplicar RBAC para obtener filtros efectivos (incluye filtro de banca si está activa)
+      const context: AuthContext = {
+        userId: user.id,
+        role: user.role,
+        ventanaId: user.ventanaId,
+        bancaId: req.bancaContext?.bancaId || null,
+      };
+      const effectiveFilters = await applyRbacFilters(context, {
+        ventanaId,
+        vendedorId,
+      });
+      
+      const filters: any = {
         month,
         scope: scope || "all",
         dimension: dimension || "ventana",
-        ventanaId,
-        vendedorId,
+        ventanaId: effectiveFilters.ventanaId,
+        vendedorId: effectiveFilters.vendedorId,
+        bancaId: effectiveFilters.bancaId, // Filtro de banca activa (si está presente)
         sort: sort || "desc",
       };
+      
       const result = await AccountsService.getStatement(filters);
       
       // Log de auditoría

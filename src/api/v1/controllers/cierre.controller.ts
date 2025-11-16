@@ -13,6 +13,7 @@ import {
   CierreView,
 } from '../types/cierre.types';
 import { createHash } from 'crypto';
+import prisma from '../../../core/prismaClient';
 
 const TIMEZONE = 'America/Costa_Rica';
 
@@ -33,16 +34,19 @@ function parseDateCR(dateStr: string, boundary: 'start' | 'end'): Date {
 
 /**
  * Aplica filtros RBAC basados en el rol del usuario
+ * Incluye soporte para filtro de banca activa (multibanca)
  */
 async function applyRbacToFilters(
   user: { id: string; role: Role; ventanaId?: string | null },
   fromDate: Date,
   toDate: Date,
   requestedVentanaId?: string,
-  requestedScope?: string
-): Promise<CierreFilters> {
+  requestedScope?: string,
+  bancaId?: string | null
+): Promise<CierreFilters & { bancaId?: string }> {
   const scope: CierreScope = requestedScope === 'mine' ? 'mine' : 'all';
   let ventanaId: string | undefined;
+  let effectiveBancaId: string | undefined;
 
   if (user.role === Role.VENTANA) {
     // VENTANA: siempre scope=mine, forzar ventanaId
@@ -74,6 +78,30 @@ async function applyRbacToFilters(
       ventanaId = requestedVentanaId;
     }
     // Si scope=all y no requestedVentanaId, ventanaId queda undefined (global)
+    
+    // Si hay banca activa (filtro de vista), aplicarla
+    if (bancaId) {
+      effectiveBancaId = bancaId;
+      
+      // Si también hay ventanaId, validar que pertenece a la banca activa
+      if (ventanaId) {
+        const ventana = await prisma.ventana.findUnique({
+          where: { id: ventanaId },
+          select: { bancaId: true },
+        });
+        if (!ventana || ventana.bancaId !== bancaId) {
+          throw new AppError('Cannot access that ventana', 403, {
+            code: 'RBAC_004',
+            details: [
+              {
+                field: 'ventanaId',
+                reason: 'Ventana does not belong to the active banca filter'
+              }
+            ]
+          });
+        }
+      }
+    }
   }
 
   return {
@@ -81,6 +109,7 @@ async function applyRbacToFilters(
     toDate,
     ventanaId,
     scope,
+    bancaId: effectiveBancaId,
   };
 }
 
@@ -118,13 +147,14 @@ export const CierreController = {
     const fromDate = parseDateCR(query.from, 'start');
     const toDate = parseDateCR(query.to, 'end');
 
-    // Aplicar RBAC
+    // Aplicar RBAC (incluye filtro de banca activa si está presente)
     const filters = await applyRbacToFilters(
       req.user,
       fromDate,
       toDate,
       query.ventanaId,
-      query.scope
+      query.scope,
+      req.bancaContext?.bancaId || null
     );
 
     // Ejecutar agregación (servicio retorna data + _performance)
@@ -195,13 +225,14 @@ export const CierreController = {
     const fromDate = parseDateCR(query.from, 'start');
     const toDate = parseDateCR(query.to, 'end');
 
-    // Aplicar RBAC
+    // Aplicar RBAC (incluye filtro de banca activa si está presente)
     const filters = await applyRbacToFilters(
       req.user,
       fromDate,
       toDate,
       query.ventanaId,
-      query.scope
+      query.scope,
+      req.bancaContext?.bancaId || null
     );
 
     // Parámetros de ordenamiento
@@ -287,13 +318,14 @@ export const CierreController = {
     const fromDate = parseDateCR(query.from, 'start');
     const toDate = parseDateCR(query.to, 'end');
 
-    // Aplicar RBAC
+    // Aplicar RBAC (incluye filtro de banca activa si está presente)
     const filters = await applyRbacToFilters(
       req.user,
       fromDate,
       toDate,
       query.ventanaId,
-      query.scope
+      query.scope,
+      req.bancaContext?.bancaId || null
     );
 
     // Obtener datos según la vista

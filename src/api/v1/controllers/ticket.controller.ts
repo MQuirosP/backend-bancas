@@ -33,7 +33,8 @@ export const TicketController = {
     const context: AuthContext = {
       userId: me.id,
       role: me.role,
-      ventanaId: me.ventanaId
+      ventanaId: me.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null,
     };
 
     // DEBUG: Log context and filters BEFORE RBAC

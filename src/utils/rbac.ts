@@ -14,6 +14,7 @@ export interface AuthContext {
   userId: string;         // sub del JWT
   role: Role;             // ADMIN | VENTANA | VENDEDOR
   ventanaId?: string | null; // presente si role === VENTANA
+  bancaId?: string | null; // presente si role === ADMIN y tiene banca activa
 }
 
 export interface RequestFilters {
@@ -25,6 +26,7 @@ export interface RequestFilters {
 export interface EffectiveFilters {
   ventanaId?: string | null;
   vendedorId?: string;
+  bancaId?: string; // Para ADMIN multibanca
   [key: string]: any;
 }
 
@@ -192,8 +194,30 @@ export async function applyRbacFilters(
       });
     }
   } else if (context.role === Role.ADMIN) {
-    // ADMIN: aplica filtros tal cual
-    // No hay restricciones; permite ventanaId, vendedorId, etc.
+    // ADMIN: si tiene banca activa (filtro de vista), filtrar por banca
+    // Si no tiene banca activa, ve todas las bancas
+    if (context.bancaId) {
+      effective.bancaId = context.bancaId;
+      // Si también hay ventanaId en request, validar que pertenece a la banca activa
+      if (requestFilters.ventanaId) {
+        const ventana = await prisma.ventana.findUnique({
+          where: { id: requestFilters.ventanaId },
+          select: { bancaId: true },
+        });
+        if (!ventana || ventana.bancaId !== context.bancaId) {
+          throw new AppError('Cannot access that ventana', 403, {
+            code: 'RBAC_004',
+            details: [
+              {
+                field: 'ventanaId',
+                reason: 'Ventana does not belong to the active banca filter'
+              }
+            ]
+          });
+        }
+      }
+    }
+    // Si no tiene banca activa, aplica filtros tal cual (ve todas las bancas)
   }
 
   return effective;
