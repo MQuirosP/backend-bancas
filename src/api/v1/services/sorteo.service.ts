@@ -890,6 +890,32 @@ export const SorteoService = {
       // Obtener datos financieros agregados por sorteo
       const sorteoIds = sorteos.map((s) => s.id);
       
+      // Obtener todos los tickets con sus multiplicadores para el desglose
+      const tickets = await prisma.ticket.findMany({
+        where: {
+          sorteoId: { in: sorteoIds },
+          vendedorId,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          sorteoId: true,
+          multiplierId: true,
+          multiplier: {
+            select: {
+              id: true,
+              name: true,
+              valueX: true,
+            },
+          },
+          totalAmount: true,
+          totalCommission: true,
+          totalPayout: true,
+          isWinner: true,
+          status: true,
+        },
+      });
+
       // Agregar datos financieros por sorteo (todos los tickets)
       const financialData = await prisma.ticket.groupBy({
         by: ["sorteoId"],
@@ -974,6 +1000,26 @@ export const SorteoService = {
         paidTicketsData.map((p) => [p.sorteoId, p._count.id])
       );
 
+      // Agrupar tickets por sorteo y multiplicador para el desglose
+      type TicketWithMultiplier = typeof tickets[0];
+      const ticketsBySorteoAndMultiplier = new Map<string, Map<string | null, TicketWithMultiplier[]>>();
+      
+      for (const ticket of tickets) {
+        const sorteoId = ticket.sorteoId;
+        const multiplierId = ticket.multiplierId || null;
+        
+        if (!ticketsBySorteoAndMultiplier.has(sorteoId)) {
+          ticketsBySorteoAndMultiplier.set(sorteoId, new Map());
+        }
+        
+        const multiplierMap = ticketsBySorteoAndMultiplier.get(sorteoId)!;
+        if (!multiplierMap.has(multiplierId)) {
+          multiplierMap.set(multiplierId, []);
+        }
+        
+        multiplierMap.get(multiplierId)!.push(ticket);
+      }
+
       // Construir respuesta con cálculos
       // IMPORTANTE: El acumulado se calcula del más antiguo hacia el más reciente
       // Los sorteos están ordenados por scheduledAt ASC (más antiguo primero) para el cálculo
@@ -1009,6 +1055,69 @@ export const SorteoService = {
         const paidCount = paidMap.get(sorteo.id) || 0;
         const unpaidCount = winningCount - paidCount;
 
+        // Calcular desglose por multiplicador
+        const multiplierMap = ticketsBySorteoAndMultiplier.get(sorteo.id) || new Map();
+        const byMultiplier: Array<{
+          multiplierId: string | null;
+          multiplierName: string;
+          multiplierValue: number;
+          totalSales: number;
+          totalCommission: number;
+          totalPrizes: number;
+          ticketCount: number;
+          subtotal: number;
+          winningTicketsCount: number;
+          paidTicketsCount: number;
+          unpaidTicketsCount: number;
+        }> = [];
+
+        for (const [multiplierId, ticketGroup] of multiplierMap.entries()) {
+          const multiplier = ticketGroup[0]?.multiplier;
+          
+          // Calcular totales por multiplicador
+          const multTotalSales = ticketGroup.reduce((sum, t) => sum + (t.totalAmount || 0), 0);
+          const multTotalCommission = ticketGroup.reduce((sum, t) => sum + (t.totalCommission || 0), 0);
+          const multTotalPrizes = ticketGroup
+            .filter(t => t.isWinner)
+            .reduce((sum, t) => sum + (t.totalPayout || 0), 0);
+          const multTicketCount = ticketGroup.length;
+          const multSubtotal = multTotalSales - multTotalCommission - multTotalPrizes;
+          
+          const multWinningCount = ticketGroup.filter(t => t.isWinner).length;
+          const multPaidCount = ticketGroup.filter(t => t.status === "PAID").length;
+          const multUnpaidCount = multWinningCount - multPaidCount;
+
+          // Determinar información del multiplicador
+          let multiplierName = "Sin multiplicador";
+          let multiplierValue = 1;
+          
+          if (multiplier) {
+            multiplierName = multiplier.name || `x${multiplier.valueX}`;
+            multiplierValue = multiplier.valueX || 1;
+          } else if (multiplierId) {
+            // Si hay multiplierId pero no hay relación cargada, usar valores por defecto
+            multiplierName = "x1";
+            multiplierValue = 1;
+          }
+
+          byMultiplier.push({
+            multiplierId,
+            multiplierName,
+            multiplierValue,
+            totalSales: multTotalSales,
+            totalCommission: multTotalCommission,
+            totalPrizes: multTotalPrizes,
+            ticketCount: multTicketCount,
+            subtotal: multSubtotal,
+            winningTicketsCount: multWinningCount,
+            paidTicketsCount: multPaidCount,
+            unpaidTicketsCount: multUnpaidCount,
+          });
+        }
+
+        // Ordenar multiplicadores por multiplierValue ascendente (menor a mayor)
+        byMultiplier.sort((a, b) => a.multiplierValue - b.multiplierValue);
+
         return {
           sorteoId: sorteo.id,
           sorteoName: sorteo.name,
@@ -1030,51 +1139,85 @@ export const SorteoService = {
           winningTicketsCount: winningCount,
           paidTicketsCount: paidCount,
           unpaidTicketsCount: unpaidCount,
+          byMultiplier, // ✅ NUEVO: Desglose por multiplicador
         };
       });
 
-      // Ordenar por scheduledAt DESC (más reciente primero) para la respuesta
-      // IMPORTANTE: El acumulado se calcula del más antiguo al más reciente,
-      // pero al ordenar DESC necesitamos mantener el acumulado correcto.
-      // El acumulado de cada sorteo es independiente del orden de visualización.
-      // Usamos el mismo criterio de ordenamiento secundario que en la consulta SQL
-      // para garantizar consistencia visual cuando hay sorteos a la misma hora.
-      const sortedData = dataWithAccumulated.sort((a, b) => {
-        const dateA = new Date(a.scheduledAt).getTime();
-        const dateB = new Date(b.scheduledAt).getTime();
-        if (dateA !== dateB) {
-          return dateB - dateA; // DESC por fecha (más reciente primero)
+      // Agrupar sorteos por día
+      type SorteoWithMultiplier = typeof dataWithAccumulated[0];
+      const sorteosByDate = new Map<string, SorteoWithMultiplier[]>();
+      
+      for (const sorteo of dataWithAccumulated) {
+        const date = sorteo.date;
+        if (!sorteosByDate.has(date)) {
+          sorteosByDate.set(date, []);
         }
-        // Si tienen la misma fecha/hora, usar mismo orden que en SQL:
-        // primero por loteriaId, luego por sorteoId
-        if (a.loteriaId !== b.loteriaId) {
-          return a.loteriaId.localeCompare(b.loteriaId);
-        }
-        return a.sorteoId.localeCompare(b.sorteoId);
-      });
+        sorteosByDate.get(date)!.push(sorteo);
+      }
 
-      const data = sortedData.map((item) => ({
-        ...item,
-        scheduledAt: formatIsoLocal(item.scheduledAt), // Formatear después de ordenar
-      }));
+      // Ordenar sorteos dentro de cada día por scheduledAt DESC (más reciente primero)
+      for (const [date, sorteosDelDia] of sorteosByDate.entries()) {
+        sorteosDelDia.sort((a, b) => {
+          const dateA = new Date(a.scheduledAt).getTime();
+          const dateB = new Date(b.scheduledAt).getTime();
+          if (dateA !== dateB) {
+            return dateB - dateA; // DESC por fecha (más reciente primero)
+          }
+          // Si tienen la misma fecha/hora, usar mismo orden que en SQL
+          if (a.loteriaId !== b.loteriaId) {
+            return a.loteriaId.localeCompare(b.loteriaId);
+          }
+          return a.sorteoId.localeCompare(b.sorteoId);
+        });
+      }
 
-      // Calcular totales agregados
+      // Construir respuesta agrupada por día
+      const daysArray = Array.from(sorteosByDate.entries())
+        .map(([date, sorteosDelDia]) => {
+          // Calcular dayTotals (suma de todos los sorteos del día)
+          const dayTotals = {
+            totalSales: sorteosDelDia.reduce((sum, s) => sum + s.totalSales, 0),
+            totalCommission: sorteosDelDia.reduce((sum, s) => sum + s.totalCommission, 0),
+            totalPrizes: sorteosDelDia.reduce((sum, s) => sum + s.totalPrizes, 0),
+            totalSubtotal: sorteosDelDia.reduce((sum, s) => sum + s.subtotal, 0),
+            totalTickets: sorteosDelDia.reduce((sum, s) => sum + s.ticketCount, 0),
+          };
+
+          // Formatear sorteos (convertir scheduledAt a ISO string)
+          const sorteosFormatted = sorteosDelDia.map((s) => ({
+            ...s,
+            scheduledAt: formatIsoLocal(s.scheduledAt),
+          }));
+
+          return {
+            date,
+            sorteos: sorteosFormatted,
+            dayTotals,
+          };
+        })
+        .sort((a, b) => {
+          // Ordenar días descendente (más reciente primero)
+          return b.date.localeCompare(a.date);
+        });
+
+      // Calcular totales agregados (suma de todos los días)
       const totals = {
-        totalSales: data.reduce((sum, s) => sum + s.totalSales, 0),
-        totalCommission: data.reduce((sum, s) => sum + s.totalCommission, 0),
-        totalPrizes: data.reduce((sum, s) => sum + s.totalPrizes, 0),
-        totalSubtotal: data.reduce((sum, s) => sum + s.subtotal, 0),
-        totalTickets: data.reduce((sum, s) => sum + s.ticketCount, 0),
+        totalSales: daysArray.reduce((sum, d) => sum + d.dayTotals.totalSales, 0),
+        totalCommission: daysArray.reduce((sum, d) => sum + d.dayTotals.totalCommission, 0),
+        totalPrizes: daysArray.reduce((sum, d) => sum + d.dayTotals.totalPrizes, 0),
+        totalSubtotal: daysArray.reduce((sum, d) => sum + d.dayTotals.totalSubtotal, 0),
+        totalTickets: daysArray.reduce((sum, d) => sum + d.dayTotals.totalTickets, 0),
       };
 
       return {
-        data,
+        data: daysArray,
         meta: {
           totals,
           dateFilter: params.date || "today",
           ...(params.fromDate ? { fromDate: params.fromDate } : {}),
           ...(params.toDate ? { toDate: params.toDate } : {}),
           totalSorteos: sorteos.length,
+          totalDays: daysArray.length, // ✅ NUEVO: Cantidad de días
         },
       };
     } catch (err: any) {
