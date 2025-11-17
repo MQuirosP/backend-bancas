@@ -183,4 +183,63 @@ export const TicketController = {
     );
     return success(res, result);
   },
+
+  async numbersSummary(req: AuthenticatedRequest, res: Response) {
+    const { date, fromDate, toDate, scope, loteriaId, sorteoId } = req.query as any;
+    
+    // Validar scope (solo 'mine' permitido)
+    if (scope && scope !== 'mine') {
+      return res.status(400).json({
+        success: false,
+        error: "scope debe ser 'mine'",
+      });
+    }
+
+    // Obtener vendedorId del usuario autenticado
+    const vendedorId = req.user!.id;
+
+    const result = await TicketService.numbersSummary(
+      {
+        date,
+        fromDate,
+        toDate,
+        scope: scope || 'mine',
+        loteriaId,
+        sorteoId,
+      },
+      vendedorId
+    );
+
+    return success(res, result.data, result.meta);
+  },
+
+  /**
+   * GET /api/v1/tickets/by-number/:ticketNumber
+   * Obtiene las jugadas de un ticket existente mediante su número
+   * Endpoint público/inter-vendedor (no filtra por vendedor)
+   */
+  async getByTicketNumber(req: AuthenticatedRequest, res: Response) {
+    const { ticketNumber } = req.params;
+
+    try {
+      const result = await TicketService.getByTicketNumber(ticketNumber);
+      return success(res, result);
+    } catch (err: any) {
+      // Manejar errores de AppError
+      if (err.statusCode && err.message) {
+        return res.status(err.statusCode).json({
+          success: false,
+          error: err.errorCode || "ERROR",
+          message: err.message,
+        });
+      }
+
+      // Error genérico
+      return res.status(500).json({
+        success: false,
+        error: "INTERNAL_ERROR",
+        message: "Error al obtener el ticket",
+      });
+    }
+  },
 };

@@ -67,6 +67,9 @@ export const EvaluatedSummaryQuerySchema = z.object({
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
   scope: z.enum(["mine"]).optional().default("mine"), // Solo 'mine' para vendedor
   loteriaId: z.uuid().optional(),
+  // status puede ser una lista separada por comas: "EVALUATED,OPEN" o un solo valor
+  // Por defecto filtra por EVALUATED y OPEN
+  status: z.string().optional(), // Ej: "EVALUATED", "OPEN", "EVALUATED,OPEN"
   _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
 
