@@ -19,26 +19,39 @@ export const GetStatementQuerySchema = z
 
 /**
  * Schema para body de POST /accounts/payment
+ * Nota: El validador permite que ambos campos sean opcionales porque el controller
+ * maneja la lógica según el rol del usuario (VENTANA puede inferir ventanaId, ADMIN puede proporcionar cualquiera)
  */
 export const CreatePaymentBodySchema = z
   .object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD"),
-    ventanaId: z.string().uuid().optional(),
-    vendedorId: z.string().uuid().optional(),
+    ventanaId: z.string().uuid().optional().nullable(),
+    vendedorId: z.string().uuid().optional().nullable(),
     amount: z.number().positive("El monto debe ser positivo"),
     type: z.enum(["payment", "collection"]),
     method: z.enum(["cash", "transfer", "check", "other"]),
-    notes: z.string().optional(),
+    notes: z.string().optional().nullable(),
     isFinal: z.boolean().optional().default(false),
-    idempotencyKey: z.string().uuid().optional(),
+    idempotencyKey: z.string().uuid().optional().nullable(),
   })
   .refine(
     (data) => {
-      // Debe tener ventanaId o vendedorId, pero no ambos
-      return (data.ventanaId && !data.vendedorId) || (!data.ventanaId && data.vendedorId);
+      // Permitir que ambos sean null/undefined (el controller manejará según el rol)
+      // Solo rechazar si ambos están presentes con valores válidos
+      const hasVentanaId = data.ventanaId && data.ventanaId !== null && data.ventanaId !== undefined;
+      const hasVendedorId = data.vendedorId && data.vendedorId !== null && data.vendedorId !== undefined;
+      
+      // Si ambos están presentes, rechazar
+      if (hasVentanaId && hasVendedorId) {
+        return false;
+      }
+      
+      // Permitir cualquier otra combinación (ambos null, uno presente, etc.)
+      return true;
     },
     {
-      message: "Debe proporcionar ventanaId o vendedorId, pero no ambos",
+      message: "No se pueden proporcionar ventanaId y vendedorId al mismo tiempo",
+      path: ["ventanaId", "vendedorId"],
     }
   )
   .strict();

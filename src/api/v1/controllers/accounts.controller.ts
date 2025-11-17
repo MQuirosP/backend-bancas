@@ -216,6 +216,20 @@ export const AccountsController = {
       } else {
         effectiveVendedorId = undefined; // No usar vendedorId cuando es ventana
       }
+    } else if (user.role === Role.ADMIN) {
+      // ADMIN debe proporcionar ventanaId o vendedorId
+      if (!ventanaId && !vendedorId) {
+        throw new AppError("Debe proporcionar ventanaId o vendedorId", 400, "MISSING_DIMENSION");
+      }
+      // Si ambos están presentes, rechazar
+      if (ventanaId && vendedorId) {
+        throw new AppError("No se pueden proporcionar ventanaId y vendedorId al mismo tiempo", 400, "INVALID_DIMENSION");
+      }
+    }
+
+    // Validar que al menos uno de los dos esté presente después del procesamiento
+    if (!effectiveVentanaId && !effectiveVendedorId) {
+      throw new AppError("Debe proporcionar ventanaId o vendedorId", 400, "MISSING_DIMENSION");
     }
 
     // Obtener nombre del usuario para auditoría desde la base de datos
@@ -511,6 +525,49 @@ export const AccountsController = {
           }
         : null,
     }, 200);
+  },
+
+  /**
+   * DELETE /api/v1/accounts/statement/:id
+   * Elimina un estado de cuenta (solo si está vacío)
+   */
+  async deleteStatement(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    const { id } = req.params;
+    const user = req.user;
+
+    // Validar permisos: solo ADMIN puede eliminar statements
+    if (user.role !== Role.ADMIN) {
+      throw new AppError("Solo los administradores pueden eliminar estados de cuenta", 403, "FORBIDDEN");
+    }
+
+    const result = await AccountsService.deleteStatement(id);
+
+    // Log de auditoría
+    // TODO: Cambiar a ACCOUNT_STATEMENT_DELETE cuando se regenere el cliente de Prisma
+    await ActivityService.log({
+      userId: user.id,
+      action: ActivityType.ACCOUNT_STATEMENT_VIEW, // Temporal: usar ACCOUNT_STATEMENT_DELETE después de regenerar Prisma
+      targetType: "ACCOUNT_STATEMENT",
+      targetId: id,
+      details: {
+        statementId: id,
+        action: "DELETE", // Indicar que es una eliminación en los detalles
+      },
+      layer: "controller",
+      requestId: req.requestId,
+    });
+
+    req.logger?.info({
+      layer: "controller",
+      action: "ACCOUNT_STATEMENT_DELETE",
+      userId: user.id,
+      requestId: req.requestId,
+      payload: { statementId: id },
+    });
+
+    return success(res, result, 200);
   },
 };
 

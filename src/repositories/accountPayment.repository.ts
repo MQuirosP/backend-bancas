@@ -197,5 +197,25 @@ export const AccountPaymentRepository = {
 
     return collections.reduce((sum, p) => sum + p.amount, 0);
   },
+
+  /**
+   * Obtiene todos los pagos/cobros de un statement (para historial)
+   */
+  async findByStatementId(accountStatementId: string) {
+    return await prisma.accountPayment.findMany({
+      where: {
+        accountStatementId,
+      },
+      orderBy: { createdAt: "asc" },
+      include: {
+        paidBy: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+  },
 };
 

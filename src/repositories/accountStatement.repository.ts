@@ -206,5 +206,26 @@ export const AccountStatementRepository = {
       },
     });
   },
+
+  /**
+   * Elimina un estado de cuenta
+   */
+  async delete(id: string) {
+    return await prisma.accountStatement.delete({
+      where: { id },
+    });
+  },
+
+  /**
+   * Obtiene un estado de cuenta por ID
+   */
+  async findById(id: string) {
+    return await prisma.accountStatement.findUnique({
+      where: { id },
+      include: {
+        payments: true, // Incluir todos los pagos para validación completa
+      },
+    });
+  },
 };
 
