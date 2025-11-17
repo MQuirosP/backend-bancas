@@ -105,3 +105,82 @@ export const ReversePaymentSchema = z.object({
 export const FinalizePaymentSchema = z.object({
   notes: z.string().max(500).optional(),
 });
+
+// ==================== NUMBERS SUMMARY VALIDATOR ====================
+
+/**
+ * Schema para el endpoint de resumen de números
+ * GET /api/v1/tickets/numbers-summary
+ */
+export const NumbersSummaryQuerySchema = z
+  .object({
+    scope: z.enum(["mine"]).optional().default("mine"), // Solo 'mine' para vendedor
+    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
+    toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
+    loteriaId: z.uuid().optional(),
+    sorteoId: z.uuid().optional(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
+  })
+  .strict()
+  .superRefine((val, ctx) => {
+    // Si date es 'range', fromDate y toDate son requeridos
+    if (val.date === "range") {
+      if (!val.fromDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["fromDate"],
+          message: "fromDate es requerido cuando date='range'",
+        });
+      }
+      if (!val.toDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["toDate"],
+          message: "toDate es requerido cuando date='range'",
+        });
+      }
+      if (val.fromDate && val.toDate && val.fromDate > val.toDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["toDate"],
+          message: "toDate debe ser mayor o igual a fromDate",
+        });
+      }
+    }
+  });
+
+export const validateNumbersSummaryQuery = validateQuery(NumbersSummaryQuerySchema);
+
+// ==================== GET TICKET BY NUMBER VALIDATOR ====================
+
+/**
+ * Schema para validar el número de ticket en la URL
+ * Formato esperado: TDDMMYY-NNNNN, TYYMMDD-XXXXXX-CC, o cualquier formato que comience con T
+ * (para compatibilidad con formatos históricos)
+ */
+export const TicketNumberParamSchema = z.object({
+  ticketNumber: z.string()
+    .min(1, "El número de ticket no puede estar vacío")
+    .max(24, "El número de ticket es demasiado largo")
+    .regex(/^T/, "El número de ticket debe comenzar con T"),
+});
+
+export const validateTicketNumberParam = (req: any, res: any, next: any) => {
+  const { ticketNumber } = req.params;
+  
+  try {
+    TicketNumberParamSchema.parse({ ticketNumber });
+    next();
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        success: false,
+        error: "Formato inválido",
+        message: "El número de ticket debe seguir el formato TDDMMYY-NNNNN o TYYMMDD-XXXXXX-CC",
+        details: error.issues,
+      });
+    }
+    next(error);
+  }
+};

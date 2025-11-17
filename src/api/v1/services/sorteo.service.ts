@@ -830,8 +830,9 @@ export const SorteoService = {
   },
 
   /**
-   * Obtiene resumen de sorteos evaluados con datos financieros agregados
+   * Obtiene resumen de sorteos evaluados y/o abiertos con datos financieros agregados
    * GET /api/v1/sorteos/evaluated-summary
+   * Por defecto filtra por EVALUATED y OPEN, pero puede especificarse con el parámetro status
    */
   async evaluatedSummary(
     params: {
@@ -840,6 +841,7 @@ export const SorteoService = {
       toDate?: string;
       scope?: string;
       loteriaId?: string;
+      status?: string;
     },
     vendedorId: string
   ) {
@@ -851,9 +853,28 @@ export const SorteoService = {
         params.toDate
       );
 
-      // Construir filtro para sorteos EVALUATED
+      // Parsear estados permitidos desde el parámetro status
+      // Por defecto: EVALUATED y OPEN
+      let allowedStatuses: SorteoStatus[] = [SorteoStatus.EVALUATED, SorteoStatus.OPEN];
+      
+      if (params.status) {
+        // Parsear string como "EVALUATED,OPEN" o "EVALUATED" o "OPEN"
+        const statusStrings = params.status.split(',').map(s => s.trim().toUpperCase());
+        allowedStatuses = statusStrings
+          .filter(s => Object.values(SorteoStatus).includes(s as SorteoStatus))
+          .map(s => s as SorteoStatus);
+        
+        // Si no hay estados válidos después del parseo, usar el default
+        if (allowedStatuses.length === 0) {
+          allowedStatuses = [SorteoStatus.EVALUATED, SorteoStatus.OPEN];
+        }
+      }
+
+      // Construir filtro para sorteos EVALUATED y/o OPEN
       const sorteoWhere: Prisma.SorteoWhereInput = {
-        status: SorteoStatus.EVALUATED,
+        status: {
+          in: allowedStatuses,
+        },
         scheduledAt: {
           gte: dateRange.fromAt,
           lte: dateRange.toAt,
@@ -868,7 +889,7 @@ export const SorteoService = {
         },
       };
 
-      // Obtener sorteos evaluados ordenados por scheduledAt ASC (más antiguo primero)
+      // Obtener sorteos (EVALUATED y/o OPEN) ordenados por scheduledAt ASC (más antiguo primero)
       // para calcular el acumulado correctamente del más antiguo hacia el más reciente
       const sorteos = await prisma.sorteo.findMany({
         where: sorteoWhere,
@@ -885,6 +906,23 @@ export const SorteoService = {
           { loteriaId: "asc" }, // Orden secundario por loteriaId para consistencia cuando hay misma hora
           { id: "asc" }, // Orden terciario por ID para garantizar orden consistente
         ],
+      });
+
+      // Log de depuración
+      logger.info({
+        layer: "service",
+        action: "SORTEO_EVALUATED_SUMMARY_DEBUG",
+        payload: {
+          vendedorId,
+          allowedStatuses: allowedStatuses,
+          dateRange: {
+            fromAt: dateRange.fromAt.toISOString(),
+            toAt: dateRange.toAt.toISOString(),
+          },
+          sorteosFound: sorteos.length,
+          sorteoIds: sorteos.map(s => s.id),
+          message: "Sorteos encontrados después de filtrar",
+        },
       });
 
       // Obtener datos financieros agregados por sorteo
@@ -927,6 +965,19 @@ export const SorteoService = {
           commissionAmount: true,
           payout: true,
           isWinner: true,
+          type: true, // ✅ NUEVO: Tipo de jugada (NUMERO o REVENTADO) para desglose de comisión
+        },
+      });
+
+      // Log de depuración
+      logger.info({
+        layer: "service",
+        action: "SORTEO_EVALUATED_SUMMARY_JUGADAS_DEBUG",
+        payload: {
+          vendedorId,
+          sorteoIdsCount: sorteoIds.length,
+          jugadasFound: jugadas.length,
+          message: "Jugadas encontradas para los sorteos",
         },
       });
 
@@ -1081,6 +1132,15 @@ export const SorteoService = {
         const paidCount = paidMap.get(sorteo.id) || 0;
         const unpaidCount = winningCount - paidCount;
 
+        // ✅ NUEVO: Calcular comisiones por tipo (NUMERO vs REVENTADO) a nivel de sorteo
+        const jugadasDelSorteo = jugadas.filter(j => j.ticket.sorteoId === sorteo.id);
+        const commissionByNumber = jugadasDelSorteo
+          .filter(j => j.type === 'NUMERO')
+          .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
+        const commissionByReventado = jugadasDelSorteo
+          .filter(j => j.type === 'REVENTADO')
+          .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
+
         // Calcular desglose por multiplicador
         // Agrupar por jugadas (no tickets) porque un ticket puede tener múltiples multiplicadores
         const multiplierMap = jugadasBySorteoAndMultiplier.get(sorteo.id) || new Map();
@@ -1090,6 +1150,8 @@ export const SorteoService = {
           multiplierValue: number;
           totalSales: number;
           totalCommission: number;
+          commissionByNumber: number; // ✅ NUEVO
+          commissionByReventado: number; // ✅ NUEVO
           totalPrizes: number;
           ticketCount: number;
           subtotal: number;
@@ -1104,6 +1166,15 @@ export const SorteoService = {
           // Calcular totales por multiplicador (suma de jugadas)
           const multTotalSales = jugadasGroup.reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.amount || 0), 0);
           const multTotalCommission = jugadasGroup.reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
+          
+          // ✅ NUEVO: Calcular comisiones por tipo a nivel de multiplicador
+          const multCommissionByNumber = jugadasGroup
+            .filter((j: JugadaWithMultiplier) => j.type === 'NUMERO')
+            .reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
+          const multCommissionByReventado = jugadasGroup
+            .filter((j: JugadaWithMultiplier) => j.type === 'REVENTADO')
+            .reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
+          
           const multTotalPrizes = jugadasGroup
             .filter((j: JugadaWithMultiplier) => j.isWinner)
             .reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.payout || 0), 0);
@@ -1150,6 +1221,8 @@ export const SorteoService = {
             multiplierValue,
             totalSales: multTotalSales,
             totalCommission: multTotalCommission,
+            commissionByNumber: multCommissionByNumber, // ✅ NUEVO
+            commissionByReventado: multCommissionByReventado, // ✅ NUEVO
             totalPrizes: multTotalPrizes,
             ticketCount: multTicketCount,
             subtotal: multSubtotal,
@@ -1174,6 +1247,8 @@ export const SorteoService = {
           isReventado,
           totalSales: financial.totalSales,
           totalCommission: financial.totalCommission,
+          commissionByNumber, // ✅ NUEVO: Comisión por jugadas tipo NÚMERO
+          commissionByReventado, // ✅ NUEVO: Comisión por jugadas tipo REVENTADO
           totalPrizes: financial.totalPrizes,
           ticketCount: financial.ticketCount,
           subtotal,
@@ -1222,6 +1297,8 @@ export const SorteoService = {
           const dayTotals = {
             totalSales: sorteosDelDia.reduce((sum, s) => sum + s.totalSales, 0),
             totalCommission: sorteosDelDia.reduce((sum, s) => sum + s.totalCommission, 0),
+            commissionByNumber: sorteosDelDia.reduce((sum, s) => sum + (s.commissionByNumber || 0), 0), // ✅ NUEVO
+            commissionByReventado: sorteosDelDia.reduce((sum, s) => sum + (s.commissionByReventado || 0), 0), // ✅ NUEVO
             totalPrizes: sorteosDelDia.reduce((sum, s) => sum + s.totalPrizes, 0),
             totalSubtotal: sorteosDelDia.reduce((sum, s) => sum + s.subtotal, 0),
             totalTickets: sorteosDelDia.reduce((sum, s) => sum + s.ticketCount, 0),
@@ -1248,12 +1325,14 @@ export const SorteoService = {
       const totals = {
         totalSales: daysArray.reduce((sum, d) => sum + d.dayTotals.totalSales, 0),
         totalCommission: daysArray.reduce((sum, d) => sum + d.dayTotals.totalCommission, 0),
+        commissionByNumber: daysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByNumber || 0), 0), // ✅ NUEVO
+        commissionByReventado: daysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByReventado || 0), 0), // ✅ NUEVO
         totalPrizes: daysArray.reduce((sum, d) => sum + d.dayTotals.totalPrizes, 0),
         totalSubtotal: daysArray.reduce((sum, d) => sum + d.dayTotals.totalSubtotal, 0),
         totalTickets: daysArray.reduce((sum, d) => sum + d.dayTotals.totalTickets, 0),
       };
 
-      return {
+      const result = {
         data: daysArray,
         meta: {
           totals,
@@ -1264,6 +1343,21 @@ export const SorteoService = {
           totalDays: daysArray.length, // ✅ NUEVO: Cantidad de días
         },
       };
+
+      // Log de depuración final
+      logger.info({
+        layer: "service",
+        action: "SORTEO_EVALUATED_SUMMARY_RESULT",
+        payload: {
+          vendedorId,
+          totalSorteos: sorteos.length,
+          totalDays: daysArray.length,
+          totalTickets: totals.totalTickets,
+          message: "Resultado final del resumen evaluado",
+        },
+      });
+
+      return result;
     } catch (err: any) {
       logger.error({
         layer: "service",

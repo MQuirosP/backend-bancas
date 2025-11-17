@@ -6,7 +6,9 @@ import {
   validateListTicketsQuery,
   RegisterPaymentSchema,
   ReversePaymentSchema,
-  FinalizePaymentSchema
+  FinalizePaymentSchema,
+  validateNumbersSummaryQuery,
+  validateTicketNumberParam
 } from "../validators/ticket.validator";
 import { protect, restrictTo } from "../../../middlewares/auth.middleware";
 import { Role } from "@prisma/client";
@@ -18,6 +20,9 @@ router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.ADMIN));
 
 // Ticket CRUD
 router.post("/", validateBody(CreateTicketSchema), TicketController.create);
+// IMPORTANTE: Las rutas literales deben ir ANTES de las rutas con parámetros
+router.get("/numbers-summary", validateNumbersSummaryQuery, TicketController.numbersSummary);
+router.get("/by-number/:ticketNumber", validateTicketNumberParam, TicketController.getByTicketNumber);
 router.get("/:id", TicketController.getById);
 router.get("/", validateListTicketsQuery, TicketController.list);
 router.patch("/:id/cancel", TicketController.cancel);

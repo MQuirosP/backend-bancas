@@ -7,6 +7,7 @@ import prisma from "../../../core/prismaClient";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 import { isWithinSalesHours, validateTicketAgainstRules } from "../../../utils/loteriaRules";
 import { prepareCommissionContext, preCalculateCommissions } from "../../../utils/commissionPrecalc";
+import { resolveDateRange } from "../../../utils/dateRange";
 
 const CUTOFF_GRACE_MS = 5000;
 // Updated: Added clienteNombre field support
@@ -827,6 +828,281 @@ export const TicketService = {
         payload: { message: err.message },
       });
       throw err;
+    }
+  },
+
+  /**
+   * Obtiene resumen de números del 00 al 99 con montos por tipo (NÚMERO vs REVENTADO)
+   * GET /api/v1/tickets/numbers-summary
+   */
+  async numbersSummary(
+    params: {
+      date?: string;
+      fromDate?: string;
+      toDate?: string;
+      scope?: string;
+      loteriaId?: string;
+      sorteoId?: string;
+    },
+    vendedorId: string
+  ) {
+    try {
+      // Resolver rango de fechas
+      const dateRange = resolveDateRange(
+        params.date || "today",
+        params.fromDate,
+        params.toDate
+      );
+
+      // Construir filtro para tickets
+      const ticketWhere: any = {
+        vendedorId,
+        deletedAt: null,
+        createdAt: {
+          gte: dateRange.fromAt,
+          lte: dateRange.toAt,
+        },
+        ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+        ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
+      };
+
+      // Obtener todas las jugadas que cumplen los filtros
+      const jugadas = await prisma.jugada.findMany({
+        where: {
+          ticket: ticketWhere,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          ticketId: true,
+          number: true,
+          reventadoNumber: true,
+          type: true,
+          amount: true,
+        },
+      });
+
+      // Agrupar por número y tipo
+      // Para NUMERO: usar jugada.number
+      // Para REVENTADO: usar jugada.reventadoNumber (o jugada.number si reventadoNumber es null)
+      const numbersMap = new Map<string, {
+        amountByNumber: number;
+        amountByReventado: number;
+        ticketIdsByNumber: Set<string>;
+        ticketIdsByReventado: Set<string>;
+      }>();
+
+      // Inicializar todos los números del 00 al 99
+      for (let i = 0; i <= 99; i++) {
+        const numStr = String(i).padStart(2, '0');
+        numbersMap.set(numStr, {
+          amountByNumber: 0,
+          amountByReventado: 0,
+          ticketIdsByNumber: new Set(),
+          ticketIdsByReventado: new Set(),
+        });
+      }
+
+      // Procesar jugadas
+      for (const jugada of jugadas) {
+        let numberToUse: string;
+        
+        if (jugada.type === 'NUMERO') {
+          numberToUse = jugada.number.padStart(2, '0');
+        } else if (jugada.type === 'REVENTADO') {
+          // Para REVENTADO, usar reventadoNumber si existe, sino usar number
+          numberToUse = (jugada.reventadoNumber || jugada.number).padStart(2, '0');
+        } else {
+          // Por defecto, tratar como NUMERO (compatibilidad con datos antiguos)
+          numberToUse = jugada.number.padStart(2, '0');
+        }
+
+        // Validar que el número esté en el rango 00-99
+        const numValue = parseInt(numberToUse, 10);
+        if (numValue < 0 || numValue > 99) {
+          continue; // Saltar números inválidos
+        }
+
+        let numData = numbersMap.get(numberToUse);
+        if (!numData) {
+          // Si por alguna razón no existe, crear entrada
+          numData = {
+            amountByNumber: 0,
+            amountByReventado: 0,
+            ticketIdsByNumber: new Set(),
+            ticketIdsByReventado: new Set(),
+          };
+          numbersMap.set(numberToUse, numData);
+        }
+        
+        if (jugada.type === 'NUMERO') {
+          numData.amountByNumber += jugada.amount || 0;
+          numData.ticketIdsByNumber.add(jugada.ticketId);
+        } else if (jugada.type === 'REVENTADO') {
+          numData.amountByReventado += jugada.amount || 0;
+          numData.ticketIdsByReventado.add(jugada.ticketId);
+        } else {
+          // Por defecto, tratar como NUMERO
+          numData.amountByNumber += jugada.amount || 0;
+          numData.ticketIdsByNumber.add(jugada.ticketId);
+        }
+      }
+
+      // Construir array de respuesta ordenado de 00 a 99
+      const data = Array.from({ length: 100 }, (_, i) => {
+        const numStr = String(i).padStart(2, '0');
+        const numData = numbersMap.get(numStr) || {
+          amountByNumber: 0,
+          amountByReventado: 0,
+          ticketIdsByNumber: new Set<string>(),
+          ticketIdsByReventado: new Set<string>(),
+        };
+
+        // Calcular ticketCount: tickets únicos que tienen apuestas en este número
+        const allTicketIds = new Set([
+          ...Array.from(numData.ticketIdsByNumber),
+          ...Array.from(numData.ticketIdsByReventado),
+        ]);
+
+        return {
+          number: numStr,
+          amountByNumber: numData.amountByNumber,
+          amountByReventado: numData.amountByReventado,
+          totalAmount: numData.amountByNumber + numData.amountByReventado,
+          ticketCount: allTicketIds.size,
+          ticketsByNumber: numData.ticketIdsByNumber.size,
+          ticketsByReventado: numData.ticketIdsByReventado.size,
+        };
+      });
+
+      // Calcular totales
+      const totalAmountByNumber = data.reduce((sum, n) => sum + n.amountByNumber, 0);
+      const totalAmountByReventado = data.reduce((sum, n) => sum + n.amountByReventado, 0);
+      const totalAmount = totalAmountByNumber + totalAmountByReventado;
+      
+      // Contar tickets únicos totales
+      const allUniqueTicketIds = new Set<string>();
+      for (const numData of numbersMap.values()) {
+        numData.ticketIdsByNumber.forEach(id => allUniqueTicketIds.add(id));
+        numData.ticketIdsByReventado.forEach(id => allUniqueTicketIds.add(id));
+      }
+      const totalTickets = allUniqueTicketIds.size;
+
+      return {
+        data,
+        meta: {
+          dateFilter: params.date || "today",
+          ...(params.fromDate ? { fromDate: params.fromDate } : {}),
+          ...(params.toDate ? { toDate: params.toDate } : {}),
+          totalNumbers: 100,
+          totalAmountByNumber,
+          totalAmountByReventado,
+          totalAmount,
+          totalTickets,
+        },
+      };
+    } catch (err: any) {
+      logger.error({
+        layer: "service",
+        action: "TICKET_NUMBERS_SUMMARY_FAIL",
+        payload: { message: err.message, params },
+      });
+      throw err;
+    }
+  },
+
+  /**
+   * Obtiene las jugadas de un ticket existente mediante su número de ticket
+   * GET /api/v1/tickets/by-number/:ticketNumber
+   * Endpoint público/inter-vendedor (no filtra por vendedor)
+   */
+  async getByTicketNumber(ticketNumber: string) {
+    try {
+      // Buscar el ticket por número (sin filtrar por vendedor)
+      const ticket = await prisma.ticket.findUnique({
+        where: {
+          ticketNumber,
+          deletedAt: null, // Solo tickets no eliminados
+        },
+        select: {
+          id: true,
+          ticketNumber: true,
+          sorteoId: true,
+          loteriaId: true,
+          createdAt: true,
+          jugadas: {
+            where: {
+              deletedAt: null, // Solo jugadas no eliminadas
+            },
+            select: {
+              id: true,
+              type: true,
+              number: true,
+              reventadoNumber: true,
+              amount: true,
+              multiplierId: true,
+            },
+            orderBy: {
+              createdAt: "asc", // Ordenar por orden de creación
+            },
+          },
+        },
+      });
+
+      if (!ticket) {
+        throw new AppError(
+          `No se encontró un ticket con el número ${ticketNumber}`,
+          404,
+          "TICKET_NOT_FOUND"
+        );
+      }
+
+      // Formatear jugadas para el frontend
+      const jugadas = ticket.jugadas.map((jugada) => {
+        const baseJugada: any = {
+          type: jugada.type || "NUMERO", // Por defecto NUMERO si no tiene tipo
+          number: jugada.number,
+          amount: jugada.amount,
+        };
+
+        // Si es REVENTADO, incluir reventadoNumber
+        if (jugada.type === "REVENTADO" && jugada.reventadoNumber) {
+          baseJugada.reventadoNumber = jugada.reventadoNumber;
+        }
+
+        // Incluir multiplierId si existe (opcional, para referencia)
+        if (jugada.multiplierId) {
+          baseJugada.multiplierId = jugada.multiplierId;
+        }
+
+        return baseJugada;
+      });
+
+      return {
+        ticketNumber: ticket.ticketNumber,
+        jugadas,
+        sorteoId: ticket.sorteoId,
+        loteriaId: ticket.loteriaId,
+        createdAt: ticket.createdAt.toISOString(),
+      };
+    } catch (err: any) {
+      // Si es un AppError, re-lanzarlo tal cual
+      if (err instanceof AppError) {
+        throw err;
+      }
+
+      // Para otros errores, loggear y lanzar error genérico
+      logger.error({
+        layer: "service",
+        action: "TICKET_GET_BY_NUMBER_FAIL",
+        payload: { message: err.message, ticketNumber },
+      });
+
+      throw new AppError(
+        "Error al obtener el ticket",
+        500,
+        "INTERNAL_ERROR"
+      );
     }
   },
 };
