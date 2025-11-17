@@ -785,6 +785,7 @@ export async function calculateDayStatement(
   const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
   const canEdit = !isSettled;
 
+  // ✅ FIX: Guardar también totalCollected en el statement
   await AccountStatementRepository.update(finalStatement.id, {
     totalSales,
     totalPayouts,
@@ -792,6 +793,7 @@ export async function calculateDayStatement(
     vendedorCommission: totalVendedorCommission,
     balance,
     totalPaid,
+    totalCollected, // ✅ NUEVO: Guardar totalCollected
     remainingBalance,
     isSettled,
     canEdit,
@@ -1695,8 +1697,10 @@ export const AccountsService = {
     // FIX: Usar helper para cálculo consistente de isSettled (incluye validación de hasPayments y ticketCount)
     const isSettled = calculateIsSettled(statement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
+    // ✅ FIX: Actualizar también totalCollected cuando se registra un movimiento
     await AccountStatementRepository.update(statement.id, {
       totalPaid: newTotalPaid,
+      totalCollected: newTotalCollected, // ✅ NUEVO: Actualizar totalCollected
       remainingBalance: newRemainingBalance,
       isSettled,
       canEdit: !isSettled,
@@ -1819,9 +1823,10 @@ export const AccountsService = {
     // FIX: Usar helper para cálculo consistente de isSettled (incluye validación de hasPayments y ticketCount)
     const isSettled = calculateIsSettled(statement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
-    // Actualizar estado de cuenta
+    // ✅ FIX: Actualizar también totalCollected cuando se revierte un movimiento
     await AccountStatementRepository.update(statement.id, {
       totalPaid: newTotalPaid,
+      totalCollected: newTotalCollected, // ✅ NUEVO: Actualizar totalCollected
       remainingBalance: newRemainingBalance,
       isSettled,
       canEdit: !isSettled,
