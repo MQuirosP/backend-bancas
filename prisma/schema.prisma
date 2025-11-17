@@ -576,6 +576,7 @@ model AccountStatement {
   // Saldo y pagos
   balance          Float @default(0)
   totalPaid        Float @default(0)
+  totalCollected   Float @default(0) // ✅ NUEVO: Total de collections (cobros) del día
   remainingBalance Float @default(0)
 
   // Estado

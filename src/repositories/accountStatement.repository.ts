@@ -56,6 +56,7 @@ export const AccountStatementRepository = {
     vendedorCommission?: number;
     balance?: number;
     totalPaid?: number;
+    totalCollected?: number; // ✅ Campo para totales de collections
     remainingBalance?: number;
     isSettled?: boolean;
     canEdit?: boolean;
