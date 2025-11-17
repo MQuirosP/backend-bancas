@@ -378,6 +378,202 @@ async function calculateCommissionsForTicket(
 type DayStatement = Awaited<ReturnType<typeof calculateDayStatement>>;
 
 /**
+ * Obtiene el desglose por sorteo para un día específico
+ */
+async function getSorteoBreakdown(
+  date: Date,
+  dimension: "ventana" | "vendedor",
+  ventanaId?: string,
+  vendedorId?: string,
+  bancaId?: string
+): Promise<Array<{
+  sorteoId: string;
+  sorteoName: string;
+  loteriaId: string;
+  loteriaName: string;
+  scheduledAt: string;
+  sales: number;
+  payouts: number;
+  listeroCommission: number;
+  vendedorCommission: number;
+  balance: number;
+  ticketCount: number;
+}>> {
+  const dateFilter = buildTicketDateFilter(date);
+  const where: any = {
+    ...dateFilter,
+    deletedAt: null,
+    status: { not: "CANCELLED" },
+  };
+
+  // Filtrar por banca activa (para ADMIN multibanca)
+  if (bancaId) {
+    where.ventana = {
+      bancaId: bancaId,
+    };
+  }
+
+  if (dimension === "ventana" && ventanaId) {
+    where.ventanaId = ventanaId;
+  } else if (dimension === "vendedor" && vendedorId) {
+    where.vendedorId = vendedorId;
+  }
+
+  // Obtener tickets con sus sorteos y loterías
+  const tickets = await prisma.ticket.findMany({
+    where,
+    select: {
+      id: true,
+      totalAmount: true,
+      sorteoId: true,
+      sorteo: {
+        select: {
+          id: true,
+          name: true,
+          scheduledAt: true,
+          loteria: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
+      jugadas: {
+        where: { deletedAt: null },
+        select: {
+          payout: true,
+          isWinner: true,
+          commissionAmount: true,
+          commissionOrigin: true,
+        },
+      },
+    },
+  });
+
+  // Agrupar por sorteo
+  const sorteoMap = new Map<string, {
+    sorteoId: string;
+    sorteoName: string;
+    loteriaId: string;
+    loteriaName: string;
+    scheduledAt: Date;
+    sales: number;
+    payouts: number;
+    listeroCommission: number;
+    vendedorCommission: number;
+    ticketCount: number;
+  }>();
+
+  for (const ticket of tickets) {
+    if (!ticket.sorteoId || !ticket.sorteo) continue;
+
+    const sorteoId = ticket.sorteo.id;
+    let entry = sorteoMap.get(sorteoId);
+
+    if (!entry) {
+      entry = {
+        sorteoId,
+        sorteoName: ticket.sorteo.name,
+        loteriaId: ticket.sorteo.loteria.id,
+        loteriaName: ticket.sorteo.loteria.name,
+        scheduledAt: ticket.sorteo.scheduledAt,
+        sales: 0,
+        payouts: 0,
+        listeroCommission: 0,
+        vendedorCommission: 0,
+        ticketCount: 0,
+      };
+      sorteoMap.set(sorteoId, entry);
+    }
+
+    entry.sales += ticket.totalAmount || 0;
+    entry.ticketCount += 1;
+
+    // Calcular payouts y comisiones desde jugadas
+    for (const jugada of ticket.jugadas) {
+      if (jugada.isWinner) {
+        entry.payouts += jugada.payout || 0;
+      }
+
+      // Comisiones según origen
+      if (jugada.commissionOrigin === "USER") {
+        entry.vendedorCommission += jugada.commissionAmount || 0;
+      } else if (jugada.commissionOrigin === "VENTANA" || jugada.commissionOrigin === "BANCA") {
+        entry.listeroCommission += jugada.commissionAmount || 0;
+      }
+    }
+  }
+
+  // Calcular balance para cada sorteo y convertir a formato de respuesta
+  const result = Array.from(sorteoMap.values())
+    .map((entry) => ({
+      sorteoId: entry.sorteoId,
+      sorteoName: entry.sorteoName,
+      loteriaId: entry.loteriaId,
+      loteriaName: entry.loteriaName,
+      scheduledAt: entry.scheduledAt.toISOString(),
+      sales: entry.sales,
+      payouts: entry.payouts,
+      listeroCommission: entry.listeroCommission,
+      vendedorCommission: entry.vendedorCommission,
+      balance: entry.sales - entry.payouts - entry.listeroCommission - entry.vendedorCommission,
+      ticketCount: entry.ticketCount,
+    }))
+    .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()); // Ordenar por scheduledAt ascendente
+
+  return result;
+}
+
+/**
+ * Obtiene los movimientos (pagos/cobros) de un statement para un día específico
+ * Los movimientos se ordenan por createdAt (ascendente) para reflejar el orden cronológico
+ * según lo especificado en BE_CUENTAS_REGISTRO_PAGO_COBRO.md
+ */
+async function getMovementsForDay(
+  statementId: string
+): Promise<Array<{
+  id: string;
+  accountStatementId: string;
+  date: string;
+  amount: number;
+  type: "payment" | "collection";
+  method: "cash" | "transfer" | "check" | "other";
+  notes: string | null;
+  isFinal: boolean;
+  isReversed: boolean;
+  reversedAt: Date | null;
+  reversedBy: string | null;
+  paidById: string;
+  paidByName: string;
+  createdAt: string;
+  updatedAt: string;
+}>> {
+  const payments = await AccountPaymentRepository.findByStatementId(statementId);
+
+  return payments
+    .filter((p) => !p.isReversed) // Solo movimientos activos
+    .map((p) => ({
+      id: p.id,
+      accountStatementId: p.accountStatementId,
+      date: p.date.toISOString().split("T")[0],
+      amount: p.amount,
+      type: p.type as "payment" | "collection",
+      method: p.method as "cash" | "transfer" | "check" | "other",
+      notes: p.notes,
+      isFinal: p.isFinal,
+      isReversed: p.isReversed,
+      reversedAt: p.reversedAt,
+      reversedBy: p.reversedBy,
+      paidById: p.paidById,
+      paidByName: p.paidByName,
+      createdAt: p.createdAt.toISOString(),
+      updatedAt: p.updatedAt.toISOString(),
+    }))
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); // Ordenar por createdAt ascendente
+}
+
+/**
  * Calcula y actualiza el estado de cuenta para un día específico
  */
 export async function calculateDayStatement(
@@ -475,8 +671,8 @@ export async function calculateDayStatement(
     );
   }
 
-  // Calcular saldo
-  const balance = totalSales - totalPayouts;
+  // Calcular saldo (incluye comisiones de listero y vendedor)
+  const balance = totalSales - totalPayouts - totalListeroCommission - totalVendedorCommission;
 
   // Si no hay tickets, retornar valores por defecto sin crear statement
   // FIX: No crear fechas nuevas cada vez para mantener consistencia
@@ -579,7 +775,10 @@ export async function calculateDayStatement(
   const totalCollected = await AccountPaymentRepository.getTotalCollected(finalStatement.id);
 
   // Calcular saldo restante: remainingBalance = balance - totalCollected + totalPaid
-  // Lógica: Payment reduce deuda (suma), Collection reduce crédito (resta)
+  // Lógica:
+  // - Collection (cobro): reduce remainingBalance cuando es positivo (resta totalCollected)
+  // - Payment (pago): reduce remainingBalance cuando es negativo (suma totalPaid)
+  // Fórmula: remainingBalance = balance - totalCollected + totalPaid
   const remainingBalance = balance - totalCollected + totalPaid;
 
   // FIX: Usar helper para cálculo consistente de isSettled
@@ -1023,40 +1222,59 @@ export const AccountsService = {
         }
       }
 
-      const statements = filteredStatements.map((s) => {
-        const base = {
-          date: s.date.toISOString().split("T")[0],
-          totalSales: s.totalSales,
-          totalPayouts: s.totalPayouts,
-          listeroCommission: s.listeroCommission,
-          vendedorCommission: s.vendedorCommission,
-          balance: s.balance,
-          totalPaid: s.totalPaid,
-          totalCollected: s.totalCollected,
-          remainingBalance: s.remainingBalance,
-          isSettled: s.isSettled,
-          canEdit: s.canEdit,
-          ticketCount: s.ticketCount,
-          createdAt: s.createdAt.toISOString(),
-          updatedAt: s.updatedAt.toISOString(),
-        };
+      // Obtener bySorteo y movements para cada statement en paralelo
+      const statements = await Promise.all(
+        filteredStatements.map(async (s) => {
+          const base = {
+            date: s.date.toISOString().split("T")[0],
+            totalSales: s.totalSales,
+            totalPayouts: s.totalPayouts,
+            listeroCommission: s.listeroCommission,
+            vendedorCommission: s.vendedorCommission,
+            balance: s.balance,
+            totalPaid: s.totalPaid,
+            totalCollected: s.totalCollected,
+            remainingBalance: s.remainingBalance,
+            isSettled: s.isSettled,
+            canEdit: s.canEdit,
+            ticketCount: s.ticketCount,
+            createdAt: s.createdAt.toISOString(),
+            updatedAt: s.updatedAt.toISOString(),
+          };
 
-        if (dimension === "ventana") {
-          return {
-            ...base,
-            ventanaId: s.ventanaId,
-            ventanaName: s.ventanaId ? ventanaInfoMap.get(s.ventanaId)?.name || null : null,
-            ventanaCode: s.ventanaId ? ventanaInfoMap.get(s.ventanaId)?.code || null : null,
-          };
-        } else {
-          return {
-            ...base,
-            vendedorId: s.vendedorId,
-            vendedorName: s.vendedorId ? vendedorInfoMap.get(s.vendedorId)?.name || null : null,
-            vendedorCode: s.vendedorId ? vendedorInfoMap.get(s.vendedorId)?.code || null : null,
-          };
-        }
-      });
+          // Obtener desglose por sorteo y movimientos en paralelo
+          const [bySorteo, movements] = await Promise.all([
+            getSorteoBreakdown(
+              s.date,
+              dimension,
+              s.ventanaId || undefined,
+              s.vendedorId || undefined,
+              bancaId
+            ),
+            getMovementsForDay(s.id),
+          ]);
+
+          if (dimension === "ventana") {
+            return {
+              ...base,
+              ventanaId: s.ventanaId,
+              ventanaName: s.ventanaId ? ventanaInfoMap.get(s.ventanaId)?.name || null : null,
+              ventanaCode: s.ventanaId ? ventanaInfoMap.get(s.ventanaId)?.code || null : null,
+              bySorteo,
+              movements,
+            };
+          } else {
+            return {
+              ...base,
+              vendedorId: s.vendedorId,
+              vendedorName: s.vendedorId ? vendedorInfoMap.get(s.vendedorId)?.name || null : null,
+              vendedorCode: s.vendedorId ? vendedorInfoMap.get(s.vendedorId)?.code || null : null,
+              bySorteo,
+              movements,
+            };
+          }
+        })
+      );
 
       const totals = {
         totalSales: filteredStatements.reduce((sum, s) => sum + s.totalSales, 0),
@@ -1270,56 +1488,75 @@ export const AccountsService = {
 
     // Formatear respuesta - retornar directamente el array en lugar de data.data
     // Incluir campos según la dimensión (omitir campos null innecesarios)
-    const formattedStatements = statements.map((s) => {
-      const dateISOCR = toCostaRicaISODate(s.date);
-      const dateKey = dateISOCR.split("T")[0];
-      const statementWithRelations = statementsMap.get(dateKey);
+    // Obtener bySorteo y movements para cada statement en paralelo
+    const formattedStatements = await Promise.all(
+      statements.map(async (s) => {
+        const dateISOCR = toCostaRicaISODate(s.date);
+        const dateKey = dateISOCR.split("T")[0];
+        const statementWithRelations = statementsMap.get(dateKey);
 
-      const base = {
-        date: dateISOCR,
-        totalSales: s.totalSales,
-        totalPayouts: s.totalPayouts,
-        listeroCommission: s.listeroCommission,
-        vendedorCommission: s.vendedorCommission,
-        balance: s.balance,
-        totalPaid: s.totalPaid,
-        totalCollected: s.totalCollected,
-        remainingBalance: s.remainingBalance,
-        isSettled: s.isSettled,
-        canEdit: s.canEdit,
-        ticketCount: s.ticketCount,
-        createdAt: s.createdAt.toISOString(),
-        updatedAt: s.updatedAt.toISOString(),
-      };
-
-      if (dimension === "ventana") {
-        const info =
-          (s.ventanaId && ventanaInfoMap.get(s.ventanaId)) ||
-          ventanaInfo ||
-          statementWithRelations?.ventana ||
-          null;
-
-        return {
-          ...base,
-          ventanaId: s.ventanaId ?? ventanaId ?? null,
-          ventanaName: info?.name ?? null,
-          ventanaCode: info?.code ?? null,
+        const base = {
+          date: dateISOCR,
+          totalSales: s.totalSales,
+          totalPayouts: s.totalPayouts,
+          listeroCommission: s.listeroCommission,
+          vendedorCommission: s.vendedorCommission,
+          balance: s.balance,
+          totalPaid: s.totalPaid,
+          totalCollected: s.totalCollected,
+          remainingBalance: s.remainingBalance,
+          isSettled: s.isSettled,
+          canEdit: s.canEdit,
+          ticketCount: s.ticketCount,
+          createdAt: s.createdAt.toISOString(),
+          updatedAt: s.updatedAt.toISOString(),
         };
-      } else {
-        const info =
-          (s.vendedorId && vendedorInfoMap.get(s.vendedorId)) ||
-          vendedorInfo ||
-          statementWithRelations?.vendedor ||
-          null;
 
-        return {
-          ...base,
-          vendedorId: s.vendedorId ?? vendedorId ?? null,
-          vendedorName: info?.name ?? null,
-          vendedorCode: info?.code ?? null,
-        };
-      }
-    });
+        // Obtener desglose por sorteo y movimientos en paralelo
+        const [bySorteo, movements] = await Promise.all([
+          getSorteoBreakdown(
+            s.date,
+            dimension,
+            s.ventanaId || ventanaId || undefined,
+            s.vendedorId || vendedorId || undefined,
+            bancaId
+          ),
+          getMovementsForDay(s.id),
+        ]);
+
+        if (dimension === "ventana") {
+          const info =
+            (s.ventanaId && ventanaInfoMap.get(s.ventanaId)) ||
+            ventanaInfo ||
+            statementWithRelations?.ventana ||
+            null;
+
+          return {
+            ...base,
+            ventanaId: s.ventanaId ?? ventanaId ?? null,
+            ventanaName: info?.name ?? null,
+            ventanaCode: info?.code ?? null,
+            bySorteo,
+            movements,
+          };
+        } else {
+          const info =
+            (s.vendedorId && vendedorInfoMap.get(s.vendedorId)) ||
+            vendedorInfo ||
+            statementWithRelations?.vendedor ||
+            null;
+
+          return {
+            ...base,
+            vendedorId: s.vendedorId ?? vendedorId ?? null,
+            vendedorName: info?.name ?? null,
+            vendedorCode: info?.code ?? null,
+            bySorteo,
+            movements,
+          };
+        }
+      })
+    );
 
     const totals = {
       totalSales: formattedStatements.reduce((sum, s) => sum + s.totalSales, 0),
@@ -1399,26 +1636,28 @@ export const AccountsService = {
     // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
     const currentRemainingBalance = baseBalance - currentTotalCollected + currentTotalPaid;
 
-    // Validar tipo de pago según saldo actualizado
-    if (currentRemainingBalance < 0) {
-      // CxP (Cuenta por Pagar) - solo permite payment
-      if (data.type !== "payment") {
-        throw new AppError("Solo se permiten pagos cuando el saldo es negativo", 400, "INVALID_PAYMENT_TYPE");
+    // Validar que el statement no esté saldado
+    if (statement.isSettled) {
+      throw new AppError("El estado de cuenta ya está saldado", 400, "STATEMENT_SETTLED");
+    }
+
+    // Validar monto según el tipo de movimiento
+    // Los movimientos solo afectan remainingBalance, no balance
+    // Se permite registrar cualquier movimiento mientras el statement no esté saldado
+    // El usuario puede seleccionar libremente el tipo (payment o collection)
+    if (data.type === "payment") {
+      // Payment: suma al remainingBalance (reduce CxP o aumenta CxC)
+      // Efecto: newRemainingBalance = currentRemainingBalance + amount
+      // Validar que el monto sea positivo
+      if (data.amount <= 0) {
+        throw new AppError("El monto debe ser positivo", 400, "INVALID_AMOUNT");
       }
-      // FIX: Permitir pagar hasta el saldo exacto (con tolerancia para redondeos)
-      const maxAmount = Math.abs(currentRemainingBalance) + 0.01;
-      if (data.amount > maxAmount) {
-        throw new AppError(`El monto excede el saldo pendiente (${Math.abs(currentRemainingBalance).toFixed(2)})`, 400, "AMOUNT_EXCEEDS_BALANCE");
-      }
-    } else if (currentRemainingBalance > 0) {
-      // CxC (Cuenta por Cobrar) - solo permite collection
-      if (data.type !== "collection") {
-        throw new AppError("Solo se permiten cobros cuando el saldo es positivo", 400, "INVALID_PAYMENT_TYPE");
-      }
-      // FIX: Permitir cobrar hasta el saldo exacto (con tolerancia para redondeos)
-      const maxAmount = currentRemainingBalance + 0.01;
-      if (data.amount > maxAmount) {
-        throw new AppError(`El monto excede el saldo pendiente (${currentRemainingBalance.toFixed(2)})`, 400, "AMOUNT_EXCEEDS_BALANCE");
+    } else if (data.type === "collection") {
+      // Collection: resta del remainingBalance (reduce CxC o aumenta CxP)
+      // Efecto: newRemainingBalance = currentRemainingBalance - amount
+      // Validar que el monto sea positivo
+      if (data.amount <= 0) {
+        throw new AppError("El monto debe ser positivo", 400, "INVALID_AMOUNT");
       }
     }
 
@@ -1444,7 +1683,13 @@ export const AccountsService = {
     const newTotalCollected = await AccountPaymentRepository.getTotalCollected(statement.id);
 
     // FIX: Reutilizar baseBalance ya calculado arriba (línea 1039)
-    // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
+    // Fórmula según tipo de movimiento:
+    // - payment: suma al remainingBalance (reduce CxP o aumenta CxC)
+    // - collection: resta del remainingBalance (reduce CxC o aumenta CxP)
+    // Fórmula: remainingBalance = balance - totalCollected + totalPaid
+    // Esto es equivalente a:
+    // - payment: remainingBalance += amount (porque totalPaid aumenta)
+    // - collection: remainingBalance -= amount (porque totalCollected aumenta)
     const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
     
     // FIX: Usar helper para cálculo consistente de isSettled (incluye validación de hasPayments y ticketCount)
@@ -1522,8 +1767,8 @@ export const AccountsService = {
       vendedorId: payment.vendedorId ?? undefined,
     });
 
-    // Calcular saldo base del día (sin pagos/cobros)
-    const baseBalance = statement.totalSales - statement.totalPayouts;
+    // Calcular saldo base del día (sin pagos/cobros, incluye comisiones)
+    const baseBalance = statement.totalSales - statement.totalPayouts - (statement.listeroCommission || 0) - (statement.vendedorCommission || 0);
 
     // FIX: Eliminar cálculo redundante - usar directamente el repositorio para obtener totales actuales
     const currentTotalPaid = await AccountPaymentRepository.getTotalPaid(statement.id);
@@ -1583,6 +1828,36 @@ export const AccountsService = {
     });
 
     return reversed;
+  },
+
+  /**
+   * Elimina un estado de cuenta
+   * Solo permite eliminar statements vacíos (sin tickets ni pagos activos)
+   */
+  async deleteStatement(statementId: string) {
+    const statement = await AccountStatementRepository.findById(statementId);
+    
+    if (!statement) {
+      throw new AppError("Estado de cuenta no encontrado", 404, "STATEMENT_NOT_FOUND");
+    }
+
+    // Validar que no tenga tickets
+    if (statement.ticketCount > 0) {
+      throw new AppError(`No se puede eliminar un estado de cuenta con tickets registrados (ticketCount: ${statement.ticketCount})`, 400, "STATEMENT_HAS_TICKETS");
+    }
+
+    // Validar que no tenga pagos activos (solo pagos no revertidos)
+    const allPayments = statement.payments || [];
+    const activePayments = allPayments.filter(p => !p.isReversed);
+    
+    if (activePayments.length > 0) {
+      throw new AppError(`No se puede eliminar un estado de cuenta con pagos/cobros registrados (${activePayments.length} pagos activos)`, 400, "STATEMENT_HAS_PAYMENTS");
+    }
+
+    // Eliminar el statement (los pagos revertidos se eliminarán automáticamente por cascade)
+    await AccountStatementRepository.delete(statementId);
+
+    return { id: statementId, deleted: true };
   },
 };
 

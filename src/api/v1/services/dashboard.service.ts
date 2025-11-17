@@ -75,6 +75,8 @@ interface CxCResult {
     ventanaName: string;
     totalSales: number;
     totalPayouts: number;
+    totalListeroCommission: number;
+    totalVendedorCommission: number;
     totalPaid: number;
     totalPaidOut: number;
     totalCollected: number;
@@ -92,10 +94,13 @@ interface CxPResult {
     ventanaName: string;
     totalSales: number;
     totalPayouts: number;
+    totalListeroCommission: number;
+    totalVendedorCommission: number;
     totalPaid: number;
     totalPaidOut: number;
     totalCollected: number;
     totalPaidToCustomer: number;
+    totalPaidToVentana: number; // Para CxP según documento
     amount: number; // compatibilidad: saldo positivo (CxP)
     remainingBalance: number;
     isActive: boolean;
@@ -572,7 +577,8 @@ export const DashboardService = {
     const commissionVentanaRawTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
     const commissionVentanaTotal = commissionVentanaRawTotal + totalVentanaCommission;
     const totalAmount = commissionUserTotal + commissionVentanaTotal;
-    const totalNet = totalSales - totalPayouts;
+    // Calcular ganancia neta incluyendo comisiones de listero y vendedor
+    const totalNet = totalSales - totalPayouts - commissionUserTotal - commissionVentanaTotal;
     const margin = totalSales > 0 ? (totalNet / totalSales) * 100 : 0;
 
     return {
@@ -592,7 +598,8 @@ export const DashboardService = {
         const commissionVentana =
           (Number(row.commission_ventana) || 0) + (extrasByVentana.get(row.ventana_id) || 0);
         const commissions = commissionUser + commissionVentana;
-        const net = sales - payout;
+        // Calcular ganancia neta incluyendo comisiones de listero y vendedor
+        const net = sales - payout - commissionUser - commissionVentana;
         const ventanaMargin = sales > 0 ? (net / sales) * 100 : 0;
         const winRate = tickets > 0 ? (winners / tickets) * 100 : 0;
 
@@ -622,7 +629,8 @@ export const DashboardService = {
         const commissionVentana =
           (Number(row.commission_ventana) || 0) + (extrasByLoteria.get(row.loteria_id) || 0);
         const commissions = commissionUser + commissionVentana;
-        const net = sales - payout;
+        // Calcular ganancia neta incluyendo comisiones de listero y vendedor
+        const net = sales - payout - commissionUser - commissionVentana;
         const loteriaMargin = sales > 0 ? (net / sales) * 100 : 0;
 
         return {
@@ -709,6 +717,8 @@ export const DashboardService = {
         isActive: boolean;
         totalSales: number;
         totalPayouts: number;
+        totalListeroCommission: number;
+        totalVendedorCommission: number;
         totalPaid: number;
         totalCollected: number;
         totalPaidToCustomer: number;
@@ -730,6 +740,8 @@ export const DashboardService = {
           isActive: fallbackIsActive ?? info?.isActive ?? true,
           totalSales: 0,
           totalPayouts: 0,
+          totalListeroCommission: 0,
+          totalVendedorCommission: 0,
           totalPaid: 0,
           totalCollected: 0,
           totalPaidToCustomer: 0,
@@ -759,7 +771,10 @@ export const DashboardService = {
 
       existing.totalSales += statement.totalSales ?? 0;
       existing.totalPayouts += statement.totalPayouts ?? 0;
+      existing.totalListeroCommission += statement.listeroCommission ?? 0;
+      existing.totalVendedorCommission += statement.vendedorCommission ?? 0;
       existing.totalPaid += statement.totalPaid ?? 0;
+      // remainingBalance ya incluye comisiones porque balance las incluye
       existing.remainingBalance += statement.remainingBalance ?? 0;
     }
 
@@ -854,6 +869,8 @@ export const DashboardService = {
           ventanaName: entry.ventanaName,
           totalSales: entry.totalSales,
           totalPayouts: entry.totalPayouts,
+          totalListeroCommission: entry.totalListeroCommission,
+          totalVendedorCommission: entry.totalVendedorCommission,
           totalPaid,
           totalPaidOut: totalPaid,
           totalCollected,
@@ -937,9 +954,12 @@ export const DashboardService = {
         isActive: boolean;
         totalSales: number;
         totalPayouts: number;
+        totalListeroCommission: number;
+        totalVendedorCommission: number;
         totalPaid: number;
         totalCollected: number;
         totalPaidToCustomer: number;
+        totalPaidToVentana: number;
         remainingBalance: number;
       }
     >();
@@ -958,9 +978,12 @@ export const DashboardService = {
           isActive: fallbackIsActive ?? info?.isActive ?? true,
           totalSales: 0,
           totalPayouts: 0,
+          totalListeroCommission: 0,
+          totalVendedorCommission: 0,
           totalPaid: 0,
           totalCollected: 0,
           totalPaidToCustomer: 0,
+          totalPaidToVentana: 0,
           remainingBalance: 0,
         };
         aggregated.set(ventanaId, entry);
@@ -986,7 +1009,10 @@ export const DashboardService = {
 
       existing.totalSales += statement.totalSales ?? 0;
       existing.totalPayouts += statement.totalPayouts ?? 0;
+      existing.totalListeroCommission += statement.listeroCommission ?? 0;
+      existing.totalVendedorCommission += statement.vendedorCommission ?? 0;
       existing.totalPaid += statement.totalPaid ?? 0;
+      // remainingBalance ya incluye comisiones porque balance las incluye
       existing.remainingBalance += statement.remainingBalance ?? 0;
     }
 
@@ -1076,15 +1102,19 @@ export const DashboardService = {
         const totalPaid = entry.totalPaid;
         const totalCollected = entry.totalCollected;
         const totalPaidToCustomer = entry.totalPaidToCustomer;
+        const totalPaidToVentana = entry.totalPaidToVentana || 0; // Para CxP según documento
         return {
           ventanaId: entry.ventanaId,
           ventanaName: entry.ventanaName,
           totalSales: entry.totalSales,
           totalPayouts: entry.totalPayouts,
+          totalListeroCommission: entry.totalListeroCommission,
+          totalVendedorCommission: entry.totalVendedorCommission,
           totalPaid,
           totalPaidOut: totalPaid,
           totalCollected,
           totalPaidToCustomer,
+          totalPaidToVentana,
           amount,
           remainingBalance: entry.remainingBalance,
           isActive: entry.isActive,
@@ -1172,7 +1202,8 @@ export const DashboardService = {
     const commissionUser = Number(summary.commission_user) || 0;
     const commissionVentana = (Number(summary.commission_ventana) || 0) + totalVentanaCommission;
     const totalCommissions = commissionUser + commissionVentana;
-    const net = totalSales - totalPayouts;
+    // Calcular ganancia neta incluyendo comisiones de listero y vendedor
+    const net = totalSales - totalPayouts - commissionUser - commissionVentana;
     const winRate = totalTickets > 0 ? (winningTickets / totalTickets) * 100 : 0;
 
     return {

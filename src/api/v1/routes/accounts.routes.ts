@@ -36,4 +36,8 @@ router.get("/payment-history", validateGetPaymentHistoryQuery, AccountsControlle
 // POST /accounts/reverse-payment
 router.post("/reverse-payment", validateReversePaymentBody, AccountsController.reversePayment);
 
+// 5) Eliminar un estado de cuenta (solo ADMIN, solo si está vacío)
+// DELETE /accounts/statement/:id
+router.delete("/statement/:id", AccountsController.deleteStatement);
+
 export default router;
