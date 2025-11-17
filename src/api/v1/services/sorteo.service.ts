@@ -890,16 +890,31 @@ export const SorteoService = {
       // Obtener datos financieros agregados por sorteo
       const sorteoIds = sorteos.map((s) => s.id);
       
-      // Obtener todos los tickets con sus multiplicadores para el desglose
-      const tickets = await prisma.ticket.findMany({
+      // Obtener todas las jugadas con sus multiplicadores para el desglose
+      // El multiplicador está en Jugada, no en Ticket
+      const jugadas = await prisma.jugada.findMany({
         where: {
-          sorteoId: { in: sorteoIds },
-          vendedorId,
+          ticket: {
+            sorteoId: { in: sorteoIds },
+            vendedorId,
+            deletedAt: null,
+          },
           deletedAt: null,
         },
         select: {
           id: true,
-          sorteoId: true,
+          ticketId: true,
+          ticket: {
+            select: {
+              id: true,
+              sorteoId: true,
+              totalAmount: true,
+              totalCommission: true,
+              totalPayout: true,
+              isWinner: true,
+              status: true,
+            },
+          },
           multiplierId: true,
           multiplier: {
             select: {
@@ -908,11 +923,10 @@ export const SorteoService = {
               valueX: true,
             },
           },
-          totalAmount: true,
-          totalCommission: true,
-          totalPayout: true,
+          amount: true,
+          commissionAmount: true,
+          payout: true,
           isWinner: true,
-          status: true,
         },
       });
 
@@ -1000,24 +1014,36 @@ export const SorteoService = {
         paidTicketsData.map((p) => [p.sorteoId, p._count.id])
       );
 
-      // Agrupar tickets por sorteo y multiplicador para el desglose
-      type TicketWithMultiplier = typeof tickets[0];
-      const ticketsBySorteoAndMultiplier = new Map<string, Map<string | null, TicketWithMultiplier[]>>();
+      // Agrupar jugadas por sorteo y multiplicador para el desglose
+      // Un ticket puede tener múltiples jugadas con diferentes multiplicadores
+      type JugadaWithMultiplier = typeof jugadas[0];
+      const jugadasBySorteoAndMultiplier = new Map<string, Map<string | null, JugadaWithMultiplier[]>>();
       
-      for (const ticket of tickets) {
-        const sorteoId = ticket.sorteoId;
-        const multiplierId = ticket.multiplierId || null;
+      for (const jugada of jugadas) {
+        const sorteoId = jugada.ticket.sorteoId;
+        const multiplierId = jugada.multiplierId || null;
         
-        if (!ticketsBySorteoAndMultiplier.has(sorteoId)) {
-          ticketsBySorteoAndMultiplier.set(sorteoId, new Map());
+        if (!jugadasBySorteoAndMultiplier.has(sorteoId)) {
+          jugadasBySorteoAndMultiplier.set(sorteoId, new Map());
         }
         
-        const multiplierMap = ticketsBySorteoAndMultiplier.get(sorteoId)!;
+        const multiplierMap = jugadasBySorteoAndMultiplier.get(sorteoId)!;
         if (!multiplierMap.has(multiplierId)) {
           multiplierMap.set(multiplierId, []);
         }
         
-        multiplierMap.get(multiplierId)!.push(ticket);
+        multiplierMap.get(multiplierId)!.push(jugada);
+      }
+
+      // Crear un mapa de tickets únicos por sorteo para contar tickets por multiplicador
+      const ticketsBySorteo = new Map<string, Set<string>>();
+      for (const jugada of jugadas) {
+        const sorteoId = jugada.ticket.sorteoId;
+        const ticketId = jugada.ticketId;
+        if (!ticketsBySorteo.has(sorteoId)) {
+          ticketsBySorteo.set(sorteoId, new Set());
+        }
+        ticketsBySorteo.get(sorteoId)!.add(ticketId);
       }
 
       // Construir respuesta con cálculos
@@ -1056,7 +1082,8 @@ export const SorteoService = {
         const unpaidCount = winningCount - paidCount;
 
         // Calcular desglose por multiplicador
-        const multiplierMap = ticketsBySorteoAndMultiplier.get(sorteo.id) || new Map();
+        // Agrupar por jugadas (no tickets) porque un ticket puede tener múltiples multiplicadores
+        const multiplierMap = jugadasBySorteoAndMultiplier.get(sorteo.id) || new Map();
         const byMultiplier: Array<{
           multiplierId: string | null;
           multiplierName: string;
@@ -1071,20 +1098,37 @@ export const SorteoService = {
           unpaidTicketsCount: number;
         }> = [];
 
-        for (const [multiplierId, ticketGroup] of multiplierMap.entries()) {
-          const multiplier = ticketGroup[0]?.multiplier;
+        for (const [multiplierId, jugadasGroup] of multiplierMap.entries()) {
+          const multiplier = jugadasGroup[0]?.multiplier;
           
-          // Calcular totales por multiplicador
-          const multTotalSales = ticketGroup.reduce((sum, t) => sum + (t.totalAmount || 0), 0);
-          const multTotalCommission = ticketGroup.reduce((sum, t) => sum + (t.totalCommission || 0), 0);
-          const multTotalPrizes = ticketGroup
-            .filter(t => t.isWinner)
-            .reduce((sum, t) => sum + (t.totalPayout || 0), 0);
-          const multTicketCount = ticketGroup.length;
+          // Calcular totales por multiplicador (suma de jugadas)
+          const multTotalSales = jugadasGroup.reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.amount || 0), 0);
+          const multTotalCommission = jugadasGroup.reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
+          const multTotalPrizes = jugadasGroup
+            .filter((j: JugadaWithMultiplier) => j.isWinner)
+            .reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.payout || 0), 0);
+          
+          // Contar tickets únicos con este multiplicador en este sorteo
+          const ticketIdsWithThisMultiplier = new Set(jugadasGroup.map((j: JugadaWithMultiplier) => j.ticketId));
+          const multTicketCount = ticketIdsWithThisMultiplier.size;
+          
           const multSubtotal = multTotalSales - multTotalCommission - multTotalPrizes;
           
-          const multWinningCount = ticketGroup.filter(t => t.isWinner).length;
-          const multPaidCount = ticketGroup.filter(t => t.status === "PAID").length;
+          // Contar tickets ganadores y pagados con este multiplicador
+          const winningTicketIds = new Set(
+            jugadasGroup
+              .filter((j: JugadaWithMultiplier) => j.isWinner)
+              .map((j: JugadaWithMultiplier) => j.ticketId)
+          );
+          const multWinningCount = winningTicketIds.size;
+          
+          // Obtener tickets pagados (necesitamos verificar el status del ticket)
+          const paidTicketIds = new Set(
+            jugadasGroup
+              .filter((j: JugadaWithMultiplier) => j.ticket.status === "PAID")
+              .map((j: JugadaWithMultiplier) => j.ticketId)
+          );
+          const multPaidCount = paidTicketIds.size;
           const multUnpaidCount = multWinningCount - multPaidCount;
 
           // Determinar información del multiplicador
