@@ -214,33 +214,129 @@ export const LoteriaController = {
   },
 
   async seedSorteos(req: Request, res: Response) {
-  const loteriaId = req.params.id
-  const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : new Date()
-  const days = req.query.days ? Number(req.query.days) : 7
-  const dryRun = req.query.dryRun === "true"
+    const loteriaId = req.params.id
+    const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : new Date()
+    const days = req.query.days ? Number(req.query.days) : 7
+    const dryRun = req.query.dryRun === "true"
 
-  if (isNaN(start.getTime())) {
-    return res.status(400).json({ success: false, message: "start inválido" })
-  }
-  if (days < 1 || days > 31) {
-    return res.status(400).json({ success: false, message: "days debe ser 1..31" })
-  }
+    if (isNaN(start.getTime())) {
+      return res.status(400).json({ success: false, message: "start inválido" })
+    }
+    if (days < 1 || days > 31) {
+      return res.status(400).json({ success: false, message: "days debe ser 1..31" })
+    }
 
-  const subset: Date[] | undefined = Array.isArray((req as any).body?.scheduledDates)
-    ? (req as any).body.scheduledDates
-        .map((d: any) => {
+    // El body ya está validado por el middleware, puede ser {} o tener scheduledDates
+    const body = (req as any).body || {}
+    let subset: Date[] | undefined = undefined;
+    
+    if (Array.isArray(body.scheduledDates) && body.scheduledDates.length > 0) {
+      const parsedDates = (body.scheduledDates as Array<string | Date | number>)
+        .map((d: string | Date | number): Date | null => {
           try {
-            return parseCostaRicaDateTime(d);
-          } catch {
+            // Si ya es un Date, usarlo directamente
+            if (d instanceof Date) {
+              return d;
+            }
+            // Si es string, parsearlo
+            if (typeof d === 'string') {
+              return parseCostaRicaDateTime(d);
+            }
+            // Si es número (timestamp), convertirlo
+            if (typeof d === 'number') {
+              return new Date(d);
+            }
+            return null;
+          } catch (err: any) {
+            req.logger?.warn({
+              layer: "controller",
+              action: "LOTERIA_SEED_SORTEOS_PARSE_DATE_ERROR",
+              payload: {
+                loteriaId,
+                dateValue: d,
+                error: err.message,
+              },
+            });
             return null;
           }
         })
-        .filter((d: Date | null): d is Date => !!d)
-    : undefined
+        .filter((d: Date | null): d is Date => !!d);
+      
+      if (parsedDates.length > 0) {
+        subset = parsedDates;
+        req.logger?.info({
+          layer: "controller",
+          action: "LOTERIA_SEED_SORTEOS_SUBSET_PARSED",
+          payload: {
+            loteriaId,
+            originalCount: body.scheduledDates.length,
+            parsedCount: parsedDates.length,
+            parsedDates: parsedDates.map(d => d.toISOString()),
+          },
+        });
+      } else {
+        req.logger?.warn({
+          layer: "controller",
+          action: "LOTERIA_SEED_SORTEOS_NO_VALID_DATES",
+          payload: {
+            loteriaId,
+            scheduledDates: body.scheduledDates,
+            message: "No se pudieron parsear las fechas del body",
+          },
+        });
+      }
+    }
 
-  const result = await LoteriaService.seedSorteosFromRules(loteriaId, start, days, dryRun, subset)
-  return res.json({ success: true, data: result })
-}
+    (req as any)?.logger?.info({
+      layer: "controller",
+      action: "LOTERIA_SEED_SORTEOS",
+      requestId: (req as any)?.requestId ?? null,
+      payload: {
+        loteriaId,
+        start: start.toISOString(),
+        days,
+        dryRun,
+        hasSubset: subset !== undefined,
+        subsetLength: subset ? subset.length : 0,
+      },
+    });
+
+    try {
+      // Cuando se llama manualmente desde el endpoint, siempre forzar la creación
+      // (ignorar la bandera autoCreateSorteos que solo aplica para autogeneración automática)
+      const result = await LoteriaService.seedSorteosFromRules(loteriaId, start, days, dryRun, subset, true)
+      
+      // Log del resultado
+      req.logger?.info({
+        layer: "controller",
+        action: "LOTERIA_SEED_SORTEOS_RESULT",
+        payload: {
+          loteriaId,
+          dryRun,
+          result: {
+            created: Array.isArray(result.created) ? result.created.length : (typeof result.created === 'number' ? result.created : 0),
+            skipped: Array.isArray(result.skipped) ? result.skipped.length : (typeof result.skipped === 'number' ? result.skipped : 0),
+            alreadyExists: Array.isArray(result.alreadyExists) ? result.alreadyExists.length : 0,
+            processed: Array.isArray(result.processed) ? result.processed.length : 0,
+            note: (result as any).note,
+          },
+        },
+      });
+
+      return res.json({ success: true, data: result })
+    } catch (error: any) {
+      req.logger?.error({
+        layer: "controller",
+        action: "LOTERIA_SEED_SORTEOS_ERROR",
+        payload: {
+          loteriaId,
+          error: error.message,
+          stack: error.stack,
+        },
+      });
+      throw error;
+    }
+  }
 
 };
 

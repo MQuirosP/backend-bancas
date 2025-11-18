@@ -220,7 +220,7 @@ export const LoteriaService = {
     return restored;
   },
 
-  async seedSorteosFromRules(loteriaId: string, start: Date, days: number, dryRun = false, scheduledDates?: Date[]) {
+  async seedSorteosFromRules(loteriaId: string, start: Date, days: number, dryRun = false, scheduledDates?: Date[], forceCreate = false) {
     const loteria = await prisma.loteria.findUnique({
       where: { id: loteriaId },
       select: { name: true, rulesJson: true, isActive: true },
@@ -229,9 +229,20 @@ export const LoteriaService = {
     if (!loteria.isActive) throw new Error("Lotería inactiva")
 
     const rules = (loteria.rulesJson ?? {}) as any
-    if (rules?.autoCreateSorteos === false) {
-      // Si quieres, permite override via query param; por ahora respetamos bandera.
-      return { created: 0, skipped: 0, note: "autoCreateSorteos=false" }
+    // Si forceCreate=true (llamada manual desde endpoint), ignorar la bandera autoCreateSorteos
+    // La bandera solo aplica para la autogeneración automática (cron jobs)
+    if (!forceCreate && rules?.autoCreateSorteos === false) {
+      logger.info({
+        layer: "service",
+        action: "LOTERIA_SEED_SORTEOS_SKIPPED_AUTO_CREATE_FLAG",
+        payload: {
+          loteriaId,
+          loteriaName: loteria.name,
+          autoCreateSorteos: false,
+          message: "autoCreateSorteos=false, solo se crean manualmente o con forceCreate=true",
+        },
+      });
+      return { created: 0, skipped: 0, alreadyExists: [], processed: [], note: "autoCreateSorteos=false (usa forceCreate para crear manualmente)" }
     }
 
     const schedule = rules?.drawSchedule ?? {}
@@ -247,11 +258,36 @@ export const LoteriaService = {
       limit: 1000,
     })
 
+    logger.info({
+      layer: "service",
+      action: "LOTERIA_SEED_SORTEOS_FROM_RULES",
+      payload: {
+        loteriaId,
+        loteriaName: loteria.name,
+        start: start.toISOString(),
+        days,
+        dryRun,
+        totalOccurrences: occurrences.length,
+        hasScheduledDates: Array.isArray(scheduledDates) && scheduledDates.length > 0,
+        scheduledDatesCount: scheduledDates?.length ?? 0,
+      },
+    });
+
     // Si viene subset, filtrar por timestamps exactos (idempotente)
     let subset = occurrences
     if (Array.isArray(scheduledDates) && scheduledDates.length > 0) {
       const subsetKeys = new Set(scheduledDates.map(d => new Date(d).getTime()))
       subset = occurrences.filter(o => subsetKeys.has(o.scheduledAt.getTime()))
+      
+      logger.info({
+        layer: "service",
+        action: "LOTERIA_SEED_SORTEOS_FILTERED",
+        payload: {
+          loteriaId,
+          originalOccurrences: occurrences.length,
+          filteredOccurrences: subset.length,
+        },
+      });
     }
 
     if (dryRun) {
@@ -264,7 +300,38 @@ export const LoteriaService = {
       }
     }
 
+    if (subset.length === 0) {
+      logger.warn({
+        layer: "service",
+        action: "LOTERIA_SEED_SORTEOS_EMPTY_SUBSET",
+        payload: {
+          loteriaId,
+          message: "No hay ocurrencias para crear sorteos",
+        },
+      });
+      return {
+        created: [],
+        skipped: [],
+        alreadyExists: [],
+        processed: [],
+        note: "No hay ocurrencias para crear",
+      };
+    }
+
     const result = await SorteoRepository.bulkCreateIfMissing(loteriaId, subset)
+    
+    logger.info({
+      layer: "service",
+      action: "LOTERIA_SEED_SORTEOS_RESULT",
+      payload: {
+        loteriaId,
+        created: Array.isArray(result.created) ? result.created.length : (typeof result.created === 'number' ? result.created : 0),
+        skipped: Array.isArray(result.skipped) ? result.skipped.length : (typeof result.skipped === 'number' ? result.skipped : 0),
+        alreadyExists: Array.isArray(result.alreadyExists) ? result.alreadyExists.length : 0,
+        processed: Array.isArray(result.processed) ? result.processed.length : 0,
+      },
+    });
+
     return result
   },
 };

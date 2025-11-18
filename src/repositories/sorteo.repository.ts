@@ -700,8 +700,23 @@ const SorteoRepository = {
 
     // Inserción masiva idempotente con respaldo de @@unique(loteriaId, scheduledAt)
     if (toInsert.length > 0) {
+      logger.info({
+        layer: "repository",
+        action: "SORTEO_BULK_CREATE_IF_MISSING_BEFORE_INSERT",
+        payload: {
+          loteriaId,
+          toInsertCount: toInsert.length,
+          alreadyExistsCount: alreadyExists.length,
+          sampleToInsert: toInsert.slice(0, 3).map(it => ({
+            name: it.name,
+            scheduledAt: formatIsoLocal(new Date(it.ts)),
+            timestamp: it.ts,
+          })),
+        },
+      });
+
       try {
-        await prisma.sorteo.createMany({
+        const createResult = await prisma.sorteo.createMany({
           data: toInsert.map(it => ({
             loteriaId,
             name: it.name,
@@ -710,13 +725,45 @@ const SorteoRepository = {
             isActive: true,
           })),
           skipDuplicates: true,
-        })
+        });
+
+        logger.info({
+          layer: "repository",
+          action: "SORTEO_BULK_CREATE_IF_MISSING_INSERT_RESULT",
+          payload: {
+            loteriaId,
+            createManyCount: createResult.count,
+            attemptedCount: toInsert.length,
+            difference: toInsert.length - createResult.count,
+          },
+        });
       } catch (err: any) {
+        logger.error({
+          layer: "repository",
+          action: "SORTEO_BULK_CREATE_IF_MISSING_INSERT_ERROR",
+          payload: {
+            loteriaId,
+            errorCode: err?.code,
+            errorMessage: err?.message,
+            attemptedCount: toInsert.length,
+          },
+        });
         // P2002 / 23505 deben tratarse como skips, no como error fatal
         if (!(err?.code === 'P2002' || String(err?.message).includes('23505'))) {
           throw err
         }
       }
+    } else {
+      logger.info({
+        layer: "repository",
+        action: "SORTEO_BULK_CREATE_IF_MISSING_NO_INSERT",
+        payload: {
+          loteriaId,
+          reason: "No hay sorteos para insertar (todos ya existen)",
+          alreadyExistsCount: alreadyExists.length,
+          totalOccurrences: items.length,
+        },
+      });
     }
 
     // Verificación post-inserción para reflejar creados reales bajo concurrencia
@@ -735,12 +782,17 @@ const SorteoRepository = {
 
     logger.info({
       layer: "repository",
-      action: "SORTEO_BULK_CREATE_IF_MISSING",
+      action: "SORTEO_BULK_CREATE_IF_MISSING_FINAL",
       payload: {
         loteriaId,
         created: createdTs.length,
         skipped: skippedTs.length,
+        alreadyExists: alreadyExists.length,
         processed: items.length,
+        toInsertCount: toInsert.length,
+        existingBeforeCount: existingBefore.size,
+        existingAfterCount: afterSet.size,
+        createdTimestamps: createdTs.slice(0, 5).map(fmt), // Primeros 5 para debugging
       },
     })
 
