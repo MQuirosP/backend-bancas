@@ -189,6 +189,17 @@ export const TicketController = {
     
     const me = req.user!;
 
+    // Log para debugging
+    req.logger?.info({
+      layer: "controller",
+      action: "TICKET_NUMBERS_SUMMARY_REQUEST",
+      payload: {
+        userId: me.id,
+        role: me.role,
+        queryParams: { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId },
+      },
+    });
+
     // Build auth context
     const context: AuthContext = {
       userId: me.id,
@@ -221,8 +232,30 @@ export const TicketController = {
       effectiveScope = scope || 'all';
     }
 
+    // Validar que ADMIN no intente usar scope='all' sin permisos
+    if (effectiveScope === 'all' && me.role !== Role.ADMIN) {
+      return res.status(403).json({
+        success: false,
+        error: "Solo los administradores pueden usar scope='all'",
+      });
+    }
+
     // Resolver rango de fechas
     const dateRange = resolveDateRange(date || "today", fromDate, toDate);
+
+    req.logger?.info({
+      layer: "controller",
+      action: "TICKET_NUMBERS_SUMMARY_PARAMS",
+      payload: {
+        effectiveScope,
+        effectiveFilters,
+        dimension,
+        dateRange: dateRange ? {
+          fromAt: dateRange.fromAt.toISOString(),
+          toAt: dateRange.toAt.toISOString(),
+        } : null,
+      },
+    });
 
     const result = await TicketService.numbersSummary(
       {

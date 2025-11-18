@@ -13,8 +13,24 @@ export const SorteoController = {
     res.json({ success: true, data: s });
   },
 
+  async setActive(req: AuthenticatedRequest, res: Response) {
+    const isActive = req.body.isActive === true || req.body.isActive === "true";
+    const s = await SorteoService.setActive(req.params.id, isActive, req.user!.id);
+    res.json({ success: true, data: s });
+  },
+
   async open(req: AuthenticatedRequest, res: Response) {
     const s = await SorteoService.open(req.params.id, req.user!.id);
+    res.json({ success: true, data: s });
+  },
+
+  async forceOpen(req: AuthenticatedRequest, res: Response) {
+    const s = await SorteoService.forceOpen(req.params.id, req.user!.id);
+    res.json({ success: true, data: s });
+  },
+
+  async activateAndOpen(req: AuthenticatedRequest, res: Response) {
+    const s = await SorteoService.activateAndOpen(req.params.id, req.user!.id);
     res.json({ success: true, data: s });
   },
 
@@ -39,6 +55,16 @@ export const SorteoController = {
       req.user!.id,
       req.body?.reason
     );
+    res.json({ success: true, data: s });
+  },
+
+  async restore(req: AuthenticatedRequest, res: Response) {
+    const s = await SorteoService.restore(req.params.id, req.user!.id);
+    res.json({ success: true, data: s });
+  },
+
+  async resetToScheduled(req: AuthenticatedRequest, res: Response) {
+    const s = await SorteoService.resetToScheduled(req.params.id, req.user!.id);
     res.json({ success: true, data: s });
   },
 

@@ -56,7 +56,13 @@ function validateWith(schema: ZodType<any>, source: "body" | "query" | "params")
   const strictSchema = typeof (schema as any).strict === "function" ? (schema as any).strict() : schema;
 
   return (req: Request, _res: Response, next: NextFunction) => {
-    const data = (req as any)[source];
+    let data = (req as any)[source];
+    
+    // Para body, si es undefined o null, convertir a {} para schemas que lo permiten
+    if (source === "body" && (data === undefined || data === null)) {
+      data = {};
+    }
+    
     const result = strictSchema.safeParse(data);
 
     if (result.success) {

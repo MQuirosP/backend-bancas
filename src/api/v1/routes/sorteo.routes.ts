@@ -9,6 +9,7 @@ import {
   validateListSorteosQuery,
   validateRevertSorteo,
   validateEvaluatedSummaryQuery,
+  validateSetActiveSorteo,
 } from "../validators/sorteo.validator";
 import { protect } from "../../../middlewares/auth.middleware";
 import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
@@ -52,7 +53,13 @@ router.patch(
   "/:id/restore",
   requireAdmin,
   validateIdParam,
-  SorteoController.update
+  SorteoController.restore
+);
+router.patch(
+  "/:id/reset-to-scheduled",
+  requireAdmin,
+  validateIdParam,
+  SorteoController.resetToScheduled
 );
 router.patch(
   "/:id/close",
@@ -61,6 +68,15 @@ router.patch(
   SorteoController.close
 );
 router.patch("/:id/open", requireAdmin, validateIdParam, SorteoController.open);
+router.patch("/:id/force-open", requireAdmin, validateIdParam, SorteoController.forceOpen);
+router.patch("/:id/activate-and-open", requireAdmin, validateIdParam, SorteoController.activateAndOpen);
+router.patch(
+  "/:id/set-active",
+  requireAdmin,
+  validateIdParam,
+  validateSetActiveSorteo,
+  SorteoController.setActive
+);
 router.patch(
   "/:id/evaluate",
   requireAdmin,

@@ -161,6 +161,43 @@ const SorteoRepository = {
     return s;
   },
 
+  /**
+   * Fuerza el cambio de estado a OPEN desde cualquier estado (excepto EVALUATED)
+   * Útil para reabrir sorteos que están en CLOSED
+   */
+  async forceOpen(id: string) {
+    const current = await prisma.sorteo.findUnique({ where: { id } });
+    if (!current) throw new AppError("Sorteo no encontrado", 404);
+    if (current.status === SorteoStatus.EVALUATED) {
+      throw new AppError(
+        "No se puede reabrir un sorteo evaluado. Usa revert-evaluation primero.",
+        400
+      );
+    }
+    const s = await prisma.sorteo.update({
+      where: { id },
+      data: { status: SorteoStatus.OPEN },
+      include: {
+        loteria: {
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
+          },
+        },
+        extraMultiplier: {
+          select: { id: true, name: true, valueX: true },
+        },
+      },
+    });
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_FORCE_OPEN_DB",
+      payload: { sorteoId: id, previousStatus: current.status },
+    });
+    return s;
+  },
+
   async close(id: string) {
     const current = await prisma.sorteo.findUnique({ where: { id } });
     if (!current) throw new AppError("Sorteo no encontrado", 404);
@@ -641,16 +678,22 @@ const SorteoRepository = {
     return { data, total };
   },
 
-  async softDelete(id: string, userId: string, reason?: string) {
+  async softDelete(id: string, userId: string, reason?: string, byCascade = false, cascadeFrom?: string, cascadeId?: string) {
     const existing = await prisma.sorteo.findUnique({ where: { id } });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
 
     const s = await prisma.sorteo.update({
       where: { id },
       data: {
+        deletedAt: new Date(),
+        deletedBy: userId,
+        deletedReason: reason || null,
         isActive: false,
         status: SorteoStatus.CLOSED,
-        // campos de borrado lógico deprecated: no se usan
+        // Campos de cascada: si es por cascada, marcar; si es manual, limpiar
+        deletedByCascade: byCascade,
+        deletedByCascadeFrom: byCascade ? (cascadeFrom || null) : null,
+        deletedByCascadeId: byCascade ? (cascadeId || null) : null,
       },
       include: {
         loteria: {
@@ -669,9 +712,174 @@ const SorteoRepository = {
     logger.warn({
       layer: "repository",
       action: "SORTEO_SOFT_DELETE_DB",
-      payload: { sorteoId: id, reason },
+      payload: { 
+        sorteoId: id, 
+        reason,
+        byCascade,
+        cascadeFrom,
+        cascadeId,
+      },
     });
     return s;
+  },
+
+  /**
+   * Restaura un sorteo (soft delete revert)
+   * Limpia los campos de cascada para indicar que fue restaurado manualmente
+   */
+  async restore(id: string): Promise<any> {
+    const existing = await prisma.sorteo.findUnique({ where: { id } });
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+    if (!existing.deletedAt) {
+      throw new AppError("Sorteo no está inactivo", 400);
+    }
+
+    const s = await prisma.sorteo.update({
+      where: { id },
+      data: {
+        deletedAt: null,
+        deletedBy: null,
+        deletedReason: null,
+        isActive: true,
+        // Limpiar campos de cascada (restauración manual)
+        deletedByCascade: false,
+        deletedByCascadeFrom: null,
+        deletedByCascadeId: null,
+      },
+      include: {
+        loteria: {
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
+          },
+        },
+        extraMultiplier: {
+          select: { id: true, name: true, valueX: true },
+        },
+      },
+    });
+
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_RESTORE_DB",
+      payload: { sorteoId: id },
+    });
+    return s;
+  },
+
+  /**
+   * Inactiva todos los sorteos activos de una lotería por cascada
+   * Solo afecta sorteos que actualmente están activos (deletedAt IS NULL)
+   * Puede usar un cliente de transacción opcional para operaciones atómicas
+   */
+  async inactivateSorteosByLoteria(loteriaId: string, userId: string, tx?: Prisma.TransactionClient): Promise<{ count: number; sorteosIds: string[] }> {
+    const client = tx || prisma;
+    const now = new Date();
+    
+    // Buscar sorteos activos de esta lotería
+    const activeSorteos = await client.sorteo.findMany({
+      where: {
+        loteriaId,
+        deletedAt: null, // Solo sorteos activos
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (activeSorteos.length === 0) {
+      return { count: 0, sorteosIds: [] };
+    }
+
+    const sorteosIds = activeSorteos.map(s => s.id);
+
+    // Actualizar todos en batch
+    const result = await client.sorteo.updateMany({
+      where: {
+        id: { in: sorteosIds },
+      },
+      data: {
+        deletedAt: now,
+        deletedBy: userId,
+        deletedReason: `Inactivado por cascada desde lotería ${loteriaId}`,
+        isActive: false,
+        status: SorteoStatus.CLOSED,
+        deletedByCascade: true,
+        deletedByCascadeFrom: 'loteria',
+        deletedByCascadeId: loteriaId,
+      },
+    });
+
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_INACTIVATE_BY_LOTERIA_CASCADE",
+      payload: {
+        loteriaId,
+        sorteosAffected: result.count,
+        sorteosIds,
+      },
+    });
+
+    return { count: result.count, sorteosIds };
+  },
+
+  /**
+   * Restaura todos los sorteos que fueron inactivados por cascada desde una lotería
+   * Solo restaura sorteos que tienen deletedByCascade=true y deletedByCascadeFrom='loteria' y deletedByCascadeId=loteriaId
+   * Puede usar un cliente de transacción opcional para operaciones atómicas
+   */
+  async restoreSorteosByLoteria(loteriaId: string, tx?: Prisma.TransactionClient): Promise<{ count: number; sorteosIds: string[] }> {
+    const client = tx || prisma;
+    
+    // Buscar sorteos inactivados por cascada desde esta lotería
+    const cascadeSorteos = await client.sorteo.findMany({
+      where: {
+        loteriaId,
+        deletedAt: { not: null },
+        deletedByCascade: true,
+        deletedByCascadeFrom: 'loteria',
+        deletedByCascadeId: loteriaId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (cascadeSorteos.length === 0) {
+      return { count: 0, sorteosIds: [] };
+    }
+
+    const sorteosIds = cascadeSorteos.map(s => s.id);
+
+    // Restaurar todos en batch
+    const result = await client.sorteo.updateMany({
+      where: {
+        id: { in: sorteosIds },
+      },
+      data: {
+        deletedAt: null,
+        deletedBy: null,
+        deletedReason: null,
+        isActive: true,
+        // Limpiar campos de cascada
+        deletedByCascade: false,
+        deletedByCascadeFrom: null,
+        deletedByCascadeId: null,
+      },
+    });
+
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_RESTORE_BY_LOTERIA_CASCADE",
+      payload: {
+        loteriaId,
+        sorteosRestored: result.count,
+        sorteosIds,
+      },
+    });
+
+    return { count: result.count, sorteosIds };
   },
 
   async bulkCreateIfMissing(loteriaId: string, occurrences: Array<{ scheduledAt: Date; name: string }>) {

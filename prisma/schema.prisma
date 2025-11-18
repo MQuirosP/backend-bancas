@@ -282,6 +282,10 @@ model Sorteo {
   extraMultiplierId String?      @db.Uuid
   extraMultiplierX  Float?
   extraOutcomeCode  String?
+  // Campos de cascada para tracking de inactivación automática
+  deletedByCascade        Boolean   @default(false)
+  deletedByCascadeFrom    String?   // 'loteria', 'ventana', etc.
+  deletedByCascadeId      String?   @db.Uuid // ID del recurso padre que causó la cascada
 
   extraMultiplier LoteriaMultiplier? @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
   loteria         Loteria            @relation(fields: [loteriaId], references: [id])
@@ -289,6 +293,8 @@ model Sorteo {
 
   @@unique([loteriaId, scheduledAt])
   @@index([loteriaId, scheduledAt])
+  @@index([loteriaId, deletedAt])
+  @@index([deletedByCascade, deletedByCascadeFrom, deletedByCascadeId])
   @@index([extraMultiplierId])
   @@index([name])
   @@index([winningNumber])

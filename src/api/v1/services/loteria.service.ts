@@ -1,4 +1,3 @@
-import { is } from 'zod/locales';
 import prisma from "../../../core/prismaClient";
 import { ActivityType, Prisma } from "@prisma/client";
 import ActivityService from "../../../core/activity.service";
@@ -160,11 +159,22 @@ export const LoteriaService = {
     const existing = await prisma.loteria.findUnique({ where: { id } });
     if (!existing) throw new AppError("Lotería not found", 404);
 
-    const deleted = await prisma.loteria.update({
-      where: { id },
-      data: {
-        isActive: false,
-      },
+    // Transacción atómica: inactivar lotería + sorteos relacionados
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Inactivar la lotería
+      const deleted = await tx.loteria.update({
+        where: { id },
+        data: {
+          isActive: false,
+          deletedAt: new Date(),
+          deletedBy: userId,
+        },
+      });
+
+      // 2. Inactivar sorteos relacionados por cascada (usando el cliente de transacción)
+      const cascadeResult = await SorteoRepository.inactivateSorteosByLoteria(id, userId, tx);
+
+      return { deleted, cascadeResult };
     });
 
     logger.warn({
@@ -172,7 +182,11 @@ export const LoteriaService = {
       action: "LOTERIA_DELETE",
       userId,
       requestId,
-      payload: { id },
+      payload: {
+        id,
+        sorteosInactivated: result.cascadeResult.count,
+        sorteosIds: result.cascadeResult.sorteosIds,
+      },
     });
 
     await ActivityService.log({
@@ -180,23 +194,38 @@ export const LoteriaService = {
       action: ActivityType.LOTERIA_DELETE,
       targetType: "LOTERIA",
       targetId: id,
-      details: { isActive: false },
+      details: {
+        isActive: false,
+        sorteosInactivated: result.cascadeResult.count,
+        sorteosIds: result.cascadeResult.sorteosIds,
+      },
       requestId,
       layer: "service",
     });
 
-    return deleted;
+    return result.deleted;
   },
 
   async restore(id: string, userId: string, requestId?: string) {
     const existing = await prisma.loteria.findUnique({ where: { id } });
     if (!existing) throw new AppError("Lotería not found", 404);
 
-    const restored = await prisma.loteria.update({
-      where: { id },
-      data: {
-        isActive: true,
-      },
+    // Transacción atómica: restaurar lotería + sorteos relacionados que fueron inactivados por cascada
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Restaurar la lotería
+      const restored = await tx.loteria.update({
+        where: { id },
+        data: {
+          isActive: true,
+          deletedAt: null,
+          deletedBy: null,
+        },
+      });
+
+      // 2. Restaurar sorteos relacionados que fueron inactivados por cascada (usando el cliente de transacción)
+      const cascadeResult = await SorteoRepository.restoreSorteosByLoteria(id, tx);
+
+      return { restored, cascadeResult };
     });
 
     logger.info({
@@ -204,7 +233,11 @@ export const LoteriaService = {
       action: "LOTERIA_RESTORE",
       userId,
       requestId,
-      payload: { id },
+      payload: {
+        id,
+        sorteosRestored: result.cascadeResult.count,
+        sorteosIds: result.cascadeResult.sorteosIds,
+      },
     });
 
     await ActivityService.log({
@@ -212,12 +245,16 @@ export const LoteriaService = {
       action: ActivityType.LOTERIA_RESTORE,
       targetType: "LOTERIA",
       targetId: id,
-      details: { isActive: true },
+      details: {
+        isActive: true,
+        sorteosRestored: result.cascadeResult.count,
+        sorteosIds: result.cascadeResult.sorteosIds,
+      },
       requestId,
       layer: "service",
     });
 
-    return restored;
+    return result.restored;
   },
 
   async seedSorteosFromRules(loteriaId: string, start: Date, days: number, dryRun = false, scheduledDates?: Date[], forceCreate = false) {
