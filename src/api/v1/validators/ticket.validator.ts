@@ -114,7 +114,10 @@ export const FinalizePaymentSchema = z.object({
  */
 export const NumbersSummaryQuerySchema = z
   .object({
-    scope: z.enum(["mine"]).optional().default("mine"), // Solo 'mine' para vendedor
+    scope: z.enum(["mine", "all"]).optional().default("mine"), // 'mine' para vendedor, 'all' para admin
+    dimension: z.enum(["listero", "vendedor"]).optional(), // Filtro por dimensión (listero = ventana, vendedor = vendedor)
+    ventanaId: z.uuid().optional(), // Filtro por ventana (cuando dimension='listero' o scope='all')
+    vendedorId: z.uuid().optional(), // Filtro por vendedor (cuando dimension='vendedor' o scope='all')
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
@@ -147,6 +150,21 @@ export const NumbersSummaryQuerySchema = z
           message: "toDate debe ser mayor o igual a fromDate",
         });
       }
+    }
+    // Validar que dimension y filtros específicos sean consistentes
+    if (val.dimension === "listero" && val.vendedorId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["vendedorId"],
+        message: "vendedorId no puede usarse cuando dimension='listero'",
+      });
+    }
+    if (val.dimension === "vendedor" && val.ventanaId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ventanaId"],
+        message: "ventanaId no puede usarse cuando dimension='vendedor'",
+      });
     }
   });
 
