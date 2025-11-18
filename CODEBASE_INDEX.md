@@ -1254,7 +1254,384 @@ GET /api/v1/healthz    # Retorna { status: 'ok' }
 
 ---
 
+---
+
+## 📊 Estadísticas del Codebase
+
+### Archivos por Tipo
+- **Controllers**: 17 archivos
+- **Services**: 17 archivos  
+- **Repositories**: 11 archivos
+- **Routes**: 23 archivos
+- **Validators**: 17 archivos
+- **DTOs**: 11 archivos
+- **Middlewares**: 10 archivos
+- **Utils**: 14 archivos
+- **Tests**: 9 archivos
+- **Scripts**: 50+ archivos de utilidad
+
+### Modelos de Base de Datos
+- **Entidades principales**: 20 modelos
+- **Enums**: 6 enums (Role, TicketStatus, SorteoStatus, BetType, etc.)
+- **Relaciones**: 30+ relaciones definidas
+- **Índices**: 50+ índices para optimización
+
+### Endpoints API
+- **Total de endpoints**: 80+ endpoints REST
+- **Versión API**: v1
+- **Autenticación**: JWT (Access + Refresh)
+- **Rate Limiting**: Configurado por endpoint
+
+---
+
+## 🔍 Análisis de Dependencias
+
+### Dependencias Principales
+```json
+{
+  "runtime": {
+    "@prisma/client": "^6.18.0",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "zod": "^4.1.11",
+    "pino": "^10.0.0"
+  },
+  "security": {
+    "bcryptjs": "^2.4.3",
+    "helmet": "^8.1.0",
+    "express-rate-limit": "^8.1.0"
+  },
+  "utilities": {
+    "decimal.js": "^10.6.0",
+    "uuid": "^13.0.0",
+    "exceljs": "^4.4.0",
+    "pdfmake": "^0.2.20"
+  }
+}
+```
+
+### Arquitectura de Dependencias
+```
+Express App
+├── Middlewares (Auth, Validation, CORS, Rate Limit)
+├── Routes (v1)
+│   ├── Controllers
+│   │   └── Services
+│   │       └── Repositories
+│   │           └── Prisma Client
+│   │               └── PostgreSQL
+│   └── Validators (Zod)
+└── Core Modules
+    ├── Logger (Pino)
+    ├── Error Handler
+    ├── Activity Service
+    └── Transaction Retry
+```
+
+---
+
+## 🎨 Patrones de Diseño Implementados
+
+### 1. Repository Pattern
+- **Ubicación**: `src/repositories/`
+- **Propósito**: Abstracción de acceso a datos
+- **Características**:
+  - Recibe `TransactionClient` para transacciones
+  - Sin lógica de negocio
+  - Queries optimizadas
+
+### 2. Service Layer Pattern
+- **Ubicación**: `src/api/v1/services/`
+- **Propósito**: Lógica de negocio centralizada
+- **Características**:
+  - Orquestación entre repositorios
+  - Validaciones de dominio
+  - Cálculos complejos
+
+### 3. Middleware Pattern
+- **Ubicación**: `src/middlewares/`
+- **Propósito**: Cross-cutting concerns
+- **Características**:
+  - Composición funcional
+  - Reutilizable
+  - Orden de ejecución crítico
+
+### 4. Strategy Pattern (Comisiones)
+- **Ubicación**: `src/services/commission.resolver.ts`
+- **Propósito**: Resolución jerárquica de políticas
+- **Características**:
+  - Prioridad: USER → VENTANA → BANCA
+  - Matching de reglas flexible
+  - Fallback graceful
+
+### 5. Retry Pattern (Transacciones)
+- **Ubicación**: `src/core/withTransactionRetry.ts`
+- **Propósito**: Manejo robusto de concurrencia
+- **Características**:
+  - Backoff exponencial
+  - Detección de deadlocks
+  - Logging por intento
+
+---
+
+## 🔐 Seguridad Detallada
+
+### Autenticación JWT
+
+**Estructura del Token**:
+```typescript
+{
+  sub: string;           // userId (UUID)
+  role: Role;           // ADMIN | VENTANA | VENDEDOR
+  ventanaId?: string;   // Opcional (para VENTANA)
+  iat: number;          // Issued at
+  exp: number;          // Expiration
+}
+```
+
+**Validación**:
+- Firma verificada con `JWT_ACCESS_SECRET`
+- Expiración verificada automáticamente
+- Payload validado (sub y role requeridos)
+
+**Refresh Token**:
+- Almacenado en BD (`RefreshToken` table)
+- Revocable por logout
+- UUID v4 + JWT firmado
+
+### RBAC Implementation
+
+**Flujo de Validación**:
+```
+1. Request con JWT
+2. Middleware `protect` extrae usuario
+3. Middleware `restrictTo` valida rol
+4. Service aplica `applyRbacFilters()`
+5. Repository ejecuta query filtrada
+```
+
+**Reglas de Filtrado**:
+- **VENDEDOR**: `WHERE vendedorId = userId`
+- **VENTANA**: `WHERE ventanaId = JWT.ventanaId` (fetch desde BD si falta)
+- **ADMIN**: Sin filtro (o según `scope` parameter)
+
+### Rate Limiting
+
+**Configuración**:
+- Basado en IP (con `trust proxy`)
+- Límites configurables por endpoint
+- Window: 15 minutos por defecto
+- Max requests: Variable según endpoint
+
+### Validación de Entrada
+
+**Zod Schemas**:
+- Validación estricta con `.strict()`
+- Type inference automático
+- Errores estructurados con detalles
+- Transformaciones automáticas (UUIDs, fechas)
+
+---
+
+## 📈 Performance y Optimización
+
+### Optimizaciones de Base de Datos
+
+**Índices Estratégicos**:
+```sql
+-- Búsqueda de texto (GIN con trgm)
+CREATE INDEX idx_ventana_name_trgm ON "Ventana" USING gin(name gin_trgm_ops);
+
+-- Queries frecuentes
+CREATE INDEX idx_ticket_sorteo_vendedor ON "Ticket"(sorteoId, vendedorId, createdAt);
+
+-- Unicidad
+CREATE UNIQUE INDEX "Sorteo_loteriaId_scheduledAt_key" ON "Sorteo"(loteriaId, scheduledAt);
+```
+
+**Queries Optimizadas**:
+- Uso de `select` para campos específicos
+- Evitar `include` innecesarios
+- Paginación en listados grandes
+- CTEs para subqueries complejas
+
+### Caching Strategy
+
+**Comisiones**:
+- Cache de políticas JSON parseadas
+- Cache de multiplicadores activos
+- Invalidación manual cuando cambian políticas
+
+**Multiplicadores**:
+- Cache en memoria durante creación de ticket
+- Lookup optimizado con Map
+
+### Transacciones
+
+**Configuración**:
+- Isolation Level: Serializable (por defecto)
+- Max Retries: 3
+- Backoff: 150ms - 2000ms (exponencial)
+- Timeout: 20s
+
+---
+
+## 🧩 Módulos Especializados Detallados
+
+### Sistema de Comisiones
+
+**Resolución Jerárquica**:
+```typescript
+// Prioridad: USER → VENTANA → BANCA
+const userPolicy = parseCommissionPolicy(user.commissionPolicyJson, "USER");
+if (userPolicy) {
+  const match = findMatchingRule(userPolicy, input);
+  if (match) return { origin: "USER", ...match };
+}
+
+const ventanaPolicy = parseCommissionPolicy(ventana.commissionPolicyJson, "VENTANA");
+if (ventanaPolicy) {
+  const match = findMatchingRule(ventanaPolicy, input);
+  if (match) return { origin: "VENTANA", ...match };
+}
+
+const bancaPolicy = parseCommissionPolicy(banca.commissionPolicyJson, "BANCA");
+if (bancaPolicy) {
+  const match = findMatchingRule(bancaPolicy, input);
+  if (match) return { origin: "BANCA", ...match };
+}
+
+// Fallback: 0% (no bloquea venta)
+return { origin: null, percent: 0, ruleId: null };
+```
+
+**Matching de Reglas**:
+- `loteriaId`: Coincidencia exacta o `null` (comodín)
+- `betType`: `NUMERO` | `REVENTADO` | `null` (comodín)
+- `multiplierRange`: `[min, max]` inclusivo
+- **Primera regla que calza gana** (orden importa)
+
+### Sistema de Restricciones
+
+**Resolución Jerárquica**:
+```typescript
+// Prioridad: User (100) > Ventana (10) > Banca (1)
+const userRules = await findRules({ userId, isActive: true });
+const ventanaRules = await findRules({ ventanaId, isActive: true });
+const bancaRules = await findRules({ bancaId, isActive: true });
+
+// Aplicar primera regla encontrada (mayor prioridad primero)
+const effectiveRule = userRules[0] || ventanaRules[0] || bancaRules[0];
+```
+
+**Tipos de Restricción**:
+- `maxAmount`: Límite por número específico
+- `maxTotal`: Límite total por ticket
+- `salesCutoffMinutes`: Bloqueo por tiempo antes del sorteo
+- `salesPercentage`: % de ventas permitido (0-100)
+
+**Vigencia Temporal**:
+- `appliesToDate`: Fecha específica
+- `appliesToHour`: Hora específica (0-23)
+- `isAutoDate`: Auto-activación por fecha comercial
+
+### Sistema de Multiplicadores
+
+**Resolución de Base Multiplier X**:
+```typescript
+// 1. User Override (más alta prioridad)
+const userOverride = await findUserMultiplierOverride(userId, loteriaId);
+if (userOverride?.baseMultiplierX) return userOverride.baseMultiplierX;
+
+// 2. Banca-Lotería Setting
+const bls = await findBancaLoteriaSetting(bancaId, loteriaId);
+if (bls?.baseMultiplierX) return bls.baseMultiplierX;
+
+// 3. LoteriaMultiplier "Base"
+const baseMultiplier = await findLoteriaMultiplier(loteriaId, "Base");
+if (baseMultiplier?.valueX) return baseMultiplier.valueX;
+
+// 4. rulesJson.baseMultiplierX
+const rulesJson = loteria.rulesJson;
+if (rulesJson?.baseMultiplierX) return rulesJson.baseMultiplierX;
+
+// 5. Env var (fallback)
+return process.env.MULTIPLIER_BASE_DEFAULT_X || 95;
+```
+
+**Snapshot Inmutable**:
+- `finalMultiplierX` se congela en jugada al momento de venta
+- No se recalcula posteriormente
+- Para REVENTADO: `extraMultiplierX` se aplica al evaluar
+
+---
+
+## 🧪 Testing Strategy
+
+### Cobertura Actual
+
+**Tests Unitarios**:
+- ✅ Concurrencia de tickets
+- ✅ Restricciones jerárquicas
+- ✅ Evaluación de sorteos
+- ✅ Guards de actualización
+- ✅ Ciclo de vida de sorteos
+
+**Tests de Integración**:
+- ✅ Endpoints de autenticación
+- ✅ CRUD de usuarios
+- ✅ Creación de tickets con validaciones
+
+### Configuración de Tests
+
+**Base de Datos de Prueba**:
+- `.env.test` separado
+- Migraciones automáticas antes de tests
+- Limpieza después de cada suite
+
+**Helpers**:
+- `testIds.ts`: IDs de prueba reutilizables
+- Factories para crear datos de prueba
+- Mocks para servicios externos
+
+---
+
+## 📚 Documentación Adicional
+
+### Documentos Principales
+- `README.md`: Documentación principal del proyecto
+- `CHANGELOG.md`: Historial completo de cambios
+- `CODEBASE_INDEX.md`: Este documento (indexación profunda)
+
+### Documentos por Módulo (`docs/`)
+- `COMMISSION_SYSTEM.md`: Sistema de comisiones completo
+- `DASHBOARD_API.md`: Especificación del Dashboard API
+- `VENTAS_SUMMARY_API.md`: API de ventas con payment tracking
+- `ACCOUNTS_API.md`: Sistema de estados de cuenta
+- `BUG_FIX_RBAC_SCOPE_MINE.md`: Análisis de bugs RBAC
+- Y 200+ documentos adicionales
+
+---
+
+## 🚀 Roadmap y Mejoras Futuras
+
+### En Progreso
+- [ ] Integración completa de TicketPayments
+- [ ] Documentación OpenAPI/Swagger completa
+- [ ] CI/CD en GitHub Actions
+- [ ] Deploy Docker Compose
+
+### Planificado
+- [ ] Webhooks para eventos críticos
+- [ ] Sistema de alertas avanzado
+- [ ] Exportación mejorada (Excel, PDF)
+- [ ] Dashboard en tiempo real
+- [ ] API GraphQL (opcional)
+
+---
+
 **Última actualización**: 2025-01-20  
 **Versión del sistema**: v1.2.0  
-**Mantenido por**: Mario Quirós P.
+**Mantenido por**: Mario Quirós P.  
+**Email**: mquirosp78@gmail.com
 

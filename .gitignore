@@ -78,6 +78,10 @@ src/scripts/*backfill*.ts
 # Scripts manuales (no versionar)
 scripts/
 
+# Respaldos y backups
+backups/
+**/backups/
+
 # Documentación generada automáticamente
 # Toda la carpeta docs/ contiene documentación de trabajo y no debe versionarse
 docs/
