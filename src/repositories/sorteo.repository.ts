@@ -769,7 +769,60 @@ const SorteoRepository = {
   },
 
   /**
-   * Inactiva todos los sorteos activos de una lotería por cascada
+   * Inactiva todos los sorteos activos de una lotería por cascada (solo cambia isActive=false)
+   * Usado cuando se inactiva una lotería mediante update(isActive=false)
+   * Puede usar un cliente de transacción opcional para operaciones atómicas
+   */
+  async setInactiveSorteosByLoteria(loteriaId: string, tx?: Prisma.TransactionClient): Promise<{ count: number; sorteosIds: string[] }> {
+    const client = tx || prisma;
+    
+    // Buscar sorteos activos de esta lotería (que no estén soft-deleted)
+    const activeSorteos = await client.sorteo.findMany({
+      where: {
+        loteriaId,
+        deletedAt: null, // Solo sorteos no soft-deleted
+        isActive: true, // Solo los que están activos
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (activeSorteos.length === 0) {
+      return { count: 0, sorteosIds: [] };
+    }
+
+    const sorteosIds = activeSorteos.map(s => s.id);
+
+    // Solo cambiar isActive=false, sin hacer soft delete
+    const result = await client.sorteo.updateMany({
+      where: {
+        id: { in: sorteosIds },
+      },
+      data: {
+        isActive: false,
+        deletedByCascade: true,
+        deletedByCascadeFrom: 'loteria',
+        deletedByCascadeId: loteriaId,
+      },
+    });
+
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_SET_INACTIVE_BY_LOTERIA_CASCADE",
+      payload: {
+        loteriaId,
+        sorteosAffected: result.count,
+        sorteosIds,
+      },
+    });
+
+    return { count: result.count, sorteosIds };
+  },
+
+  /**
+   * Inactiva todos los sorteos activos de una lotería por cascada (soft delete completo)
+   * Usado cuando se hace soft delete de una lotería
    * Solo afecta sorteos que actualmente están activos (deletedAt IS NULL)
    * Puede usar un cliente de transacción opcional para operaciones atómicas
    */
@@ -825,14 +878,72 @@ const SorteoRepository = {
   },
 
   /**
-   * Restaura todos los sorteos que fueron inactivados por cascada desde una lotería
+   * Restaura isActive=true en sorteos que fueron inactivados por cascada desde una lotería
+   * Usado cuando se restaura una lotería mediante update(isActive=true)
+   * Solo restaura sorteos que tienen deletedByCascade=true y deletedByCascadeFrom='loteria' y deletedByCascadeId=loteriaId
+   * Puede usar un cliente de transacción opcional para operaciones atómicas
+   */
+  async setActiveSorteosByLoteria(loteriaId: string, tx?: Prisma.TransactionClient): Promise<{ count: number; sorteosIds: string[] }> {
+    const client = tx || prisma;
+    
+    // Buscar sorteos inactivados por cascada desde esta lotería (que no estén soft-deleted)
+    const cascadeSorteos = await client.sorteo.findMany({
+      where: {
+        loteriaId,
+        deletedAt: null, // Solo sorteos no soft-deleted
+        isActive: false, // Solo los que están inactivos
+        deletedByCascade: true,
+        deletedByCascadeFrom: 'loteria',
+        deletedByCascadeId: loteriaId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (cascadeSorteos.length === 0) {
+      return { count: 0, sorteosIds: [] };
+    }
+
+    const sorteosIds = cascadeSorteos.map(s => s.id);
+
+    // Solo cambiar isActive=true y limpiar campos de cascada
+    const result = await client.sorteo.updateMany({
+      where: {
+        id: { in: sorteosIds },
+      },
+      data: {
+        isActive: true,
+        // Limpiar campos de cascada
+        deletedByCascade: false,
+        deletedByCascadeFrom: null,
+        deletedByCascadeId: null,
+      },
+    });
+
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_SET_ACTIVE_BY_LOTERIA_CASCADE",
+      payload: {
+        loteriaId,
+        sorteosRestored: result.count,
+        sorteosIds,
+      },
+    });
+
+    return { count: result.count, sorteosIds };
+  },
+
+  /**
+   * Restaura todos los sorteos que fueron inactivados por cascada desde una lotería (soft delete completo)
+   * Usado cuando se restaura una lotería mediante restore()
    * Solo restaura sorteos que tienen deletedByCascade=true y deletedByCascadeFrom='loteria' y deletedByCascadeId=loteriaId
    * Puede usar un cliente de transacción opcional para operaciones atómicas
    */
   async restoreSorteosByLoteria(loteriaId: string, tx?: Prisma.TransactionClient): Promise<{ count: number; sorteosIds: string[] }> {
     const client = tx || prisma;
     
-    // Buscar sorteos inactivados por cascada desde esta lotería
+    // Buscar sorteos inactivados por cascada desde esta lotería (soft-deleted)
     const cascadeSorteos = await client.sorteo.findMany({
       where: {
         loteriaId,
@@ -852,7 +963,7 @@ const SorteoRepository = {
 
     const sorteosIds = cascadeSorteos.map(s => s.id);
 
-    // Restaurar todos en batch
+    // Restaurar todos en batch (soft delete completo)
     const result = await client.sorteo.updateMany({
       where: {
         id: { in: sorteosIds },
