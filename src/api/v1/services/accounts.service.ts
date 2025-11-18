@@ -378,7 +378,200 @@ async function calculateCommissionsForTicket(
 type DayStatement = Awaited<ReturnType<typeof calculateDayStatement>>;
 
 /**
- * Obtiene el desglose por sorteo para un día específico
+ * ✅ OPTIMIZACIÓN: Obtiene el desglose por sorteo para múltiples días en batch
+ * Retorna un Map<dateKey, Array<{...}>>
+ */
+async function getSorteoBreakdownBatch(
+  dates: Date[],
+  dimension: "ventana" | "vendedor",
+  ventanaId?: string,
+  vendedorId?: string,
+  bancaId?: string
+): Promise<Map<string, Array<{
+  sorteoId: string;
+  sorteoName: string;
+  loteriaId: string;
+  loteriaName: string;
+  scheduledAt: string;
+  sales: number;
+  payouts: number;
+  listeroCommission: number;
+  vendedorCommission: number;
+  balance: number;
+  ticketCount: number;
+}>>> {
+  if (dates.length === 0) {
+    return new Map();
+  }
+
+  // Construir filtro de fechas combinado
+  const dateFilters = dates.map(date => buildTicketDateFilter(date));
+  const where: any = {
+    OR: dateFilters,
+    deletedAt: null,
+    status: { not: "CANCELLED" },
+  };
+
+  // Filtrar por banca activa (para ADMIN multibanca)
+  if (bancaId) {
+    where.ventana = {
+      bancaId: bancaId,
+    };
+  }
+
+  if (dimension === "ventana" && ventanaId) {
+    where.ventanaId = ventanaId;
+  } else if (dimension === "vendedor" && vendedorId) {
+    where.vendedorId = vendedorId;
+  }
+
+  // ✅ OPTIMIZACIÓN: Una sola query para todos los días
+  const tickets = await prisma.ticket.findMany({
+    where,
+    select: {
+      id: true,
+      totalAmount: true,
+      sorteoId: true,
+      businessDate: true,
+      createdAt: true,
+      ventanaId: true,
+      vendedorId: true,
+      sorteo: {
+        select: {
+          id: true,
+          name: true,
+          scheduledAt: true,
+          loteria: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
+      jugadas: {
+        where: { deletedAt: null },
+        select: {
+          payout: true,
+          isWinner: true,
+          commissionAmount: true,
+          commissionOrigin: true,
+        },
+      },
+    },
+  });
+
+  // Crear Map por fecha
+  const resultMap = new Map<string, Map<string, {
+    sorteoId: string;
+    sorteoName: string;
+    loteriaId: string;
+    loteriaName: string;
+    scheduledAt: Date;
+    sales: number;
+    payouts: number;
+    listeroCommission: number;
+    vendedorCommission: number;
+    ticketCount: number;
+  }>>();
+
+  // Inicializar mapas por fecha
+  for (const date of dates) {
+    const dateKey = date.toISOString().split("T")[0];
+    resultMap.set(dateKey, new Map());
+  }
+
+  // Agrupar tickets por fecha y sorteo
+  for (const ticket of tickets) {
+    if (!ticket.sorteoId || !ticket.sorteo) continue;
+
+    // Determinar la fecha del ticket
+    const ticketDate = ticket.businessDate 
+      ? new Date(ticket.businessDate)
+      : new Date(ticket.createdAt);
+    ticketDate.setUTCHours(0, 0, 0, 0);
+    const dateKey = ticketDate.toISOString().split("T")[0];
+    
+    const sorteoMap = resultMap.get(dateKey);
+    if (!sorteoMap) continue; // Skip si la fecha no está en el rango
+
+    const sorteoId = ticket.sorteo.id;
+    let entry = sorteoMap.get(sorteoId);
+
+    if (!entry) {
+      entry = {
+        sorteoId,
+        sorteoName: ticket.sorteo.name,
+        loteriaId: ticket.sorteo.loteria.id,
+        loteriaName: ticket.sorteo.loteria.name,
+        scheduledAt: ticket.sorteo.scheduledAt,
+        sales: 0,
+        payouts: 0,
+        listeroCommission: 0,
+        vendedorCommission: 0,
+        ticketCount: 0,
+      };
+      sorteoMap.set(sorteoId, entry);
+    }
+
+    entry.sales += ticket.totalAmount || 0;
+    entry.ticketCount += 1;
+
+    // Calcular payouts y comisiones desde jugadas
+    for (const jugada of ticket.jugadas) {
+      if (jugada.isWinner) {
+        entry.payouts += jugada.payout || 0;
+      }
+
+      // Comisiones según origen
+      if (jugada.commissionOrigin === "USER") {
+        entry.vendedorCommission += jugada.commissionAmount || 0;
+      } else if (jugada.commissionOrigin === "VENTANA" || jugada.commissionOrigin === "BANCA") {
+        entry.listeroCommission += jugada.commissionAmount || 0;
+      }
+    }
+  }
+
+  // Convertir a formato de respuesta
+  const finalMap = new Map<string, Array<{
+    sorteoId: string;
+    sorteoName: string;
+    loteriaId: string;
+    loteriaName: string;
+    scheduledAt: string;
+    sales: number;
+    payouts: number;
+    listeroCommission: number;
+    vendedorCommission: number;
+    balance: number;
+    ticketCount: number;
+  }>>();
+
+  for (const [dateKey, sorteoMap] of resultMap.entries()) {
+    const result = Array.from(sorteoMap.values())
+      .map((entry) => ({
+        sorteoId: entry.sorteoId,
+        sorteoName: entry.sorteoName,
+        loteriaId: entry.loteriaId,
+        loteriaName: entry.loteriaName,
+        scheduledAt: entry.scheduledAt.toISOString(),
+        sales: entry.sales,
+        payouts: entry.payouts,
+        listeroCommission: entry.listeroCommission,
+        vendedorCommission: entry.vendedorCommission,
+        balance: entry.sales - entry.payouts - entry.listeroCommission - entry.vendedorCommission,
+        ticketCount: entry.ticketCount,
+      }))
+      .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+    
+    finalMap.set(dateKey, result);
+  }
+
+  return finalMap;
+}
+
+/**
+ * Obtiene el desglose por sorteo para un día específico (mantener para compatibilidad)
  */
 async function getSorteoBreakdown(
   date: Date,
@@ -684,7 +877,22 @@ export async function calculateDayStatement(
     });
 
     if (existingStatement) {
-      // Si existe, retornar el existente
+      // ✅ FIX: Recalcular totalPaid y totalCollected desde movimientos activos
+      // Esto asegura que los valores reflejen los movimientos actuales
+      const recalculatedTotalPaid = await AccountPaymentRepository.getTotalPaid(existingStatement.id);
+      const recalculatedTotalCollected = await AccountPaymentRepository.getTotalCollected(existingStatement.id);
+      // remainingBalance = balance - totalCollected + totalPaid
+      // Como balance = 0 (no hay tickets), remainingBalance = 0 - totalCollected + totalPaid
+      const recalculatedRemainingBalance = 0 - recalculatedTotalCollected + recalculatedTotalPaid;
+      
+      // ✅ FIX: Actualizar el statement con los valores recalculados
+      await AccountStatementRepository.update(existingStatement.id, {
+        totalPaid: recalculatedTotalPaid,
+        totalCollected: recalculatedTotalCollected,
+        remainingBalance: recalculatedRemainingBalance,
+      });
+      
+      // Si existe, retornar el existente con valores recalculados
       return {
         ...existingStatement,
         totalSales: 0,
@@ -692,9 +900,9 @@ export async function calculateDayStatement(
         listeroCommission: 0,
         vendedorCommission: 0,
         balance: 0,
-        totalPaid: existingStatement.totalPaid || 0,
-        totalCollected: await AccountPaymentRepository.getTotalCollected(existingStatement.id),
-        remainingBalance: existingStatement.remainingBalance || 0,
+        totalPaid: recalculatedTotalPaid,
+        totalCollected: recalculatedTotalCollected,
+        remainingBalance: recalculatedRemainingBalance,
         isSettled: false,
         canEdit: true,
         ticketCount: 0,
@@ -871,6 +1079,7 @@ export const AccountsService = {
         vendedorCommission: number;
         balance: number;
         totalPaid: number;
+        totalCollected: number; // ✅ Agregar totalCollected al tipo
         remainingBalance: number;
         isSettled: boolean;
         canEdit: boolean;
@@ -908,22 +1117,102 @@ export const AccountsService = {
         return true;
       });
 
-      // Recalcular cualquier statement existente para garantizar datos frescos
+      // ✅ OPTIMIZACIÓN: Solo recalcular statements si hay cambios recientes
+      // Verificar si hay tickets nuevos o movimientos nuevos desde updatedAt del statement
+      const todayForCheck = new Date();
+      todayForCheck.setUTCHours(0, 0, 0, 0);
+      const twoDaysAgo = new Date(todayForCheck);
+      twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+      
+      // Obtener IDs de statements para verificar cambios
+      const statementIdsForCheck = existingStatementsForDimension.map(s => s.id);
+      
+      // Verificar si hay tickets nuevos o movimientos nuevos para estos statements
+      const [recentTickets, recentPayments] = await Promise.all([
+        // Tickets creados o actualizados recientemente que afectan estos statements
+        prisma.ticket.findMany({
+          where: {
+            OR: [
+              { businessDate: { gte: twoDaysAgo } },
+              { createdAt: { gte: twoDaysAgo } },
+            ],
+            deletedAt: null,
+            status: { not: "CANCELLED" },
+            ...(dimension === "ventana" 
+              ? { ventanaId: { in: existingStatementsForDimension.filter(s => s.ventanaId).map(s => s.ventanaId!) } }
+              : { vendedorId: { in: existingStatementsForDimension.filter(s => s.vendedorId).map(s => s.vendedorId!) } }
+            ),
+          },
+          select: {
+            businessDate: true,
+            createdAt: true,
+            ventanaId: true,
+            vendedorId: true,
+          },
+        }),
+        // Movimientos creados recientemente para estos statements
+        prisma.accountPayment.findMany({
+          where: {
+            accountStatementId: { in: statementIdsForCheck },
+            createdAt: { gte: twoDaysAgo },
+          },
+          select: {
+            accountStatementId: true,
+          },
+        }),
+      ]);
+
+      // Crear Set de statementIds que tienen cambios recientes
+      const statementsWithChanges = new Set<string>();
+      for (const ticket of recentTickets) {
+        const ticketDate = ticket.businessDate 
+          ? new Date(ticket.businessDate)
+          : new Date(ticket.createdAt);
+        ticketDate.setUTCHours(0, 0, 0, 0);
+        const dateKey = ticketDate.toISOString().split("T")[0];
+        const targetId = dimension === "ventana" ? ticket.ventanaId : ticket.vendedorId;
+        if (targetId) {
+          const key = `${dateKey}-${targetId}`;
+          const statement = existingStatementsForDimension.find(s => {
+            const sDateKey = s.date.toISOString().split("T")[0];
+            const sTargetId = dimension === "ventana" ? s.ventanaId : s.vendedorId;
+            return `${sDateKey}-${sTargetId}` === key;
+          });
+          if (statement) {
+            statementsWithChanges.add(statement.id);
+          }
+        }
+      }
+      for (const payment of recentPayments) {
+        statementsWithChanges.add(payment.accountStatementId);
+      }
+
+      // Solo recalcular statements con cambios recientes o si updatedAt es muy antiguo
       let filteredStatements: DayStatement[] = await Promise.all(
         existingStatementsForDimension.map(async (s) => {
           const statementDate = new Date(s.date);
           statementDate.setUTCHours(0, 0, 0, 0);
-
-          const recalculated = await calculateDayStatement(
-            statementDate,
-            month,
-            dimension,
-            s.ventanaId ?? undefined,
-            s.vendedorId ?? undefined,
-            bancaId
-          );
-
-          return recalculated;
+          
+          const hasRecentChanges = statementsWithChanges.has(s.id);
+          const isOld = s.updatedAt < twoDaysAgo;
+          
+          if (hasRecentChanges || isOld) {
+            // Recalcular si hay cambios recientes o si el statement es muy antiguo
+            return await calculateDayStatement(
+              statementDate,
+              month,
+              dimension,
+              s.ventanaId ?? undefined,
+              s.vendedorId ?? undefined,
+              bancaId
+            );
+          } else {
+            // Usar valores guardados y solo refrescar movimientos (ya optimizado con batch)
+            return {
+              ...s,
+              date: statementDate,
+            } as DayStatement;
+          }
         })
       );
 
@@ -966,8 +1255,8 @@ export const AccountsService = {
       });
 
       const pendingStatements = new Map<string, { date: Date; ventanaId?: string; vendedorId?: string }>();
-      const today = new Date();
-      today.setUTCHours(0, 0, 0, 0);
+      const todayForPending = new Date();
+      todayForPending.setUTCHours(0, 0, 0, 0);
 
       for (const ticket of ticketsInMonth) {
         const ticketDate = ticket.businessDate
@@ -975,9 +1264,9 @@ export const AccountsService = {
           : new Date(ticket.createdAt);
         ticketDate.setUTCHours(0, 0, 0, 0);
 
-        const isCurrentMonth = ticketDate.getUTCFullYear() === today.getUTCFullYear() &&
-          ticketDate.getUTCMonth() === today.getUTCMonth();
-        if (isCurrentMonth && ticketDate > today) {
+        const isCurrentMonth = ticketDate.getUTCFullYear() === todayForPending.getUTCFullYear() &&
+          ticketDate.getUTCMonth() === todayForPending.getUTCMonth();
+        if (isCurrentMonth && ticketDate > todayForPending) {
           continue;
         }
 
@@ -1224,9 +1513,54 @@ export const AccountsService = {
         }
       }
 
+      // ✅ OPTIMIZACIÓN: Obtener todos los IDs de statements para hacer batch queries
+      const statementIdsForBatch = filteredStatements.map(s => s.id);
+      
+      // ✅ OPTIMIZACIÓN: Obtener fechas para batch query de getSorteoBreakdown
+      const statementDatesForBatch = filteredStatements.map(s => {
+        const d = new Date(s.date);
+        d.setUTCHours(0, 0, 0, 0);
+        return d;
+      });
+      
+      // ✅ OPTIMIZACIÓN: Obtener totales, movimientos y breakdowns en batch (una sola query en lugar de N queries)
+      const [totalsBatch, movementsBatch, sorteoBreakdownBatch] = await Promise.all([
+        AccountPaymentRepository.getTotalsBatch(statementIdsForBatch),
+        AccountPaymentRepository.findMovementsBatch(statementIdsForBatch),
+        getSorteoBreakdownBatch(statementDatesForBatch, dimension, undefined, undefined, bancaId),
+      ]);
+
+      // ✅ OPTIMIZACIÓN: Preparar actualizaciones batch para statements que necesitan actualización
+      const statementsToUpdate: Array<{ id: string; totalPaid: number; totalCollected: number; remainingBalance: number }> = [];
+
       // Obtener bySorteo y movements para cada statement en paralelo
       const statements = await Promise.all(
         filteredStatements.map(async (s) => {
+          // ✅ OPTIMIZACIÓN: Usar valores del batch en lugar de queries individuales
+          const totals = totalsBatch.get(s.id) || { totalPaid: 0, totalCollected: 0 };
+          const verifiedTotalPaid = totals.totalPaid;
+          const verifiedTotalCollected = totals.totalCollected;
+          // Recalcular remainingBalance con los valores verificados
+          const verifiedRemainingBalance = s.balance - verifiedTotalCollected + verifiedTotalPaid;
+          
+          // Si los valores verificados son diferentes a los del statement, preparar actualización
+          if (Math.abs(verifiedTotalPaid - s.totalPaid) > 0.01 || 
+              Math.abs(verifiedTotalCollected - s.totalCollected) > 0.01 ||
+              Math.abs(verifiedRemainingBalance - s.remainingBalance) > 0.01) {
+            statementsToUpdate.push({
+              id: s.id,
+              totalPaid: verifiedTotalPaid,
+              totalCollected: verifiedTotalCollected,
+              remainingBalance: verifiedRemainingBalance,
+            });
+          }
+          
+          // ✅ SIEMPRE actualizar el objeto s con los valores verificados para que se usen en los totales
+          // Esto asegura que los totales acumulados reflejen los movimientos actuales
+          s.totalPaid = verifiedTotalPaid;
+          s.totalCollected = verifiedTotalCollected;
+          s.remainingBalance = verifiedRemainingBalance;
+
           const base = {
             date: s.date.toISOString().split("T")[0],
             totalSales: s.totalSales,
@@ -1234,9 +1568,9 @@ export const AccountsService = {
             listeroCommission: s.listeroCommission,
             vendedorCommission: s.vendedorCommission,
             balance: s.balance,
-            totalPaid: s.totalPaid,
-            totalCollected: s.totalCollected,
-            remainingBalance: s.remainingBalance,
+            totalPaid: verifiedTotalPaid, // ✅ Usar valores verificados desde movimientos
+            totalCollected: verifiedTotalCollected, // ✅ Usar valores verificados desde movimientos
+            remainingBalance: verifiedRemainingBalance, // ✅ Usar valores verificados
             isSettled: s.isSettled,
             canEdit: s.canEdit,
             ticketCount: s.ticketCount,
@@ -1244,17 +1578,12 @@ export const AccountsService = {
             updatedAt: s.updatedAt.toISOString(),
           };
 
-          // Obtener desglose por sorteo y movimientos en paralelo
-          const [bySorteo, movements] = await Promise.all([
-            getSorteoBreakdown(
-              s.date,
-              dimension,
-              s.ventanaId || undefined,
-              s.vendedorId || undefined,
-              bancaId
-            ),
-            getMovementsForDay(s.id),
-          ]);
+          // ✅ OPTIMIZACIÓN: Obtener movimientos del batch en lugar de query individual
+          const movements = movementsBatch.get(s.id) || [];
+
+          // ✅ OPTIMIZACIÓN: Obtener desglose por sorteo del batch en lugar de query individual
+          const dateKeyForSorteo = s.date.toISOString().split("T")[0];
+          const bySorteo = sorteoBreakdownBatch.get(dateKeyForSorteo) || [];
 
           if (dimension === "ventana") {
             return {
@@ -1278,17 +1607,32 @@ export const AccountsService = {
         })
       );
 
+      // ✅ OPTIMIZACIÓN: Actualizar statements en batch (paralelo) en lugar de secuencial
+      if (statementsToUpdate.length > 0) {
+        await Promise.all(
+          statementsToUpdate.map(({ id, totalPaid, totalCollected, remainingBalance }) =>
+            AccountStatementRepository.update(id, {
+              totalPaid,
+              totalCollected,
+              remainingBalance,
+            })
+          )
+        );
+      }
+
+      // ✅ FIX: Usar statements (que tienen valores verificados) en lugar de filteredStatements
+      // para los totales acumulados, asegurando que reflejen los movimientos actuales
       const totals = {
-        totalSales: filteredStatements.reduce((sum, s) => sum + s.totalSales, 0),
-        totalPayouts: filteredStatements.reduce((sum, s) => sum + s.totalPayouts, 0),
-        totalListeroCommission: filteredStatements.reduce((sum, s) => sum + s.listeroCommission, 0),
-        totalVendedorCommission: filteredStatements.reduce((sum, s) => sum + s.vendedorCommission, 0),
-        totalBalance: filteredStatements.reduce((sum, s) => sum + s.balance, 0),
-        totalPaid: filteredStatements.reduce((sum, s) => sum + s.totalPaid, 0),
-        totalCollected: filteredStatements.reduce((sum, s) => sum + s.totalCollected, 0),
-        totalRemainingBalance: filteredStatements.reduce((sum, s) => sum + s.remainingBalance, 0),
-        settledDays: filteredStatements.filter((s) => s.isSettled).length,
-        pendingDays: filteredStatements.filter((s) => !s.isSettled).length,
+        totalSales: statements.reduce((sum, s) => sum + s.totalSales, 0),
+        totalPayouts: statements.reduce((sum, s) => sum + s.totalPayouts, 0),
+        totalListeroCommission: statements.reduce((sum, s) => sum + s.listeroCommission, 0),
+        totalVendedorCommission: statements.reduce((sum, s) => sum + s.vendedorCommission, 0),
+        totalBalance: statements.reduce((sum, s) => sum + s.balance, 0),
+        totalPaid: statements.reduce((sum, s) => sum + s.totalPaid, 0), // ✅ Usar valores verificados
+        totalCollected: statements.reduce((sum, s) => sum + s.totalCollected, 0), // ✅ Usar valores verificados
+        totalRemainingBalance: statements.reduce((sum, s) => sum + s.remainingBalance, 0), // ✅ Usar valores verificados
+        settledDays: statements.filter((s) => s.isSettled).length,
+        pendingDays: statements.filter((s) => !s.isSettled).length,
       };
 
       const meta = {
@@ -1488,6 +1832,26 @@ export const AccountsService = {
       }
     }
 
+    // ✅ OPTIMIZACIÓN: Obtener todos los IDs de statements para hacer batch queries
+    const statementIdsForBatch2 = statements.map(s => s.id);
+    
+    // ✅ OPTIMIZACIÓN: Obtener fechas para batch query de getSorteoBreakdown
+    const statementDatesForBatch2 = statements.map(s => {
+      const d = new Date(s.date);
+      d.setUTCHours(0, 0, 0, 0);
+      return d;
+    });
+    
+    // ✅ OPTIMIZACIÓN: Obtener totales, movimientos y breakdowns en batch (una sola query en lugar de N queries)
+    const [totalsBatch, movementsBatch, sorteoBreakdownBatch] = await Promise.all([
+      AccountPaymentRepository.getTotalsBatch(statementIdsForBatch2),
+      AccountPaymentRepository.findMovementsBatch(statementIdsForBatch2),
+      getSorteoBreakdownBatch(statementDatesForBatch2, dimension, ventanaId, vendedorId, bancaId),
+    ]);
+
+    // ✅ OPTIMIZACIÓN: Preparar actualizaciones batch para statements que necesitan actualización
+    const statementsToUpdate: Array<{ id: string; totalPaid: number; totalCollected: number; remainingBalance: number }> = [];
+
     // Formatear respuesta - retornar directamente el array en lugar de data.data
     // Incluir campos según la dimensión (omitir campos null innecesarios)
     // Obtener bySorteo y movements para cada statement en paralelo
@@ -1497,6 +1861,31 @@ export const AccountsService = {
         const dateKey = dateISOCR.split("T")[0];
         const statementWithRelations = statementsMap.get(dateKey);
 
+        // ✅ OPTIMIZACIÓN: Usar valores del batch en lugar de queries individuales
+        const totals = totalsBatch.get(s.id) || { totalPaid: 0, totalCollected: 0 };
+        const verifiedTotalPaid = totals.totalPaid;
+        const verifiedTotalCollected = totals.totalCollected;
+        // Recalcular remainingBalance con los valores verificados
+        const verifiedRemainingBalance = s.balance - verifiedTotalCollected + verifiedTotalPaid;
+        
+        // Si los valores verificados son diferentes a los del statement, preparar actualización
+        if (Math.abs(verifiedTotalPaid - s.totalPaid) > 0.01 || 
+            Math.abs(verifiedTotalCollected - s.totalCollected) > 0.01 ||
+            Math.abs(verifiedRemainingBalance - s.remainingBalance) > 0.01) {
+          statementsToUpdate.push({
+            id: s.id,
+            totalPaid: verifiedTotalPaid,
+            totalCollected: verifiedTotalCollected,
+            remainingBalance: verifiedRemainingBalance,
+          });
+        }
+        
+        // ✅ SIEMPRE actualizar el objeto s con los valores verificados para que se usen en los totales
+        // Esto asegura que los totales acumulados reflejen los movimientos actuales
+        s.totalPaid = verifiedTotalPaid;
+        s.totalCollected = verifiedTotalCollected;
+        s.remainingBalance = verifiedRemainingBalance;
+
         const base = {
           date: dateISOCR,
           totalSales: s.totalSales,
@@ -1504,9 +1893,9 @@ export const AccountsService = {
           listeroCommission: s.listeroCommission,
           vendedorCommission: s.vendedorCommission,
           balance: s.balance,
-          totalPaid: s.totalPaid,
-          totalCollected: s.totalCollected,
-          remainingBalance: s.remainingBalance,
+          totalPaid: verifiedTotalPaid, // ✅ Usar valores verificados desde movimientos
+          totalCollected: verifiedTotalCollected, // ✅ Usar valores verificados desde movimientos
+          remainingBalance: verifiedRemainingBalance, // ✅ Usar valores verificados
           isSettled: s.isSettled,
           canEdit: s.canEdit,
           ticketCount: s.ticketCount,
@@ -1514,17 +1903,12 @@ export const AccountsService = {
           updatedAt: s.updatedAt.toISOString(),
         };
 
-        // Obtener desglose por sorteo y movimientos en paralelo
-        const [bySorteo, movements] = await Promise.all([
-          getSorteoBreakdown(
-            s.date,
-            dimension,
-            s.ventanaId || ventanaId || undefined,
-            s.vendedorId || vendedorId || undefined,
-            bancaId
-          ),
-          getMovementsForDay(s.id),
-        ]);
+        // ✅ OPTIMIZACIÓN: Obtener movimientos del batch en lugar de query individual
+        const movements = movementsBatch.get(s.id) || [];
+
+        // ✅ OPTIMIZACIÓN: Obtener desglose por sorteo del batch en lugar de query individual
+        const dateKeyForSorteo2 = dateISOCR.split("T")[0];
+        const bySorteo = sorteoBreakdownBatch.get(dateKeyForSorteo2) || [];
 
         if (dimension === "ventana") {
           const info =
@@ -1559,6 +1943,19 @@ export const AccountsService = {
         }
       })
     );
+
+    // ✅ OPTIMIZACIÓN: Actualizar statements en batch (paralelo) en lugar de secuencial
+    if (statementsToUpdate.length > 0) {
+      await Promise.all(
+        statementsToUpdate.map(({ id, totalPaid, totalCollected, remainingBalance }) =>
+          AccountStatementRepository.update(id, {
+            totalPaid,
+            totalCollected,
+            remainingBalance,
+          })
+        )
+      );
+    }
 
     const totals = {
       totalSales: formattedStatements.reduce((sum, s) => sum + s.totalSales, 0),
