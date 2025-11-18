@@ -217,5 +217,104 @@ export const AccountPaymentRepository = {
       },
     });
   },
+
+  /**
+   * ✅ OPTIMIZACIÓN: Obtiene totales de pagos y cobros para múltiples statements en una sola query
+   * Retorna un Map<statementId, { totalPaid, totalCollected }>
+   */
+  async getTotalsBatch(accountStatementIds: string[]): Promise<Map<string, { totalPaid: number; totalCollected: number }>> {
+    if (accountStatementIds.length === 0) {
+      return new Map();
+    }
+
+    // Obtener todos los pagos activos de los statements en una sola query
+    const payments = await prisma.accountPayment.findMany({
+      where: {
+        accountStatementId: { in: accountStatementIds },
+        isReversed: false,
+      },
+      select: {
+        accountStatementId: true,
+        type: true,
+        amount: true,
+      },
+    });
+
+    // Agrupar por statementId y tipo
+    const totalsMap = new Map<string, { totalPaid: number; totalCollected: number }>();
+    
+    // Inicializar todos los statements con 0
+    for (const id of accountStatementIds) {
+      totalsMap.set(id, { totalPaid: 0, totalCollected: 0 });
+    }
+
+    // Sumar los montos
+    for (const payment of payments) {
+      const totals = totalsMap.get(payment.accountStatementId) || { totalPaid: 0, totalCollected: 0 };
+      if (payment.type === "payment") {
+        totals.totalPaid += payment.amount;
+      } else if (payment.type === "collection") {
+        totals.totalCollected += payment.amount;
+      }
+      totalsMap.set(payment.accountStatementId, totals);
+    }
+
+    return totalsMap;
+  },
+
+  /**
+   * ✅ OPTIMIZACIÓN: Obtiene todos los movimientos de múltiples statements en una sola query
+   * Retorna un Map<statementId, movements[]>
+   */
+  async findMovementsBatch(accountStatementIds: string[]): Promise<Map<string, any[]>> {
+    if (accountStatementIds.length === 0) {
+      return new Map();
+    }
+
+    const payments = await prisma.accountPayment.findMany({
+      where: {
+        accountStatementId: { in: accountStatementIds },
+      },
+      orderBy: { createdAt: "asc" },
+      include: {
+        paidBy: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Agrupar por statementId
+    const movementsMap = new Map<string, any[]>();
+    for (const id of accountStatementIds) {
+      movementsMap.set(id, []);
+    }
+
+    for (const payment of payments) {
+      const movements = movementsMap.get(payment.accountStatementId) || [];
+      movements.push({
+        id: payment.id,
+        accountStatementId: payment.accountStatementId,
+        date: payment.date.toISOString().split("T")[0],
+        amount: payment.amount,
+        type: payment.type,
+        method: payment.method,
+        notes: payment.notes,
+        isFinal: payment.isFinal,
+        isReversed: payment.isReversed,
+        reversedAt: payment.reversedAt?.toISOString() || null,
+        reversedBy: payment.reversedBy,
+        paidById: payment.paidById,
+        paidByName: payment.paidByName,
+        createdAt: payment.createdAt.toISOString(),
+        updatedAt: payment.updatedAt.toISOString(),
+      });
+      movementsMap.set(payment.accountStatementId, movements);
+    }
+
+    return movementsMap;
+  },
 };
 
