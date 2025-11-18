@@ -156,6 +156,176 @@ export const SorteoService = {
     return serializeSorteo(s);
   },
 
+  /**
+   * Activa o desactiva un sorteo sin importar su estado
+   * Útil para activar sorteos que están en CLOSED o EVALUATED
+   */
+  async setActive(id: string, isActive: boolean, userId: string) {
+    const existing = await SorteoRepository.findById(id);
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+
+    const s = await SorteoRepository.update(id, {
+      isActive,
+    } as UpdateSorteoDTO);
+
+    await ActivityService.log({
+      userId,
+      action: ActivityType.SORTEO_UPDATE,
+      targetType: "SORTEO",
+      targetId: id,
+      details: { isActive, previousIsActive: (existing as any).isActive },
+    });
+
+    return serializeSorteo(s);
+  },
+
+  /**
+   * Fuerza el cambio de estado a OPEN desde cualquier estado (excepto EVALUATED)
+   * Útil para reabrir sorteos que están en CLOSED
+   */
+  async forceOpen(id: string, userId: string) {
+    const existing = await SorteoRepository.findById(id);
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+    if (existing.status === SorteoStatus.EVALUATED) {
+      throw new AppError("No se puede reabrir un sorteo evaluado. Usa revert-evaluation primero.", 409);
+    }
+
+    const s = await SorteoRepository.forceOpen(id);
+
+    const details: Prisma.InputJsonObject = {
+      from: existing.status,
+      to: SorteoStatus.OPEN,
+      forced: true,
+    };
+
+    await ActivityService.log({
+      userId,
+      action: ActivityType.SORTEO_OPEN,
+      targetType: "SORTEO",
+      targetId: id,
+      details,
+    });
+
+    return serializeSorteo(s);
+  },
+
+  /**
+   * Activa un sorteo y lo pone en estado OPEN en una sola operación
+   * Útil para reactivar sorteos que están inactivos y cerrados
+   */
+  async activateAndOpen(id: string, userId: string) {
+    const existing = await SorteoRepository.findById(id);
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+    if (existing.status === SorteoStatus.EVALUATED) {
+      throw new AppError("No se puede reabrir un sorteo evaluado. Usa revert-evaluation primero.", 409);
+    }
+
+    // Actualizar isActive y status en una sola operación
+    const s = await prisma.sorteo.update({
+      where: { id },
+      data: {
+        isActive: true,
+        status: SorteoStatus.OPEN,
+      },
+      include: {
+        loteria: {
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
+          },
+        },
+        extraMultiplier: {
+          select: { id: true, name: true, valueX: true },
+        },
+      },
+    });
+
+    const details: Prisma.InputJsonObject = {
+      from: {
+        status: existing.status,
+        isActive: (existing as any).isActive,
+      },
+      to: {
+        status: SorteoStatus.OPEN,
+        isActive: true,
+      },
+      forced: true,
+    };
+
+    await ActivityService.log({
+      userId,
+      action: ActivityType.SORTEO_UPDATE,
+      targetType: "SORTEO",
+      targetId: id,
+      details,
+    });
+
+    logger.info({
+      layer: "service",
+      action: "SORTEO_ACTIVATE_AND_OPEN",
+      userId,
+      payload: {
+        sorteoId: id,
+        previousStatus: existing.status,
+        previousIsActive: (existing as any).isActive,
+      },
+    });
+
+    return serializeSorteo(s);
+  },
+
+  /**
+   * Actualiza un sorteo a estado SCHEDULED y isActive=true
+   * Útil para resetear sorteos a estado inicial
+   */
+  async resetToScheduled(id: string, userId: string) {
+    const existing = await SorteoRepository.findById(id);
+    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+
+    const s = await prisma.sorteo.update({
+      where: { id },
+      data: {
+        status: SorteoStatus.SCHEDULED,
+        isActive: true,
+        deletedAt: null,
+        deletedBy: null,
+        deletedReason: null,
+        // Limpiar campos de cascada
+        deletedByCascade: false,
+        deletedByCascadeFrom: null,
+        deletedByCascadeId: null,
+      },
+      include: {
+        loteria: {
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
+          },
+        },
+        extraMultiplier: {
+          select: { id: true, name: true, valueX: true },
+        },
+      },
+    });
+
+    await ActivityService.log({
+      userId,
+      action: ActivityType.SORTEO_UPDATE,
+      targetType: "SORTEO",
+      targetId: id,
+      details: {
+        status: SorteoStatus.SCHEDULED,
+        isActive: true,
+        previousStatus: existing.status,
+        previousIsActive: (existing as any).isActive,
+      },
+    });
+
+    return serializeSorteo(s);
+  },
+
   async open(id: string, userId: string) {
     const existing = await SorteoRepository.findById(id);
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
@@ -422,7 +592,8 @@ export const SorteoService = {
   },
 
   async remove(id: string, userId: string, reason?: string) {
-    const s = await SorteoRepository.softDelete(id, userId, reason);
+    // Inactivación manual: deletedByCascade = false
+    const s = await SorteoRepository.softDelete(id, userId, reason, false);
 
     const details: Record<string, any> = {};
     if (reason) details.reason = reason;
@@ -433,6 +604,20 @@ export const SorteoService = {
       targetType: "SORTEO",
       targetId: id,
       details: details as Prisma.InputJsonObject,
+    });
+
+    return serializeSorteo(s);
+  },
+
+  async restore(id: string, userId: string) {
+    const s = await SorteoRepository.restore(id);
+
+    await ActivityService.log({
+      userId,
+      action: ActivityType.RESTORE,
+      targetType: "SORTEO",
+      targetId: id,
+      details: { restored: true },
     });
 
     return serializeSorteo(s);

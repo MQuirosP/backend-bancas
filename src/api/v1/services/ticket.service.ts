@@ -870,15 +870,26 @@ export const TicketService = {
       };
 
       // Aplicar filtros según dimension y scope
-      if (params.dimension === "listero" && params.ventanaId) {
-        ticketWhere.ventanaId = params.ventanaId;
-      } else if (params.dimension === "vendedor" && params.vendedorId) {
-        ticketWhere.vendedorId = params.vendedorId;
+      // Prioridad: dimension > filtros directos > scope
+      if (params.dimension === "listero") {
+        if (params.ventanaId) {
+          ticketWhere.ventanaId = params.ventanaId;
+        } else {
+          // Si dimension='listero' pero no hay ventanaId, es un error
+          throw new AppError("ventanaId es requerido cuando dimension='listero'", 400);
+        }
+      } else if (params.dimension === "vendedor") {
+        if (params.vendedorId) {
+          ticketWhere.vendedorId = params.vendedorId;
+        } else {
+          // Si dimension='vendedor' pero no hay vendedorId, es un error
+          throw new AppError("vendedorId es requerido cuando dimension='vendedor'", 400);
+        }
       } else if (params.ventanaId) {
-        // ventanaId viene de RBAC o del request
+        // ventanaId viene de RBAC o del request (sin dimension específica)
         ticketWhere.ventanaId = params.ventanaId;
       } else if (params.vendedorId) {
-        // vendedorId viene de RBAC o del request
+        // vendedorId viene de RBAC o del request (sin dimension específica)
         ticketWhere.vendedorId = params.vendedorId;
       } else if (params.scope === "mine") {
         // Si scope='mine' y no hay filtros específicos, usar userId según rol
@@ -886,17 +897,19 @@ export const TicketService = {
           ticketWhere.vendedorId = userId;
         } else if (role === "VENTANA") {
           // Para VENTANA, el ventanaId debería venir en params.ventanaId desde RBAC
-          // Si no viene, es un error de configuración
           if (!params.ventanaId) {
             logger.warn({
               layer: "service",
               action: "TICKET_NUMBERS_SUMMARY_MISSING_VENTANA_ID",
               payload: { role, userId, message: "VENTANA user should have ventanaId from RBAC" },
             });
+            // No lanzar error, solo loguear (RBAC debería haberlo agregado)
+          } else {
+            ticketWhere.ventanaId = params.ventanaId;
           }
         }
       }
-      // Si scope='all' y no hay filtros específicos, no agregar filtros de ventanaId/vendedorId
+      // Si scope='all' y no hay filtros específicos ni dimension, no agregar filtros de ventanaId/vendedorId
 
       // Obtener todas las jugadas que cumplen los filtros
       const jugadas = await prisma.jugada.findMany({

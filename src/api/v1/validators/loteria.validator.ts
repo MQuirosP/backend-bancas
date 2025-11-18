@@ -32,6 +32,7 @@ export const previewScheduleQuerySchema = z.object({
 }).strict();
 
 // Body para seed_sorteos: subset de fechas específicas (ISO). Opcional.
+// Permite body vacío {}, undefined o con scheduledDates opcional
 export const seedSorteosBodySchema = z
   .object({
     scheduledDates: z
@@ -40,5 +41,5 @@ export const seedSorteosBodySchema = z
       )
       .optional(),
   })
-  .strict();
+  .passthrough(); // Permite campos adicionales pero valida scheduledDates si viene
 

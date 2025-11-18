@@ -29,6 +29,10 @@ export const RevertSorteoSchema = z.object({
   reason: z.string().trim().min(3).max(200).optional(),
 }).strict();
 
+export const SetActiveSorteoSchema = z.object({
+  isActive: z.coerce.boolean(),
+}).strict();
+
 // ✅ NUEVO: query para listar
 export const ListSorteosQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
@@ -55,6 +59,8 @@ export const validateEvaluateSorteo = (req: Request, res: Response, next: NextFu
   validateBody(EvaluateSorteoSchema)(req, res, next);
 export const validateRevertSorteo = (req: Request, res: Response, next: NextFunction) =>
   validateBody(RevertSorteoSchema)(req, res, next);
+export const validateSetActiveSorteo = (req: Request, res: Response, next: NextFunction) =>
+  validateBody(SetActiveSorteoSchema)(req, res, next);
 
 // ✅ export helper para rutas
 export const validateListSorteosQuery = (req: Request, res: Response, next: NextFunction) =>

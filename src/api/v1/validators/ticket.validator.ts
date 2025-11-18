@@ -115,8 +115,8 @@ export const FinalizePaymentSchema = z.object({
 export const NumbersSummaryQuerySchema = z
   .object({
     scope: z.enum(["mine", "all"]).optional().default("mine"), // 'mine' para vendedor, 'all' para admin
-    dimension: z.enum(["listero", "vendedor"]).optional(), // Filtro por dimensión (listero = ventana, vendedor = vendedor)
-    ventanaId: z.uuid().optional(), // Filtro por ventana (cuando dimension='listero' o scope='all')
+    dimension: z.enum(["listero", "vendedor", "ventana"]).optional(), // Filtro por dimensión (ventana/listero = ventana, vendedor = vendedor)
+    ventanaId: z.uuid().optional(), // Filtro por ventana (cuando dimension='listero'/'ventana' o scope='all')
     vendedorId: z.uuid().optional(), // Filtro por vendedor (cuando dimension='vendedor' o scope='all')
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
@@ -126,6 +126,13 @@ export const NumbersSummaryQuerySchema = z
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
+  .transform((val) => {
+    // Normalizar 'ventana' a 'listero' para consistencia interna
+    if (val.dimension === "ventana") {
+      return { ...val, dimension: "listero" as const };
+    }
+    return val;
+  })
   .superRefine((val, ctx) => {
     // Si date es 'range', fromDate y toDate son requeridos
     if (val.date === "range") {
@@ -156,7 +163,7 @@ export const NumbersSummaryQuerySchema = z
       ctx.addIssue({
         code: "custom",
         path: ["vendedorId"],
-        message: "vendedorId no puede usarse cuando dimension='listero'",
+        message: "vendedorId no puede usarse cuando dimension='listero' o 'ventana'",
       });
     }
     if (val.dimension === "vendedor" && val.ventanaId) {
