@@ -378,6 +378,120 @@ async function calculateCommissionsForTicket(
 type DayStatement = Awaited<ReturnType<typeof calculateDayStatement>>;
 
 /**
+ * ✅ OPTIMIZACIÓN: Lee resúmenes diarios de la vista materializada
+ * Retorna un Map<dateKey, { ventanaId, vendedorId, ticket_count, total_sales, ... }>
+ */
+async function getDailySummariesFromMaterializedView(
+  startDate: Date,
+  endDate: Date,
+  dimension: "ventana" | "vendedor",
+  ventanaId: string | undefined,
+  vendedorId: string | undefined,
+  sort: "asc" | "desc" = "desc"
+): Promise<Map<string, {
+  date: Date;
+  ventanaId: string | null;
+  vendedorId: string | null;
+  ticket_count: number;
+  total_sales: number;
+  total_payouts: number;
+  vendedor_commission: number;
+  listero_commission: number;
+  balance: number;
+}>> {
+  try {
+    // Construir condiciones WHERE dinámicamente
+    const conditions: string[] = [
+      `date >= '${startDate.toISOString().split('T')[0]}'::date`,
+      `date <= '${endDate.toISOString().split('T')[0]}'::date`,
+    ];
+
+    if (dimension === "ventana" && ventanaId) {
+      conditions.push(`"ventanaId" = '${ventanaId}'::uuid`);
+      conditions.push(`"vendedorId" IS NULL`);
+    } else if (dimension === "vendedor" && vendedorId) {
+      conditions.push(`"vendedorId" = '${vendedorId}'::uuid`);
+      conditions.push(`"ventanaId" IS NULL`);
+    } else if (dimension === "ventana") {
+      conditions.push(`"ventanaId" IS NOT NULL`);
+      conditions.push(`"vendedorId" IS NULL`);
+    } else if (dimension === "vendedor") {
+      conditions.push(`"vendedorId" IS NOT NULL`);
+      conditions.push(`"ventanaId" IS NULL`);
+    }
+
+    const whereClause = conditions.join(' AND ');
+    const orderClause = sort === "desc" ? "DESC" : "ASC";
+
+    // Query la vista materializada
+    const summaries = await prisma.$queryRawUnsafe<Array<{
+      date: Date;
+      ventanaId: string | null;
+      vendedorId: string | null;
+      ticket_count: bigint;
+      total_sales: number;
+      total_payouts: number;
+      vendedor_commission: number;
+      listero_commission: number;
+      balance: number;
+    }>>(`
+      SELECT 
+        date,
+        "ventanaId",
+        "vendedorId",
+        ticket_count,
+        total_sales,
+        total_payouts,
+        vendedor_commission,
+        listero_commission,
+        balance
+      FROM mv_daily_account_summary
+      WHERE ${whereClause}
+      ORDER BY date ${orderClause}
+    `);
+
+    // Convertir a Map por dateKey
+    const resultMap = new Map<string, {
+      date: Date;
+      ventanaId: string | null;
+      vendedorId: string | null;
+      ticket_count: number;
+      total_sales: number;
+      total_payouts: number;
+      vendedor_commission: number;
+      listero_commission: number;
+      balance: number;
+    }>();
+
+    for (const summary of summaries) {
+      const dateKey = summary.date.toISOString().split("T")[0];
+      resultMap.set(dateKey, {
+        date: summary.date,
+        ventanaId: summary.ventanaId,
+        vendedorId: summary.vendedorId,
+        ticket_count: Number(summary.ticket_count),
+        total_sales: summary.total_sales,
+        total_payouts: summary.total_payouts,
+        vendedor_commission: summary.vendedor_commission,
+        listero_commission: summary.listero_commission,
+        balance: summary.balance,
+      });
+    }
+
+    return resultMap;
+  } catch (error: any) {
+    // Si la vista materializada no existe o hay error, retornar Map vacío
+    // El código fallback usará calculateDayStatement
+    logger.warn({
+      layer: "service",
+      action: "MATERIALIZED_VIEW_QUERY_FAILED",
+      payload: { error: error.message },
+    });
+    return new Map();
+  }
+}
+
+/**
  * ✅ OPTIMIZACIÓN: Obtiene el desglose por sorteo para múltiples días en batch
  * Retorna un Map<dateKey, Array<{...}>>
  */
@@ -1028,6 +1142,263 @@ export async function calculateDayStatement(
 }
 
 /**
+ * ✅ OPTIMIZACIÓN: Obtiene statement desde la vista materializada
+ * Esta función es MUCHO más rápida que calcular desde cero
+ */
+async function getStatementFromMaterializedView(
+  filters: AccountsFilters,
+  materializedSummaries: Map<string, {
+    date: Date;
+    ventanaId: string | null;
+    vendedorId: string | null;
+    ticket_count: number;
+    total_sales: number;
+    total_payouts: number;
+    vendedor_commission: number;
+    listero_commission: number;
+    balance: number;
+  }>,
+  startDate: Date,
+  endDate: Date,
+  daysInMonth: number
+) {
+  const { month, dimension, ventanaId, vendedorId, bancaId, sort = "desc" } = filters;
+  
+  // Obtener o crear AccountStatement para cada día (para movimientos y otros datos)
+  const statementDates = Array.from(materializedSummaries.values()).map(s => s.date);
+  const statementsMap = new Map<string, {
+    id: string;
+    date: Date;
+    ventanaId: string | null;
+    vendedorId: string | null;
+    totalSales: number;
+    totalPayouts: number;
+    listeroCommission: number;
+    vendedorCommission: number;
+    balance: number;
+    totalPaid: number;
+    totalCollected: number;
+    remainingBalance: number;
+    isSettled: boolean;
+    canEdit: boolean;
+    ticketCount: number;
+    createdAt: Date;
+    updatedAt: Date;
+  }>();
+  
+  // Obtener statements existentes o crearlos
+  for (const summary of materializedSummaries.values()) {
+    const dateKey = summary.date.toISOString().split("T")[0];
+    let statement: {
+      id: string;
+      date: Date;
+      ventanaId: string | null;
+      vendedorId: string | null;
+      totalSales: number;
+      totalPayouts: number;
+      listeroCommission: number;
+      vendedorCommission: number;
+      balance: number;
+      totalPaid: number;
+      totalCollected: number;
+      remainingBalance: number;
+      isSettled: boolean;
+      canEdit: boolean;
+      ticketCount: number;
+      createdAt: Date;
+      updatedAt: Date;
+    } | null = await AccountStatementRepository.findByDate(summary.date, {
+      ventanaId: summary.ventanaId ?? undefined,
+      vendedorId: summary.vendedorId ?? undefined,
+    });
+    
+    if (!statement) {
+      // Crear statement si no existe
+      const newStatement = await AccountStatementRepository.findOrCreate({
+        date: summary.date,
+        month,
+        ventanaId: summary.ventanaId ?? undefined,
+        vendedorId: summary.vendedorId ?? undefined,
+      });
+      statement = newStatement as NonNullable<typeof statement>;
+    }
+    
+    if (statement) {
+      statementsMap.set(dateKey, statement);
+    }
+  }
+  
+  // Obtener IDs de statements para batch queries
+  const statementIds = Array.from(statementsMap.values()).map(s => s.id);
+  
+  // Obtener totales y movimientos en batch
+  const [totalsBatch, movementsBatch, sorteoBreakdownBatch] = await Promise.all([
+    AccountPaymentRepository.getTotalsBatch(statementIds),
+    AccountPaymentRepository.findMovementsBatch(statementIds),
+    getSorteoBreakdownBatch(statementDates, dimension, ventanaId, vendedorId, bancaId),
+  ]);
+  
+  // Obtener información de ventanas/vendedores
+  const ventanaInfoMap = new Map<string, { id: string; name: string | null; code: string | null }>();
+  const vendedorInfoMap = new Map<string, { id: string; name: string | null; code: string | null }>();
+  
+  const ventanaIds = Array.from(materializedSummaries.values())
+    .map(s => s.ventanaId)
+    .filter((id): id is string => id !== null);
+  const vendedorIds = Array.from(materializedSummaries.values())
+    .map(s => s.vendedorId)
+    .filter((id): id is string => id !== null);
+  
+  if (ventanaIds.length > 0) {
+    const ventanas = await prisma.ventana.findMany({
+      where: { id: { in: ventanaIds } },
+      select: { id: true, name: true, code: true },
+    });
+    for (const ventana of ventanas) {
+      ventanaInfoMap.set(ventana.id, {
+        id: ventana.id,
+        name: ventana.name,
+        code: ventana.code,
+      });
+    }
+  }
+  
+  if (vendedorIds.length > 0) {
+    const vendedores = await prisma.user.findMany({
+      where: { id: { in: vendedorIds } },
+      select: { id: true, name: true, code: true },
+    });
+    for (const vendedor of vendedores) {
+      vendedorInfoMap.set(vendedor.id, {
+        id: vendedor.id,
+        name: vendedor.name,
+        code: vendedor.code || null,
+      });
+    }
+  }
+  
+  // Construir statements desde la vista materializada
+  const statementsToUpdate: Array<{ id: string; totalPaid: number; totalCollected: number; remainingBalance: number }> = [];
+  const statements = Array.from(materializedSummaries.entries())
+    .map(([dateKey, summary]) => {
+      const statement = statementsMap.get(dateKey);
+      if (!statement) return null;
+      
+      const totals = totalsBatch.get(statement.id) || { totalPaid: 0, totalCollected: 0 };
+      const verifiedTotalPaid = totals.totalPaid;
+      const verifiedTotalCollected = totals.totalCollected;
+      const verifiedRemainingBalance = summary.balance - verifiedTotalCollected + verifiedTotalPaid;
+      
+      // Preparar actualización si es necesario
+      if (Math.abs(verifiedTotalPaid - statement.totalPaid) > 0.01 || 
+          Math.abs(verifiedTotalCollected - statement.totalCollected) > 0.01 ||
+          Math.abs(verifiedRemainingBalance - statement.remainingBalance) > 0.01) {
+        statementsToUpdate.push({
+          id: statement.id,
+          totalPaid: verifiedTotalPaid,
+          totalCollected: verifiedTotalCollected,
+          remainingBalance: verifiedRemainingBalance,
+        });
+      }
+      
+      const movements = movementsBatch.get(statement.id) || [];
+      const bySorteo = sorteoBreakdownBatch.get(dateKey) || [];
+      
+      const base = {
+        date: summary.date.toISOString().split("T")[0],
+        totalSales: summary.total_sales,
+        totalPayouts: summary.total_payouts,
+        listeroCommission: summary.listero_commission,
+        vendedorCommission: summary.vendedor_commission,
+        balance: summary.balance,
+        totalPaid: verifiedTotalPaid,
+        totalCollected: verifiedTotalCollected,
+        remainingBalance: verifiedRemainingBalance,
+        isSettled: calculateIsSettled(
+          summary.ticket_count,
+          verifiedRemainingBalance,
+          verifiedTotalPaid,
+          verifiedTotalCollected
+        ),
+        canEdit: !calculateIsSettled(
+          summary.ticket_count,
+          verifiedRemainingBalance,
+          verifiedTotalPaid,
+          verifiedTotalCollected
+        ),
+        ticketCount: summary.ticket_count,
+        createdAt: statement.createdAt.toISOString(),
+        updatedAt: statement.updatedAt.toISOString(),
+        bySorteo,
+        movements,
+      };
+      
+      if (dimension === "ventana") {
+        return {
+          ...base,
+          ventanaId: summary.ventanaId,
+          ventanaName: summary.ventanaId ? ventanaInfoMap.get(summary.ventanaId)?.name || null : null,
+          ventanaCode: summary.ventanaId ? ventanaInfoMap.get(summary.ventanaId)?.code || null : null,
+        };
+      } else {
+        return {
+          ...base,
+          vendedorId: summary.vendedorId,
+          vendedorName: summary.vendedorId ? vendedorInfoMap.get(summary.vendedorId)?.name || null : null,
+          vendedorCode: summary.vendedorId ? vendedorInfoMap.get(summary.vendedorId)?.code || null : null,
+        };
+      }
+    })
+    .filter((s): s is NonNullable<typeof s> => s !== null)
+    .sort((a, b) => {
+      const dateA = new Date(a.date).getTime();
+      const dateB = new Date(b.date).getTime();
+      return sort === "desc" ? dateB - dateA : dateA - dateB;
+    });
+  
+  // Actualizar statements en batch si es necesario
+  if (statementsToUpdate.length > 0) {
+    await Promise.all(
+      statementsToUpdate.map(({ id, totalPaid, totalCollected, remainingBalance }) =>
+        AccountStatementRepository.update(id, {
+          totalPaid,
+          totalCollected,
+          remainingBalance,
+        })
+      )
+    );
+  }
+  
+  // Calcular totales
+  const totals = {
+    totalSales: statements.reduce((sum, s) => sum + s.totalSales, 0),
+    totalPayouts: statements.reduce((sum, s) => sum + s.totalPayouts, 0),
+    totalListeroCommission: statements.reduce((sum, s) => sum + s.listeroCommission, 0),
+    totalVendedorCommission: statements.reduce((sum, s) => sum + s.vendedorCommission, 0),
+    totalBalance: statements.reduce((sum, s) => sum + s.balance, 0),
+    totalPaid: statements.reduce((sum, s) => sum + s.totalPaid, 0),
+    totalCollected: statements.reduce((sum, s) => sum + s.totalCollected, 0),
+    totalRemainingBalance: statements.reduce((sum, s) => sum + s.remainingBalance, 0),
+    settledDays: statements.filter((s) => s.isSettled).length,
+    pendingDays: statements.filter((s) => !s.isSettled).length,
+  };
+  
+  const meta = {
+    month,
+    startDate: startDate.toISOString().split("T")[0],
+    endDate: endDate.toISOString().split("T")[0],
+    dimension,
+    totalDays: daysInMonth,
+  };
+  
+  return {
+    statements,
+    totals,
+    meta,
+  };
+}
+
+/**
  * Accounts Service
  * Proporciona endpoints para consultar y gestionar estados de cuenta
  */
@@ -1038,6 +1409,30 @@ export const AccountsService = {
   async getStatement(filters: AccountsFilters) {
     const { month, dimension, ventanaId, vendedorId, bancaId, sort = "desc" } = filters;
     const { startDate, endDate, daysInMonth } = getMonthDateRange(month);
+    
+    // ✅ OPTIMIZACIÓN: Intentar leer de la vista materializada primero (MUY RÁPIDO)
+    const materializedSummaries = await getDailySummariesFromMaterializedView(
+      startDate,
+      endDate,
+      dimension,
+      ventanaId,
+      vendedorId,
+      sort as "asc" | "desc"
+    );
+    
+    // Si la vista materializada tiene datos, usarla; si no, usar método tradicional
+    const useMaterializedView = materializedSummaries.size > 0;
+    
+    // ✅ OPTIMIZACIÓN: Si tenemos datos de la vista materializada, usarlos directamente
+    if (useMaterializedView && materializedSummaries.size > 0) {
+      return await getStatementFromMaterializedView(
+        filters,
+        materializedSummaries,
+        startDate,
+        endDate,
+        daysInMonth
+      );
+    }
 
     // Si scope=all y no hay ventanaId/vendedorId, obtener estados existentes
     // Si no hay estados existentes, calcular basándose en tickets del mes
