@@ -332,6 +332,9 @@ export const SorteoService = {
     if (existing.status !== SorteoStatus.SCHEDULED) {
       throw new AppError("Solo se puede abrir desde SCHEDULED", 409);
     }
+    if (!(existing as any).isActive) {
+      throw new AppError("No se puede abrir un sorteo inactivo", 409);
+    }
 
     const s = await SorteoRepository.open(id);
 

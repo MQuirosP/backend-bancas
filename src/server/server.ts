@@ -3,6 +3,7 @@ import app from './app'
 import logger from '../core/logger'
 import { config } from '../config'
 import prisma from '../core/prismaClient'
+import { startSorteosAutoJobs, stopSorteosAutoJobs } from '../jobs/sorteosAuto.job'
 
 const server = http.createServer(app)
 
@@ -13,11 +14,41 @@ server.listen(config.port, () => {
     requestId: null,
     payload: { port: config.port },
   })
+  
+  // Iniciar jobs de automatización de sorteos
+  try {
+    startSorteosAutoJobs()
+    logger.info({
+      layer: 'server',
+      action: 'SORTEOS_AUTO_JOBS_STARTED',
+      requestId: null,
+      payload: { message: 'Jobs de automatización de sorteos iniciados' },
+    })
+  } catch (error: any) {
+    logger.error({
+      layer: 'server',
+      action: 'SORTEOS_AUTO_JOBS_START_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
 })
 
 // Graceful shutdown
 const gracefulShutdown = async (signal: string) => {
   logger.info({ layer: 'server', action: 'SHUTDOWN_INITIATED', payload: { signal } })
+
+  // Detener jobs de automatización
+  try {
+    stopSorteosAutoJobs()
+    logger.info({ layer: 'server', action: 'SORTEOS_AUTO_JOBS_STOPPED' })
+  } catch (error: any) {
+    logger.warn({
+      layer: 'server',
+      action: 'SORTEOS_AUTO_JOBS_STOP_ERROR',
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
 
   server.close(async (err) => {
     if (err) {
