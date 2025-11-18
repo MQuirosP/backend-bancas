@@ -124,6 +124,72 @@ export const LoteriaService = {
     const existing = await prisma.loteria.findUnique({ where: { id } });
     if (!existing) throw new AppError("Lotería not found", 404);
 
+    // Detectar cambio en isActive para activar cascada
+    const isActiveChanged = data.isActive !== undefined && data.isActive !== existing.isActive;
+    const isBeingInactivated = isActiveChanged && data.isActive === false;
+    const isBeingRestored = isActiveChanged && data.isActive === true;
+
+    // Si hay cambio en isActive, usar transacción para cascada
+    if (isActiveChanged) {
+      const result = await prisma.$transaction(async (tx) => {
+        // 1. Actualizar la lotería
+        const updated = await tx.loteria.update({
+          where: { id },
+          data: {
+            name: data.name ?? existing.name,
+            rulesJson:
+              (data.rulesJson as Prisma.InputJsonValue) ?? existing.rulesJson,
+            isActive: data.isActive ?? existing.isActive,
+          },
+        });
+
+        // 2. Aplicar cascada según el cambio (solo cambiar isActive, sin soft delete)
+        let cascadeResult = { count: 0, sorteosIds: [] as string[] };
+        if (isBeingInactivated) {
+          // Inactivar sorteos asociados (solo isActive=false)
+          cascadeResult = await SorteoRepository.setInactiveSorteosByLoteria(id, tx);
+        } else if (isBeingRestored) {
+          // Restaurar sorteos que fueron inactivados por cascada (solo isActive=true)
+          cascadeResult = await SorteoRepository.setActiveSorteosByLoteria(id, tx);
+        }
+
+        return { updated, cascadeResult };
+      });
+
+      logger.info({
+        layer: "service",
+        action: "LOTERIA_UPDATE_WITH_CASCADE",
+        userId,
+        requestId,
+        payload: {
+          id,
+          changes: Object.keys(data),
+          isActiveChanged,
+          isBeingInactivated,
+          isBeingRestored,
+          sorteosAffected: result.cascadeResult.count,
+          sorteosIds: result.cascadeResult.sorteosIds,
+        },
+      });
+
+      await ActivityService.log({
+        userId,
+        action: ActivityType.LOTERIA_UPDATE,
+        targetType: "LOTERIA",
+        targetId: id,
+        details: {
+          ...data,
+          sorteosAffected: result.cascadeResult.count,
+          sorteosIds: result.cascadeResult.sorteosIds,
+        },
+        requestId,
+        layer: "service",
+      });
+
+      return result.updated;
+    }
+
+    // Si no hay cambio en isActive, actualización normal sin cascada
     const updated = await prisma.loteria.update({
       where: { id },
       data: {
