@@ -5,7 +5,7 @@ import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { Role } from "@prisma/client";
 import { resolveDateRange } from "../../../utils/dateRange";
-import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
+import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
@@ -185,29 +185,59 @@ export const TicketController = {
   },
 
   async numbersSummary(req: AuthenticatedRequest, res: Response) {
-    const { date, fromDate, toDate, scope, loteriaId, sorteoId } = req.query as any;
+    const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId } = req.query as any;
     
-    // Validar scope (solo 'mine' permitido)
-    if (scope && scope !== 'mine') {
-      return res.status(400).json({
-        success: false,
-        error: "scope debe ser 'mine'",
-      });
+    const me = req.user!;
+
+    // Build auth context
+    const context: AuthContext = {
+      userId: me.id,
+      role: me.role,
+      ventanaId: me.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null,
+    };
+
+    // Aplicar RBAC filters (similar a otros endpoints)
+    const requestFilters: RequestFilters = {
+      ...(ventanaId ? { ventanaId } : {}),
+      ...(vendedorId ? { vendedorId } : {}),
+      ...(loteriaId ? { loteriaId } : {}),
+      ...(sorteoId ? { sorteoId } : {}),
+    };
+
+    const effectiveFilters = await applyRbacFilters(context, requestFilters);
+
+    // Determinar el scope efectivo según el rol
+    let effectiveScope = scope || 'mine';
+    if (me.role === Role.VENDEDOR) {
+      // VENDEDOR siempre usa scope='mine' y filtra por su propio vendedorId
+      effectiveScope = 'mine';
+      effectiveFilters.vendedorId = me.id;
+    } else if (me.role === Role.VENTANA) {
+      // VENTANA siempre usa scope='mine' (su ventana)
+      effectiveScope = 'mine';
+    } else if (me.role === Role.ADMIN) {
+      // ADMIN puede usar scope='all' o 'mine'
+      effectiveScope = scope || 'all';
     }
 
-    // Obtener vendedorId del usuario autenticado
-    const vendedorId = req.user!.id;
+    // Resolver rango de fechas
+    const dateRange = resolveDateRange(date || "today", fromDate, toDate);
 
     const result = await TicketService.numbersSummary(
       {
-        date,
+        date: date || "today",
         fromDate,
         toDate,
-        scope: scope || 'mine',
-        loteriaId,
-        sorteoId,
+        scope: effectiveScope,
+        dimension,
+        ventanaId: effectiveFilters.ventanaId,
+        vendedorId: effectiveFilters.vendedorId,
+        loteriaId: effectiveFilters.loteriaId,
+        sorteoId: effectiveFilters.sorteoId,
       },
-      vendedorId
+      me.role,
+      me.id
     );
 
     return success(res, result.data, result.meta);

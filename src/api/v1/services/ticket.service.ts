@@ -841,10 +841,14 @@ export const TicketService = {
       fromDate?: string;
       toDate?: string;
       scope?: string;
+      dimension?: string;
+      ventanaId?: string | null;
+      vendedorId?: string | null;
       loteriaId?: string;
       sorteoId?: string;
     },
-    vendedorId: string
+    role: string,
+    userId: string
   ) {
     try {
       // Resolver rango de fechas
@@ -854,9 +858,8 @@ export const TicketService = {
         params.toDate
       );
 
-      // Construir filtro para tickets
+      // Construir filtro para tickets según dimension y scope
       const ticketWhere: any = {
-        vendedorId,
         deletedAt: null,
         createdAt: {
           gte: dateRange.fromAt,
@@ -865,6 +868,35 @@ export const TicketService = {
         ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
         ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
       };
+
+      // Aplicar filtros según dimension y scope
+      if (params.dimension === "listero" && params.ventanaId) {
+        ticketWhere.ventanaId = params.ventanaId;
+      } else if (params.dimension === "vendedor" && params.vendedorId) {
+        ticketWhere.vendedorId = params.vendedorId;
+      } else if (params.ventanaId) {
+        // ventanaId viene de RBAC o del request
+        ticketWhere.ventanaId = params.ventanaId;
+      } else if (params.vendedorId) {
+        // vendedorId viene de RBAC o del request
+        ticketWhere.vendedorId = params.vendedorId;
+      } else if (params.scope === "mine") {
+        // Si scope='mine' y no hay filtros específicos, usar userId según rol
+        if (role === "VENDEDOR") {
+          ticketWhere.vendedorId = userId;
+        } else if (role === "VENTANA") {
+          // Para VENTANA, el ventanaId debería venir en params.ventanaId desde RBAC
+          // Si no viene, es un error de configuración
+          if (!params.ventanaId) {
+            logger.warn({
+              layer: "service",
+              action: "TICKET_NUMBERS_SUMMARY_MISSING_VENTANA_ID",
+              payload: { role, userId, message: "VENTANA user should have ventanaId from RBAC" },
+            });
+          }
+        }
+      }
+      // Si scope='all' y no hay filtros específicos, no agregar filtros de ventanaId/vendedorId
 
       // Obtener todas las jugadas que cumplen los filtros
       const jugadas = await prisma.jugada.findMany({
@@ -988,6 +1020,26 @@ export const TicketService = {
       }
       const totalTickets = allUniqueTicketIds.size;
 
+      // Obtener información de ventana/vendedor si están presentes
+      let ventanaName: string | undefined;
+      let vendedorName: string | undefined;
+
+      if (params.ventanaId) {
+        const ventana = await prisma.ventana.findUnique({
+          where: { id: params.ventanaId },
+          select: { name: true },
+        });
+        ventanaName = ventana?.name;
+      }
+
+      if (params.vendedorId) {
+        const vendedor = await prisma.user.findUnique({
+          where: { id: params.vendedorId },
+          select: { name: true },
+        });
+        vendedorName = vendedor?.name || undefined;
+      }
+
       return {
         data,
         meta: {
@@ -999,6 +1051,11 @@ export const TicketService = {
           totalAmountByReventado,
           totalAmount,
           totalTickets,
+          ...(params.dimension ? { dimension: params.dimension } : {}),
+          ...(params.ventanaId ? { ventanaId: params.ventanaId } : {}),
+          ...(params.vendedorId ? { vendedorId: params.vendedorId } : {}),
+          ...(ventanaName ? { ventanaName } : {}),
+          ...(vendedorName ? { vendedorName } : {}),
         },
       };
     } catch (err: any) {
