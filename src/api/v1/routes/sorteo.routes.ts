@@ -12,11 +12,27 @@ import {
 } from "../validators/sorteo.validator";
 import { protect } from "../../../middlewares/auth.middleware";
 import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
+import { SorteosAutoController } from "../controllers/sorteosAuto.controller";
+import { validateBody } from "../../../middlewares/validate.middleware";
+import { UpdateSorteosAutoConfigSchema } from "../validators/sorteosAuto.validator";
 
 const router = Router();
 router.use(protect);
 
-// Admin
+// IMPORTANTE: Rutas literales específicas DEBEN ir ANTES de las rutas con parámetros :id
+// Rutas de automatización de sorteos (rutas literales primero)
+router.get('/auto-config', requireAdmin, SorteosAutoController.getConfig);
+router.patch(
+  '/auto-config',
+  requireAdmin,
+  validateBody(UpdateSorteosAutoConfigSchema),
+  SorteosAutoController.updateConfig
+);
+router.get('/auto-status', SorteosAutoController.getHealthStatus);
+router.post('/auto-open/execute', requireAdmin, SorteosAutoController.executeAutoOpen);
+router.post('/auto-create/execute', requireAdmin, SorteosAutoController.executeAutoCreate);
+
+// Admin - Rutas de sorteos
 router.post("/", requireAdmin, validateCreateSorteo, SorteoController.create);
 router.put(
   "/:id",

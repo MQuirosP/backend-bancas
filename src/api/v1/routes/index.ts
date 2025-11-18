@@ -21,6 +21,7 @@ import cierreRoutes from "./cierre.routes"
 import commissionsRoutes from "./commissions.routes"
 import accountsRoutes from "./accounts.routes"
 import salesRoutes from "./sales.routes"
+import sorteosAutoRoutes from "./sorteosAuto.routes"
 
 const router = Router();
 
@@ -47,6 +48,8 @@ router.use("/cierres", cierreRoutes);
 router.use("/commissions", commissionsRoutes);
 router.use("/accounts", accountsRoutes);
 router.use("/sales", salesRoutes);
+// Las rutas de automatización ahora están dentro de sorteo.routes.ts (antes de las rutas con :id)
+router.use("/sorteos", sorteoRoutes);
 router.use("/", commissionRoutes); // Commission routes include their own path prefixes (políticas de comisión)
 
 export const apiV1Router = router;

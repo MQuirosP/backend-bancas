@@ -105,6 +105,7 @@ model User {
   accountPaymentsPaid     AccountPayment[]     @relation("AccountPaymentPaidBy")
   accountPaymentsReversed AccountPayment[]     @relation("AccountPaymentReversedBy")
   bancas                  UserBanca[]
+  sorteosAutoConfigUpdated SorteosAutoConfig[] @relation("SorteosAutoConfigUpdatedBy")
 
   @@index([code])
   @@index([email])
@@ -757,4 +758,23 @@ enum JobStatus {
   COMPLETED
   FAILED
   CANCELLED
+}
+
+model SorteosAutoConfig {
+  id                  String    @id @default(uuid()) @db.Uuid
+  autoOpenEnabled     Boolean   @default(false)
+  autoCreateEnabled   Boolean   @default(false)
+  openCronSchedule    String?   // Ej: "0 7 * * *" (1 AM CR = 7 AM UTC)
+  createCronSchedule  String?   // Ej: "30 7 * * *" (1:30 AM CR = 7:30 AM UTC)
+  lastOpenExecution   DateTime?
+  lastCreateExecution DateTime?
+  lastOpenCount       Int?
+  lastCreateCount     Int?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  updatedBy            String?   @db.Uuid
+
+  updatedByUser User? @relation("SorteosAutoConfigUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@unique([id]) // Solo una configuración global
 }
