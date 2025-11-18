@@ -400,11 +400,14 @@ export const SorteosAutoService = {
         }
 
         // Crear sorteos usando el servicio existente
+        // forceCreate = false para respetar la bandera autoCreateSorteos en autogeneración automática
         const result = await LoteriaService.seedSorteosFromRules(
           loteria.id,
           startDate,
           actualDaysAhead,
-          false // dryRun = false
+          false, // dryRun = false
+          undefined, // scheduledDates = undefined (generar todos)
+          false // forceCreate = false (respetar autoCreateSorteos)
         );
 
         // Manejar diferentes tipos de retorno (puede ser number o string[])
