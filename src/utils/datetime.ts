@@ -59,6 +59,14 @@ export function addLocalDays(d: Date | string, days: number): Date {
   return shiftFromCostaRica(local);
 }
 
+// Fin de día en hora local (23:59:59.999)
+export function endOfLocalDay(d: Date | string): Date {
+  const start = startOfLocalDay(d);
+  const nextDay = addLocalDays(start, 1);
+  // El fin del día es el inicio del día siguiente menos 1ms
+  return new Date(nextDay.getTime() - 1);
+}
+
 /**
  * Construye un Date interpretando HH:mm como hora LOCAL de Costa Rica.
  * 
