@@ -5,7 +5,7 @@ export interface CreateUserDTO {
   email?: string | null;     // opcional
   phone?: string | null;     // opcional
   username: string;
-  password: string;          // >= 8 (valida el validator)
+  password: string;          // >= 6 (valida el validator)
   role?: Role;
   ventanaId?: string | null; // requerido si role != ADMIN (lo aplica el service)
   code?: string | null;

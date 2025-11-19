@@ -73,7 +73,8 @@ export const CommissionController = {
 
   /**
    * PUT /ventanas/:id/commission-policy
-   * Actualizar política de comisiones de una ventana (ADMIN only)
+   * Actualizar política de comisiones de una ventana
+   * ADMIN puede gestionar cualquier ventana, VENTANA solo su propia ventana
    */
   async updateVentanaCommissionPolicy(req: AuthenticatedRequest, res: Response) {
     const { id } = req.params;
@@ -108,7 +109,8 @@ export const CommissionController = {
 
   /**
    * GET /ventanas/:id/commission-policy
-   * Obtener política de comisiones de una ventana (ADMIN only)
+   * Obtener política de comisiones de una ventana
+   * ADMIN puede ver cualquier ventana, VENTANA solo su propia ventana
    */
   async getVentanaCommissionPolicy(req: AuthenticatedRequest, res: Response) {
     const { id } = req.params;
