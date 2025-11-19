@@ -26,7 +26,7 @@ export const listLoteriaQuerySchema = z.object({
 
 export const previewScheduleQuerySchema = z.object({
   start: z.coerce.date().optional(),             // ISO opcional; default = ahora
-  days: z.coerce.number().int().min(1).max(31).optional(),   // default 7
+  days: z.coerce.number().int().min(1).max(31).optional(),   // default 1
   limit: z.coerce.number().int().min(1).max(1000).optional(), // top 200 por default
   _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
