@@ -11,7 +11,7 @@ export const CreateVendedorSchema = z.object({
   name: z.string().min(2, "El nombre es obligatorio"),
   username: z.string().min(3).max(12),
   email: z.email("Formato de correo inválido").trim().toLowerCase().optional(),
-  password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres"),
+  password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres"),
 }).strict();
 
 export const UpdateVendedorSchema = z.object({
@@ -22,7 +22,7 @@ export const UpdateVendedorSchema = z.object({
   // role tampoco se toca desde aquí
   name: z.string().min(2, "El nombre es obligatorio").optional(),
   email: z.email("Formato de correo inválido").trim().toLowerCase().optional(),
-  password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").optional(),
+  password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres").optional(),
   isActive: z.boolean().optional(),
 }).strict();
 

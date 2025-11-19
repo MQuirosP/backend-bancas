@@ -70,7 +70,7 @@ export const createUserSchema = z
     email: emailOptional,
     phone: phoneOptional,
     username: z.string().trim().min(3).max(32),
-    password: z.string().min(8),
+    password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
     role: z.enum(['ADMIN', 'VENTANA', 'VENDEDOR']).optional(),
     ventanaId: z.uuid('ventanaId inválido').nullable().optional(),
     isActive: z.boolean().optional(),
@@ -83,7 +83,7 @@ export const updateUserSchema = z
     email: emailOptional,
     phone: phoneOptional,
     username: z.string().trim().min(3).max(32).optional(),
-    password: z.string().min(8).optional(),
+    password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').optional(),
     role: z.enum(['ADMIN', 'VENTANA', 'VENDEDOR']).optional(),
     ventanaId: z
       .uuid('ventanaId inválido')
@@ -155,7 +155,7 @@ export const UpdateUserSettingsSchema = z
 export const ChangePasswordSchema = z
   .object({
     currentPassword: z.string().min(1, 'Contraseña actual requerida'),
-    newPassword: z.string().min(8, 'Nueva contraseña debe tener al menos 8 caracteres'),
+    newPassword: z.string().min(6, 'Nueva contraseña debe tener al menos 6 caracteres'),
   })
   .strict()
   .refine(

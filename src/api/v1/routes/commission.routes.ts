@@ -10,6 +10,7 @@ import {
   protect,
   restrictTo,
   restrictToCommissionAdminSelfOrVentanaVendor,
+  restrictToAdminOrVentanaSelf,
 } from "../../../middlewares/auth.middleware";
 import { Role } from "@prisma/client";
 
@@ -37,17 +38,19 @@ router.get(
 // ==================== VENTANA COMMISSION POLICIES ====================
 
 // PUT /api/v1/ventanas/:id/commission-policy
+// ADMIN puede gestionar cualquier ventana, VENTANA solo su propia ventana
 router.put(
   "/ventanas/:id/commission-policy",
-  restrictTo(Role.ADMIN),
+  restrictToAdminOrVentanaSelf,
   validateUpdateVentanaCommissionPolicyBody,
   CommissionController.updateVentanaCommissionPolicy
 );
 
 // GET /api/v1/ventanas/:id/commission-policy
+// ADMIN puede ver cualquier ventana, VENTANA solo su propia ventana
 router.get(
   "/ventanas/:id/commission-policy",
-  restrictTo(Role.ADMIN),
+  restrictToAdminOrVentanaSelf,
   CommissionController.getVentanaCommissionPolicy
 );
 

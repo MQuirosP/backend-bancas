@@ -171,3 +171,55 @@ export const restrictToCommissionAdminSelfOrVentanaVendor = async (
 
   next();
 };
+
+/**
+ * Middleware para políticas de comisiones de ventanas
+ * Permite ADMIN gestionar cualquier ventana, o VENTANA gestionar su propia ventana
+ */
+export const restrictToAdminOrVentanaSelf = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+) => {
+  const authUser = (req as any)?.user;
+  const ventanaId = req.params.id;
+
+  if (!authUser) {
+    throw new AppError("Unauthorized", 401);
+  }
+
+  if (!ventanaId) {
+    throw new AppError("Ventana id is required", 400);
+  }
+
+  // ADMIN puede gestionar cualquier ventana
+  if (authUser.role === Role.ADMIN) {
+    return next();
+  }
+
+  // VENTANA solo puede gestionar su propia ventana
+  if (authUser.role !== Role.VENTANA) {
+    throw new AppError("Forbidden", 403);
+  }
+
+  // Obtener la ventana del usuario autenticado
+  const actor = await prisma.user.findUnique({
+    where: { id: authUser.id },
+    select: { ventanaId: true },
+  });
+
+  if (!actor?.ventanaId) {
+    throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
+  }
+
+  // Verificar que el ventanaId del endpoint coincide con la ventana del usuario
+  if (actor.ventanaId !== ventanaId) {
+    throw new AppError(
+      "Solo puedes gestionar la política de comisiones de tu propia ventana",
+      403,
+      "FORBIDDEN"
+    );
+  }
+
+  next();
+};
