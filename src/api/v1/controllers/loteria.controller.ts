@@ -5,7 +5,8 @@ import LoteriaService from "../services/loteria.service";
 import ActivityService from "../../../core/activity.service";
 import { success, created } from "../../../utils/responses";
 import { computeOccurrences } from "../../../utils/schedule";
-import { formatIsoLocal, parseCostaRicaDateTime } from "../../../utils/datetime";
+import { formatIsoLocal, parseCostaRicaDateTime, startOfLocalDay, endOfLocalDay, addLocalDays } from "../../../utils/datetime";
+import prisma from "../../../core/prismaClient";
 
 export const LoteriaController = {
   async create(req: Request, res: Response) {
@@ -182,8 +183,9 @@ export const LoteriaController = {
 
     async previewSchedule(req: Request, res: Response) {
     const loteriaId = req.params.id;
-    const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : new Date();
-    const days = req.query.days ? Number(req.query.days) : 7;
+    const now = new Date(); // Hora actual del servidor
+    const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : now;
+    const days = req.query.days ? Number(req.query.days) : 1; // Cambiado de 7 a 1
     const limit = req.query.limit ? Number(req.query.limit) : 200;
 
     if (isNaN(start.getTime())) {
@@ -193,6 +195,24 @@ export const LoteriaController = {
     const loteria = await LoteriaService.getById(loteriaId);
     const rules = (loteria.rulesJson ?? {}) as any;
 
+    // Calcular rango de fechas según days
+    const todayStart = startOfLocalDay(now);
+    const todayEnd = endOfLocalDay(now);
+    
+    let fromDate: Date;
+    let toDate: Date;
+    
+    if (days === 1) {
+      // Solo día actual
+      fromDate = todayStart;
+      toDate = todayEnd;
+    } else {
+      // Desde hoy hasta days días en el futuro
+      fromDate = todayStart;
+      const futureDate = addLocalDays(todayStart, days - 1);
+      toDate = endOfLocalDay(futureDate);
+    }
+
     const occurrences = computeOccurrences({
       loteriaName: loteria.name,
       schedule: {
@@ -200,23 +220,55 @@ export const LoteriaController = {
         times: rules?.drawSchedule?.times,
         daysOfWeek: rules?.drawSchedule?.daysOfWeek,
       },
-      start,
+      start: fromDate,
       days,
       limit,
     });
 
-    const data = occurrences.map((o: any) => ({
-      scheduledAt: formatIsoLocal(o.scheduledAt),
-      name: o.name,
-    }));
+    // Filtrar sorteos cuya hora ya pasó (scheduledAt >= now)
+    const futureOccurrences = occurrences.filter((o: any) => o.scheduledAt >= now);
 
-    return success(res, data, { count: data.length });
+    // Verificar duplicados en la base de datos
+    const scheduledDates = futureOccurrences.map((o: any) => o.scheduledAt);
+    
+    let existingDatesSet = new Set<number>();
+    
+    if (scheduledDates.length > 0) {
+      const existingSorteos = await prisma.sorteo.findMany({
+        where: {
+          loteriaId,
+          scheduledAt: { in: scheduledDates },
+        },
+        select: { scheduledAt: true },
+      });
+
+      existingDatesSet = new Set(
+        existingSorteos.map((s) => s.scheduledAt.getTime())
+      );
+    }
+
+    // Mapear con campo alreadyExists
+    const data = futureOccurrences.map((o: any) => {
+      const scheduledAtTime = o.scheduledAt.getTime();
+      return {
+        scheduledAt: formatIsoLocal(o.scheduledAt),
+        name: o.name,
+        loteriaId,
+        alreadyExists: existingDatesSet.has(scheduledAtTime),
+      };
+    });
+
+    return success(res, data.slice(0, limit), {
+      count: data.length,
+      from: formatIsoLocal(fromDate),
+      to: formatIsoLocal(toDate),
+    });
   },
 
   async seedSorteos(req: Request, res: Response) {
     const loteriaId = req.params.id
     const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : new Date()
-    const days = req.query.days ? Number(req.query.days) : 7
+    const days = req.query.days ? Number(req.query.days) : 1 // Cambiado de 7 a 1
     const dryRun = req.query.dryRun === "true"
 
     if (isNaN(start.getTime())) {

@@ -38,6 +38,55 @@ const CommissionRuleSchema = z
   .strict();
 
 /**
+ * Valida que no existan reglas duplicadas con la misma combinación de:
+ * - loteriaId (mismo o ambas null)
+ * - betType (mismo o una null y otra específica - solapamiento)
+ * - multiplierRange donde min === max (mismo multiplicador específico)
+ */
+function validateNoDuplicateRules(rules: Array<{
+  id?: string;
+  loteriaId: string | null;
+  betType: BetType | null;
+  multiplierRange: { min: number; max: number };
+}>) {
+  // Solo considerar reglas con multiplicador específico (min === max)
+  const specificMultiplierRules = rules.filter(
+    (rule) => rule.multiplierRange.min === rule.multiplierRange.max
+  );
+
+  for (let i = 0; i < specificMultiplierRules.length; i++) {
+    const rule1 = specificMultiplierRules[i];
+    
+    for (let j = i + 1; j < specificMultiplierRules.length; j++) {
+      const rule2 = specificMultiplierRules[j];
+      
+      // Mismo loteriaId (ambas null o mismo valor)
+      const sameLoteriaId = 
+        (rule1.loteriaId === null && rule2.loteriaId === null) ||
+        (rule1.loteriaId !== null && rule2.loteriaId !== null && rule1.loteriaId === rule2.loteriaId);
+      
+      // Mismo betType o solapamiento (una null y otra específica, o ambas iguales)
+      const sameBetType =
+        (rule1.betType === null && rule2.betType === null) ||
+        (rule1.betType !== null && rule2.betType !== null && rule1.betType === rule2.betType) ||
+        (rule1.betType === null && rule2.betType !== null) ||
+        (rule1.betType !== null && rule2.betType === null);
+      
+      // Mismo multiplicador específico
+      const sameMultiplier = 
+        rule1.multiplierRange.min === rule2.multiplierRange.min &&
+        rule1.multiplierRange.max === rule2.multiplierRange.max;
+      
+      if (sameLoteriaId && sameBetType && sameMultiplier) {
+        return false; // Duplicado encontrado
+      }
+    }
+  }
+  
+  return true; // No hay duplicados
+}
+
+/**
  * Schema principal para CommissionPolicy (version 1)
  * - version: literal 1
  * - effectiveFrom/To: ISO 8601 | null
@@ -63,6 +112,13 @@ export const CommissionPolicySchema = z
     {
       message: "effectiveFrom must be before or equal to effectiveTo",
       path: ["effectiveFrom"],
+    }
+  )
+  .refine(
+    (data) => validateNoDuplicateRules(data.rules),
+    {
+      message: "Ya existe una regla para este multiplicador en esta lotería y tipo",
+      path: ["rules"],
     }
   )
   .transform((data) => {
