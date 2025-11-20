@@ -657,7 +657,9 @@ const SorteoRepository = {
 
     const skip = Math.max(0, (page - 1) * pageSize);
 
-    const [data, total] = await prisma.$transaction([
+    // Optimización: Usar Promise.all en lugar de $transaction para mejor performance
+    // (no necesitamos transacción para queries de solo lectura)
+    const [data, total] = await Promise.all([
       prisma.sorteo.findMany({
         where,
         skip,
@@ -667,7 +669,26 @@ const SorteoRepository = {
           { scheduledAt: 'desc' },
           { createdAt: 'desc' }, // desempate estable
         ],
-        include: {
+        select: {
+          id: true,
+          loteriaId: true,
+          scheduledAt: true,
+          status: true,
+          winningNumber: true,
+          hasWinner: true,
+          isActive: true,
+          deletedAt: true,
+          deletedBy: true,
+          deletedReason: true,
+          createdAt: true,
+          updatedAt: true,
+          name: true,
+          extraMultiplierId: true,
+          extraMultiplierX: true,
+          extraOutcomeCode: true,
+          deletedByCascade: true,
+          deletedByCascadeFrom: true,
+          deletedByCascadeId: true,
           loteria: { select: { id: true, name: true, rulesJson: true } },
           extraMultiplier: { select: { id: true, name: true, valueX: true } },
         },

@@ -423,12 +423,19 @@ export const LoteriaService = {
 
     const result = await SorteoRepository.bulkCreateIfMissing(loteriaId, subset)
     
+    // Invalidar cache de sorteos si se crearon nuevos
+    const createdCount = Array.isArray(result.created) ? result.created.length : (typeof result.created === 'number' ? result.created : 0);
+    if (createdCount > 0) {
+      const { clearSorteoCache } = require('../../../utils/sorteoCache');
+      clearSorteoCache();
+    }
+    
     logger.info({
       layer: "service",
       action: "LOTERIA_SEED_SORTEOS_RESULT",
       payload: {
         loteriaId,
-        created: Array.isArray(result.created) ? result.created.length : (typeof result.created === 'number' ? result.created : 0),
+        created: createdCount,
         skipped: Array.isArray(result.skipped) ? result.skipped.length : (typeof result.skipped === 'number' ? result.skipped : 0),
         alreadyExists: Array.isArray(result.alreadyExists) ? result.alreadyExists.length : 0,
         processed: Array.isArray(result.processed) ? result.processed.length : 0,

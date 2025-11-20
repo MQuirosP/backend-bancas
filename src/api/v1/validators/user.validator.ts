@@ -165,3 +165,19 @@ export const ChangePasswordSchema = z
       path: ['newPassword'],
     }
   )
+
+/**
+ * Esquema para obtener multiplicadores permitidos de un vendedor
+ */
+export const getAllowedMultipliersQuerySchema = z
+  .object({
+    loteriaId: z.string().uuid('loteriaId debe ser un UUID válido'),
+    betType: z.enum(['NUMERO', 'REVENTADO']).optional().default('NUMERO'),
+  })
+  .strict()
+
+export const getAllowedMultipliersParamsSchema = z
+  .object({
+    userId: z.string().uuid('userId debe ser un UUID válido'),
+  })
+  .strict()

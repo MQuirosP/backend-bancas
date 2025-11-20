@@ -226,6 +226,26 @@ export const UserController = {
 
     return success(res, result);
   },
+
+  async getAllowedMultipliers(req: Request, res: Response) {
+    const { userId } = req.params;
+    const { loteriaId, betType } = req.query;
+
+    const result = await UserService.getAllowedMultipliers(
+      userId,
+      loteriaId as string,
+      (betType as 'NUMERO' | 'REVENTADO') || 'NUMERO'
+    );
+
+    (req as any)?.logger?.info({
+      layer: "controller",
+      action: "GET_ALLOWED_MULTIPLIERS",
+      userId: (req as any)?.user?.id,
+      payload: { userId, loteriaId, betType, multipliersCount: result.data.length },
+    });
+
+    return success(res, result.data, result.meta);
+  },
 };
 
 export default UserController;

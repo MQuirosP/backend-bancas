@@ -2011,12 +2011,35 @@ export const TicketRepository = {
       ];
     }
 
-    const [data, total] = await prisma.$transaction([
+    // Optimización: Usar select en lugar de include para mejor performance
+    const [data, total] = await Promise.all([
       prisma.ticket.findMany({
         where,
         skip,
         take: pageSize,
-        include: {
+        select: {
+          id: true,
+          ticketNumber: true,
+          businessDate: true,
+          loteriaId: true,
+          ventanaId: true,
+          vendedorId: true,
+          totalAmount: true,
+          status: true,
+          isActive: true,
+          isWinner: true,
+          sorteoId: true,
+          clienteNombre: true,
+          totalPayout: true,
+          totalPaid: true,
+          remainingAmount: true,
+          totalCommission: true,
+          lastPaymentAt: true,
+          paidById: true,
+          paymentMethod: true,
+          paymentNotes: true,
+          createdAt: true,
+          updatedAt: true,
           loteria: { select: { id: true, name: true } },
           sorteo: {
             select: { id: true, name: true, status: true, scheduledAt: true },
@@ -2024,7 +2047,20 @@ export const TicketRepository = {
           ventana: { select: { id: true, name: true } },
           vendedor: { select: { id: true, name: true, role: true } },
           jugadas: {
-            include: {
+            select: {
+              id: true,
+              number: true,
+              amount: true,
+              finalMultiplierX: true,
+              payout: true,
+              isActive: true,
+              isWinner: true,
+              multiplierId: true,
+              reventadoNumber: true,
+              type: true,
+              commissionPercent: true,
+              commissionAmount: true,
+              commissionOrigin: true,
               multiplier: {
                 select: {
                   id: true,

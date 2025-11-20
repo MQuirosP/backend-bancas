@@ -1630,6 +1630,339 @@ return process.env.MULTIPLIER_BASE_DEFAULT_X || 95;
 
 ---
 
+---
+
+## 📂 Índice Detallado de Archivos por Módulo
+
+### Controllers (`src/api/v1/controllers/`)
+
+| Archivo | Responsabilidad | Endpoints Principales |
+|---------|----------------|----------------------|
+| `ticket.controller.ts` | Gestión de tickets | POST/GET/PATCH/DELETE `/tickets` |
+| `sorteo.controller.ts` | Gestión de sorteos | POST/GET/PATCH `/sorteos`, `/sorteos/:id/evaluate` |
+| `loteria.controller.ts` | Gestión de loterías | POST/GET/PATCH `/loterias`, `/loterias/:id/preview_schedule` |
+| `venta.controller.ts` | Resúmenes de ventas | GET `/ventas/summary`, `/ventas/breakdown`, `/ventas/timeseries` |
+| `dashboard.controller.ts` | Dashboard y métricas | GET `/admin/dashboard/*` |
+| `accounts.controller.ts` | Estados de cuenta | GET/POST `/accounts/statement`, `/accounts/payment` |
+| `auth.controller.ts` | Autenticación | POST `/auth/login`, `/auth/refresh`, `/auth/logout` |
+| `user.controller.ts` | CRUD de usuarios | POST/GET/PATCH/DELETE `/users` |
+| `ventana.controller.ts` | CRUD de ventanas | POST/GET/PATCH/DELETE `/ventanas` |
+| `banca.controller.ts` | CRUD de bancas | POST/GET/PATCH/DELETE `/bancas` |
+| `restrictionRule.controller.ts` | Restricciones | POST/GET/PATCH/DELETE `/restrictions` |
+| `commissions.controller.ts` | Políticas de comisión | PUT/GET `/bancas/:id/commission-policy` |
+| `ticketPayment.controller.ts` | Pagos de tickets | POST `/tickets/:id/pay`, `/tickets/:id/reverse-payment` |
+| `multiplier.controller.ts` | Multiplicadores | CRUD `/multipliers` |
+| `multiplierOverride.controller.ts` | Overrides de multiplicadores | CRUD `/multiplier-overrides` |
+| `vendedor.controller.ts` | Gestión de vendedores | GET `/vendedores` |
+| `cierre.controller.ts` | Cierres operativos | POST/GET `/cierres` |
+| `reports.controller.ts` | Reportes | GET `/reports/*` |
+| `sorteosAuto.controller.ts` | Automatización de sorteos | GET/PATCH `/sorteos-auto` |
+| `activityLog.controller.ts` | Logs de actividad | GET `/activity-logs` |
+| `sales.controller.ts` | Ventas y analytics | GET `/sales/*` |
+| `diagnostics.controller.ts` | Diagnósticos | GET `/diagnostics/*` |
+
+### Services (`src/api/v1/services/`)
+
+| Archivo | Responsabilidad | Lógica Clave |
+|---------|----------------|--------------|
+| `ticket.service.ts` | Creación y gestión de tickets | Validaciones, resolución de comisiones, restricciones |
+| `sorteo.service.ts` | Ciclo de vida de sorteos | Evaluación, apertura, cierre, reversión |
+| `loteria.service.ts` | Gestión de loterías | Preview de horarios, seed de sorteos |
+| `venta.service.ts` | Agregaciones de ventas | Resúmenes, breakdowns, timeseries |
+| `dashboard.service.ts` | Cálculo de métricas | KPIs, alertas, comparaciones |
+| `accounts.service.ts` | Estados de cuenta | Cálculo de balances, pagos, cobros |
+| `auth.service.ts` | Autenticación JWT | Login, refresh tokens, validación |
+| `user.service.ts` | Lógica de usuarios | CRUD, validaciones de rol |
+| `ventana.service.ts` | Lógica de ventanas | CRUD, validaciones |
+| `banca.service.ts` | Lógica de bancas | CRUD, validaciones |
+| `restrictionRule.service.ts` | Resolución de restricciones | Jerarquía, validaciones temporales |
+| `commissions.service.ts` | Políticas de comisión | CRUD de políticas JSON |
+| `ticketPayment.service.ts` | Pagos de tickets | Registro, reversión, finalización |
+| `multiplier.service.ts` | Multiplicadores | CRUD, validaciones |
+| `multiplierOverride.service.ts` | Overrides | Resolución jerárquica |
+| `vendedor.service.ts` | Lógica de vendedores | Queries, validaciones |
+| `cierre.service.ts` | Cierres | Cálculo de balances, exportación |
+| `cierre-export.service.ts` | Exportación de cierres | Excel, PDF |
+| `dashboard-export.service.ts` | Exportación de dashboard | Excel, PDF |
+| `sorteosAuto.service.ts` | Automatización | Cron jobs, creación automática |
+| `activityLog.service.ts` | Logs | Queries, filtros |
+| `sales.service.ts` | Analytics de ventas | Agregaciones avanzadas |
+
+#### Services de Reportes (`src/api/v1/services/reports/`)
+
+| Archivo | Responsabilidad |
+|---------|----------------|
+| `ticketsReport.service.ts` | Reportes de tickets |
+| `ventanasReport.service.ts` | Reportes de ventanas |
+| `vendedoresReport.service.ts` | Reportes de vendedores |
+| `loteriasReport.service.ts` | Reportes de loterías |
+
+### Repositories (`src/repositories/`)
+
+| Archivo | Responsabilidad | Queries Principales |
+|---------|----------------|-------------------|
+| `ticket.repository.ts` | Acceso a tickets | `create`, `findById`, `list`, `resolveBaseMultiplierX` |
+| `sorteo.repository.ts` | Acceso a sorteos | `create`, `findById`, `open`, `close`, `evaluate` |
+| `user.repository.ts` | Acceso a usuarios | `findById`, `findByEmail`, `list` |
+| `ventana.repository.ts` | Acceso a ventanas | `findById`, `list` |
+| `banca.repository.ts` | Acceso a bancas | `findById`, `list` |
+| `restrictionRule.repository.ts` | Restricciones | `getEffectiveLimits`, `resolveSalesCutoff` |
+| `accountStatement.repository.ts` | Estados de cuenta | `findByDate`, `calculateBalance` |
+| `accountPayment.repository.ts` | Pagos de cuentas | `create`, `reverse` |
+| `activityLog.repository.ts` | Logs | `create`, `list` |
+| `multiplierOverride.repository.ts` | Overrides | `findByScope` |
+| `vendedor.repository.ts` | Vendedores | `findByVentana` |
+
+### Middlewares (`src/middlewares/`)
+
+| Archivo | Responsabilidad | Funciones Principales |
+|---------|----------------|---------------------|
+| `auth.middleware.ts` | Autenticación JWT | `protect`, `restrictTo`, `restrictToAdminOrSelf` |
+| `validate.middleware.ts` | Validación Zod | `validateBody`, `validateQuery`, `validateParams` |
+| `error.middleware.ts` | Manejo de errores | `errorHandler` (global) |
+| `rbac.middleware.ts` | RBAC filters | `applyRbacFilters` (deprecated, usar utils/rbac.ts) |
+| `roleGuards.middleware.ts` | Guards de roles | Guards personalizados |
+| `rateLimit.middleware.ts` | Rate limiting | `rateLimitMiddleware` |
+| `cors.middleware.ts` | CORS | `corsMiddleware` |
+| `attachLogger.middleware.ts` | Logger por request | `attachRequestLogger` |
+| `requestId.middleware.ts` | Request ID | `requestIdMiddleware` |
+| `bancaContext.middleware.ts` | Contexto de banca | `bancaContextMiddleware` |
+| `contentTypeJson.middleware.ts` | Content-Type | `requireJson` |
+
+### Core (`src/core/`)
+
+| Archivo | Responsabilidad | Funciones Principales |
+|---------|----------------|---------------------|
+| `logger.ts` | Logging estructurado | `logger.info/warn/error/debug` |
+| `errors.ts` | Clases de error | `AppError` |
+| `prismaClient.ts` | Cliente Prisma | Singleton `prisma` |
+| `withTransactionRetry.ts` | Transacciones con reintentos | `withTransactionRetry` |
+| `activity.service.ts` | Servicio de auditoría | `ActivityService.log` |
+| `types.ts` | Tipos Express extendidos | `AuthenticatedRequest` |
+| `express.d.ts` | Declaraciones Express | Tipos globales |
+
+### Utils (`src/utils/`)
+
+| Archivo | Responsabilidad | Funciones Principales |
+|---------|----------------|---------------------|
+| `rbac.ts` | RBAC helpers | `applyRbacFilters`, `validateVentanaUser` |
+| `businessDate.ts` | Fechas comerciales | `getBusinessDate`, `getBusinessDateRange` |
+| `loteriaRules.ts` | Parser de rulesJson | `parseRulesJson`, `validateBetType` |
+| `commissionCache.ts` | Cache de comisiones | Cache en memoria |
+| `commissionPrecalc.ts` | Pre-cálculo | Optimización de queries |
+| `schedule.ts` | Generación de horarios | `computeOccurrences` |
+| `datetime.ts` | Helpers de fecha/hora | Conversiones de timezone |
+| `pagination.ts` | Paginación | `calculateSkipLimit` |
+| `responses.ts` | Respuestas estandarizadas | `success`, `error` |
+| `decimal.ts` | Precisión decimal | Helpers para cálculos financieros |
+| `cors.ts` | CORS parsing | `parseCorsOrigins` |
+| `crypto.ts` | Utilidades criptográficas | Helpers de seguridad |
+| `dateRange.ts` | Rangos de fechas | Validación y normalización |
+| `phoneNormalizer.ts` | Normalización de teléfonos | Formato estándar |
+
+### Routes (`src/api/v1/routes/`)
+
+Todas las rutas están organizadas por módulo y siguen el patrón:
+- `*.routes.ts` - Definición de rutas con middlewares
+- Integración en `index.ts` con prefijo `/api/v1`
+
+**Rutas principales**:
+- `/auth` - Autenticación
+- `/users` - Usuarios
+- `/tickets` - Tickets
+- `/sorteos` - Sorteos
+- `/loterias` - Loterías
+- `/ventanas` - Ventanas
+- `/bancas` - Bancas
+- `/vendedores` - Vendedores
+- `/restrictions` - Restricciones
+- `/multipliers` - Multiplicadores
+- `/multiplier-overrides` - Overrides
+- `/ticket-payments` - Pagos de tickets
+- `/ventas` - Ventas y analytics
+- `/admin/dashboard` - Dashboard
+- `/accounts` - Estados de cuenta
+- `/commissions` - Políticas de comisión
+- `/activity-logs` - Logs de actividad
+- `/cierres` - Cierres operativos
+- `/reports` - Reportes
+- `/diagnostics` - Diagnósticos
+- `/sales` - Analytics de ventas
+
+### Validators (`src/api/v1/validators/`)
+
+Cada módulo tiene su validador Zod correspondiente:
+- `*.validator.ts` - Schemas de validación con `.strict()`
+- Validación automática vía middleware `validateBody/Query/Params`
+
+### DTOs (`src/api/v1/dto/`)
+
+Data Transfer Objects para tipado fuerte:
+- `*.dto.ts` - Interfaces TypeScript para request/response
+
+---
+
+## 🔍 Flujos Detallados de Código
+
+### Flujo de Creación de Ticket (Detallado)
+
+```typescript
+// 1. Request HTTP
+POST /api/v1/tickets
+Body: { loteriaId, sorteoId, jugadas[], vendedorId? }
+
+// 2. Middleware Chain
+requestIdMiddleware → attachLogger → cors → validateBody → protect → bancaContext
+
+// 3. Controller (ticket.controller.ts)
+ticketController.create(req, res)
+  → TicketService.create(data, userId, requestId, actorRole)
+
+// 4. Service (ticket.service.ts)
+TicketService.create():
+  a. Validar vendedorId según rol (impersonación)
+  b. Validar ventana, sorteo, lotería
+  c. Resolver sales cutoff (RestrictionRuleRepository.resolveSalesCutoff)
+  d. Validar sorteo está OPEN
+  e. Validar tiempo (sales cutoff)
+  f. Llamar TicketRepository.create() dentro de withTransactionRetry
+
+// 5. Repository (ticket.repository.ts)
+TicketRepository.create():
+  a. Obtener número de ticket (secuencial atómico)
+  b. Resolver base multiplier X (jerarquía completa)
+  c. Validar jugadas contra rulesJson
+  d. Resolver restricciones jerárquicas (User > Ventana > Banca)
+  e. Resolver comisiones (CommissionResolver.resolveCommission)
+  f. Crear ticket y jugadas (con snapshots)
+  g. Actualizar contadores
+
+// 6. Activity Log (async)
+ActivityService.log({ action: 'TICKET_CREATE', ... })
+
+// 7. Response
+{ success: true, data: ticket }
+```
+
+### Flujo de Evaluación de Sorteo (Detallado)
+
+```typescript
+// 1. Request HTTP
+PATCH /api/v1/sorteos/:id/evaluate
+Body: { winningNumber, extraMultiplierId?, extraOutcomeCode? }
+
+// 2. Middleware Chain
+requestIdMiddleware → attachLogger → cors → validateBody → protect → restrictTo(ADMIN)
+
+// 3. Controller (sorteo.controller.ts)
+sorteoController.evaluate(req, res)
+  → SorteoService.evaluate(id, data, userId)
+
+// 4. Service (sorteo.service.ts)
+SorteoService.evaluate():
+  a. Validar sorteo existe y está CLOSED o EVALUATED
+  b. Validar winningNumber (2 dígitos)
+  c. Si hay REVENTADO ganador:
+     - Validar extraMultiplierId (tipo REVENTADO, activo)
+     - Snapshot extraMultiplierX
+  d. Llamar SorteoRepository.evaluate()
+
+// 5. Repository (sorteo.repository.ts)
+SorteoRepository.evaluate():
+  a. Actualizar sorteo (status=EVALUATED, winningNumber, extraMultiplierId/X)
+  b. Buscar todas las jugadas del sorteo
+  c. Evaluar cada jugada:
+     - NUMERO: isWinner = (number === winningNumber)
+     - REVENTADO: isWinner = (number === winningNumber && extraMultiplierId existe)
+  d. Calcular payout:
+     - NUMERO: amount × finalMultiplierX
+     - REVENTADO: amount × extraMultiplierX (snapshot)
+  e. Actualizar jugadas (isWinner, payout)
+  f. Actualizar tickets (isWinner, status=EVALUATED, totalPayout)
+
+// 6. Activity Log (async)
+ActivityService.log({ action: 'SORTEO_EVALUATE', ... })
+
+// 7. Response
+{ success: true, data: sorteo }
+```
+
+---
+
+## 🗂️ Estructura de Base de Datos (Resumen)
+
+### Modelos Principales (20 modelos)
+
+1. **Banca** - Entidad raíz
+2. **Ventana** - Pertenece a Banca
+3. **User** - Usuarios (ADMIN/VENTANA/VENDEDOR)
+4. **Loteria** - Configuración de loterías
+5. **Sorteo** - Sorteos programados
+6. **Ticket** - Tickets de venta
+7. **Jugada** - Jugadas dentro de tickets
+8. **RestrictionRule** - Reglas de restricción
+9. **LoteriaMultiplier** - Multiplicadores por lotería
+10. **MultiplierOverride** - Overrides jerárquicos
+11. **TicketPayment** - Pagos de tickets
+12. **AccountStatement** - Estados de cuenta diarios
+13. **AccountPayment** - Pagos/cobros de cuentas
+14. **ActivityLog** - Auditoría
+15. **RefreshToken** - Tokens de refresh
+16. **UserBanca** - Relación usuario-banca
+17. **BancaLoteriaSetting** - Configuración banca-lotería
+18. **TicketCounter** - Contador diario de tickets
+19. **SorteosAutoConfig** - Configuración de automatización
+20. **SavedReport, ExportJob, Alert, ApiKey, Webhook, etc.** - Módulos avanzados
+
+### Enums Principales (6 enums)
+
+- `Role`: ADMIN, VENTANA, VENDEDOR
+- `TicketStatus`: ACTIVE, EVALUATED, PAID, PAGADO, CANCELLED, RESTORED
+- `SorteoStatus`: SCHEDULED, OPEN, CLOSED, EVALUATED
+- `BetType`: NUMERO, REVENTADO
+- `MultiplierKind`: NUMERO, REVENTADO
+- `ActivityType`: 50+ tipos de acción
+
+---
+
+## 📊 Estadísticas del Codebase (Actualizado)
+
+### Archivos por Tipo
+- **Controllers**: 21 archivos
+- **Services**: 21 archivos (incluyendo reports/)
+- **Repositories**: 11 archivos
+- **Routes**: 25 archivos
+- **Validators**: 21 archivos
+- **DTOs**: 13 archivos
+- **Middlewares**: 11 archivos
+- **Utils**: 14 archivos
+- **Core**: 7 archivos
+- **Tests**: 11 archivos
+- **Scripts**: 50+ archivos de utilidad
+
+### Líneas de Código Estimadas
+- **TypeScript**: ~50,000+ líneas
+- **Prisma Schema**: ~800 líneas
+- **Tests**: ~3,000+ líneas
+- **Documentación**: ~200+ archivos MD
+
+### Endpoints API
+- **Total**: 100+ endpoints REST
+- **Autenticación**: 3 endpoints
+- **Tickets**: 8 endpoints
+- **Sorteos**: 10 endpoints
+- **Loterías**: 8 endpoints
+- **Ventas/Analytics**: 15+ endpoints
+- **Dashboard**: 5 endpoints
+- **Cuentas**: 6 endpoints
+- **Comisiones**: 6 endpoints
+- **Restricciones**: 4 endpoints
+- **Usuarios/Ventanas/Bancas**: 20+ endpoints
+- **Reportes**: 10+ endpoints
+- **Otros**: 10+ endpoints
+
+---
+
 **Última actualización**: 2025-01-20  
 **Versión del sistema**: v1.2.0  
 **Mantenido por**: Mario Quirós P.  
