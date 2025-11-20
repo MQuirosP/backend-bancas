@@ -284,4 +284,72 @@ export const TicketController = {
       });
     }
   },
+
+  /**
+   * GET /api/v1/tickets/filter-options
+   * Obtiene las opciones disponibles para los filtros de tickets
+   * basándose en los tickets reales del usuario según su rol
+   */
+  async getFilterOptions(req: AuthenticatedRequest, res: Response) {
+    const {
+      scope,
+      vendedorId,
+      ventanaId,
+      date,
+      fromDate,
+      toDate,
+      status,
+    } = req.query as any;
+
+    const me = req.user!;
+
+    try {
+      const result = await TicketService.getFilterOptions(
+        {
+          scope,
+          vendedorId,
+          ventanaId,
+          date,
+          fromDate,
+          toDate,
+          status,
+        },
+        {
+          userId: me.id,
+          role: me.role,
+          ventanaId: me.ventanaId,
+          bancaId: req.bancaContext?.bancaId || null,
+        }
+      );
+
+      req.logger?.info({
+        layer: 'controller',
+        action: 'TICKET_FILTER_OPTIONS',
+        payload: {
+          scope,
+          totalTickets: result.meta.totalTickets,
+          loteriasCount: result.loterias.length,
+          sorteosCount: result.sorteos.length,
+          multipliersCount: result.multipliers.length,
+          vendedoresCount: result.vendedores.length,
+        },
+      });
+
+      return success(res, result);
+    } catch (err: any) {
+      if (err.statusCode && err.message) {
+        return res.status(err.statusCode).json({
+          success: false,
+          error: err.errorCode || 'ERROR',
+          message: err.message,
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        error: 'INTERNAL_ERROR',
+        message: 'Error al obtener opciones de filtros',
+      });
+    }
+  },
 };

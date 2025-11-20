@@ -8,6 +8,7 @@ import { RestrictionRuleRepository } from "../../../repositories/restrictionRule
 import { isWithinSalesHours, validateTicketAgainstRules } from "../../../utils/loteriaRules";
 import { prepareCommissionContext, preCalculateCommissions } from "../../../utils/commissionPrecalc";
 import { resolveDateRange } from "../../../utils/dateRange";
+import { UserService } from "./user.service";
 
 const CUTOFF_GRACE_MS = 5000;
 // Updated: Added clienteNombre field support
@@ -1085,6 +1086,10 @@ export const TicketService = {
    * Obtiene las jugadas de un ticket existente mediante su número de ticket
    * GET /api/v1/tickets/by-number/:ticketNumber
    * Endpoint público/inter-vendedor (no filtra por vendedor)
+   * 
+   * Para jugadas REVENTADO, devuelve:
+   * - amount: Monto de la jugada NUMERO asociada (número base)
+   * - amountReventado: Monto de la jugada REVENTADO
    */
   async getByTicketNumber(ticketNumber: string) {
     try {
@@ -1127,25 +1132,78 @@ export const TicketService = {
         );
       }
 
+      // Separar jugadas NUMERO y REVENTADO para poder hacer el matching
+      const jugadasNumero = ticket.jugadas.filter((j) => j.type === "NUMERO");
+      const jugadasReventado = ticket.jugadas.filter((j) => j.type === "REVENTADO");
+
+      // Crear un mapa de números a montos y multiplierId para jugadas NUMERO
+      const numeroDataMap = new Map<string, { amount: number; multiplierId: string | null }>();
+      jugadasNumero.forEach((j) => {
+        numeroDataMap.set(j.number, {
+          amount: j.amount,
+          multiplierId: j.multiplierId,
+        });
+      });
+
+      // Crear un Set de números que tienen REVENTADO asociado
+      const numerosConReventado = new Set<string>();
+      jugadasReventado.forEach((j) => {
+        if (j.number) {
+          numerosConReventado.add(j.number);
+        }
+      });
+
       // Formatear jugadas para el frontend
-      const jugadas = ticket.jugadas.map((jugada) => {
+      // Agrupar: si hay NUMERO + REVENTADO del mismo número, devolver solo REVENTADO con ambos montos
+      const jugadas: any[] = [];
+
+      // Procesar jugadas NUMERO que NO tienen REVENTADO asociado
+      jugadasNumero.forEach((jugada) => {
+        if (!numerosConReventado.has(jugada.number)) {
+          // Jugada NUMERO sin REVENTADO: devolver normalmente
+          const baseJugada: any = {
+            type: "NUMERO",
+            number: jugada.number,
+            amount: jugada.amount,
+          };
+
+          if (jugada.multiplierId) {
+            baseJugada.multiplierId = jugada.multiplierId;
+          }
+
+          jugadas.push(baseJugada);
+        }
+        // Si tiene REVENTADO asociado, se procesará en el siguiente loop
+      });
+
+      // Procesar jugadas REVENTADO (agrupadas con NUMERO si existe)
+      jugadasReventado.forEach((jugada) => {
         const baseJugada: any = {
-          type: jugada.type || "NUMERO", // Por defecto NUMERO si no tiene tipo
+          type: "REVENTADO",
           number: jugada.number,
-          amount: jugada.amount,
+          reventadoNumber: jugada.reventadoNumber || jugada.number,
         };
 
-        // Si es REVENTADO, incluir reventadoNumber
-        if (jugada.type === "REVENTADO" && jugada.reventadoNumber) {
-          baseJugada.reventadoNumber = jugada.reventadoNumber;
+        // Buscar la jugada NUMERO asociada para obtener el monto del número base
+        const numeroData = numeroDataMap.get(jugada.number);
+        if (numeroData !== undefined) {
+          // amount: monto del número base (jugada NUMERO)
+          // amountReventado: monto del reventado (jugada REVENTADO)
+          baseJugada.amount = numeroData.amount;
+          baseJugada.amountReventado = jugada.amount;
+          
+          // Incluir multiplierId de la jugada NUMERO asociada
+          if (numeroData.multiplierId) {
+            baseJugada.multiplierId = numeroData.multiplierId;
+          }
+        } else {
+          // Si no hay jugada NUMERO asociada, usar el amount de REVENTADO como total
+          // Esto puede pasar en tickets antiguos o mal formados
+          baseJugada.amount = jugada.amount;
+          baseJugada.amountReventado = jugada.amount; // Fallback: usar el mismo monto
         }
 
-        // Incluir multiplierId si existe (opcional, para referencia)
-        if (jugada.multiplierId) {
-          baseJugada.multiplierId = jugada.multiplierId;
-        }
-
-        return baseJugada;
+        jugadas.push(baseJugada);
       });
 
       return {
@@ -1172,6 +1230,395 @@ export const TicketService = {
         "Error al obtener el ticket",
         500,
         "INTERNAL_ERROR"
+      );
+    }
+  },
+
+  /**
+   * Obtiene las opciones disponibles para los filtros de tickets
+   * basándose en los tickets reales del usuario según su rol
+   * GET /api/v1/tickets/filter-options
+   */
+  async getFilterOptions(params: {
+    scope?: string;
+    vendedorId?: string;
+    ventanaId?: string;
+    date?: string;
+    fromDate?: string;
+    toDate?: string;
+    status?: string;
+  }, context: {
+    userId: string;
+    role: Role;
+    ventanaId?: string | null;
+    bancaId?: string | null;
+  }) {
+    try {
+      // Aplicar RBAC filters para determinar qué tickets puede ver el usuario
+      const { applyRbacFilters } = require('../../../utils/rbac');
+      const authContext = {
+        userId: context.userId,
+        role: context.role,
+        ventanaId: context.ventanaId,
+        bancaId: context.bancaId,
+      };
+
+      const effectiveFilters = await applyRbacFilters(authContext, {
+        scope: params.scope || 'mine',
+        vendedorId: params.vendedorId,
+        ventanaId: params.ventanaId,
+      });
+
+      // Construir filtros de fecha si se proporcionan
+      let dateFrom: Date | undefined;
+      let dateTo: Date | undefined;
+
+      if (params.date || params.fromDate || params.toDate) {
+        const dateRange = resolveDateRange(
+          params.date || 'today',
+          params.fromDate,
+          params.toDate
+        );
+        dateFrom = dateRange.fromAt;
+        dateTo = dateRange.toAt;
+      }
+
+      // Construir where clause para tickets
+      const where: any = {
+        deletedAt: null,
+        isActive: true,
+      };
+
+      // Aplicar filtros RBAC
+      if (effectiveFilters.vendedorId) {
+        where.vendedorId = effectiveFilters.vendedorId;
+      }
+      if (effectiveFilters.ventanaId) {
+        where.ventanaId = effectiveFilters.ventanaId;
+      }
+      if (effectiveFilters.bancaId) {
+        where.ventana = { bancaId: effectiveFilters.bancaId };
+      }
+
+      // Aplicar filtros de fecha
+      if (dateFrom || dateTo) {
+        where.createdAt = {};
+        if (dateFrom) where.createdAt.gte = dateFrom;
+        if (dateTo) where.createdAt.lt = dateTo;
+      }
+
+      // Aplicar filtro de estado
+      if (params.status) {
+        where.status = params.status;
+      }
+
+      // Obtener tickets con relaciones necesarias
+      const tickets = await prisma.ticket.findMany({
+        where,
+        select: {
+          id: true,
+          loteriaId: true,
+          sorteoId: true,
+          vendedorId: true,
+          jugadas: {
+            where: {
+              deletedAt: null,
+              isActive: true,
+            },
+            select: {
+              multiplierId: true,
+            },
+          },
+          loteria: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          sorteo: {
+            select: {
+              id: true,
+              name: true,
+              scheduledAt: true,
+              loteriaId: true,
+            },
+          },
+          vendedor: {
+            select: {
+              id: true,
+              name: true,
+              ventanaId: true,
+              ventana: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const totalTickets = tickets.length;
+
+      // Agrupar por lotería
+      const loteriaMap = new Map<string, { id: string; name: string; count: number }>();
+      tickets.forEach((ticket) => {
+        if (ticket.loteria) {
+          const existing = loteriaMap.get(ticket.loteria.id);
+          if (existing) {
+            existing.count++;
+          } else {
+            loteriaMap.set(ticket.loteria.id, {
+              id: ticket.loteria.id,
+              name: ticket.loteria.name,
+              count: 1,
+            });
+          }
+        }
+      });
+
+      // Agrupar por sorteo
+      const sorteoMap = new Map<string, {
+        id: string;
+        name: string;
+        loteriaId: string;
+        loteriaName: string;
+        scheduledAt: Date;
+        count: number;
+      }>();
+      tickets.forEach((ticket) => {
+        if (ticket.sorteo) {
+          const existing = sorteoMap.get(ticket.sorteo.id);
+          if (existing) {
+            existing.count++;
+          } else {
+            sorteoMap.set(ticket.sorteo.id, {
+              id: ticket.sorteo.id,
+              name: ticket.sorteo.name,
+              loteriaId: ticket.sorteo.loteriaId,
+              loteriaName: ticket.loteria?.name || '',
+              scheduledAt: ticket.sorteo.scheduledAt,
+              count: 1,
+            });
+          }
+        }
+      });
+
+      // Agrupar por multiplicador (de jugadas)
+      // IMPORTANTE: Contar TICKETS únicos, no jugadas
+      const multiplierMap = new Map<string, {
+        id: string;
+        ticketIds: Set<string>; // Set de ticket IDs únicos
+        loteriaIds: Set<string>;
+      }>();
+      tickets.forEach((ticket) => {
+        // Obtener multiplicadores únicos de este ticket
+        const ticketMultiplierIds = new Set<string>();
+        ticket.jugadas.forEach((jugada) => {
+          if (jugada.multiplierId) {
+            ticketMultiplierIds.add(jugada.multiplierId);
+          }
+        });
+
+        // Para cada multiplicador único en este ticket, agregar el ticket ID
+        ticketMultiplierIds.forEach((multiplierId) => {
+          const existing = multiplierMap.get(multiplierId);
+          if (existing) {
+            existing.ticketIds.add(ticket.id);
+            if (ticket.loteriaId) {
+              existing.loteriaIds.add(ticket.loteriaId);
+            }
+          } else {
+            multiplierMap.set(multiplierId, {
+              id: multiplierId,
+              ticketIds: new Set([ticket.id]),
+              loteriaIds: new Set(ticket.loteriaId ? [ticket.loteriaId] : []),
+            });
+          }
+        });
+      });
+
+      // Obtener información de multiplicadores
+      const multiplierIds = Array.from(multiplierMap.keys());
+      const multipliers = multiplierIds.length > 0
+        ? await prisma.loteriaMultiplier.findMany({
+            where: {
+              id: { in: multiplierIds },
+              isActive: true,
+            },
+            select: {
+              id: true,
+              name: true,
+              valueX: true,
+              loteriaId: true,
+              loteria: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          })
+        : [];
+
+      // Para vendedores, filtrar multiplicadores según política de comisión
+      let allowedMultiplierIds: Set<string> | null = null;
+      if (context.role === Role.VENDEDOR) {
+        // Obtener multiplicadores permitidos para el vendedor
+        const loteriasConMultipliers = new Set<string>();
+        multipliers.forEach((m) => {
+          if (m.loteriaId) {
+            loteriasConMultipliers.add(m.loteriaId);
+          }
+        });
+
+        // Para cada lotería, obtener multiplicadores permitidos
+        allowedMultiplierIds = new Set<string>();
+        for (const loteriaId of loteriasConMultipliers) {
+          try {
+            const allowedResult = await UserService.getAllowedMultipliers(
+              context.userId,
+              loteriaId,
+              'NUMERO'
+            );
+            allowedResult.data.forEach((m) => {
+              allowedMultiplierIds!.add(m.id);
+            });
+
+            // También obtener para REVENTADO
+            const allowedReventadoResult = await UserService.getAllowedMultipliers(
+              context.userId,
+              loteriaId,
+              'REVENTADO'
+            );
+            allowedReventadoResult.data.forEach((m) => {
+              allowedMultiplierIds!.add(m.id);
+            });
+          } catch (err) {
+            // Si hay error (ej: usuario no encontrado), continuar
+            logger.warn({
+              layer: 'service',
+              action: 'FILTER_OPTIONS_ALLOWED_MULTIPLIERS_ERROR',
+              payload: {
+                userId: context.userId,
+                loteriaId,
+                error: (err as Error).message,
+              },
+            });
+          }
+        }
+      }
+
+      // Agrupar por vendedor (solo para ADMIN y VENTANA)
+      const vendedorMap = new Map<string, {
+        id: string;
+        name: string;
+        ventanaId?: string;
+        ventanaName?: string;
+        count: number;
+      }>();
+      if (context.role === Role.ADMIN || context.role === Role.VENTANA) {
+        tickets.forEach((ticket) => {
+          if (ticket.vendedor) {
+            const existing = vendedorMap.get(ticket.vendedor.id);
+            if (existing) {
+              existing.count++;
+            } else {
+              vendedorMap.set(ticket.vendedor.id, {
+                id: ticket.vendedor.id,
+                name: ticket.vendedor.name,
+                ventanaId: ticket.vendedor.ventanaId || undefined,
+                ventanaName: ticket.vendedor.ventana?.name,
+                count: 1,
+              });
+            }
+          }
+        });
+      }
+
+      // Construir respuesta
+      const loterias = Array.from(loteriaMap.values())
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((l) => ({
+          id: l.id,
+          name: l.name,
+          ticketCount: l.count,
+        }));
+
+      const sorteos = Array.from(sorteoMap.values())
+        .sort((a, b) => b.scheduledAt.getTime() - a.scheduledAt.getTime())
+        .map((s) => ({
+          id: s.id,
+          name: s.name,
+          loteriaId: s.loteriaId,
+          loteriaName: s.loteriaName,
+          scheduledAt: s.scheduledAt.toISOString(),
+          ticketCount: s.count,
+        }));
+
+      // Filtrar multiplicadores según política de comisión para vendedores
+      const multipliersFiltered = multipliers
+        .filter((m) => {
+          // Para vendedores, solo incluir multiplicadores permitidos
+          if (context.role === Role.VENDEDOR && allowedMultiplierIds) {
+            return allowedMultiplierIds.has(m.id);
+          }
+          // Para otros roles, incluir todos los multiplicadores que tienen tickets
+          return multiplierMap.has(m.id);
+        })
+        .map((m) => {
+          const multiplierData = multiplierMap.get(m.id);
+          // ticketCount es el número de tickets únicos que tienen este multiplicador
+          const ticketCount = multiplierData?.ticketIds.size || 0;
+          return {
+            id: m.id,
+            name: m.name,
+            valueX: m.valueX,
+            loteriaId: m.loteriaId,
+            loteriaName: m.loteria?.name || '',
+            ticketCount, // ✅ Ahora cuenta tickets únicos, no jugadas
+          };
+        })
+        .sort((a, b) => a.valueX - b.valueX);
+
+      const vendedores = Array.from(vendedorMap.values())
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((v) => ({
+          id: v.id,
+          name: v.name,
+          ventanaId: v.ventanaId,
+          ventanaName: v.ventanaName,
+          ticketCount: v.count,
+        }));
+
+      return {
+        loterias,
+        sorteos,
+        multipliers: multipliersFiltered,
+        vendedores,
+        meta: {
+          totalTickets,
+        },
+      };
+    } catch (err: any) {
+      logger.error({
+        layer: 'service',
+        action: 'TICKET_FILTER_OPTIONS_FAIL',
+        payload: {
+          params,
+          error: err.message,
+        },
+      });
+
+      if (err instanceof AppError) {
+        throw err;
+      }
+
+      throw new AppError(
+        'Error al obtener opciones de filtros',
+        500,
+        'INTERNAL_ERROR'
       );
     }
   },
