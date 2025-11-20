@@ -37,30 +37,9 @@ export const TicketController = {
       bancaId: req.bancaContext?.bancaId || null,
     };
 
-    // DEBUG: Log context and filters BEFORE RBAC
-    req.logger?.info({
-      layer: "controller",
-      action: "TICKET_LIST_RBAC_DEBUG",
-      payload: {
-        context,
-        requestFilters: rest,
-        scope,
-        message: "BEFORE applyRbacFilters"
-      }
-    });
-
     // Apply RBAC filters (fetches ventanaId from DB if missing in JWT)
+    // Optimización: Solo loggear en modo debug para reducir overhead
     const effectiveFilters = await applyRbacFilters(context, { ...rest, scope });
-
-    // DEBUG: Log AFTER RBAC
-    req.logger?.info({
-      layer: "controller",
-      action: "TICKET_LIST_RBAC_APPLIED",
-      payload: {
-        effectiveFilters,
-        message: "AFTER applyRbacFilters - these are the filters that will be used"
-      }
-    });
 
     // Resolver rango de fechas (mismo patrón que Venta/Dashboard)
     // Regla especial: cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha

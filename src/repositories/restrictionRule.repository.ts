@@ -187,13 +187,40 @@ export const RestrictionRuleRepository = {
       // Esto incluye automáticas, de montos, de cutoff, y de lotería/multiplicador
     }
 
-    const [data, total] = await prisma.$transaction([
+    // Optimización: Usar Promise.all en lugar de $transaction para mejor performance
+    const [data, total] = await Promise.all([
       prisma.restrictionRule.findMany({
         where,
         orderBy: [{ updatedAt: "desc" }],
         skip,
         take,
-        include: includeLabels, // ← incluye banca/ventana/user en el listado
+        select: {
+          id: true,
+          bancaId: true,
+          ventanaId: true,
+          userId: true,
+          number: true,
+          maxAmount: true,
+          maxTotal: true,
+          appliesToDate: true,
+          appliesToHour: true,
+          isActive: true,
+          isAutoDate: true,
+          baseAmount: true,
+          salesPercentage: true,
+          appliesToVendedor: true,
+          createdAt: true,
+          updatedAt: true,
+          salesCutoffMinutes: true,
+          loteriaId: true,
+          multiplierId: true,
+          message: true,
+          banca: { select: { id: true, name: true, code: true } },
+          ventana: { select: { id: true, name: true, code: true } },
+          user: { select: { id: true, name: true, username: true } },
+          loteria: { select: { id: true, name: true } },
+          multiplier: { select: { id: true, name: true, valueX: true } },
+        },
       }),
       prisma.restrictionRule.count({ where }),
     ]);

@@ -6,6 +6,7 @@ import UserRepository from '../../../repositories/user.repository';
 import { Role, ActivityType } from '@prisma/client';
 import { normalizePhone } from "../../../utils/phoneNormalizer";
 import ActivityService from '../../../core/activity.service';
+import { parseCommissionPolicy } from '../../../services/commission.resolver';
 
 /**
  * Deep merge de configuraciones (parcial)
@@ -395,6 +396,167 @@ export const UserService = {
     }
 
     return user;
+  },
+
+  async getAllowedMultipliers(
+    userId: string,
+    loteriaId: string,
+    betType: 'NUMERO' | 'REVENTADO' = 'NUMERO'
+  ) {
+    // Optimización: Hacer todas las queries en paralelo
+    const [user, loteria, activeMultipliers] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          role: true,
+          commissionPolicyJson: true,
+        },
+      }),
+      prisma.loteria.findUnique({
+        where: { id: loteriaId },
+        select: { id: true, isActive: true },
+      }),
+      prisma.loteriaMultiplier.findMany({
+        where: {
+          loteriaId,
+          isActive: true,
+          kind: betType,
+        },
+        select: {
+          id: true,
+          loteriaId: true,
+          name: true,
+          valueX: true,
+          kind: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    // Validaciones
+    if (!user) {
+      throw new AppError('Usuario no encontrado', 404, { code: 'USER_NOT_FOUND' });
+    }
+
+    if (user.role !== Role.VENDEDOR) {
+      throw new AppError('El usuario debe tener rol VENDEDOR', 400, {
+        code: 'INVALID_USER_ROLE',
+        details: [{ field: 'userId', message: 'El usuario debe ser un vendedor' }],
+      });
+    }
+
+    if (!loteria) {
+      throw new AppError('Lotería no encontrada', 404, { code: 'LOTERIA_NOT_FOUND' });
+    }
+
+    const totalActiveMultipliers = activeMultipliers.length;
+
+    // Obtener política de comisión del vendedor
+    const policyJson = user.commissionPolicyJson;
+    const policyExists = !!policyJson;
+
+    // Si no hay política, retornar vacío
+    if (!policyJson) {
+      return {
+        data: [],
+        meta: {
+          policyExists: false,
+          policyEffective: false,
+          rulesMatched: 0,
+          totalActiveMultipliers,
+        },
+      };
+    }
+
+    // Parsear política usando la función existente
+    const policy = parseCommissionPolicy(policyJson, 'USER');
+
+    // Si la política no es válida o no tiene reglas, retornar vacío
+    if (!policy || !policy.rules || policy.rules.length === 0) {
+      return {
+        data: [],
+        meta: {
+          policyExists: true,
+          policyEffective: false,
+          rulesMatched: 0,
+          totalActiveMultipliers,
+        },
+      };
+    }
+
+    // Verificar vigencia temporal
+    const now = new Date();
+    const effectiveFrom = policy.effectiveFrom ? new Date(policy.effectiveFrom) : null;
+    const effectiveTo = policy.effectiveTo ? new Date(policy.effectiveTo) : null;
+
+    const policyEffective =
+      (!effectiveFrom || now >= effectiveFrom) && (!effectiveTo || now <= effectiveTo);
+
+    if (!policyEffective) {
+      return {
+        data: [],
+        meta: {
+          policyExists: true,
+          policyEffective: false,
+          rulesMatched: 0,
+          totalActiveMultipliers,
+        },
+      };
+    }
+
+    // Pre-filtrar reglas aplicables para optimizar
+    const applicableRules = policy.rules.filter((rule) => {
+      const loteriaMatches = rule.loteriaId === null || rule.loteriaId === loteriaId;
+      const betTypeMatches = rule.betType === null || rule.betType === betType;
+      return loteriaMatches && betTypeMatches && !!rule.multiplierRange;
+    });
+
+    if (applicableRules.length === 0) {
+      return {
+        data: [],
+        meta: {
+          policyExists: true,
+          policyEffective: true,
+          rulesMatched: 0,
+          totalActiveMultipliers,
+        },
+      };
+    }
+
+    // Filtrar multiplicadores según reglas de la política (optimizado)
+    const allowedMultiplierIds = new Set<string>();
+    const matchedRuleIds = new Set<string>();
+
+    for (const multiplier of activeMultipliers) {
+      for (const rule of applicableRules) {
+        const multiplierInRange =
+          multiplier.valueX >= rule.multiplierRange!.min &&
+          multiplier.valueX <= rule.multiplierRange!.max;
+
+        if (multiplierInRange) {
+          allowedMultiplierIds.add(multiplier.id);
+          matchedRuleIds.add(rule.id);
+          break; // Primera regla que aplica gana
+        }
+      }
+    }
+
+    // Obtener multiplicadores permitidos (mantener orden original)
+    const allowedMultipliers = activeMultipliers.filter((m) => allowedMultiplierIds.has(m.id));
+
+    return {
+      data: allowedMultipliers,
+      meta: {
+        policyExists: true,
+        policyEffective: true,
+        rulesMatched: matchedRuleIds.size,
+        totalActiveMultipliers,
+      },
+    };
   },
 
   async restore(id: string, actor?: { id: string; role: Role }) {

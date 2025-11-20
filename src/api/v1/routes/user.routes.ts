@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import UserController from "../controllers/user.controller";
 import {
   protect,
@@ -15,9 +15,13 @@ import {
   updateUserSchema,
   listUsersQuerySchema,
   ChangePasswordSchema,
+  getAllowedMultipliersQuerySchema,
+  getAllowedMultipliersParamsSchema,
 } from "../validators/user.validator";
 import { z } from "zod";
 import { Role } from "@prisma/client";
+import prisma from "../../../core/prismaClient";
+import { AppError } from "../../../core/errors";
 
 const router = Router();
 
@@ -76,6 +80,67 @@ router.get(
   restrictToAdminSelfOrVentanaVendor,
   validateParams(idParamSchema),
   UserController.getById
+);
+
+// GET /api/v1/users/:userId/allowed-multipliers
+router.get(
+  "/:userId/allowed-multipliers",
+  protect,
+  async (req: Request, res: Response, next: NextFunction) => {
+    const authUser = (req as any)?.user;
+    const targetId = req.params.userId;
+
+    if (!authUser) {
+      throw new AppError("Unauthorized", 401);
+    }
+
+    if (!targetId) {
+      throw new AppError("User id is required", 400);
+    }
+
+    if (authUser.role === Role.ADMIN || authUser.id === targetId) {
+      return next();
+    }
+
+    if (authUser.role !== Role.VENTANA) {
+      throw new AppError("Forbidden", 403);
+    }
+
+    const actor = await prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { ventanaId: true },
+    });
+
+    if (!actor?.ventanaId) {
+      throw new AppError(
+        "El usuario VENTANA no tiene una ventana asignada",
+        403,
+        "NO_VENTANA"
+      );
+    }
+
+    const target = await prisma.user.findUnique({
+      where: { id: targetId },
+      select: { role: true, ventanaId: true },
+    });
+
+    if (!target) {
+      throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+    }
+
+    if (target.role !== Role.VENDEDOR || target.ventanaId !== actor.ventanaId) {
+      throw new AppError(
+        "Solo puedes gestionar usuarios vendedores de tu ventana",
+        403,
+        "FORBIDDEN"
+      );
+    }
+
+    next();
+  },
+  validateParams(getAllowedMultipliersParamsSchema),
+  validateQuery(getAllowedMultipliersQuerySchema),
+  UserController.getAllowedMultipliers
 );
 
 export default router;

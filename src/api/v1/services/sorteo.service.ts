@@ -91,6 +91,10 @@ export const SorteoService = {
 
     const s = await SorteoRepository.create(data);
 
+    // Invalidar cache de sorteos
+    const { clearSorteoCache } = require('../../../utils/sorteoCache');
+    clearSorteoCache();
+
     const details: Prisma.InputJsonObject = {
       loteriaId: data.loteriaId,
       scheduledAt: (data.scheduledAt instanceof Date
@@ -132,6 +136,10 @@ export const SorteoService = {
       scheduledAt: data.scheduledAt,
       isActive: data.isActive,
     } as UpdateSorteoDTO);
+
+    // Invalidar cache de sorteos
+    const { clearSorteoCache } = require('../../../utils/sorteoCache');
+    clearSorteoCache();
 
     const details: Record<string, any> = {};
     if (data.name && data.name !== existing.name) details.name = data.name;
@@ -338,6 +346,10 @@ export const SorteoService = {
 
     const s = await SorteoRepository.open(id);
 
+    // Invalidar cache de sorteos
+    const { clearSorteoCache } = require('../../../utils/sorteoCache');
+    clearSorteoCache();
+
     const details: Prisma.InputJsonObject = {
       from: existing.status,
       to: SorteoStatus.OPEN,
@@ -362,6 +374,10 @@ export const SorteoService = {
     }
 
     const s = await SorteoRepository.close(id);
+
+    // Invalidar cache de sorteos
+    const { clearSorteoCache } = require('../../../utils/sorteoCache');
+    clearSorteoCache();
 
     const details: Prisma.InputJsonObject = {
       from: existing.status,
@@ -589,6 +605,10 @@ export const SorteoService = {
       },
     });
 
+    // Invalidar cache de sorteos
+    const { clearSorteoCache } = require('../../../utils/sorteoCache');
+    clearSorteoCache();
+
     // 5) Devolver sorteo evaluado (con include para mantener reventadoEnabled)
     const evaluated = await SorteoRepository.findById(id);
     return evaluated ? serializeSorteo(evaluated) : evaluated;
@@ -597,6 +617,10 @@ export const SorteoService = {
   async remove(id: string, userId: string, reason?: string) {
     // Inactivación manual: deletedByCascade = false
     const s = await SorteoRepository.softDelete(id, userId, reason, false);
+
+    // Invalidar cache de sorteos
+    const { clearSorteoCache } = require('../../../utils/sorteoCache');
+    clearSorteoCache();
 
     const details: Record<string, any> = {};
     if (reason) details.reason = reason;
@@ -614,6 +638,10 @@ export const SorteoService = {
 
   async restore(id: string, userId: string) {
     const s = await SorteoRepository.restore(id);
+
+    // Invalidar cache de sorteos
+    const { clearSorteoCache } = require('../../../utils/sorteoCache');
+    clearSorteoCache();
 
     await ActivityService.log({
       userId,
@@ -634,6 +662,10 @@ export const SorteoService = {
     }
 
     const reverted = await SorteoRepository.revertEvaluation(id);
+
+    // Invalidar cache de sorteos
+    const { clearSorteoCache } = require('../../../utils/sorteoCache');
+    clearSorteoCache();
 
     await ActivityService.log({
       userId,
@@ -666,6 +698,23 @@ export const SorteoService = {
       const p = params.page && params.page > 0 ? params.page : 1;
       const ps = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
 
+      // Intentar obtener del cache
+      const { getCachedSorteoList, setCachedSorteoList } = require('../../../utils/sorteoCache');
+      const cached = getCachedSorteoList({
+        loteriaId: params.loteriaId,
+        page: p,
+        pageSize: ps,
+        status: params.status,
+        search: params.search?.trim() || undefined,
+        isActive: params.isActive,
+        dateFrom: params.dateFrom,
+        dateTo: params.dateTo,
+      });
+
+      if (cached) {
+        return cached;
+      }
+
       const { data, total } = await SorteoRepository.list({
         page: p,
         pageSize: ps,
@@ -677,9 +726,10 @@ export const SorteoService = {
         dateTo: params.dateTo,
       });
 
+      const serialized = serializeSorteos(data);
       const totalPages = Math.ceil(total / ps);
-      return {
-        data: serializeSorteos(data),
+      const result = {
+        data: serialized,
         meta: {
           total,
           page: p,
@@ -691,6 +741,24 @@ export const SorteoService = {
           groupBy: null,
         },
       };
+
+      // Guardar en cache
+      setCachedSorteoList(
+        {
+          loteriaId: params.loteriaId,
+          page: p,
+          pageSize: ps,
+          status: params.status,
+          search: params.search?.trim() || undefined,
+          isActive: params.isActive,
+          dateFrom: params.dateFrom,
+          dateTo: params.dateTo,
+        },
+        result.data,
+        result.meta
+      );
+
+      return result;
     }
 
     // Con groupBy, usar query SQL optimizada
