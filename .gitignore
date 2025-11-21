@@ -86,3 +86,4 @@ backups/
 # Toda la carpeta docs/ contiene documentación de trabajo y no debe versionarse
 docs/
 **/docs/
+.cursorrules
