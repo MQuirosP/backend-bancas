@@ -2,9 +2,11 @@
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { PaginatedResult, buildMeta, getSkipTake } from "../../../utils/pagination";
-import { Prisma } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import logger from "../../../core/logger";
 import { formatIsoLocal } from "../../../utils/datetime";
+import { resolveCommission } from "../../../services/commission.resolver";
+import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
 
 const BUSINESS_TZ = "America/Costa_Rica";
 const COSTA_RICA_OFFSET_HOURS = -6;
@@ -49,8 +51,11 @@ export interface VentasFilters {
 function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
   const where: Prisma.TicketWhereInput = {
     deletedAt: null, // Soft-delete: solo tickets no eliminados
-    // NO filtrar por status aquí - incluir TODOS los tickets (ACTIVE, EVALUATED, PAID)
-    // El filtro de status se aplica solo si se solicita explícitamente en filters.status
+    // Excluir tickets CANCELLED por defecto
+    // Si se especifica filters.status, usar ese valor; si no, excluir CANCELLED
+    status: filters.status 
+      ? (filters.status as any) 
+      : { not: "CANCELLED" }, // Excluir CANCELLED si no se especifica status
   };
 
   if (filters.dateFrom || filters.dateTo) {
@@ -106,9 +111,8 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
   }
 
   // Filtro por status personalizado (si se solicita un status específico diferente)
-  if (filters.status) {
-    where.status = filters.status as any;
-  }
+  // NOTA: Si filters.status está definido, ya se aplicó arriba en el where inicial
+  // Si no está definido, el where inicial ya excluye CANCELLED por defecto
 
   // Filtro por ganadores
   if (filters.winnersOnly) {
@@ -314,6 +318,10 @@ export const VentasService = {
     unpaidTicketsCount: number;  // Tickets con pago pendiente
     // Campos adicionales solo para VENDEDOR con scope='mine' (opcionales)
     pendingPayment?: number;     // Total pendiente de pago en tickets EVALUATED
+    // Campos adicionales solo para VENTANA con scope='mine' (opcionales)
+    commissionVendedorTotal?: number;  // Suma de comisiones de todos los vendedores
+    commissionListeroTotal?: number;    // Comisión propia del listero (ventana)
+    gananciaNeta?: number;              // Ventas - Premios - Comisión Vendedor
   }> {
     try {
       const where = buildWhereClause(filters);
@@ -408,6 +416,143 @@ export const VentasService = {
         pendingPayment = evaluatedStats._sum.remainingAmount ?? 0;
       }
 
+      // ✅ NUEVO: Calcular comisiones separadas para VENTANA con scope='mine'
+      let commissionVendedorTotal: number | undefined = undefined;
+      let commissionListeroTotal: number | undefined = undefined;
+      let gananciaNeta: number | undefined = undefined;
+      
+      if (options?.role === 'VENTANA' && options?.scope === 'mine' && options?.userId) {
+        // Obtener ventanaId del usuario VENTANA
+        const ventanaUser = await prisma.user.findUnique({
+          where: { id: options.userId },
+          select: { ventanaId: true },
+        });
+
+        if (ventanaUser?.ventanaId) {
+          // 1. Calcular commissionVendedorTotal: Suma de comisiones de todos los vendedores
+          // Las comisiones de vendedores están guardadas en jugadas.commissionAmount cuando commissionOrigin='USER'
+          // Nota: commissionOrigin='USER' ya garantiza que el ticket tiene vendedorId, así que no necesitamos filtrar explícitamente
+          const vendedorCommissionsAgg = await prisma.jugada.aggregate({
+            where: {
+              ticket: {
+                ...where,
+                ventanaId: ventanaUser.ventanaId,
+                // ✅ No incluimos filtro vendedorId porque commissionOrigin='USER' ya garantiza que existe
+              },
+              commissionOrigin: 'USER', // Comisiones de vendedores (esto ya garantiza que el ticket tiene vendedorId)
+            },
+            _sum: {
+              commissionAmount: true,
+            },
+          });
+          // ✅ Verificar que _sum existe antes de acceder
+          commissionVendedorTotal = parseFloat((vendedorCommissionsAgg._sum?.commissionAmount ?? 0).toFixed(2));
+
+          // 2. Calcular commissionListeroTotal: Comisión propia del listero (ventana)
+          // Necesitamos calcular desde las políticas de comisión de la ventana
+          // Obtener todas las jugadas del período para esta ventana
+          const jugadasForListero = await prisma.jugada.findMany({
+            where: {
+              ticket: {
+                ...where,
+                ventanaId: ventanaUser.ventanaId,
+              },
+            },
+            select: {
+              id: true,
+              amount: true,
+              type: true,
+              finalMultiplierX: true,
+              ticket: {
+                select: {
+                  id: true,
+                  loteriaId: true,
+                  ventana: {
+                    select: {
+                      id: true,
+                      commissionPolicyJson: true,
+                      banca: {
+                        select: {
+                          commissionPolicyJson: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          });
+
+          // Obtener usuario VENTANA para obtener su política de comisión
+          const ventanaUserWithPolicy = await prisma.user.findUnique({
+            where: { id: options.userId },
+            select: {
+              id: true,
+              commissionPolicyJson: true,
+              ventanaId: true,
+            },
+          });
+
+          let totalListeroCommission = 0;
+          for (const jugada of jugadasForListero) {
+            if (!jugada.ticket?.ventana) continue;
+
+            const userPolicyJson = ventanaUserWithPolicy?.commissionPolicyJson;
+            const ventanaPolicy = jugada.ticket.ventana.commissionPolicyJson as any;
+            const bancaPolicy = jugada.ticket.ventana.banca?.commissionPolicyJson as any;
+
+            let listeroAmount = 0;
+
+            if (userPolicyJson) {
+              try {
+                // ✅ Cast a any para resolver el tipo JsonValue a CommissionPolicyV1
+                const resolution = resolveCommissionFromPolicy(userPolicyJson as any, {
+                  userId: options.userId,
+                  loteriaId: jugada.ticket.loteriaId,
+                  betType: jugada.type as "NUMERO" | "REVENTADO",
+                  finalMultiplierX: jugada.finalMultiplierX ?? null,
+                });
+                listeroAmount = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
+              } catch (err) {
+                // Fallback a políticas de ventana/banca
+                const fallback = resolveCommission(
+                  {
+                    loteriaId: jugada.ticket.loteriaId,
+                    betType: jugada.type as "NUMERO" | "REVENTADO",
+                    finalMultiplierX: jugada.finalMultiplierX || 0,
+                    amount: jugada.amount,
+                  },
+                  null, // No usar política de usuario en fallback
+                  ventanaPolicy,
+                  bancaPolicy
+                );
+                listeroAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
+              }
+            } else {
+              // Usar políticas de ventana/banca directamente
+              const fallback = resolveCommission(
+                {
+                  loteriaId: jugada.ticket.loteriaId,
+                  betType: jugada.type as "NUMERO" | "REVENTADO",
+                  finalMultiplierX: jugada.finalMultiplierX || 0,
+                  amount: jugada.amount,
+                },
+                null,
+                ventanaPolicy,
+                bancaPolicy
+              );
+              listeroAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
+            }
+
+            totalListeroCommission += listeroAmount;
+          }
+          commissionListeroTotal = parseFloat(totalListeroCommission.toFixed(2));
+
+          // 3. Calcular gananciaNeta: ventasTotal - payoutTotal - commissionVendedorTotal
+          gananciaNeta = parseFloat((ventasTotal - payoutTotal - commissionVendedorTotal).toFixed(2));
+        }
+      }
+
       logger.info({
         layer: "service",
         action: "VENTA_SUMMARY",
@@ -444,6 +589,13 @@ export const VentasService = {
       // Agregar campos adicionales solo para VENDEDOR con scope='mine'
       if (options?.role === 'VENDEDOR' && options?.scope === 'mine') {
         result.pendingPayment = pendingPayment;
+      }
+
+      // ✅ NUEVO: Agregar campos adicionales solo para VENTANA con scope='mine'
+      if (options?.role === 'VENTANA' && options?.scope === 'mine') {
+        result.commissionVendedorTotal = commissionVendedorTotal ?? 0;
+        result.commissionListeroTotal = commissionListeroTotal ?? 0;
+        result.gananciaNeta = gananciaNeta ?? parseFloat((ventasTotal - payoutTotal).toFixed(2));
       }
 
       return result;
@@ -787,13 +939,17 @@ export const VentasService = {
             const lastTicketAt = lastTicketAtByVendedor.get(r.vendedorId);
             const firstTicketAt = firstTicketAtByVendedor.get(r.vendedorId);
 
+            // Calcular neto: ventas - premios - comisión vendedor
+            // Para VENTANA con scope=mine, debe restar la comisión del vendedor
+            const neto = ventasTotal - payoutTotal - commissionTotal;
+
             return {
               key: r.vendedorId,
               name: vendedor?.name ?? "Desconocido",
               ventasTotal,
               ticketsCount,
               payoutTotal,
-              neto: ventasTotal - payoutTotal,
+              neto, // ✅ CORREGIDO: ventasTotal - payoutTotal - commissionTotal
               commissionTotal,
               totalWinningTickets: winningTicketsCount,
               totalPaidTickets: paidTicketsCount,
@@ -806,7 +962,7 @@ export const VentasService = {
               avgTicketAmount: Math.round(avgTicketAmount * 100) / 100, // Redondear a 2 decimales
               winRate: Math.round(winRate * 100) / 100, // Redondear a 2 decimales
               payoutRate: Math.round(payoutRate * 100) / 100, // Redondear a 2 decimales
-              commissionAmount: commissionTotal, // Alias para consistencia con propuesta
+              commissionAmount: commissionTotal, // ✅ Comisión del vendedor (ya estaba presente)
               lastTicketAt: lastTicketAt ? lastTicketAt.toISOString() : undefined,
               firstTicketAt: firstTicketAt ? firstTicketAt.toISOString() : undefined,
               activityDays,

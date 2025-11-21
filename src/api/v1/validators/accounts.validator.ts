@@ -7,7 +7,11 @@ import { validateQuery, validateBody } from "../../../middlewares/validate.middl
  */
 export const GetStatementQuerySchema = z
   .object({
-    month: z.string().regex(/^\d{4}-\d{2}$/, "El mes debe ser en formato YYYY-MM"),
+    month: z.string().regex(/^\d{4}-\d{2}$/, "El mes debe ser en formato YYYY-MM").optional(), // ✅ Opcional si se usa date
+    // ✅ NUEVO: Filtros de período
+    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional(),
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
+    toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
     scope: z.enum(["mine", "ventana", "all"]),
     dimension: z.enum(["ventana", "vendedor"]),
     ventanaId: z.string().uuid().optional(),
@@ -15,7 +19,35 @@ export const GetStatementQuerySchema = z
     sort: z.enum(["asc", "desc"]).optional().default("desc"),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
-  .strict();
+  .strict()
+  .superRefine((val, ctx) => {
+    // Si date es 'range', fromDate y toDate son requeridos
+    if (val.date === "range") {
+      if (!val.fromDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["fromDate"],
+          message: "fromDate es requerido cuando date='range'",
+        });
+      }
+      if (!val.toDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["toDate"],
+          message: "toDate es requerido cuando date='range'",
+        });
+      }
+      if (val.fromDate && val.toDate && val.fromDate > val.toDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["toDate"],
+          message: "toDate debe ser mayor o igual a fromDate",
+        });
+      }
+    }
+    // Si no se proporciona date ni month, usar mes actual por defecto
+    // (esto se maneja en el servicio)
+  });
 
 /**
  * Schema para body de POST /accounts/payment
