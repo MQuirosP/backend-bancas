@@ -199,6 +199,25 @@ export const AccountPaymentRepository = {
   },
 
   /**
+   * ✅ NUEVO: Obtiene total de pagos y cobros combinados (no revertidos) de un statement
+   * Suma el valor absoluto de todos los movimientos activos (payment + collection)
+   */
+  async getTotalPaymentsCollections(accountStatementId: string) {
+    const movements = await prisma.accountPayment.findMany({
+      where: {
+        accountStatementId,
+        isReversed: false, // Solo movimientos no revertidos
+      },
+      select: {
+        amount: true,
+      },
+    });
+
+    // Sumar el valor absoluto de todos los montos
+    return movements.reduce((sum, m) => sum + Math.abs(m.amount), 0);
+  },
+
+  /**
    * Obtiene todos los pagos/cobros de un statement (para historial)
    */
   async findByStatementId(accountStatementId: string) {
@@ -220,9 +239,9 @@ export const AccountPaymentRepository = {
 
   /**
    * ✅ OPTIMIZACIÓN: Obtiene totales de pagos y cobros para múltiples statements en una sola query
-   * Retorna un Map<statementId, { totalPaid, totalCollected }>
+   * Retorna un Map<statementId, { totalPaid, totalCollected, totalPaymentsCollections }>
    */
-  async getTotalsBatch(accountStatementIds: string[]): Promise<Map<string, { totalPaid: number; totalCollected: number }>> {
+  async getTotalsBatch(accountStatementIds: string[]): Promise<Map<string, { totalPaid: number; totalCollected: number; totalPaymentsCollections: number }>> {
     if (accountStatementIds.length === 0) {
       return new Map();
     }
@@ -241,21 +260,24 @@ export const AccountPaymentRepository = {
     });
 
     // Agrupar por statementId y tipo
-    const totalsMap = new Map<string, { totalPaid: number; totalCollected: number }>();
+    const totalsMap = new Map<string, { totalPaid: number; totalCollected: number; totalPaymentsCollections: number }>();
     
     // Inicializar todos los statements con 0
     for (const id of accountStatementIds) {
-      totalsMap.set(id, { totalPaid: 0, totalCollected: 0 });
+      totalsMap.set(id, { totalPaid: 0, totalCollected: 0, totalPaymentsCollections: 0 });
     }
 
     // Sumar los montos
     for (const payment of payments) {
-      const totals = totalsMap.get(payment.accountStatementId) || { totalPaid: 0, totalCollected: 0 };
+      const totals = totalsMap.get(payment.accountStatementId) || { totalPaid: 0, totalCollected: 0, totalPaymentsCollections: 0 };
+      const absAmount = Math.abs(payment.amount);
       if (payment.type === "payment") {
         totals.totalPaid += payment.amount;
       } else if (payment.type === "collection") {
         totals.totalCollected += payment.amount;
       }
+      // ✅ NUEVO: Sumar valor absoluto para totalPaymentsCollections
+      totals.totalPaymentsCollections += absAmount;
       totalsMap.set(payment.accountStatementId, totals);
     }
 

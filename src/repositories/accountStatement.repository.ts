@@ -88,11 +88,14 @@ export const AccountStatementRepository = {
       month,
     };
 
+    // ✅ CRÍTICO: Asegurar que cuando se busca por ventanaId, vendedorId es null, y viceversa
+    // Esto es necesario porque el constraint requiere que solo uno de los dos sea no-null
     if (filters.ventanaId) {
       where.ventanaId = filters.ventanaId;
-    }
-    if (filters.vendedorId) {
+      where.vendedorId = null; // ✅ Asegurar que vendedorId es null para statements de ventana
+    } else if (filters.vendedorId) {
       where.vendedorId = filters.vendedorId;
+      where.ventanaId = null; // ✅ Asegurar que ventanaId es null para statements de vendedor
     }
 
     return await prisma.accountStatement.findMany({

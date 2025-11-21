@@ -1950,6 +1950,7 @@ export const TicketRepository = {
       dateFrom?: Date;
       dateTo?: Date;
       winnersOnly?: boolean;
+      number?: string; // ✅ NUEVO: Búsqueda por número de jugada (1-2 dígitos)
     } = {}
   ) {
     const skip = (page - 1) * pageSize;
@@ -1982,6 +1983,37 @@ export const TicketRepository = {
           }
         : {}),
     };
+
+    // ✅ NUEVO: Búsqueda exacta por número de jugada
+    // Busca en jugada.number (para NUMERO) y jugada.reventadoNumber (para REVENTADO)
+    // La búsqueda es exacta: si se busca "12", encuentra "12" pero no "123" o "012"
+    if (filters.number) {
+      const numberStr = filters.number.trim();
+      // Normalizar el número: asegurar que tenga formato consistente (sin ceros a la izquierda para comparación)
+      // Pero mantener la búsqueda exacta en la base de datos
+      const existingAnd = where.AND
+        ? Array.isArray(where.AND)
+          ? where.AND
+          : [where.AND]
+        : [];
+      
+      where.AND = [
+        ...existingAnd,
+        {
+          jugadas: {
+            some: {
+              OR: [
+                // Búsqueda en number (para tipo NUMERO)
+                { number: numberStr },
+                // Búsqueda en reventadoNumber (para tipo REVENTADO)
+                { reventadoNumber: numberStr },
+              ],
+              deletedAt: null, // Solo jugadas activas
+            },
+          },
+        },
+      ];
+    }
 
     // búsqueda unificada
     const s = typeof filters.search === "string" ? filters.search.trim() : "";

@@ -1024,6 +1024,8 @@ export async function calculateDayStatement(
       // Esto asegura que los valores reflejen los movimientos actuales
       const recalculatedTotalPaid = await AccountPaymentRepository.getTotalPaid(existingStatement.id);
       const recalculatedTotalCollected = await AccountPaymentRepository.getTotalCollected(existingStatement.id);
+      // ✅ NUEVO: Recalcular totalPaymentsCollections
+      const recalculatedTotalPaymentsCollections = await AccountPaymentRepository.getTotalPaymentsCollections(existingStatement.id);
       // remainingBalance = balance - totalCollected + totalPaid
       // Como balance = 0 (no hay tickets), remainingBalance = 0 - totalCollected + totalPaid
       const recalculatedRemainingBalance = 0 - recalculatedTotalCollected + recalculatedTotalPaid;
@@ -1045,6 +1047,7 @@ export async function calculateDayStatement(
         balance: 0,
         totalPaid: recalculatedTotalPaid,
         totalCollected: recalculatedTotalCollected,
+        totalPaymentsCollections: recalculatedTotalPaymentsCollections, // ✅ NUEVO
         remainingBalance: recalculatedRemainingBalance,
         isSettled: false,
         canEdit: true,
@@ -1071,6 +1074,7 @@ export async function calculateDayStatement(
       balance: 0,
       totalPaid: 0,
       totalCollected: 0,
+      totalPaymentsCollections: 0, // ✅ NUEVO
       remainingBalance: 0,
       isSettled: false, // No está saldado si no hay tickets
       canEdit: true,
@@ -1130,6 +1134,8 @@ export async function calculateDayStatement(
   // Obtener total pagado y cobrado después de crear el statement
   const totalPaid = await AccountPaymentRepository.getTotalPaid(finalStatement.id);
   const totalCollected = await AccountPaymentRepository.getTotalCollected(finalStatement.id);
+  // ✅ NUEVO: Obtener total de pagos y cobros combinados (no revertidos)
+  const totalPaymentsCollections = await AccountPaymentRepository.getTotalPaymentsCollections(finalStatement.id);
 
   // Calcular saldo restante: remainingBalance = balance - totalCollected + totalPaid
   // Lógica:
@@ -1167,6 +1173,7 @@ export async function calculateDayStatement(
     balance,
     totalPaid,
     totalCollected, // Agregar totalCollected al objeto retornado
+    totalPaymentsCollections, // ✅ NUEVO: Total de pagos y cobros combinados (no revertidos)
     remainingBalance,
     isSettled,
     canEdit,
@@ -1330,9 +1337,10 @@ async function getStatementFromMaterializedView(
       const statement = statementsMap.get(dateKey);
       if (!statement) return null;
       
-      const totals = totalsBatch.get(statement.id) || { totalPaid: 0, totalCollected: 0 };
+      const totals = totalsBatch.get(statement.id) || { totalPaid: 0, totalCollected: 0, totalPaymentsCollections: 0 };
       const verifiedTotalPaid = totals.totalPaid;
       const verifiedTotalCollected = totals.totalCollected;
+      const verifiedTotalPaymentsCollections = totals.totalPaymentsCollections; // ✅ NUEVO
       const verifiedRemainingBalance = summary.balance - verifiedTotalCollected + verifiedTotalPaid;
       
       // Preparar actualización si es necesario
@@ -1359,6 +1367,7 @@ async function getStatementFromMaterializedView(
         balance: summary.balance,
         totalPaid: verifiedTotalPaid,
         totalCollected: verifiedTotalCollected,
+        totalPaymentsCollections: verifiedTotalPaymentsCollections, // ✅ NUEVO: Total de pagos y cobros combinados (no revertidos)
         remainingBalance: verifiedRemainingBalance,
         isSettled: calculateIsSettled(
           summary.ticket_count,
@@ -2260,15 +2269,24 @@ export const AccountsService = {
       // ✅ Filtrar DIRECTAMENTE por rango de fechas cuando date está presente
       // NO procesar el mes completo
       // startDateStr y endDateStr ya están definidos arriba
-      statementsWithRelations = await prisma.accountStatement.findMany({
-        where: {
-          date: {
-            gte: new Date(startDateStr + "T00:00:00.000Z"),
-            lte: new Date(endDateStr + "T23:59:59.999Z"),
-          },
-          ...(ventanaId ? { ventanaId } : {}),
-          ...(vendedorId ? { vendedorId } : {}),
+      // ✅ CRÍTICO: Asegurar que cuando dimension=vendedor, ventanaId=null, y viceversa
+      const whereClause: any = {
+        date: {
+          gte: new Date(startDateStr + "T00:00:00.000Z"),
+          lte: new Date(endDateStr + "T23:59:59.999Z"),
         },
+      };
+      
+      if (dimension === "ventana" && ventanaId) {
+        whereClause.ventanaId = ventanaId;
+        whereClause.vendedorId = null; // ✅ Asegurar que vendedorId es null para statements de ventana
+      } else if (dimension === "vendedor" && vendedorId) {
+        whereClause.vendedorId = vendedorId;
+        whereClause.ventanaId = null; // ✅ Asegurar que ventanaId es null para statements de vendedor
+      }
+      
+      statementsWithRelations = await prisma.accountStatement.findMany({
+        where: whereClause,
         orderBy: {
           date: sort as "asc" | "desc",
         },
@@ -2446,9 +2464,10 @@ export const AccountsService = {
         const statementWithRelations = statementsMap.get(dateKey);
 
         // ✅ OPTIMIZACIÓN: Usar valores del batch en lugar de queries individuales
-        const totals = totalsBatch.get(s.id) || { totalPaid: 0, totalCollected: 0 };
+        const totals = totalsBatch.get(s.id) || { totalPaid: 0, totalCollected: 0, totalPaymentsCollections: 0 };
         const verifiedTotalPaid = totals.totalPaid;
         const verifiedTotalCollected = totals.totalCollected;
+        const verifiedTotalPaymentsCollections = totals.totalPaymentsCollections; // ✅ NUEVO
         // Recalcular remainingBalance con los valores verificados
         const verifiedRemainingBalance = s.balance - verifiedTotalCollected + verifiedTotalPaid;
         
@@ -2479,6 +2498,7 @@ export const AccountsService = {
           balance: s.balance,
           totalPaid: verifiedTotalPaid, // ✅ Usar valores verificados desde movimientos
           totalCollected: verifiedTotalCollected, // ✅ Usar valores verificados desde movimientos
+          totalPaymentsCollections: verifiedTotalPaymentsCollections, // ✅ NUEVO: Total de pagos y cobros combinados (no revertidos)
           remainingBalance: verifiedRemainingBalance, // ✅ Usar valores verificados
           isSettled: s.isSettled,
           canEdit: s.canEdit,
