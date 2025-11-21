@@ -68,6 +68,9 @@ export const ListTicketsQuerySchema = z
     scope: z.enum(["mine", "all"]).optional().default("mine"),
     winnersOnly: z.coerce.boolean().optional(),
 
+    // ✅ NUEVO: Búsqueda por número de jugada (1-2 dígitos, búsqueda exacta)
+    number: z.string().regex(/^\d{1,2}$/, "El número debe ser de 1-2 dígitos (0-99)").optional(),
+
     // Filtros de fecha (STANDARDIZADO - mismo patrón que Venta/Dashboard)
     // Fechas: date (today|yesterday|week|month|year|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),

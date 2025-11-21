@@ -25,7 +25,7 @@ export const TicketController = {
   },
 
   async list(req: AuthenticatedRequest, res: Response) {
-    const { page = 1, pageSize = 10, scope = "mine", date = "today", fromDate, toDate, ...rest } = req.query as any;
+    const { page = 1, pageSize = 10, scope = "mine", date = "today", fromDate, toDate, number, ...rest } = req.query as any;
 
     const me = req.user!;
 
@@ -63,7 +63,8 @@ export const TicketController = {
       ...(dateRange ? {
         dateFrom: dateRange.fromAt,
         dateTo: dateRange.toAt
-      } : {})
+      } : {}),
+      ...(number ? { number } : {}), // ✅ NUEVO: Pasar parámetro number al repositorio
     };
 
     // Repository expects 'userId' but RBAC returns 'vendedorId'
