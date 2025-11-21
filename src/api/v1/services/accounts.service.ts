@@ -1658,50 +1658,81 @@ export const AccountsService = {
       if (date) {
         // ✅ Filtrar DIRECTAMENTE por rango de fechas cuando date está presente
         // NO procesar el mes completo
-        // ⚠️ CRÍTICO: Convertir fechas UTC a CR antes de usar en query
+        // ⚠️ CRÍTICO: El campo `date` en AccountStatement es DATE (sin hora), representando días calendario en CR
+        // NO usar comparaciones con timestamps UTC, usar directamente las fechas CR como strings
         const startDateStr = toCRDateString(startDate);
         const endDateStr = toCRDateString(endDate);
         
-        // ⚠️ CRÍTICO: startDateStr y endDateStr ya están en formato CR (YYYY-MM-DD)
-        // Convertir a Date UTC para la query de Prisma (que espera Date objects)
-        // startDateStr representa el día en CR, necesitamos el instante UTC correspondiente
-        // Usar la misma lógica que resolveDateRange: 00:00:00 CR = 06:00:00 UTC del mismo día
-        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-        const startDateUTC = new Date(Date.UTC(startYear, startMonth - 1, startDay, 6, 0, 0, 0));
-        // ⚠️ CRÍTICO: Usar límite exclusivo para excluir el inicio del día siguiente
-        // endDateStr representa el último día incluido en CR
-        // Para excluir datos del día siguiente, usar el inicio del día siguiente (exclusivo)
-        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-        const endDateNextDayStart = new Date(Date.UTC(endYear, endMonth - 1, endDay + 1, 6, 0, 0, 0)); // Inicio del día siguiente en CR (exclusivo)
-        const endDateUTC = endDateNextDayStart; // Este será el límite exclusivo (usar `lt` en la query)
-        // ⚠️ CRÍTICO: Usar `lt` (less than) para endDateUTC para excluir el inicio del día siguiente
-        statementsWithRelations = (await prisma.accountStatement.findMany({
-          where: {
-            date: {
-              gte: startDateUTC,
-              lt: endDateUTC, // ⚠️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
-            },
-          },
-          orderBy: {
-            date: sort as "asc" | "desc",
-          },
-          include: {
-            ventana: {
-              select: {
-                id: true,
-                name: true,
-                code: true,
-              },
-            },
-            vendedor: {
-              select: {
-                id: true,
-                name: true,
-                code: true,
-              },
-            },
-          },
-        })) as typeof statementsWithRelations;
+        // ⚠️ CRÍTICO: El campo `date` en AccountStatement es DATE (sin hora), representando días calendario en CR
+        // Para "yesterday": startDateStr = "2025-11-19", endDateStr = "2025-11-19"
+        // Solo queremos statements con date = "2025-11-19", NO "2025-11-20"
+        // Usar comparación directa de DATE en SQL, no timestamps UTC
+        const dateFilter = startDateStr === endDateStr
+          ? Prisma.sql`s.date = ${startDateStr}::date`  // Si es un solo día, usar igualdad exacta
+          : Prisma.sql`s.date >= ${startDateStr}::date AND s.date <= ${endDateStr}::date`;  // Si es un rango, usar >= y <=
+        
+        statementsWithRelations = (await prisma.$queryRaw<typeof statementsWithRelations>`
+          SELECT 
+            s.id,
+            s.date,
+            s."ventanaId",
+            s."vendedorId",
+            s."totalSales",
+            s."totalPayouts",
+            s."listeroCommission",
+            s."vendedorCommission",
+            s.balance,
+            s."totalPaid",
+            s."totalCollected",
+            s."remainingBalance",
+            s."isSettled",
+            s."canEdit",
+            s."ticketCount",
+            s."createdAt",
+            s."updatedAt",
+            v.id as "ventana.id",
+            v.name as "ventana.name",
+            v.code as "ventana.code",
+            u.id as "vendedor.id",
+            u.name as "vendedor.name",
+            u.code as "vendedor.code"
+          FROM "AccountStatement" s
+          LEFT JOIN "Ventana" v ON v.id = s."ventanaId"
+          LEFT JOIN "User" u ON u.id = s."vendedorId"
+          WHERE ${dateFilter}
+          ORDER BY s.date ${sort === "desc" ? Prisma.sql`DESC` : Prisma.sql`ASC`}
+        `) as typeof statementsWithRelations;
+        
+        // Convertir resultados a formato esperado
+        statementsWithRelations = statementsWithRelations.map((row: any) => ({
+          id: row.id,
+          date: row.date,
+          ventanaId: row.ventanaId,
+          vendedorId: row.vendedorId,
+          totalSales: row.totalSales,
+          totalPayouts: row.totalPayouts,
+          listeroCommission: row.listeroCommission,
+          vendedorCommission: row.vendedorCommission,
+          balance: row.balance,
+          totalPaid: row.totalPaid,
+          totalCollected: row.totalCollected,
+          remainingBalance: row.remainingBalance,
+          isSettled: row.isSettled,
+          canEdit: row.canEdit,
+          ticketCount: row.ticketCount,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          ventana: row["ventana.id"] ? {
+            id: row["ventana.id"],
+            name: row["ventana.name"],
+            code: row["ventana.code"],
+          } : null,
+          vendedor: row["vendedor.id"] ? {
+            id: row["vendedor.id"],
+            name: row["vendedor.name"],
+            code: row["vendedor.code"],
+          } : null,
+        }));
       } else {
         // Solo usar findByMonth si date NO está presente (compatibilidad hacia atrás)
         statementsWithRelations = (await AccountStatementRepository.findByMonth(
