@@ -76,6 +76,12 @@ export const EvaluatedSummaryQuerySchema = z.object({
   // status puede ser una lista separada por comas: "EVALUATED,OPEN" o un solo valor
   // Por defecto filtra por EVALUATED y OPEN
   status: z.string().optional(), // Ej: "EVALUATED", "OPEN", "EVALUATED,OPEN"
+  // ticketStatus: lista separada por comas de estados de ticket permitidos
+  // Ej: "ACTIVE,EVALUATED,RESTORED"
+  ticketStatus: z.string().optional(), // Ej: "ACTIVE", "EVALUATED", "ACTIVE,EVALUATED,RESTORED"
+  // excludeTicketStatus: lista separada por comas de estados de ticket a excluir
+  // Ej: "CANCELLED"
+  excludeTicketStatus: z.string().optional(), // Ej: "CANCELLED", "CANCELLED,RESTORED"
   _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
 
