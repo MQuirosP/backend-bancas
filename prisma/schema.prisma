@@ -91,7 +91,8 @@ model User {
   activities              ActivityLog[]
   refreshTokens           RefreshToken[]
   restrictionRules        RestrictionRule[]
-  ticketsCreated          Ticket[]
+  tickets                 Ticket[]             @relation("TicketVendedor")
+  ticketsCreated          Ticket[]             @relation("TicketCreatedBy")
   ticketsPaid             Ticket[]             @relation("TicketPaidBy")
   TicketPayment           TicketPayment[]
   ventana                 Ventana?             @relation(fields: [ventanaId], references: [id])
@@ -174,6 +175,10 @@ model Ticket {
   sorteoId      String       @db.Uuid
   clienteNombre String?      @default("CLIENTE CONTADO") @db.VarChar(100)
 
+  // Campos de auditoría: quién creó el ticket
+  createdBy     String?      @db.Uuid // userId del usuario que creó el ticket
+  createdByRole Role?        // Rol del usuario que creó el ticket ('ADMIN' | 'VENTANA' | 'VENDEDOR')
+
   // Campos de pago unificados
   totalPayout     Float?    @default(0) // Total de premios ganados
   totalPaid       Float?    @default(0) // Total pagado acumulado
@@ -188,15 +193,17 @@ model Ticket {
   jugadas       Jugada[]
   loteria       Loteria         @relation(fields: [loteriaId], references: [id])
   sorteo        Sorteo          @relation(fields: [sorteoId], references: [id])
-  vendedor      User            @relation(fields: [vendedorId], references: [id])
+  vendedor      User            @relation("TicketVendedor", fields: [vendedorId], references: [id])
   ventana       Ventana         @relation(fields: [ventanaId], references: [id])
   paidBy        User?           @relation("TicketPaidBy", fields: [paidById], references: [id])
+  createdByUser User?           @relation("TicketCreatedBy", fields: [createdBy], references: [id])
   TicketPayment TicketPayment[] // Mantenido para auditoría
 
   @@index([sorteoId])
   @@index([vendedorId, createdAt])
   @@index([status, isWinner])
   @@index([paidById])
+  @@index([createdBy])
 }
 
 /// Contador diario de tickets por ventana basado en businessDate (CR)
