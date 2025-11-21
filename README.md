@@ -28,6 +28,14 @@ Notas:
 > **Backend modular y escalable** para la gestión integral de bancas de lotería.  
 > Desarrollado con **TypeScript, Express y Prisma ORM**, bajo arquitectura por capas, validaciones estrictas (`Zod`) y trazabilidad total con `ActivityLog`.
 
+## ⚠️ ESTÁNDAR CRÍTICO: ZONA HORARIA
+
+**TODAS las fechas en este proyecto se manejan en hora LOCAL de Costa Rica (UTC-6).**
+
+**NUNCA usar `toISOString().split('T')[0]` directamente en fechas UTC sin convertir primero a CR.**
+
+Ver documentación completa en: [`docs/ESTANDAR_ZONA_HORARIA_COSTA_RICA.md`](docs/ESTANDAR_ZONA_HORARIA_COSTA_RICA.md)
+
 ---
 
 ## 🚀 Tecnologías Base

@@ -26,7 +26,41 @@ interface AccountsFilters {
   sort?: "asc" | "desc";
 }
 
+/**
+ * ⚠️ ESTÁNDAR CRÍTICO: ZONA HORARIA COSTA RICA
+ * 
+ * TODAS las fechas en este proyecto se manejan en hora LOCAL de Costa Rica (UTC-6).
+ * NUNCA usar toISOString().split('T')[0] directamente en fechas UTC sin convertir primero a CR.
+ * 
+ * Reglas:
+ * - startDate/endDate de resolveDateRange son instantes UTC que representan días en CR
+ * - Para extraer la fecha CR de un Date UTC: convertir primero a CR, luego extraer YYYY-MM-DD
+ * - La base de datos almacena fechas como DATE (sin hora), representando días calendario en CR
+ * - Siempre convertir a CR antes de comparar o formatear fechas
+ */
 const COSTA_RICA_UTC_OFFSET_HOURS = 6; // Costa Rica está en UTC-6, así que 00:00 local = 06:00 UTC
+const COSTA_RICA_UTC_OFFSET_MS = COSTA_RICA_UTC_OFFSET_HOURS * 60 * 60 * 1000;
+
+/**
+ * Convierte un Date UTC a fecha calendario en CR (YYYY-MM-DD)
+ * 
+ * ⚠️ CRÍTICO: Usar esta función cuando necesites extraer la fecha CR de un Date UTC
+ * 
+ * @param date Date en UTC que representa un instante en CR
+ * @returns String YYYY-MM-DD representando el día calendario en CR
+ * 
+ * Ejemplo:
+ * - Input: Date('2025-11-20T05:59:59.999Z') (fin del día 19 en CR)
+ * - Output: '2025-11-19' (día correcto en CR)
+ */
+function toCRDateString(date: Date): string {
+  // Convertir UTC a CR: sumar 6 horas para obtener la fecha en CR
+  const crDate = new Date(date.getTime() + COSTA_RICA_UTC_OFFSET_MS);
+  const year = crDate.getUTCFullYear();
+  const month = String(crDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(crDate.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 function toCostaRicaISODate(date: Date): string {
   return new Date(
@@ -301,20 +335,24 @@ function buildTicketDateFilter(date: Date): any {
   // createdAt está en UTC, pero representa horas en CR
   // 00:00 CR = 06:00 UTC del mismo día calendario
   // 23:59:59.999 CR = 05:59:59.999 UTC del día siguiente
+  // ⚠️ CRÍTICO: Usar límite exclusivo para excluir el inicio del día siguiente
+  // Para un día específico: desde 06:00 UTC hasta (pero no incluyendo) 06:00 UTC del día siguiente
   const createdAtStart = new Date(Date.UTC(year, month, day, 6, 0, 0, 0)); // 00:00 CR
-  const createdAtEnd = new Date(Date.UTC(year, month, day + 1, 5, 59, 59, 999)); // 23:59:59.999 CR
+  const createdAtEndExclusive = new Date(Date.UTC(year, month, day + 1, 6, 0, 0, 0)); // 00:00 CR del día siguiente (exclusivo)
 
   return {
     OR: [
       // Prioridad: businessDate (fecha de negocio correcta)
       { businessDate: businessDateStart },
       // Fallback: createdAt para tickets antiguos sin businessDate
-      // Convertir rango de CR a UTC: 00:00-23:59:59.999 CR = 06:00 UTC - 05:59:59.999 UTC del día siguiente
+      // ⚠️ CRÍTICO: Usar `lt` (less than) en lugar de `lte` para excluir el inicio del día siguiente
+      // Convertir rango de CR a UTC: 00:00 CR hasta (pero no incluyendo) 00:00 CR del día siguiente
+      // = 06:00 UTC hasta (pero no incluyendo) 06:00 UTC del día siguiente
       {
         businessDate: null,
         createdAt: {
           gte: createdAtStart,
-          lte: createdAtEnd,
+          lt: createdAtEndExclusive, // ⚠️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
         },
       },
     ],
@@ -424,10 +462,25 @@ async function getDailySummariesFromMaterializedView(
   balance: number;
 }>> {
   try {
+    // ⚠️ CRÍTICO: Convertir fechas UTC a fechas CR antes de usar en SQL
+    // startDate y endDate son instantes UTC que representan días en CR
+    // NO usar toISOString().split('T')[0] directamente (extrae fecha UTC, no CR)
+    const startDateCR = toCRDateString(startDate);
+    const endDateCR = toCRDateString(endDate);
+    
+    // ⚠️ CRÍTICO: Usar límite exclusivo para excluir el inicio del día siguiente
+    // endDate representa el fin del último día incluido (ej: 2025-11-20T05:59:59.999Z = fin del 19 en CR)
+    // Para excluir datos del día siguiente, usar el día siguiente (exclusivo) en SQL
+    // Si endDateCR es '2025-11-19', queremos excluir '2025-11-20', entonces usamos date < '2025-11-20'::date
+    const [endYear, endMonth, endDay] = endDateCR.split('-').map(Number);
+    const endDateObj = new Date(Date.UTC(endYear, endMonth - 1, endDay));
+    endDateObj.setUTCDate(endDateObj.getUTCDate() + 1); // Día siguiente
+    const endDateNextDayCR = `${endDateObj.getUTCFullYear()}-${String(endDateObj.getUTCMonth() + 1).padStart(2, '0')}-${String(endDateObj.getUTCDate()).padStart(2, '0')}`;
+    
     // Construir condiciones WHERE dinámicamente
     const conditions: string[] = [
-      `date >= '${startDate.toISOString().split('T')[0]}'::date`,
-      `date <= '${endDate.toISOString().split('T')[0]}'::date`,
+      `date >= '${startDateCR}'::date`,
+      `date < '${endDateNextDayCR}'::date`, // ⚠️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
     ];
 
     if (dimension === "ventana" && ventanaId) {
@@ -488,7 +541,10 @@ async function getDailySummariesFromMaterializedView(
     }>();
 
     for (const summary of summaries) {
-      const dateKey = summary.date.toISOString().split("T")[0];
+      // ⚠️ CRÍTICO: summary.date viene de la BD como DATE (sin hora), representando un día calendario en CR
+      // Usar toCRDateString para obtener la fecha CR correcta (aunque summary.date ya debería estar en CR)
+      // Esto asegura consistencia con el resto del código
+      const dateKey = toCRDateString(summary.date);
       resultMap.set(dateKey, {
         date: summary.date,
         ventanaId: summary.ventanaId,
@@ -1241,7 +1297,9 @@ async function getStatementFromMaterializedView(
   
   // Obtener statements existentes o crearlos
   for (const summary of materializedSummaries.values()) {
-    const dateKey = summary.date.toISOString().split("T")[0];
+    // ⚠️ CRÍTICO: summary.date viene de la BD como DATE (sin hora), representando un día calendario en CR
+    // Usar toCRDateString para obtener la fecha CR correcta
+    const dateKey = toCRDateString(summary.date);
     let statement: {
       id: string;
       date: Date;
@@ -1331,8 +1389,50 @@ async function getStatementFromMaterializedView(
   }
   
   // Construir statements desde la vista materializada
+  // ⚠️ CRÍTICO: Filtrar por rango de fechas para asegurar que solo se incluyan datos del período solicitado
+  const startDateCR = toCRDateString(startDate);
+  const endDateCR = toCRDateString(endDate);
+  const [endYear, endMonth, endDay] = endDateCR.split('-').map(Number);
+  const endDateObj = new Date(Date.UTC(endYear, endMonth - 1, endDay));
+  endDateObj.setUTCDate(endDateObj.getUTCDate() + 1);
+  const endDateNextDayCR = `${endDateObj.getUTCFullYear()}-${String(endDateObj.getUTCMonth() + 1).padStart(2, '0')}-${String(endDateObj.getUTCDate()).padStart(2, '0')}`;
+  
   const statementsToUpdate: Array<{ id: string; totalPaid: number; totalCollected: number; remainingBalance: number }> = [];
+  
+  // ⚠️ DEBUG: Log para verificar qué fechas están llegando de la vista materializada
+  const allDateKeys = Array.from(materializedSummaries.keys());
+  logger.info({
+    layer: "service",
+    action: "MATERIALIZED_VIEW_FILTER_DEBUG",
+    payload: {
+      startDateCR,
+      endDateCR,
+      endDateNextDayCR,
+      allDateKeysFromView: allDateKeys,
+      totalEntries: materializedSummaries.size,
+    },
+  });
+  
   const statements = Array.from(materializedSummaries.entries())
+    .filter(([dateKey, summary]) => {
+      // ⚠️ CRÍTICO: Filtrar por fecha CR para asegurar que solo se incluyan datos del rango solicitado
+      // dateKey ya está en formato CR (construido con toCRDateString en getDailySummariesFromMaterializedView)
+      // Usar dateKey directamente en lugar de recalcular summaryDateCR para consistencia
+      const passesFilter = dateKey >= startDateCR && dateKey < endDateNextDayCR;
+      if (!passesFilter) {
+        logger.warn({
+          layer: "service",
+          action: "MATERIALIZED_VIEW_FILTER_EXCLUDED",
+          payload: {
+            dateKey,
+            startDateCR,
+            endDateNextDayCR,
+            reason: "dateKey fuera del rango",
+          },
+        });
+      }
+      return passesFilter;
+    })
     .map(([dateKey, summary]) => {
       const statement = statementsMap.get(dateKey);
       if (!statement) return null;
@@ -1441,8 +1541,9 @@ async function getStatementFromMaterializedView(
   const meta = {
     month: effectiveMonth, // ✅ Usar effectiveMonth para compatibilidad
     ...(date ? { date, fromDate, toDate } : {}), // ✅ Incluir filtros de período si se usaron
-    startDate: startDate.toISOString().split("T")[0],
-    endDate: endDate.toISOString().split("T")[0],
+    // ⚠️ CRÍTICO: Convertir fechas UTC a CR antes de formatear
+    startDate: toCRDateString(startDate),
+    endDate: toCRDateString(endDate),
     dimension,
     totalDays: daysInMonth,
   };
@@ -1557,14 +1658,28 @@ export const AccountsService = {
       if (date) {
         // ✅ Filtrar DIRECTAMENTE por rango de fechas cuando date está presente
         // NO procesar el mes completo
-        const startDateStr = startDate.toISOString().split("T")[0];
-        const endDateStr = endDate.toISOString().split("T")[0];
+        // ⚠️ CRÍTICO: Convertir fechas UTC a CR antes de usar en query
+        const startDateStr = toCRDateString(startDate);
+        const endDateStr = toCRDateString(endDate);
         
+        // ⚠️ CRÍTICO: startDateStr y endDateStr ya están en formato CR (YYYY-MM-DD)
+        // Convertir a Date UTC para la query de Prisma (que espera Date objects)
+        // startDateStr representa el día en CR, necesitamos el instante UTC correspondiente
+        // Usar la misma lógica que resolveDateRange: 00:00:00 CR = 06:00:00 UTC del mismo día
+        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+        const startDateUTC = new Date(Date.UTC(startYear, startMonth - 1, startDay, 6, 0, 0, 0));
+        // ⚠️ CRÍTICO: Usar límite exclusivo para excluir el inicio del día siguiente
+        // endDateStr representa el último día incluido en CR
+        // Para excluir datos del día siguiente, usar el inicio del día siguiente (exclusivo)
+        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+        const endDateNextDayStart = new Date(Date.UTC(endYear, endMonth - 1, endDay + 1, 6, 0, 0, 0)); // Inicio del día siguiente en CR (exclusivo)
+        const endDateUTC = endDateNextDayStart; // Este será el límite exclusivo (usar `lt` en la query)
+        // ⚠️ CRÍTICO: Usar `lt` (less than) para endDateUTC para excluir el inicio del día siguiente
         statementsWithRelations = (await prisma.accountStatement.findMany({
           where: {
             date: {
-              gte: new Date(startDateStr + "T00:00:00.000Z"),
-              lte: new Date(endDateStr + "T23:59:59.999Z"),
+              gte: startDateUTC,
+              lt: endDateUTC, // ⚠️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
             },
           },
           orderBy: {
@@ -2164,8 +2279,9 @@ export const AccountsService = {
       const meta = {
         month: effectiveMonth, // ✅ Usar effectiveMonth para compatibilidad
         ...(date ? { date, fromDate, toDate } : {}), // ✅ Incluir filtros de período si se usaron
-        startDate: startDate.toISOString().split("T")[0],
-        endDate: endDate.toISOString().split("T")[0],
+        // ⚠️ CRÍTICO: Convertir fechas UTC a CR antes de formatear
+        startDate: toCRDateString(startDate),
+        endDate: toCRDateString(endDate),
         dimension,
         totalDays: daysInMonth,
       };
@@ -2188,14 +2304,18 @@ export const AccountsService = {
     const endDateStr = `${endDateInCR.getUTCFullYear()}-${String(endDateInCR.getUTCMonth() + 1).padStart(2, '0')}-${String(endDateInCR.getUTCDate()).padStart(2, '0')}`;
     
     // Construir filtros para cada día en el rango (solo días que están dentro del rango)
+    // ⚠️ CRÍTICO: endDateStr representa el último día incluido, NO incluir el día siguiente
     const dateFilters: any[] = [];
     const startDay = new Date(startDateStr + "T00:00:00.000Z");
     const endDay = new Date(endDateStr + "T00:00:00.000Z");
     const currentDay = new Date(startDay);
     
+    // ⚠️ CRÍTICO: Usar < en lugar de <= para excluir el día siguiente
     while (currentDay <= endDay) {
       dateFilters.push(buildTicketDateFilter(new Date(currentDay)));
       currentDay.setUTCDate(currentDay.getUTCDate() + 1);
+      // Si el siguiente día sería mayor que endDay, parar (ya procesamos todos los días incluidos)
+      if (currentDay > endDay) break;
     }
 
     const ticketsWithDates = await prisma.ticket.findMany({
@@ -2246,10 +2366,17 @@ export const AccountsService = {
       }
       
       // ✅ CRÍTICO: Solo agregar días que están dentro del rango cuando date está presente
-      const ticketDateStr = ticketDate.toISOString().split("T")[0];
+      // ⚠️ CRÍTICO: ticketDate ya está en formato CR (convertido arriba), pero usar toCRDateString para consistencia
+      // startDateStr y endDateStr ya están en CR (convertidos con toCRDateString arriba)
+      const ticketDateStr = toCRDateString(ticketDate);
       if (date) {
         // Verificar que la fecha del ticket esté dentro del rango
+        // ⚠️ CRÍTICO: Usar < en lugar de <= para endDateStr para excluir el día siguiente
+        // endDateStr representa el último día incluido, pero queremos exclusivo
         if (ticketDateStr >= startDateStr && ticketDateStr <= endDateStr) {
+          // ⚠️ CRÍTICO: Verificación adicional para asegurar que no incluimos datos del día siguiente
+          // Si ticketDateStr es igual a endDateStr, está bien (es el último día incluido)
+          // Pero si es mayor, no debería pasar porque los filtros ya deberían excluirlo
           uniqueDays.add(ticketDateStr);
         }
       } else {
@@ -2268,12 +2395,22 @@ export const AccountsService = {
     if (date) {
       // ✅ Filtrar DIRECTAMENTE por rango de fechas cuando date está presente
       // NO procesar el mes completo
-      // startDateStr y endDateStr ya están definidos arriba
+      // startDateStr y endDateStr ya están definidos arriba (en formato CR)
+      // ⚠️ CRÍTICO: Convertir fechas CR a instantes UTC para la query de Prisma
+      // startDateStr representa el día en CR, necesitamos el instante UTC correspondiente
+      // Usar la misma lógica que resolveDateRange: 00:00:00 CR = 06:00:00 UTC del mismo día
+      const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+      const startDateUTC = new Date(Date.UTC(startYear, startMonth - 1, startDay, 6, 0, 0, 0));
+      // ⚠️ CRÍTICO: Usar límite exclusivo para excluir el inicio del día siguiente
+      // endDateStr representa el último día incluido en CR
+      // Para excluir datos del día siguiente, usar el inicio del día siguiente (exclusivo)
+      const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+      const endDateNextDayStart = new Date(Date.UTC(endYear, endMonth - 1, endDay + 1, 6, 0, 0, 0)); // Inicio del día siguiente en CR (exclusivo)
       // ✅ CRÍTICO: Asegurar que cuando dimension=vendedor, ventanaId=null, y viceversa
       const whereClause: any = {
         date: {
-          gte: new Date(startDateStr + "T00:00:00.000Z"),
-          lte: new Date(endDateStr + "T23:59:59.999Z"),
+          gte: startDateUTC,
+          lt: endDateNextDayStart, // ⚠️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
         },
       };
       
@@ -2576,8 +2713,9 @@ export const AccountsService = {
 
     const meta = {
       month,
-      startDate: startDate.toISOString().split("T")[0],
-      endDate: endDate.toISOString().split("T")[0],
+      // ⚠️ CRÍTICO: Convertir fechas UTC a CR antes de formatear
+      startDate: toCRDateString(startDate),
+      endDate: toCRDateString(endDate),
       dimension,
       totalDays: daysInMonth,
       daysWithStatements: formattedStatements.length,
