@@ -34,8 +34,8 @@ export const SalesService = {
     let dateStr: string;
 
     if (date) {
-      // Parsear fecha YYYY-MM-DD
-      const parsed = new Date(date + "T00:00:00Z");
+      // Parsear fecha YYYY-MM-DD : data  + "T00:00:00Z"
+      const parsed = new Date(date);
       if (isNaN(parsed.getTime())) {
         throw new AppError("Formato de fecha inválido. Use YYYY-MM-DD", 400);
       }
@@ -112,6 +112,7 @@ export const SalesService = {
     };
   },
 };
+
 
 
 
