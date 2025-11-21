@@ -250,7 +250,7 @@ export const TicketRepository = {
   async create(
     data: CreateTicketInput,
     userId: string,
-    options?: { actorRole?: Role }
+    options?: { actorRole?: Role; createdBy?: string; createdByRole?: Role }
   ) {
     const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
     const actorRole = options?.actorRole ?? Role.VENDEDOR;
@@ -1032,6 +1032,8 @@ export const TicketRepository = {
             status: TicketStatus.ACTIVE,
             isActive: true,
             clienteNombre: normalizedClienteNombre,
+            createdBy: options?.createdBy ?? null,
+            createdByRole: options?.createdByRole ?? null,
             jugadas: {
               create: jugadasWithCommissions,
             },
@@ -1160,6 +1162,8 @@ export const TicketRepository = {
       actorRole?: Role;
       commissionContext?: CommissionContext;
       scheduledAt?: Date | null;
+      createdBy?: string;
+      createdByRole?: Role;
     }
   ) {
     const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
@@ -1796,6 +1800,8 @@ export const TicketRepository = {
             status: TicketStatus.ACTIVE,
             isActive: true,
             clienteNombre: normalizedClienteNombre,
+            createdBy: options?.createdBy ?? null,
+            createdByRole: options?.createdByRole ?? null,
           },
         });
 
@@ -1931,6 +1937,9 @@ export const TicketRepository = {
         sorteo: true,
         ventana: true,
         vendedor: true,
+        createdByUser: {
+          select: { id: true, name: true, role: true },
+        },
       },
     });
   },
@@ -2072,12 +2081,15 @@ export const TicketRepository = {
           paymentNotes: true,
           createdAt: true,
           updatedAt: true,
+          createdBy: true,
+          createdByRole: true,
           loteria: { select: { id: true, name: true } },
           sorteo: {
             select: { id: true, name: true, status: true, scheduledAt: true },
           },
           ventana: { select: { id: true, name: true } },
           vendedor: { select: { id: true, name: true, role: true } },
+          createdByUser: { select: { id: true, name: true, role: true } },
           jugadas: {
             select: {
               id: true,

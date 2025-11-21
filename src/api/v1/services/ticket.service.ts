@@ -264,6 +264,21 @@ export const TicketService = {
         };
       });
 
+      // 🧩 Determinar campos de auditoría (createdBy y createdByRole)
+      // Si el vendedor efectivo es diferente al actor autenticado, fue creado por otro
+      let createdBy: string | undefined;
+      let createdByRole: Role | undefined;
+      
+      if (effectiveVendedorId === actor.id) {
+        // Ticket creado por el propio vendedor
+        createdBy = actor.id;
+        createdByRole = Role.VENDEDOR;
+      } else {
+        // Ticket creado por admin/ventana para otro vendedor
+        createdBy = actor.id;
+        createdByRole = actor.role;
+      }
+
       // 🧩 Crear ticket con método optimizado
       const { ticket, warnings } = await TicketRepository.createOptimized(
         {
@@ -277,6 +292,8 @@ export const TicketService = {
         {
           actorRole,
           commissionContext, // Pasar contexto para cálculo rápido
+          createdBy,
+          createdByRole,
           scheduledAt: sorteo.scheduledAt,
         }
       );
