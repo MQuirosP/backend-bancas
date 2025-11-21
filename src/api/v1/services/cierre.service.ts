@@ -154,6 +154,7 @@ export class CierreService {
         WHERE
           t."deletedAt" IS NULL
           AND j."deletedAt" IS NULL
+          AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
           ${whereConditions}
       )
       SELECT
@@ -235,6 +236,7 @@ export class CierreService {
       WHERE
         t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
+        AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
         ${whereConditions}
         AND (
           j.type = 'REVENTADO' OR (
@@ -619,6 +621,7 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
     WHERE
       t."deletedAt" IS NULL
       AND j."deletedAt" IS NULL
+      AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
       ${whereConditions}
       AND j.type = 'NUMERO'
       AND NOT EXISTS (

@@ -123,6 +123,8 @@ export const NumbersSummaryQuerySchema = z
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
     loteriaId: z.uuid().optional(),
     sorteoId: z.uuid().optional(),
+    multiplierId: z.uuid().optional(), // ✅ NUEVO: Filtrar por multiplicador específico
+    status: z.enum(["ACTIVE", "EVALUATED", "PAID", "CANCELLED"]).optional(), // ✅ NUEVO: Filtrar por estado de ticket
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()

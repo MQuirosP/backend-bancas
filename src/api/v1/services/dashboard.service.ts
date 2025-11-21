@@ -117,6 +117,7 @@ interface DashboardSummary {
   totalTickets: number;
   winningTickets: number;
   net: number;
+  margin: number; // ✅ NUEVO: Margen neto
   winRate: number;
 }
 
@@ -378,7 +379,7 @@ async function computeVentanaCommissionFromPolicies(filters: DashboardFilters) {
           betType: jugada.type as "NUMERO" | "REVENTADO",
           finalMultiplierX: jugada.finalMultiplierX ?? null,
         });
-        ventanaAmount = Math.round((jugada.amount * resolution.percent) / 100);
+        ventanaAmount = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
       } catch (err) {
         const fallback = resolveCommission(
           {
@@ -429,8 +430,10 @@ export const DashboardService = {
   /**
    * Calcula ganancia: Sum de comisiones + premium retenido
    * Incluye desglose completo por ventana y lotería
+   * @param filters Filtros de dashboard
+   * @param role Rol del usuario autenticado (para determinar qué comisión restar)
    */
-  async calculateGanancia(filters: DashboardFilters): Promise<GananciaResult> {
+  async calculateGanancia(filters: DashboardFilters, role?: Role): Promise<GananciaResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
     const {
@@ -577,8 +580,19 @@ export const DashboardService = {
     const commissionVentanaRawTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
     const commissionVentanaTotal = commissionVentanaRawTotal + totalVentanaCommission;
     const totalAmount = commissionUserTotal + commissionVentanaTotal;
-    // Calcular ganancia neta incluyendo comisiones de listero y vendedor
-    const totalNet = totalSales - totalPayouts - commissionUserTotal - commissionVentanaTotal;
+    
+    // Calcular ganancia neta según rol y dimensión
+    // Banca (ADMIN) con dimension=ventana/loteria: resta solo commissionVentana
+    // Ventana o dimension=vendedor: resta solo commissionUser
+    // Vendedor: resta solo commissionUser
+    let totalNet: number;
+    if (role === Role.ADMIN && (filters.dimension === 'ventana' || filters.dimension === 'loteria')) {
+      // Banca viendo ventanas o loterías: resta solo comisión de ventana
+      totalNet = totalSales - totalPayouts - commissionVentanaTotal;
+    } else {
+      // Ventana, vendedor, o admin viendo vendedores: resta solo comisión de usuario
+      totalNet = totalSales - totalPayouts - commissionUserTotal;
+    }
     const margin = totalSales > 0 ? (totalNet / totalSales) * 100 : 0;
 
     return {
@@ -598,8 +612,15 @@ export const DashboardService = {
         const commissionVentana =
           (Number(row.commission_ventana) || 0) + (extrasByVentana.get(row.ventana_id) || 0);
         const commissions = commissionUser + commissionVentana;
-        // Calcular ganancia neta incluyendo comisiones de listero y vendedor
-        const net = sales - payout - commissionUser - commissionVentana;
+        // Calcular ganancia neta según rol y dimensión
+        // Banca (ADMIN) con dimension=ventana: resta solo commissionVentana
+        // Ventana: resta solo commissionUser
+        let net: number;
+        if (role === Role.ADMIN && filters.dimension === 'ventana') {
+          net = sales - payout - commissionVentana;
+        } else {
+          net = sales - payout - commissionUser;
+        }
         const ventanaMargin = sales > 0 ? (net / sales) * 100 : 0;
         const winRate = tickets > 0 ? (winners / tickets) * 100 : 0;
 
@@ -629,8 +650,8 @@ export const DashboardService = {
         const commissionVentana =
           (Number(row.commission_ventana) || 0) + (extrasByLoteria.get(row.loteria_id) || 0);
         const commissions = commissionUser + commissionVentana;
-        // Calcular ganancia neta incluyendo comisiones de listero y vendedor
-        const net = sales - payout - commissionUser - commissionVentana;
+        // Calcular ganancia neta: Banca viendo loterías siempre resta solo commissionVentana
+        const net = sales - payout - commissionVentana;
         const loteriaMargin = sales > 0 ? (net / sales) * 100 : 0;
 
         return {
@@ -1132,8 +1153,10 @@ export const DashboardService = {
 
   /**
    * Resumen general: totales de ventas, pagos, comisiones
+   * @param filters Filtros de dashboard
+   * @param role Rol del usuario autenticado (para determinar qué comisión restar)
    */
-  async getSummary(filters: DashboardFilters): Promise<DashboardSummary> {
+  async getSummary(filters: DashboardFilters, role?: Role): Promise<DashboardSummary> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
     const { totalVentanaCommission } = await computeVentanaCommissionFromPolicies(filters);
@@ -1202,8 +1225,13 @@ export const DashboardService = {
     const commissionUser = Number(summary.commission_user) || 0;
     const commissionVentana = (Number(summary.commission_ventana) || 0) + totalVentanaCommission;
     const totalCommissions = commissionUser + commissionVentana;
-    // Calcular ganancia neta incluyendo comisiones de listero y vendedor
-    const net = totalSales - totalPayouts - commissionUser - commissionVentana;
+    // ✅ CORRECCIÓN: Calcular ganancia neta según rol
+    // Para ADMIN: resta commissionVentana (comisión del listero)
+    // Para VENTANA/VENDEDOR: resta commissionUser (comisión del vendedor)
+    const net = role === Role.ADMIN
+      ? totalSales - totalPayouts - commissionVentana
+      : totalSales - totalPayouts - commissionUser;
+    const margin = totalSales > 0 ? (net / totalSales) * 100 : 0;
     const winRate = totalTickets > 0 ? (winningTickets / totalTickets) * 100 : 0;
 
     return {
@@ -1216,19 +1244,22 @@ export const DashboardService = {
       totalTickets,
       winningTickets,
       net,
+      margin: parseFloat(margin.toFixed(2)), // ✅ NUEVO: Margen neto
       winRate: parseFloat(winRate.toFixed(2)),
     };
   },
 
   /**
    * Dashboard completo: combina ganancia, CxC, CxP y resumen
+   * @param filters Filtros de dashboard
+   * @param role Rol del usuario autenticado (para determinar qué comisión restar)
    */
-  async getFullDashboard(filters: DashboardFilters) {
+  async getFullDashboard(filters: DashboardFilters, role?: Role) {
     const startTime = Date.now();
     let queryCount = 0;
 
     const [ganancia, cxc, cxp, summary, timeSeries, exposure, previousPeriod] = await Promise.all([
-      this.calculateGanancia(filters).then((r) => {
+      this.calculateGanancia(filters, role).then((r) => {
         queryCount += 2;
         return r;
       }),
@@ -1240,7 +1271,7 @@ export const DashboardService = {
         queryCount += 1;
         return r;
       }),
-      this.getSummary(filters).then((r) => {
+      this.getSummary(filters, role).then((r) => {
         queryCount += 1;
         return r;
       }),
@@ -1252,7 +1283,7 @@ export const DashboardService = {
         queryCount += 3;
         return r;
       }),
-      this.calculatePreviousPeriod(filters).then((r) => {
+      this.calculatePreviousPeriod(filters, role).then((r) => {
         queryCount += 1;
         return r;
       }),
@@ -1627,8 +1658,10 @@ export const DashboardService = {
 
   /**
    * Período anterior: para comparación de crecimiento
+   * @param filters Filtros de dashboard
+   * @param role Rol del usuario autenticado (para determinar qué comisión restar)
    */
-  async calculatePreviousPeriod(filters: DashboardFilters) {
+  async calculatePreviousPeriod(filters: DashboardFilters, role?: Role) {
     const diffMs = filters.toDate.getTime() - filters.fromDate.getTime();
     const previousFromDate = new Date(filters.fromDate.getTime() - diffMs);
     const previousToDate = new Date(filters.fromDate.getTime() - 1);
@@ -1702,14 +1735,26 @@ export const DashboardService = {
       commission_ventana: 0,
     };
 
+    const sales = Number(row.total_sales) || 0;
+    const payouts = Number(row.total_payouts) || 0;
     const commissionUser = Number(row.commission_user) || 0;
     const commissionVentanaRaw = Number(row.commission_ventana) || 0;
     const commissionVentana = commissionVentanaRaw + totalVentanaCommission;
     const totalCommissions = commissionUser + commissionVentana;
+    
+    // ✅ CORRECCIÓN: Calcular ganancia neta según rol
+    // Para ADMIN: resta commissionVentana (comisión del listero)
+    // Para VENTANA/VENDEDOR: resta commissionUser (comisión del vendedor)
+    const net = role === Role.ADMIN
+      ? sales - payouts - commissionVentana
+      : sales - payouts - commissionUser;
+    const margin = sales > 0 ? (net / sales) * 100 : 0;
 
     return {
-      sales: Number(row.total_sales) || 0,
-      payouts: Number(row.total_payouts) || 0,
+      sales,
+      payouts,
+      net, // ✅ NUEVO: Ganancia neta del período anterior
+      margin: parseFloat(margin.toFixed(2)), // ✅ NUEVO: Margen neto del período anterior
       tickets: Number(row.total_tickets) || 0,
       winners: Number(row.winning_tickets) || 0,
       commissions: totalCommissions,

@@ -54,6 +54,7 @@ export const CommissionsService = {
     totalPayouts: number;
     commissionListero?: number;
     commissionVendedor?: number;
+    net?: number; // ✅ NUEVO: Ganancia neta (totalSales - totalPayouts - commissionVendedor)
   }>> {
     try {
       // Resolver rango de fechas
@@ -306,6 +307,9 @@ export const CommissionsService = {
               totalPayouts: entry.totalPayouts,
               commissionListero: entry.commissionListero,
               commissionVendedor: entry.commissionVendedor,
+              // ✅ NUEVO: Ganancia neta para VENTANA: ventas - premios - comisión vendedor
+              // commissionListero es informativo (no se resta)
+              net: entry.totalSales - entry.totalPayouts - entry.commissionVendedor,
             };
           }).sort((a, b) => {
             // Ordenar por fecha DESC, luego por nombre de ventana ASC
@@ -503,6 +507,9 @@ export const CommissionsService = {
               totalPayouts: entry.totalPayouts,
               commissionListero: entry.commissionListero,
               commissionVendedor: entry.commissionVendedor,
+              // ✅ NUEVO: Ganancia neta para VENTANA: ventas - premios - comisión vendedor
+              // commissionListero es informativo (no se resta)
+              net: entry.totalSales - entry.totalPayouts - entry.commissionVendedor,
             };
           }).sort((a, b) => {
             // Ordenar por fecha DESC, luego por nombre de ventana ASC
@@ -527,6 +534,8 @@ export const CommissionsService = {
             totalPayouts: parseFloat(r.total_payouts),
             commissionListero: 0,
             commissionVendedor,
+            // ✅ NUEVO: Ganancia neta para VENTANA: ventas - premios - comisión vendedor
+            net: parseFloat(r.total_sales) - parseFloat(r.total_payouts) - commissionVendedor,
           };
         });
       } else if (filters.dimension === "vendedor") {
@@ -586,6 +595,8 @@ export const CommissionsService = {
             totalPayouts: parseFloat(r.total_payouts),
             commissionListero: 0,
             commissionVendedor,
+            // ✅ Para VENDEDOR: ganancia neta = ventas - premios - su propia comisión
+            net: parseFloat(r.total_sales) - parseFloat(r.total_payouts) - commissionVendedor,
           };
         });
       } else {

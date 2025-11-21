@@ -22,6 +22,7 @@ router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.ADMIN));
 router.post("/", validateBody(CreateTicketSchema), TicketController.create);
 // IMPORTANTE: Las rutas literales deben ir ANTES de las rutas con parámetros
 router.get("/filter-options", TicketController.getFilterOptions);
+router.get("/numbers-summary/filter-options", TicketController.getNumbersSummaryFilterOptions);
 router.get("/numbers-summary", validateNumbersSummaryQuery, TicketController.numbersSummary);
 router.get("/by-number/:ticketNumber", validateTicketNumberParam, TicketController.getByTicketNumber);
 router.get("/:id", TicketController.getById);

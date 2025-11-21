@@ -67,7 +67,8 @@ export const DashboardController = {
       betType: query.betType,
       interval: query.interval,
       scope: query.scope || 'all',
-    });
+      dimension: query.dimension, // 'ventana' | 'loteria' | 'vendedor'
+    }, req.user!.role); // Pasar el rol del usuario para calcular correctamente la ganancia neta
 
     return success(res, result);
   },
@@ -95,7 +96,8 @@ export const DashboardController = {
       toDate: dateRange.toAt,
       ventanaId,
       bancaId,
-    });
+      dimension: query.dimension, // 'ventana' | 'loteria' | 'vendedor'
+    }, req.user!.role); // Pasar el rol del usuario para calcular correctamente la ganancia neta
 
     return success(res, {
       data: result,
@@ -342,7 +344,8 @@ export const DashboardController = {
       loteriaId: query.loteriaId,
       betType: query.betType,
       scope: query.scope || 'all',
-    });
+      dimension: query.dimension, // 'ventana' | 'loteria' | 'vendedor'
+    }, req.user!.role); // Pasar el rol del usuario para calcular correctamente la ganancia neta
 
     const timestamp = new Date().toISOString().split('T')[0];
     const filename = `dashboard-${timestamp}.${format}`;

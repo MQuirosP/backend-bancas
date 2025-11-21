@@ -19,7 +19,8 @@ export const AccountsController = {
   async getStatement(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
     
-    const { month, scope, dimension, ventanaId, vendedorId, sort } = req.query as any;
+    // ✅ NUEVO: Agregar filtros de período
+    const { month, date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, sort } = req.query as any;
     const user = req.user;
 
     // Validar permisos según rol
@@ -28,13 +29,16 @@ export const AccountsController = {
         throw new AppError("Los vendedores solo pueden ver su propio estado de cuenta", 403, "FORBIDDEN");
       }
       // Forzar vendedorId al usuario actual
-      const filters = {
-        month,
-        scope: "mine" as const,
-        dimension: "vendedor" as const,
-        vendedorId: user.id,
-        sort: sort || "desc",
-      };
+        const filters = {
+          month,
+          date, // ✅ NUEVO
+          fromDate, // ✅ NUEVO
+          toDate, // ✅ NUEVO
+          scope: "mine" as const,
+          dimension: "vendedor" as const,
+          vendedorId: user.id,
+          sort: sort || "desc",
+        };
       const result = await AccountsService.getStatement(filters);
       return success(res, result);
     }
@@ -64,6 +68,9 @@ export const AccountsController = {
         }
         const filters = {
           month,
+          date, // ✅ NUEVO
+          fromDate, // ✅ NUEVO
+          toDate, // ✅ NUEVO
           scope: "mine" as const,
           dimension: "ventana" as const,
           ventanaId: effectiveVentanaId,
@@ -90,6 +97,9 @@ export const AccountsController = {
         }
         const filters = {
           month,
+          date, // ✅ NUEVO
+          fromDate, // ✅ NUEVO
+          toDate, // ✅ NUEVO
           scope: "ventana" as const,
           dimension: "vendedor" as const,
           ventanaId: effectiveVentanaId,
@@ -117,6 +127,9 @@ export const AccountsController = {
       
       const filters: any = {
         month,
+        date, // ✅ NUEVO
+        fromDate, // ✅ NUEVO
+        toDate, // ✅ NUEVO
         scope: scope || "all",
         dimension: dimension || "ventana",
         ventanaId: effectiveFilters.ventanaId,
