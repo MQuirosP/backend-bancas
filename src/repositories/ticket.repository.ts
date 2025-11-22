@@ -2181,15 +2181,23 @@ export const TicketRepository = {
         }
 
         // 3) Actualizar ticket (soft delete + inactivar)
+        // IMPORTANTE: También inactivar todas las jugadas del ticket
         const cancelled = await tx.ticket.update({
           where: { id },
           data: {
             isActive: false,
-
             status: TicketStatus.CANCELLED,
             updatedAt: new Date(),
           },
           include: { jugadas: true },
+        });
+
+        // 4) Inactivar todas las jugadas del ticket cancelado
+        await tx.jugada.updateMany({
+          where: { ticketId: id },
+          data: {
+            isActive: false,
+          },
         });
 
         return cancelled;

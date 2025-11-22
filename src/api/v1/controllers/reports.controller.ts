@@ -135,6 +135,8 @@ export const ReportsController = {
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
+      ticketStatus: query.ticketStatus,
+      excludeTicketStatus: query.excludeTicketStatus,
     });
 
     return success(res, result.data, result.meta);

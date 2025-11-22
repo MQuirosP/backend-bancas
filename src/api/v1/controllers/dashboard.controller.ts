@@ -134,7 +134,7 @@ export const DashboardController = {
       toDate: dateRange.toAt,
       ventanaId,
       bancaId,
-    });
+    }, req.user!.role); // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
 
     return success(res, {
       data: result,
@@ -171,7 +171,7 @@ export const DashboardController = {
       toDate: dateRange.toAt,
       ventanaId,
       bancaId,
-    });
+    }, req.user!.role); // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
 
     return success(res, {
       data: result,

@@ -2,7 +2,7 @@
  * Servicio de reportes de vendedores
  */
 
-import { Prisma } from '@prisma/client';
+import { Prisma, TicketStatus } from '@prisma/client';
 import prisma from '../../../../core/prismaClient';
 import { AppError } from '../../../../core/errors';
 import { resolveDateRange, normalizePagination, calculateChangePercent, calculatePercentage } from '../../utils/reports.utils';
@@ -19,6 +19,8 @@ export const VendedoresReportService = {
     date?: DateToken;
     fromDate?: string;
     toDate?: string;
+    ticketStatus?: string; // Ej: "ACTIVE,EVALUATED,RESTORED"
+    excludeTicketStatus?: string; // Ej: "CANCELLED"
   }): Promise<any> {
     const dateRange = resolveDateRange(
       filters.date || 'today',
@@ -36,7 +38,38 @@ export const VendedoresReportService = {
       throw new AppError('Ventana no encontrada', 404);
     }
 
+    // Construir filtro de status de tickets
+    let ticketStatusFilter: Prisma.Sql = Prisma.empty;
+    
+    if (filters.ticketStatus) {
+      // Parsear string como "ACTIVE,EVALUATED,RESTORED"
+      const statuses = filters.ticketStatus.split(',').map(s => s.trim()).filter(Boolean);
+      if (statuses.length > 0) {
+        const validStatuses = statuses.filter(s => Object.values(TicketStatus).includes(s as TicketStatus));
+        if (validStatuses.length > 0) {
+          ticketStatusFilter = Prisma.sql`AND t.status IN (${Prisma.join(validStatuses.map(s => Prisma.sql`${s}::"TicketStatus"`), ', ')})`;
+        }
+      }
+    } else if (filters.excludeTicketStatus) {
+      // Parsear string como "CANCELLED"
+      const excludedStatuses = filters.excludeTicketStatus.split(',').map(s => s.trim()).filter(Boolean);
+      if (excludedStatuses.length > 0) {
+        const validExcludedStatuses = excludedStatuses.filter(s => Object.values(TicketStatus).includes(s as TicketStatus));
+        if (validExcludedStatuses.length > 0) {
+          ticketStatusFilter = Prisma.sql`AND t.status NOT IN (${Prisma.join(validExcludedStatuses.map(s => Prisma.sql`${s}::"TicketStatus"`), ', ')})`;
+        }
+      }
+    } else {
+      // Por defecto: solo ACTIVE y EVALUATED (excluir CANCELLED)
+      ticketStatusFilter = Prisma.sql`AND t.status IN ('ACTIVE', 'EVALUATED')`;
+    }
+
+    // Convertir fechas a strings en formato CR para comparación con businessDate
+    const fromDateStr = dateRange.fromString; // YYYY-MM-DD
+    const toDateStr = dateRange.toString; // YYYY-MM-DD
+
     // Query optimizada para comisiones por vendedor
+    // Usa businessDate (o createdAt convertido a CR) para filtrar por fecha de negocio
     const chartQuery = Prisma.sql`
       SELECT 
         u.id as vendedor_id,
@@ -47,11 +80,15 @@ export const VendedoresReportService = {
         COALESCE(SUM(t."totalAmount"), 0) as ventas_total
       FROM "User" u
       LEFT JOIN "Ticket" t ON t."vendedorId" = u.id 
-        AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        AND t.status = 'ACTIVE'
+        AND (
+          COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
+        ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
         AND t."deletedAt" IS NULL
+        AND t."isActive" = true
+        ${ticketStatusFilter}
       LEFT JOIN "Jugada" j ON j."ticketId" = t.id 
         AND j."deletedAt" IS NULL
+        AND j."isActive" = true
         AND j."commissionOrigin" = 'USER'
       WHERE u.role = 'VENDEDOR'
         AND u."ventanaId" = ${filters.ventanaId}::uuid
