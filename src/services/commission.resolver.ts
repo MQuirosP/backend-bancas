@@ -296,3 +296,94 @@ export function resolveCommission(
     commissionRuleId: null,
   };
 }
+
+/**
+ * Resuelve la comisión del LISTERO (ventana) para una jugada
+ * Prioridad: VENTANA → BANCA (NO incluye USER)
+ * Usado para snapshot de comisión del listero en Jugada
+ */
+export function resolveListeroCommission(
+  input: CommissionMatchInput,
+  ventanaPolicyJson: any,
+  bancaPolicyJson: any
+): CommissionSnapshot {
+  // Intentar resolver desde VENTANA
+  const ventanaPolicy = parseCommissionPolicy(ventanaPolicyJson, "VENTANA");
+  if (ventanaPolicy) {
+    const match = findMatchingRule(ventanaPolicy, input);
+    if (match) {
+      const commissionAmount = parseFloat(((input.amount * match.percent) / 100).toFixed(2));
+      logger.info({
+        layer: "service",
+        action: "LISTERO_COMMISSION_RESOLVED",
+        payload: {
+          origin: "VENTANA",
+          percent: match.percent,
+          ruleId: match.ruleId,
+          amount: commissionAmount,
+          loteriaId: input.loteriaId,
+          betType: input.betType,
+          multiplierX: input.finalMultiplierX,
+        },
+      });
+      return {
+        commissionPercent: match.percent,
+        commissionAmount,
+        commissionOrigin: "VENTANA",
+        commissionRuleId: match.ruleId,
+      };
+    }
+  }
+
+  // Intentar resolver desde BANCA
+  const bancaPolicy = parseCommissionPolicy(bancaPolicyJson, "BANCA");
+  if (bancaPolicy) {
+    const match = findMatchingRule(bancaPolicy, input);
+    if (match) {
+      const commissionAmount = parseFloat(((input.amount * match.percent) / 100).toFixed(2));
+      logger.info({
+        layer: "service",
+        action: "LISTERO_COMMISSION_RESOLVED",
+        payload: {
+          origin: "BANCA",
+          percent: match.percent,
+          ruleId: match.ruleId,
+          amount: commissionAmount,
+          loteriaId: input.loteriaId,
+          betType: input.betType,
+          multiplierX: input.finalMultiplierX,
+        },
+      });
+      return {
+        commissionPercent: match.percent,
+        commissionAmount,
+        commissionOrigin: "BANCA",
+        commissionRuleId: match.ruleId,
+      };
+    }
+  }
+
+  // Log cuando no se encuentra comisión del listero
+  logger.warn({
+    layer: "service",
+    action: "LISTERO_COMMISSION_NOT_FOUND",
+    payload: {
+      loteriaId: input.loteriaId,
+      betType: input.betType,
+      multiplierX: input.finalMultiplierX,
+      amount: input.amount,
+      ventanaPolicyExists: !!ventanaPolicy,
+      bancaPolicyExists: !!bancaPolicy,
+      ventanaPolicyRules: ventanaPolicy?.rules?.length ?? 0,
+      bancaPolicyRules: bancaPolicy?.rules?.length ?? 0,
+    },
+  });
+
+  // Fallback: Sin comisión (0%)
+  return {
+    commissionPercent: 0,
+    commissionAmount: 0,
+    commissionOrigin: null,
+    commissionRuleId: null,
+  };
+}

@@ -169,6 +169,17 @@ export const AccountsController = {
         payload: { month, scope, dimension },
       });
       
+      logger.debug({
+        layer: "controller",
+        action: "ACCOUNT_STATEMENT_RESULT",
+        userId: user.id,
+        requestId: req.requestId,
+        payload: { 
+          statementsCount: result.statements?.length || 0,
+          totalBalance: result.totals?.totalBalance || 0
+        },
+      });
+      
       return success(res, result);
     }
 

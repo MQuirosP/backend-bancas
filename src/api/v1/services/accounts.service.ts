@@ -632,6 +632,7 @@ async function getSorteoBreakdownBatch(
       createdAt: true,
       ventanaId: true,
       vendedorId: true,
+      loteriaId: true,
       sorteo: {
         select: {
           id: true,
@@ -650,12 +651,57 @@ async function getSorteoBreakdownBatch(
         select: {
           payout: true,
           isWinner: true,
+          amount: true,
+          type: true,
+          finalMultiplierX: true,
           commissionAmount: true,
           commissionOrigin: true,
+          listeroCommissionAmount: true, // ✅ Snapshot (puede ser 0)
+        },
+      },
+      ventana: {
+        select: {
+          commissionPolicyJson: true,
+          banca: {
+            select: {
+              commissionPolicyJson: true,
+            },
+          },
         },
       },
     },
   });
+
+  // ✅ CRÍTICO: Obtener usuarios VENTANA con sus políticas (igual que getSorteoBreakdown)
+  const ventanaIds = Array.from(new Set(tickets.map(t => t.ventanaId).filter((id): id is string => id !== null)));
+  const ventanaUsers = ventanaIds.length > 0
+    ? await prisma.user.findMany({
+        where: {
+          role: Role.VENTANA,
+          isActive: true,
+          deletedAt: null,
+          ventanaId: { in: ventanaIds },
+        },
+        select: {
+          id: true,
+          ventanaId: true,
+          commissionPolicyJson: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      })
+    : [];
+
+  // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
+  const userPolicyByVentana = new Map<string, any>();
+  const ventanaUserIdByVentana = new Map<string, string>();
+  for (const user of ventanaUsers) {
+    if (!user.ventanaId) continue;
+    if (!userPolicyByVentana.has(user.ventanaId)) {
+      userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
+      ventanaUserIdByVentana.set(user.ventanaId, user.id);
+    }
+  }
 
   // Crear Map por fecha
   const resultMap = new Map<string, Map<string, {
@@ -682,8 +728,8 @@ async function getSorteoBreakdownBatch(
     if (!ticket.sorteoId || !ticket.sorteo) continue;
 
     // Determinar la fecha del ticket
-    const ticketDate = ticket.businessDate 
-      ? new Date(ticket.businessDate)
+    const ticketDate = ticket.businessDate !== null
+      ? new Date(ticket.businessDate as Date)
       : new Date(ticket.createdAt);
     ticketDate.setUTCHours(0, 0, 0, 0);
     const dateKey = ticketDate.toISOString().split("T")[0];
@@ -713,17 +759,70 @@ async function getSorteoBreakdownBatch(
     entry.sales += ticket.totalAmount || 0;
     entry.ticketCount += 1;
 
-    // Calcular payouts y comisiones desde jugadas
+    // ✅ CRÍTICO: Calcular comisiones jugada por jugada desde políticas (igual que getSorteoBreakdown)
     for (const jugada of ticket.jugadas) {
+      // Payouts
       if (jugada.isWinner) {
         entry.payouts += jugada.payout || 0;
       }
 
-      // Comisiones según origen
+      // Comisión del vendedor (usar snapshot)
       if (jugada.commissionOrigin === "USER") {
         entry.vendedorCommission += jugada.commissionAmount || 0;
-      } else if (jugada.commissionOrigin === "VENTANA" || jugada.commissionOrigin === "BANCA") {
-        entry.listeroCommission += jugada.commissionAmount || 0;
+      }
+      
+      // ✅ CRÍTICO: Comisión del listero - calcular desde políticas (igual que getSorteoBreakdown)
+      // Prioridad: USER VENTANA policy → VENTANA policy → BANCA policy
+      if (ticket.ventanaId) {
+        const userPolicyJson = userPolicyByVentana.get(ticket.ventanaId) ?? null;
+        const ventanaUserId = ventanaUserIdByVentana.get(ticket.ventanaId) ?? "";
+        const ventanaPolicy = ticket.ventana?.commissionPolicyJson as any;
+        const bancaPolicy = ticket.ventana?.banca?.commissionPolicyJson as any;
+
+        let listeroCommission = 0;
+
+        if (userPolicyJson) {
+          // Si hay política de usuario VENTANA, usarla (prioridad más alta)
+          try {
+            const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+              userId: ventanaUserId,
+              loteriaId: ticket.loteriaId,
+              betType: jugada.type as "NUMERO" | "REVENTADO",
+              finalMultiplierX: jugada.finalMultiplierX ?? null,
+            });
+            listeroCommission = Math.round((jugada.amount * resolution.percent) / 100);
+          } catch (err) {
+            // Si falla, usar fallback con políticas de ventana/banca
+            const fallback = resolveCommission(
+              {
+                loteriaId: ticket.loteriaId,
+                betType: jugada.type as "NUMERO" | "REVENTADO",
+                finalMultiplierX: jugada.finalMultiplierX || 0,
+                amount: jugada.amount,
+              },
+              null,
+              ventanaPolicy,
+              bancaPolicy
+            );
+            listeroCommission = Math.round(fallback.commissionAmount);
+          }
+        } else {
+          // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
+          const ventanaCommission = resolveCommission(
+            {
+              loteriaId: ticket.loteriaId,
+              betType: jugada.type as "NUMERO" | "REVENTADO",
+              finalMultiplierX: jugada.finalMultiplierX || 0,
+              amount: jugada.amount,
+            },
+            null, // No hay política de usuario VENTANA
+            ventanaPolicy, // Política de ventana
+            bancaPolicy // Política de banca
+          );
+          listeroCommission = Math.round(ventanaCommission.commissionAmount);
+        }
+
+        entry.listeroCommission += listeroCommission;
       }
     }
   }
@@ -814,13 +913,15 @@ async function getSorteoBreakdown(
     where.vendedorId = vendedorId;
   }
 
-  // Obtener tickets con sus sorteos y loterías
+  // Obtener tickets con sus sorteos, loterías y jugadas
   const tickets = await prisma.ticket.findMany({
     where,
     select: {
       id: true,
       totalAmount: true,
       sorteoId: true,
+      ventanaId: true,
+      loteriaId: true,
       sorteo: {
         select: {
           id: true,
@@ -839,12 +940,57 @@ async function getSorteoBreakdown(
         select: {
           payout: true,
           isWinner: true,
+          amount: true,
+          type: true,
+          finalMultiplierX: true,
           commissionAmount: true,
           commissionOrigin: true,
+          listeroCommissionAmount: true, // ✅ Snapshot (puede ser 0)
+        },
+      },
+      ventana: {
+        select: {
+          commissionPolicyJson: true,
+          banca: {
+            select: {
+              commissionPolicyJson: true,
+            },
+          },
         },
       },
     },
   });
+
+  // ✅ CRÍTICO: Obtener usuarios VENTANA con sus políticas (igual que commissions.service.ts)
+  const ventanaIds = Array.from(new Set(tickets.map(t => t.ventanaId).filter((id): id is string => id !== null)));
+  const ventanaUsers = ventanaIds.length > 0
+    ? await prisma.user.findMany({
+        where: {
+          role: Role.VENTANA,
+          isActive: true,
+          deletedAt: null,
+          ventanaId: { in: ventanaIds },
+        },
+        select: {
+          id: true,
+          ventanaId: true,
+          commissionPolicyJson: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      })
+    : [];
+
+  // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
+  const userPolicyByVentana = new Map<string, any>();
+  const ventanaUserIdByVentana = new Map<string, string>();
+  for (const user of ventanaUsers) {
+    if (!user.ventanaId) continue;
+    if (!userPolicyByVentana.has(user.ventanaId)) {
+      userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
+      ventanaUserIdByVentana.set(user.ventanaId, user.id);
+    }
+  }
 
   // Agrupar por sorteo
   const sorteoMap = new Map<string, {
@@ -885,17 +1031,70 @@ async function getSorteoBreakdown(
     entry.sales += ticket.totalAmount || 0;
     entry.ticketCount += 1;
 
-    // Calcular payouts y comisiones desde jugadas
+    // ✅ CRÍTICO: Calcular comisiones jugada por jugada desde políticas (igual que commissions.service.ts)
     for (const jugada of ticket.jugadas) {
+      // Payouts
       if (jugada.isWinner) {
         entry.payouts += jugada.payout || 0;
       }
 
-      // Comisiones según origen
+      // Comisión del vendedor (usar snapshot)
       if (jugada.commissionOrigin === "USER") {
         entry.vendedorCommission += jugada.commissionAmount || 0;
-      } else if (jugada.commissionOrigin === "VENTANA" || jugada.commissionOrigin === "BANCA") {
-        entry.listeroCommission += jugada.commissionAmount || 0;
+      }
+
+      // ✅ CRÍTICO: Comisión del listero - calcular desde políticas (igual que commissions.service.ts)
+      // Prioridad: USER VENTANA policy → VENTANA policy → BANCA policy
+      if (ticket.ventanaId) {
+        const userPolicyJson = userPolicyByVentana.get(ticket.ventanaId) ?? null;
+        const ventanaUserId = ventanaUserIdByVentana.get(ticket.ventanaId) ?? "";
+        const ventanaPolicy = ticket.ventana?.commissionPolicyJson as any;
+        const bancaPolicy = ticket.ventana?.banca?.commissionPolicyJson as any;
+
+        let listeroCommission = 0;
+
+        if (userPolicyJson) {
+          // Si hay política de usuario VENTANA, usarla (prioridad más alta)
+          try {
+            const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+              userId: ventanaUserId,
+              loteriaId: ticket.loteriaId,
+              betType: jugada.type as "NUMERO" | "REVENTADO",
+              finalMultiplierX: jugada.finalMultiplierX ?? null,
+            });
+            listeroCommission = Math.round((jugada.amount * resolution.percent) / 100);
+          } catch (err) {
+            // Si falla, usar fallback con políticas de ventana/banca
+            const fallback = resolveCommission(
+              {
+                loteriaId: ticket.loteriaId,
+                betType: jugada.type as "NUMERO" | "REVENTADO",
+                finalMultiplierX: jugada.finalMultiplierX || 0,
+                amount: jugada.amount,
+              },
+              null,
+              ventanaPolicy,
+              bancaPolicy
+            );
+            listeroCommission = Math.round(fallback.commissionAmount);
+          }
+        } else {
+          // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
+          const ventanaCommission = resolveCommission(
+            {
+              loteriaId: ticket.loteriaId,
+              betType: jugada.type as "NUMERO" | "REVENTADO",
+              finalMultiplierX: jugada.finalMultiplierX || 0,
+              amount: jugada.amount,
+            },
+            null, // No hay política de usuario VENTANA
+            ventanaPolicy, // Política de ventana
+            bancaPolicy // Política de banca
+          );
+          listeroCommission = Math.round(ventanaCommission.commissionAmount);
+        }
+
+        entry.listeroCommission += listeroCommission;
       }
     }
   }
@@ -982,7 +1181,8 @@ export async function calculateDayStatement(
   dimension: "ventana" | "vendedor",
   ventanaId?: string,
   vendedorId?: string,
-  bancaId?: string
+  bancaId?: string,
+  userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" // ✅ CRÍTICO: Rol del usuario para calcular balance correctamente
 ) {
   // Construir WHERE clause
   // FIX: Usar businessDate en lugar de createdAt para agrupar correctamente por día de negocio
@@ -1009,7 +1209,7 @@ export async function calculateDayStatement(
 
   // Usar agregaciones de Prisma para calcular totales directamente en la base de datos
   // Esto es mucho más eficiente que traer todos los tickets y jugadas a memoria
-  const [ticketAgg, jugadaAggVendor, jugadaAggWinners] = await Promise.all([
+  const [ticketAgg, jugadaAggVendor, jugadaAggListero, jugadaAggWinners] = await Promise.all([
     // Agregaciones de tickets
     prisma.ticket.aggregate({
       where,
@@ -1033,6 +1233,23 @@ export async function calculateDayStatement(
         commissionAmount: true,
       },
     }),
+    // ✅ NUEVO: Agregación de comisiones del listero desde snapshot
+    // Nota: Si la columna no existe aún (migración pendiente), usar fallback desde commissionOrigin
+    prisma.jugada.aggregate({
+      where: {
+        ticket: where,
+        deletedAt: null,
+      },
+      _sum: {
+        listeroCommissionAmount: true, // ✅ Usar snapshot en lugar de calcular desde políticas
+      },
+    }).catch((error: any) => {
+      // Fallback si la columna no existe aún (migración pendiente)
+      if (error?.message?.includes('listeroCommissionAmount')) {
+        return { _sum: { listeroCommissionAmount: null } };
+      }
+      throw error;
+    }),
     // Agregaciones de jugadas - Solo jugadas ganadoras para payouts
     prisma.jugada.aggregate({
       where: {
@@ -1054,29 +1271,55 @@ export async function calculateDayStatement(
   const ticketCount = ticketAgg._count.id || 0;
   // FIX: Solo sumar comisiones del vendedor (commissionOrigin === "USER")
   const totalVendedorCommission = jugadaAggVendor._sum.commissionAmount || 0;
-
-  // Calcular comisiones según dimensión
-  let totalListeroCommission = 0;
-
-  const listeroMap = await computeListeroCommissionsForWhere(
-    where as Prisma.TicketWhereInput
-  );
-
-  if (dimension === "ventana") {
-    totalListeroCommission = listeroMap.get(ventanaId || "") ?? 0;
-  } else {
-    totalListeroCommission = Array.from(listeroMap.values()).reduce(
-      (sum, value) => sum + value,
-      0
-    );
+  
+  // ✅ NUEVO: Usar snapshot de comisión del listero en lugar de calcular desde políticas
+  // Esto es mucho más rápido y preciso
+  // Fallback: Si el snapshot es 0 (tickets creados antes de los cambios), calcular desde commissionOrigin
+  let totalListeroCommission = jugadaAggListero?._sum?.listeroCommissionAmount || 0;
+  
+  // Si el snapshot es 0, puede ser porque:
+  // 1. Realmente no hay comisión del listero
+  // 2. Los tickets fueron creados antes de los cambios (tienen listeroCommissionAmount: 0 por defecto)
+  // En el caso 2, necesitamos calcular desde commissionOrigin como fallback
+  if (totalListeroCommission === 0) {
+    // Verificar si hay tickets con commissionOrigin VENTANA/BANCA que no tienen snapshot
+    // Esto indica que fueron creados antes de los cambios
+    // Buscar jugadas con commissionOrigin VENTANA/BANCA que tienen listeroCommissionAmount = 0
+    // Esto indica tickets creados antes de los cambios (tienen 0 por defecto)
+    const jugadasFallback = await prisma.jugada.findMany({
+      where: {
+        ticket: where,
+        deletedAt: null,
+        commissionOrigin: { in: ["VENTANA", "BANCA"] },
+        listeroCommissionAmount: 0, // Tickets antiguos tienen 0 por defecto
+      },
+      select: {
+        commissionAmount: true,
+        listeroCommissionAmount: true,
+      },
+    });
+    const fallbackTotal = jugadasFallback.reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
+    if (fallbackTotal > 0) {
+      totalListeroCommission = fallbackTotal;
+      logger.warn({
+        layer: 'service',
+        action: 'LISTERO_COMMISSION_FALLBACK_FROM_ORIGIN',
+        payload: {
+          fallbackTotal,
+          jugadasCount: jugadasFallback.length,
+          note: 'Using commissionOrigin as fallback for old tickets',
+        },
+      });
+    }
   }
 
-  // Calcular saldo según dimensión
-  // Para VENTANA (dimension=ventana): solo resta comisión vendedor (listero es informativo)
-  // Para VENDEDOR (dimension=vendedor): resta su propia comisión
-  const balance = dimension === "ventana"
-    ? totalSales - totalPayouts - totalVendedorCommission  // ✅ Solo resta comisión vendedor
-    : totalSales - totalPayouts - totalVendedorCommission; // Para vendedor también solo resta su comisión
+  // ✅ CRÍTICO: Calcular saldo según ROL del usuario, NO según dimensión
+  // ADMIN siempre resta listeroCommission (independiente de dimensión)
+  // VENTANA siempre resta vendedorCommission
+  const effectiveUserRole = userRole || "ADMIN"; // Por defecto ADMIN si no se especifica
+  const balance = effectiveUserRole === "ADMIN"
+    ? totalSales - totalPayouts - totalListeroCommission
+    : totalSales - totalPayouts - totalVendedorCommission;
 
   // Si no hay tickets, retornar valores por defecto sin crear statement
   // FIX: No crear fechas nuevas cada vez para mantener consistencia
@@ -1255,6 +1498,351 @@ export async function calculateDayStatement(
  * ✅ OPTIMIZACIÓN: Obtiene statement desde la vista materializada
  * Esta función es MUCHO más rápida que calcular desde cero
  */
+/**
+ * ✅ NUEVO: Calcula estado de cuenta directamente desde tickets/jugadas
+ * Sin usar AccountStatement ni vista materializada
+ * Usa exactamente la misma lógica que calculateGanancia y calculateCxC
+ */
+/**
+ * ✅ NUEVO: Calcula estado de cuenta directamente desde tickets/jugadas
+ * Usa EXACTAMENTE la misma lógica que commissions.service.ts
+ * Calcula jugada por jugada desde el principio, igual que commissions
+ */
+async function getStatementDirect(
+  filters: AccountsFilters,
+  startDate: Date,
+  endDate: Date,
+  daysInMonth: number,
+  effectiveMonth: string,
+  dimension: "ventana" | "vendedor",
+  ventanaId?: string,
+  vendedorId?: string,
+  bancaId?: string,
+  userRole: "ADMIN" | "VENTANA" | "VENDEDOR" = "ADMIN",
+  sort: "asc" | "desc" = "desc"
+) {
+  const startDateCRStr = toCRDateString(startDate);
+  const endDateCRStr = toCRDateString(endDate);
+  
+  // Construir filtros WHERE dinámicos según RBAC (igual que commissions)
+  const whereConditions: Prisma.Sql[] = [
+    Prisma.sql`t."deletedAt" IS NULL`,
+    Prisma.sql`t.status IN ('ACTIVE', 'EVALUATED', 'PAID')`,
+    Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`,
+    Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`,
+  ];
+
+  // Filtrar por banca activa (para ADMIN multibanca)
+  if (bancaId) {
+    whereConditions.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "Ventana" v 
+      WHERE v.id = t."ventanaId" 
+      AND v."bancaId" = ${bancaId}::uuid
+    )`);
+  }
+
+  // Aplicar filtros de RBAC según dimension
+  if (dimension === "vendedor") {
+    if (vendedorId) {
+      whereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+    }
+    if (ventanaId) {
+      whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+    }
+  } else if (dimension === "ventana") {
+    if (ventanaId) {
+      whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+    }
+  }
+
+  const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`;
+
+  // ✅ CRÍTICO: Obtener TODAS las jugadas individuales (igual que commissions)
+  // Calcular todo jugada por jugada desde el principio
+  const jugadas = await prisma.$queryRaw<
+    Array<{
+      business_date: Date;
+      ventana_id: string;
+      ventana_name: string;
+      vendedor_id: string | null;
+      vendedor_name: string | null;
+      ticket_id: string;
+      amount: number;
+      type: string;
+      finalMultiplierX: number | null;
+      loteriaId: string;
+      ventana_policy: any;
+      banca_policy: any;
+      ticket_total_payout: number | null;
+      commission_amount: number | null; // snapshot del vendedor
+      listero_commission_amount: number | null; // snapshot del listero
+    }>
+  >`
+    SELECT
+      COALESCE(
+        t."businessDate",
+        DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+      ) as business_date,
+      t."ventanaId" as ventana_id,
+      v.name as ventana_name,
+      t."vendedorId" as vendedor_id,
+      u.name as vendedor_name,
+      t.id as ticket_id,
+      j.amount,
+      j.type,
+      j."finalMultiplierX",
+      t."loteriaId",
+      v."commissionPolicyJson" as ventana_policy,
+      b."commissionPolicyJson" as banca_policy,
+      t."totalPayout" as ticket_total_payout,
+      j."commissionAmount" as commission_amount,
+      j."listeroCommissionAmount" as listero_commission_amount
+    FROM "Ticket" t
+    INNER JOIN "Jugada" j ON j."ticketId" = t.id
+    INNER JOIN "Ventana" v ON v.id = t."ventanaId"
+    INNER JOIN "Banca" b ON b.id = v."bancaId"
+    LEFT JOIN "User" u ON u.id = t."vendedorId"
+    ${whereClause}
+    AND j."deletedAt" IS NULL
+  `;
+
+  // Obtener usuarios VENTANA por ventana (igual que commissions)
+  const ventanaIds = Array.from(new Set(jugadas.map((j) => j.ventana_id)));
+  const ventanaUsers = ventanaIds.length > 0
+    ? await prisma.user.findMany({
+        where: {
+          role: Role.VENTANA,
+          isActive: true,
+          deletedAt: null,
+          ventanaId: { in: ventanaIds },
+        },
+        select: {
+          id: true,
+          ventanaId: true,
+          commissionPolicyJson: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      })
+    : [];
+
+  // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
+  const userPolicyByVentana = new Map<string, any>();
+  const ventanaUserIdByVentana = new Map<string, string>();
+  for (const user of ventanaUsers) {
+    if (!user.ventanaId) continue;
+    if (!userPolicyByVentana.has(user.ventanaId)) {
+      userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
+      ventanaUserIdByVentana.set(user.ventanaId, user.id);
+    }
+  }
+
+  // ✅ CRÍTICO: Agrupar jugadas por día y ventana/vendedor, calculando comisiones jugada por jugada
+  // EXACTAMENTE igual que commissions (líneas 403-492)
+  const byDateAndDimension = new Map<
+    string,
+    {
+      ventanaId: string;
+      ventanaName: string;
+      vendedorId: string | null;
+      vendedorName: string | null;
+      totalSales: number;
+      totalPayouts: number;
+      totalTickets: Set<string>;
+      commissionListero: number;
+      commissionVendedor: number;
+      payoutTickets: Set<string>;
+    }
+  >();
+
+  for (const jugada of jugadas) {
+    // Obtener política de usuario VENTANA para esta ventana específica
+    const userPolicyJson = userPolicyByVentana.get(jugada.ventana_id) ?? null;
+    const ventanaUserId = ventanaUserIdByVentana.get(jugada.ventana_id) ?? "";
+
+    let commissionListero = 0;
+
+    // ✅ CRÍTICO: Calcular comisión del listero jugada por jugada (igual que commissions)
+    if (userPolicyJson) {
+      // Si hay política de usuario VENTANA, usarla (prioridad más alta)
+      try {
+        const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+          userId: ventanaUserId,
+          loteriaId: jugada.loteriaId,
+          betType: jugada.type as "NUMERO" | "REVENTADO",
+          finalMultiplierX: jugada.finalMultiplierX ?? null,
+        });
+        commissionListero = Math.round((jugada.amount * resolution.percent) / 100);
+      } catch (err) {
+        // Si falla, usar fallback con políticas de ventana/banca
+        const fallback = resolveCommission(
+          {
+            loteriaId: jugada.loteriaId,
+            betType: jugada.type as "NUMERO" | "REVENTADO",
+            finalMultiplierX: jugada.finalMultiplierX || 0,
+            amount: jugada.amount,
+          },
+          null,
+          jugada.ventana_policy,
+          jugada.banca_policy
+        );
+        commissionListero = Math.round(fallback.commissionAmount);
+      }
+    } else {
+      // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
+      const ventanaCommission = resolveCommission(
+        {
+          loteriaId: jugada.loteriaId,
+          betType: jugada.type as "NUMERO" | "REVENTADO",
+          finalMultiplierX: jugada.finalMultiplierX || 0,
+          amount: jugada.amount,
+        },
+        null, // No hay política de usuario VENTANA
+        jugada.ventana_policy, // Política de ventana
+        jugada.banca_policy // Política de banca
+      );
+      commissionListero = Math.round(ventanaCommission.commissionAmount);
+    }
+
+    // Usar snapshot si está disponible, sino usar el calculado
+    const commissionListeroFinal = (jugada.listero_commission_amount && jugada.listero_commission_amount > 0)
+      ? Math.round(jugada.listero_commission_amount)
+      : commissionListero;
+
+    const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
+    const key = dimension === "ventana"
+      ? `${dateKey}_${jugada.ventana_id}`
+      : `${dateKey}_${jugada.vendedor_id || 'null'}`;
+
+    let entry = byDateAndDimension.get(key);
+    if (!entry) {
+      entry = {
+        ventanaId: jugada.ventana_id,
+        ventanaName: jugada.ventana_name,
+        vendedorId: jugada.vendedor_id,
+        vendedorName: jugada.vendedor_name,
+        totalSales: 0,
+        totalPayouts: 0,
+        totalTickets: new Set<string>(),
+        commissionListero: 0,
+        commissionVendedor: 0,
+        payoutTickets: new Set<string>(),
+      };
+      byDateAndDimension.set(key, entry);
+    }
+
+    entry.totalSales += jugada.amount;
+    entry.totalTickets.add(jugada.ticket_id);
+    entry.commissionListero += commissionListeroFinal;
+    entry.commissionVendedor += Number(jugada.commission_amount || 0);
+    if (!entry.payoutTickets.has(jugada.ticket_id)) {
+      entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+      entry.payoutTickets.add(jugada.ticket_id);
+    }
+  }
+
+  // Obtener movimientos y desglose por sorteo
+  const statementDates = Array.from(new Set(Array.from(byDateAndDimension.keys()).map(k => k.split("_")[0]))).map(d => {
+    const [year, month, day] = d.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day));
+  });
+  
+  const [movementsByDate, sorteoBreakdownBatch] = await Promise.all([
+    AccountPaymentRepository.findMovementsByDateRange(startDate, endDate, dimension, ventanaId, vendedorId, bancaId),
+    getSorteoBreakdownBatch(statementDates, dimension, ventanaId, vendedorId, bancaId, userRole),
+  ]);
+
+  // Construir statements desde el mapa agrupado
+  const statements = Array.from(byDateAndDimension.entries()).map(([key, entry]) => {
+    const date = key.split("_")[0];
+    
+    // Calcular balance según rol
+    const balance = userRole === "ADMIN"
+      ? entry.totalSales - entry.totalPayouts - entry.commissionListero
+      : entry.totalSales - entry.totalPayouts - entry.commissionVendedor;
+    
+    // Obtener movimientos y desglose por sorteo para esta fecha
+    const movements = movementsByDate.get(date) || [];
+    const bySorteo = sorteoBreakdownBatch.get(date) || [];
+    
+    // Calcular totales de pagos y cobros
+    const totalPaid = movements
+      .filter((m: any) => m.type === "payment" && !m.isReversed)
+      .reduce((sum: number, m: any) => sum + m.amount, 0);
+    const totalCollected = movements
+      .filter((m: any) => m.type === "collection" && !m.isReversed)
+      .reduce((sum: number, m: any) => sum + m.amount, 0);
+    const remainingBalance = balance - totalCollected + totalPaid;
+    
+    const statement: any = {
+      date,
+      totalSales: entry.totalSales,
+      totalPayouts: entry.totalPayouts,
+      listeroCommission: entry.commissionListero,
+      vendedorCommission: entry.commissionVendedor,
+      balance,
+      totalPaid,
+      totalCollected,
+      totalPaymentsCollections: totalPaid + totalCollected,
+      remainingBalance,
+      isSettled: calculateIsSettled(entry.totalTickets.size, remainingBalance, totalPaid, totalCollected),
+      canEdit: !calculateIsSettled(entry.totalTickets.size, remainingBalance, totalPaid, totalCollected),
+      ticketCount: entry.totalTickets.size,
+      bySorteo,
+      movements,
+    };
+    
+    if (dimension === "ventana") {
+      statement.ventanaId = entry.ventanaId;
+      statement.ventanaName = entry.ventanaName;
+    } else {
+      statement.vendedorId = entry.vendedorId;
+      statement.vendedorName = entry.vendedorName;
+    }
+    
+    return statement;
+  }).sort((a, b) => {
+    const dateA = new Date(a.date).getTime();
+    const dateB = new Date(b.date).getTime();
+    return sort === "desc" ? dateB - dateA : dateA - dateB;
+  });
+  
+  // Calcular totales
+  const totalSales = statements.reduce((sum, s) => sum + s.totalSales, 0);
+  const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
+  const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
+  const totalVendedorCommission = statements.reduce((sum, s) => sum + s.vendedorCommission, 0);
+  const totalBalance = userRole === "ADMIN"
+    ? totalSales - totalPayouts - totalListeroCommission
+    : totalSales - totalPayouts - totalVendedorCommission;
+  const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
+  const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
+  const totalRemainingBalance = statements.reduce((sum, s) => sum + s.remainingBalance, 0);
+  
+  return {
+    statements,
+    totals: {
+      totalSales,
+      totalPayouts,
+      totalListeroCommission,
+      totalVendedorCommission,
+      totalBalance,
+      totalPaid,
+      totalCollected,
+      totalRemainingBalance,
+      settledDays: statements.filter(s => s.isSettled).length,
+      pendingDays: statements.filter(s => !s.isSettled).length,
+    },
+    meta: {
+      month: effectiveMonth,
+      startDate: startDateCRStr,
+      endDate: endDateCRStr,
+      dimension,
+      totalDays: daysInMonth,
+    },
+  };
+}
+
 async function getStatementFromMaterializedView(
   filters: AccountsFilters,
   materializedSummaries: Map<string, {
@@ -1355,6 +1943,259 @@ async function getStatementFromMaterializedView(
   // Obtener IDs de statements para batch queries
   const statementIds = Array.from(statementsMap.values()).map(s => s.id);
   
+  // ✅ CRÍTICO: Calcular comisiones directamente desde tickets/jugadas (igual que calculateGanancia)
+  // Ignorar la vista materializada si tiene datos incorrectos
+  const startDateCRStr = toCRDateString(startDate);
+  const endDateCRStr = toCRDateString(endDate);
+  
+  // Construir filtros base para tickets
+  const ticketBaseWhere: any = {
+    deletedAt: null,
+    status: { in: ["ACTIVE", "EVALUATED", "PAID"] },
+    OR: [
+      {
+        businessDate: {
+          gte: startDate,
+          lte: endDate,
+        },
+      },
+      {
+        businessDate: null,
+        createdAt: {
+          gte: startDate,
+          lte: endDate,
+        },
+      },
+    ],
+  };
+  
+  if (ventanaId) {
+    ticketBaseWhere.ventanaId = ventanaId;
+  }
+  if (vendedorId) {
+    ticketBaseWhere.vendedorId = vendedorId;
+  }
+  if (bancaId) {
+    ticketBaseWhere.ventana = { bancaId };
+  }
+  
+  // Calcular comisiones por fecha y ventana/vendedor usando SQL directo
+  const commissionsByDate = await prisma.$queryRaw<
+    Array<{
+      date_key: string;
+      ventana_id: string | null;
+      vendedor_id: string | null;
+      listero_commission_snapshot: number;
+      commission_ventana_raw: number;
+      vendedor_commission: number;
+    }>
+  >(
+    Prisma.sql`
+      WITH tickets_in_range AS (
+        SELECT
+          t.id,
+          COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) as ticket_date,
+          t."ventanaId",
+          t."vendedorId"
+        FROM "Ticket" t
+        WHERE t."deletedAt" IS NULL
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND (
+            (t."businessDate" IS NOT NULL AND t."businessDate" >= ${startDate}::date AND t."businessDate" <= ${endDate}::date)
+            OR (t."businessDate" IS NULL AND DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')) >= ${startDateCRStr}::date AND DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')) <= ${endDateCRStr}::date)
+          )
+          ${ventanaId ? Prisma.sql`AND t."ventanaId" = ${ventanaId}::uuid` : Prisma.empty}
+          ${vendedorId ? Prisma.sql`AND t."vendedorId" = ${vendedorId}::uuid` : Prisma.empty}
+          ${bancaId ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = ${bancaId}::uuid)` : Prisma.empty}
+      ),
+      commissions_per_date AS (
+        SELECT
+          DATE(tir.ticket_date) as date_key,
+          tir."ventanaId" as ventana_id,
+          tir."vendedorId" as vendedor_id,
+          COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as vendedor_commission,
+          COALESCE(SUM(j."listeroCommissionAmount"), 0) as listero_commission_snapshot,
+          COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) as commission_ventana_raw
+        FROM tickets_in_range tir
+        JOIN "Jugada" j ON j."ticketId" = tir.id
+        WHERE j."deletedAt" IS NULL
+        GROUP BY DATE(tir.ticket_date), tir."ventanaId", tir."vendedorId"
+      )
+      SELECT * FROM commissions_per_date
+    `
+  );
+  
+  // ✅ CRÍTICO: Calcular comisiones desde políticas agrupadas por fecha y ventana
+  // Igual que computeVentanaCommissionFromPolicies en dashboard.service.ts
+  // SIEMPRE calcular desde políticas (el snapshot no se está registrando correctamente)
+  const jugadasForPolicies = await prisma.jugada.findMany({
+    where: {
+      deletedAt: null,
+      ticket: ticketBaseWhere,
+    },
+    select: {
+      amount: true,
+      type: true,
+      finalMultiplierX: true,
+      ticket: {
+        select: {
+          id: true,
+          ventanaId: true,
+          vendedorId: true,
+          businessDate: true,
+          createdAt: true,
+          loteriaId: true,
+          ventana: {
+            select: {
+              commissionPolicyJson: true,
+              banca: {
+                select: {
+                  commissionPolicyJson: true,
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // Obtener usuarios VENTANA para sus políticas
+  const ventanaIdsForPolicies = Array.from(new Set(jugadasForPolicies.map(j => j.ticket.ventanaId).filter((id): id is string => id !== null)));
+  const ventanaUsers = ventanaIdsForPolicies.length > 0
+    ? await prisma.user.findMany({
+        where: {
+          role: Role.VENTANA,
+          isActive: true,
+          deletedAt: null,
+          ventanaId: { in: ventanaIdsForPolicies },
+        },
+        select: {
+          id: true,
+          ventanaId: true,
+          commissionPolicyJson: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      })
+    : [];
+
+  const userPolicyByVentana = new Map<string, { policy: any; userId: string }>();
+  for (const user of ventanaUsers) {
+    if (!user.ventanaId) continue;
+    if (!userPolicyByVentana.has(user.ventanaId)) {
+      userPolicyByVentana.set(user.ventanaId, {
+        policy: user.commissionPolicyJson ?? null,
+        userId: user.id,
+      });
+    }
+  }
+
+  // Calcular comisiones desde políticas agrupadas por fecha y ventana
+  // Igual que computeVentanaCommissionFromPolicies: SIEMPRE calcular desde políticas
+  const policiesCommissionsByDate = new Map<string, number>();
+  for (const jugada of jugadasForPolicies) {
+    const ticket = jugada.ticket;
+    if (!ticket.ventanaId) continue;
+
+    // Determinar fecha del ticket
+    const ticketDate = ticket.businessDate !== null
+      ? new Date(ticket.businessDate as Date)
+      : new Date(ticket.createdAt);
+    ticketDate.setUTCHours(0, 0, 0, 0);
+    const dateKey = toCRDateString(ticketDate);
+
+    const userPolicyData = userPolicyByVentana.get(ticket.ventanaId);
+    const userPolicyJson = userPolicyData?.policy ?? null;
+    const ventanaUserId = userPolicyData?.userId ?? ticket.ventanaId;
+    const ventanaPolicy = (ticket.ventana?.commissionPolicyJson as any) ?? null;
+    const bancaPolicy = (ticket.ventana?.banca?.commissionPolicyJson as any) ?? null;
+
+    let policyCommissionAmount = 0;
+
+    if (userPolicyJson) {
+      try {
+        const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+          userId: ventanaUserId,
+          loteriaId: ticket.loteriaId,
+          betType: jugada.type as "NUMERO" | "REVENTADO",
+          finalMultiplierX: jugada.finalMultiplierX ?? null,
+        });
+        policyCommissionAmount = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
+      } catch (err) {
+        const fallback = resolveCommission(
+          {
+            loteriaId: ticket.loteriaId,
+            betType: jugada.type as "NUMERO" | "REVENTADO",
+            finalMultiplierX: jugada.finalMultiplierX || 0,
+            amount: jugada.amount,
+          },
+          null,
+          ventanaPolicy,
+          bancaPolicy
+        );
+        policyCommissionAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
+      }
+    } else {
+      const fallback = resolveCommission(
+        {
+          loteriaId: ticket.loteriaId,
+          betType: jugada.type as "NUMERO" | "REVENTADO",
+          finalMultiplierX: jugada.finalMultiplierX || 0,
+          amount: jugada.amount,
+        },
+        null,
+        ventanaPolicy,
+        bancaPolicy
+      );
+      policyCommissionAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
+    }
+
+    if (policyCommissionAmount <= 0) continue;
+
+    // ✅ CRÍTICO: SIEMPRE agregar desde políticas (igual que computeVentanaCommissionFromPolicies)
+    // No verificar snapshot porque no se está registrando correctamente
+    const key = `${dateKey}|${ticket.ventanaId}|${ticket.vendedorId || 'null'}`;
+    policiesCommissionsByDate.set(key, (policiesCommissionsByDate.get(key) || 0) + policyCommissionAmount);
+  }
+  
+  // Crear mapa de comisiones por fecha y ventana/vendedor
+  // ✅ CRÍTICO: SUMAR snapshot + extras desde políticas (igual que calculateCxC)
+  // calculateCxC hace: listeroCommissionFromDB = snapshot > 0 ? snapshot : commissionVentanaRaw
+  //                    totalListeroCommission = listeroCommissionFromDB + extrasFromPolicies
+  const commissionsMap = new Map<string, { listeroCommission: number; vendedorCommission: number }>();
+  
+  // Primero, agregar comisiones desde snapshot/commissionOrigin (puede ser 0)
+  for (const row of commissionsByDate) {
+    const key = `${row.date_key}|${row.ventana_id || 'null'}|${row.vendedor_id || 'null'}`;
+    const listeroCommissionSnapshot = Number(row.listero_commission_snapshot) || 0;
+    const commissionVentanaRaw = Number(row.commission_ventana_raw) || 0;
+    const extrasFromPolicies = policiesCommissionsByDate.get(key) || 0;
+    
+    // ✅ CRÍTICO: Usar snapshot si está disponible, sino usar commissionOrigin (igual que calculateCxC)
+    const listeroCommissionFromDB = listeroCommissionSnapshot > 0 
+      ? listeroCommissionSnapshot 
+      : commissionVentanaRaw;
+    
+    // ✅ CRÍTICO: SUMAR igual que calculateCxC
+    const finalListeroCommission = listeroCommissionFromDB + extrasFromPolicies;
+    
+    commissionsMap.set(key, {
+      listeroCommission: finalListeroCommission,
+      vendedorCommission: Number(row.vendedor_commission) || 0,
+    });
+  }
+  
+  // Agregar comisiones desde políticas para fechas que no tienen snapshot
+  for (const [key, policyCommission] of policiesCommissionsByDate.entries()) {
+    if (!commissionsMap.has(key)) {
+      commissionsMap.set(key, {
+        listeroCommission: policyCommission,
+        vendedorCommission: 0,
+      });
+    }
+  }
+  
   // Obtener totales y movimientos en batch
   const [totalsBatch, movementsBatch, sorteoBreakdownBatch] = await Promise.all([
     AccountPaymentRepository.getTotalsBatch(statementIds),
@@ -1403,9 +2244,8 @@ async function getStatementFromMaterializedView(
   
   // Construir statements desde la vista materializada
   // ⚠️ CRÍTICO: Filtrar por rango de fechas para asegurar que solo se incluyan datos del período solicitado
-  const startDateCR = toCRDateString(startDate);
-  const endDateCR = toCRDateString(endDate);
-  const [endYear, endMonth, endDay] = endDateCR.split('-').map(Number);
+  // Usar las variables ya declaradas arriba (startDateCRStr y endDateCRStr)
+  const [endYear, endMonth, endDay] = endDateCRStr.split('-').map(Number);
   const endDateObj = new Date(Date.UTC(endYear, endMonth - 1, endDay));
   endDateObj.setUTCDate(endDateObj.getUTCDate() + 1);
   const endDateNextDayCR = `${endDateObj.getUTCFullYear()}-${String(endDateObj.getUTCMonth() + 1).padStart(2, '0')}-${String(endDateObj.getUTCDate()).padStart(2, '0')}`;
@@ -1418,8 +2258,8 @@ async function getStatementFromMaterializedView(
     layer: "service",
     action: "MATERIALIZED_VIEW_FILTER_DEBUG",
     payload: {
-      startDateCR,
-      endDateCR,
+      startDateCR: startDateCRStr,
+      endDateCR: endDateCRStr,
       endDateNextDayCR,
       allDateKeysFromView: allDateKeys,
       totalEntries: materializedSummaries.size,
@@ -1431,14 +2271,14 @@ async function getStatementFromMaterializedView(
       // ⚠️ CRÍTICO: Filtrar por fecha CR para asegurar que solo se incluyan datos del rango solicitado
       // dateKey ya está en formato CR (construido con toCRDateString en getDailySummariesFromMaterializedView)
       // Usar dateKey directamente en lugar de recalcular summaryDateCR para consistencia
-      const passesFilter = dateKey >= startDateCR && dateKey < endDateNextDayCR;
+      const passesFilter = dateKey >= startDateCRStr && dateKey < endDateNextDayCR;
       if (!passesFilter) {
         logger.warn({
           layer: "service",
           action: "MATERIALIZED_VIEW_FILTER_EXCLUDED",
           payload: {
             dateKey,
-            startDateCR,
+            startDateCR: startDateCRStr,
             endDateNextDayCR,
             reason: "dateKey fuera del rango",
           },
@@ -1481,18 +2321,47 @@ async function getStatementFromMaterializedView(
       
       const movements = movementsBatch.get(statement.id) || [];
       const bySorteo = sorteoBreakdownBatch.get(dateKey) || [];
+      
+      // ✅ CRÍTICO: Usar comisiones calculadas directamente desde tickets/jugadas
+      // Ignorar la vista materializada si tiene datos incorrectos
+      const commissionKey = `${dateKey}|${summary.ventanaId || 'null'}|${summary.vendedorId || 'null'}`;
+      const calculatedCommissions = commissionsMap.get(commissionKey) || {
+        listeroCommission: 0,
+        vendedorCommission: 0,
+      };
+      
+      // Usar el valor mayor entre el calculado directamente y el del desglose por sorteo
+      const listeroCommissionFromSorteo = bySorteo.reduce((sum, s) => sum + (s.listeroCommission || 0), 0);
+      const finalListeroCommission = Math.max(
+        calculatedCommissions.listeroCommission,
+        listeroCommissionFromSorteo,
+        summary.listero_commission // Mantener como último fallback
+      );
+      
+      const finalVendedorCommission = Math.max(
+        calculatedCommissions.vendedorCommission,
+        summary.vendedor_commission
+      );
+      
+      // Recalcular balance usando las comisiones correctas
+      const recalculatedBalance = effectiveUserRole === "ADMIN"
+        ? summary.total_sales - summary.total_payouts - finalListeroCommission
+        : summary.total_sales - summary.total_payouts - finalVendedorCommission;
+      
+      // Recalcular remainingBalance usando el balance correcto
+      const finalRemainingBalance = recalculatedBalance - verifiedTotalCollected + verifiedTotalPaid;
 
       const base = {
         date: summary.date.toISOString().split("T")[0],
         totalSales: summary.total_sales,
         totalPayouts: summary.total_payouts,
-        listeroCommission: summary.listero_commission,
-        vendedorCommission: summary.vendedor_commission,
-        balance: calculatedBalance,
+        listeroCommission: finalListeroCommission, // ✅ Usar valor calculado directamente desde tickets/jugadas
+        vendedorCommission: finalVendedorCommission, // ✅ Usar valor calculado directamente
+        balance: recalculatedBalance, // ✅ Usar balance recalculado con comisiones correctas
         totalPaid: verifiedTotalPaid,
         totalCollected: verifiedTotalCollected,
         totalPaymentsCollections: verifiedTotalPaymentsCollections, // ✅ NUEVO: Total de pagos y cobros combinados (no revertidos)
-        remainingBalance: verifiedRemainingBalance,
+        remainingBalance: finalRemainingBalance, // ✅ Usar remainingBalance recalculado con balance correcto
         isSettled: calculateIsSettled(
           summary.ticket_count,
           verifiedRemainingBalance,
@@ -1549,12 +2418,24 @@ async function getStatementFromMaterializedView(
   }
   
   // Calcular totales
+  // ✅ CRÍTICO: Calcular totalBalance según rol del usuario, NO solo sumar balances
+  const effectiveUserRole = filters.userRole || "ADMIN";
+  const totalSales = statements.reduce((sum, s) => sum + s.totalSales, 0);
+  const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
+  const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
+  const totalVendedorCommission = statements.reduce((sum, s) => sum + s.vendedorCommission, 0);
+  
+  // Calcular totalBalance según rol (no solo sumar balances individuales)
+  const totalBalance = effectiveUserRole === "ADMIN"
+    ? totalSales - totalPayouts - totalListeroCommission
+    : totalSales - totalPayouts - totalVendedorCommission;
+  
   const totals = {
-    totalSales: statements.reduce((sum, s) => sum + s.totalSales, 0),
-    totalPayouts: statements.reduce((sum, s) => sum + s.totalPayouts, 0),
-    totalListeroCommission: statements.reduce((sum, s) => sum + s.listeroCommission, 0),
-    totalVendedorCommission: statements.reduce((sum, s) => sum + s.vendedorCommission, 0),
-    totalBalance: statements.reduce((sum, s) => sum + s.balance, 0),
+    totalSales,
+    totalPayouts,
+    totalListeroCommission, // ✅ REQUERIDO: Suma de listeroCommission de todos los días
+    totalVendedorCommission, // ✅ REQUERIDO: Suma de vendedorCommission de todos los días
+    totalBalance, // ✅ Calculado según rol: totalSales - totalPayouts - totalListeroCommission (para ADMIN)
     totalPaid: statements.reduce((sum, s) => sum + s.totalPaid, 0),
     totalCollected: statements.reduce((sum, s) => sum + s.totalCollected, 0),
     totalRemainingBalance: statements.reduce((sum, s) => sum + s.remainingBalance, 0),
@@ -1638,17 +2519,21 @@ export const AccountsService = {
     // Si la vista materializada tiene datos, usarla; si no, usar método tradicional
     const useMaterializedView = materializedSummaries.size > 0;
     
-    // ✅ OPTIMIZACIÓN: Si tenemos datos de la vista materializada, usarlos directamente
-    if (useMaterializedView && materializedSummaries.size > 0) {
-      return await getStatementFromMaterializedView(
-        filters,
-        materializedSummaries,
-        startDate,
-        endDate,
-        daysInMonth,
-        filters.userRole
-      );
-    }
+    // ✅ CRÍTICO: Calcular TODO directamente desde tickets/jugadas (sin AccountStatement)
+    // Usar exactamente la misma lógica que calculateGanancia y calculateCxC
+    return await getStatementDirect(
+      filters,
+      startDate,
+      endDate,
+      daysInMonth,
+      effectiveMonth,
+      dimension,
+      ventanaId,
+      vendedorId,
+      bancaId,
+      filters.userRole || "ADMIN",
+      sort as "asc" | "desc"
+    );
 
     // Si scope=all y no hay ventanaId/vendedorId, obtener estados existentes
     // Si no hay estados existentes, calcular basándose en tickets del mes
@@ -1862,8 +2747,8 @@ export const AccountsService = {
       // Crear Set de statementIds que tienen cambios recientes
       const statementsWithChanges = new Set<string>();
       for (const ticket of recentTickets) {
-        const ticketDate = ticket.businessDate 
-          ? new Date(ticket.businessDate)
+        const ticketDate = ticket.businessDate !== null
+          ? new Date(ticket.businessDate as Date)
           : new Date(ticket.createdAt);
         ticketDate.setUTCHours(0, 0, 0, 0);
         const dateKey = ticketDate.toISOString().split("T")[0];
@@ -1876,7 +2761,7 @@ export const AccountsService = {
             return `${sDateKey}-${sTargetId}` === key;
           });
           if (statement) {
-            statementsWithChanges.add(statement.id);
+            statementsWithChanges.add(statement!.id);
           }
         }
       }
@@ -1901,7 +2786,8 @@ export const AccountsService = {
               dimension,
               s.ventanaId ?? undefined,
               s.vendedorId ?? undefined,
-              bancaId
+              bancaId,
+              filters.userRole // ✅ CRÍTICO: Pasar rol del usuario
             );
           } else {
             // Usar valores guardados y solo refrescar movimientos (ya optimizado con batch)
@@ -1956,8 +2842,8 @@ export const AccountsService = {
       todayForPending.setUTCHours(0, 0, 0, 0);
 
       for (const ticket of ticketsInMonth) {
-        const ticketDate = ticket.businessDate
-          ? new Date(ticket.businessDate)
+        const ticketDate = ticket.businessDate !== null
+          ? new Date(ticket.businessDate as Date)
           : new Date(ticket.createdAt);
         ticketDate.setUTCHours(0, 0, 0, 0);
 
@@ -1996,7 +2882,8 @@ export const AccountsService = {
             dimension,
             info.ventanaId,
             info.vendedorId,
-            bancaId
+            bancaId,
+            filters.userRole // ✅ CRÍTICO: Pasar rol del usuario
           );
           additionalStatements.push(calculated);
         }
@@ -2047,8 +2934,8 @@ export const AccountsService = {
 
         for (const ticket of tickets) {
           // FIX: Usar businessDate si existe, fallback a createdAt
-          const ticketDate = ticket.businessDate 
-            ? new Date(ticket.businessDate)
+          const ticketDate = ticket.businessDate !== null
+            ? new Date(ticket.businessDate as Date)
             : new Date(ticket.createdAt);
           ticketDate.setUTCHours(0, 0, 0, 0);
           const dateKey = ticketDate.toISOString().split("T")[0];
@@ -2099,31 +2986,34 @@ export const AccountsService = {
             dimension,
             statementInfo.ventanaId || undefined,
             statementInfo.vendedorId || undefined,
-            bancaId
+            bancaId,
+            filters.userRole // ✅ CRÍTICO: Pasar rol del usuario
           );
 
           // Obtener relaciones para nombres y códigos
           let ventana = null;
           let vendedor = null;
 
-          if (calculated.ventanaId) {
+          if (calculated.ventanaId !== null && calculated.ventanaId !== undefined) {
             const ventanaData = await prisma.ventana.findUnique({
-              where: { id: calculated.ventanaId },
+              where: { id: calculated.ventanaId as string },
               select: { id: true, name: true, code: true },
             });
             ventana = ventanaData;
           }
 
-          if (calculated.vendedorId) {
+          if (calculated.vendedorId !== null && calculated.vendedorId !== undefined) {
             const vendedorData = await prisma.user.findUnique({
-              where: { id: calculated.vendedorId },
+              where: { id: calculated.vendedorId as string },
               select: { id: true, name: true, code: true },
             });
-            vendedor = vendedorData ? {
-              id: vendedorData.id,
-              name: vendedorData.name,
-              code: vendedorData.code || "",
-            } : null;
+            if (vendedorData) {
+              vendedor = {
+                id: vendedorData!.id,
+                name: vendedorData!.name,
+                code: vendedorData!.code || "",
+              };
+            }
           }
 
           calculatedStatements.push({
@@ -2153,17 +3043,17 @@ export const AccountsService = {
       // Mapear info de ventana/vendedor existente
       for (const s of statementsWithRelations) {
         if (s.ventana) {
-          ventanaInfoMap.set(s.ventana.id, {
-            id: s.ventana.id,
-            name: s.ventana.name,
-            code: s.ventana.code,
+          ventanaInfoMap.set(s.ventana!.id, {
+            id: s.ventana!.id,
+            name: s.ventana!.name,
+            code: s.ventana!.code,
           });
         }
         if (s.vendedor) {
-          vendedorInfoMap.set(s.vendedor.id, {
-            id: s.vendedor.id,
-            name: s.vendedor.name,
-            code: s.vendedor.code,
+          vendedorInfoMap.set(s.vendedor!.id, {
+            id: s.vendedor!.id,
+            name: s.vendedor!.name,
+            code: s.vendedor!.code,
           });
         }
       }
@@ -2172,8 +3062,8 @@ export const AccountsService = {
       const ventanaIdsNeeded = new Set<string>();
       const vendedorIdsNeeded = new Set<string>();
       for (const s of filteredStatements) {
-        if (s.ventanaId) ventanaIdsNeeded.add(s.ventanaId);
-        if (s.vendedorId) vendedorIdsNeeded.add(s.vendedorId);
+        if (s.ventanaId !== null && s.ventanaId !== undefined) ventanaIdsNeeded.add(s.ventanaId as string);
+        if (s.vendedorId !== null && s.vendedorId !== undefined) vendedorIdsNeeded.add(s.vendedorId as string);
       }
 
       const ventanaIdsToFetch = Array.from(ventanaIdsNeeded).filter(
@@ -2394,8 +3284,8 @@ export const AccountsService = {
     for (const ticket of ticketsWithDates) {
       // Usar businessDate si existe, sino usar createdAt pero convertir a día en CR
       let ticketDate: Date;
-      if (ticket.businessDate) {
-        ticketDate = new Date(ticket.businessDate);
+      if (ticket.businessDate !== null && ticket.businessDate !== undefined) {
+        ticketDate = new Date(ticket.businessDate as Date);
         ticketDate.setUTCHours(0, 0, 0, 0);
       } else {
         // ✅ Convertir createdAt (UTC) a día en CR
@@ -2562,7 +3452,7 @@ export const AccountsService = {
     // Esto reduce significativamente el tiempo de respuesta (de ~14s a ~2-3s)
     const statementsPromises = Array.from(uniqueDays).map(async (dateStr) => {
       const date = new Date(dateStr + "T00:00:00.000Z");
-      return await calculateDayStatement(date, effectiveMonth, dimension, ventanaId, vendedorId, bancaId);
+      return await calculateDayStatement(date, effectiveMonth, dimension, ventanaId, vendedorId, bancaId, filters.userRole);
     });
     
     const statements = await Promise.all(statementsPromises);
@@ -2582,14 +3472,19 @@ export const AccountsService = {
     // Obtener información de ventana/vendedor cuando está especificado
     // Esto es necesario porque si no hay statements existentes, el mapa estará vacío
     // y no tendremos la información de nombres y códigos
-    let ventanaInfo: { id: string; name: string; code: string } | null = null;
+    let ventanaInfo: { id: string; name: string; code: string | null } | null = null;
     let vendedorInfo: { id: string; name: string; code: string | null } | null = null;
 
     if (ventanaId) {
       // Verificar si ya tenemos la información en el mapa
-      const firstStatement = statementsWithRelations.find((s) => s.ventana);
-      if (firstStatement?.ventana) {
-        ventanaInfo = firstStatement.ventana;
+      const firstStatementWithVentana = statementsWithRelations.find((s) => s.ventana);
+      if (firstStatementWithVentana?.ventana) {
+        const { ventana } = firstStatementWithVentana!;
+        ventanaInfo = { 
+          id: ventana!.id, 
+          name: ventana!.name, 
+          code: ventana!.code ?? null 
+        };
       } else {
         // Si no está en el mapa, obtenerla directamente
         const ventana = await prisma.ventana.findUnique({
@@ -2604,12 +3499,13 @@ export const AccountsService = {
 
     if (vendedorId) {
       // Verificar si ya tenemos la información en el mapa
-      const firstStatement = statementsWithRelations.find((s) => s.vendedor);
-      if (firstStatement?.vendedor) {
+      const firstStatementWithVendedor = statementsWithRelations.find((s) => s.vendedor);
+      if (firstStatementWithVendedor?.vendedor) {
+        const { vendedor: vendedorFromStatement } = firstStatementWithVendedor!;
         vendedorInfo = {
-          id: firstStatement.vendedor.id,
-          name: firstStatement.vendedor.name,
-          code: firstStatement.vendedor.code,
+          id: vendedorFromStatement!.id,
+          name: vendedorFromStatement!.name,
+          code: vendedorFromStatement!.code,
         };
       } else {
         // Si no está en el mapa, obtenerla directamente
@@ -2619,9 +3515,9 @@ export const AccountsService = {
         });
         if (vendedor) {
           vendedorInfo = {
-            id: vendedor.id,
-            name: vendedor.name,
-            code: vendedor.code || "",
+            id: vendedor!.id,
+            name: vendedor!.name,
+            code: vendedor!.code ?? null,
           };
         }
       }
@@ -2813,12 +3709,22 @@ export const AccountsService = {
 
     // Recalcular el estado de cuenta antes de validar el pago
     const dimension: "ventana" | "vendedor" = data.ventanaId ? "ventana" : "vendedor";
+    
+    // ✅ CRÍTICO: Obtener rol del usuario que está creando el pago
+    const user = await prisma.user.findUnique({
+      where: { id: data.paidById },
+      select: { role: true },
+    });
+    const userRole = user?.role || Role.ADMIN;
+    
     const statement = await calculateDayStatement(
       paymentDate,
       month,
       dimension,
       data.ventanaId ?? undefined,
-      data.vendedorId ?? undefined
+      data.vendedorId ?? undefined,
+      undefined, // bancaId
+      userRole // ✅ CRÍTICO: Pasar rol del usuario
     );
 
     // Validar que se puede editar

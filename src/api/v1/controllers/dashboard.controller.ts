@@ -69,7 +69,7 @@ export const DashboardController = {
       scope: query.scope || 'all',
       dimension: query.dimension, // 'ventana' | 'loteria' | 'vendedor'
     }, req.user!.role); // Pasar el rol del usuario para calcular correctamente la ganancia neta
-
+    console.log("result", result);
     return success(res, result);
   },
 
@@ -135,7 +135,7 @@ export const DashboardController = {
       ventanaId,
       bancaId,
     }, req.user!.role); // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
-
+    console.log("result", result);
     return success(res, {
       data: result,
       meta: {

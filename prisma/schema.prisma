@@ -263,6 +263,7 @@ model Jugada {
   commissionAmount  Float     @default(0) // Snapshot inmutable: monto calculado
   commissionOrigin  String? // Snapshot inmutable: "user"|"ventana"|"banca"
   commissionRuleId  String? // Snapshot inmutable: ID de la regla que aplicó
+  listeroCommissionAmount Float @default(0) // ✅ Snapshot inmutable: comisión del listero (ventana) calculada desde políticas
 
   multiplier LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
   ticket     Ticket             @relation(fields: [ticketId], references: [id])

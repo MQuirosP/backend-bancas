@@ -3,7 +3,8 @@ import { Prisma, TicketStatus, Role } from "@prisma/client";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { withTransactionRetry } from "../core/withTransactionRetry";
-import { resolveCommission } from "../services/commission.resolver";
+import { resolveCommission, resolveListeroCommission, CommissionSnapshot } from "../services/commission.resolver";
+import { resolveCommissionFromPolicy } from "../services/commission/commission.resolver";
 import { getBusinessDateCRInfo, getCRDayRangeUTC } from "../utils/businessDate";
 import { CommissionContext, preCalculateCommissions } from "../utils/commissionPrecalc";
 
@@ -971,9 +972,43 @@ export const TicketRepository = {
         const ventanaPolicy = (ventana?.commissionPolicyJson ?? null) as any;
         const bancaPolicy = (ventana?.banca?.commissionPolicyJson ?? null) as any;
         
+        // ✅ CRÍTICO: Obtener política del usuario VENTANA (listero) para calcular su comisión
+        // Esto es necesario porque el listero puede tener su propia política de comisión
+        let ventanaUserPolicy: any = null;
+        let ventanaUserId: string | null = null;
+        try {
+          const ventanaUser = await tx.user.findFirst({
+            where: {
+              role: Role.VENTANA,
+              ventanaId: ventanaId,
+              isActive: true,
+              deletedAt: null,
+            },
+            select: {
+              id: true,
+              commissionPolicyJson: true,
+            },
+            orderBy: { updatedAt: "desc" },
+          });
+          if (ventanaUser) {
+            ventanaUserPolicy = ventanaUser.commissionPolicyJson ?? null;
+            ventanaUserId = ventanaUser.id;
+          }
+        } catch (error) {
+          // Si no se encuentra el usuario VENTANA, continuar sin su política
+          logger.warn({
+            layer: 'repository',
+            action: 'VENTANA_USER_NOT_FOUND',
+            payload: { ventanaId, error: (error as Error).message },
+          });
+        }
+        
         // Calcular comisiones para cada jugada y acumular totalCommission
+        // ✅ CRÍTICO: Calcular comisión del vendedor (USER) y comisión del listero (VENTANA/BANCA) por separado
+        // Nota: resolveCommission y resolveListeroCommission son funciones síncronas rápidas (solo parsing y matching)
+        // No bloquean significativamente la creación del ticket
         const jugadasWithCommissions = preparedJugadas.map((j) => {
-          // Resolver comisión con prioridad jerárquica: USER → VENTANA → BANCA
+          // Resolver comisión del vendedor con prioridad jerárquica: USER → VENTANA → BANCA
           const res = resolveCommission(
             {
               loteriaId,
@@ -985,6 +1020,56 @@ export const TicketRepository = {
             ventanaPolicy,
             bancaPolicy
           );
+
+          // ✅ CRÍTICO: Calcular comisión del listero usando la MISMA lógica que el dashboard
+          // Prioridad: USER (ventana user) → VENTANA → BANCA
+          // Esto es exactamente lo que hace computeVentanaCommissionFromPolicies en dashboard.service.ts
+          let listeroRes: CommissionSnapshot;
+          
+          if (ventanaUserPolicy && ventanaUserId) {
+            try {
+              // Intentar usar resolveCommissionFromPolicy primero (como en dashboard)
+              const resolution = resolveCommissionFromPolicy(ventanaUserPolicy, {
+                userId: ventanaUserId,
+                loteriaId,
+                betType: j.type as "NUMERO" | "REVENTADO",
+                finalMultiplierX: j.finalMultiplierX ?? null,
+              });
+              const commissionAmount = parseFloat(((j.amount * resolution.percent) / 100).toFixed(2));
+              listeroRes = {
+                commissionPercent: resolution.percent,
+                commissionAmount,
+                commissionOrigin: "USER", // Del usuario VENTANA
+                commissionRuleId: resolution.ruleId ?? null, // Convertir undefined a null
+              };
+            } catch (err) {
+              // Fallback: usar resolveCommission con null como userPolicy (busca en VENTANA/BANCA)
+              listeroRes = resolveCommission(
+                {
+                  loteriaId,
+                  betType: j.type,
+                  finalMultiplierX: j.finalMultiplierX || 0,
+                  amount: j.amount,
+                },
+                null, // No usar userPolicy del vendedor, buscar en VENTANA/BANCA
+                ventanaPolicy,
+                bancaPolicy
+              );
+            }
+          } else {
+            // Si no hay usuario VENTANA, usar resolveCommission con null (busca en VENTANA/BANCA)
+            listeroRes = resolveCommission(
+              {
+                loteriaId,
+                betType: j.type,
+                finalMultiplierX: j.finalMultiplierX || 0,
+                amount: j.amount,
+              },
+              null, // No usar userPolicy del vendedor, buscar en VENTANA/BANCA
+              ventanaPolicy,
+              bancaPolicy
+            );
+          }
 
           // Guardar para ActivityLog
           commissionsDetails.push({
@@ -998,6 +1083,23 @@ export const TicketRepository = {
             jugadaAmount: j.amount,
           });
 
+          // Log CRÍTICO para verificar que se está guardando correctamente
+          logger.info({
+            layer: 'repository',
+            action: 'JUGADA_COMMISSION_SNAPSHOT',
+            payload: {
+              jugadaType: j.type,
+              jugadaAmount: j.amount,
+              vendedorCommission: res.commissionAmount,
+              vendedorCommissionOrigin: res.commissionOrigin,
+              listeroCommissionAmount: listeroRes.commissionAmount,
+              listeroCommissionOrigin: listeroRes.commissionOrigin,
+              listeroCommissionPercent: listeroRes.commissionPercent,
+              ventanaId,
+              loteriaId,
+            },
+          });
+          
           return {
             type: j.type,
             number: j.number,
@@ -1008,6 +1110,7 @@ export const TicketRepository = {
             commissionAmount: res.commissionAmount,
             commissionOrigin: res.commissionOrigin,
             commissionRuleId: res.commissionRuleId ?? null,
+            listeroCommissionAmount: listeroRes.commissionAmount, // ✅ Snapshot de comisión del listero
             ...(j.multiplierId
               ? { multiplier: { connect: { id: j.multiplierId } } }
               : {}),
