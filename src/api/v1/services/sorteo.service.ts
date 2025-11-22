@@ -467,9 +467,15 @@ export const SorteoService = {
       });
 
       // 3.2 Pagar NUMERO
+      // IMPORTANTE: Excluir tickets CANCELLED y solo jugadas activas
       const numeroWinners = await tx.jugada.findMany({
         where: {
-          ticket: { sorteoId: id },
+          ticket: { 
+            sorteoId: id,
+            status: { not: "CANCELLED" }, // Excluir tickets cancelados
+            isActive: true, // Solo tickets activos
+            deletedAt: null, // Solo tickets no eliminados
+          },
           type: "NUMERO",
           number: winningNumber,
           isActive: true,
@@ -495,9 +501,15 @@ export const SorteoService = {
       let reventadoWinners: { id: string; amount: number; ticketId: string }[] = [];
 
       if (extraX > 0) {
+        // IMPORTANTE: Excluir tickets CANCELLED y solo jugadas activas
         reventadoWinners = await tx.jugada.findMany({
           where: {
-            ticket: { sorteoId: id },
+            ticket: { 
+              sorteoId: id,
+              status: { not: "CANCELLED" }, // Excluir tickets cancelados
+              isActive: true, // Solo tickets activos
+              deletedAt: null, // Solo tickets no eliminados
+            },
             type: "REVENTADO",
             reventadoNumber: winningNumber,
             isActive: true,
@@ -527,8 +539,14 @@ export const SorteoService = {
         ...reventadoWinners.map((j) => j.ticketId),
       ]);
 
+      // IMPORTANTE: Solo evaluar tickets activos y no cancelados
       const tickets = await tx.ticket.findMany({
-        where: { sorteoId: id },
+        where: { 
+          sorteoId: id,
+          status: { not: "CANCELLED" }, // Excluir tickets cancelados
+          isActive: true, // Solo tickets activos
+          deletedAt: null, // Solo tickets no eliminados
+        },
         select: { id: true },
       });
 

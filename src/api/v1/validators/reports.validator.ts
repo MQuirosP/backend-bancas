@@ -96,6 +96,8 @@ export const VendedoresProductivityQuerySchema = DateRangeSchema.merge(EntityFil
 
 export const VendedoresCommissionsChartQuerySchema = DateRangeSchema.merge(EntityFiltersSchema).extend({
   ventanaId: z.string().uuid(), // Requerido (sin valor por defecto)
+  ticketStatus: z.string().optional(), // Ej: "ACTIVE,EVALUATED,RESTORED"
+  excludeTicketStatus: z.string().optional(), // Ej: "CANCELLED"
 }).strict();
 
 export const VendedoresSalesBehaviorQuerySchema = DateRangeSchema.merge(EntityFiltersSchema).strict();

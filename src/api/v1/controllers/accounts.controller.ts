@@ -38,6 +38,7 @@ export const AccountsController = {
           dimension: "vendedor" as const,
           vendedorId: user.id,
           sort: sort || "desc",
+          userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario
         };
       const result = await AccountsService.getStatement(filters);
       return success(res, result);
@@ -75,6 +76,7 @@ export const AccountsController = {
           dimension: "ventana" as const,
           ventanaId: effectiveVentanaId,
           sort: sort || "desc",
+          userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario
         };
         const result = await AccountsService.getStatement(filters);
         return success(res, result);
@@ -105,6 +107,7 @@ export const AccountsController = {
           ventanaId: effectiveVentanaId,
           vendedorId,
           sort: sort || "desc",
+          userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario
         };
         const result = await AccountsService.getStatement(filters);
         return success(res, result);
@@ -136,6 +139,7 @@ export const AccountsController = {
         vendedorId: effectiveFilters.vendedorId,
         bancaId: effectiveFilters.bancaId, // Filtro de banca activa (si está presente)
         sort: sort || "desc",
+        userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
       };
       
       const result = await AccountsService.getStatement(filters);

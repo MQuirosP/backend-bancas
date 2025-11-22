@@ -24,6 +24,7 @@ interface AccountsFilters {
   vendedorId?: string;
   bancaId?: string; // Para ADMIN multibanca
   sort?: "asc" | "desc";
+  userRole?: "ADMIN" | "VENTANA" | "VENDEDOR"; // ✅ CRÍTICO: Rol del usuario para calcular balance correctamente
 }
 
 /**
@@ -580,7 +581,8 @@ async function getSorteoBreakdownBatch(
   dimension: "ventana" | "vendedor",
   ventanaId?: string,
   vendedorId?: string,
-  bancaId?: string
+  bancaId?: string,
+  userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" // ✅ CRÍTICO: Rol del usuario para calcular balance
 ): Promise<Map<string, Array<{
   sorteoId: string;
   sorteoName: string;
@@ -753,8 +755,12 @@ async function getSorteoBreakdownBatch(
         payouts: entry.payouts,
         listeroCommission: entry.listeroCommission,
         vendedorCommission: entry.vendedorCommission,
-        // Para VENTANA: solo resta comisión vendedor (listero es informativo)
-        balance: entry.sales - entry.payouts - entry.vendedorCommission,
+        // ✅ CRÍTICO: Calcular balance según ROL del usuario, NO según dimensión
+        // ADMIN siempre resta listeroCommission (independiente de dimensión)
+        // VENTANA siempre resta vendedorCommission
+        balance: userRole === "ADMIN"
+          ? entry.sales - entry.payouts - entry.listeroCommission
+          : entry.sales - entry.payouts - entry.vendedorCommission,
         ticketCount: entry.ticketCount,
       }))
       .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
@@ -773,7 +779,8 @@ async function getSorteoBreakdown(
   dimension: "ventana" | "vendedor",
   ventanaId?: string,
   vendedorId?: string,
-  bancaId?: string
+  bancaId?: string,
+  userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" // ✅ CRÍTICO: Rol del usuario para calcular balance
 ): Promise<Array<{
   sorteoId: string;
   sorteoName: string;
@@ -905,7 +912,12 @@ async function getSorteoBreakdown(
       payouts: entry.payouts,
       listeroCommission: entry.listeroCommission,
       vendedorCommission: entry.vendedorCommission,
-      balance: entry.sales - entry.payouts - entry.listeroCommission - entry.vendedorCommission,
+      // ✅ CRÍTICO: Calcular balance según ROL del usuario, NO según dimensión
+      // ADMIN siempre resta listeroCommission (independiente de dimensión)
+      // VENTANA siempre resta vendedorCommission
+      balance: userRole === "ADMIN"
+        ? entry.sales - entry.payouts - entry.listeroCommission
+        : entry.sales - entry.payouts - entry.vendedorCommission,
       ticketCount: entry.ticketCount,
     }))
     .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()); // Ordenar por scheduledAt ascendente
@@ -1258,7 +1270,8 @@ async function getStatementFromMaterializedView(
   }>,
   startDate: Date,
   endDate: Date,
-  daysInMonth: number
+  daysInMonth: number,
+  userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" // ✅ CRÍTICO: Rol del usuario para calcular balance
 ) {
   const { month, date, fromDate, toDate, dimension, ventanaId, vendedorId, bancaId, sort = "desc" } = filters;
   
@@ -1346,7 +1359,7 @@ async function getStatementFromMaterializedView(
   const [totalsBatch, movementsBatch, sorteoBreakdownBatch] = await Promise.all([
     AccountPaymentRepository.getTotalsBatch(statementIds),
     AccountPaymentRepository.findMovementsBatch(statementIds),
-    getSorteoBreakdownBatch(statementDates, dimension, ventanaId, vendedorId, bancaId),
+    getSorteoBreakdownBatch(statementDates, dimension, ventanaId, vendedorId, bancaId, filters.userRole),
   ]);
   
   // Obtener información de ventanas/vendedores
@@ -1441,7 +1454,18 @@ async function getStatementFromMaterializedView(
       const verifiedTotalPaid = totals.totalPaid;
       const verifiedTotalCollected = totals.totalCollected;
       const verifiedTotalPaymentsCollections = totals.totalPaymentsCollections; // ✅ NUEVO
-      const verifiedRemainingBalance = summary.balance - verifiedTotalCollected + verifiedTotalPaid;
+      
+      // ✅ CRÍTICO: Calcular balance según ROL del usuario, NO según dimensión
+      // ADMIN siempre resta listeroCommission (independiente de dimensión)
+      // VENTANA siempre resta vendedorCommission
+      // La vista materializada calcula balance restando ambas comisiones, así que lo recalculamos
+      const effectiveUserRole = userRole || filters.userRole || "ADMIN"; // Por defecto ADMIN si no se especifica
+      const calculatedBalance = effectiveUserRole === "ADMIN"
+        ? summary.total_sales - summary.total_payouts - summary.listero_commission
+        : summary.total_sales - summary.total_payouts - summary.vendedor_commission;
+      
+      // Recalcular remainingBalance usando el balance correcto según el rol
+      const verifiedRemainingBalance = calculatedBalance - verifiedTotalCollected + verifiedTotalPaid;
       
       // Preparar actualización si es necesario
       if (Math.abs(verifiedTotalPaid - statement.totalPaid) > 0.01 || 
@@ -1457,14 +1481,14 @@ async function getStatementFromMaterializedView(
       
       const movements = movementsBatch.get(statement.id) || [];
       const bySorteo = sorteoBreakdownBatch.get(dateKey) || [];
-      
+
       const base = {
         date: summary.date.toISOString().split("T")[0],
         totalSales: summary.total_sales,
         totalPayouts: summary.total_payouts,
         listeroCommission: summary.listero_commission,
         vendedorCommission: summary.vendedor_commission,
-        balance: summary.balance,
+        balance: calculatedBalance,
         totalPaid: verifiedTotalPaid,
         totalCollected: verifiedTotalCollected,
         totalPaymentsCollections: verifiedTotalPaymentsCollections, // ✅ NUEVO: Total de pagos y cobros combinados (no revertidos)
@@ -1621,7 +1645,8 @@ export const AccountsService = {
         materializedSummaries,
         startDate,
         endDate,
-        daysInMonth
+        daysInMonth,
+        filters.userRole
       );
     }
 
@@ -2616,7 +2641,7 @@ export const AccountsService = {
     const [totalsBatch, movementsBatch, sorteoBreakdownBatch] = await Promise.all([
       AccountPaymentRepository.getTotalsBatch(statementIdsForBatch2),
       AccountPaymentRepository.findMovementsBatch(statementIdsForBatch2),
-      getSorteoBreakdownBatch(statementDatesForBatch2, dimension, ventanaId, vendedorId, bancaId),
+      getSorteoBreakdownBatch(statementDatesForBatch2, dimension, ventanaId, vendedorId, bancaId, filters.userRole),
     ]);
 
     // ✅ OPTIMIZACIÓN: Preparar actualizaciones batch para statements que necesitan actualización
@@ -2942,10 +2967,13 @@ export const AccountsService = {
     });
 
     // Calcular saldo base del día (sin pagos/cobros)
-    // Para VENTANA: solo resta comisión vendedor (listero es informativo)
+    // Para ADMIN (dimension=ventana): resta solo listeroCommission
+    // Para VENDEDOR (dimension=vendedor): resta solo vendedorCommission
     // Obtener dimension del statement (si tiene ventanaId es ventana, si tiene vendedorId es vendedor)
     const isVentana = statement.ventanaId !== null && statement.vendedorId === null;
-    const baseBalance = statement.totalSales - statement.totalPayouts - (statement.vendedorCommission || 0);
+    const baseBalance = isVentana
+      ? statement.totalSales - statement.totalPayouts - (statement.listeroCommission || 0)
+      : statement.totalSales - statement.totalPayouts - (statement.vendedorCommission || 0);
 
     // FIX: Eliminar cálculo redundante - usar directamente el repositorio para obtener totales actuales
     const currentTotalPaid = await AccountPaymentRepository.getTotalPaid(statement.id);

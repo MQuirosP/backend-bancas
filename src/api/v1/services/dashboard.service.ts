@@ -677,7 +677,7 @@ export const DashboardService = {
    * Calcula CxC: Monto que ventana debe al banco por premios no pagados
    * CxC = Total de ventas - Total de premios pagados
    */
-  async calculateCxC(filters: DashboardFilters): Promise<CxCResult> {
+  async calculateCxC(filters: DashboardFilters, role?: Role): Promise<CxCResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
@@ -915,7 +915,7 @@ export const DashboardService = {
    * Calcula CxP: Monto que banco debe a ventana por overpayment
    * CxP ocurre cuando ventana paga más de lo que vendió
    */
-  async calculateCxP(filters: DashboardFilters): Promise<CxPResult> {
+  async calculateCxP(filters: DashboardFilters, role?: Role): Promise<CxPResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
