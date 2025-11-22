@@ -1804,6 +1804,7 @@ export const TicketRepository = {
           commissionAmount: number;
           commissionOrigin: "USER" | "VENTANA" | "BANCA" | null;
           commissionRuleId: string | null;
+          listeroCommissionAmount: number; // ✅ CRÍTICO: Comisión del listero (VENTANA/BANCA)
           multiplierId: string | null;
         }>;
 
@@ -1819,19 +1820,43 @@ export const TicketRepository = {
             }
           }
           
-          jugadasWithCommissions = preCalculated.map((j) => ({
-            ...j,
-            reventadoNumber: j.type === "REVENTADO" ? j.number : null,
-            multiplierId: j.type === "NUMERO" ? (numeroMultiplierMap.get(j.number) ?? null) : null,
-          }));
+          // ✅ CRÍTICO: Calcular listeroCommissionAmount desde políticas VENTANA o BANCA
+          const ventanaPolicy = ventana?.commissionPolicyJson ?? null;
+          const bancaPolicy = ventana?.banca?.commissionPolicyJson ?? null;
+          
+          jugadasWithCommissions = preCalculated.map((j) => {
+            // Calcular comisión del listero (VENTANA o BANCA, nunca USER)
+            let listeroCommissionAmount = 0;
+            
+            const listeroResult = resolveListeroCommission(
+              {
+                loteriaId,
+                betType: j.type,
+                finalMultiplierX: j.finalMultiplierX,
+                amount: j.amount,
+              },
+              ventanaPolicy,
+              bancaPolicy
+            );
+            
+            listeroCommissionAmount = Math.round(listeroResult.commissionAmount);
+            
+            return {
+              ...j,
+              reventadoNumber: j.type === "REVENTADO" ? j.number : null,
+              multiplierId: j.type === "NUMERO" ? (numeroMultiplierMap.get(j.number) ?? null) : null,
+              listeroCommissionAmount, // ✅ PERSISTIR en DB
+            };
+          });
 
           // Preparar detalles para ActivityLog
-          for (const j of preCalculated) {
+          for (const j of jugadasWithCommissions) {
             commissionsDetails.push({
               origin: j.commissionOrigin,
               ruleId: j.commissionRuleId ?? null,
               percent: j.commissionPercent,
               amount: j.commissionAmount,
+              listeroAmount: j.listeroCommissionAmount, // ✅ Incluir en logs
               loteriaId,
               betType: j.type,
               multiplierX: j.finalMultiplierX,
@@ -1857,11 +1882,26 @@ export const TicketRepository = {
               bancaPolicy
             );
 
+            // ✅ CRÍTICO: Calcular listeroCommissionAmount desde políticas VENTANA o BANCA
+            const listeroResult = resolveListeroCommission(
+              {
+                loteriaId,
+                betType: j.type,
+                finalMultiplierX: j.finalMultiplierX,
+                amount: j.amount,
+              },
+              ventanaPolicy,
+              bancaPolicy
+            );
+
+            const listeroCommissionAmount = Math.round(listeroResult.commissionAmount);
+
             commissionsDetails.push({
               origin: res.commissionOrigin,
               ruleId: res.commissionRuleId ?? null,
               percent: res.commissionPercent,
               amount: res.commissionAmount,
+              listeroAmount: listeroCommissionAmount, // ✅ Incluir en logs
               loteriaId,
               betType: j.type,
               multiplierX: j.finalMultiplierX,
@@ -1878,6 +1918,7 @@ export const TicketRepository = {
               commissionAmount: res.commissionAmount,
               commissionOrigin: res.commissionOrigin,
               commissionRuleId: res.commissionRuleId ?? null,
+              listeroCommissionAmount, // ✅ PERSISTIR en DB
               multiplierId: j.multiplierId ?? null,
             };
           });
@@ -1924,6 +1965,7 @@ export const TicketRepository = {
               commissionAmount: j.commissionAmount,
               commissionOrigin: j.commissionOrigin,
               commissionRuleId: j.commissionRuleId,
+              listeroCommissionAmount: j.listeroCommissionAmount, // ✅ PERSISTIR en DB
               multiplierId: j.multiplierId,
             })),
           });
