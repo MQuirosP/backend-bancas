@@ -288,6 +288,97 @@ export const AccountPaymentRepository = {
    * ✅ OPTIMIZACIÓN: Obtiene todos los movimientos de múltiples statements en una sola query
    * Retorna un Map<statementId, movements[]>
    */
+  /**
+   * ✅ NUEVO: Obtiene movimientos agrupados por fecha sin depender de AccountStatement
+   */
+  async findMovementsByDateRange(
+    startDate: Date,
+    endDate: Date,
+    dimension: "ventana" | "vendedor",
+    ventanaId?: string,
+    vendedorId?: string,
+    bancaId?: string
+  ): Promise<Map<string, any[]>> {
+    const where: Prisma.AccountPaymentWhereInput = {
+      date: {
+        gte: startDate,
+        lte: endDate,
+      },
+      isReversed: false,
+    };
+
+    if (dimension === "ventana") {
+      if (ventanaId) {
+        where.ventanaId = ventanaId;
+      } else {
+        where.ventanaId = { not: null };
+      }
+      where.vendedorId = null;
+    } else {
+      if (vendedorId) {
+        where.vendedorId = vendedorId;
+      } else {
+        where.vendedorId = { not: null };
+      }
+    }
+
+    if (bancaId) {
+      where.ventana = {
+        bancaId: bancaId,
+      };
+    }
+
+    const payments = await prisma.accountPayment.findMany({
+      where,
+      include: {
+        paidBy: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    // Función helper para convertir Date a fecha CR (YYYY-MM-DD)
+    const toCRDateString = (date: Date): string => {
+      const offsetMs = 6 * 60 * 60 * 1000; // UTC-6 = +6 horas para convertir a CR
+      const crDate = new Date(date.getTime() + offsetMs);
+      const year = crDate.getUTCFullYear();
+      const month = String(crDate.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(crDate.getUTCDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    const movementsMap = new Map<string, any[]>();
+    for (const payment of payments) {
+      const dateKey = toCRDateString(payment.date);
+      if (!movementsMap.has(dateKey)) {
+        movementsMap.set(dateKey, []);
+      }
+      movementsMap.get(dateKey)!.push({
+        id: payment.id,
+        accountStatementId: payment.accountStatementId,
+        date: dateKey,
+        amount: payment.amount,
+        type: payment.type,
+        method: payment.method,
+        notes: payment.notes,
+        isFinal: payment.isFinal,
+        isReversed: payment.isReversed,
+        reversedAt: payment.reversedAt,
+        reversedBy: payment.reversedBy,
+        paidById: payment.paidById,
+        paidByName: payment.paidBy?.name || payment.paidByName,
+        createdAt: payment.createdAt.toISOString(),
+        updatedAt: payment.updatedAt.toISOString(),
+      });
+    }
+
+    return movementsMap;
+  },
+
   async findMovementsBatch(accountStatementIds: string[]): Promise<Map<string, any[]>> {
     if (accountStatementIds.length === 0) {
       return new Map();

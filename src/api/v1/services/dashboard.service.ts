@@ -488,7 +488,13 @@ export const DashboardService = {
           SELECT
             t."ventanaId" AS ventana_id,
             COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana
+            COALESCE(SUM(
+              CASE 
+                WHEN j."listeroCommissionAmount" > 0 THEN j."listeroCommissionAmount"
+                WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount"
+                ELSE 0
+              END
+            ), 0) AS commission_ventana
           FROM tickets_in_range t
           JOIN "Jugada" j ON j."ticketId" = t.id
           WHERE j."deletedAt" IS NULL
@@ -550,7 +556,13 @@ export const DashboardService = {
           SELECT
             t."loteriaId" AS loteria_id,
             COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana
+            COALESCE(SUM(
+              CASE 
+                WHEN j."listeroCommissionAmount" > 0 THEN j."listeroCommissionAmount"
+                WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount"
+                ELSE 0
+              END
+            ), 0) AS commission_ventana
           FROM tickets_in_range t
           JOIN "Jugada" j ON j."ticketId" = t.id
           WHERE j."deletedAt" IS NULL
@@ -681,6 +693,74 @@ export const DashboardService = {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+
+    // ✅ CRÍTICO: Calcular comisiones desde políticas (igual que calculateGanancia)
+    const {
+      totalVentanaCommission,
+      extrasByVentana,
+    } = await computeVentanaCommissionFromPolicies(filters);
+
+    // ✅ CRÍTICO: Obtener datos directamente desde tickets/jugadas (igual que calculateGanancia)
+    const ventanaData = await prisma.$queryRaw<
+      Array<{
+        ventana_id: string;
+        ventana_name: string;
+        is_active: boolean;
+        total_sales: number;
+        total_payouts: number;
+        commission_user: number;
+        commission_ventana_raw: number;
+        listero_commission_snapshot: number;
+      }>
+    >(
+      Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT
+            t.id,
+            t."ventanaId",
+            t."totalAmount",
+            t."totalPayout"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+        ),
+        sales_per_ventana AS (
+          SELECT
+            t."ventanaId" AS ventana_id,
+            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
+            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts
+          FROM tickets_in_range t
+          GROUP BY t."ventanaId"
+        ),
+        commissions_per_ventana AS (
+          SELECT
+            t."ventanaId" AS ventana_id,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
+            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
+          FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          GROUP BY t."ventanaId"
+        )
+        SELECT
+          v.id AS ventana_id,
+          v.name AS ventana_name,
+          v."isActive" AS is_active,
+          COALESCE(sp.total_sales, 0) AS total_sales,
+          COALESCE(sp.total_payouts, 0) AS total_payouts,
+          COALESCE(cp.commission_user, 0) AS commission_user,
+          COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw,
+          COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot
+        FROM "Ventana" v
+        LEFT JOIN sales_per_ventana sp ON sp.ventana_id = v.id
+        LEFT JOIN commissions_per_ventana cp ON cp.ventana_id = v.id
+        WHERE v."isActive" = true
+          ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+        ORDER BY total_sales DESC
+      `
+    );
 
     const where: Prisma.AccountStatementWhereInput = {
       date: {
@@ -781,6 +861,31 @@ export const DashboardService = {
       return entry;
     };
 
+    // ✅ CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
+    for (const ventanaRow of ventanaData) {
+      const ventanaId = ventanaRow.ventana_id;
+      const entry = ensureEntry(ventanaId);
+      
+      entry.totalSales = Number(ventanaRow.total_sales) || 0;
+      entry.totalPayouts = Number(ventanaRow.total_payouts) || 0;
+      
+      // ✅ CRÍTICO: Calcular comisión del listero igual que calculateGanancia
+      // Sumar snapshot + comisiones desde políticas
+      const commissionVentanaRaw = Number(ventanaRow.commission_ventana_raw) || 0;
+      const listeroCommissionSnapshot = Number(ventanaRow.listero_commission_snapshot) || 0;
+      const extrasFromPolicies = extrasByVentana.get(ventanaId) || 0;
+      
+      // Usar snapshot si está disponible, sino usar commissionOrigin
+      const listeroCommissionFromDB = listeroCommissionSnapshot > 0 
+        ? listeroCommissionSnapshot 
+        : commissionVentanaRaw;
+      
+      // Sumar extras desde políticas (igual que calculateGanancia)
+      entry.totalListeroCommission = listeroCommissionFromDB + extrasFromPolicies;
+      entry.totalVendedorCommission = Number(ventanaRow.commission_user) || 0;
+    }
+
+    // Obtener totalPaid desde AccountStatement (ya está calculado correctamente)
     for (const statement of statements) {
       if (!statement.ventanaId) continue;
       const key = statement.ventanaId;
@@ -790,13 +895,7 @@ export const DashboardService = {
         statement.ventana?.isActive ?? undefined
       );
 
-      existing.totalSales += statement.totalSales ?? 0;
-      existing.totalPayouts += statement.totalPayouts ?? 0;
-      existing.totalListeroCommission += statement.listeroCommission ?? 0;
-      existing.totalVendedorCommission += statement.vendedorCommission ?? 0;
       existing.totalPaid += statement.totalPaid ?? 0;
-      // remainingBalance ya incluye comisiones porque balance las incluye
-      existing.remainingBalance += statement.remainingBalance ?? 0;
     }
 
     const accountPaymentWhere: Prisma.AccountPaymentWhereInput = {
@@ -881,23 +980,33 @@ export const DashboardService = {
 
     const byVentana = Array.from(aggregated.values())
       .map((entry) => {
-        const amount = entry.remainingBalance > 0 ? entry.remainingBalance : 0;
         const totalPaid = entry.totalPaid;
         const totalCollected = entry.totalCollected;
         const totalPaidToCustomer = entry.totalPaidToCustomer;
+        // ✅ CRÍTICO: Recalcular remainingBalance según rol del usuario
+        const effectiveUserRole = role || Role.ADMIN;
+        const baseBalance = effectiveUserRole === Role.ADMIN
+          ? entry.totalSales - entry.totalPayouts - entry.totalListeroCommission
+          : entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
+        const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
+        // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado
+        const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
+        
         return {
           ventanaId: entry.ventanaId,
           ventanaName: entry.ventanaName,
           totalSales: entry.totalSales,
           totalPayouts: entry.totalPayouts,
-          totalListeroCommission: entry.totalListeroCommission,
-          totalVendedorCommission: entry.totalVendedorCommission,
+          listeroCommission: entry.totalListeroCommission, // ✅ REQUERIDO: Campo individual
+          vendedorCommission: entry.totalVendedorCommission, // ✅ REQUERIDO: Campo individual
+          totalListeroCommission: entry.totalListeroCommission, // ✅ Mantener para compatibilidad
+          totalVendedorCommission: entry.totalVendedorCommission, // ✅ Mantener para compatibilidad
           totalPaid,
           totalPaidOut: totalPaid,
           totalCollected,
           totalPaidToCustomer,
-          amount,
-          remainingBalance: entry.remainingBalance,
+          amount, // ✅ Usa remainingBalance recalculado
+          remainingBalance: recalculatedRemainingBalance, // ✅ Recalculado según rol
           isActive: entry.isActive,
         };
       })
@@ -919,6 +1028,74 @@ export const DashboardService = {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+
+    // ✅ CRÍTICO: Calcular comisiones desde políticas (igual que calculateGanancia)
+    const {
+      totalVentanaCommission,
+      extrasByVentana,
+    } = await computeVentanaCommissionFromPolicies(filters);
+
+    // ✅ CRÍTICO: Obtener datos directamente desde tickets/jugadas (igual que calculateGanancia)
+    const ventanaData = await prisma.$queryRaw<
+      Array<{
+        ventana_id: string;
+        ventana_name: string;
+        is_active: boolean;
+        total_sales: number;
+        total_payouts: number;
+        commission_user: number;
+        commission_ventana_raw: number;
+        listero_commission_snapshot: number;
+      }>
+    >(
+      Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT
+            t.id,
+            t."ventanaId",
+            t."totalAmount",
+            t."totalPayout"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+        ),
+        sales_per_ventana AS (
+          SELECT
+            t."ventanaId" AS ventana_id,
+            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
+            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts
+          FROM tickets_in_range t
+          GROUP BY t."ventanaId"
+        ),
+        commissions_per_ventana AS (
+          SELECT
+            t."ventanaId" AS ventana_id,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
+            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
+          FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          GROUP BY t."ventanaId"
+        )
+        SELECT
+          v.id AS ventana_id,
+          v.name AS ventana_name,
+          v."isActive" AS is_active,
+          COALESCE(sp.total_sales, 0) AS total_sales,
+          COALESCE(sp.total_payouts, 0) AS total_payouts,
+          COALESCE(cp.commission_user, 0) AS commission_user,
+          COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw,
+          COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot
+        FROM "Ventana" v
+        LEFT JOIN sales_per_ventana sp ON sp.ventana_id = v.id
+        LEFT JOIN commissions_per_ventana cp ON cp.ventana_id = v.id
+        WHERE v."isActive" = true
+          ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+        ORDER BY total_sales DESC
+      `
+    );
 
     const where: Prisma.AccountStatementWhereInput = {
       date: {
@@ -1019,6 +1196,31 @@ export const DashboardService = {
       return entry;
     };
 
+    // ✅ CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
+    for (const ventanaRow of ventanaData) {
+      const ventanaId = ventanaRow.ventana_id;
+      const entry = ensureEntry(ventanaId);
+      
+      entry.totalSales = Number(ventanaRow.total_sales) || 0;
+      entry.totalPayouts = Number(ventanaRow.total_payouts) || 0;
+      
+      // ✅ CRÍTICO: Calcular comisión del listero igual que calculateGanancia
+      // Sumar snapshot + comisiones desde políticas
+      const commissionVentanaRaw = Number(ventanaRow.commission_ventana_raw) || 0;
+      const listeroCommissionSnapshot = Number(ventanaRow.listero_commission_snapshot) || 0;
+      const extrasFromPolicies = extrasByVentana.get(ventanaId) || 0;
+      
+      // Usar snapshot si está disponible, sino usar commissionOrigin
+      const listeroCommissionFromDB = listeroCommissionSnapshot > 0 
+        ? listeroCommissionSnapshot 
+        : commissionVentanaRaw;
+      
+      // Sumar extras desde políticas (igual que calculateGanancia)
+      entry.totalListeroCommission = listeroCommissionFromDB + extrasFromPolicies;
+      entry.totalVendedorCommission = Number(ventanaRow.commission_user) || 0;
+    }
+
+    // Obtener totalPaid desde AccountStatement (ya está calculado correctamente)
     for (const statement of statements) {
       if (!statement.ventanaId) continue;
       const key = statement.ventanaId;
@@ -1028,13 +1230,7 @@ export const DashboardService = {
         statement.ventana?.isActive ?? undefined
       );
 
-      existing.totalSales += statement.totalSales ?? 0;
-      existing.totalPayouts += statement.totalPayouts ?? 0;
-      existing.totalListeroCommission += statement.listeroCommission ?? 0;
-      existing.totalVendedorCommission += statement.vendedorCommission ?? 0;
       existing.totalPaid += statement.totalPaid ?? 0;
-      // remainingBalance ya incluye comisiones porque balance las incluye
-      existing.remainingBalance += statement.remainingBalance ?? 0;
     }
 
     const accountPaymentWhere: Prisma.AccountPaymentWhereInput = {
@@ -1119,25 +1315,35 @@ export const DashboardService = {
 
     const byVentana = Array.from(aggregated.values())
       .map((entry) => {
-        const amount = entry.remainingBalance < 0 ? Math.abs(entry.remainingBalance) : 0;
         const totalPaid = entry.totalPaid;
         const totalCollected = entry.totalCollected;
         const totalPaidToCustomer = entry.totalPaidToCustomer;
         const totalPaidToVentana = entry.totalPaidToVentana || 0; // Para CxP según documento
+        // ✅ CRÍTICO: Recalcular remainingBalance según rol del usuario
+        const effectiveUserRole = role || Role.ADMIN;
+        const baseBalance = effectiveUserRole === Role.ADMIN
+          ? entry.totalSales - entry.totalPayouts - entry.totalListeroCommission
+          : entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
+        const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
+        // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
+        const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
+        
         return {
           ventanaId: entry.ventanaId,
           ventanaName: entry.ventanaName,
           totalSales: entry.totalSales,
           totalPayouts: entry.totalPayouts,
-          totalListeroCommission: entry.totalListeroCommission,
-          totalVendedorCommission: entry.totalVendedorCommission,
+          listeroCommission: entry.totalListeroCommission, // ✅ REQUERIDO: Campo individual
+          vendedorCommission: entry.totalVendedorCommission, // ✅ REQUERIDO: Campo individual
+          totalListeroCommission: entry.totalListeroCommission, // ✅ Mantener para compatibilidad
+          totalVendedorCommission: entry.totalVendedorCommission, // ✅ Mantener para compatibilidad
           totalPaid,
           totalPaidOut: totalPaid,
           totalCollected,
           totalPaidToCustomer,
           totalPaidToVentana,
-          amount,
-          remainingBalance: entry.remainingBalance,
+          amount, // ✅ Usa remainingBalance recalculado
+          remainingBalance: recalculatedRemainingBalance, // ✅ Recalculado según rol
           isActive: entry.isActive,
         };
       })
