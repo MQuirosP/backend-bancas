@@ -41,12 +41,12 @@ export const RestrictionRuleController = {
 
   async list(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
-    
+
     // Si es ADMIN con banca activa, agregar filtro de bancaId
     if (req.user!.role === 'ADMIN' && req.bancaContext?.bancaId && req.bancaContext.hasAccess) {
       query.bancaId = req.bancaContext.bancaId;
     }
-    
+
     const result = await RestrictionRuleService.list(query);
     res.json({ success: true, data: result.data, meta: result.meta });
   },
@@ -58,6 +58,17 @@ export const RestrictionRuleController = {
 
   async executeCronManually(req: AuthenticatedRequest, res: Response) {
     const result = await RestrictionRuleService.executeCronManually();
+    res.json({ success: true, data: result });
+  },
+
+  async myRestrictions(req: AuthenticatedRequest, res: Response) {
+    const { id, bancaId, ventanaId } = req.user!;
+
+    if (!bancaId) {
+      throw new Error("El usuario no tiene una banca asignada");
+    }
+
+    const result = await RestrictionRuleService.forVendor(id, bancaId, ventanaId || null);
     res.json({ success: true, data: result });
   },
 };

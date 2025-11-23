@@ -67,7 +67,7 @@ export const RestrictionRuleRepository = {
       loteriaId: data.loteriaId ?? null,
       multiplierId: data.multiplierId ?? null,
     };
-    
+
     return prisma.restrictionRule.create({
       data: validData,
       include: includeLabels,
@@ -133,7 +133,7 @@ export const RestrictionRuleRepository = {
     // ✅ Zod ya parsea correctamente los booleanos con enum + transform
     // Si no viene isActive, usar true por defecto (solo activas)
     const _isActive = isActive !== undefined ? isActive : true;
-    
+
     // Los otros filtros de tipo son opcionales y Zod los parsea correctamente
     const _hasCutoff = hasCutoff === true;
     const _hasAmount = hasAmount === true;
@@ -146,10 +146,10 @@ export const RestrictionRuleRepository = {
     if (ventanaId) where.ventanaId = ventanaId;
     if (userId) where.userId = userId;
     if (number) where.number = number;
-    
+
     // Determinar si hay algún filtro de tipo especificado
     const hasAnyTypeFilter = _hasCutoff || _hasAmount || _hasAutoDate !== undefined || loteriaId || multiplierId;
-    
+
     // Solo aplicar filtros de tipo si se especifican explícitamente
     if (hasAnyTypeFilter) {
       // Filtro para restricciones automáticas por fecha
@@ -237,6 +237,40 @@ export const RestrictionRuleRepository = {
   },
 
   /**
+   * Busca reglas generales aplicables a un contexto (Banca/Ventana)
+   * que NO tienen usuario asignado.
+   *
+   * Retorna:
+   * 1. Reglas Globales (bancaId=null, ventanaId=null)
+   * 2. Reglas de la Banca (bancaId=X, ventanaId=null)
+   * 3. Reglas de la Ventana (bancaId=X, ventanaId=Y)
+   */
+  async findGeneralRules(bancaId: string, ventanaId: string | null) {
+    const orConditions: any[] = [
+      // 1. Globales
+      { bancaId: null, ventanaId: null },
+      // 2. De la Banca
+      { bancaId, ventanaId: null },
+    ];
+
+    if (ventanaId) {
+      // 3. De la Ventana (debe coincidir banca también para consistencia, 
+      // aunque ventanaId debería ser único, mejor ser explícito)
+      orConditions.push({ bancaId, ventanaId });
+    }
+
+    return prisma.restrictionRule.findMany({
+      where: {
+        isActive: true,
+        userId: null, // Solo reglas generales (sin usuario específico)
+        OR: orConditions,
+      },
+      orderBy: { updatedAt: "desc" },
+      include: includeLabels,
+    });
+  },
+
+  /**
    * Límites de montos efectivos (USER > VENTANA > BANCA), con soporte de number y ventana temporal.
    * Solo considera reglas activas.
    * Ahora incluye soporte para isAutoDate y límites dinámicos (baseAmount + salesPercentage).
@@ -276,13 +310,13 @@ export const RestrictionRuleRepository = {
       numberConditions.push({ number });
     }
     if (autoDateNumber) {
-      numberConditions.push({ 
-        isAutoDate: true, 
-        number: autoDateNumber 
+      numberConditions.push({
+        isAutoDate: true,
+        number: autoDateNumber
       });
     }
 
-    const numberWhere = numberConditions.length > 0 
+    const numberWhere = numberConditions.length > 0
       ? { OR: numberConditions }
       : { number: null };
 
@@ -290,30 +324,30 @@ export const RestrictionRuleRepository = {
     const [userSpecific, ventanaSpecific, bancaSpecific] = await Promise.all([
       userId
         ? prisma.restrictionRule.findFirst({
-            where: { 
-              userId, 
-              isActive: true, 
-              ...whereTime,
-              ...(number ? numberWhere : { number: null }),
-            },
-            orderBy: { updatedAt: "desc" },
-          })
+          where: {
+            userId,
+            isActive: true,
+            ...whereTime,
+            ...(number ? numberWhere : { number: null }),
+          },
+          orderBy: { updatedAt: "desc" },
+        })
         : Promise.resolve(null),
       ventanaId
         ? prisma.restrictionRule.findFirst({
-            where: { 
-              ventanaId, 
-              isActive: true, 
-              ...whereTime,
-              ...(number ? numberWhere : { number: null }),
-            },
-            orderBy: { updatedAt: "desc" },
-          })
+          where: {
+            ventanaId,
+            isActive: true,
+            ...whereTime,
+            ...(number ? numberWhere : { number: null }),
+          },
+          orderBy: { updatedAt: "desc" },
+        })
         : Promise.resolve(null),
       prisma.restrictionRule.findFirst({
-        where: { 
-          bancaId, 
-          isActive: true, 
+        where: {
+          bancaId,
+          isActive: true,
           ...whereTime,
           ...(number ? numberWhere : { number: null }),
         },
@@ -326,33 +360,33 @@ export const RestrictionRuleRepository = {
       userSpecific || !userId
         ? Promise.resolve(null)
         : prisma.restrictionRule.findFirst({
-            where: { userId, number: null, isActive: true, ...whereTime },
-            orderBy: { updatedAt: "desc" },
-          }),
+          where: { userId, number: null, isActive: true, ...whereTime },
+          orderBy: { updatedAt: "desc" },
+        }),
       ventanaSpecific || !ventanaId
         ? Promise.resolve(null)
         : prisma.restrictionRule.findFirst({
-            where: { ventanaId, number: null, isActive: true, ...whereTime },
-            orderBy: { updatedAt: "desc" },
-          }),
+          where: { ventanaId, number: null, isActive: true, ...whereTime },
+          orderBy: { updatedAt: "desc" },
+        }),
       bancaSpecific
         ? Promise.resolve(null)
         : prisma.restrictionRule.findFirst({
-            where: { bancaId, number: null, isActive: true, ...whereTime },
-            orderBy: { updatedAt: "desc" },
-          }),
+          where: { bancaId, number: null, isActive: true, ...whereTime },
+          orderBy: { updatedAt: "desc" },
+        }),
     ]);
 
     const pick = (r: any, scope: EffectiveRestriction["source"]) =>
       r
         ? {
-            source: scope,
-            maxAmount: r.maxAmount ?? null,
-            maxTotal: r.maxTotal ?? null,
-            baseAmount: r.baseAmount ?? null,
-            salesPercentage: r.salesPercentage ?? null,
-            appliesToVendedor: r.appliesToVendedor ?? null,
-          }
+          source: scope,
+          maxAmount: r.maxAmount ?? null,
+          maxTotal: r.maxTotal ?? null,
+          baseAmount: r.baseAmount ?? null,
+          salesPercentage: r.salesPercentage ?? null,
+          appliesToVendedor: r.appliesToVendedor ?? null,
+        }
         : null;
 
     const chosen =
@@ -400,17 +434,17 @@ export const RestrictionRuleRepository = {
     const [userRule, ventanaRule, bancaRule] = await Promise.all([
       userId
         ? prisma.restrictionRule.findFirst({
-            where: baseWhere({ userId }),
-            orderBy: { updatedAt: "desc" },
-            select: { salesCutoffMinutes: true },
-          })
+          where: baseWhere({ userId }),
+          orderBy: { updatedAt: "desc" },
+          select: { salesCutoffMinutes: true },
+        })
         : Promise.resolve(null),
       ventanaId
         ? prisma.restrictionRule.findFirst({
-            where: baseWhere({ ventanaId }),
-            orderBy: { updatedAt: "desc" },
-            select: { salesCutoffMinutes: true },
-          })
+          where: baseWhere({ ventanaId }),
+          orderBy: { updatedAt: "desc" },
+          select: { salesCutoffMinutes: true },
+        })
         : Promise.resolve(null),
       prisma.restrictionRule.findFirst({
         where: baseWhere({ bancaId }),

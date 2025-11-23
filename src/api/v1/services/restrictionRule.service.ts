@@ -19,17 +19,17 @@ function normalizeAndValidateNumbers(
   number: string | string[] | undefined
 ): string[] {
   if (!number) return [];
-  
+
   // Normalizar a array
   const numbers = Array.isArray(number) ? number : [number];
-  
+
   // Validar cada número
   const validated: string[] = [];
   for (const num of numbers) {
     if (typeof num !== "string") {
       throw new AppError("Cada número debe ser un string", 400);
     }
-    
+
     const trimmed = num.trim();
     if (!/^\d{2}$/.test(trimmed)) {
       throw new AppError(
@@ -37,7 +37,7 @@ function normalizeAndValidateNumbers(
         400
       );
     }
-    
+
     const numValue = Number(trimmed);
     if (numValue < 0 || numValue > 99) {
       throw new AppError(
@@ -45,16 +45,16 @@ function normalizeAndValidateNumbers(
         400
       );
     }
-    
+
     validated.push(trimmed);
   }
-  
+
   // Eliminar duplicados y ordenar
   const unique = [...new Set(validated)];
   if (unique.length !== validated.length) {
     throw new AppError("No se permiten números duplicados en el array", 400);
   }
-  
+
   return unique.sort((a, b) => Number(a) - Number(b));
 }
 
@@ -163,7 +163,7 @@ export const RestrictionRuleService = {
 
     // Normalizar number a array
     const numbers = normalizeAndValidateNumbers(data.number);
-    
+
     // Si no hay números, crear una sola restricción sin number
     if (numbers.length === 0) {
       const created = await RestrictionRuleRepository.create({
@@ -195,7 +195,7 @@ export const RestrictionRuleService = {
       });
       return created;
     }
-    
+
     // Si hay números, crear una restricción por cada número
     const restrictions = await Promise.all(
       numbers.map((num) =>
@@ -220,7 +220,7 @@ export const RestrictionRuleService = {
         })
       )
     );
-    
+
     // Log para todas las restricciones creadas
     await Promise.all(
       restrictions.map((restriction) =>
@@ -234,7 +234,7 @@ export const RestrictionRuleService = {
         })
       )
     );
-    
+
     // Retornar el primer registro (Opción A según el documento)
     return restrictions[0];
   },
@@ -390,7 +390,7 @@ export const RestrictionRuleService = {
     // Ejecutar manualmente la función de actualización
     try {
       await prisma.$executeRawUnsafe(`SELECT update_auto_date_restrictions();`);
-      
+
       // Obtener el último log para retornar información
       const lastLog = await prisma.$queryRaw<Array<{
         id: string;
@@ -449,5 +449,26 @@ export const RestrictionRuleService = {
         }
       );
     }
+  },
+
+  /**
+   * Obtiene todas las restricciones visibles para un vendedor.
+   * - **general**: reglas que no están asociadas a un usuario
+   *               (pueden estar vinculadas a banca, ventana o ser globales).
+   * - **vendorSpecific**: reglas cuyo `userId` coincide con el vendedor.
+   */
+  async forVendor(vendorId: string, bancaId: string, ventanaId: string | null) {
+    // 1️⃣ Restricciones generales (Globales + Banca + Ventana)
+    const general = await RestrictionRuleRepository.findGeneralRules(bancaId, ventanaId);
+
+    // 2️⃣ Restricciones específicas del vendedor
+    const vendorSpecific = await RestrictionRuleRepository.list({
+      userId: vendorId,
+    });
+
+    return {
+      general,
+      vendorSpecific: vendorSpecific.data,
+    };
   },
 };

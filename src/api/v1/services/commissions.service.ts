@@ -179,20 +179,20 @@ export const CommissionsService = {
           // Obtener todas las jugadas del periodo para calcular todo desde ellas
           // Usar zona horaria de Costa Rica para el agrupamiento por fecha
           const jugadas = await prisma.$queryRaw<
-          Array<{
-            business_date: Date;
-            ventana_id: string;
-            ventana_name: string;
-            ticket_id: string;
-            amount: number;
-            type: string;
-            finalMultiplierX: number;
-            loteriaId: string;
-            ventana_policy: any;
-            banca_policy: any;
-            ticket_total_payout: number | null;
-            commission_amount: number | null;
-          }>
+            Array<{
+              business_date: Date;
+              ventana_id: string;
+              ventana_name: string;
+              ticket_id: string;
+              amount: number;
+              type: string;
+              finalMultiplierX: number;
+              loteriaId: string;
+              ventana_policy: any;
+              banca_policy: any;
+              ticket_total_payout: number | null;
+              commission_amount: number | null;
+            }>
           >`
             SELECT
               COALESCE(
@@ -245,7 +245,7 @@ export const CommissionsService = {
                 betType: jugada.type as "NUMERO" | "REVENTADO",
                 finalMultiplierX: jugada.finalMultiplierX || null,
               });
-              commission = Math.round((jugada.amount * ventanaCommission.percent) / 100);
+              commission = Number(((jugada.amount * ventanaCommission.percent) / 100).toFixed(2));
             } else {
               // Para otras ventanas, usar directamente las políticas de ventana/banca
               // Las políticas son por ventana (Ventana.commissionPolicyJson), no por usuario VENTANA
@@ -260,7 +260,7 @@ export const CommissionsService = {
                 jugada.ventana_policy, // Política de ventana (Ventana.commissionPolicyJson)
                 jugada.banca_policy // Política de banca (Banca.commissionPolicyJson)
               );
-              commission = Math.round(ventanaCommission.commissionAmount);
+              commission = Number(ventanaCommission.commissionAmount.toFixed(2));
             }
 
             const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
@@ -372,20 +372,20 @@ export const CommissionsService = {
           const ventanaIds = Array.from(new Set(jugadas.map((j) => j.ventana_id)));
           const ventanaUsers = ventanaIds.length
             ? await prisma.user.findMany({
-                where: {
-                  role: Role.VENTANA,
-                  isActive: true,
-                  deletedAt: null,
-                  ventanaId: { in: ventanaIds },
-                },
-                select: {
-                  id: true,
-                  ventanaId: true,
-                  commissionPolicyJson: true,
-                  updatedAt: true,
-                },
-                orderBy: { updatedAt: "desc" },
-              })
+              where: {
+                role: Role.VENTANA,
+                isActive: true,
+                deletedAt: null,
+                ventanaId: { in: ventanaIds },
+              },
+              select: {
+                id: true,
+                ventanaId: true,
+                commissionPolicyJson: true,
+                updatedAt: true,
+              },
+              orderBy: { updatedAt: "desc" },
+            })
             : [];
 
           // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
@@ -816,7 +816,7 @@ export const CommissionsService = {
             betType: jugada.bet_type as "NUMERO" | "REVENTADO",
             finalMultiplierX: jugada.final_multiplier_x || null,
           });
-          const commission = Math.round((jugada.amount * ventanaCommission.percent) / 100);
+          const commission = Number(((jugada.amount * ventanaCommission.percent) / 100).toFixed(2));
           const commissionPercent = ventanaCommission.percent;
 
           // Construir clave única para el multiplicador
@@ -896,7 +896,7 @@ export const CommissionsService = {
             multiplierId: m.multiplierId,
             multiplierName: m.multiplierName,
             multiplierPercentage: m.commissionCount > 0
-              ? Math.round(m.commissionSum / m.commissionCount)
+              ? Number((m.commissionSum / m.commissionCount).toFixed(2))
               : 0,
             totalSales: m.totalSales,
             totalTickets: m.totalTickets.size,
@@ -984,20 +984,20 @@ export const CommissionsService = {
         const ventanaIds = Array.from(new Set(jugadas.map((j) => j.ventana_id)));
         const ventanaUsers = ventanaIds.length
           ? await prisma.user.findMany({
-              where: {
-                role: Role.VENTANA,
-                isActive: true,
-                deletedAt: null,
-                ventanaId: { in: ventanaIds },
-              },
-              select: {
-                id: true,
-                ventanaId: true,
-                commissionPolicyJson: true,
-                updatedAt: true,
-              },
-              orderBy: { updatedAt: "desc" },
-            })
+            where: {
+              role: Role.VENTANA,
+              isActive: true,
+              deletedAt: null,
+              ventanaId: { in: ventanaIds },
+            },
+            select: {
+              id: true,
+              ventanaId: true,
+              commissionPolicyJson: true,
+              updatedAt: true,
+            },
+            orderBy: { updatedAt: "desc" },
+          })
           : [];
 
         // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
@@ -1066,7 +1066,7 @@ export const CommissionsService = {
                 jugada.ventana_policy,
                 jugada.banca_policy
               );
-              commission = Math.round(fallback.commissionAmount);
+              commission = Number(fallback.commissionAmount.toFixed(2));
               commissionPercent = fallback.commissionPercent;
             }
           } else {
@@ -1083,7 +1083,7 @@ export const CommissionsService = {
               jugada.banca_policy // Política de banca
             );
             // Usar commissionAmount directamente de resolveCommission para mantener consistencia
-            commission = Math.round(ventanaCommission.commissionAmount);
+            commission = Number(ventanaCommission.commissionAmount.toFixed(2));
             commissionPercent = ventanaCommission.commissionPercent;
           }
 
@@ -1164,7 +1164,7 @@ export const CommissionsService = {
             multiplierId: m.multiplierId,
             multiplierName: m.multiplierName,
             multiplierPercentage: m.commissionCount > 0
-              ? Math.round(m.commissionSum / m.commissionCount)
+              ? Number((m.commissionSum / m.commissionCount).toFixed(2))
               : 0,
             totalSales: m.totalSales,
             totalTickets: m.totalTickets.size,
@@ -1290,7 +1290,7 @@ export const CommissionsService = {
         }
 
         const loteria = byLoteria.get(loteriaKey)!;
-        
+
         // Construir nombre del multiplicador según reglas:
         // - Si es NULL (REVENTADO): "REVENTADO" (nunca "Sin multiplicador")
         // - Si es "Base" y kind=NUMERO: "Base {valueX}x" (ej: "Base 90x")
@@ -1306,12 +1306,12 @@ export const CommissionsService = {
           // Usar el nombre tal cual
           multiplierName = row.multiplier_name;
         }
-        
+
         // Para VENDEDOR: usar el porcentaje y monto almacenado (del vendedor)
         // commission_percent ya está en formato 0-100, redondear a entero
-        const multiplierPercentage = Math.round(row.commission_percent || 0);
+        const multiplierPercentage = Number((row.commission_percent || 0).toFixed(2));
         const totalCommission = parseFloat(row.total_commission);
-        
+
         const multiplier = {
           multiplierId: row.multiplier_id || "unknown",
           multiplierName,
@@ -1510,9 +1510,9 @@ export const CommissionsService = {
           INNER JOIN "Ticket" t ON t.id = j."ticketId"
           WHERE j."ticketId" IN (${Prisma.join(ticketIds.map((id) => Prisma.sql`${id}::uuid`))})
             AND t."loteriaId" = ${loteriaId}::uuid
-            ${multiplierId === "unknown" 
-              ? Prisma.sql`AND j."multiplierId" IS NULL` 
-              : Prisma.sql`AND j."multiplierId" = ${multiplierId}::uuid`}
+            ${multiplierId === "unknown"
+            ? Prisma.sql`AND j."multiplierId" IS NULL`
+            : Prisma.sql`AND j."multiplierId" = ${multiplierId}::uuid`}
         `;
 
         // Agrupar jugadas por ticket y calcular comisiones del usuario VENTANA
@@ -1524,7 +1524,7 @@ export const CommissionsService = {
             betType: jugada.type as "NUMERO" | "REVENTADO",
             finalMultiplierX: jugada.finalMultiplierX || null,
           });
-          const commission = Math.round((jugada.amount * ventanaCommission.percent) / 100);
+          const commission = Number(((jugada.amount * ventanaCommission.percent) / 100).toFixed(2));
           const existing = commissionByTicket.get(jugada.ticket_id) || { totalCommission: 0, avgPercent: 0, count: 0 };
           commissionByTicket.set(jugada.ticket_id, {
             totalCommission: existing.totalCommission + commission,
@@ -1537,8 +1537,8 @@ export const CommissionsService = {
         return {
           data: data.map((row) => {
             const ticketCommissions = commissionByTicket.get(row.ticket_id) || { totalCommission: 0, avgPercent: 0, count: 0 };
-            const avgPercent = ticketCommissions.count > 0 
-              ? ticketCommissions.avgPercent / ticketCommissions.count 
+            const avgPercent = ticketCommissions.count > 0
+              ? ticketCommissions.avgPercent / ticketCommissions.count
               : 0;
 
             return {
@@ -1546,7 +1546,7 @@ export const CommissionsService = {
               ticketNumber: row.ticket_number,
               totalAmount: row.total_amount,
               commissionAmount: ticketCommissions.totalCommission,
-              commissionPercentage: Math.round(avgPercent),
+              commissionPercentage: Number(avgPercent.toFixed(2)),
               createdAt: row.created_at.toISOString(),
               vendedorName: row.vendedor_name || undefined,
               ventanaName: row.ventana_name || undefined,
@@ -1564,7 +1564,7 @@ export const CommissionsService = {
           ticketNumber: row.ticket_number,
           totalAmount: row.total_amount,
           commissionAmount: row.commission_amount,
-          commissionPercentage: Math.round(row.commission_percent || 0),
+          commissionPercentage: Number((row.commission_percent || 0).toFixed(2)),
           createdAt: row.created_at.toISOString(),
           vendedorName: row.vendedor_name || undefined,
           ventanaName: row.ventana_name || undefined,

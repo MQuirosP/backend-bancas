@@ -50,6 +50,16 @@ router.post(
   RestrictionRuleController.executeCronManually
 );
 
+/**
+ * 🔒 VENDEDOR: Obtener mis restricciones (generales + específicas)
+ * GET /api/v1/restrictions/me
+ */
+router.get(
+  "/me",
+  requireAuth,
+  RestrictionRuleController.myRestrictions
+);
+
 router.get(
   "/:id",
   requireAuth,                          // ← antes requireAdmin
