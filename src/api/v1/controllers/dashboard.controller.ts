@@ -134,7 +134,6 @@ export const DashboardController = {
       ventanaId,
       bancaId,
     }, req.user!.role); // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
-    console.log("result", result);
     return success(res, {
       data: result,
       meta: {
