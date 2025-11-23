@@ -173,6 +173,7 @@ export const getAllowedMultipliersQuerySchema = z
   .object({
     loteriaId: z.string().uuid('loteriaId debe ser un UUID válido'),
     betType: z.enum(['NUMERO', 'REVENTADO']).optional().default('NUMERO'),
+    _: z.string().optional(),
   })
   .strict()
 
