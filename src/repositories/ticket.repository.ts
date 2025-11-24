@@ -1685,12 +1685,22 @@ export const TicketRepository = {
           });
           const dailyTotal = _sum.totalAmount ?? 0;
           if (dailyTotal + totalAmountTx > effectiveDailyLimit) {
-            throw new AppError("Límite diario de ventas excedido", 400, {
-              code: "LIMIT_VIOLATION",
-              limiteAplicado: effectiveDailyLimit,
-              totalAcumulado: dailyTotal,
-              montoTicket: totalAmountTx,
-            });
+            const ruleScope = globalLimitRule?.userId ? "personal"
+              : globalLimitRule?.ventanaId ? "de ventana"
+                : globalLimitRule?.bancaId ? "de banca"
+                  : "global";
+
+            throw new AppError(
+              `Límite diario ${ruleScope} excedido: ${dailyTotal.toFixed(2)} + ${totalAmountTx.toFixed(2)} = ${(dailyTotal + totalAmountTx).toFixed(2)} supera el límite de ${effectiveDailyLimit.toFixed(2)}`,
+              400,
+              {
+                code: "LIMIT_VIOLATION",
+                limiteAplicado: effectiveDailyLimit,
+                totalAcumulado: dailyTotal,
+                montoTicket: totalAmountTx,
+                scope: ruleScope,
+              }
+            );
           }
         }
 
@@ -1732,9 +1742,24 @@ export const TicketRepository = {
             }
 
             if (effectiveMaxAmount != null && sumForNumber > effectiveMaxAmount) {
+              const ruleScope = rule.userId ? "personal"
+                : rule.ventanaId ? "de ventana"
+                  : rule.bancaId ? "de banca"
+                    : "global";
+              const isAutoDate = rule.isAutoDate ? " (restricción automática por fecha)" : "";
+
               throw new AppError(
-                `Number ${rule.number} exceeded maxAmount (${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
-                400
+                `El número ${rule.number} excede el límite ${ruleScope}${isAutoDate}: ${sumForNumber.toFixed(2)} supera ${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico calculado)` : ''}`,
+                400,
+                {
+                  code: "NUMBER_LIMIT_EXCEEDED",
+                  number: rule.number,
+                  scope: ruleScope,
+                  isAutoDate: rule.isAutoDate,
+                  amountAttempted: sumForNumber,
+                  limitApplied: effectiveMaxAmount,
+                  isDynamic: dynamicLimit != null,
+                }
               );
             }
 
@@ -1748,9 +1773,24 @@ export const TicketRepository = {
             }
 
             if (effectiveMaxTotal != null && totalAmountTx > effectiveMaxTotal) {
+              const ruleScope = rule.userId ? "personal"
+                : rule.ventanaId ? "de ventana"
+                  : rule.bancaId ? "de banca"
+                    : "global";
+              const isAutoDate = rule.isAutoDate ? " (restricción automática por fecha)" : "";
+
               throw new AppError(
-                `Ticket total exceeded maxTotal (${effectiveMaxTotal.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
-                400
+                `El total del ticket excede el límite ${ruleScope} para el número ${rule.number}${isAutoDate}: ${totalAmountTx.toFixed(2)} supera ${effectiveMaxTotal.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico calculado)` : ''}`,
+                400,
+                {
+                  code: "TICKET_TOTAL_EXCEEDED",
+                  number: rule.number,
+                  scope: ruleScope,
+                  isAutoDate: rule.isAutoDate,
+                  totalAttempted: totalAmountTx,
+                  limitApplied: effectiveMaxTotal,
+                  isDynamic: dynamicLimit != null,
+                }
               );
             }
           } else {
@@ -1767,9 +1807,21 @@ export const TicketRepository = {
             if (effectiveMaxAmount != null) {
               const maxBet = Math.max(...preparedJugadas.map((j) => j.amount));
               if (maxBet > effectiveMaxAmount) {
+                const ruleScope = rule.userId ? "personal"
+                  : rule.ventanaId ? "de ventana"
+                    : rule.bancaId ? "de banca"
+                      : "global";
+
                 throw new AppError(
-                  `Bet amount exceeded maxAmount (${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
-                  400
+                  `Una jugada excede el límite ${ruleScope} por apuesta: ${maxBet.toFixed(2)} supera ${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico calculado)` : ''}`,
+                  400,
+                  {
+                    code: "BET_AMOUNT_EXCEEDED",
+                    scope: ruleScope,
+                    betAttempted: maxBet,
+                    limitApplied: effectiveMaxAmount,
+                    isDynamic: dynamicLimit != null,
+                  }
                 );
               }
             }
@@ -1784,9 +1836,21 @@ export const TicketRepository = {
             }
 
             if (effectiveMaxTotal != null && totalAmountTx > effectiveMaxTotal) {
+              const ruleScope = rule.userId ? "personal"
+                : rule.ventanaId ? "de ventana"
+                  : rule.bancaId ? "de banca"
+                    : "global";
+
               throw new AppError(
-                `Ticket total exceeded maxTotal (${effectiveMaxTotal.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
-                400
+                `El total del ticket excede el límite ${ruleScope}: ${totalAmountTx.toFixed(2)} supera ${effectiveMaxTotal.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico calculado)` : ''}`,
+                400,
+                {
+                  code: "TICKET_TOTAL_EXCEEDED",
+                  scope: ruleScope,
+                  totalAttempted: totalAmountTx,
+                  limitApplied: effectiveMaxTotal,
+                  isDynamic: dynamicLimit != null,
+                }
               );
             }
           }

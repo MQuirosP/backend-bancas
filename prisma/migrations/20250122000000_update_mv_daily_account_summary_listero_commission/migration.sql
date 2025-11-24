@@ -45,3 +45,4 @@ $$ LANGUAGE plpgsql;
 COMMENT ON MATERIALIZED VIEW mv_daily_account_summary IS 'Vista materializada que pre-calcula resúmenes diarios de ventas, premios y comisiones por ventana/vendedor. Usa snapshot de listeroCommissionAmount para mayor precisión. Se debe refrescar periódicamente o después de cambios importantes en tickets/jugadas.';
 COMMENT ON FUNCTION refresh_daily_account_summary() IS 'Función para refrescar la vista materializada mv_daily_account_summary. Usa CONCURRENTLY para evitar bloquear lecturas.';
 
+
