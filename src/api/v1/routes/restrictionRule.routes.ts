@@ -11,11 +11,15 @@ import {
 } from "../validators/restrictionRule.validator";
 import { protect } from "../../../middlewares/auth.middleware";
 import { requireAdmin, requireAuth } from "../../../middlewares/roleGuards.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 
 const router = Router();
 
 // 🔐 todos los endpoints requieren estar autenticado
 router.use(protect);
+
+// 🔐 aplicar contexto de banca (resuelve bancaId para VENDEDOR/VENTANA)
+router.use(bancaContextMiddleware);
 
 /**
  * LIBERADOS (solo requieren estar autenticado)
