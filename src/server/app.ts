@@ -41,11 +41,11 @@ if (config.nodeEnv !== 'production') {
   app.use(morgan('dev'))
 }
 
+// health check (public, before auth)
+app.get('/api/v1/healthz', (_req, res) => res.status(200).json({ status: 'ok' }))
+
 // routes
 app.use('/api/v1', apiV1Router)
-
-// health
-app.get('/api/v1/healthz', (_req, res) => res.status(200).json({ status: 'ok' }))
 
 // global error handler (last)
 app.use(errorHandler)
