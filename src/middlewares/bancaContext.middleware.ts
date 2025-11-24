@@ -28,12 +28,28 @@ export async function bancaContextMiddleware(
 
     // Para VENTANA/VENDEDOR, usar su banca a través de ventanaId
     if (user.role !== Role.ADMIN) {
-      if (user.ventanaId) {
+      // Si ventanaId no viene en el token (req.user), buscarlo en BD
+      let ventanaId = user.ventanaId;
+
+      if (!ventanaId) {
+        const userWithVentana = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { ventanaId: true },
+        });
+        ventanaId = userWithVentana?.ventanaId;
+
+        // Actualizar req.user para futuros middlewares
+        if (ventanaId && req.user) {
+          req.user.ventanaId = ventanaId;
+        }
+      }
+
+      if (ventanaId) {
         const ventana = await prisma.ventana.findUnique({
-          where: { id: user.ventanaId },
+          where: { id: ventanaId },
           select: { bancaId: true },
         });
-        
+
         if (ventana) {
           req.bancaContext = {
             bancaId: ventana.bancaId,
@@ -50,7 +66,7 @@ export async function bancaContextMiddleware(
     const headerLower = req.headers['x-active-banca-id'] as string | undefined;
     const headerUpper = req.headers['X-Active-Banca-Id'] as string | undefined;
     const requestedBancaId = headerLower || headerUpper || undefined;
-    
+
     let activeBancaId: string | null = null;
     let hasAccess = false;
 
@@ -63,7 +79,7 @@ export async function bancaContextMiddleware(
           isActive: true,
         },
       });
-      
+
       if (banca && banca.isActive) {
         activeBancaId = requestedBancaId;
         hasAccess = true;
