@@ -62,13 +62,22 @@ export const RestrictionRuleController = {
   },
 
   async myRestrictions(req: AuthenticatedRequest, res: Response) {
-    const { id, bancaId, ventanaId } = req.user!;
+    const userId = req.user!.id;
+    const ventanaId = req.user!.ventanaId || null;
+    const bancaId = req.bancaContext?.bancaId || null;
 
+    // If no bancaId is available, return empty restrictions
     if (!bancaId) {
-      throw new Error("El usuario no tiene una banca asignada");
+      return res.json({
+        success: true,
+        data: {
+          general: [],
+          vendorSpecific: []
+        }
+      });
     }
 
-    const result = await RestrictionRuleService.forVendor(id, bancaId, ventanaId || null);
+    const result = await RestrictionRuleService.forVendor(userId, bancaId, ventanaId);
     res.json({ success: true, data: result });
   },
 };
