@@ -36,7 +36,11 @@ const NUMBER_VALIDATOR = z.union([
 
 // --- Helpers lógicos ---
 const hasScope = (d: any) => !!(d.bancaId || d.ventanaId || d.userId);
-const isAmountRule = (d: any) => d.maxAmount != null || d.maxTotal != null;
+const isAmountRule = (d: any) =>
+  d.maxAmount != null ||
+  d.maxTotal != null ||
+  d.baseAmount != null ||
+  d.salesPercentage != null;
 const isCutoffRule = (d: any) => d.salesCutoffMinutes != null;
 const isLotteryMultiplierRule = (d: any) => d.loteriaId != null || d.multiplierId != null;
 
@@ -64,121 +68,121 @@ export const CreateRestrictionRuleSchema = z
     multiplierId: z.uuid().optional(),
     message: z.string().trim().min(1).max(255).optional(),
   })
-.strict()
-.superRefine((data, ctx) => {
-  if (!hasScope(data)) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["(root)"],
-      message: "Debe indicar bancaId, ventanaId o userId (al menos uno).",
-    });
-  }
-
-  const amount = isAmountRule(data);
-  const cutoff = isCutoffRule(data);
-  const lotteryMult = isLotteryMultiplierRule(data);
-
-  const totalKinds = (amount ? 1 : 0) + (cutoff ? 1 : 0) + (lotteryMult ? 1 : 0);
-  if (totalKinds !== 1) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["(root)"],
-      message: "Debe definir exactamente un tipo de restricción: montos, cutoff o lotería/multiplicador.",
-    });
-  }
-
-  if (cutoff && data.number != null) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["number"],
-      message: "Para salesCutoffMinutes, number debe omitirse.",
-    });
-  }
-
-  if (lotteryMult) {
-    if (!data.loteriaId || !data.multiplierId) {
+  .strict()
+  .superRefine((data, ctx) => {
+    if (!hasScope(data)) {
       ctx.addIssue({
         code: "custom",
         path: ["(root)"],
-        message: "Para restringir por lotería/multiplicador debe indicar loteriaId y multiplierId.",
+        message: "Debe indicar bancaId, ventanaId o userId (al menos uno).",
       });
     }
-    if (amount || cutoff) {
+
+    const amount = isAmountRule(data);
+    const cutoff = isCutoffRule(data);
+    const lotteryMult = isLotteryMultiplierRule(data);
+
+    const totalKinds = (amount ? 1 : 0) + (cutoff ? 1 : 0) + (lotteryMult ? 1 : 0);
+    if (totalKinds !== 1) {
       ctx.addIssue({
         code: "custom",
         path: ["(root)"],
-        message: "No puede combinar lotería/multiplicador con montos o cutoff en la misma regla.",
+        message: "Debe definir exactamente un tipo de restricción: montos, cutoff o lotería/multiplicador.",
       });
     }
-    if (data.number != null) {
+
+    if (cutoff && data.number != null) {
       ctx.addIssue({
         code: "custom",
         path: ["number"],
-        message: "Las reglas de lotería/multiplicador no aceptan el campo number.",
+        message: "Para salesCutoffMinutes, number debe omitirse.",
       });
     }
-    if (data.isAutoDate) {
+
+    if (lotteryMult) {
+      if (!data.loteriaId || !data.multiplierId) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["(root)"],
+          message: "Para restringir por lotería/multiplicador debe indicar loteriaId y multiplierId.",
+        });
+      }
+      if (amount || cutoff) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["(root)"],
+          message: "No puede combinar lotería/multiplicador con montos o cutoff en la misma regla.",
+        });
+      }
+      if (data.number != null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["number"],
+          message: "Las reglas de lotería/multiplicador no aceptan el campo number.",
+        });
+      }
+      if (data.isAutoDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["isAutoDate"],
+          message: "Las reglas de lotería/multiplicador no pueden usar isAutoDate.",
+        });
+      }
+    }
+
+    // Validación: isAutoDate solo puede usarse con restricciones de montos (amount)
+    if (data.isAutoDate && !amount) {
       ctx.addIssue({
         code: "custom",
         path: ["isAutoDate"],
-        message: "Las reglas de lotería/multiplicador no pueden usar isAutoDate.",
+        message: "isAutoDate solo puede usarse con restricciones de montos (maxAmount o maxTotal).",
       });
     }
-  }
 
-  // Validación: isAutoDate solo puede usarse con restricciones de montos (amount)
-  if (data.isAutoDate && !amount) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["isAutoDate"],
-      message: "isAutoDate solo puede usarse con restricciones de montos (maxAmount o maxTotal).",
-    });
-  }
+    // Validación: si isAutoDate es true, number debe ser null o no especificarse
+    if (data.isAutoDate && data.number != null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["number"],
+        message: "Si isAutoDate es true, number debe omitirse (se actualiza automáticamente al día del mes).",
+      });
+    }
 
-  // Validación: si isAutoDate es true, number debe ser null o no especificarse
-  if (data.isAutoDate && data.number != null) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["number"],
-      message: "Si isAutoDate es true, number debe omitirse (se actualiza automáticamente al día del mes).",
-    });
-  }
+    // Validaciones para porcentaje de ventas
+    const hasPercentageFields = data.baseAmount != null || data.salesPercentage != null;
 
-  // Validaciones para porcentaje de ventas
-  const hasPercentageFields = data.baseAmount != null || data.salesPercentage != null;
-  
-  if (hasPercentageFields && !amount) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["baseAmount"],
-      message: "baseAmount y salesPercentage solo pueden usarse con restricciones de montos (maxAmount o maxTotal).",
-    });
-  }
+    if (hasPercentageFields && !amount) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["baseAmount"],
+        message: "baseAmount y salesPercentage solo pueden usarse con restricciones de montos (maxAmount o maxTotal).",
+      });
+    }
 
-  if (data.salesPercentage != null && (data.salesPercentage < 0 || data.salesPercentage > 100)) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["salesPercentage"],
-      message: "salesPercentage debe estar entre 0 y 100.",
-    });
-  }
+    if (data.salesPercentage != null && (data.salesPercentage < 0 || data.salesPercentage > 100)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["salesPercentage"],
+        message: "salesPercentage debe estar entre 0 y 100.",
+      });
+    }
 
-  if (data.baseAmount != null && data.baseAmount < 0) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["baseAmount"],
-      message: "baseAmount debe ser mayor o igual a 0.",
-    });
-  }
+    if (data.baseAmount != null && data.baseAmount < 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["baseAmount"],
+        message: "baseAmount debe ser mayor o igual a 0.",
+      });
+    }
 
-  if (data.appliesToVendedor && data.salesPercentage == null) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["appliesToVendedor"],
-      message: "appliesToVendedor solo tiene sentido cuando salesPercentage está presente.",
-    });
-  }
-});
+    if (data.appliesToVendedor && data.salesPercentage == null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["appliesToVendedor"],
+        message: "appliesToVendedor solo tiene sentido cuando salesPercentage está presente.",
+      });
+    }
+  });
 
 // UPDATE
 // Nota: PATCH solo acepta string (no array) según recomendación del documento
@@ -206,88 +210,88 @@ export const UpdateRestrictionRuleSchema = z.object({
   multiplierId: z.uuid().optional(),
   message: z.string().trim().min(1).max(255).optional().nullable(),
 })
-.strict()
-.superRefine((data, ctx) => {
-  const amount = isAmountRule(data);
-  const cutoff = isCutoffRule(data);
-  const lotteryMult = isLotteryMultiplierRule(data);
+  .strict()
+  .superRefine((data, ctx) => {
+    const amount = isAmountRule(data);
+    const cutoff = isCutoffRule(data);
+    const lotteryMult = isLotteryMultiplierRule(data);
 
-  if ([amount, cutoff, lotteryMult].filter(Boolean).length > 1) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["(root)"],
-      message: "No puede combinar distintos tipos de restricción en la misma regla.",
-    });
-  }
-  if (cutoff && data.number != null) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["number"],
-      message: "Para salesCutoffMinutes, number debe omitirse.",
-    });
-  }
-  if (lotteryMult && data.number != null) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["number"],
-      message: "Las reglas de lotería/multiplicador no aceptan el campo number.",
-    });
-  }
-  if (lotteryMult && (data.loteriaId == null || data.multiplierId == null)) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["(root)"],
-      message: "Debe indicar loteriaId y multiplierId cuando actualiza una restricción de lotería/multiplicador.",
-    });
-  }
-  if (lotteryMult && data.isAutoDate) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["isAutoDate"],
-      message: "Las reglas de lotería/multiplicador no pueden usar isAutoDate.",
-    });
-  }
+    if ([amount, cutoff, lotteryMult].filter(Boolean).length > 1) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["(root)"],
+        message: "No puede combinar distintos tipos de restricción en la misma regla.",
+      });
+    }
+    if (cutoff && data.number != null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["number"],
+        message: "Para salesCutoffMinutes, number debe omitirse.",
+      });
+    }
+    if (lotteryMult && data.number != null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["number"],
+        message: "Las reglas de lotería/multiplicador no aceptan el campo number.",
+      });
+    }
+    if (lotteryMult && (data.loteriaId == null || data.multiplierId == null)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["(root)"],
+        message: "Debe indicar loteriaId y multiplierId cuando actualiza una restricción de lotería/multiplicador.",
+      });
+    }
+    if (lotteryMult && data.isAutoDate) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["isAutoDate"],
+        message: "Las reglas de lotería/multiplicador no pueden usar isAutoDate.",
+      });
+    }
 
-  // Validación: isAutoDate solo puede usarse con restricciones de montos (amount)
-  if (data.isAutoDate && !amount && !cutoff) {
-    // Permitir si es una actualización parcial y no se está cambiando el tipo
-    // Esta validación es más permisiva en UPDATE
-  }
+    // Validación: isAutoDate solo puede usarse con restricciones de montos (amount)
+    if (data.isAutoDate && !amount && !cutoff) {
+      // Permitir si es una actualización parcial y no se está cambiando el tipo
+      // Esta validación es más permisiva en UPDATE
+    }
 
-  // Validación: si isAutoDate es true, number debe ser null o no especificarse
-  if (data.isAutoDate && data.number != null) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["number"],
-      message: "Si isAutoDate es true, number debe omitirse (se actualiza automáticamente al día del mes).",
-    });
-  }
+    // Validación: si isAutoDate es true, number debe ser null o no especificarse
+    if (data.isAutoDate && data.number != null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["number"],
+        message: "Si isAutoDate es true, number debe omitirse (se actualiza automáticamente al día del mes).",
+      });
+    }
 
-  // Validaciones para porcentaje de ventas en UPDATE
-  if (data.salesPercentage != null && (data.salesPercentage < 0 || data.salesPercentage > 100)) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["salesPercentage"],
-      message: "salesPercentage debe estar entre 0 y 100.",
-    });
-  }
+    // Validaciones para porcentaje de ventas en UPDATE
+    if (data.salesPercentage != null && (data.salesPercentage < 0 || data.salesPercentage > 100)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["salesPercentage"],
+        message: "salesPercentage debe estar entre 0 y 100.",
+      });
+    }
 
-  if (data.baseAmount != null && data.baseAmount < 0) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["baseAmount"],
-      message: "baseAmount debe ser mayor o igual a 0.",
-    });
-  }
+    if (data.baseAmount != null && data.baseAmount < 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["baseAmount"],
+        message: "baseAmount debe ser mayor o igual a 0.",
+      });
+    }
 
-  if (data.appliesToVendedor && data.salesPercentage == null) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["appliesToVendedor"],
-      message: "appliesToVendedor solo tiene sentido cuando salesPercentage está presente.",
-    });
-  }
-});
+    if (data.appliesToVendedor && data.salesPercentage == null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["appliesToVendedor"],
+        message: "appliesToVendedor solo tiene sentido cuando salesPercentage está presente.",
+      });
+    }
+  });
 
 // LIST (query)  ✅ acepta hasAmount / hasCutoff / hasAutoDate y usa isActive
 export const ListRestrictionRuleQuerySchema = z.object({
