@@ -47,7 +47,7 @@ export const TicketController = {
     const hasExplicitDateRange = fromDate || toDate;
 
     let dateRange: { fromAt: Date; toAt: Date; tz: string; description?: string } | null = null;
-    
+
     if (hasSorteoId && !hasExplicitDateRange) {
       // NO aplicar filtro de fecha cuando hay sorteoId y no hay fechas explícitas
       dateRange = null;
@@ -112,6 +112,12 @@ export const TicketController = {
     return success(res, result);
   },
 
+  async restore(req: AuthenticatedRequest, res: Response) {
+    const userId = req.user!.id;
+    const result = await TicketService.restore(req.params.id, userId, req.requestId);
+    return success(res, result);
+  },
+
   // ==================== PAYMENT ENDPOINTS ====================
 
   /**
@@ -166,7 +172,7 @@ export const TicketController = {
 
   async numbersSummary(req: AuthenticatedRequest, res: Response) {
     const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status } = req.query as any;
-    
+
     const me = req.user!;
 
     // Log para debugging

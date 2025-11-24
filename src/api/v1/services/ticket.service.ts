@@ -221,7 +221,7 @@ export const TicketService = {
 
       // 🚀 OPTIMIZACIÓN: Pre-calcular comisiones fuera de la transacción
       // Obtener políticas de comisión (una sola vez)
-      const [user, ventanaWithBanca] = await Promise.all([
+      const [user, ventanaWithBanca, listeroUser] = await Promise.all([
         prisma.user.findUnique({
           where: { id: effectiveVendedorId },
           select: { commissionPolicyJson: true },
@@ -237,6 +237,17 @@ export const TicketService = {
             },
           },
         }),
+        // ✅ Fetch listero user (Role.VENTANA) for this ventana
+        prisma.user.findFirst({
+          where: {
+            role: Role.VENTANA,
+            ventanaId: ventanaId,
+            isActive: true,
+            deletedAt: null,
+          },
+          select: { commissionPolicyJson: true, id: true },
+          orderBy: { updatedAt: "desc" },
+        }),
       ]);
 
       // Preparar contexto de comisiones (parsear y cachear políticas)
@@ -246,7 +257,8 @@ export const TicketService = {
         ventana.bancaId,
         user?.commissionPolicyJson ?? null,
         ventanaWithBanca?.commissionPolicyJson ?? null,
-        ventanaWithBanca?.banca?.commissionPolicyJson ?? null
+        ventanaWithBanca?.banca?.commissionPolicyJson ?? null,
+        listeroUser?.commissionPolicyJson ?? null // ✅ Pass listero policy
       );
 
       // 🧩 Normalizar jugadas para repo (sin comisiones aún)
@@ -268,7 +280,7 @@ export const TicketService = {
       // Si el vendedor efectivo es diferente al actor autenticado, fue creado por otro
       let createdBy: string | undefined;
       let createdByRole: Role | undefined;
-      
+
       if (effectiveVendedorId === actor.id) {
         // Ticket creado por el propio vendedor
         createdBy = actor.id;
@@ -433,6 +445,30 @@ export const TicketService = {
     return ticket;
   },
 
+  async restore(id: string, userId: string, requestId?: string) {
+    const ticket = await TicketRepository.restore(id, userId);
+
+    await ActivityService.log({
+      userId,
+      action: ActivityType.TICKET_RESTORE,
+      targetType: "TICKET",
+      targetId: id,
+      details: { restored: true },
+      requestId,
+      layer: "service",
+    });
+
+    logger.info({
+      layer: "service",
+      action: "TICKET_RESTORE",
+      userId,
+      requestId,
+      payload: { ticketId: id },
+    });
+
+    return ticket;
+  },
+
   // ==================== MÉTODOS DE PAGO ====================
 
   /**
@@ -489,7 +525,7 @@ export const TicketService = {
             requestId,
             payload: { ticketId, idempotencyKey: data.idempotencyKey },
           });
-      return existing.ticket;
+          return existing.ticket;
         }
       }
 
@@ -635,11 +671,11 @@ export const TicketService = {
       const updatedHistory = history.map((p) =>
         p.id === lastPayment.id
           ? {
-              ...p,
-              isReversed: true,
-              reversedAt: new Date().toISOString(),
-              reversedBy: userId,
-            }
+            ...p,
+            isReversed: true,
+            reversedAt: new Date().toISOString(),
+            reversedBy: userId,
+          }
           : p
       );
 
@@ -887,8 +923,8 @@ export const TicketService = {
         },
         // Excluir tickets CANCELLED por defecto
         // Si se especifica params.status, usar ese valor; si no, excluir CANCELLED
-        status: params.status 
-          ? params.status 
+        status: params.status
+          ? params.status
           : { not: "CANCELLED" }, // Excluir CANCELLED si no se especifica
         ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
         ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
@@ -942,10 +978,10 @@ export const TicketService = {
         deletedAt: null,
         ...(params.multiplierId
           ? {
-              // ✅ NUEVO: Filtrar por multiplicador (solo jugadas NUMERO tienen multiplierId)
-              multiplierId: params.multiplierId,
-              type: 'NUMERO', // Solo jugadas NUMERO tienen multiplicador
-            }
+            // ✅ NUEVO: Filtrar por multiplicador (solo jugadas NUMERO tienen multiplierId)
+            multiplierId: params.multiplierId,
+            type: 'NUMERO', // Solo jugadas NUMERO tienen multiplicador
+          }
           : {}),
       };
 
@@ -986,7 +1022,7 @@ export const TicketService = {
       // Procesar jugadas
       for (const jugada of jugadas) {
         let numberToUse: string;
-        
+
         if (jugada.type === 'NUMERO') {
           numberToUse = jugada.number.padStart(2, '0');
         } else if (jugada.type === 'REVENTADO') {
@@ -1014,7 +1050,7 @@ export const TicketService = {
           };
           numbersMap.set(numberToUse, numData);
         }
-        
+
         if (jugada.type === 'NUMERO') {
           numData.amountByNumber += jugada.amount || 0;
           numData.ticketIdsByNumber.add(jugada.ticketId);
@@ -1059,7 +1095,7 @@ export const TicketService = {
       const totalAmountByNumber = data.reduce((sum, n) => sum + n.amountByNumber, 0);
       const totalAmountByReventado = data.reduce((sum, n) => sum + n.amountByReventado, 0);
       const totalAmount = totalAmountByNumber + totalAmountByReventado;
-      
+
       // Contar tickets únicos totales
       const allUniqueTicketIds = new Set<string>();
       for (const numData of numbersMap.values()) {
@@ -1225,7 +1261,7 @@ export const TicketService = {
           // amountReventado: monto del reventado (jugada REVENTADO)
           baseJugada.amount = numeroData.amount;
           baseJugada.amountReventado = jugada.amount;
-          
+
           // Incluir multiplierId de la jugada NUMERO asociada
           if (numeroData.multiplierId) {
             baseJugada.multiplierId = numeroData.multiplierId;
@@ -1477,23 +1513,23 @@ export const TicketService = {
       const multiplierIds = Array.from(multiplierMap.keys());
       const multipliers = multiplierIds.length > 0
         ? await prisma.loteriaMultiplier.findMany({
-            where: {
-              id: { in: multiplierIds },
-              isActive: true,
-            },
-            select: {
-              id: true,
-              name: true,
-              valueX: true,
-              loteriaId: true,
-              loteria: {
-                select: {
-                  id: true,
-                  name: true,
-                },
+          where: {
+            id: { in: multiplierIds },
+            isActive: true,
+          },
+          select: {
+            id: true,
+            name: true,
+            valueX: true,
+            loteriaId: true,
+            loteria: {
+              select: {
+                id: true,
+                name: true,
               },
             },
-          })
+          },
+        })
         : [];
 
       // Para vendedores, filtrar multiplicadores según política de comisión
@@ -1893,23 +1929,23 @@ export const TicketService = {
       const multiplierIds = Array.from(multiplierMap.keys());
       const multipliers = multiplierIds.length > 0
         ? await prisma.loteriaMultiplier.findMany({
-            where: {
-              id: { in: multiplierIds },
-              isActive: true,
-            },
-            select: {
-              id: true,
-              name: true,
-              valueX: true,
-              loteriaId: true,
-              loteria: {
-                select: {
-                  id: true,
-                  name: true,
-                },
+          where: {
+            id: { in: multiplierIds },
+            isActive: true,
+          },
+          select: {
+            id: true,
+            name: true,
+            valueX: true,
+            loteriaId: true,
+            loteria: {
+              select: {
+                id: true,
+                name: true,
               },
             },
-          })
+          },
+        })
         : [];
 
       // Para vendedores, filtrar multiplicadores según política de comisión

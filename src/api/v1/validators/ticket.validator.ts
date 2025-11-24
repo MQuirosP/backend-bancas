@@ -57,7 +57,10 @@ export const ListTicketsQuerySchema = z
     pageSize: z.coerce.number().int().min(1).max(100).optional(),
 
     // Filtros estándar
-    status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID"]).optional(),
+    status: z.union([
+      z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID"]),
+      z.array(z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID"])),
+    ]).optional(),
     isActive: z.coerce.boolean().optional(),
     sorteoId: z.uuid().optional(),
     loteriaId: z.uuid().optional(),
@@ -198,7 +201,7 @@ export const TicketNumberParamSchema = z.object({
 
 export const validateTicketNumberParam = (req: any, res: any, next: any) => {
   const { ticketNumber } = req.params;
-  
+
   try {
     TicketNumberParamSchema.parse({ ticketNumber });
     next();

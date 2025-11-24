@@ -3,7 +3,7 @@ import { Prisma, TicketStatus, Role } from "@prisma/client";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { withTransactionRetry } from "../core/withTransactionRetry";
-import { resolveCommission, resolveListeroCommission, CommissionSnapshot } from "../services/commission.resolver";
+import { resolveCommission, resolveListeroCommission, CommissionSnapshot, findMatchingRule } from "../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../services/commission/commission.resolver";
 import { getBusinessDateCRInfo, getCRDayRangeUTC } from "../utils/businessDate";
 import { CommissionContext, preCalculateCommissions } from "../utils/commissionPrecalc";
@@ -36,7 +36,7 @@ async function calculateDynamicLimit(
   // Porcentaje de ventas
   if (rule.salesPercentage != null && rule.salesPercentage > 0) {
     const crRange = getCRDayRangeUTC(context.at);
-    
+
     // Construir WHERE según appliesToVendedor
     const where: Prisma.TicketWhereInput = {
       deletedAt: null,
@@ -346,7 +346,7 @@ export const TicketRepository = {
         let nextNumber: string = '';
         let seqForLog: number | null = null;
         let useLegacyFallback = false;
-        
+
         if (hasTicketCounter) {
           try {
             // Bloquear la fila de TicketCounter para evitar colisiones concurrentes
@@ -364,13 +364,13 @@ export const TicketRepository = {
             seqForLog = seq;
             const seqPadded = String(seq).padStart(5, '0');
             const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
-            
+
             // Verificar que el ticketNumber no exista (doble validación)
             const existing = await tx.ticket.findUnique({
               where: { ticketNumber: candidateNumber },
               select: { id: true },
             });
-            
+
             if (existing) {
               // Si existe, usar fallback legacy
               logger.warn({
@@ -402,7 +402,7 @@ export const TicketRepository = {
         } else {
           useLegacyFallback = true;
         }
-        
+
         if (useLegacyFallback) {
           // Fallback seguro: usar función legacy dentro de TX, sin provocar errores previos
           logger.warn({
@@ -428,7 +428,7 @@ export const TicketRepository = {
             nextNumber = raw;
           }
         }
-        
+
         // Asegurar que nextNumber siempre esté asignado
         if (!nextNumber) {
           throw new AppError('Failed to generate ticket number', 500, 'SEQ_ERROR');
@@ -506,8 +506,8 @@ export const TicketRepository = {
           !!RJ.reventadoConfig?.requiresMatchingNumber;
         const numberRange =
           RJ.numberRange &&
-          typeof RJ.numberRange.min === "number" &&
-          typeof RJ.numberRange.max === "number"
+            typeof RJ.numberRange.min === "number" &&
+            typeof RJ.numberRange.max === "number"
             ? { min: RJ.numberRange.min, max: RJ.numberRange.max }
             : { min: 0, max: 99 };
 
@@ -731,8 +731,8 @@ export const TicketRepository = {
               matchingRule.userId
                 ? "USER"
                 : matchingRule.ventanaId
-                ? "VENTANA"
-                : "BANCA";
+                  ? "VENTANA"
+                  : "BANCA";
 
             const loteriaNameForWarning =
               matchingRule.loteria?.name ?? loteriaName;
@@ -865,13 +865,13 @@ export const TicketRepository = {
         // 8) Aplicar primera regla aplicable (si hay) con soporte para límites dinámicos
         if (applicable.length > 0) {
           const rule = applicable[0] as any; // Cast para incluir nuevos campos
-          
+
           // Calcular límite dinámico si hay baseAmount o salesPercentage
           let dynamicLimit: number | null = null;
-          const hasDynamicFields = 
+          const hasDynamicFields =
             (rule.baseAmount != null && rule.baseAmount > 0) ||
             (rule.salesPercentage != null && rule.salesPercentage > 0);
-          
+
           if (hasDynamicFields) {
             dynamicLimit = await calculateDynamicLimit(tx, {
               baseAmount: rule.baseAmount,
@@ -894,7 +894,7 @@ export const TicketRepository = {
             let effectiveMaxAmount: number | null = null;
             if (rule.maxAmount != null || dynamicLimit != null) {
               const staticMaxAmount = rule.maxAmount ?? Infinity;
-              effectiveMaxAmount = dynamicLimit != null 
+              effectiveMaxAmount = dynamicLimit != null
                 ? Math.min(staticMaxAmount, dynamicLimit)
                 : staticMaxAmount;
             }
@@ -971,7 +971,7 @@ export const TicketRepository = {
         const userPolicy = (user?.commissionPolicyJson ?? null) as any;
         const ventanaPolicy = (ventana?.commissionPolicyJson ?? null) as any;
         const bancaPolicy = (ventana?.banca?.commissionPolicyJson ?? null) as any;
-        
+
         // ✅ CRÍTICO: Obtener política del usuario VENTANA (listero) para calcular su comisión
         // Esto es necesario porque el listero puede tener su propia política de comisión
         let ventanaUserPolicy: any = null;
@@ -1002,7 +1002,7 @@ export const TicketRepository = {
             payload: { ventanaId, error: (error as Error).message },
           });
         }
-        
+
         // Calcular comisiones para cada jugada y acumular totalCommission
         // ✅ CRÍTICO: Calcular comisión del vendedor (USER) y comisión del listero (VENTANA/BANCA) por separado
         // Nota: resolveCommission y resolveListeroCommission son funciones síncronas rápidas (solo parsing y matching)
@@ -1025,7 +1025,7 @@ export const TicketRepository = {
           // Prioridad: USER (ventana user) → VENTANA → BANCA
           // Esto es exactamente lo que hace computeVentanaCommissionFromPolicies en dashboard.service.ts
           let listeroRes: CommissionSnapshot;
-          
+
           if (ventanaUserPolicy && ventanaUserId) {
             try {
               // Intentar usar resolveCommissionFromPolicy primero (como en dashboard)
@@ -1099,7 +1099,7 @@ export const TicketRepository = {
               loteriaId,
             },
           });
-          
+
           return {
             type: j.type,
             number: j.number,
@@ -1116,13 +1116,13 @@ export const TicketRepository = {
               : {}),
           };
         });
-        
+
         // Calcular totalCommission sumando todas las comisiones de las jugadas
         const totalCommission = jugadasWithCommissions.reduce(
           (sum, j) => sum + (j.commissionAmount || 0),
           0
         );
-        
+
         const createdTicket = await tx.ticket.create({
           data: {
             ticketNumber: nextNumber,
@@ -1163,7 +1163,7 @@ export const TicketRepository = {
 
         // Almacenar commissionsDetails en el ticket para usarlo fuera de TX
         (createdTicket as any).__commissionsDetails = commissionsDetails;
-        
+
         // Almacenar jugadasWithCommissions para usarlo fuera de TX
         (createdTicket as any).__jugadasCount = jugadasWithCommissions.length;
 
@@ -1472,8 +1472,8 @@ export const TicketRepository = {
         const RJ = (loteria.rulesJson ?? {}) as any;
         const numberRange =
           RJ.numberRange &&
-          typeof RJ.numberRange.min === "number" &&
-          typeof RJ.numberRange.max === "number"
+            typeof RJ.numberRange.min === "number" &&
+            typeof RJ.numberRange.max === "number"
             ? { min: RJ.numberRange.min, max: RJ.numberRange.max }
             : { min: 0, max: 99 };
 
@@ -1603,8 +1603,8 @@ export const TicketRepository = {
             const ruleScope: "USER" | "VENTANA" | "BANCA" = matchingRule.userId
               ? "USER"
               : matchingRule.ventanaId
-              ? "VENTANA"
-              : "BANCA";
+                ? "VENTANA"
+                : "BANCA";
 
             const loteriaNameForWarning = matchingRule.loteria?.name ?? loteriaName;
             const multiplierNameForWarning = multiplier.name ?? matchingRule.multiplier?.name ?? null;
@@ -1697,13 +1697,13 @@ export const TicketRepository = {
         // 10) Aplicar primera regla aplicable con soporte para límites dinámicos
         if (applicable.length > 0) {
           const rule = applicable[0] as any; // Cast para incluir nuevos campos
-          
+
           // Calcular límite dinámico si hay baseAmount o salesPercentage
           let dynamicLimit: number | null = null;
-          const hasDynamicFields = 
+          const hasDynamicFields =
             (rule.baseAmount != null && rule.baseAmount > 0) ||
             (rule.salesPercentage != null && rule.salesPercentage > 0);
-          
+
           if (hasDynamicFields) {
             dynamicLimit = await calculateDynamicLimit(tx, {
               baseAmount: rule.baseAmount,
@@ -1726,7 +1726,7 @@ export const TicketRepository = {
             let effectiveMaxAmount: number | null = null;
             if (rule.maxAmount != null || dynamicLimit != null) {
               const staticMaxAmount = rule.maxAmount ?? Infinity;
-              effectiveMaxAmount = dynamicLimit != null 
+              effectiveMaxAmount = dynamicLimit != null
                 ? Math.min(staticMaxAmount, dynamicLimit)
                 : staticMaxAmount;
             }
@@ -1811,7 +1811,7 @@ export const TicketRepository = {
         if (commissionContext) {
           // Usar pre-cálculo optimizado
           const preCalculated = preCalculateCommissions(preparedJugadas, loteriaId, commissionContext);
-          
+
           // Crear mapa de número -> multiplierId para NUMERO jugadas
           const numeroMultiplierMap = new Map<string, string | null>();
           for (const pj of preparedJugadas) {
@@ -1819,28 +1819,56 @@ export const TicketRepository = {
               numeroMultiplierMap.set(pj.number, pj.multiplierId);
             }
           }
-          
+
           // ✅ CRÍTICO: Calcular listeroCommissionAmount desde políticas VENTANA o BANCA
           const ventanaPolicy = ventana?.commissionPolicyJson ?? null;
           const bancaPolicy = ventana?.banca?.commissionPolicyJson ?? null;
-          
+          // ✅ Use listeroPolicy from context if available
+          const listeroPolicy = commissionContext.listeroPolicy ?? null;
+
           jugadasWithCommissions = preCalculated.map((j) => {
             // Calcular comisión del listero (VENTANA o BANCA, nunca USER)
             let listeroCommissionAmount = 0;
-            
-            const listeroResult = resolveListeroCommission(
-              {
+
+            // Try to use listeroPolicy from context first (most optimized)
+            if (listeroPolicy) {
+              const match = findMatchingRule(listeroPolicy, {
                 loteriaId,
                 betType: j.type,
                 finalMultiplierX: j.finalMultiplierX,
                 amount: j.amount,
-              },
-              ventanaPolicy,
-              bancaPolicy
-            );
-            
-            listeroCommissionAmount = Math.round(listeroResult.commissionAmount);
-            
+              });
+              if (match) {
+                listeroCommissionAmount = Math.round(parseFloat(((j.amount * match.percent) / 100).toFixed(2)));
+              } else {
+                // Fallback to standard resolution if no match in listero policy
+                const listeroResult = resolveListeroCommission(
+                  {
+                    loteriaId,
+                    betType: j.type,
+                    finalMultiplierX: j.finalMultiplierX,
+                    amount: j.amount,
+                  },
+                  ventanaPolicy,
+                  bancaPolicy
+                );
+                listeroCommissionAmount = Math.round(listeroResult.commissionAmount);
+              }
+            } else {
+              // Fallback to standard resolution
+              const listeroResult = resolveListeroCommission(
+                {
+                  loteriaId,
+                  betType: j.type,
+                  finalMultiplierX: j.finalMultiplierX,
+                  amount: j.amount,
+                },
+                ventanaPolicy,
+                bancaPolicy
+              );
+              listeroCommissionAmount = Math.round(listeroResult.commissionAmount);
+            }
+
             return {
               ...j,
               reventadoNumber: j.type === "REVENTADO" ? j.number : null,
@@ -2093,7 +2121,7 @@ export const TicketRepository = {
     page = 1,
     pageSize = 10,
     filters: {
-      status?: TicketStatus;
+      status?: TicketStatus | TicketStatus[];
       isActive?: boolean;
       sorteoId?: string;
       loteriaId?: string;
@@ -2110,7 +2138,11 @@ export const TicketRepository = {
     const skip = (page - 1) * pageSize;
 
     const where: Prisma.TicketWhereInput = {
-      ...(filters.status ? { status: filters.status } : {}),
+      ...(filters.status
+        ? Array.isArray(filters.status)
+          ? { status: { in: filters.status } }
+          : { status: filters.status }
+        : {}),
       ...(typeof filters.isActive === "boolean"
         ? { isActive: filters.isActive }
         : { isActive: filters.isActive }),
@@ -2118,23 +2150,23 @@ export const TicketRepository = {
       ...(filters.loteriaId ? { loteriaId: filters.loteriaId } : {}),
       ...(filters.multiplierId
         ? {
-            jugadas: {
-              some: {
-                multiplierId: filters.multiplierId,
-              },
+          jugadas: {
+            some: {
+              multiplierId: filters.multiplierId,
             },
-          }
+          },
+        }
         : {}),
       ...(filters.userId ? { vendedorId: filters.userId } : {}),
       ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}), // ✅ ahora sí aplica
       ...(filters.winnersOnly ? { isWinner: true } : {}),
       ...(filters.dateFrom || filters.dateTo
         ? {
-            createdAt: {
-              ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
-              ...(filters.dateTo ? { lt: filters.dateTo } : {}), // ✅ medio-abierto
-            },
-          }
+          createdAt: {
+            ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
+            ...(filters.dateTo ? { lt: filters.dateTo } : {}), // ✅ medio-abierto
+          },
+        }
         : {}),
     };
 
@@ -2150,7 +2182,7 @@ export const TicketRepository = {
           ? where.AND
           : [where.AND]
         : [];
-      
+
       where.AND = [
         ...existingAnd,
         {
@@ -2389,6 +2421,117 @@ export const TicketRepository = {
         userId,
         sorteoId: (ticket as any).sorteoId,
         totalAmount: ticket.totalAmount,
+      },
+    });
+
+    return ticket;
+  },
+
+  /**
+   * Restaura un ticket cancelado si el sorteo aún no ha pasado
+   */
+  async restore(id: string, userId: string) {
+    const ticket = await withTransactionRetry(
+      async (tx) => {
+        // 1) Verificar existencia y estado
+        const existing = await tx.ticket.findUnique({
+          where: { id },
+          include: { sorteo: true },
+        });
+
+        if (!existing) {
+          throw new AppError("Ticket not found", 404, "NOT_FOUND");
+        }
+
+        if (existing.status !== TicketStatus.CANCELLED) {
+          throw new AppError(
+            "Only cancelled tickets can be restored",
+            400,
+            "INVALID_STATE"
+          );
+        }
+
+        // 2) Validar que el sorteo no haya pasado
+        const now = new Date();
+        if (existing.sorteo.scheduledAt <= now) {
+          throw new AppError(
+            "Cannot restore ticket: draw has passed",
+            409,
+            "DRAW_PASSED"
+          );
+        }
+
+        // 3) Validar estado del sorteo
+        if (
+          existing.sorteo.status === "CLOSED" ||
+          existing.sorteo.status === "EVALUATED"
+        ) {
+          throw new AppError(
+            "Cannot restore ticket: draw is closed or evaluated",
+            409,
+            "SORTEO_LOCKED"
+          );
+        }
+
+        // 4) Restaurar ticket
+        const restored = await tx.ticket.update({
+          where: { id },
+          data: {
+            isActive: true,
+            status: TicketStatus.ACTIVE,
+            updatedAt: new Date(),
+          },
+          include: { jugadas: true },
+        });
+
+        // 5) Restaurar jugadas
+        await tx.jugada.updateMany({
+          where: { ticketId: id },
+          data: {
+            isActive: true,
+          },
+        });
+
+        return restored;
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+        maxRetries: 3,
+        backoffMinMs: 150,
+        backoffMaxMs: 2_000,
+        maxWaitMs: 10_000,
+        timeoutMs: 20_000,
+      }
+    );
+
+    // ActivityLog
+    prisma.activityLog
+      .create({
+        data: {
+          userId,
+          action: "TICKET_RESTORE",
+          targetType: "TICKET",
+          targetId: ticket.id,
+          details: {
+            ticketNumber: ticket.ticketNumber,
+            restoredAt: ticket.updatedAt,
+          },
+        },
+      })
+      .catch((err) =>
+        logger.warn({
+          layer: "activityLog",
+          action: "ASYNC_FAIL",
+          payload: { message: err.message },
+        })
+      );
+
+    logger.info({
+      layer: "repository",
+      action: "TICKET_RESTORE_DB",
+      payload: {
+        ticketId: id,
+        userId,
       },
     });
 

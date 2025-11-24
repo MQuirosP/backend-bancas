@@ -1,5 +1,5 @@
 // src/utils/commissionPrecalc.ts
-import { CommissionSnapshot, CommissionMatchInput, findMatchingRule } from '../services/commission.resolver';
+import { CommissionSnapshot, CommissionMatchInput, findMatchingRule, parseCommissionPolicy } from '../services/commission.resolver';
 import { getCachedCommissionPolicy } from './commissionCache';
 import logger from '../core/logger';
 
@@ -10,6 +10,32 @@ export interface CommissionContext {
   userPolicy: any;
   ventanaPolicy: any;
   bancaPolicy: any;
+  listeroPolicy: any;
+}
+
+/**
+ * Prepara el contexto de comisiones (parsea y cachea políticas)
+ */
+export async function prepareCommissionContext(
+  userId: string | null,
+  ventanaId: string,
+  bancaId: string,
+  userPolicyJson: any,
+  ventanaPolicyJson: any,
+  bancaPolicyJson: any,
+  listeroPolicyJson: any = null
+): Promise<CommissionContext> {
+  const userPolicy = userId ? await getCachedCommissionPolicy("USER", userId, userPolicyJson) : null;
+  const ventanaPolicy = await getCachedCommissionPolicy("VENTANA", ventanaId, ventanaPolicyJson);
+  const bancaPolicy = await getCachedCommissionPolicy("BANCA", bancaId, bancaPolicyJson);
+  const listeroPolicy = listeroPolicyJson ? parseCommissionPolicy(listeroPolicyJson, "USER") : null;
+
+  return {
+    userPolicy,
+    ventanaPolicy,
+    bancaPolicy,
+    listeroPolicy,
+  };
 }
 
 /**
@@ -62,7 +88,7 @@ export function resolveCommissionFast(
     }
   }
 
-  // Fallback: Sin comisión (0%)
+  // Si no hay match
   return {
     commissionPercent: 0,
     commissionAmount: 0,
@@ -71,31 +97,6 @@ export function resolveCommissionFast(
   };
 }
 
-/**
- * Prepara el contexto de comisiones parseando y cacheando políticas
- */
-export async function prepareCommissionContext(
-  userId: string,
-  ventanaId: string,
-  bancaId: string,
-  userPolicyJson: any,
-  ventanaPolicyJson: any,
-  bancaPolicyJson: any
-): Promise<CommissionContext> {
-  const userPolicy = getCachedCommissionPolicy('USER', userId, userPolicyJson);
-  const ventanaPolicy = getCachedCommissionPolicy('VENTANA', ventanaId, ventanaPolicyJson);
-  const bancaPolicy = getCachedCommissionPolicy('BANCA', bancaId, bancaPolicyJson);
-
-  return {
-    userPolicy,
-    ventanaPolicy,
-    bancaPolicy,
-  };
-}
-
-/**
- * Pre-calcula comisiones para todas las jugadas antes de entrar a la transacción
- */
 export function preCalculateCommissions(
   jugadas: Array<{
     type: "NUMERO" | "REVENTADO";
@@ -132,4 +133,3 @@ export function preCalculateCommissions(
     };
   });
 }
-

@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { TicketController } from "../controllers/ticket.controller";
 import { validateBody } from "../../../middlewares/validate.middleware";
-import { 
-  CreateTicketSchema, 
+import {
+  CreateTicketSchema,
   validateListTicketsQuery,
   RegisterPaymentSchema,
   ReversePaymentSchema,
@@ -28,6 +28,7 @@ router.get("/by-number/:ticketNumber", validateTicketNumberParam, TicketControll
 router.get("/:id", TicketController.getById);
 router.get("/", validateListTicketsQuery, TicketController.list);
 router.patch("/:id/cancel", TicketController.cancel);
+router.patch("/:id/restore", TicketController.restore);
 
 // Payment endpoints (unificados en Ticket)
 router.post(
