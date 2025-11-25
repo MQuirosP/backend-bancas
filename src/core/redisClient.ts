@@ -23,8 +23,65 @@ export async function initRedisClient(): Promise<void> {
     }
 
     try {
-        // Importar ioredis dinámicamente (solo si está instalado)
-        // Usar require dinámico para evitar error de compilación si no está instalado
+        // ✅ OPTIMIZACIÓN: Detectar si es Upstash REST API (URL empieza con https://)
+        const isUpstashRest = process.env.REDIS_URL?.startsWith('https://');
+
+        if (isUpstashRest) {
+            // Para Upstash REST API, crear un cliente simple basado en fetch
+            logger.info({ layer: 'redis', action: 'UPSTASH_REST_MODE', payload: { message: 'Using Upstash REST API' } });
+
+            redisClient = {
+                // Implementación simple de comandos Redis sobre REST API de Upstash
+                async get(key: string) {
+                    const response = await fetch(`${process.env.REDIS_URL}/get/${encodeURIComponent(key)}`, {
+                        headers: { 'Authorization': `Bearer ${process.env.REDIS_TOKEN}` }
+                    });
+                    const data = await response.json();
+                    return data.result;
+                },
+                async setex(key: string, seconds: number, value: string) {
+                    await fetch(`${process.env.REDIS_URL}/setex/${encodeURIComponent(key)}/${seconds}`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${process.env.REDIS_TOKEN}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(value)
+                    });
+                },
+                async del(...keys: string[]) {
+                    for (const key of keys) {
+                        await fetch(`${process.env.REDIS_URL}/del/${encodeURIComponent(key)}`, {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${process.env.REDIS_TOKEN}` }
+                        });
+                    }
+                },
+                async keys(pattern: string) {
+                    const response = await fetch(`${process.env.REDIS_URL}/keys/${encodeURIComponent(pattern)}`, {
+                        headers: { 'Authorization': `Bearer ${process.env.REDIS_TOKEN}` }
+                    });
+                    const data = await response.json();
+                    return data.result || [];
+                },
+                async exists(key: string) {
+                    const response = await fetch(`${process.env.REDIS_URL}/exists/${encodeURIComponent(key)}`, {
+                        headers: { 'Authorization': `Bearer ${process.env.REDIS_TOKEN}` }
+                    });
+                    const data = await response.json();
+                    return data.result;
+                },
+                async quit() {
+                    // No-op para REST API
+                }
+            };
+
+            redisAvailable = true;
+            logger.info({ layer: 'redis', action: 'READY' });
+            return;
+        }
+
+        // Para Redis estándar (no-Upstash), usar ioredis
         let Redis: any = null;
         try {
             Redis = require('ioredis');
@@ -37,7 +94,7 @@ export async function initRedisClient(): Promise<void> {
             return;
         }
 
-        // Crear cliente Redis
+        // Crear cliente Redis estándar
         const url = new URL(process.env.REDIS_URL);
         redisClient = new Redis({
             host: url.hostname,
@@ -47,7 +104,7 @@ export async function initRedisClient(): Promise<void> {
             retryStrategy: (times: number) => {
                 if (times > 3) {
                     logger.warn({ layer: 'redis', action: 'MAX_RETRIES', payload: { attempts: times } });
-                    return null; // Stop retrying
+                    return null;
                 }
                 return Math.min(times * 100, 2000);
             },
