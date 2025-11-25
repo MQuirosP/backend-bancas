@@ -1765,11 +1765,14 @@ export const TicketRepository = {
 
             // Calcular límite efectivo para maxTotal
             let effectiveMaxTotal: number | null = null;
-            if (rule.maxTotal != null || dynamicLimit != null) {
-              const staticMaxTotal = rule.maxTotal ?? Infinity;
-              effectiveMaxTotal = dynamicLimit != null
-                ? Math.min(staticMaxTotal, dynamicLimit)
-                : staticMaxTotal;
+            if (rule.maxTotal != null) {
+              // const staticMaxTotal = rule.maxTotal ?? Infinity;
+
+              // effectiveMaxTotal = dynamicLimit != null
+              //   ? Math.min(staticMaxTotal, dynamicLimit)
+              //   : staticMaxTotal;
+              effectiveMaxTotal = Number(rule.maxTotal);
+
             }
 
             if (effectiveMaxTotal != null && totalAmountTx > effectiveMaxTotal) {
