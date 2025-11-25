@@ -185,8 +185,9 @@ export const LoteriaController = {
     const loteriaId = req.params.id;
     const now = new Date(); // Hora actual del servidor
     const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : now;
-    const days = req.query.days ? Number(req.query.days) : 1; // Cambiado de 7 a 1
+    const days = req.query.days ? Number(req.query.days) : 1;
     const limit = req.query.limit ? Number(req.query.limit) : 200;
+    const allowPast = req.query.allowPast === "true"; // ✅ NUEVO: permitir fechas pasadas
 
     if (isNaN(start.getTime())) {
       return res.status(400).json({ success: false, message: "start inválido" });
@@ -195,23 +196,9 @@ export const LoteriaController = {
     const loteria = await LoteriaService.getById(loteriaId);
     const rules = (loteria.rulesJson ?? {}) as any;
 
-    // Calcular rango de fechas según days
-    const todayStart = startOfLocalDay(now);
-    const todayEnd = endOfLocalDay(now);
-    
-    let fromDate: Date;
-    let toDate: Date;
-    
-    if (days === 1) {
-      // Solo día actual
-      fromDate = todayStart;
-      toDate = todayEnd;
-    } else {
-      // Desde hoy hasta days días en el futuro
-      fromDate = todayStart;
-      const futureDate = addLocalDays(todayStart, days - 1);
-      toDate = endOfLocalDay(futureDate);
-    }
+    // ✅ Calcular rango de fechas usando el parámetro 'start' (no 'now')
+    const startOfDay = startOfLocalDay(start);
+    const endOfDays = endOfLocalDay(addLocalDays(startOfDay, days - 1));
 
     const occurrences = computeOccurrences({
       loteriaName: loteria.name,
@@ -220,19 +207,23 @@ export const LoteriaController = {
         times: rules?.drawSchedule?.times,
         daysOfWeek: rules?.drawSchedule?.daysOfWeek,
       },
-      start: fromDate,
+      start: startOfDay,
       days,
       limit,
     });
 
-    // Filtrar sorteos cuya hora ya pasó (scheduledAt >= now)
-    const futureOccurrences = occurrences.filter((o: any) => o.scheduledAt >= now);
+    // ✅ Filtrar por rango calculado (no por "ahora")
+    // Si allowPast=true, mostrar todos; si false, solo futuros respecto a now
+    let filteredOccurrences = occurrences;
+    if (!allowPast) {
+      filteredOccurrences = occurrences.filter((o: any) => o.scheduledAt >= now);
+    }
 
     // Verificar duplicados en la base de datos
-    const scheduledDates = futureOccurrences.map((o: any) => o.scheduledAt);
-    
+    const scheduledDates = filteredOccurrences.map((o: any) => o.scheduledAt);
+
     let existingDatesSet = new Set<number>();
-    
+
     if (scheduledDates.length > 0) {
       const existingSorteos = await prisma.sorteo.findMany({
         where: {
@@ -248,7 +239,7 @@ export const LoteriaController = {
     }
 
     // Mapear con campo alreadyExists
-    const data = futureOccurrences.map((o: any) => {
+    const data = filteredOccurrences.map((o: any) => {
       const scheduledAtTime = o.scheduledAt.getTime();
       return {
         scheduledAt: formatIsoLocal(o.scheduledAt),
@@ -260,8 +251,9 @@ export const LoteriaController = {
 
     return success(res, data.slice(0, limit), {
       count: data.length,
-      from: formatIsoLocal(fromDate),
-      to: formatIsoLocal(toDate),
+      from: formatIsoLocal(startOfDay),
+      to: formatIsoLocal(endOfDays),
+      allowPast, // ✅ NUEVO: indicar al cliente si se permitieron fechas pasadas
     });
   },
 

@@ -16,15 +16,17 @@ export const SorteosAutoController = {
   },
 
   async executeAutoOpen(req: AuthenticatedRequest, res: Response) {
-    const result = await SorteosAutoService.executeAutoOpen();
+    // ✅ Pasar userId del JWT autenticado al servicio
+    const result = await SorteosAutoService.executeAutoOpen(req.user!.id);
     return success(res, result);
   },
 
   async executeAutoCreate(req: AuthenticatedRequest, res: Response) {
-    const daysAhead = req.query.daysAhead 
-      ? Number(req.query.daysAhead) 
+    const daysAhead = req.query.daysAhead
+      ? Number(req.query.daysAhead)
       : 7;
-    const result = await SorteosAutoService.executeAutoCreate(daysAhead);
+    // ✅ Pasar userId del JWT autenticado al servicio
+    const result = await SorteosAutoService.executeAutoCreate(daysAhead, req.user!.id);
     return success(res, result);
   },
 

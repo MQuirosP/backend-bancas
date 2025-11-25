@@ -348,49 +348,65 @@ export const LoteriaService = {
       return { created: 0, skipped: 0, alreadyExists: [], processed: [], note: "autoCreateSorteos=false (usa forceCreate para crear manualmente)" }
     }
 
-    const schedule = rules?.drawSchedule ?? {}
-    const occurrences = computeOccurrences({
-      loteriaName: loteria.name,
-      schedule: {
-        frequency: schedule.frequency,
-        times: schedule.times,
-        daysOfWeek: schedule.daysOfWeek,
-      },
-      start,
-      days,
-      limit: 1000,
-    })
+    // ✅ IMPORTANTE: Si vienen scheduledDates específicas, usarlas DIRECTAMENTE sin filtrar por occurrences
+    // Esto permite crear sorteos de cualquier fecha (pasada, presente o futura)
+    let subset: any[] = [];
 
-    logger.info({
-      layer: "service",
-      action: "LOTERIA_SEED_SORTEOS_FROM_RULES",
-      payload: {
-        loteriaId,
-        loteriaName: loteria.name,
-        start: start.toISOString(),
-        days,
-        dryRun,
-        totalOccurrences: occurrences.length,
-        hasScheduledDates: Array.isArray(scheduledDates) && scheduledDates.length > 0,
-        scheduledDatesCount: scheduledDates?.length ?? 0,
-      },
-    });
-
-    // Si viene subset, filtrar por timestamps exactos (idempotente)
-    let subset = occurrences
     if (Array.isArray(scheduledDates) && scheduledDates.length > 0) {
-      const subsetKeys = new Set(scheduledDates.map(d => new Date(d).getTime()))
-      subset = occurrences.filter(o => subsetKeys.has(o.scheduledAt.getTime()))
-      
+      // Modo: crear fechas específicas solicitadas
+      subset = scheduledDates.map(d => {
+        const date = d instanceof Date ? d : new Date(d);
+        // Extraer hora en formato HH:MM de la fecha (en timezone Costa Rica)
+        const localDate = new Date(date.getTime() - 6 * 60 * 60 * 1000); // Convertir a CR time
+        const hours = String(localDate.getUTCHours()).padStart(2, '0');
+        const minutes = String(localDate.getUTCMinutes()).padStart(2, '0');
+        const timeStr = `${hours}:${minutes}`;
+        return {
+          name: `${loteria.name} ${timeStr}`, // Ej: "Tica 14:30"
+          scheduledAt: date,
+        };
+      });
+
       logger.info({
         layer: "service",
-        action: "LOTERIA_SEED_SORTEOS_FILTERED",
+        action: "LOTERIA_SEED_SORTEOS_FROM_SPECIFIC_DATES",
         payload: {
           loteriaId,
-          originalOccurrences: occurrences.length,
-          filteredOccurrences: subset.length,
+          loteriaName: loteria.name,
+          dryRun,
+          specificDatesCount: scheduledDates.length,
+          scheduledDates: scheduledDates.map(d => (d instanceof Date ? d : new Date(d)).toISOString()),
         },
       });
+    } else {
+      // Modo: calcular occurrences por reglas de schedule
+      const schedule = rules?.drawSchedule ?? {}
+      const occurrences = computeOccurrences({
+        loteriaName: loteria.name,
+        schedule: {
+          frequency: schedule.frequency,
+          times: schedule.times,
+          daysOfWeek: schedule.daysOfWeek,
+        },
+        start,
+        days,
+        limit: 1000,
+      })
+
+      logger.info({
+        layer: "service",
+        action: "LOTERIA_SEED_SORTEOS_FROM_RULES",
+        payload: {
+          loteriaId,
+          loteriaName: loteria.name,
+          start: start.toISOString(),
+          days,
+          dryRun,
+          totalOccurrences: occurrences.length,
+        },
+      });
+
+      subset = occurrences;
     }
 
     if (dryRun) {
