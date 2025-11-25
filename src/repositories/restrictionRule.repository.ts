@@ -2,6 +2,7 @@
 import prisma from "../core/prismaClient";
 import { getCRLocalComponents } from "../utils/businessDate";
 import { SalesService } from "../api/v1/services/sales.service";
+import { getCachedCutoff, setCachedCutoff, invalidateRestrictionCaches } from "../utils/restrictionCache";
 
 export type EffectiveRestriction = {
   source: "USER" | "VENTANA" | "BANCA" | null;
@@ -68,18 +69,36 @@ export const RestrictionRuleRepository = {
       multiplierId: data.multiplierId ?? null,
     };
 
-    return prisma.restrictionRule.create({
+    const rule = await prisma.restrictionRule.create({
       data: validData,
       include: includeLabels,
     });
+
+    // ✅ OPTIMIZACIÓN: Invalidar caché cuando se crea una restricción
+    await invalidateRestrictionCaches({
+      bancaId: rule.bancaId || undefined,
+      ventanaId: rule.ventanaId || undefined,
+      userId: rule.userId || undefined,
+    });
+
+    return rule;
   },
 
   async update(id: string, data: any) {
-    return prisma.restrictionRule.update({
+    const rule = await prisma.restrictionRule.update({
       where: { id },
       data,
       include: includeLabels,
     });
+
+    // ✅ OPTIMIZACIÓN: Invalidar caché cuando se actualiza una restricción
+    await invalidateRestrictionCaches({
+      bancaId: rule.bancaId || undefined,
+      ventanaId: rule.ventanaId || undefined,
+      userId: rule.userId || undefined,
+    });
+
+    return rule;
   },
 
   async softDelete(id: string, _actorId: string, _reason?: string) {
@@ -443,6 +462,7 @@ export const RestrictionRuleRepository = {
    * API ÚNICA para el resto del sistema:
    * - si hay regla → respeta minutos y fuente
    * - si no hay → fallback a `defaultCutoff` y source="DEFAULT"
+   * ✅ OPTIMIZACIÓN: Usa caché Redis para reducir queries a DB
    */
   async resolveSalesCutoff(params: {
     bancaId: string;
@@ -451,15 +471,27 @@ export const RestrictionRuleRepository = {
     defaultCutoff?: number;
   }): Promise<EffectiveSalesCutoffDetailed> {
     const { bancaId, ventanaId, userId, defaultCutoff = 5 } = params;
+
+    // ✅ OPTIMIZACIÓN: Intentar obtener de caché primero
+    const cached = await getCachedCutoff({ bancaId, ventanaId, userId });
+    if (cached) {
+      return cached;
+    }
+
+    // Si no está en caché, consultar DB
     const eff = await this.getEffectiveSalesCutoffWithSource({
       bancaId,
       ventanaId: ventanaId ?? null,
       userId: userId ?? null,
     });
 
-    if (eff.minutes == null) {
-      return { minutes: Math.max(0, defaultCutoff), source: "DEFAULT" };
-    }
-    return { minutes: Math.max(0, eff.minutes), source: eff.source! };
+    const result = eff.minutes == null
+      ? { minutes: Math.max(0, defaultCutoff), source: "DEFAULT" as const }
+      : { minutes: Math.max(0, eff.minutes), source: eff.source! };
+
+    // ✅ OPTIMIZACIÓN: Guardar en caché para futuras requests
+    await setCachedCutoff({ bancaId, ventanaId, userId }, result);
+
+    return result;
   },
 };

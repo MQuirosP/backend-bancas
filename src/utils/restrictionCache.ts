@@ -45,7 +45,7 @@ export async function getCachedCutoff(params: {
     bancaId: string;
     ventanaId?: string | null;
     userId?: string | null;
-}): Promise<{ minutes: number; source: string } | null> {
+}): Promise<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" } | null> {
     const key = getCutoffCacheKey(params);
     return await CacheService.get(key);
 }
@@ -55,7 +55,7 @@ export async function getCachedCutoff(params: {
  */
 export async function setCachedCutoff(
     params: { bancaId: string; ventanaId?: string | null; userId?: string | null },
-    value: { minutes: number; source: string }
+    value: { minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" }
 ): Promise<void> {
     const key = getCutoffCacheKey(params);
     await CacheService.set(key, value, CUTOFF_TTL);
