@@ -4,17 +4,30 @@ import logger from '../core/logger'
 import { config } from '../config'
 import prisma from '../core/prismaClient'
 import { startSorteosAutoJobs, stopSorteosAutoJobs } from '../jobs/sorteosAuto.job'
+import { initRedisClient, closeRedisClient } from '../core/redisClient'
 
 const server = http.createServer(app)
 
-server.listen(config.port, () => {
+server.listen(config.port, async () => {
   logger.info({
     layer: 'server',
     action: 'SERVER_LISTEN',
     requestId: null,
     payload: { port: config.port },
   })
-  
+
+  // ✅ OPTIMIZACIÓN: Inicializar Redis (opcional, no bloquea el servidor)
+  try {
+    await initRedisClient()
+  } catch (error: any) {
+    logger.warn({
+      layer: 'server',
+      action: 'REDIS_INIT_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
   // Iniciar jobs de automatización de sorteos
   try {
     startSorteosAutoJobs()
@@ -46,6 +59,17 @@ const gracefulShutdown = async (signal: string) => {
     logger.warn({
       layer: 'server',
       action: 'SORTEOS_AUTO_JOBS_STOP_ERROR',
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
+  // ✅ OPTIMIZACIÓN: Cerrar conexión Redis
+  try {
+    await closeRedisClient()
+  } catch (error: any) {
+    logger.warn({
+      layer: 'server',
+      action: 'REDIS_CLOSE_ERROR',
       meta: { error: error instanceof Error ? error.message : String(error) },
     })
   }
