@@ -485,9 +485,21 @@ export const RestrictionRuleRepository = {
       userId: userId ?? null,
     });
 
-    const result = eff.minutes == null
-      ? { minutes: Math.max(0, defaultCutoff), source: "DEFAULT" as const }
-      : { minutes: Math.max(0, eff.minutes), source: eff.source! };
+    // ✅ VALIDACIÓN DEFENSIVA: Asegurar que minutes sea un número válido antes de cachear
+    let minutes: number;
+    let source: "USER" | "VENTANA" | "BANCA" | "DEFAULT";
+
+    if (eff.minutes != null && typeof eff.minutes === 'number' && !isNaN(eff.minutes)) {
+      minutes = Math.max(0, eff.minutes);
+      source = eff.source!;
+    } else {
+      // Fallback a defaultCutoff
+      const safeDefault = (typeof defaultCutoff === 'number' && !isNaN(defaultCutoff)) ? defaultCutoff : 5;
+      minutes = Math.max(0, safeDefault);
+      source = "DEFAULT";
+    }
+
+    const result = { minutes, source };
 
     // ✅ OPTIMIZACIÓN: Guardar en caché para futuras requests
     await setCachedCutoff({ bancaId, ventanaId, userId }, result);

@@ -47,10 +47,10 @@ async function resolveExtraMultiplierX(
 
 const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
   name: d.name,
-  scheduledAt:
-    d.scheduledAt instanceof Date
-      ? new Date(d.scheduledAt.getTime())
-      : parseCostaRicaDateTime(d.scheduledAt),
+  // ✅ Confiar en la fecha ya normalizada por zodDateCR() en el validator
+  scheduledAt: d.scheduledAt instanceof Date
+    ? d.scheduledAt
+    : parseCostaRicaDateTime(d.scheduledAt), // Fallback por si acaso
   loteria: { connect: { id: d.loteriaId } },
   // extraOutcomeCode, extraMultiplierId/X se quedan nulos al crear
 });
@@ -59,8 +59,8 @@ const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
   // ✅ ÚNICAMENTE se permite reprogramar la fecha/hora (más name/isActive si lo quieres)
   scheduledAt: d.scheduledAt
     ? d.scheduledAt instanceof Date
-      ? new Date(d.scheduledAt.getTime())
-      : parseCostaRicaDateTime(d.scheduledAt)
+      ? d.scheduledAt
+      : parseCostaRicaDateTime(d.scheduledAt) // Fallback por si acaso
     : undefined,
   name: d.name ?? undefined,
   ...(d.loteriaId ? { loteria: { connect: { id: d.loteriaId } } } : {}),
@@ -623,11 +623,11 @@ const SorteoRepository = {
       // 🔑 Filtro de fecha: si se proporciona, usarlo; si no, sin restricción de fecha
       ...(dateFrom || dateTo
         ? {
-            scheduledAt: {
-              ...(dateFrom ? { gte: dateFrom } : {}),
-              ...(dateTo ? { lte: dateTo } : {}),
-            },
-          }
+          scheduledAt: {
+            ...(dateFrom ? { gte: dateFrom } : {}),
+            ...(dateTo ? { lte: dateTo } : {}),
+          },
+        }
         : {}),
     };
 
@@ -733,8 +733,8 @@ const SorteoRepository = {
     logger.warn({
       layer: "repository",
       action: "SORTEO_SOFT_DELETE_DB",
-      payload: { 
-        sorteoId: id, 
+      payload: {
+        sorteoId: id,
         reason,
         byCascade,
         cascadeFrom,
@@ -796,7 +796,7 @@ const SorteoRepository = {
    */
   async setInactiveSorteosByLoteria(loteriaId: string, tx?: Prisma.TransactionClient): Promise<{ count: number; sorteosIds: string[] }> {
     const client = tx || prisma;
-    
+
     // Buscar sorteos activos de esta lotería (que no estén soft-deleted)
     const activeSorteos = await client.sorteo.findMany({
       where: {
@@ -850,7 +850,7 @@ const SorteoRepository = {
   async inactivateSorteosByLoteria(loteriaId: string, userId: string, tx?: Prisma.TransactionClient): Promise<{ count: number; sorteosIds: string[] }> {
     const client = tx || prisma;
     const now = new Date();
-    
+
     // Buscar sorteos activos de esta lotería
     const activeSorteos = await client.sorteo.findMany({
       where: {
@@ -906,7 +906,7 @@ const SorteoRepository = {
    */
   async setActiveSorteosByLoteria(loteriaId: string, tx?: Prisma.TransactionClient): Promise<{ count: number; sorteosIds: string[] }> {
     const client = tx || prisma;
-    
+
     // Buscar sorteos inactivados por cascada desde esta lotería (que no estén soft-deleted)
     const cascadeSorteos = await client.sorteo.findMany({
       where: {
@@ -963,7 +963,7 @@ const SorteoRepository = {
    */
   async restoreSorteosByLoteria(loteriaId: string, tx?: Prisma.TransactionClient): Promise<{ count: number; sorteosIds: string[] }> {
     const client = tx || prisma;
-    
+
     // Buscar sorteos inactivados por cascada desde esta lotería (soft-deleted)
     const cascadeSorteos = await client.sorteo.findMany({
       where: {
