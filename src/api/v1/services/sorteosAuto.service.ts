@@ -7,8 +7,6 @@ import SorteoService from './sorteo.service';
 import LoteriaService from './loteria.service';
 import { startOfLocalDay, addLocalDays } from '../../../utils/datetime';
 
-const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000'; // UUID del sistema
-
 /**
  * Obtiene o crea la configuración de automatización (singleton)
  */
@@ -108,7 +106,7 @@ export const SorteosAutoService = {
   /**
    * Ejecuta la apertura automática de sorteos del día
    */
-  async executeAutoOpen(): Promise<{
+  async executeAutoOpen(userId: string): Promise<{
     success: boolean;
     openedCount: number;
     errors: Array<{ sorteoId: string; error: string }>;
@@ -164,7 +162,8 @@ export const SorteosAutoService = {
 
     for (const sorteo of sorteos) {
       try {
-        await SorteoService.open(sorteo.id, SYSTEM_USER_ID);
+        // ✅ Usar userId del admin autenticado
+        await SorteoService.open(sorteo.id, userId);
         openedCount++;
         
         logger.info({
@@ -241,7 +240,7 @@ export const SorteosAutoService = {
   /**
    * Ejecuta la creación automática de sorteos futuros
    */
-  async executeAutoCreate(daysAhead: number = 7): Promise<{
+  async executeAutoCreate(daysAhead: number = 7, userId?: string): Promise<{
     success: boolean;
     createdCount: number;
     skippedCount: number;
