@@ -1,5 +1,5 @@
-import { hashPassword } from '../utils/crypto';
-import prisma from '../core/prismaClient';
+import { hashPassword } from '../src/utils/crypto';
+import prisma from '../src/core/prismaClient';
 
 async function main() {
   const adminEmail = 'admin@system.local';
