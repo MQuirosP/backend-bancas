@@ -6,7 +6,7 @@ import { parseCorsOrigins } from '../utils/cors'
 
 dotenvSafe.config({
   example: path.resolve(process.cwd(), '.env.example'),
-  allowEmptyValues: false,
+  allowEmptyValues: true, // Permite variables opcionales como REDIS_URL, REDIS_TOKEN
 })
 
 const parsed = EnvSchema.safeParse(process.env)
