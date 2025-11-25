@@ -9,6 +9,7 @@ import { isWithinSalesHours, validateTicketAgainstRules } from "../../../utils/l
 import { prepareCommissionContext, preCalculateCommissions } from "../../../utils/commissionPrecalc";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { UserService } from "./user.service";
+import { nowCR, validateDate, formatDateCRWithTZ } from "../../../utils/datetime";
 
 const CUTOFF_GRACE_MS = 5000;
 // Updated: Added clienteNombre field support
@@ -131,6 +132,28 @@ export const TicketService = {
         );
       }
 
+      // ✅ VALIDACIÓN DEFENSIVA: Verificar que scheduledAt sea válido ANTES de calcular fechas
+      try {
+        validateDate(sorteo.scheduledAt, 'sorteo.scheduledAt');
+      } catch (err: any) {
+        logger.error({
+          layer: "service",
+          action: "INVALID_SORTEO_SCHEDULED_AT",
+          userId,
+          requestId,
+          payload: {
+            sorteoId,
+            scheduledAt: sorteo.scheduledAt,
+            error: err.message,
+          },
+        });
+        throw new AppError(
+          `El sorteo ${sorteoId} tiene una fecha programada inválida. Por favor contacta al administrador.`,
+          400,
+          "INVALID_SORTEO_SCHEDULED_AT"
+        );
+      }
+
       // ⏱ cutoff efectivo (rules → RestrictionRuleRepository)
       const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
         bancaId: ventana.bancaId,
@@ -139,8 +162,14 @@ export const TicketService = {
         defaultCutoff: 5,
       });
 
-      const now = new Date();
-      const cutoffMs = cutoff.minutes * 60_000;
+      const now = nowCR(); // ✅ Usar nowCR() en lugar de new Date()
+
+      // ✅ VALIDACIÓN DEFENSIVA: Asegurar que minutes sea un número válido
+      const safeMinutes = (typeof cutoff.minutes === 'number' && !isNaN(cutoff.minutes))
+        ? cutoff.minutes
+        : 5; // Fallback seguro a 5 min si viene corrupto
+
+      const cutoffMs = safeMinutes * 60_000;
       const limitTime = new Date(sorteo.scheduledAt.getTime() - cutoffMs);
       const effectiveLimitTime = new Date(limitTime.getTime() + CUTOFF_GRACE_MS);
 
@@ -150,9 +179,9 @@ export const TicketService = {
         userId,
         requestId,
         payload: {
-          cutOff: { minutes: cutoff.minutes, source: cutoff.source },
+          cutOff: { minutes: safeMinutes, source: cutoff.source },
           nowISO: now.toISOString(),
-          scheduledAtISO: sorteo.scheduledAt ? sorteo.scheduledAt.toISOString() : null,
+          scheduledAtISO: formatDateCRWithTZ(sorteo.scheduledAt),
           limitTimeISO: limitTime.toISOString(),
           effectiveLimitTimeISO: effectiveLimitTime.toISOString(),
           sorteoStatus: sorteo.status,
@@ -544,7 +573,7 @@ export const TicketService = {
       const historyEntry: PaymentHistoryEntry = {
         id: crypto.randomUUID(),
         amountPaid: data.amountPaid,
-        paidAt: new Date().toISOString(),
+        paidAt: formatDateCRWithTZ(nowCR()), // ✅ Usar formatDateCRWithTZ para timezone explícito
         paidById: userId,
         paidByName: user?.name ?? "Unknown",
         method: data.method ?? "cash",

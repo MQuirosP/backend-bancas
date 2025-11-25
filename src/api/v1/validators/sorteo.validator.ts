@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { Request, Response, NextFunction } from "express";
-import { validateBody, validateParams, validateQuery } from "../../../middlewares/validate.middleware";
+import { validateBody, validateParams, validateQuery, zodDateCR } from "../../../middlewares/validate.middleware";
 
 const IdParamSchema = z.object({ id: z.uuid("id inválido (UUID)") }).strict();
 const twoDigit = z.string().regex(/^\d{2}$/, "winningNumber debe ser 2 dígitos (00-99)");
 
 export const CreateSorteoSchema = z.object({
   loteriaId: z.uuid("loteriaId inválido"),
-  scheduledAt: z.coerce.date(),
+  scheduledAt: zodDateCR(), // ✅ Normaliza automáticamente a CR timezone
   name: z.string().trim().min(1).max(100),
   isActive: z.coerce.boolean().optional(),
 }).strict();
@@ -15,7 +15,7 @@ export const CreateSorteoSchema = z.object({
 export const UpdateSorteoSchema = z.object({
   loteriaId: z.uuid("loteriaId inválido").optional(),
   name: z.string().trim().min(1).max(100).optional(),
-  scheduledAt: z.coerce.date().optional(),
+  scheduledAt: zodDateCR().optional(), // ✅ Normaliza automáticamente a CR timezone
   isActive: z.coerce.boolean().optional(),
 }).strict();
 
@@ -38,7 +38,7 @@ export const ListSorteosQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
   loteriaId: z.uuid().optional(),
-  status: z.enum(["SCHEDULED","OPEN","EVALUATED","CLOSED"]).optional(),
+  status: z.enum(["SCHEDULED", "OPEN", "EVALUATED", "CLOSED"]).optional(),
   search: z.string().trim().min(1).max(100).optional(),
   isActive: z.coerce.boolean().optional(),
   // Filtros de fecha (patrón: date=today|yesterday|week|month|year|range)

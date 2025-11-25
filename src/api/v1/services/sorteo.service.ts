@@ -9,7 +9,8 @@ import {
   EvaluateSorteoDTO,
   UpdateSorteoDTO,
 } from "../dto/sorteo.dto";
-import { formatIsoLocal } from "../../../utils/datetime";
+import { formatIsoLocal, normalizeDateCR, formatDateCRWithTZ } from "../../../utils/datetime";
+import { getCRLocalComponents } from "../../../utils/businessDate";
 import { resolveDateRange } from "../../../utils/dateRange";
 import logger from "../../../core/logger";
 
@@ -59,25 +60,22 @@ function serializeSorteos<T extends { scheduledAt?: Date | null }>(sorteos: T[])
  * Ejemplo: "14:30" → "2:30PM", "09:15" → "9:15AM"
  */
 function formatTime12h(date: Date): string {
-  const local = new Date(date.getTime() - 6 * 60 * 60 * 1000); // Convertir a CR time
-  let hours = local.getUTCHours();
-  const minutes = local.getUTCMinutes();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12; // 0 debe ser 12
-  const minutesStr = String(minutes).padStart(2, '0');
-  return `${hours}:${minutesStr}${ampm}`;
+  const { hour, minute } = getCRLocalComponents(date); // ✅ Usar utilidad CR
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  let hours12 = hour % 12;
+  hours12 = hours12 ? hours12 : 12; // 0 debe ser 12
+  const minutesStr = String(minute).padStart(2, '0');
+  return `${hours12}:${minutesStr}${ampm}`;
 }
 
 /**
  * Extrae la fecha en formato YYYY-MM-DD de un Date
  */
 function formatDateOnly(date: Date): string {
-  const local = new Date(date.getTime() - 6 * 60 * 60 * 1000); // Convertir a CR time
-  const year = local.getUTCFullYear();
-  const month = String(local.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(local.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  const { year, month, day } = getCRLocalComponents(date); // ✅ Usar utilidad CR
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  return `${year}-${mm}-${dd}`;
 }
 
 export const SorteoService = {
@@ -97,10 +95,7 @@ export const SorteoService = {
 
     const details: Prisma.InputJsonObject = {
       loteriaId: data.loteriaId,
-      scheduledAt: (data.scheduledAt instanceof Date
-        ? data.scheduledAt
-        : new Date(data.scheduledAt)
-      ).toISOString(),
+      scheduledAt: formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')), // ✅ Normalizar y formatear con timezone
     };
 
     await ActivityService.log({
@@ -145,9 +140,7 @@ export const SorteoService = {
     if (data.name && data.name !== existing.name) details.name = data.name;
     if (data.loteriaId && data.loteriaId !== existing.loteriaId) details.loteriaId = data.loteriaId;
     if (data.scheduledAt) {
-      details.scheduledAt = (
-        data.scheduledAt instanceof Date ? data.scheduledAt : new Date(data.scheduledAt)
-      ).toISOString();
+      details.scheduledAt = formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')); // ✅ Normalizar y formatear con timezone
     }
     if (data.isActive !== undefined && data.isActive !== (existing as any).isActive) {
       details.isActive = data.isActive;
@@ -470,7 +463,7 @@ export const SorteoService = {
       // IMPORTANTE: Excluir tickets CANCELLED y solo jugadas activas
       const numeroWinners = await tx.jugada.findMany({
         where: {
-          ticket: { 
+          ticket: {
             sorteoId: id,
             status: { not: "CANCELLED" }, // Excluir tickets cancelados
             isActive: true, // Solo tickets activos
@@ -504,7 +497,7 @@ export const SorteoService = {
         // IMPORTANTE: Excluir tickets CANCELLED y solo jugadas activas
         reventadoWinners = await tx.jugada.findMany({
           where: {
-            ticket: { 
+            ticket: {
               sorteoId: id,
               status: { not: "CANCELLED" }, // Excluir tickets cancelados
               isActive: true, // Solo tickets activos
@@ -541,7 +534,7 @@ export const SorteoService = {
 
       // IMPORTANTE: Solo evaluar tickets activos y no cancelados
       const tickets = await tx.ticket.findMany({
-        where: { 
+        where: {
           sorteoId: id,
           status: { not: "CANCELLED" }, // Excluir tickets cancelados
           isActive: true, // Solo tickets activos
@@ -554,7 +547,7 @@ export const SorteoService = {
       for (const t of tickets) {
         const tIsWinner = winningTicketIds.has(t.id);
         if (tIsWinner) winners++;
-        
+
         // Si es ganador, calcular totalPayout sumando jugadas ganadoras
         let totalPayout = 0;
         let remainingAmount = 0;
@@ -566,13 +559,13 @@ export const SorteoService = {
           totalPayout = winningJugadas._sum.payout || 0;
           remainingAmount = totalPayout; // Inicialmente todo pendiente
         }
-        
+
         await tx.ticket.update({
           where: { id: t.id },
-          data: { 
-            status: "EVALUATED", 
+          data: {
+            status: "EVALUATED",
             isWinner: tIsWinner,
-            ...(tIsWinner ? { 
+            ...(tIsWinner ? {
               totalPayout,
               totalPaid: 0,
               remainingAmount,
@@ -1132,14 +1125,14 @@ export const SorteoService = {
       // Parsear estados permitidos desde el parámetro status
       // Por defecto: EVALUATED y OPEN
       let allowedStatuses: SorteoStatus[] = [SorteoStatus.EVALUATED, SorteoStatus.OPEN];
-      
+
       if (params.status) {
         // Parsear string como "EVALUATED,OPEN" o "EVALUATED" o "OPEN"
         const statusStrings = params.status.split(',').map(s => s.trim().toUpperCase());
         allowedStatuses = statusStrings
           .filter(s => Object.values(SorteoStatus).includes(s as SorteoStatus))
           .map(s => s as SorteoStatus);
-        
+
         // Si no hay estados válidos después del parseo, usar el default
         if (allowedStatuses.length === 0) {
           allowedStatuses = [SorteoStatus.EVALUATED, SorteoStatus.OPEN];
@@ -1151,14 +1144,14 @@ export const SorteoService = {
       // Si no, pero se proporciona excludeTicketStatus, se excluyen esos estados
       // Si no se proporciona ninguno, no se filtra por status de ticket
       let ticketStatusFilter: Prisma.EnumTicketStatusFilter | undefined = undefined;
-      
+
       if (params.ticketStatus) {
         // Parsear string como "ACTIVE,EVALUATED,RESTORED"
         const statusStrings = params.ticketStatus.split(',').map(s => s.trim().toUpperCase());
         const validStatuses = statusStrings
           .filter(s => Object.values(TicketStatus).includes(s as TicketStatus))
           .map(s => s as TicketStatus);
-        
+
         if (validStatuses.length > 0) {
           ticketStatusFilter = { in: validStatuses };
         }
@@ -1168,7 +1161,7 @@ export const SorteoService = {
         const validExcludes = excludeStrings
           .filter(s => Object.values(TicketStatus).includes(s as TicketStatus))
           .map(s => s as TicketStatus);
-        
+
         if (validExcludes.length > 0) {
           ticketStatusFilter = { notIn: validExcludes };
         }
@@ -1232,7 +1225,7 @@ export const SorteoService = {
 
       // Obtener datos financieros agregados por sorteo
       const sorteoIds = sorteos.map((s) => s.id);
-      
+
       // Obtener todas las jugadas con sus multiplicadores para el desglose
       // El multiplicador está en Jugada, no en Ticket
       const jugadas = await prisma.jugada.findMany({
@@ -1341,7 +1334,7 @@ export const SorteoService = {
       if (ticketStatusFilter) {
         // Si hay un filtro de ticketStatus, intersectar con PAID/PAGADO
         const allowedStatuses = (ticketStatusFilter as any).in || [];
-        const paidStatuses = allowedStatuses.filter((s: TicketStatus) => 
+        const paidStatuses = allowedStatuses.filter((s: TicketStatus) =>
           s === TicketStatus.PAID || s === TicketStatus.PAGADO
         );
         if (paidStatuses.length > 0) {
@@ -1397,20 +1390,20 @@ export const SorteoService = {
       // Un ticket puede tener múltiples jugadas con diferentes multiplicadores
       type JugadaWithMultiplier = typeof jugadas[0];
       const jugadasBySorteoAndMultiplier = new Map<string, Map<string | null, JugadaWithMultiplier[]>>();
-      
+
       for (const jugada of jugadas) {
         const sorteoId = jugada.ticket.sorteoId;
         const multiplierId = jugada.multiplierId || null;
-        
+
         if (!jugadasBySorteoAndMultiplier.has(sorteoId)) {
           jugadasBySorteoAndMultiplier.set(sorteoId, new Map());
         }
-        
+
         const multiplierMap = jugadasBySorteoAndMultiplier.get(sorteoId)!;
         if (!multiplierMap.has(multiplierId)) {
           multiplierMap.set(multiplierId, []);
         }
-        
+
         multiplierMap.get(multiplierId)!.push(jugada);
       }
 
@@ -1490,11 +1483,11 @@ export const SorteoService = {
 
         for (const [multiplierId, jugadasGroup] of multiplierMap.entries()) {
           const multiplier = jugadasGroup[0]?.multiplier;
-          
+
           // Calcular totales por multiplicador (suma de jugadas)
           const multTotalSales = jugadasGroup.reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.amount || 0), 0);
           const multTotalCommission = jugadasGroup.reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
-          
+
           // ✅ NUEVO: Calcular comisiones por tipo a nivel de multiplicador
           const multCommissionByNumber = jugadasGroup
             .filter((j: JugadaWithMultiplier) => j.type === 'NUMERO')
@@ -1502,17 +1495,17 @@ export const SorteoService = {
           const multCommissionByReventado = jugadasGroup
             .filter((j: JugadaWithMultiplier) => j.type === 'REVENTADO')
             .reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
-          
+
           const multTotalPrizes = jugadasGroup
             .filter((j: JugadaWithMultiplier) => j.isWinner)
             .reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.payout || 0), 0);
-          
+
           // Contar tickets únicos con este multiplicador en este sorteo
           const ticketIdsWithThisMultiplier = new Set(jugadasGroup.map((j: JugadaWithMultiplier) => j.ticketId));
           const multTicketCount = ticketIdsWithThisMultiplier.size;
-          
+
           const multSubtotal = multTotalSales - multTotalCommission - multTotalPrizes;
-          
+
           // Contar tickets ganadores y pagados con este multiplicador
           const winningTicketIds = new Set(
             jugadasGroup
@@ -1520,11 +1513,11 @@ export const SorteoService = {
               .map((j: JugadaWithMultiplier) => j.ticketId)
           );
           const multWinningCount = winningTicketIds.size;
-          
+
           // Obtener tickets pagados (necesitamos verificar el status del ticket)
           const paidTicketIds = new Set(
             jugadasGroup
-              .filter((j: JugadaWithMultiplier) => 
+              .filter((j: JugadaWithMultiplier) =>
                 j.ticket.status === TicketStatus.PAID || j.ticket.status === TicketStatus.PAGADO
               )
               .map((j: JugadaWithMultiplier) => j.ticketId)
@@ -1535,7 +1528,7 @@ export const SorteoService = {
           // Determinar información del multiplicador
           let multiplierName = "Sin multiplicador";
           let multiplierValue = 1;
-          
+
           if (multiplier) {
             multiplierName = multiplier.name || `x${multiplier.valueX}`;
             multiplierValue = multiplier.valueX || 1;
@@ -1595,7 +1588,7 @@ export const SorteoService = {
       // Agrupar sorteos por día
       type SorteoWithMultiplier = typeof dataWithAccumulated[0];
       const sorteosByDate = new Map<string, SorteoWithMultiplier[]>();
-      
+
       for (const sorteo of dataWithAccumulated) {
         const date = sorteo.date;
         if (!sorteosByDate.has(date)) {
