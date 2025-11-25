@@ -88,25 +88,25 @@ model User {
   commissionPolicyJson Json? // Política de comisiones jerárquica
   settings             Json? // Configuraciones del usuario (print, theme, etc.)
 
-  activities              ActivityLog[]
-  refreshTokens           RefreshToken[]
-  restrictionRules        RestrictionRule[]
-  tickets                 Ticket[]             @relation("TicketVendedor")
-  ticketsCreated          Ticket[]             @relation("TicketCreatedBy")
-  ticketsPaid             Ticket[]             @relation("TicketPaidBy")
-  TicketPayment           TicketPayment[]
-  ventana                 Ventana?             @relation(fields: [ventanaId], references: [id])
-  multiplierOverrides     MultiplierOverride[]
-  savedReports            SavedReport[]
-  exportJobs              ExportJob[]
-  alerts                  Alert[]
-  apiKeys                 ApiKey[]
-  accountStatements       AccountStatement[]
-  accountPayments         AccountPayment[]
-  accountPaymentsPaid     AccountPayment[]     @relation("AccountPaymentPaidBy")
-  accountPaymentsReversed AccountPayment[]     @relation("AccountPaymentReversedBy")
-  bancas                  UserBanca[]
-  sorteosAutoConfigUpdated SorteosAutoConfig[] @relation("SorteosAutoConfigUpdatedBy")
+  activities               ActivityLog[]
+  refreshTokens            RefreshToken[]
+  restrictionRules         RestrictionRule[]
+  tickets                  Ticket[]             @relation("TicketVendedor")
+  ticketsCreated           Ticket[]             @relation("TicketCreatedBy")
+  ticketsPaid              Ticket[]             @relation("TicketPaidBy")
+  TicketPayment            TicketPayment[]
+  ventana                  Ventana?             @relation(fields: [ventanaId], references: [id])
+  multiplierOverrides      MultiplierOverride[]
+  savedReports             SavedReport[]
+  exportJobs               ExportJob[]
+  alerts                   Alert[]
+  apiKeys                  ApiKey[]
+  accountStatements        AccountStatement[]
+  accountPayments          AccountPayment[]
+  accountPaymentsPaid      AccountPayment[]     @relation("AccountPaymentPaidBy")
+  accountPaymentsReversed  AccountPayment[]     @relation("AccountPaymentReversedBy")
+  bancas                   UserBanca[]
+  sorteosAutoConfigUpdated SorteosAutoConfig[]  @relation("SorteosAutoConfigUpdatedBy")
 
   @@index([code])
   @@index([email])
@@ -176,8 +176,8 @@ model Ticket {
   clienteNombre String?      @default("CLIENTE CONTADO") @db.VarChar(100)
 
   // Campos de auditoría: quién creó el ticket
-  createdBy     String?      @db.Uuid // userId del usuario que creó el ticket
-  createdByRole Role?        // Rol del usuario que creó el ticket ('ADMIN' | 'VENTANA' | 'VENDEDOR')
+  createdBy     String? @db.Uuid // userId del usuario que creó el ticket
+  createdByRole Role? // Rol del usuario que creó el ticket ('ADMIN' | 'VENTANA' | 'VENDEDOR')
 
   // Campos de pago unificados
   totalPayout     Float?    @default(0) // Total de premios ganados
@@ -204,6 +204,9 @@ model Ticket {
   @@index([status, isWinner])
   @@index([paidById])
   @@index([createdBy])
+  // ✅ OPTIMIZACIÓN: Índices para cálculo de límite dinámico (calculateDynamicLimit)
+  @@index([ventanaId, createdAt, deletedAt]) // Para aggregate por ventana
+  @@index([vendedorId, createdAt, deletedAt]) // Para aggregate por vendedor
 }
 
 /// Contador diario de tickets por ventana basado en businessDate (CR)
@@ -243,27 +246,27 @@ model TicketPayment {
 }
 
 model Jugada {
-  id                String    @id @default(uuid()) @db.Uuid
-  ticketId          String    @db.Uuid
-  number            String
-  amount            Float
-  finalMultiplierX  Float
-  payout            Float?
-  isActive          Boolean   @default(true)
-  deletedAt         DateTime?
-  deletedBy         String?
-  deletedReason     String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  isWinner          Boolean   @default(false)
-  multiplierId      String?   @db.Uuid
-  reventadoNumber   String?
-  type              BetType   @default(NUMERO)
-  commissionPercent Float     @default(0) // Snapshot inmutable: % de comisión aplicado
-  commissionAmount  Float     @default(0) // Snapshot inmutable: monto calculado
-  commissionOrigin  String? // Snapshot inmutable: "user"|"ventana"|"banca"
-  commissionRuleId  String? // Snapshot inmutable: ID de la regla que aplicó
-  listeroCommissionAmount Float @default(0) // ✅ Snapshot inmutable: comisión del listero (ventana) calculada desde políticas
+  id                      String    @id @default(uuid()) @db.Uuid
+  ticketId                String    @db.Uuid
+  number                  String
+  amount                  Float
+  finalMultiplierX        Float
+  payout                  Float?
+  isActive                Boolean   @default(true)
+  deletedAt               DateTime?
+  deletedBy               String?
+  deletedReason           String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  isWinner                Boolean   @default(false)
+  multiplierId            String?   @db.Uuid
+  reventadoNumber         String?
+  type                    BetType   @default(NUMERO)
+  commissionPercent       Float     @default(0) // Snapshot inmutable: % de comisión aplicado
+  commissionAmount        Float     @default(0) // Snapshot inmutable: monto calculado
+  commissionOrigin        String? // Snapshot inmutable: "user"|"ventana"|"banca"
+  commissionRuleId        String? // Snapshot inmutable: ID de la regla que aplicó
+  listeroCommissionAmount Float     @default(0) // ✅ Snapshot inmutable: comisión del listero (ventana) calculada desde políticas
 
   multiplier LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
   ticket     Ticket             @relation(fields: [ticketId], references: [id])
@@ -274,26 +277,26 @@ model Jugada {
 }
 
 model Sorteo {
-  id                String       @id @default(uuid()) @db.Uuid
-  loteriaId         String       @db.Uuid
-  scheduledAt       DateTime
-  status            SorteoStatus @default(SCHEDULED)
-  winningNumber     String?
-  hasWinner         Boolean      @default(false)
-  isActive          Boolean      @default(true)
-  deletedAt         DateTime?
-  deletedBy         String?
-  deletedReason     String?
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-  name              String
-  extraMultiplierId String?      @db.Uuid
-  extraMultiplierX  Float?
-  extraOutcomeCode  String?
+  id                   String       @id @default(uuid()) @db.Uuid
+  loteriaId            String       @db.Uuid
+  scheduledAt          DateTime
+  status               SorteoStatus @default(SCHEDULED)
+  winningNumber        String?
+  hasWinner            Boolean      @default(false)
+  isActive             Boolean      @default(true)
+  deletedAt            DateTime?
+  deletedBy            String?
+  deletedReason        String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  name                 String
+  extraMultiplierId    String?      @db.Uuid
+  extraMultiplierX     Float?
+  extraOutcomeCode     String?
   // Campos de cascada para tracking de inactivación automática
-  deletedByCascade        Boolean   @default(false)
-  deletedByCascadeFrom    String?   // 'loteria', 'ventana', etc.
-  deletedByCascadeId      String?   @db.Uuid // ID del recurso padre que causó la cascada
+  deletedByCascade     Boolean      @default(false)
+  deletedByCascadeFrom String? // 'loteria', 'ventana', etc.
+  deletedByCascadeId   String?      @db.Uuid // ID del recurso padre que causó la cascada
 
   extraMultiplier LoteriaMultiplier? @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
   loteria         Loteria            @relation(fields: [loteriaId], references: [id])
@@ -354,6 +357,14 @@ model RestrictionRule {
   @@index([multiplierId])
   @@index([isAutoDate, isActive])
   @@index([salesPercentage])
+  // ✅ OPTIMIZACIÓN: Índices para resolveSalesCutoff (líneas 408-428 de restrictionRule.repository.ts)
+  @@index([userId, isActive, salesCutoffMinutes, number])
+  @@index([ventanaId, isActive, salesCutoffMinutes, number])
+  @@index([bancaId, isActive, salesCutoffMinutes, number])
+  // ✅ OPTIMIZACIÓN: Índices para getEffectiveLimits (líneas 298-352 de restrictionRule.repository.ts)
+  @@index([userId, isActive, number])
+  @@index([ventanaId, isActive, number])
+  @@index([bancaId, isActive, number])
 }
 
 model LoteriaMultiplier {
@@ -778,15 +789,15 @@ model SorteosAutoConfig {
   id                  String    @id @default(uuid()) @db.Uuid
   autoOpenEnabled     Boolean   @default(false)
   autoCreateEnabled   Boolean   @default(false)
-  openCronSchedule    String?   // Ej: "0 7 * * *" (1 AM CR = 7 AM UTC)
-  createCronSchedule  String?   // Ej: "30 7 * * *" (1:30 AM CR = 7:30 AM UTC)
+  openCronSchedule    String? // Ej: "0 7 * * *" (1 AM CR = 7 AM UTC)
+  createCronSchedule  String? // Ej: "30 7 * * *" (1:30 AM CR = 7:30 AM UTC)
   lastOpenExecution   DateTime?
   lastCreateExecution DateTime?
   lastOpenCount       Int?
   lastCreateCount     Int?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
-  updatedBy            String?   @db.Uuid
+  updatedBy           String?   @db.Uuid
 
   updatedByUser User? @relation("SorteosAutoConfigUpdatedBy", fields: [updatedBy], references: [id])
 
