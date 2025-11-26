@@ -14,6 +14,7 @@ export const TicketPaymentController = {
   /**
    * POST /api/v1/ticket-payments
    * Registrar un pago de tiquete (total o parcial)
+   * Si idempotencyKey ya existe, devuelve el pago existente con indicador cached=true
    */
   async create(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
@@ -27,17 +28,30 @@ export const TicketPaymentController = {
       ventanaId: req.user.ventanaId,
     });
 
+    // Verificar si es una respuesta cacheada (pago duplicado con idempotencyKey)
+    const isCached = (result as any).cached === true;
+    const statusCode = isCached ? 200 : 201;
+
     // Log en controller
     await ActivityService.log({
       userId: req.user.id,
       action: "TICKET_PAY" as any,
       targetType: "TICKET_PAYMENT",
       targetId: result.id,
-      details: { created: true },
+      details: { created: !isCached, cached: isCached },
       layer: "controller",
     });
 
-    return created(res, result);
+    // Limpiar propiedad temporal antes de enviar respuesta
+    const responseData = { ...result };
+    delete (responseData as any).cached;
+
+    // Enviar respuesta con status code apropiado y meta indicando si es cacheado
+    return res.status(statusCode).json({
+      success: true,
+      data: responseData,
+      ...(isCached ? { meta: { cached: true } } : {}),
+    });
   },
 
   /**

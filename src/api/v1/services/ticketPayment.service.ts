@@ -62,12 +62,17 @@ export const TicketPaymentService = {
     // ADMIN puede pagar cualquier tiquete (sin restricción)
 
     // Idempotencia: si trae llave y ya existe, devolver ese pago
+    // Marca como cacheado mediante una propiedad temporal (no persiste en DB)
     if (data.idempotencyKey) {
       const existingKey = await prisma.ticketPayment.findUnique({
         where: { idempotencyKey: data.idempotencyKey },
         include: { ticket: true, paidBy: true },
       });
-      if (existingKey) return existingKey;
+      if (existingKey) {
+        // Agregar propiedad temporal para indicar que es respuesta cacheada
+        (existingKey as any).cached = true;
+        return existingKey;
+      }
     }
 
     // Verificar si ya existe un pago no revertido y no final

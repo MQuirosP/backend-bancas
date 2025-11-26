@@ -281,6 +281,10 @@ export const AccountsController = {
       paidByName,
     });
 
+    // Verificar si es una respuesta cacheada (pago duplicado con idempotencyKey)
+    const isCached = (payment as any).cached === true;
+    const statusCode = isCached ? 200 : 201;
+
     // Log de auditoría
     await ActivityService.log({
       userId: user.id,
@@ -295,6 +299,7 @@ export const AccountsController = {
         ventanaId: effectiveVentanaId || null,
         vendedorId: effectiveVendedorId || null,
         isFinal,
+        cached: isCached,
       },
       layer: "controller",
       requestId: req.requestId,
@@ -311,10 +316,20 @@ export const AccountsController = {
         amount,
         type,
         method,
+        cached: isCached,
       },
     });
 
-    return success(res, payment, 201);
+    // Limpiar propiedad temporal antes de enviar respuesta
+    const responseData = { ...payment };
+    delete (responseData as any).cached;
+
+    // Enviar respuesta con status code apropiado y meta indicando si es cacheado
+    return res.status(statusCode).json({
+      success: true,
+      data: responseData,
+      ...(isCached ? { meta: { cached: true } } : {}),
+    });
   },
 
   /**

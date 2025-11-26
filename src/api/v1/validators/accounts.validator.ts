@@ -64,7 +64,7 @@ export const CreatePaymentBodySchema = z
     method: z.enum(["cash", "transfer", "check", "other"]),
     notes: z.string().optional().nullable(),
     isFinal: z.boolean().optional().default(false),
-    idempotencyKey: z.string().uuid().optional().nullable(),
+    idempotencyKey: z.string().min(8, "idempotencyKey debe tener al menos 8 caracteres").max(100, "idempotencyKey máximo 100 caracteres").optional().nullable(),
   })
   .refine(
     (data) => {

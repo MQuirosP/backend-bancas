@@ -29,6 +29,8 @@ export async function registerPayment(data: {
     if (data.idempotencyKey) {
         const existing = await AccountPaymentRepository.findByIdempotencyKey(data.idempotencyKey);
         if (existing) {
+            // Agregar propiedad temporal para indicar que es respuesta cacheada
+            (existing as any).cached = true;
             return existing;
         }
     }

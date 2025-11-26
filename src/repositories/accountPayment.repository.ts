@@ -37,10 +37,26 @@ export const AccountPaymentRepository = {
 
   /**
    * Encuentra un pago por idempotencyKey
+   * Incluye relaciones necesarias para devolver como respuesta completa
    */
   async findByIdempotencyKey(idempotencyKey: string) {
     return await prisma.accountPayment.findUnique({
       where: { idempotencyKey },
+      include: {
+        accountStatement: true,
+        paidBy: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        reversedByUser: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
     });
   },
 
