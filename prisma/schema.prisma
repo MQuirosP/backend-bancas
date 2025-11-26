@@ -190,6 +190,9 @@ model Ticket {
   paymentNotes    String? // Notas del último pago
   paymentHistory  Json? // Historial completo de pagos
 
+  // ✅ NUEVO: Cascada de cierre de sorteo
+  isSorteoClosed  Boolean   @default(false) // Marca si el sorteo fue cerrado (para exclusión de reportes)
+
   jugadas       Jugada[]
   loteria       Loteria         @relation(fields: [loteriaId], references: [id])
   sorteo        Sorteo          @relation(fields: [sorteoId], references: [id])
@@ -204,6 +207,7 @@ model Ticket {
   @@index([status, isWinner])
   @@index([paidById])
   @@index([createdBy])
+  @@index([isSorteoClosed]) // ✅ Índice para filtrados rápidos de sorteos cerrados
   // ✅ OPTIMIZACIÓN: Índices para cálculo de límite dinámico (calculateDynamicLimit)
   @@index([ventanaId, createdAt, deletedAt]) // Para aggregate por ventana
   @@index([vendedorId, createdAt, deletedAt]) // Para aggregate por vendedor

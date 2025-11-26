@@ -7,6 +7,7 @@ import { clonePolicies } from "./tasks/clonePolicies";
 import { processTickets } from "./tasks/processTickets";
 import { reapplyCommissions } from "./tasks/reapplyCommissions";
 import { purgeTickets } from "./tasks/purgeTickets";
+import { backfillSorteoClosed } from "./tasks/backfillSorteoClosed";
 import { info, error, success, warn } from "./utils/logger";
 
 async function main() {
@@ -29,6 +30,9 @@ async function main() {
         break;
       case "reapply-commissions":
         await handleReapply(flags);
+        break;
+      case "backfill-sorteo-closed":
+        await handleBackfillSorteoClosed(flags);
         break;
       case "help":
       default:
@@ -76,6 +80,10 @@ Comandos disponibles:
     --to YYYY-MM-DD
     [--ventana <id>]
     [--dry-run]
+
+  backfill-sorteo-closed   Marca tickets de sorteos CLOSED como isSorteoClosed
+    [--dry-run]
+    [--limit N] (procesar máximo N sorteos, para testing)
 `);
 }
 
@@ -169,6 +177,14 @@ async function handleReapply(flags: Record<string, string | boolean>) {
     ventanaId,
     dryRun,
   });
+}
+
+async function handleBackfillSorteoClosed(flags: Record<string, string | boolean>) {
+  const dryRun = flagAsBoolean(flags, "dry-run");
+  const limitStr = optionalFlag(flags, "limit");
+  const limit = limitStr ? parseInt(limitStr, 10) : undefined;
+
+  await backfillSorteoClosed({ dryRun, limit });
 }
 
 main().catch((err) => {

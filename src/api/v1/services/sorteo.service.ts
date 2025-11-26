@@ -284,6 +284,22 @@ export const SorteoService = {
     const existing = await SorteoRepository.findById(id);
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
 
+    // ✅ NUEVA VALIDACIÓN: Permitir reset desde SCHEDULED, OPEN, CLOSED, EVALUATED
+    // (cualquier estado excepto aquellos que requieren pasos previos)
+    const allowedStatuses = [
+      SorteoStatus.SCHEDULED,
+      SorteoStatus.OPEN,
+      SorteoStatus.CLOSED,
+      SorteoStatus.EVALUATED,
+    ];
+
+    if (!allowedStatuses.includes(existing.status)) {
+      throw new AppError(
+        `No se puede resetear a SCHEDULED desde estado ${existing.status}`,
+        409
+      );
+    }
+
     const s = await prisma.sorteo.update({
       where: { id },
       data: {
@@ -362,11 +378,12 @@ export const SorteoService = {
   async close(id: string, userId: string) {
     const existing = await SorteoRepository.findById(id);
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
-    if (existing.status !== SorteoStatus.OPEN) {
-      throw new AppError("Solo se puede cerrar desde OPEN", 409);
+    if (existing.status !== SorteoStatus.OPEN && existing.status !== SorteoStatus.EVALUATED) {
+      throw new AppError("Solo se puede cerrar desde OPEN o EVALUATED", 409);
     }
 
-    const s = await SorteoRepository.close(id);
+    // ✅ NUEVA: Usar closeWithCascade() para marcar tickets también
+    const { sorteo: s, ticketsAffected } = await SorteoRepository.closeWithCascade(id);
 
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
@@ -375,6 +392,7 @@ export const SorteoService = {
     const details: Prisma.InputJsonObject = {
       from: existing.status,
       to: SorteoStatus.CLOSED,
+      ticketsClosed: ticketsAffected,  // ✅ NUEVO: Registrar cuántos tickets se marcaron
     };
 
     await ActivityService.log({

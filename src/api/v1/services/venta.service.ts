@@ -53,9 +53,14 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
     deletedAt: null, // Soft-delete: solo tickets no eliminados
     // Excluir tickets CANCELLED por defecto
     // Si se especifica filters.status, usar ese valor; si no, excluir CANCELLED
-    status: filters.status 
-      ? (filters.status as any) 
+    status: filters.status
+      ? (filters.status as any)
       : { not: "CANCELLED" }, // Excluir CANCELLED si no se especifica status
+    // ✅ NUEVO: Excluir sorteos CLOSED para no incluir datos de sorteos finalizados
+    sorteo: {
+      status: { not: "CLOSED" },
+      deletedAt: null,  // También excluir sorteos eliminados
+    },
   };
 
   if (filters.dateFrom || filters.dateTo) {
