@@ -64,9 +64,9 @@ export const TicketController = {
         dateFrom: dateRange.fromAt,
         dateTo: dateRange.toAt
       } : {}),
-      ...(number ? { number } : {}), // ✅ NUEVO: Pasar parámetro number al repositorio
-      ...(typeof isActive !== 'undefined' ? { isActive: isActive === 'true' || isActive === true } : {}),
-      ...(typeof winnersOnly !== 'undefined' ? { winnersOnly: winnersOnly === 'true' || winnersOnly === true } : {}),
+      ...(number ? { number } : {}),
+      ...(typeof isActive === 'boolean' ? { isActive } : {}),
+      ...(typeof winnersOnly === 'boolean' ? { winnersOnly } : {}),
     };
 
     // Repository expects 'userId' but RBAC returns 'vendedorId'
