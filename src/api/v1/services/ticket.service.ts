@@ -124,6 +124,14 @@ export const TicketService = {
       });
       if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
 
+      // ✅ NUEVA VALIDACIÓN: Verificar que el sorteo no esté cerrado
+      if (sorteo.status === "CLOSED") {
+        throw new AppError(
+          "No se pueden crear tickets en un sorteo cerrado",
+          409
+        );
+      }
+
       // Validar que loteriaId del request coincida con loteriaId del sorteo
       if (loteriaId !== sorteo.loteriaId) {
         throw new AppError(
@@ -513,11 +521,19 @@ export const TicketService = {
       // Verificar que el ticket existe y es ganador
       const ticket = await prisma.ticket.findUnique({
         where: { id: ticketId },
-        include: { jugadas: true, vendedor: true, ventana: true },
+        include: { jugadas: true, vendedor: true, ventana: true, sorteo: { select: { id: true, status: true } } },
       });
 
       if (!ticket) throw new AppError("Ticket no encontrado", 404);
       if (!ticket.isWinner) throw new AppError("El ticket no es ganador", 409);
+
+      // ✅ NUEVA VALIDACIÓN: Verificar que el sorteo no esté cerrado
+      if (ticket.sorteo?.status === "CLOSED") {
+        throw new AppError(
+          "No se pueden registrar pagos para tickets de sorteos cerrados",
+          409
+        );
+      }
 
       // Validar estado del ticket
       if (ticket.status !== "EVALUATED" && ticket.status !== "PAID") {

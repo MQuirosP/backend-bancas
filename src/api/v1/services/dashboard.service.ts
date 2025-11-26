@@ -195,6 +195,12 @@ function buildTicketBaseFilters(
     Prisma.sql`${Prisma.raw(`${alias}."deletedAt"`)} IS NULL`,
     Prisma.sql`${Prisma.raw(`${alias}."status"`)} IN ('ACTIVE', 'EVALUATED', 'PAID')`,
     ticketBusinessDateCondition(alias, fromDateStr, toDateStr),
+    // ✅ NUEVO: Excluir sorteos CLOSED para no incluir datos de sorteos finalizados
+    Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "Sorteo" s
+      WHERE s.id = ${Prisma.raw(`${alias}."sorteoId"`)}
+      AND s.status = 'CLOSED'
+    )`,
   ];
 
   if (filters.ventanaId) {
@@ -204,8 +210,8 @@ function buildTicketBaseFilters(
   // Filtrar por banca activa (para ADMIN multibanca)
   if (filters.bancaId) {
     conditions.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "Ventana" v 
-      WHERE v.id = ${Prisma.raw(`${alias}."ventanaId"`)} 
+      SELECT 1 FROM "Ventana" v
+      WHERE v.id = ${Prisma.raw(`${alias}."ventanaId"`)}
       AND v."bancaId" = ${filters.bancaId}::uuid
     )`);
   }
@@ -241,6 +247,10 @@ function buildTicketWhereInput(
   const baseWhere: Prisma.TicketWhereInput = {
     deletedAt: null,
     status: { in: ["ACTIVE", "EVALUATED", "PAID"] },
+    // ✅ NUEVO: Excluir tickets de sorteos CLOSED
+    sorteo: {
+      status: { not: "CLOSED" },
+    },
     AND: [
       {
         OR: [

@@ -237,6 +237,78 @@ const SorteoRepository = {
     return s;
   },
 
+  /**
+   * ✅ NUEVO: Cierra sorteo con cascada a tickets
+   *
+   * Transacción atómica que:
+   * 1. Marca sorteo como CLOSED
+   * 2. Marca todos los tickets con isSorteoClosed=true
+   * 3. Retorna datos de sorteo y count de tickets afectados
+   *
+   * @param id - ID del sorteo
+   * @returns { sorteo, ticketsAffected: number }
+   */
+  async closeWithCascade(id: string) {
+    const current = await prisma.sorteo.findUnique({ where: { id } });
+    if (!current) throw new AppError("Sorteo no encontrado", 404);
+    if (
+      current.status !== SorteoStatus.OPEN &&
+      current.status !== SorteoStatus.EVALUATED
+    ) {
+      throw new AppError(
+        `Solo se pueden cerrar sorteos en estado OPEN o EVALUATED (actual: ${current.status})`,
+        400
+      );
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1️⃣ Cerrar sorteo
+      const closed = await tx.sorteo.update({
+        where: { id },
+        data: { status: SorteoStatus.CLOSED },
+        include: {
+          loteria: {
+            select: {
+              id: true,
+              name: true,
+              rulesJson: true,
+            },
+          },
+          extraMultiplier: {
+            select: { id: true, name: true, valueX: true },
+          },
+        },
+      });
+
+      // 2️⃣ Marcar tickets como cerrados (cascada)
+      const ticketsAffected = await tx.ticket.updateMany({
+        where: {
+          sorteoId: id,
+          deletedAt: null, // Solo tickets activos
+        },
+        data: {
+          isSorteoClosed: true,
+        },
+      });
+
+      return {
+        sorteo: closed,
+        ticketsAffected: ticketsAffected.count,
+      };
+    });
+
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_CLOSE_CASCADE_DB",
+      payload: {
+        sorteoId: id,
+        ticketsAffected: result.ticketsAffected,
+      },
+    });
+
+    return result;
+  },
+
   async revertEvaluation(id: string) {
     const sorteo = await prisma.$transaction(async (tx) => {
       const current = await tx.sorteo.findUnique({
@@ -703,45 +775,65 @@ const SorteoRepository = {
     const existing = await prisma.sorteo.findUnique({ where: { id } });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
 
-    const s = await prisma.sorteo.update({
-      where: { id },
-      data: {
-        deletedAt: new Date(),
-        deletedBy: userId,
-        deletedReason: reason || null,
-        isActive: false,
-        status: SorteoStatus.CLOSED,
-        // Campos de cascada: si es por cascada, marcar; si es manual, limpiar
-        deletedByCascade: byCascade,
-        deletedByCascadeFrom: byCascade ? (cascadeFrom || null) : null,
-        deletedByCascadeId: byCascade ? (cascadeId || null) : null,
-      },
-      include: {
-        loteria: {
-          select: {
-            id: true,
-            name: true,
-            rulesJson: true,
+    // ✅ MEJORADO: Usar transacción para marcar sorteo Y tickets como eliminados
+    const result = await prisma.$transaction(async (tx) => {
+      // 1️⃣ Eliminar sorteo
+      const s = await tx.sorteo.update({
+        where: { id },
+        data: {
+          deletedAt: new Date(),
+          deletedBy: userId,
+          deletedReason: reason || null,
+          isActive: false,
+          status: SorteoStatus.CLOSED,
+          // Campos de cascada: si es por cascada, marcar; si es manual, limpiar
+          deletedByCascade: byCascade,
+          deletedByCascadeFrom: byCascade ? (cascadeFrom || null) : null,
+          deletedByCascadeId: byCascade ? (cascadeId || null) : null,
+        },
+        include: {
+          loteria: {
+            select: {
+              id: true,
+              name: true,
+              rulesJson: true,
+            },
+          },
+          extraMultiplier: {
+            select: { id: true, name: true, valueX: true },
           },
         },
-        extraMultiplier: {
-          select: { id: true, name: true, valueX: true },
+      });
+
+      // 2️⃣ ✅ NUEVO: Marcar tickets como eliminados también
+      const ticketsAffected = await tx.ticket.updateMany({
+        where: {
+          sorteoId: id,
+          deletedAt: null,  // Solo tickets no eliminados
         },
-      },
+        data: {
+          deletedAt: new Date(),
+          deletedBy: userId,
+          deletedReason: `Eliminado por cascada del sorteo: ${reason || 'sin motivo'}`,
+        },
+      });
+
+      return { sorteo: s, ticketsAffected: ticketsAffected.count };
     });
 
     logger.warn({
       layer: "repository",
-      action: "SORTEO_SOFT_DELETE_DB",
+      action: "SORTEO_SOFT_DELETE_CASCADE_DB",
       payload: {
         sorteoId: id,
         reason,
         byCascade,
         cascadeFrom,
         cascadeId,
+        ticketsAffected: result.ticketsAffected,  // ✅ NUEVO: Log cuántos tickets se marcaron
       },
     });
-    return s;
+    return result.sorteo;
   },
 
   /**
