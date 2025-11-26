@@ -852,48 +852,109 @@ const SorteoRepository = {
   },
 
   /**
-   * Restaura un sorteo (soft delete revert)
-   * Limpia los campos de cascada para indicar que fue restaurado manualmente
+   * Restaura un sorteo (soft delete revert Y/O reapertura de sorteo cerrado)
+   * Maneja dos casos:
+   * - Caso A: Sorteo soft-deleted (deletedAt != null) → limpia campos de eliminación y restaura tickets
+   * - Caso B: Sorteo cerrado (status = CLOSED) → reabre a OPEN y desbloquea tickets
+   * - Caso C: Ambos → aplica ambas restauraciones
    */
   async restore(id: string): Promise<any> {
     const existing = await prisma.sorteo.findUnique({ where: { id } });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
-    if (!existing.deletedAt) {
-      throw new AppError("Sorteo no está inactivo", 400);
+
+    const isSoftDeleted = existing.deletedAt !== null;
+    const isClosed = existing.status === SorteoStatus.CLOSED;
+
+    // Validar que haya algo que restaurar
+    if (!isSoftDeleted && !isClosed) {
+      throw new AppError(
+        "Sorteo no requiere restauración (no está eliminado ni cerrado)",
+        400
+      );
     }
 
-    const s = await prisma.sorteo.update({
-      where: { id },
-      data: {
-        deletedAt: null,
-        deletedBy: null,
-        deletedReason: null,
-        isActive: true,
-        // Limpiar campos de cascada (restauración manual)
-        deletedByCascade: false,
-        deletedByCascadeFrom: null,
-        deletedByCascadeId: null,
-      },
-      include: {
-        loteria: {
-          select: {
-            id: true,
-            name: true,
-            rulesJson: true,
+    const result = await prisma.$transaction(async (tx) => {
+      // Preparar data de actualización del sorteo
+      const updateData: any = {};
+
+      // Caso A: Soft-deleted → limpiar campos de eliminación
+      if (isSoftDeleted) {
+        updateData.deletedAt = null;
+        updateData.deletedBy = null;
+        updateData.deletedReason = null;
+        updateData.isActive = true;
+        updateData.deletedByCascade = false;
+        updateData.deletedByCascadeFrom = null;
+        updateData.deletedByCascadeId = null;
+      }
+
+      // Caso B: Cerrado → reabrir
+      if (isClosed) {
+        updateData.status = SorteoStatus.OPEN;
+      }
+
+      // Actualizar sorteo
+      const s = await tx.sorteo.update({
+        where: { id },
+        data: updateData,
+        include: {
+          loteria: {
+            select: {
+              id: true,
+              name: true,
+              rulesJson: true,
+            },
+          },
+          extraMultiplier: {
+            select: { id: true, name: true, valueX: true },
           },
         },
-        extraMultiplier: {
-          select: { id: true, name: true, valueX: true },
-        },
-      },
+      });
+
+      // Restaurar tickets según el caso
+      let ticketsRestored = 0;
+
+      if (isSoftDeleted) {
+        // Restaurar tickets eliminados por cascada del sorteo
+        const ticketsResult = await tx.ticket.updateMany({
+          where: {
+            sorteoId: id,
+            deletedAt: { not: null }
+          },
+          data: {
+            deletedAt: null,
+            deletedBy: null,
+            deletedReason: null,
+          }
+        });
+        ticketsRestored = ticketsResult.count;
+      }
+
+      if (isClosed) {
+        // Desbloquear tickets cerrados (isSorteoClosed)
+        const ticketsResult = await tx.ticket.updateMany({
+          where: { sorteoId: id },
+          data: { isSorteoClosed: false }
+        });
+        // Si ya restauramos tickets eliminados, este count puede ser diferente
+        // Usamos el máximo para el log
+        ticketsRestored = Math.max(ticketsRestored, ticketsResult.count);
+      }
+
+      return { s, ticketsRestored };
     });
 
     logger.info({
       layer: "repository",
       action: "SORTEO_RESTORE_DB",
-      payload: { sorteoId: id },
+      payload: {
+        sorteoId: id,
+        wasSoftDeleted: isSoftDeleted,
+        wasClosed: isClosed,
+        ticketsRestored: result.ticketsRestored
+      },
     });
-    return s;
+    return result.s;
   },
 
   /**
