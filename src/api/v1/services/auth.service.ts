@@ -58,7 +58,7 @@ export const AuthService = {
     return user;
   },
 
-  async login(data: LoginDTO): Promise<TokenPair> {
+  async login(data: LoginDTO): Promise<TokenPair & { user: { id: string; username: string; email: string | null; role: string; ventanaId: string | null } }> {
     const user = await prisma.user.findUnique({ where: { username: data.username } });
     if (!user) {
       throw new AppError('Invalid credentials', 401);
@@ -97,7 +97,17 @@ export const AuthService = {
       expiresIn: config.jwtRefreshExpires as jwt.SignOptions['expiresIn'],
     });
 
-    return { accessToken, refreshToken: signedRefresh };
+    return {
+      accessToken,
+      refreshToken: signedRefresh,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        ventanaId: user.ventanaId
+      }
+    };
   },
 
   async refresh(refreshToken: string): Promise<TokenPair> {
