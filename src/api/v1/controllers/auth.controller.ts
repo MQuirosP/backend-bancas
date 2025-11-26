@@ -33,30 +33,33 @@ export const AuthController = {
   },
 
   async login(req: Request, res: Response) {
-    const tokens = await AuthService.login(req.body);
+    const { accessToken, refreshToken, user } = await AuthService.login(req.body);
 
-    const user = await prisma.user.findUnique({ where: { username: req.body.username } });
+    logger.info({
+      layer: 'controller',
+      action: ActivityType.LOGIN,
+      userId: user.id,
+      payload: { username: user.username },
+    });
 
-    if (user) {
-      logger.info({
-        layer: 'controller',
-        action: ActivityType.LOGIN,
+    // Activity log asíncrono (fire-and-forget) - no bloquea la respuesta
+    prisma.activityLog.create({
+      data: {
         userId: user.id,
-        payload: { username: user.username },
+        action: ActivityType.LOGIN,
+        targetType: 'USER',
+        targetId: user.id,
+        details: { email: user.email },
+      },
+    }).catch(err => {
+      logger.error({
+        layer: 'controller',
+        action: 'ACTIVITY_LOG_FAIL',
+        payload: { error: err.message, userId: user.id },
       });
+    });
 
-      await prisma.activityLog.create({
-        data: {
-          userId: user.id,
-          action: ActivityType.LOGIN,
-          targetType: 'USER',
-          targetId: user.id,
-          details: { email: user.email },
-        },
-      });
-    }
-    console.log("")
-    return success(res, tokens);
+    return success(res, { accessToken, refreshToken });
   },
 
   async refresh(req: Request, res: Response) {
@@ -146,8 +149,8 @@ export const AuthController = {
         u.role === Role.VENTANA
           ? u.ventanaId
           : u.role === Role.VENDEDOR
-          ? u.ventanaId ?? null
-          : null,
+            ? u.ventanaId ?? null
+            : null,
       ...(userRole === Role.ADMIN && {
         bancas,
         activeBancaId,
