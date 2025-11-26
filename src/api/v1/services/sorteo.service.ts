@@ -1127,8 +1127,7 @@ export const SorteoService = {
       scope?: string;
       loteriaId?: string;
       status?: string;
-      ticketStatus?: string;
-      excludeTicketStatus?: string;
+      isActive?: string;
     },
     vendedorId: string
   ) {
@@ -1158,32 +1157,8 @@ export const SorteoService = {
       }
 
       // Construir filtro de status de tickets
-      // Si se proporciona ticketStatus, se usa (tiene prioridad)
-      // Si no, pero se proporciona excludeTicketStatus, se excluyen esos estados
-      // Si no se proporciona ninguno, no se filtra por status de ticket
-      let ticketStatusFilter: Prisma.EnumTicketStatusFilter | undefined = undefined;
-
-      if (params.ticketStatus) {
-        // Parsear string como "ACTIVE,EVALUATED,RESTORED"
-        const statusStrings = params.ticketStatus.split(',').map(s => s.trim().toUpperCase());
-        const validStatuses = statusStrings
-          .filter(s => Object.values(TicketStatus).includes(s as TicketStatus))
-          .map(s => s as TicketStatus);
-
-        if (validStatuses.length > 0) {
-          ticketStatusFilter = { in: validStatuses };
-        }
-      } else if (params.excludeTicketStatus) {
-        // Parsear string como "CANCELLED" o "CANCELLED,RESTORED"
-        const excludeStrings = params.excludeTicketStatus.split(',').map(s => s.trim().toUpperCase());
-        const validExcludes = excludeStrings
-          .filter(s => Object.values(TicketStatus).includes(s as TicketStatus))
-          .map(s => s as TicketStatus);
-
-        if (validExcludes.length > 0) {
-          ticketStatusFilter = { notIn: validExcludes };
-        }
-      }
+      // Filtro de isActive: si no se proporciona, se asume true (solo tickets activos)
+      const ticketIsActive = params.isActive !== 'false' && params.isActive !== '0';
 
       // Construir filtro para sorteos EVALUATED y/o OPEN
       const sorteoWhere: Prisma.SorteoWhereInput = {
@@ -1195,12 +1170,12 @@ export const SorteoService = {
           lte: dateRange.toAt,
         },
         ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
-        // Solo sorteos donde el vendedor tiene tickets (aplicar filtro de status si existe)
+        // Solo sorteos donde el vendedor tiene tickets (aplicar filtro de isActive)
         tickets: {
           some: {
             vendedorId,
             deletedAt: null,
-            ...(ticketStatusFilter ? { status: ticketStatusFilter } : {}),
+            isActive: ticketIsActive,
           },
         },
       };
@@ -1252,7 +1227,7 @@ export const SorteoService = {
             sorteoId: { in: sorteoIds },
             vendedorId,
             deletedAt: null,
-            ...(ticketStatusFilter ? { status: ticketStatusFilter } : {}),
+            isActive: ticketIsActive,
           },
           deletedAt: null,
         },
@@ -1305,7 +1280,7 @@ export const SorteoService = {
           sorteoId: { in: sorteoIds },
           vendedorId,
           deletedAt: null,
-          ...(ticketStatusFilter ? { status: ticketStatusFilter } : {}),
+          isActive: ticketIsActive,
         },
         _sum: {
           totalAmount: true,
@@ -1325,7 +1300,7 @@ export const SorteoService = {
           vendedorId,
           isWinner: true,
           deletedAt: null,
-          ...(ticketStatusFilter ? { status: ticketStatusFilter } : {}),
+          isActive: ticketIsActive,
         },
         _sum: {
           totalPayout: true,
@@ -1340,31 +1315,17 @@ export const SorteoService = {
           vendedorId,
           isWinner: true,
           deletedAt: null,
-          ...(ticketStatusFilter ? { status: ticketStatusFilter } : {}),
+          isActive: ticketIsActive,
         },
         _count: {
           id: true,
         },
       });
 
-      // Para tickets pagados, necesitamos combinar el filtro de ticketStatus con el filtro de PAID/PAGADO
-      let paidStatusFilter: Prisma.EnumTicketStatusFilter;
-      if (ticketStatusFilter) {
-        // Si hay un filtro de ticketStatus, intersectar con PAID/PAGADO
-        const allowedStatuses = (ticketStatusFilter as any).in || [];
-        const paidStatuses = allowedStatuses.filter((s: TicketStatus) =>
-          s === TicketStatus.PAID || s === TicketStatus.PAGADO
-        );
-        if (paidStatuses.length > 0) {
-          paidStatusFilter = { in: paidStatuses };
-        } else {
-          // Si el filtro excluye PAID/PAGADO, no hay tickets pagados que mostrar
-          paidStatusFilter = { in: [] };
-        }
-      } else {
-        // Sin filtro de ticketStatus, usar solo PAID/PAGADO
-        paidStatusFilter = { in: [TicketStatus.PAID, TicketStatus.PAGADO] };
-      }
+      // Para tickets pagados, siempre mostrar los que tengan status PAID o PAGADO
+      const paidStatusFilter: Prisma.EnumTicketStatusFilter = {
+        in: [TicketStatus.PAID, TicketStatus.PAGADO]
+      };
 
       const paidTicketsData = await prisma.ticket.groupBy({
         by: ["sorteoId"],

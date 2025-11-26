@@ -178,8 +178,8 @@ export const SorteoController = {
   },
 
   async evaluatedSummary(req: AuthenticatedRequest, res: Response) {
-    const { date, fromDate, toDate, scope, loteriaId, status, ticketStatus, excludeTicketStatus } = req.query as any;
-    
+    const { date, fromDate, toDate, scope, loteriaId, status, isActive } = req.query as any;
+
     // Validar scope (solo 'mine' permitido)
     if (scope && scope !== 'mine') {
       return res.status(400).json({
@@ -198,9 +198,8 @@ export const SorteoController = {
         toDate,
         scope: scope || 'mine',
         loteriaId,
-        status, // Pasar el parámetro status al servicio
-        ticketStatus, // Pasar el parámetro ticketStatus al servicio
-        excludeTicketStatus, // Pasar el parámetro excludeTicketStatus al servicio
+        status,
+        isActive,
       },
       vendedorId
     );
