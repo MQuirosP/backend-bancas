@@ -174,28 +174,43 @@ const SorteoRepository = {
         400
       );
     }
-    const s = await prisma.sorteo.update({
-      where: { id },
-      data: { status: SorteoStatus.OPEN },
-      include: {
-        loteria: {
-          select: {
-            id: true,
-            name: true,
-            rulesJson: true,
+    const result = await prisma.$transaction(async (tx) => {
+      const s = await tx.sorteo.update({
+        where: { id },
+        data: { status: SorteoStatus.OPEN },
+        include: {
+          loteria: {
+            select: {
+              id: true,
+              name: true,
+              rulesJson: true,
+            },
+          },
+          extraMultiplier: {
+            select: { id: true, name: true, valueX: true },
           },
         },
-        extraMultiplier: {
-          select: { id: true, name: true, valueX: true },
-        },
-      },
+      });
+
+      // ✅ NUEVO: Revertir flag de cierre en tickets (desbloquear)
+      const ticketsAffected = await tx.ticket.updateMany({
+        where: { sorteoId: id },
+        data: { isSorteoClosed: false },
+      });
+
+      return { s, ticketsAffected };
     });
+
     logger.info({
       layer: "repository",
       action: "SORTEO_FORCE_OPEN_DB",
-      payload: { sorteoId: id, previousStatus: current.status },
+      payload: {
+        sorteoId: id,
+        previousStatus: current.status,
+        ticketsUnlocked: result.ticketsAffected.count
+      },
     });
-    return s;
+    return result.s;
   },
 
   async close(id: string) {
