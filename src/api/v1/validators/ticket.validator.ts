@@ -57,10 +57,7 @@ export const ListTicketsQuerySchema = z
     pageSize: z.coerce.number().int().min(1).max(100).optional(),
 
     // Filtros estándar
-    status: z.union([
-      z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID"]),
-      z.array(z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID"])),
-    ]).optional(),
+    status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID", "PAGADO"]).optional(),
     isActive: z.coerce.boolean().optional(),
     sorteoId: z.uuid().optional(),
     loteriaId: z.uuid().optional(),
