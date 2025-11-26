@@ -58,7 +58,7 @@ export const ListTicketsQuerySchema = z
 
     // Filtros estándar
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID", "PAGADO"]).optional(),
-    isActive: z.enum(["true", "false"]).optional().transform(v => v === "true"),
+    isActive: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"),
     sorteoId: z.uuid().optional(),
     loteriaId: z.uuid().optional(),
     multiplierId: z.uuid().optional(),
@@ -66,7 +66,7 @@ export const ListTicketsQuerySchema = z
     vendedorId: z.uuid("vendedorId inválido").optional(),
     search: z.string().trim().min(1).max(100).optional(),
     scope: z.enum(["mine", "all"]).optional().default("mine"),
-    winnersOnly: z.enum(["true", "false"]).optional().transform(v => v === "true"),
+    winnersOnly: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"),
 
     // ✅ NUEVO: Búsqueda por número de jugada (1-2 dígitos, búsqueda exacta)
     number: z.string().regex(/^\d{1,2}$/, "El número debe ser de 1-2 dígitos (0-99)").optional(),
