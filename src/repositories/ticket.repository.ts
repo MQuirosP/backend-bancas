@@ -2195,9 +2195,7 @@ export const TicketRepository = {
 
     const where: Prisma.TicketWhereInput = {
       ...(filters.status ? { status: filters.status } : {}),
-      ...(typeof filters.isActive === "boolean"
-        ? { isActive: filters.isActive }
-        : { isActive: filters.isActive }),
+      ...(typeof filters.isActive === "boolean" ? { isActive: filters.isActive } : {}),
       ...(filters.sorteoId ? { sorteoId: filters.sorteoId } : {}),
       ...(filters.loteriaId ? { loteriaId: filters.loteriaId } : {}),
       ...(filters.multiplierId
@@ -2210,8 +2208,8 @@ export const TicketRepository = {
         }
         : {}),
       ...(filters.userId ? { vendedorId: filters.userId } : {}),
-      ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}), // ✅ ahora sí aplica
-      ...(filters.winnersOnly ? { isWinner: true } : {}),
+      ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
+      ...(filters.winnersOnly === true ? { isWinner: true } : {}),
       ...(filters.dateFrom || filters.dateTo
         ? {
           createdAt: {
