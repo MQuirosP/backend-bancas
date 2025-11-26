@@ -300,7 +300,7 @@ export const TicketsReportService = {
 
     // Query optimizada para números más jugados
     const numbersQuery = Prisma.sql`
-      SELECT 
+      SELECT
         j.number,
         SUM(j.amount) as total_amount,
         COUNT(DISTINCT j."ticketId") as tickets_count,
@@ -313,7 +313,7 @@ export const TicketsReportService = {
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
         ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-        ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}` : Prisma.empty}
+        ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
       GROUP BY j.number
       ORDER BY total_amount DESC
       LIMIT ${filters.top || 20}
@@ -329,7 +329,7 @@ export const TicketsReportService = {
 
     // Calcular resumen
     const summaryQuery = Prisma.sql`
-      SELECT 
+      SELECT
         COUNT(DISTINCT j.number) as total_numbers_played,
         SUM(j.amount) as total_amount,
         COUNT(DISTINCT j."ticketId") as total_tickets
@@ -340,7 +340,7 @@ export const TicketsReportService = {
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
         ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-        ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}` : Prisma.empty}
+        ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
     `;
 
     const [summary] = await prisma.$queryRaw<Array<{
