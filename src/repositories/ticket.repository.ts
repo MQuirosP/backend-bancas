@@ -2177,7 +2177,7 @@ export const TicketRepository = {
     page = 1,
     pageSize = 10,
     filters: {
-      status?: TicketStatus | TicketStatus[];
+      status?: TicketStatus;
       isActive?: boolean;
       sorteoId?: string;
       loteriaId?: string;
@@ -2194,11 +2194,7 @@ export const TicketRepository = {
     const skip = (page - 1) * pageSize;
 
     const where: Prisma.TicketWhereInput = {
-      ...(filters.status
-        ? Array.isArray(filters.status)
-          ? { status: { in: filters.status } }
-          : { status: filters.status }
-        : {}),
+      ...(filters.status ? { status: filters.status } : {}),
       ...(typeof filters.isActive === "boolean"
         ? { isActive: filters.isActive }
         : { isActive: filters.isActive }),
