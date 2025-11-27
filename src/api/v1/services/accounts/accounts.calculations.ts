@@ -505,7 +505,7 @@ export async function getStatementDirect(
                     });
 
                     if (match) {
-                        commissionListero = Math.round((jugada.amount * match.percent) / 100);
+                        commissionListero = parseFloat(((jugada.amount * match.percent) / 100).toFixed(2));
                     } else {
                         throw new Error("No matching rule found");
                     }
@@ -525,7 +525,7 @@ export async function getStatementDirect(
                     jugada.ventana_policy,
                     jugada.banca_policy
                 );
-                commissionListero = Math.round(fallback.commissionAmount);
+                commissionListero = parseFloat((fallback.commissionAmount).toFixed(2));
             }
         } else {
             // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
@@ -540,12 +540,12 @@ export async function getStatementDirect(
                 jugada.ventana_policy, // Política de ventana
                 jugada.banca_policy // Política de banca
             );
-            commissionListero = Math.round(ventanaCommission.commissionAmount);
+            commissionListero = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
         }
 
         // Usar snapshot si está disponible, sino usar el calculado
         const commissionListeroFinal = (jugada.listero_commission_amount && jugada.listero_commission_amount > 0)
-            ? Math.round(jugada.listero_commission_amount)
+            ? parseFloat((jugada.listero_commission_amount).toFixed(2))
             : commissionListero;
 
         const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD

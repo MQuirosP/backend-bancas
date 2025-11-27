@@ -430,7 +430,7 @@ export const CommissionsService = {
                   betType: jugada.type as "NUMERO" | "REVENTADO",
                   finalMultiplierX: jugada.finalMultiplierX || null,
                 });
-                commission = Math.round((jugada.amount * resolution.percent) / 100);
+                commission = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
               } catch (err) {
                 // Si falla, usar fallback con políticas de ventana/banca
                 const fallback = resolveCommission(
@@ -444,7 +444,7 @@ export const CommissionsService = {
                   jugada.ventana_policy,
                   jugada.banca_policy
                 );
-                commission = Math.round(fallback.commissionAmount);
+                commission = parseFloat((fallback.commissionAmount).toFixed(2));
               }
             } else {
               // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
@@ -460,7 +460,7 @@ export const CommissionsService = {
                 jugada.banca_policy // Política de banca
               );
               // Usar commissionAmount directamente de resolveCommission para mantener consistencia
-              commission = Math.round(ventanaCommission.commissionAmount);
+              commission = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
             }
 
             const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
@@ -1063,7 +1063,7 @@ export const CommissionsService = {
                 betType: jugada.bet_type as "NUMERO" | "REVENTADO",
                 finalMultiplierX: jugada.final_multiplier_x || null,
               });
-              commission = Math.round((jugada.amount * resolution.percent) / 100);
+              commission = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
               commissionPercent = resolution.percent;
             } catch (err) {
               // Si falla, usar fallback con políticas de ventana/banca
