@@ -83,6 +83,7 @@ interface CxCResult {
     totalPaidToCustomer: number;
     amount: number; // compatibilidad: saldo positivo (CxC)
     remainingBalance: number;
+    saldoAHoy: number; // ✅ NUEVO: Acumulado del mes completo (inmutable respecto período)
     isActive: boolean;
   }>;
 }
@@ -103,6 +104,7 @@ interface CxPResult {
     totalPaidToVentana: number; // Para CxP según documento
     amount: number; // compatibilidad: saldo positivo (CxP)
     remainingBalance: number;
+    saldoAHoy: number; // ✅ NUEVO: Acumulado del mes completo (inmutable respecto período)
     isActive: boolean;
   }>;
 }
@@ -989,6 +991,171 @@ export const DashboardService = {
       ensureEntry(ventana.id, ventana.name, ventana.isActive);
     }
 
+    // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana
+    const monthSaldoByVentana = new Map<string, number>();
+    {
+      // Extraer año y mes de los filtros
+      const currentDate = new Date();
+      const monthStart = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), 1));
+      const monthEnd = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth() + 1, 0));
+
+      // Construir filtros WHERE para el mes completo (misma lógica que calculateCxC pero con fechas del mes)
+      const monthBaseFilters = buildTicketBaseFilters(
+        "t",
+        { ...filters, fromDate: monthStart, toDate: monthEnd },
+        monthStart.toISOString().split("T")[0],
+        monthEnd.toISOString().split("T")[0]
+      );
+
+      // Obtener datos de ventanas para el mes completo
+      const monthVentanaData = await prisma.$queryRaw<
+        Array<{
+          ventana_id: string;
+          ventana_name: string;
+          is_active: boolean;
+          total_sales: number;
+          total_payouts: number;
+          commission_user: number;
+          commission_ventana_raw: number;
+          listero_commission_snapshot: number;
+        }>
+      >(
+        Prisma.sql`
+          WITH tickets_in_range AS (
+            SELECT
+              t.id,
+              t."ventanaId",
+              t."totalAmount",
+              t."totalPayout"
+            FROM "Ticket" t
+            WHERE ${monthBaseFilters}
+          ),
+          sales_per_ventana AS (
+            SELECT
+              t."ventanaId" AS ventana_id,
+              COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
+              COALESCE(SUM(t."totalPayout"), 0) AS total_payouts
+            FROM tickets_in_range t
+            GROUP BY t."ventanaId"
+          ),
+          commissions_per_ventana AS (
+            SELECT
+              t."ventanaId" AS ventana_id,
+              COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+              COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
+              COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
+            FROM tickets_in_range t
+            JOIN "Jugada" j ON j."ticketId" = t.id
+            WHERE j."deletedAt" IS NULL
+            GROUP BY t."ventanaId"
+          )
+          SELECT
+            v.id AS ventana_id,
+            v.name AS ventana_name,
+            v."isActive" AS is_active,
+            COALESCE(sp.total_sales, 0) AS total_sales,
+            COALESCE(sp.total_payouts, 0) AS total_payouts,
+            COALESCE(cp.commission_user, 0) AS commission_user,
+            COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw,
+            COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot
+          FROM "Ventana" v
+          LEFT JOIN sales_per_ventana sp ON sp.ventana_id = v.id
+          LEFT JOIN commissions_per_ventana cp ON cp.ventana_id = v.id
+          WHERE v."isActive" = true
+            ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
+            ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+        `
+      );
+
+      // Obtener statements del mes completo
+      const monthStatements = await prisma.accountStatement.findMany({
+        where: {
+          date: {
+            gte: monthStart,
+            lte: monthEnd,
+          },
+          vendedorId: null,
+          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }),
+          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+        },
+      });
+
+      // Obtener collections del mes
+      const monthCollections = await prisma.accountPayment.findMany({
+        where: {
+          date: {
+            gte: monthStart,
+            lte: monthEnd,
+          },
+          vendedorId: null,
+          isReversed: false,
+          type: "collection",
+          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }),
+          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+        },
+        select: {
+          ventanaId: true,
+          amount: true,
+        },
+      });
+
+      // Mapear datos del mes por ventana
+      const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
+
+      // Procesar datos de ventanas del mes
+      for (const ventanaRow of monthVentanaData) {
+        const ventanaId = ventanaRow.ventana_id;
+        monthAggregated.set(ventanaId, {
+          totalSales: Number(ventanaRow.total_sales) || 0,
+          totalPayouts: Number(ventanaRow.total_payouts) || 0,
+          totalListeroCommission: Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0,
+          totalVendedorCommission: Number(ventanaRow.commission_user) || 0,
+          totalPaid: 0,
+          totalCollected: 0,
+        });
+      }
+
+      // Agregar pagos del mes
+      for (const statement of monthStatements) {
+        if (!statement.ventanaId) continue;
+        const entry = monthAggregated.get(statement.ventanaId) || {
+          totalSales: 0,
+          totalPayouts: 0,
+          totalListeroCommission: 0,
+          totalVendedorCommission: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+        };
+        entry.totalPaid += statement.totalPaid ?? 0;
+        monthAggregated.set(statement.ventanaId, entry);
+      }
+
+      // Agregar cobros del mes
+      for (const collection of monthCollections) {
+        if (!collection.ventanaId) continue;
+        const entry = monthAggregated.get(collection.ventanaId) || {
+          totalSales: 0,
+          totalPayouts: 0,
+          totalListeroCommission: 0,
+          totalVendedorCommission: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+        };
+        entry.totalCollected += collection.amount ?? 0;
+        monthAggregated.set(collection.ventanaId, entry);
+      }
+
+      // Calcular saldoAHoy para cada ventana
+      const effectiveUserRole = role || Role.ADMIN;
+      for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
+        const baseBalance = effectiveUserRole === Role.ADMIN
+          ? monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission
+          : monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
+        const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        monthSaldoByVentana.set(ventanaId, saldoAHoy);
+      }
+    }
+
     const byVentana = Array.from(aggregated.values())
       .map((entry) => {
         const totalPaid = entry.totalPaid;
@@ -1018,6 +1185,7 @@ export const DashboardService = {
           totalPaidToCustomer,
           amount, // ✅ Usa remainingBalance recalculado
           remainingBalance: recalculatedRemainingBalance, // ✅ Recalculado según rol
+          saldoAHoy: monthSaldoByVentana.get(entry.ventanaId) ?? 0, // ✅ NUEVO: Saldo a Hoy
           isActive: entry.isActive,
         };
       })
@@ -1320,6 +1488,57 @@ export const DashboardService = {
       ensureEntry(ventana.id, ventana.name, ventana.isActive);
     }
 
+    // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana en CxP
+    const monthSaldoByVentana = new Map<string, number>();
+    {
+      const currentDate = new Date();
+      const monthStart = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), 1));
+      const monthEnd = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth() + 1, 0));
+
+      const monthBaseFilters = buildTicketBaseFilters(
+        "t",
+        { ...filters, fromDate: monthStart, toDate: monthEnd },
+        monthStart.toISOString().split("T")[0],
+        monthEnd.toISOString().split("T")[0]
+      );
+
+      const monthVentanaData = await prisma.$queryRaw<Array<{ ventana_id: string; ventana_name: string; is_active: boolean; total_sales: number; total_payouts: number; commission_user: number; commission_ventana_raw: number; listero_commission_snapshot: number }>>(
+        Prisma.sql`SELECT v.id AS ventana_id, v.name AS ventana_name, v."isActive" AS is_active, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "Ventana" v LEFT JOIN (SELECT t."ventanaId" AS ventana_id, COALESCE(SUM(t."totalAmount"), 0) AS total_sales, COALESCE(SUM(t."totalPayout"), 0) AS total_payouts FROM "Ticket" t WHERE ${monthBaseFilters} GROUP BY t."ventanaId") sp ON sp.ventana_id = v.id LEFT JOIN (SELECT t."ventanaId" AS ventana_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND j."deletedAt" IS NULL GROUP BY t."ventanaId") cp ON cp.ventana_id = v.id WHERE v."isActive" = true ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty} ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}`
+      );
+
+      const monthStatements = await prisma.accountStatement.findMany({ where: { date: { gte: monthStart, lte: monthEnd }, vendedorId: null, ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }), ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}) } });
+
+      const monthCollections = await prisma.accountPayment.findMany({ where: { date: { gte: monthStart, lte: monthEnd }, vendedorId: null, isReversed: false, type: "collection", ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }), ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}) }, select: { ventanaId: true, amount: true } });
+
+      const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
+
+      for (const ventanaRow of monthVentanaData) {
+        const ventanaId = ventanaRow.ventana_id;
+        monthAggregated.set(ventanaId, { totalSales: Number(ventanaRow.total_sales) || 0, totalPayouts: Number(ventanaRow.total_payouts) || 0, totalListeroCommission: Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0, totalVendedorCommission: Number(ventanaRow.commission_user) || 0, totalPaid: 0, totalCollected: 0 });
+      }
+
+      for (const statement of monthStatements) {
+        if (!statement.ventanaId) continue;
+        const entry = monthAggregated.get(statement.ventanaId) || { totalSales: 0, totalPayouts: 0, totalListeroCommission: 0, totalVendedorCommission: 0, totalPaid: 0, totalCollected: 0 };
+        entry.totalPaid += statement.totalPaid ?? 0;
+        monthAggregated.set(statement.ventanaId, entry);
+      }
+
+      for (const collection of monthCollections) {
+        if (!collection.ventanaId) continue;
+        const entry = monthAggregated.get(collection.ventanaId) || { totalSales: 0, totalPayouts: 0, totalListeroCommission: 0, totalVendedorCommission: 0, totalPaid: 0, totalCollected: 0 };
+        entry.totalCollected += collection.amount ?? 0;
+        monthAggregated.set(collection.ventanaId, entry);
+      }
+
+      const effectiveUserRole = role || Role.ADMIN;
+      for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
+        const baseBalance = effectiveUserRole === Role.ADMIN ? monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission : monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
+        const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        monthSaldoByVentana.set(ventanaId, saldoAHoy);
+      }
+    }
+
     const byVentana = Array.from(aggregated.values())
       .map((entry) => {
         const totalPaid = entry.totalPaid;
@@ -1351,6 +1570,7 @@ export const DashboardService = {
           totalPaidToVentana,
           amount, // ✅ Usa remainingBalance recalculado
           remainingBalance: recalculatedRemainingBalance, // ✅ Recalculado según rol
+          saldoAHoy: monthSaldoByVentana.get(entry.ventanaId) ?? 0, // ✅ NUEVO: Saldo a Hoy
           isActive: entry.isActive,
         };
       })
