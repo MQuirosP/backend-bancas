@@ -326,7 +326,9 @@ export const VentasService = {
     // Campos adicionales solo para VENTANA con scope='mine' (opcionales)
     commissionVendedorTotal?: number;  // Suma de comisiones de todos los vendedores
     commissionListeroTotal?: number;    // Comisión propia del listero (ventana)
-    gananciaNeta?: number;              // Ventas - Premios - Comisión Vendedor
+    gananciaNeta?: number;              // BACKWARD COMPAT: Ventas - Premios - Comisión Listero
+    balanceDueToBanca?: number;         // ✅ NUEVO: Deuda a la banca (Ventas - Premios - Comisión Listero)
+    myGain?: number;                    // ✅ NUEVO: Ganancia personal (Comisión Listero - Comisión Vendedor)
   }> {
     try {
       const where = buildWhereClause(filters);
@@ -425,7 +427,9 @@ export const VentasService = {
       let commissionVendedorTotal: number | undefined = undefined;
       let commissionListeroTotal: number | undefined = undefined;
       let gananciaNeta: number | undefined = undefined;
-      
+      let balanceDueToBanca: number | undefined = undefined;
+      let myGain: number | undefined = undefined;
+
       if (options?.role === 'VENTANA' && options?.scope === 'mine' && options?.userId) {
         // Obtener ventanaId del usuario VENTANA
         const ventanaUser = await prisma.user.findUnique({
@@ -553,8 +557,16 @@ export const VentasService = {
           }
           commissionListeroTotal = parseFloat(totalListeroCommission.toFixed(2));
 
-          // 3. Calcular gananciaNeta: ventasTotal - payoutTotal - commissionVendedorTotal
-          gananciaNeta = parseFloat((ventasTotal - payoutTotal - commissionVendedorTotal).toFixed(2));
+          // 3. Calcular balanceDueToBanca: ventasTotal - payoutTotal - commissionListeroTotal
+          // ✅ NUEVO: Lo que se debe pagar a la banca
+          balanceDueToBanca = parseFloat((ventasTotal - payoutTotal - commissionListeroTotal).toFixed(2));
+
+          // 4. Calcular myGain: commissionListeroTotal - commissionVendedorTotal
+          // ✅ NUEVO: Lo que gana personalmente el listero
+          myGain = parseFloat((commissionListeroTotal - commissionVendedorTotal).toFixed(2));
+
+          // BACKWARD COMPAT: gananciaNeta sigue siendo lo mismo que balanceDueToBanca
+          gananciaNeta = balanceDueToBanca;
         }
       }
 
@@ -601,6 +613,8 @@ export const VentasService = {
         result.commissionVendedorTotal = commissionVendedorTotal ?? 0;
         result.commissionListeroTotal = commissionListeroTotal ?? 0;
         result.gananciaNeta = gananciaNeta ?? parseFloat((ventasTotal - payoutTotal).toFixed(2));
+        result.balanceDueToBanca = balanceDueToBanca ?? parseFloat((ventasTotal - payoutTotal - (commissionListeroTotal ?? 0)).toFixed(2));
+        result.myGain = myGain ?? parseFloat(((commissionListeroTotal ?? 0) - (commissionVendedorTotal ?? 0)).toFixed(2));
       }
 
       return result;

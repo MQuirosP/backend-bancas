@@ -1895,7 +1895,7 @@ export const TicketRepository = {
                 amount: j.amount,
               });
               if (match) {
-                listeroCommissionAmount = Math.round(parseFloat(((j.amount * match.percent) / 100).toFixed(2)));
+                listeroCommissionAmount = parseFloat(((j.amount * match.percent) / 100).toFixed(2));
               } else {
                 // Fallback to standard resolution if no match in listero policy
                 const listeroResult = resolveListeroCommission(
@@ -1908,7 +1908,7 @@ export const TicketRepository = {
                   ventanaPolicy,
                   bancaPolicy
                 );
-                listeroCommissionAmount = Math.round(listeroResult.commissionAmount);
+                listeroCommissionAmount = parseFloat((listeroResult.commissionAmount).toFixed(2));
               }
             } else {
               // Fallback to standard resolution
@@ -1922,7 +1922,7 @@ export const TicketRepository = {
                 ventanaPolicy,
                 bancaPolicy
               );
-              listeroCommissionAmount = Math.round(listeroResult.commissionAmount);
+              listeroCommissionAmount = parseFloat((listeroResult.commissionAmount).toFixed(2));
             }
 
             return {
@@ -1978,7 +1978,7 @@ export const TicketRepository = {
               bancaPolicy
             );
 
-            const listeroCommissionAmount = Math.round(listeroResult.commissionAmount);
+            const listeroCommissionAmount = parseFloat((listeroResult.commissionAmount).toFixed(2));
 
             commissionsDetails.push({
               origin: res.commissionOrigin,

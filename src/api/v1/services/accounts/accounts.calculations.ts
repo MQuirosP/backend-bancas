@@ -7,7 +7,8 @@ import { AccountPaymentRepository } from "../../../../repositories/accountPaymen
 import { calculateIsSettled } from "./accounts.commissions";
 import { buildTicketDateFilter, toCRDateString } from "./accounts.dates.utils";
 import { AccountsFilters, DayStatement } from "./accounts.types";
-import { resolveCommission, parseCommissionPolicy, findMatchingRule } from "../../../../services/commission.resolver";
+import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
+import { resolveCommission } from "../../../../services/commission.resolver";
 import { getSorteoBreakdownBatch } from "./accounts.queries";
 
 /**
@@ -405,6 +406,7 @@ export async function getStatementDirect(
             ticket_total_payout: number | null;
             commission_amount: number | null; // snapshot del vendedor
             listero_commission_amount: number | null; // snapshot del listero
+            commission_origin: string; // "USER" | "VENTANA" | "BANCA"
         }>
     >`
     SELECT
@@ -425,7 +427,8 @@ export async function getStatementDirect(
       b."commissionPolicyJson" as banca_policy,
       t."totalPayout" as ticket_total_payout,
       j."commissionAmount" as commission_amount,
-      j."listeroCommissionAmount" as listero_commission_amount
+      j."listeroCommissionAmount" as listero_commission_amount,
+      j."commissionOrigin" as commission_origin
     FROM "Ticket" t
     INNER JOIN "Jugada" j ON j."ticketId" = t.id
     INNER JOIN "Ventana" v ON v.id = t."ventanaId"
@@ -491,27 +494,17 @@ export async function getStatementDirect(
 
         let commissionListero = 0;
 
-        // ✅ CRÍTICO: Calcular comisión del listero jugada por jugada (igual que commissions)
+        // ✅ CRÍTICO: Calcular comisión del listero jugada por jugada (igual que dashboard.service.ts)
         if (userPolicyJson) {
             // Si hay política de usuario VENTANA, usarla (prioridad más alta)
             try {
-                const policy = parseCommissionPolicy(userPolicyJson, "USER");
-                if (policy) {
-                    const match = findMatchingRule(policy, {
-                        loteriaId: jugada.loteriaId,
-                        betType: jugada.type as "NUMERO" | "REVENTADO",
-                        finalMultiplierX: jugada.finalMultiplierX ?? 0,
-                        amount: jugada.amount
-                    });
-
-                    if (match) {
-                        commissionListero = Math.round((jugada.amount * match.percent) / 100);
-                    } else {
-                        throw new Error("No matching rule found");
-                    }
-                } else {
-                    throw new Error("Invalid policy");
-                }
+                const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+                    userId: ventanaUserId,
+                    loteriaId: jugada.loteriaId,
+                    betType: jugada.type as "NUMERO" | "REVENTADO",
+                    finalMultiplierX: jugada.finalMultiplierX ?? null,
+                });
+                commissionListero = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
             } catch (err) {
                 // Si falla, usar fallback con políticas de ventana/banca
                 const fallback = resolveCommission(
@@ -525,7 +518,7 @@ export async function getStatementDirect(
                     jugada.ventana_policy,
                     jugada.banca_policy
                 );
-                commissionListero = Math.round(fallback.commissionAmount);
+                commissionListero = parseFloat((fallback.commissionAmount).toFixed(2));
             }
         } else {
             // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
@@ -540,13 +533,12 @@ export async function getStatementDirect(
                 jugada.ventana_policy, // Política de ventana
                 jugada.banca_policy // Política de banca
             );
-            commissionListero = Math.round(ventanaCommission.commissionAmount);
+            commissionListero = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
         }
 
-        // Usar snapshot si está disponible, sino usar el calculado
-        const commissionListeroFinal = (jugada.listero_commission_amount && jugada.listero_commission_amount > 0)
-            ? Math.round(jugada.listero_commission_amount)
-            : commissionListero;
+        // ✅ IMPORTANTE: Usar SIEMPRE el cálculo reciente desde políticas, NUNCA el snapshot
+        // El snapshot puede estar obsoleto o incorrecto. Recalcular desde políticas es confiable.
+        const commissionListeroFinal = commissionListero;
 
         const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
         const key = dimension === "ventana"
@@ -573,7 +565,10 @@ export async function getStatementDirect(
         entry.totalSales += jugada.amount;
         entry.totalTickets.add(jugada.ticket_id);
         entry.commissionListero += commissionListeroFinal;
-        entry.commissionVendedor += Number(jugada.commission_amount || 0);
+        // Solo sumar commission_amount si la jugada es de comisión de VENDEDOR (USER)
+        if (jugada.commission_origin === "USER") {
+            entry.commissionVendedor += Number(jugada.commission_amount || 0);
+        }
         if (!entry.payoutTickets.has(jugada.ticket_id)) {
             entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
             entry.payoutTickets.add(jugada.ticket_id);
