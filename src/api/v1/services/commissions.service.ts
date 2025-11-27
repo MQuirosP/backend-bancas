@@ -550,6 +550,8 @@ export const CommissionsService = {
             total_payouts: string;
             total_tickets: string;
             total_commission: string;
+            commission_listero: string;
+            commission_vendedor: string;
           }>
         >`
           SELECT
@@ -562,9 +564,12 @@ export const CommissionsService = {
             COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
             COALESCE(SUM(t."totalPayout"), 0)::text as total_payouts,
             COUNT(DISTINCT t.id)::text as total_tickets,
-            COALESCE(SUM(t."totalCommission"), 0)::text as total_commission
+            COALESCE(SUM(t."totalCommission"), 0)::text as total_commission,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0)::text as commission_listero,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0)::text as commission_vendedor
           FROM "Ticket" t
           INNER JOIN "User" u ON u.id = t."vendedorId"
+          LEFT JOIN "Jugada" j ON j."ticketId" = t.id AND j."deletedAt" IS NULL
           ${whereClause}
           GROUP BY business_date, u.id, u.name
           ORDER BY business_date DESC, u.name ASC
@@ -584,19 +589,26 @@ export const CommissionsService = {
         });
 
         return result.map((r) => {
-          const commissionVendedor = parseFloat(r.total_commission);
+          const commissionListero = parseFloat(r.commission_listero);
+          const commissionVendedor = parseFloat(r.commission_vendedor);
+          const totalSales = parseFloat(r.total_sales);
+          const totalPayouts = parseFloat(r.total_payouts);
+
           return {
             date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
             vendedorId: r.vendedor_id,
             vendedorName: r.vendedor_name,
-            totalSales: parseFloat(r.total_sales),
+            totalSales,
             totalTickets: parseInt(r.total_tickets, 10),
-            totalCommission: commissionVendedor,
-            totalPayouts: parseFloat(r.total_payouts),
-            commissionListero: 0,
+            totalCommission: parseFloat(r.total_commission),
+            totalPayouts,
+            commissionListero,
             commissionVendedor,
-            // ✅ Para VENDEDOR: ganancia neta = ventas - premios - su propia comisión
-            net: parseFloat(r.total_sales) - parseFloat(r.total_payouts) - commissionVendedor,
+            // ✅ NUEVO: Ganancia del listero = comisión listero - comisión vendedor
+            gananciaListero: commissionListero - commissionVendedor,
+            // ✅ Para VENDEDOR: ganancia neta = ventas - premios - comisión listero
+            gananciaNeta: totalSales - totalPayouts - commissionListero,
+            net: totalSales - totalPayouts - commissionListero, // Alias
           };
         });
       } else {
