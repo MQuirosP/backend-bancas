@@ -6,7 +6,7 @@ import { AccountStatementRepository } from "../../../../repositories/accountStat
 import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";
 import { calculateIsSettled } from "./accounts.commissions";
 import { buildTicketDateFilter, toCRDateString } from "./accounts.dates.utils";
-import { AccountsFilters, DayStatement } from "./accounts.types";
+import { AccountsFilters, DayStatement, StatementTotals } from "./accounts.types";
 import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
 import { resolveCommission } from "../../../../services/commission.resolver";
 import { getSorteoBreakdownBatch } from "./accounts.queries";
@@ -653,6 +653,257 @@ export async function getStatementDirect(
     const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
     const totalRemainingBalance = statements.reduce((sum, s) => sum + s.remainingBalance, 0);
 
+    // ✅ NUEVO: Calcular monthlyAccumulated (acumulado del mes COMPLETO)
+    // Esto es INMUTABLE respecto al período filtrado (siempre es el mes completo)
+    const [year, month] = effectiveMonth.split("-").map(Number);
+    const monthStartDate = new Date(Date.UTC(year, month - 1, 1)); // Primer día del mes
+    const monthEndDate = new Date(Date.UTC(year, month, 0)); // Último día del mes
+    const monthStartDateCRStr = toCRDateString(monthStartDate);
+    const monthEndDateCRStr = toCRDateString(monthEndDate);
+
+    // Construir WHERE conditions para el mes completo
+    const monthlyWhereConditions: Prisma.Sql[] = [
+        Prisma.sql`t."deletedAt" IS NULL`,
+        Prisma.sql`t.status IN ('ACTIVE', 'EVALUATED', 'PAID')`,
+        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${monthStartDateCRStr}::date`,
+        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${monthEndDateCRStr}::date`,
+    ];
+
+    // Reutilizar filtros RBAC/banca
+    if (bancaId) {
+        monthlyWhereConditions.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "Ventana" v
+      WHERE v.id = t."ventanaId"
+      AND v."bancaId" = ${bancaId}::uuid
+    )`);
+    }
+
+    if (dimension === "vendedor") {
+        if (vendedorId) {
+            monthlyWhereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+        }
+        if (ventanaId) {
+            monthlyWhereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+        }
+    } else if (dimension === "ventana") {
+        if (ventanaId) {
+            monthlyWhereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+        }
+    }
+
+    const monthlyWhereClause = Prisma.sql`WHERE ${Prisma.join(monthlyWhereConditions, " AND ")}`;
+
+    // Obtener jugadas del mes completo
+    const monthlyJugadas = await prisma.$queryRaw<
+        Array<{
+            business_date: Date;
+            ventana_id: string;
+            ventana_name: string;
+            vendedor_id: string | null;
+            vendedor_name: string | null;
+            ticket_id: string;
+            amount: number;
+            type: string;
+            finalMultiplierX: number | null;
+            loteriaId: string;
+            ventana_policy: any;
+            banca_policy: any;
+            ticket_total_payout: number | null;
+            commission_amount: number | null;
+            listero_commission_amount: number | null;
+            commission_origin: string;
+        }>
+    >`
+    SELECT
+      COALESCE(
+        t."businessDate",
+        DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+      ) as business_date,
+      t."ventanaId" as ventana_id,
+      v.name as ventana_name,
+      t."vendedorId" as vendedor_id,
+      u.name as vendedor_name,
+      t.id as ticket_id,
+      j.amount,
+      j.type,
+      j."finalMultiplierX",
+      t."loteriaId",
+      v."commissionPolicyJson" as ventana_policy,
+      b."commissionPolicyJson" as banca_policy,
+      t."totalPayout" as ticket_total_payout,
+      j."commissionAmount" as commission_amount,
+      j."listeroCommissionAmount" as listero_commission_amount,
+      j."commissionOrigin" as commission_origin
+    FROM "Ticket" t
+    INNER JOIN "Jugada" j ON j."ticketId" = t.id
+    INNER JOIN "Ventana" v ON v.id = t."ventanaId"
+    INNER JOIN "Banca" b ON b.id = v."bancaId"
+    LEFT JOIN "User" u ON u.id = t."vendedorId"
+    ${monthlyWhereClause}
+    AND j."deletedAt" IS NULL
+  `;
+
+    // Agrupar jugadas del mes por día y dimensión
+    const monthlyByDateAndDimension = new Map<
+        string,
+        {
+            ventanaId: string;
+            ventanaName: string;
+            vendedorId: string | null;
+            vendedorName: string | null;
+            totalSales: number;
+            totalPayouts: number;
+            totalTickets: Set<string>;
+            commissionListero: number;
+            commissionVendedor: number;
+            payoutTickets: Set<string>;
+        }
+    >();
+
+    // Procesar jugadas del mes (misma lógica que periodo filtrado)
+    for (const jugada of monthlyJugadas) {
+        const userPolicyJson = userPolicyByVentana.get(jugada.ventana_id) ?? null;
+        const ventanaUserId = ventanaUserIdByVentana.get(jugada.ventana_id) ?? "";
+
+        let commissionListero = 0;
+
+        if (userPolicyJson) {
+            try {
+                const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+                    userId: ventanaUserId,
+                    loteriaId: jugada.loteriaId,
+                    betType: jugada.type as "NUMERO" | "REVENTADO",
+                    finalMultiplierX: jugada.finalMultiplierX ?? null,
+                });
+                commissionListero = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
+            } catch (err) {
+                const fallback = resolveCommission(
+                    {
+                        loteriaId: jugada.loteriaId,
+                        betType: jugada.type as "NUMERO" | "REVENTADO",
+                        finalMultiplierX: jugada.finalMultiplierX || 0,
+                        amount: jugada.amount,
+                    },
+                    null,
+                    jugada.ventana_policy,
+                    jugada.banca_policy
+                );
+                commissionListero = parseFloat((fallback.commissionAmount).toFixed(2));
+            }
+        } else {
+            const ventanaCommission = resolveCommission(
+                {
+                    loteriaId: jugada.loteriaId,
+                    betType: jugada.type as "NUMERO" | "REVENTADO",
+                    finalMultiplierX: jugada.finalMultiplierX || 0,
+                    amount: jugada.amount,
+                },
+                null,
+                jugada.ventana_policy,
+                jugada.banca_policy
+            );
+            commissionListero = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
+        }
+
+        const commissionListeroFinal = commissionListero;
+        const dateKey = jugada.business_date.toISOString().split("T")[0];
+        const key = dimension === "ventana"
+            ? `${dateKey}_${jugada.ventana_id}`
+            : `${dateKey}_${jugada.vendedor_id || 'null'}`;
+
+        let entry = monthlyByDateAndDimension.get(key);
+        if (!entry) {
+            entry = {
+                ventanaId: jugada.ventana_id,
+                ventanaName: jugada.ventana_name,
+                vendedorId: jugada.vendedor_id,
+                vendedorName: jugada.vendedor_name,
+                totalSales: 0,
+                totalPayouts: 0,
+                totalTickets: new Set<string>(),
+                commissionListero: 0,
+                commissionVendedor: 0,
+                payoutTickets: new Set<string>(),
+            };
+            monthlyByDateAndDimension.set(key, entry);
+        }
+
+        entry.totalSales += jugada.amount;
+        entry.totalTickets.add(jugada.ticket_id);
+        entry.commissionListero += commissionListeroFinal;
+        if (jugada.commission_origin === "USER") {
+            entry.commissionVendedor += Number(jugada.commission_amount || 0);
+        }
+        if (!entry.payoutTickets.has(jugada.ticket_id)) {
+            entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+            entry.payoutTickets.add(jugada.ticket_id);
+        }
+    }
+
+    // Calcular movimientos del mes completo
+    const monthlyMovementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
+        monthStartDate,
+        monthEndDate,
+        dimension,
+        ventanaId,
+        vendedorId,
+        bancaId
+    );
+
+    // Calcular totales mensuales
+    const monthlyTotalSales = Array.from(monthlyByDateAndDimension.values()).reduce(
+        (sum, entry) => sum + entry.totalSales,
+        0
+    );
+    const monthlyTotalPayouts = Array.from(monthlyByDateAndDimension.values()).reduce(
+        (sum, entry) => sum + entry.totalPayouts,
+        0
+    );
+    const monthlyTotalListeroCommission = Array.from(monthlyByDateAndDimension.values()).reduce(
+        (sum, entry) => sum + entry.commissionListero,
+        0
+    );
+    const monthlyTotalVendedorCommission = Array.from(monthlyByDateAndDimension.values()).reduce(
+        (sum, entry) => sum + entry.commissionVendedor,
+        0
+    );
+    const monthlyTotalBalance = userRole === "ADMIN"
+        ? monthlyTotalSales - monthlyTotalPayouts - monthlyTotalListeroCommission
+        : monthlyTotalSales - monthlyTotalPayouts - monthlyTotalVendedorCommission;
+
+    // Calcular totales de pagos/cobros del mes
+    let monthlyTotalPaid = 0;
+    let monthlyTotalCollected = 0;
+    for (const movements of monthlyMovementsByDate.values()) {
+        monthlyTotalPaid += movements
+            .filter((m: any) => m.type === "payment" && !m.isReversed)
+            .reduce((sum: number, m: any) => sum + m.amount, 0);
+        monthlyTotalCollected += movements
+            .filter((m: any) => m.type === "collection" && !m.isReversed)
+            .reduce((sum: number, m: any) => sum + m.amount, 0);
+    }
+
+    // Contar días saldados en el mes
+    const monthlySettledDays = Array.from(monthlyByDateAndDimension.values())
+        .filter(entry => {
+            const remainingBalance = entry.totalSales - entry.totalPayouts - entry.commissionListero - monthlyTotalCollected + monthlyTotalPaid;
+            return calculateIsSettled(entry.totalTickets.size, remainingBalance, monthlyTotalPaid, monthlyTotalCollected);
+        }).length;
+    const monthlyPendingDays = monthlyByDateAndDimension.size - monthlySettledDays;
+
+    const monthlyRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
+
+    const monthlyAccumulated: StatementTotals = {
+        totalSales: monthlyTotalSales,
+        totalPayouts: monthlyTotalPayouts,
+        totalBalance: monthlyTotalBalance,
+        totalPaid: monthlyTotalPaid,
+        totalCollected: monthlyTotalCollected,
+        totalRemainingBalance: monthlyRemainingBalance,
+        settledDays: monthlySettledDays,
+        pendingDays: monthlyPendingDays,
+    };
+
     return {
         statements,
         totals: {
@@ -667,12 +918,15 @@ export async function getStatementDirect(
             settledDays: statements.filter(s => s.isSettled).length,
             pendingDays: statements.filter(s => !s.isSettled).length,
         },
+        monthlyAccumulated,  // ✅ NUEVO: Saldo a Hoy (acumulado del mes)
         meta: {
             month: effectiveMonth,
             startDate: startDateCRStr,
             endDate: endDateCRStr,
             dimension,
             totalDays: daysInMonth,
+            monthStartDate: toCRDateString(monthStartDate),
+            monthEndDate: toCRDateString(monthEndDate),
         },
     };
 }
