@@ -7,7 +7,8 @@ import { AccountPaymentRepository } from "../../../../repositories/accountPaymen
 import { calculateIsSettled } from "./accounts.commissions";
 import { buildTicketDateFilter, toCRDateString } from "./accounts.dates.utils";
 import { AccountsFilters, DayStatement } from "./accounts.types";
-import { resolveCommission, parseCommissionPolicy, findMatchingRule } from "../../../../services/commission.resolver";
+import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
+import { resolveCommission } from "../../../../services/commission.resolver";
 import { getSorteoBreakdownBatch } from "./accounts.queries";
 
 /**
@@ -493,27 +494,17 @@ export async function getStatementDirect(
 
         let commissionListero = 0;
 
-        // ✅ CRÍTICO: Calcular comisión del listero jugada por jugada (igual que commissions)
+        // ✅ CRÍTICO: Calcular comisión del listero jugada por jugada (igual que dashboard.service.ts)
         if (userPolicyJson) {
             // Si hay política de usuario VENTANA, usarla (prioridad más alta)
             try {
-                const policy = parseCommissionPolicy(userPolicyJson, "USER");
-                if (policy) {
-                    const match = findMatchingRule(policy, {
-                        loteriaId: jugada.loteriaId,
-                        betType: jugada.type as "NUMERO" | "REVENTADO",
-                        finalMultiplierX: jugada.finalMultiplierX ?? 0,
-                        amount: jugada.amount
-                    });
-
-                    if (match) {
-                        commissionListero = parseFloat(((jugada.amount * match.percent) / 100).toFixed(2));
-                    } else {
-                        throw new Error("No matching rule found");
-                    }
-                } else {
-                    throw new Error("Invalid policy");
-                }
+                const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+                    userId: ventanaUserId,
+                    loteriaId: jugada.loteriaId,
+                    betType: jugada.type as "NUMERO" | "REVENTADO",
+                    finalMultiplierX: jugada.finalMultiplierX ?? null,
+                });
+                commissionListero = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
             } catch (err) {
                 // Si falla, usar fallback con políticas de ventana/banca
                 const fallback = resolveCommission(
