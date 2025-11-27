@@ -601,8 +601,9 @@ export const DashboardService = {
     const totalSales = byVentanaResult.reduce((sum, v) => sum + Number(v.total_sales || 0), 0);
     const totalPayouts = byVentanaResult.reduce((sum, v) => sum + Number(v.total_payouts || 0), 0);
     const commissionUserTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_user || 0), 0);
-    const commissionVentanaRawTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
-    const commissionVentanaTotal = commissionVentanaRawTotal + totalVentanaCommission;
+    // ✅ IMPORTANTE: Usar SOLO totalVentanaCommission (recalculado desde políticas)
+    // NO sumar commissionVentanaRawTotal (snapshot del SQL) para evitar doble conteo
+    const commissionVentanaTotal = totalVentanaCommission;
     const totalAmount = commissionUserTotal + commissionVentanaTotal;
     
     // Calcular ganancia neta según rol y dimensión
@@ -633,8 +634,9 @@ export const DashboardService = {
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
         const commissionUser = Number(row.commission_user) || 0;
-        const commissionVentana =
-          (Number(row.commission_ventana) || 0) + (extrasByVentana.get(row.ventana_id) || 0);
+        // ✅ IMPORTANTE: Usar SOLO extrasByVentana (recalculado desde políticas)
+        // NO sumar row.commission_ventana (snapshot del SQL) para evitar doble conteo
+        const commissionVentana = extrasByVentana.get(row.ventana_id) || 0;
         const commissions = commissionUser + commissionVentana;
         // Calcular ganancia neta según rol y dimensión
         // Banca (ADMIN) con dimension=ventana: resta solo commissionVentana
@@ -671,8 +673,9 @@ export const DashboardService = {
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
         const commissionUser = Number(row.commission_user) || 0;
-        const commissionVentana =
-          (Number(row.commission_ventana) || 0) + (extrasByLoteria.get(row.loteria_id) || 0);
+        // ✅ IMPORTANTE: Usar SOLO extrasByLoteria (recalculado desde políticas)
+        // NO sumar row.commission_ventana (snapshot del SQL) para evitar doble conteo
+        const commissionVentana = extrasByLoteria.get(row.loteria_id) || 0;
         const commissions = commissionUser + commissionVentana;
         // Calcular ganancia neta: Banca viendo loterías siempre resta solo commissionVentana
         const net = sales - payout - commissionVentana;
