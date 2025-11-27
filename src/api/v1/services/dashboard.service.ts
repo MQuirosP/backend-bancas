@@ -114,6 +114,8 @@ interface DashboardSummary {
   commissionUser: number;
   commissionVentana: number;
   commissionVentanaTotal: number; // Alias para compatibilidad con frontend
+  gananciaListeros?: number; // ✅ NUEVO: Ganancia neta de listeros (commissionVentana - commissionUser)
+  gananciaBanca?: number; // ✅ NUEVO: Alias conceptual para net
   totalTickets: number;
   winningTickets: number;
   net: number;
@@ -1450,6 +1452,11 @@ export const DashboardService = {
     const margin = totalSales > 0 ? (net / totalSales) * 100 : 0;
     const winRate = totalTickets > 0 ? (winningTickets / totalTickets) * 100 : 0;
 
+    // ✅ NUEVO: Ganancia neta de listeros = comisión ventana - comisión usuario
+    const gananciaListeros = commissionVentana - commissionUser;
+    // ✅ NUEVO: Alias conceptual para claridad
+    const gananciaBanca = net;
+
     return {
       totalSales,
       totalPayouts,
@@ -1457,6 +1464,8 @@ export const DashboardService = {
       commissionUser,
       commissionVentana,
       commissionVentanaTotal: commissionVentana, // Alias para compatibilidad con frontend
+      gananciaListeros, // ✅ NUEVO
+      gananciaBanca, // ✅ NUEVO
       totalTickets,
       winningTickets,
       net,
