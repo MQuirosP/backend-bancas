@@ -405,6 +405,7 @@ export async function getStatementDirect(
             ticket_total_payout: number | null;
             commission_amount: number | null; // snapshot del vendedor
             listero_commission_amount: number | null; // snapshot del listero
+            commission_origin: string; // "USER" | "VENTANA" | "BANCA"
         }>
     >`
     SELECT
@@ -425,7 +426,8 @@ export async function getStatementDirect(
       b."commissionPolicyJson" as banca_policy,
       t."totalPayout" as ticket_total_payout,
       j."commissionAmount" as commission_amount,
-      j."listeroCommissionAmount" as listero_commission_amount
+      j."listeroCommissionAmount" as listero_commission_amount,
+      j."commissionOrigin" as commission_origin
     FROM "Ticket" t
     INNER JOIN "Jugada" j ON j."ticketId" = t.id
     INNER JOIN "Ventana" v ON v.id = t."ventanaId"
@@ -573,7 +575,10 @@ export async function getStatementDirect(
         entry.totalSales += jugada.amount;
         entry.totalTickets.add(jugada.ticket_id);
         entry.commissionListero += commissionListeroFinal;
-        entry.commissionVendedor += Number(jugada.commission_amount || 0);
+        // Solo sumar commission_amount si la jugada es de comisión de VENDEDOR (USER)
+        if (jugada.commission_origin === "USER") {
+            entry.commissionVendedor += Number(jugada.commission_amount || 0);
+        }
         if (!entry.payoutTickets.has(jugada.ticket_id)) {
             entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
             entry.payoutTickets.add(jugada.ticket_id);
