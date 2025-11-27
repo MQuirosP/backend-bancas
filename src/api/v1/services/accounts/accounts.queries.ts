@@ -356,7 +356,7 @@ export async function getSorteoBreakdownBatch(
                             betType: jugada.type as "NUMERO" | "REVENTADO",
                             finalMultiplierX: jugada.finalMultiplierX ?? null,
                         });
-                        listeroCommission = Math.round((jugada.amount * resolution.percent) / 100);
+                        listeroCommission = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
                     } catch (err) {
                         // Si falla, usar fallback con políticas de ventana/banca
                         const fallback = resolveCommission(
@@ -370,7 +370,7 @@ export async function getSorteoBreakdownBatch(
                             ventanaPolicy,
                             bancaPolicy
                         );
-                        listeroCommission = Math.round(fallback.commissionAmount);
+                        listeroCommission = parseFloat((fallback.commissionAmount).toFixed(2));
                     }
                 } else {
                     // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
@@ -385,7 +385,7 @@ export async function getSorteoBreakdownBatch(
                         ventanaPolicy, // Política de ventana
                         bancaPolicy // Política de banca
                     );
-                    listeroCommission = Math.round(ventanaCommission.commissionAmount);
+                    listeroCommission = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
                 }
 
                 entry.listeroCommission += listeroCommission;
@@ -628,7 +628,7 @@ export async function getSorteoBreakdown(
                             betType: jugada.type as "NUMERO" | "REVENTADO",
                             finalMultiplierX: jugada.finalMultiplierX ?? null,
                         });
-                        listeroCommission = Math.round((jugada.amount * resolution.percent) / 100);
+                        listeroCommission = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
                     } catch (err) {
                         // Si falla, usar fallback con políticas de ventana/banca
                         const fallback = resolveCommission(
@@ -642,7 +642,7 @@ export async function getSorteoBreakdown(
                             ventanaPolicy,
                             bancaPolicy
                         );
-                        listeroCommission = Math.round(fallback.commissionAmount);
+                        listeroCommission = parseFloat((fallback.commissionAmount).toFixed(2));
                     }
                 } else {
                     // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
@@ -657,7 +657,7 @@ export async function getSorteoBreakdown(
                         ventanaPolicy, // Política de ventana
                         bancaPolicy // Política de banca
                     );
-                    listeroCommission = Math.round(ventanaCommission.commissionAmount);
+                    listeroCommission = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
                 }
 
                 entry.listeroCommission += listeroCommission;

@@ -114,11 +114,13 @@ interface DashboardSummary {
   commissionUser: number;
   commissionVentana: number;
   commissionVentanaTotal: number; // Alias para compatibilidad con frontend
+  gananciaListeros?: number; // ✅ NUEVO: Ganancia neta de listeros (commissionVentana - commissionUser)
+  gananciaBanca?: number; // ✅ NUEVO: Alias conceptual para net
   totalTickets: number;
   winningTickets: number;
   net: number;
-  margin: number; // ✅ NUEVO: Margen neto
-  winRate: number;
+  margin: number; // ✅ PORCENTAJE: Margen neto con máximo 2 decimales (toFixed(2))
+  winRate: number; // ✅ PORCENTAJE: Tasa de ganancia con máximo 2 decimales (toFixed(2))
 }
 
 const COSTA_RICA_OFFSET_HOURS = -6;
@@ -146,14 +148,14 @@ function formatCostaRicaISO(date: Date): string {
   // Para corregirlo, restamos el offset para obtener la hora local de CR.
   const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
   const crDate = new Date(date.getTime() - offsetMs);
-  
+
   const year = crDate.getUTCFullYear();
   const month = String(crDate.getUTCMonth() + 1).padStart(2, '0');
   const day = String(crDate.getUTCDate()).padStart(2, '0');
   const hours = String(crDate.getUTCHours()).padStart(2, '0');
   const minutes = String(crDate.getUTCMinutes()).padStart(2, '0');
   const seconds = String(crDate.getUTCSeconds()).padStart(2, '0');
-  
+
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}-06:00`;
 }
 
@@ -340,20 +342,20 @@ async function computeVentanaCommissionFromPolicies(filters: DashboardFilters) {
 
   const ventanaUsers = ventanaIds.length
     ? await prisma.user.findMany({
-        where: {
-          role: Role.VENTANA,
-          isActive: true,
-          deletedAt: null,
-          ventanaId: { in: ventanaIds },
-        },
-        select: {
-          id: true,
-          ventanaId: true,
-          commissionPolicyJson: true,
-          updatedAt: true,
-        },
-        orderBy: { updatedAt: "desc" },
-      })
+      where: {
+        role: Role.VENTANA,
+        isActive: true,
+        deletedAt: null,
+        ventanaId: { in: ventanaIds },
+      },
+      select: {
+        id: true,
+        ventanaId: true,
+        commissionPolicyJson: true,
+        updatedAt: true,
+      },
+      orderBy: { updatedAt: "desc" },
+    })
     : [];
 
   const userPolicyByVentana = new Map<string, any>();
@@ -499,9 +501,9 @@ export const DashboardService = {
             t."ventanaId" AS ventana_id,
             COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
             COALESCE(SUM(
-              CASE 
+              CASE
                 WHEN j."listeroCommissionAmount" > 0 THEN j."listeroCommissionAmount"
-                WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount"
+                WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount"
                 ELSE 0
               END
             ), 0) AS commission_ventana
@@ -567,9 +569,9 @@ export const DashboardService = {
             t."loteriaId" AS loteria_id,
             COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
             COALESCE(SUM(
-              CASE 
+              CASE
                 WHEN j."listeroCommissionAmount" > 0 THEN j."listeroCommissionAmount"
-                WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount"
+                WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount"
                 ELSE 0
               END
             ), 0) AS commission_ventana
@@ -599,10 +601,11 @@ export const DashboardService = {
     const totalSales = byVentanaResult.reduce((sum, v) => sum + Number(v.total_sales || 0), 0);
     const totalPayouts = byVentanaResult.reduce((sum, v) => sum + Number(v.total_payouts || 0), 0);
     const commissionUserTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_user || 0), 0);
-    const commissionVentanaRawTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
-    const commissionVentanaTotal = commissionVentanaRawTotal + totalVentanaCommission;
+    // ✅ IMPORTANTE: Usar SOLO totalVentanaCommission (recalculado desde políticas)
+    // NO sumar commissionVentanaRawTotal (snapshot del SQL) para evitar doble conteo
+    const commissionVentanaTotal = totalVentanaCommission;
     const totalAmount = commissionUserTotal + commissionVentanaTotal;
-    
+
     // Calcular ganancia neta según rol y dimensión
     // Banca (ADMIN) con dimension=ventana/loteria: resta solo commissionVentana
     // Ventana o dimension=vendedor: resta solo commissionUser
@@ -631,8 +634,9 @@ export const DashboardService = {
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
         const commissionUser = Number(row.commission_user) || 0;
-        const commissionVentana =
-          (Number(row.commission_ventana) || 0) + (extrasByVentana.get(row.ventana_id) || 0);
+        // ✅ IMPORTANTE: Usar SOLO extrasByVentana (recalculado desde políticas)
+        // NO sumar row.commission_ventana (snapshot del SQL) para evitar doble conteo
+        const commissionVentana = extrasByVentana.get(row.ventana_id) || 0;
         const commissions = commissionUser + commissionVentana;
         // Calcular ganancia neta según rol y dimensión
         // Banca (ADMIN) con dimension=ventana: resta solo commissionVentana
@@ -669,8 +673,9 @@ export const DashboardService = {
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
         const commissionUser = Number(row.commission_user) || 0;
-        const commissionVentana =
-          (Number(row.commission_ventana) || 0) + (extrasByLoteria.get(row.loteria_id) || 0);
+        // ✅ IMPORTANTE: Usar SOLO extrasByLoteria (recalculado desde políticas)
+        // NO sumar row.commission_ventana (snapshot del SQL) para evitar doble conteo
+        const commissionVentana = extrasByLoteria.get(row.loteria_id) || 0;
         const commissions = commissionUser + commissionVentana;
         // Calcular ganancia neta: Banca viendo loterías siempre resta solo commissionVentana
         const net = sales - payout - commissionVentana;
@@ -875,23 +880,19 @@ export const DashboardService = {
     for (const ventanaRow of ventanaData) {
       const ventanaId = ventanaRow.ventana_id;
       const entry = ensureEntry(ventanaId);
-      
+
       entry.totalSales = Number(ventanaRow.total_sales) || 0;
       entry.totalPayouts = Number(ventanaRow.total_payouts) || 0;
-      
-      // ✅ CRÍTICO: Calcular comisión del listero igual que calculateGanancia
-      // Sumar snapshot + comisiones desde políticas
-      const commissionVentanaRaw = Number(ventanaRow.commission_ventana_raw) || 0;
-      const listeroCommissionSnapshot = Number(ventanaRow.listero_commission_snapshot) || 0;
+
+      // ✅ CRÍTICO: Usar SOLO comisiones recalculadas desde políticas
+      // NO sumar snapshot del SQL para evitar doble conteo (igual que calculateGanancia)
       const extrasFromPolicies = extrasByVentana.get(ventanaId) || 0;
-      
-      // Usar snapshot si está disponible, sino usar commissionOrigin
-      const listeroCommissionFromDB = listeroCommissionSnapshot > 0 
-        ? listeroCommissionSnapshot 
-        : commissionVentanaRaw;
-      
-      // Sumar extras desde políticas (igual que calculateGanancia)
-      entry.totalListeroCommission = listeroCommissionFromDB + extrasFromPolicies;
+
+      // Si tenemos comisiones recalculadas desde políticas, usarlas
+      // Sino, usar el snapshot de la DB como fallback
+      entry.totalListeroCommission = extrasFromPolicies > 0
+        ? extrasFromPolicies
+        : Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0;
       entry.totalVendedorCommission = Number(ventanaRow.commission_user) || 0;
     }
 
@@ -1001,7 +1002,7 @@ export const DashboardService = {
         const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado
         const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
-        
+
         return {
           ventanaId: entry.ventanaId,
           ventanaName: entry.ventanaName,
@@ -1210,23 +1211,19 @@ export const DashboardService = {
     for (const ventanaRow of ventanaData) {
       const ventanaId = ventanaRow.ventana_id;
       const entry = ensureEntry(ventanaId);
-      
+
       entry.totalSales = Number(ventanaRow.total_sales) || 0;
       entry.totalPayouts = Number(ventanaRow.total_payouts) || 0;
-      
-      // ✅ CRÍTICO: Calcular comisión del listero igual que calculateGanancia
-      // Sumar snapshot + comisiones desde políticas
-      const commissionVentanaRaw = Number(ventanaRow.commission_ventana_raw) || 0;
-      const listeroCommissionSnapshot = Number(ventanaRow.listero_commission_snapshot) || 0;
+
+      // ✅ CRÍTICO: Usar SOLO comisiones recalculadas desde políticas
+      // NO sumar snapshot del SQL para evitar doble conteo (igual que calculateGanancia)
       const extrasFromPolicies = extrasByVentana.get(ventanaId) || 0;
-      
-      // Usar snapshot si está disponible, sino usar commissionOrigin
-      const listeroCommissionFromDB = listeroCommissionSnapshot > 0 
-        ? listeroCommissionSnapshot 
-        : commissionVentanaRaw;
-      
-      // Sumar extras desde políticas (igual que calculateGanancia)
-      entry.totalListeroCommission = listeroCommissionFromDB + extrasFromPolicies;
+
+      // Si tenemos comisiones recalculadas desde políticas, usarlas
+      // Sino, usar el snapshot de la DB como fallback
+      entry.totalListeroCommission = extrasFromPolicies > 0
+        ? extrasFromPolicies
+        : Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0;
       entry.totalVendedorCommission = Number(ventanaRow.commission_user) || 0;
     }
 
@@ -1337,7 +1334,7 @@ export const DashboardService = {
         const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
         const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
-        
+
         return {
           ventanaId: entry.ventanaId,
           ventanaName: entry.ventanaName,
@@ -1450,6 +1447,11 @@ export const DashboardService = {
     const margin = totalSales > 0 ? (net / totalSales) * 100 : 0;
     const winRate = totalTickets > 0 ? (winningTickets / totalTickets) * 100 : 0;
 
+    // ✅ NUEVO: Ganancia neta de listeros = comisión ventana - comisión usuario
+    const gananciaListeros = commissionVentana - commissionUser;
+    // ✅ NUEVO: Alias conceptual para claridad
+    const gananciaBanca = net;
+
     return {
       totalSales,
       totalPayouts,
@@ -1457,6 +1459,8 @@ export const DashboardService = {
       commissionUser,
       commissionVentana,
       commissionVentanaTotal: commissionVentana, // Alias para compatibilidad con frontend
+      gananciaListeros, // ✅ NUEVO
+      gananciaBanca, // ✅ NUEVO
       totalTickets,
       winningTickets,
       net,
@@ -1585,7 +1589,7 @@ export const DashboardService = {
         const timestamp = formatCostaRicaISO(row.date_bucket);
         // Formatear date como YYYY-MM-DD en zona horaria de Costa Rica
         const date = formatCostaRicaDate(row.date_bucket);
-        
+
         return {
           date, // YYYY-MM-DD (fecha en CR)
           timestamp, // YYYY-MM-DDTHH:mm:ss-06:00 (timestamp en CR)
@@ -1890,7 +1894,7 @@ export const DashboardService = {
 
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(previousFilters);
     const baseFilters = buildTicketBaseFilters("t", previousFilters, fromDateStr, toDateStr);
-    
+
     // Calcular comisiones de ventana desde políticas para el período anterior
     const { totalVentanaCommission } = await computeVentanaCommissionFromPolicies(previousFilters);
 
@@ -1957,7 +1961,7 @@ export const DashboardService = {
     const commissionVentanaRaw = Number(row.commission_ventana) || 0;
     const commissionVentana = commissionVentanaRaw + totalVentanaCommission;
     const totalCommissions = commissionUser + commissionVentana;
-    
+
     // ✅ CORRECCIÓN: Calcular ganancia neta según rol
     // Para ADMIN: resta commissionVentana (comisión del listero)
     // Para VENTANA/VENDEDOR: resta commissionUser (comisión del vendedor)
