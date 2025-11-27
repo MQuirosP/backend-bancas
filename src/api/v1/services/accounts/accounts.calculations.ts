@@ -536,10 +536,9 @@ export async function getStatementDirect(
             commissionListero = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
         }
 
-        // Usar snapshot si está disponible, sino usar el calculado
-        const commissionListeroFinal = (jugada.listero_commission_amount && jugada.listero_commission_amount > 0)
-            ? parseFloat((jugada.listero_commission_amount).toFixed(2))
-            : commissionListero;
+        // ✅ IMPORTANTE: Usar SIEMPRE el cálculo reciente desde políticas, NUNCA el snapshot
+        // El snapshot puede estar obsoleto o incorrecto. Recalcular desde políticas es confiable.
+        const commissionListeroFinal = commissionListero;
 
         const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
         const key = dimension === "ventana"
