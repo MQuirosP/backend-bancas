@@ -119,8 +119,8 @@ interface DashboardSummary {
   totalTickets: number;
   winningTickets: number;
   net: number;
-  margin: number; // ✅ NUEVO: Margen neto
-  winRate: number;
+  margin: number; // ✅ PORCENTAJE: Margen neto con máximo 2 decimales (toFixed(2))
+  winRate: number; // ✅ PORCENTAJE: Tasa de ganancia con máximo 2 decimales (toFixed(2))
 }
 
 const COSTA_RICA_OFFSET_HOURS = -6;
