@@ -501,9 +501,9 @@ export const DashboardService = {
             t."ventanaId" AS ventana_id,
             COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
             COALESCE(SUM(
-              CASE 
+              CASE
                 WHEN j."listeroCommissionAmount" > 0 THEN j."listeroCommissionAmount"
-                WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount"
+                WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount"
                 ELSE 0
               END
             ), 0) AS commission_ventana
@@ -569,9 +569,9 @@ export const DashboardService = {
             t."loteriaId" AS loteria_id,
             COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
             COALESCE(SUM(
-              CASE 
+              CASE
                 WHEN j."listeroCommissionAmount" > 0 THEN j."listeroCommissionAmount"
-                WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount"
+                WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount"
                 ELSE 0
               END
             ), 0) AS commission_ventana
