@@ -184,11 +184,10 @@ export const AccountStatementRepository = {
     } else if (filters.vendedorId) {
       where.vendedorId = filters.vendedorId;
       where.ventanaId = null; // Asegurar que ventanaId es null para statements de vendedor
-    } else {
-      // Si no se especifica ninguno, buscar statements sin ambos
-      where.ventanaId = null;
-      where.vendedorId = null;
     }
+    // ✅ FIX: Si no se especifica ninguno, NO forzar ventanaId/vendedorId a null
+    // Dejar que la query encuentre cualquier statement para esa fecha
+    // (sin restricción de dimension)
 
     return await prisma.accountStatement.findFirst({
       where,
