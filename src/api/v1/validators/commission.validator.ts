@@ -25,7 +25,7 @@ const MultiplierRangeSchema = z
  * - loteriaId: UUID | null
  * - betType: "NUMERO" | "REVENTADO" | null
  * - multiplierRange: { min, max } con min <= max
- * - percent: 0..100
+ * - percent: 0..100, máximo 2 decimales
  */
 const CommissionRuleSchema = z
   .object({
@@ -33,7 +33,10 @@ const CommissionRuleSchema = z
     loteriaId: z.string().uuid().nullable(),
     betType: z.nativeEnum(BetType).nullable(),
     multiplierRange: MultiplierRangeSchema,
-    percent: z.number().min(0).max(100),
+    percent: z.number().min(0).max(100).refine(
+      (val) => /^\d+(\.\d{1,2})?$/.test(val.toString()),
+      { message: "Percentage must have maximum 2 decimal places" }
+    ),
   })
   .strict();
 
@@ -90,7 +93,7 @@ function validateNoDuplicateRules(rules: Array<{
  * Schema principal para CommissionPolicy (version 1)
  * - version: literal 1
  * - effectiveFrom/To: ISO 8601 | null
- * - defaultPercent: 0..100
+ * - defaultPercent: 0..100, máximo 2 decimales
  * - rules: array de CommissionRule
  */
 export const CommissionPolicySchema = z
@@ -98,7 +101,10 @@ export const CommissionPolicySchema = z
     version: z.literal(1),
     effectiveFrom: z.string().datetime().nullable(),
     effectiveTo: z.string().datetime().nullable(),
-    defaultPercent: z.number().min(0).max(100),
+    defaultPercent: z.number().min(0).max(100).refine(
+      (val) => /^\d+(\.\d{1,2})?$/.test(val.toString()),
+      { message: "Default percentage must have maximum 2 decimal places" }
+    ),
     rules: z.array(CommissionRuleSchema),
   })
   .strict()
