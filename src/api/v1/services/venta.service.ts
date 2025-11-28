@@ -458,104 +458,21 @@ export const VentasService = {
           commissionVendedorTotal = parseFloat((vendedorCommissionsAgg._sum?.commissionAmount ?? 0).toFixed(2));
 
           // 2. Calcular commissionListeroTotal: Comisión propia del listero (ventana)
-          // Necesitamos calcular desde las políticas de comisión de la ventana
-          // Obtener todas las jugadas del período para esta ventana
-          const jugadasForListero = await prisma.jugada.findMany({
+          // ✅ CAMBIO: Usar snapshot de comisión del listero guardado en BD, NO recalcular
+          // Las comisiones están guardadas en jugada.listeroCommissionAmount (snapshot del momento de creación)
+          const listeroCommissionsAgg = await prisma.jugada.aggregate({
             where: {
               ticket: {
                 ...where,
                 ventanaId: ventanaUser.ventanaId,
               },
             },
-            select: {
-              id: true,
-              amount: true,
-              type: true,
-              finalMultiplierX: true,
-              ticket: {
-                select: {
-                  id: true,
-                  loteriaId: true,
-                  ventana: {
-                    select: {
-                      id: true,
-                      commissionPolicyJson: true,
-                      banca: {
-                        select: {
-                          commissionPolicyJson: true,
-                        },
-                      },
-                    },
-                  },
-                },
-              },
+            _sum: {
+              listeroCommissionAmount: true,
             },
           });
-
-          // Obtener usuario VENTANA para obtener su política de comisión
-          const ventanaUserWithPolicy = await prisma.user.findUnique({
-            where: { id: options.userId },
-            select: {
-              id: true,
-              commissionPolicyJson: true,
-              ventanaId: true,
-            },
-          });
-
-          let totalListeroCommission = 0;
-          for (const jugada of jugadasForListero) {
-            if (!jugada.ticket?.ventana) continue;
-
-            const userPolicyJson = ventanaUserWithPolicy?.commissionPolicyJson;
-            const ventanaPolicy = jugada.ticket.ventana.commissionPolicyJson as any;
-            const bancaPolicy = jugada.ticket.ventana.banca?.commissionPolicyJson as any;
-
-            let listeroAmount = 0;
-
-            if (userPolicyJson) {
-              try {
-                // ✅ Cast a any para resolver el tipo JsonValue a CommissionPolicyV1
-                const resolution = resolveCommissionFromPolicy(userPolicyJson as any, {
-                  userId: options.userId,
-                  loteriaId: jugada.ticket.loteriaId,
-                  betType: jugada.type as "NUMERO" | "REVENTADO",
-                  finalMultiplierX: jugada.finalMultiplierX ?? null,
-                });
-                listeroAmount = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
-              } catch (err) {
-                // Fallback a políticas de ventana/banca
-                const fallback = resolveCommission(
-                  {
-                    loteriaId: jugada.ticket.loteriaId,
-                    betType: jugada.type as "NUMERO" | "REVENTADO",
-                    finalMultiplierX: jugada.finalMultiplierX || 0,
-                    amount: jugada.amount,
-                  },
-                  null, // No usar política de usuario en fallback
-                  ventanaPolicy,
-                  bancaPolicy
-                );
-                listeroAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
-              }
-            } else {
-              // Usar políticas de ventana/banca directamente
-              const fallback = resolveCommission(
-                {
-                  loteriaId: jugada.ticket.loteriaId,
-                  betType: jugada.type as "NUMERO" | "REVENTADO",
-                  finalMultiplierX: jugada.finalMultiplierX || 0,
-                  amount: jugada.amount,
-                },
-                null,
-                ventanaPolicy,
-                bancaPolicy
-              );
-              listeroAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
-            }
-
-            totalListeroCommission += listeroAmount;
-          }
-          commissionListeroTotal = parseFloat(totalListeroCommission.toFixed(2));
+          // ✅ Verificar que _sum existe antes de acceder
+          commissionListeroTotal = parseFloat((listeroCommissionsAgg._sum?.listeroCommissionAmount ?? 0).toFixed(2));
 
           // 3. Calcular balanceDueToBanca: ventasTotal - payoutTotal - commissionListeroTotal
           // ✅ NUEVO: Lo que se debe pagar a la banca

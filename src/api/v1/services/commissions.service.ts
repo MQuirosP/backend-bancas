@@ -5,8 +5,6 @@ import { AppError } from "../../../core/errors";
 import { PaginatedResult, buildMeta, getSkipTake } from "../../../utils/pagination";
 import logger from "../../../core/logger";
 import { resolveDateRange } from "../../../utils/dateRange";
-import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
-import { resolveCommission } from "../../../services/commission.resolver";
 
 /**
  * Filtros para queries de comisiones
@@ -185,13 +183,9 @@ export const CommissionsService = {
               ventana_name: string;
               ticket_id: string;
               amount: number;
-              type: string;
-              finalMultiplierX: number;
-              loteriaId: string;
-              ventana_policy: any;
-              banca_policy: any;
               ticket_total_payout: number | null;
               commission_amount: number | null;
+              listero_commission_amount: number | null;
             }>
           >`
             SELECT
@@ -203,17 +197,12 @@ export const CommissionsService = {
               v.name as ventana_name,
               t.id as ticket_id,
               j.amount,
-              j.type,
-              j."finalMultiplierX",
-              t."loteriaId",
-              v."commissionPolicyJson" as ventana_policy,
-              b."commissionPolicyJson" as banca_policy,
               t."totalPayout" as ticket_total_payout,
-              j."commissionAmount" as commission_amount
+              j."commissionAmount" as commission_amount,
+              j."listeroCommissionAmount" as listero_commission_amount
             FROM "Ticket" t
             INNER JOIN "Jugada" j ON j."ticketId" = t.id
             INNER JOIN "Ventana" v ON v.id = t."ventanaId"
-            INNER JOIN "Banca" b ON b.id = v."bancaId"
             ${whereClause}
           `;
 
@@ -233,35 +222,8 @@ export const CommissionsService = {
           >();
 
           for (const jugada of jugadas) {
-            let commission = 0;
-
-            // Si esta jugada pertenece a la ventana del usuario VENTANA, usar su política de usuario
-            // Si no, usar directamente las políticas de ventana/banca (las políticas son por ventana, no por usuario)
-            if (targetVentanaId && jugada.ventana_id === targetVentanaId) {
-              // Usar la política del usuario VENTANA específico (solo para su ventana)
-              const ventanaCommission = resolveCommissionFromPolicy(ventanaUserPolicy, {
-                userId: ventanaUserId || "",
-                loteriaId: jugada.loteriaId,
-                betType: jugada.type as "NUMERO" | "REVENTADO",
-                finalMultiplierX: jugada.finalMultiplierX || null,
-              });
-              commission = Number(((jugada.amount * ventanaCommission.percent) / 100).toFixed(2));
-            } else {
-              // Para otras ventanas, usar directamente las políticas de ventana/banca
-              // Las políticas son por ventana (Ventana.commissionPolicyJson), no por usuario VENTANA
-              const ventanaCommission = resolveCommission(
-                {
-                  loteriaId: jugada.loteriaId,
-                  betType: jugada.type as "NUMERO" | "REVENTADO",
-                  finalMultiplierX: jugada.finalMultiplierX || 0,
-                  amount: jugada.amount,
-                },
-                null, // No hay política de usuario VENTANA para esta ventana
-                jugada.ventana_policy, // Política de ventana (Ventana.commissionPolicyJson)
-                jugada.banca_policy // Política de banca (Banca.commissionPolicyJson)
-              );
-              commission = Number(ventanaCommission.commissionAmount.toFixed(2));
-            }
+            // Usar snapshot de comisión del listero guardado en BD, NO recalcular
+            const commissionListero = Number(jugada.listero_commission_amount || 0);
 
             const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
             const key = `${dateKey}_${jugada.ventana_id}`;
@@ -283,7 +245,7 @@ export const CommissionsService = {
 
             entry.totalSales += jugada.amount;
             entry.totalTickets.add(jugada.ticket_id);
-            entry.commissionListero += commission;
+            entry.commissionListero += commissionListero;
             entry.commissionVendedor += Number(jugada.commission_amount || 0);
             if (!entry.payoutTickets.has(jugada.ticket_id)) {
               entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
@@ -292,7 +254,7 @@ export const CommissionsService = {
           }
 
           // Convertir a formato de respuesta
-          return Array.from(byDateAndVentana.entries()).map(([key, entry]) => {
+          const items = Array.from(byDateAndVentana.entries()).map(([key, entry]) => {
             const date = key.split("_")[0];
             // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
             // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
@@ -307,9 +269,8 @@ export const CommissionsService = {
               totalPayouts: entry.totalPayouts,
               commissionListero: entry.commissionListero,
               commissionVendedor: entry.commissionVendedor,
-              // ✅ NUEVO: Ganancia neta para VENTANA: ventas - premios - comisión vendedor
-              // commissionListero es informativo (no se resta)
-              net: entry.totalSales - entry.totalPayouts - entry.commissionVendedor,
+              // Ganancia neta para VENTANA: ventas - premios - comisión listero
+              net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
             };
           }).sort((a, b) => {
             // Ordenar por fecha DESC, luego por nombre de ventana ASC
@@ -318,17 +279,18 @@ export const CommissionsService = {
             }
             return a.ventanaName.localeCompare(b.ventanaName);
           });
+
+          return items;
         }
 
         // ============================================================================
-        // FIX: Cuando dimension=ventana y NO hay ventanaUserPolicy, calcular desde políticas de ventana/banca
+        // FIX: Cuando dimension=ventana y NO hay ventanaUserPolicy, usar snapshots de comisión
         // ============================================================================
-        // Antes: Usaba totalCommission del ticket (snapshot del vendedor) - INCORRECTO
-        // Ahora: Calcula desde políticas de ventana/banca usando resolveCommission con fallback
-        // IMPORTANTE: Buscar usuarios VENTANA por ventana individualmente (como en dashboard)
+        // Las comisiones ya están guardadas como snapshots en listeroCommissionAmount
+        // Simplemente las sumamos directamente sin recalcular
         // ============================================================================
         if (filters.dimension === "ventana" && !ventanaUserPolicy) {
-          // Obtener todas las jugadas del periodo con políticas de ventana y banca
+          // Obtener todas las jugadas del periodo con snapshots de comisión
           const jugadas = await prisma.$queryRaw<
             Array<{
               business_date: Date;
@@ -336,13 +298,9 @@ export const CommissionsService = {
               ventana_name: string;
               ticket_id: string;
               amount: number;
-              type: string;
-              finalMultiplierX: number;
-              loteriaId: string;
-              ventana_policy: any;
-              banca_policy: any;
               ticket_total_payout: number | null;
-              commission_amount: number | null; // snapshot del vendedor
+              commission_amount: number | null;
+              listero_commission_amount: number | null;
             }>
           >`
             SELECT
@@ -354,52 +312,16 @@ export const CommissionsService = {
               v.name as ventana_name,
               t.id as ticket_id,
               j.amount,
-              j.type,
-              j."finalMultiplierX",
-              t."loteriaId",
-              v."commissionPolicyJson" as ventana_policy,
-              b."commissionPolicyJson" as banca_policy,
               t."totalPayout" as ticket_total_payout,
-              j."commissionAmount" as commission_amount
+              j."commissionAmount" as commission_amount,
+              j."listeroCommissionAmount" as listero_commission_amount
             FROM "Ticket" t
             INNER JOIN "Jugada" j ON j."ticketId" = t.id
             INNER JOIN "Ventana" v ON v.id = t."ventanaId"
-            INNER JOIN "Banca" b ON b.id = v."bancaId"
             ${whereClause}
           `;
 
-          // Obtener usuarios VENTANA por ventana (similar a dashboard)
-          const ventanaIds = Array.from(new Set(jugadas.map((j) => j.ventana_id)));
-          const ventanaUsers = ventanaIds.length
-            ? await prisma.user.findMany({
-              where: {
-                role: Role.VENTANA,
-                isActive: true,
-                deletedAt: null,
-                ventanaId: { in: ventanaIds },
-              },
-              select: {
-                id: true,
-                ventanaId: true,
-                commissionPolicyJson: true,
-                updatedAt: true,
-              },
-              orderBy: { updatedAt: "desc" },
-            })
-            : [];
-
-          // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
-          const userPolicyByVentana = new Map<string, any>();
-          const ventanaUserIdByVentana = new Map<string, string>();
-          for (const user of ventanaUsers) {
-            if (!user.ventanaId) continue;
-            if (!userPolicyByVentana.has(user.ventanaId)) {
-              userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
-              ventanaUserIdByVentana.set(user.ventanaId, user.id);
-            }
-          }
-
-          // Agrupar jugadas por día y ventana, calculando comisiones desde políticas
+          // Agrupar jugadas por día y ventana, usando snapshots de comisión
           const byDateAndVentana = new Map<
             string,
             {
@@ -415,53 +337,8 @@ export const CommissionsService = {
           >();
 
           for (const jugada of jugadas) {
-            // Obtener política de usuario VENTANA para esta ventana específica
-            const userPolicyJson = userPolicyByVentana.get(jugada.ventana_id) ?? null;
-            const ventanaUserId = ventanaUserIdByVentana.get(jugada.ventana_id) ?? "";
-
-            let commission = 0;
-
-            if (userPolicyJson) {
-              // Si hay política de usuario VENTANA, usarla (prioridad más alta)
-              try {
-                const resolution = resolveCommissionFromPolicy(userPolicyJson, {
-                  userId: ventanaUserId,
-                  loteriaId: jugada.loteriaId,
-                  betType: jugada.type as "NUMERO" | "REVENTADO",
-                  finalMultiplierX: jugada.finalMultiplierX || null,
-                });
-                commission = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
-              } catch (err) {
-                // Si falla, usar fallback con políticas de ventana/banca
-                const fallback = resolveCommission(
-                  {
-                    loteriaId: jugada.loteriaId,
-                    betType: jugada.type as "NUMERO" | "REVENTADO",
-                    finalMultiplierX: jugada.finalMultiplierX || 0,
-                    amount: jugada.amount,
-                  },
-                  null,
-                  jugada.ventana_policy,
-                  jugada.banca_policy
-                );
-                commission = parseFloat((fallback.commissionAmount).toFixed(2));
-              }
-            } else {
-              // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
-              const ventanaCommission = resolveCommission(
-                {
-                  loteriaId: jugada.loteriaId,
-                  betType: jugada.type as "NUMERO" | "REVENTADO",
-                  finalMultiplierX: jugada.finalMultiplierX || 0,
-                  amount: jugada.amount,
-                },
-                null, // No hay política de usuario VENTANA
-                jugada.ventana_policy, // Política de ventana
-                jugada.banca_policy // Política de banca
-              );
-              // Usar commissionAmount directamente de resolveCommission para mantener consistencia
-              commission = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
-            }
+            // Usar snapshot de comisión del listero guardado en BD, NO recalcular
+            const commissionListero = Number(jugada.listero_commission_amount || 0);
 
             const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
             const key = `${dateKey}_${jugada.ventana_id}`;
@@ -483,7 +360,7 @@ export const CommissionsService = {
 
             entry.totalSales += jugada.amount;
             entry.totalTickets.add(jugada.ticket_id);
-            entry.commissionListero += commission;
+            entry.commissionListero += commissionListero;
             entry.commissionVendedor += Number(jugada.commission_amount || 0);
             if (!entry.payoutTickets.has(jugada.ticket_id)) {
               entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
@@ -492,7 +369,7 @@ export const CommissionsService = {
           }
 
           // Convertir a formato de respuesta
-          return Array.from(byDateAndVentana.entries()).map(([key, entry]) => {
+          const items = Array.from(byDateAndVentana.entries()).map(([key, entry]) => {
             const date = key.split("_")[0];
             // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
             // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
@@ -507,9 +384,8 @@ export const CommissionsService = {
               totalPayouts: entry.totalPayouts,
               commissionListero: entry.commissionListero,
               commissionVendedor: entry.commissionVendedor,
-              // ✅ NUEVO: Ganancia neta para VENTANA: ventas - premios - comisión vendedor
-              // commissionListero es informativo (no se resta)
-              net: entry.totalSales - entry.totalPayouts - entry.commissionVendedor,
+              // Ganancia neta para VENTANA: ventas - premios - comisión listero
+              net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
             };
           }).sort((a, b) => {
             // Ordenar por fecha DESC, luego por nombre de ventana ASC
@@ -518,6 +394,8 @@ export const CommissionsService = {
             }
             return a.ventanaName.localeCompare(b.ventanaName);
           });
+
+          return items;
         }
 
         // Fallback: solo si realmente no hay forma de calcular (caso edge muy raro)
@@ -534,24 +412,23 @@ export const CommissionsService = {
             totalPayouts: parseFloat(r.total_payouts),
             commissionListero: 0,
             commissionVendedor,
-            // ✅ NUEVO: Ganancia neta para VENTANA: ventas - premios - comisión vendedor
-            net: parseFloat(r.total_sales) - parseFloat(r.total_payouts) - commissionVendedor,
+            // Ganancia neta para VENTANA: ventas - premios - comisión listero
+            net: parseFloat(r.total_sales) - parseFloat(r.total_payouts) - 0, // commissionListero is 0 in fallback
           };
         });
       } else if (filters.dimension === "vendedor") {
         // Agrupar por día Y por vendedor
-        // Solo incluir vendedores que tienen tickets en el periodo (según scope)
-        const result = await prisma.$queryRaw<
+        // Usar snapshots de comisión guardados en la BD (listeroCommissionAmount)
+        const jugadas = await prisma.$queryRaw<
           Array<{
             business_date: Date;
             vendedor_id: string;
             vendedor_name: string;
-            total_sales: string;
-            total_payouts: string;
-            total_tickets: string;
-            total_commission: string;
-            commission_listero: string;
-            commission_vendedor: string;
+            ticket_id: string;
+            amount: number;
+            ticket_total_payout: number | null;
+            commission_amount: number | null;
+            listero_commission_amount: number | null;
           }>
         >`
           SELECT
@@ -559,21 +436,63 @@ export const CommissionsService = {
               t."businessDate",
               DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
             ) as business_date,
-            u.id as vendedor_id,
+            t."vendedorId" as vendedor_id,
             u.name as vendedor_name,
-            COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
-            COALESCE(SUM(t."totalPayout"), 0)::text as total_payouts,
-            COUNT(DISTINCT t.id)::text as total_tickets,
-            COALESCE(SUM(t."totalCommission"), 0)::text as total_commission,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0)::text as commission_listero,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0)::text as commission_vendedor
+            t.id as ticket_id,
+            j.amount,
+            t."totalPayout" as ticket_total_payout,
+            j."commissionAmount" as commission_amount,
+            j."listeroCommissionAmount" as listero_commission_amount
           FROM "Ticket" t
+          INNER JOIN "Jugada" j ON j."ticketId" = t.id AND j."deletedAt" IS NULL
           INNER JOIN "User" u ON u.id = t."vendedorId"
-          LEFT JOIN "Jugada" j ON j."ticketId" = t.id AND j."deletedAt" IS NULL
           ${whereClause}
-          GROUP BY business_date, u.id, u.name
-          ORDER BY business_date DESC, u.name ASC
         `;
+
+        // Agrupar jugadas por día y vendedor, usando snapshots de comisión
+        const byDateAndVendedor = new Map<
+          string,
+          {
+            vendedorId: string;
+            vendedorName: string;
+            totalSales: number;
+            totalPayouts: number;
+            totalTickets: Set<string>;
+            commissionListero: number;
+            commissionVendedor: number;
+            payoutTickets: Set<string>;
+          }
+        >();
+
+        for (const jugada of jugadas) {
+          const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
+          const key = `${dateKey}_${jugada.vendedor_id}`;
+
+          let entry = byDateAndVendedor.get(key);
+          if (!entry) {
+            entry = {
+              vendedorId: jugada.vendedor_id,
+              vendedorName: jugada.vendedor_name,
+              totalSales: 0,
+              totalPayouts: 0,
+              totalTickets: new Set<string>(),
+              commissionListero: 0,
+              commissionVendedor: 0,
+              payoutTickets: new Set<string>(),
+            };
+            byDateAndVendedor.set(key, entry);
+          }
+
+          entry.totalSales += jugada.amount;
+          entry.totalTickets.add(jugada.ticket_id);
+          // Usar snapshot de comisión del listero guardado en BD
+          entry.commissionListero += Number(jugada.listero_commission_amount || 0);
+          entry.commissionVendedor += Number(jugada.commission_amount || 0);
+          if (!entry.payoutTickets.has(jugada.ticket_id)) {
+            entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+            entry.payoutTickets.add(jugada.ticket_id);
+          }
+        }
 
         logger.info({
           layer: "service",
@@ -584,33 +503,38 @@ export const CommissionsService = {
               toAt: dateRange.toAt.toISOString(),
             },
             filters,
-            resultCount: result.length,
+            resultCount: byDateAndVendedor.size,
           },
         });
 
-        return result.map((r) => {
-          const commissionListero = parseFloat(r.commission_listero);
-          const commissionVendedor = parseFloat(r.commission_vendedor);
-          const totalSales = parseFloat(r.total_sales);
-          const totalPayouts = parseFloat(r.total_payouts);
-
+        // Convertir a formato de respuesta
+        const items = Array.from(byDateAndVendedor.entries()).map(([key, entry]) => {
+          const date = key.split("_")[0];
           return {
-            date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
-            vendedorId: r.vendedor_id,
-            vendedorName: r.vendedor_name,
-            totalSales,
-            totalTickets: parseInt(r.total_tickets, 10),
-            totalCommission: parseFloat(r.total_commission),
-            totalPayouts,
-            commissionListero,
-            commissionVendedor,
-            // ✅ NUEVO: Ganancia del listero = comisión listero - comisión vendedor
-            gananciaListero: commissionListero - commissionVendedor,
-            // ✅ Para VENDEDOR: ganancia neta = ventas - premios - comisión listero
-            gananciaNeta: totalSales - totalPayouts - commissionListero,
-            net: totalSales - totalPayouts - commissionListero, // Alias
+            date, // YYYY-MM-DD
+            vendedorId: entry.vendedorId,
+            vendedorName: entry.vendedorName,
+            totalSales: entry.totalSales,
+            totalTickets: entry.totalTickets.size,
+            totalCommission: entry.commissionListero + entry.commissionVendedor,
+            totalPayouts: entry.totalPayouts,
+            commissionListero: entry.commissionListero,
+            commissionVendedor: entry.commissionVendedor,
+            // Ganancia del listero = comisión listero - comisión vendedor
+            gananciaListero: entry.commissionListero - entry.commissionVendedor,
+            // Para VENDEDOR: ganancia neta = ventas - premios - comisión listero
+            gananciaNeta: entry.totalSales - entry.totalPayouts - entry.commissionListero,
+            net: entry.totalSales - entry.totalPayouts - entry.commissionListero, // Alias
           };
+        }).sort((a, b) => {
+          // Ordenar por fecha DESC, luego por nombre ASC
+          if (a.date !== b.date) {
+            return b.date.localeCompare(a.date);
+          }
+          return a.vendedorName.localeCompare(b.vendedorName);
         });
+
+        return items;
       } else {
         // Sin dimensión: solo agrupar por día
         const result = await prisma.$queryRaw<
@@ -764,7 +688,7 @@ export const CommissionsService = {
       // Ahora: Calculamos jugada por jugada y luego agrupamos en memoria
       // ============================================================================
       if (filters.dimension === "ventana" && ventanaUserPolicy) {
-        // Obtener todas las jugadas individuales del periodo
+        // Obtener todas las jugadas individuales del periodo con snapshots de comisión
         const jugadas = await prisma.$queryRaw<
           Array<{
             loteria_id: string;
@@ -773,10 +697,9 @@ export const CommissionsService = {
             multiplier_name: string | null;
             multiplier_value_x: number | null;
             multiplier_kind: string | null;
-            bet_type: string;
-            final_multiplier_x: number;
             amount: number;
             ticket_id: string;
+            listero_commission_amount: number | null;
           }>
         >`
           SELECT
@@ -786,10 +709,9 @@ export const CommissionsService = {
             lm.name as multiplier_name,
             lm."valueX" as multiplier_value_x,
             lm.kind as multiplier_kind,
-            j.type as bet_type,
-            j."finalMultiplierX" as final_multiplier_x,
             j.amount,
-            t.id as ticket_id
+            t.id as ticket_id,
+            j."listeroCommissionAmount" as listero_commission_amount
           FROM "Ticket" t
           INNER JOIN "Jugada" j ON j."ticketId" = t.id
           INNER JOIN "Loteria" l ON l.id = t."loteriaId"
@@ -821,18 +743,12 @@ export const CommissionsService = {
 
         // Procesar cada jugada individualmente
         for (const jugada of jugadas) {
-          // Calcular comisión usando la política del usuario VENTANA
-          const ventanaCommission = resolveCommissionFromPolicy(ventanaUserPolicy, {
-            userId: ventanaUserId || "",
-            loteriaId: jugada.loteria_id,
-            betType: jugada.bet_type as "NUMERO" | "REVENTADO",
-            finalMultiplierX: jugada.final_multiplier_x || null,
-          });
-          const commission = Number(((jugada.amount * ventanaCommission.percent) / 100).toFixed(2));
-          const commissionPercent = ventanaCommission.percent;
+          // Usar snapshot de comisión del listero guardado en BD, NO recalcular
+          const commission = Number(jugada.listero_commission_amount || 0);
+          const commissionPercent = jugada.amount > 0 ? (commission / jugada.amount) * 100 : 0;
 
           // Construir clave única para el multiplicador
-          const multiplierKey = jugada.multiplier_id || `REVENTADO_${jugada.bet_type}`;
+          const multiplierKey = jugada.multiplier_id || "REVENTADO";
 
           // Inicializar lotería si no existe
           if (!byLoteria.has(jugada.loteria_id)) {
@@ -946,12 +862,12 @@ export const CommissionsService = {
       }
 
       // ============================================================================
-      // FIX: Cuando dimension=ventana y NO hay ventanaUserPolicy, calcular desde políticas de ventana/banca
+      // FIX: Cuando dimension=ventana y NO hay ventanaUserPolicy, usar snapshots de comisión
       // ============================================================================
-      // IMPORTANTE: Buscar usuarios VENTANA por ventana individualmente (como en dashboard)
+      // Las comisiones ya están guardadas como snapshots en la BD, simplemente las sumamos
       // ============================================================================
       if (filters.dimension === "ventana" && !ventanaUserPolicy) {
-        // Obtener todas las jugadas individuales del periodo con políticas de ventana y banca
+        // Obtener todas las jugadas individuales del periodo con snapshots de comisión
         const jugadas = await prisma.$queryRaw<
           Array<{
             loteria_id: string;
@@ -960,13 +876,9 @@ export const CommissionsService = {
             multiplier_name: string | null;
             multiplier_value_x: number | null;
             multiplier_kind: string | null;
-            bet_type: string;
-            final_multiplier_x: number;
             amount: number;
+            listero_commission_amount: number;
             ticket_id: string;
-            ventana_id: string;
-            ventana_policy: any;
-            banca_policy: any;
           }>
         >`
           SELECT
@@ -976,54 +888,17 @@ export const CommissionsService = {
             lm.name as multiplier_name,
             lm."valueX" as multiplier_value_x,
             lm.kind as multiplier_kind,
-            j.type as bet_type,
-            j."finalMultiplierX" as final_multiplier_x,
             j.amount,
-            t.id as ticket_id,
-            t."ventanaId" as ventana_id,
-            v."commissionPolicyJson" as ventana_policy,
-            b."commissionPolicyJson" as banca_policy
+            j."listeroCommissionAmount" as listero_commission_amount,
+            t.id as ticket_id
           FROM "Ticket" t
           INNER JOIN "Jugada" j ON j."ticketId" = t.id
           INNER JOIN "Loteria" l ON l.id = t."loteriaId"
-          INNER JOIN "Ventana" v ON v.id = t."ventanaId"
-          INNER JOIN "Banca" b ON b.id = v."bancaId"
           LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
           ${whereClause}
         `;
 
-        // Obtener usuarios VENTANA por ventana (similar a dashboard)
-        const ventanaIds = Array.from(new Set(jugadas.map((j) => j.ventana_id)));
-        const ventanaUsers = ventanaIds.length
-          ? await prisma.user.findMany({
-            where: {
-              role: Role.VENTANA,
-              isActive: true,
-              deletedAt: null,
-              ventanaId: { in: ventanaIds },
-            },
-            select: {
-              id: true,
-              ventanaId: true,
-              commissionPolicyJson: true,
-              updatedAt: true,
-            },
-            orderBy: { updatedAt: "desc" },
-          })
-          : [];
-
-        // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
-        const userPolicyByVentana = new Map<string, any>();
-        const ventanaUserIdByVentana = new Map<string, string>();
-        for (const user of ventanaUsers) {
-          if (!user.ventanaId) continue;
-          if (!userPolicyByVentana.has(user.ventanaId)) {
-            userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
-            ventanaUserIdByVentana.set(user.ventanaId, user.id);
-          }
-        }
-
-        // Agrupar por lotería y multiplicador, calculando comisiones desde políticas
+        // Agrupar por lotería y multiplicador, sumando comisiones snapshots
         const byLoteria = new Map<
           string,
           {
@@ -1045,62 +920,14 @@ export const CommissionsService = {
           }
         >();
 
-        // Procesar cada jugada individualmente
+        // Procesar cada jugada usando snapshots
         for (const jugada of jugadas) {
-          // Obtener política de usuario VENTANA para esta ventana específica
-          const userPolicyJson = userPolicyByVentana.get(jugada.ventana_id) ?? null;
-          const ventanaUserId = ventanaUserIdByVentana.get(jugada.ventana_id) ?? "";
-
-          let commission = 0;
-          let commissionPercent = 0;
-
-          if (userPolicyJson) {
-            // Si hay política de usuario VENTANA, usarla (prioridad más alta)
-            try {
-              const resolution = resolveCommissionFromPolicy(userPolicyJson, {
-                userId: ventanaUserId,
-                loteriaId: jugada.loteria_id,
-                betType: jugada.bet_type as "NUMERO" | "REVENTADO",
-                finalMultiplierX: jugada.final_multiplier_x || null,
-              });
-              commission = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
-              commissionPercent = resolution.percent;
-            } catch (err) {
-              // Si falla, usar fallback con políticas de ventana/banca
-              const fallback = resolveCommission(
-                {
-                  loteriaId: jugada.loteria_id,
-                  betType: jugada.bet_type as "NUMERO" | "REVENTADO",
-                  finalMultiplierX: jugada.final_multiplier_x || 0,
-                  amount: jugada.amount,
-                },
-                null,
-                jugada.ventana_policy,
-                jugada.banca_policy
-              );
-              commission = Number(fallback.commissionAmount.toFixed(2));
-              commissionPercent = fallback.commissionPercent;
-            }
-          } else {
-            // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
-            const ventanaCommission = resolveCommission(
-              {
-                loteriaId: jugada.loteria_id,
-                betType: jugada.bet_type as "NUMERO" | "REVENTADO",
-                finalMultiplierX: jugada.final_multiplier_x || 0,
-                amount: jugada.amount,
-              },
-              null, // No hay política de usuario VENTANA
-              jugada.ventana_policy, // Política de ventana
-              jugada.banca_policy // Política de banca
-            );
-            // Usar commissionAmount directamente de resolveCommission para mantener consistencia
-            commission = Number(ventanaCommission.commissionAmount.toFixed(2));
-            commissionPercent = ventanaCommission.commissionPercent;
-          }
+          // Usar el snapshot directamente
+          const commission = Number(jugada.listero_commission_amount || 0);
+          const commissionPercent = jugada.amount > 0 ? (commission / jugada.amount) * 100 : 0;
 
           // Construir clave única para el multiplicador
-          const multiplierKey = jugada.multiplier_id || `REVENTADO_${jugada.bet_type}`;
+          const multiplierKey = jugada.multiplier_id || "REVENTADO";
 
           // Inicializar lotería si no existe
           if (!byLoteria.has(jugada.loteria_id)) {
@@ -1142,7 +969,7 @@ export const CommissionsService = {
 
           const multiplier = loteria.multipliers.get(multiplierKey)!;
 
-          // Acumular datos
+          // Acumular datos usando snapshots
           multiplier.totalSales += jugada.amount;
           multiplier.totalTickets.add(jugada.ticket_id);
           multiplier.totalCommission += commission;
@@ -1206,7 +1033,7 @@ export const CommissionsService = {
             date,
             filters,
             resultCount: result.length,
-            calculationMethod: "jugada_por_jugada_ventana_banca_policy",
+            calculationMethod: "snapshot_based",
           },
         });
 
@@ -1441,6 +1268,7 @@ export const CommissionsService = {
 
       // Query para obtener tickets con paginación
       // Solo tickets que tengan al menos una jugada con el multiplicador especificado
+      // Incluimos listeroCommissionAmount para usar snapshots en lugar de recalcular
       const [data, totalResult] = await Promise.all([
         prisma.$queryRaw<
           Array<{
@@ -1448,6 +1276,7 @@ export const CommissionsService = {
             ticket_number: string;
             total_amount: number;
             commission_amount: number;
+            listero_commission_amount: number;
             commission_percent: number;
             created_at: Date;
             vendedor_name: string | null;
@@ -1459,6 +1288,7 @@ export const CommissionsService = {
             t."ticketNumber" as ticket_number,
             t."totalAmount" as total_amount,
             COALESCE(SUM(j."commissionAmount"), 0) as commission_amount,
+            COALESCE(SUM(j."listeroCommissionAmount"), 0) as listero_commission_amount,
             AVG(j."commissionPercent") as commission_percent,
             t."createdAt" as created_at,
             u.name as vendedor_name,
@@ -1499,66 +1329,22 @@ export const CommissionsService = {
         },
       });
 
-      // Si dimension=ventana, recalcular comisiones usando la política del usuario VENTANA
-      if (filters.dimension === "ventana" && ventanaUserPolicy) {
-        // Obtener las jugadas de los tickets paginados para recalcular comisiones
-        const ticketIds = data.map((r) => r.ticket_id);
-        const jugadas = await prisma.$queryRaw<
-          Array<{
-            ticket_id: string;
-            amount: number;
-            type: string;
-            finalMultiplierX: number;
-            loteriaId: string;
-          }>
-        >`
-          SELECT
-            j."ticketId" as ticket_id,
-            j.amount,
-            j.type,
-            j."finalMultiplierX",
-            t."loteriaId"
-          FROM "Jugada" j
-          INNER JOIN "Ticket" t ON t.id = j."ticketId"
-          WHERE j."ticketId" IN (${Prisma.join(ticketIds.map((id) => Prisma.sql`${id}::uuid`))})
-            AND t."loteriaId" = ${loteriaId}::uuid
-            ${multiplierId === "unknown"
-            ? Prisma.sql`AND j."multiplierId" IS NULL`
-            : Prisma.sql`AND j."multiplierId" = ${multiplierId}::uuid`}
-        `;
-
-        // Agrupar jugadas por ticket y calcular comisiones del usuario VENTANA
-        const commissionByTicket = new Map<string, { totalCommission: number; avgPercent: number; count: number }>();
-        for (const jugada of jugadas) {
-          const ventanaCommission = resolveCommissionFromPolicy(ventanaUserPolicy, {
-            userId: ventanaUserId || "",
-            loteriaId: jugada.loteriaId,
-            betType: jugada.type as "NUMERO" | "REVENTADO",
-            finalMultiplierX: jugada.finalMultiplierX || null,
-          });
-          const commission = Number(((jugada.amount * ventanaCommission.percent) / 100).toFixed(2));
-          const existing = commissionByTicket.get(jugada.ticket_id) || { totalCommission: 0, avgPercent: 0, count: 0 };
-          commissionByTicket.set(jugada.ticket_id, {
-            totalCommission: existing.totalCommission + commission,
-            avgPercent: existing.avgPercent + ventanaCommission.percent,
-            count: existing.count + 1,
-          });
-        }
-
-        // Mapear datos con comisiones recalculadas
+      // Si dimension=ventana: usar snapshots de comisión del listero (listeroCommissionAmount)
+      if (filters.dimension === "ventana") {
+        // Las comisiones ya están guardadas como snapshots en la BD
+        // Simplemente usamos el listero_commission_amount agregado desde la query
         return {
           data: data.map((row) => {
-            const ticketCommissions = commissionByTicket.get(row.ticket_id) || { totalCommission: 0, avgPercent: 0, count: 0 };
-            const avgPercent = ticketCommissions.count > 0
-              ? ticketCommissions.avgPercent / ticketCommissions.count
+            const commissionPercent = row.total_amount > 0
+              ? (row.listero_commission_amount / row.total_amount) * 100
               : 0;
 
             return {
               ticketId: row.ticket_id,
               ticketNumber: row.ticket_number,
               totalAmount: row.total_amount,
-              commissionAmount: ticketCommissions.totalCommission,
-              commissionPercentage: Number(avgPercent.toFixed(2)),
+              commissionAmount: row.listero_commission_amount,
+              commissionPercentage: Number(commissionPercent.toFixed(2)),
               createdAt: row.created_at.toISOString(),
               vendedorName: row.vendedor_name || undefined,
               ventanaName: row.ventana_name || undefined,

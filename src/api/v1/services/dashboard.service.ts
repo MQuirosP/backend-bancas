@@ -506,13 +506,7 @@ export const DashboardService = {
           SELECT
             t."ventanaId" AS ventana_id,
             COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-            COALESCE(SUM(
-              CASE
-                WHEN j."listeroCommissionAmount" > 0 THEN j."listeroCommissionAmount"
-                WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount"
-                ELSE 0
-              END
-            ), 0) AS commission_ventana
+            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS commission_ventana
           FROM tickets_in_range t
           JOIN "Jugada" j ON j."ticketId" = t.id
           WHERE j."deletedAt" IS NULL
@@ -574,13 +568,7 @@ export const DashboardService = {
           SELECT
             t."loteriaId" AS loteria_id,
             COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-            COALESCE(SUM(
-              CASE
-                WHEN j."listeroCommissionAmount" > 0 THEN j."listeroCommissionAmount"
-                WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount"
-                ELSE 0
-              END
-            ), 0) AS commission_ventana
+            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS commission_ventana
           FROM tickets_in_range t
           JOIN "Jugada" j ON j."ticketId" = t.id
           WHERE j."deletedAt" IS NULL
@@ -1156,11 +1144,10 @@ export const DashboardService = {
       }
 
       // Calcular saldoAHoy para cada ventana
-      const effectiveUserRole = role || Role.ADMIN;
+      // Balance: Ventas - Premios - Comisión Listero
+      // Comisión Vendedor es SOLO informativa, no se resta del balance
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
-        const baseBalance = effectiveUserRole === Role.ADMIN
-          ? monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission
-          : monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
+        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
         const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
         monthSaldoByVentana.set(ventanaId, saldoAHoy);
       }
@@ -1171,11 +1158,9 @@ export const DashboardService = {
         const totalPaid = entry.totalPaid;
         const totalCollected = entry.totalCollected;
         const totalPaidToCustomer = entry.totalPaidToCustomer;
-        // ✅ CRÍTICO: Recalcular remainingBalance según rol del usuario
-        const effectiveUserRole = role || Role.ADMIN;
-        const baseBalance = effectiveUserRole === Role.ADMIN
-          ? entry.totalSales - entry.totalPayouts - entry.totalListeroCommission
-          : entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
+        // Balance: Ventas - Premios - Comisión Listero
+        // Comisión Vendedor es SOLO informativa, no se resta del balance
+        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
         const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado
         const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
@@ -1553,9 +1538,10 @@ export const DashboardService = {
         monthAggregated.set(collection.ventanaId, entry);
       }
 
-      const effectiveUserRole = role || Role.ADMIN;
+      // Balance: Ventas - Premios - Comisión Listero
+      // Comisión Vendedor es SOLO informativa, no se resta del balance
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
-        const baseBalance = effectiveUserRole === Role.ADMIN ? monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission : monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
+        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
         const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
         monthSaldoByVentana.set(ventanaId, saldoAHoy);
       }
@@ -1567,11 +1553,9 @@ export const DashboardService = {
         const totalCollected = entry.totalCollected;
         const totalPaidToCustomer = entry.totalPaidToCustomer;
         const totalPaidToVentana = entry.totalPaidToVentana || 0; // Para CxP según documento
-        // ✅ CRÍTICO: Recalcular remainingBalance según rol del usuario
-        const effectiveUserRole = role || Role.ADMIN;
-        const baseBalance = effectiveUserRole === Role.ADMIN
-          ? entry.totalSales - entry.totalPayouts - entry.totalListeroCommission
-          : entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
+        // Balance: Ventas - Premios - Comisión Listero
+        // Comisión Vendedor es SOLO informativa, no se resta del balance
+        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
         const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
         const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
