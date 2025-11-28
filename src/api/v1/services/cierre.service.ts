@@ -127,7 +127,7 @@ export class CierreService {
           j."finalMultiplierX" AS "finalMultiplierX",
           j.amount            AS amount,
           j.payout            AS payout,
-          j."commissionAmount" AS "commissionAmount",
+          j."listeroCommissionAmount" AS "listeroCommissionAmount",
           t.id                AS "ticketId",
           t."ventanaId"       AS "ventanaId",
           t."loteriaId"       AS "loteriaId",
@@ -164,7 +164,7 @@ export class CierreService {
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') as turno,
         COALESCE(SUM(base.amount), 0)::FLOAT as "totalVendida",
         COALESCE(SUM(base.payout), 0)::FLOAT as ganado,
-        COALESCE(SUM(base."commissionAmount"), 0)::FLOAT as "comisionTotal",
+        COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT as "comisionTotal",
         0::FLOAT as refuerzos,
         COUNT(DISTINCT base."ticketId")::INT as "ticketsCount",
         COUNT(base."jugadaId")::INT as "jugadasCount"
@@ -223,7 +223,7 @@ export class CierreService {
         -- Métricas
         COALESCE(SUM(j.amount), 0)::FLOAT as "totalVendida",
         COALESCE(SUM(j.payout), 0)::FLOAT as ganado,
-        COALESCE(SUM(j."commissionAmount"), 0)::FLOAT as "comisionTotal",
+        COALESCE(SUM(j."listeroCommissionAmount"), 0)::FLOAT as "comisionTotal",
         0::FLOAT as refuerzos,
         COUNT(DISTINCT t.id)::INT as "ticketsCount",
         COUNT(j.id)::INT as "jugadasCount"
@@ -692,7 +692,7 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
           outOfBandCount: cnt,
         },
       });
-    } catch {}
+    } catch { }
   }
 
   return { outOfBandCount: cnt, examples };
