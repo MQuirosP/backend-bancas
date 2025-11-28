@@ -716,11 +716,8 @@ export const DashboardService = {
     const rangeEnd = parseDateEnd(toDateStr);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
-    // ✅ CRÍTICO: Calcular comisiones desde políticas (igual que calculateGanancia)
-    const {
-      totalVentanaCommission,
-      extrasByVentana,
-    } = await computeVentanaCommissionFromPolicies(filters);
+    // ✅ NOTE: Commission already included in SQL snapshot (listero_commission_snapshot)
+    // No need to call computeVentanaCommissionFromPolicies here
 
     // ✅ CRÍTICO: Obtener datos directamente desde tickets/jugadas (igual que calculateGanancia)
     const ventanaData = await prisma.$queryRaw<
@@ -1619,7 +1616,8 @@ export const DashboardService = {
   async getSummary(filters: DashboardFilters, role?: Role): Promise<DashboardSummary> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
-    const { totalVentanaCommission } = await computeVentanaCommissionFromPolicies(filters);
+    // ✅ NOTE: Commission already included in SQL snapshot
+    // No need to call computeVentanaCommissionFromPolicies
 
     const summaryRows = await prisma.$queryRaw<
       Array<{
@@ -1683,7 +1681,9 @@ export const DashboardService = {
     const totalTickets = Number(summary.total_tickets) || 0;
     const winningTickets = Number(summary.winning_tickets) || 0;
     const commissionUser = Number(summary.commission_user) || 0;
-    const commissionVentana = (Number(summary.commission_ventana) || 0) + totalVentanaCommission;
+    // ✅ FIX: Use ONLY snapshot from database, NOT totalVentanaCommission
+    // totalVentanaCommission is already included in summary.commission_ventana
+    const commissionVentana = Number(summary.commission_ventana) || 0;
     const totalCommissions = commissionUser + commissionVentana;
     // ✅ CORRECCIÓN: Calcular ganancia neta según rol
     // Para ADMIN: resta commissionVentana (comisión del listero)
@@ -2142,8 +2142,8 @@ export const DashboardService = {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(previousFilters);
     const baseFilters = buildTicketBaseFilters("t", previousFilters, fromDateStr, toDateStr);
 
-    // Calcular comisiones de ventana desde políticas para el período anterior
-    const { totalVentanaCommission } = await computeVentanaCommissionFromPolicies(previousFilters);
+    // ✅ NOTE: Commission already included in SQL snapshot for previous period
+    // No need to call computeVentanaCommissionFromPolicies
 
     const previousRows = await prisma.$queryRaw<
       Array<{
@@ -2205,8 +2205,9 @@ export const DashboardService = {
     const sales = Number(row.total_sales) || 0;
     const payouts = Number(row.total_payouts) || 0;
     const commissionUser = Number(row.commission_user) || 0;
-    const commissionVentanaRaw = Number(row.commission_ventana) || 0;
-    const commissionVentana = commissionVentanaRaw + totalVentanaCommission;
+    // ✅ FIX: Use ONLY snapshot from database, NOT totalVentanaCommission
+    // totalVentanaCommission is already included in row.commission_ventana
+    const commissionVentana = Number(row.commission_ventana) || 0;
     const totalCommissions = commissionUser + commissionVentana;
 
     // ✅ CORRECCIÓN: Calcular ganancia neta según rol
