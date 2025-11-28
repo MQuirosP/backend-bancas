@@ -115,7 +115,16 @@ export const AccountsService = {
         }
 
         // Si es fecha y filtros (uso legacy del controller)
-        const targetDate = typeof date === 'string' ? new Date(date) : date;
+        let targetDate: Date;
+        if (typeof date === 'string') {
+            // Parse date string in format YYYY-MM-DD
+            // This represents a day in Costa Rica timezone
+            const [year, month, day] = date.split('-').map(Number);
+            targetDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+        } else {
+            targetDate = date;
+        }
+
         const { ventanaId, vendedorId } = filters;
 
         // Buscar el statement correspondiente
