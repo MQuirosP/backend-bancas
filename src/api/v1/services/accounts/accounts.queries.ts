@@ -717,7 +717,9 @@ export async function getMovementsForDay(
     const payments = await AccountPaymentRepository.findByStatementId(statementId);
 
     return payments
-        .filter((p) => !p.isReversed) // Solo movimientos activos
+        // ✅ CORREGIDO: Retornar TODOS los movimientos (activos y reversados)
+        // El FE los separa en "Activos" y "Revertidos" para mostrar en historial de auditoria
+        // Los cálculos en el backend filtran !isReversed cuando es necesario
         .map((p) => ({
             id: p.id,
             accountStatementId: p.accountStatementId,
