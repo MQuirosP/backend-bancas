@@ -1650,7 +1650,13 @@ export const DashboardService = {
         commission_summary AS (
           SELECT
             COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana
+            COALESCE(SUM(
+              CASE
+                WHEN j."listeroCommissionAmount" > 0 THEN j."listeroCommissionAmount"
+                WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount"
+                ELSE 0
+              END
+            ), 0) AS commission_ventana
           FROM "Jugada" j
           JOIN tickets_in_range t ON t.id = j."ticketId"
           WHERE j."deletedAt" IS NULL
