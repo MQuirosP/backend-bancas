@@ -129,3 +129,27 @@ export const validateGetPaymentHistoryQuery = validateQuery(GetPaymentHistoryQue
  * Middleware de validación para POST /accounts/reverse-payment
  */
 export const validateReversePaymentBody = validateBody(ReversePaymentBodySchema);
+
+/**
+ * Schema para query parameters de GET /accounts/balance/current
+ */
+export const GetCurrentBalanceQuerySchema = z
+  .object({
+    scope: z.string(),
+    dimension: z.string(),
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
+  })
+  .strict()
+  .refine((data) => data.scope === "mine", {
+    message: "Los parámetros scope y dimension son requeridos",
+    path: ["scope"],
+  })
+  .refine((data) => data.dimension === "ventana", {
+    message: "Los parámetros scope y dimension son requeridos",
+    path: ["dimension"],
+  });
+
+/**
+ * Middleware de validación para GET /accounts/balance/current
+ */
+export const validateGetCurrentBalanceQuery = validateQuery(GetCurrentBalanceQuerySchema);

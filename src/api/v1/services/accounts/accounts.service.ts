@@ -5,6 +5,7 @@ import { getDailySummariesFromMaterializedView, getMovementsForDay } from "./acc
 import { getStatementDirect, calculateDayStatement } from "./accounts.calculations";
 import { registerPayment, reversePayment, deleteStatement } from "./accounts.movements";
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
+import prisma from "../../../../core/prismaClient";
 
 /**
  * Accounts Service
@@ -144,4 +145,112 @@ export const AccountsService = {
      * Elimina un estado de cuenta
      */
     deleteStatement,
+
+    /**
+     * Obtiene el balance acumulado actual de una ventana
+     * Balance = ventas - premios - comisiones + comisiones propias - pagos realizados
+     * Sin filtro de fecha (acumulado desde el inicio hasta HOY)
+     */
+    async getCurrentBalance(ventanaId: string) {
+        const today = new Date();
+        // Establecer rango desde el inicio del tiempo hasta hoy
+        const startDate = new Date(Date.UTC(2020, 0, 1)); // Fecha arbitraria en el pasado
+        const endDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 23, 59, 59, 999));
+
+        // Obtener información de la ventana
+        const ventana = await prisma.ventana.findUnique({
+            where: { id: ventanaId },
+            select: { id: true, name: true },
+        });
+
+        if (!ventana) {
+            throw new Error("Ventana no encontrada");
+        }
+
+        // Usar la misma lógica que getStatementDirect para calcular el balance
+        // Calcular balance acumulado directamente desde tickets/jugadas
+        const startDateCRStr = toCRDateString(startDate);
+        const endDateCRStr = toCRDateString(endDate);
+
+        // Construir query SQL para obtener totales acumulados
+        // IMPORTANTE: Calcular sales y commissions desde jugadas (suma de todas)
+        // Pero payouts debe ser la suma de totalPayout de tickets únicos (no duplicar por jugada)
+        const salesAndCommissions = await prisma.$queryRaw<Array<{
+            total_sales: number;
+            listero_commission: number;
+            vendedor_commission: number;
+        }>>`
+            SELECT
+                COALESCE(SUM(j.amount), 0) as total_sales,
+                COALESCE(SUM(j."listeroCommissionAmount"), 0) as listero_commission,
+                COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as vendedor_commission
+            FROM "Ticket" t
+            INNER JOIN "Jugada" j ON j."ticketId" = t.id
+            WHERE t."ventanaId" = ${ventanaId}::uuid
+            AND t."deletedAt" IS NULL
+            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+            AND j."deletedAt" IS NULL
+            AND COALESCE(
+                t."businessDate",
+                DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+            ) <= ${endDateCRStr}::date
+        `;
+
+        // Calcular payouts desde tickets (no desde jugadas para evitar duplicar)
+        const payoutsResult = await prisma.$queryRaw<Array<{
+            total_payouts: number;
+        }>>`
+            SELECT
+                COALESCE(SUM(t."totalPayout"), 0) as total_payouts
+            FROM "Ticket" t
+            WHERE t."ventanaId" = ${ventanaId}::uuid
+            AND t."deletedAt" IS NULL
+            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+            AND COALESCE(
+                t."businessDate",
+                DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+            ) <= ${endDateCRStr}::date
+        `;
+
+        const totalSales = Number(salesAndCommissions[0]?.total_sales || 0);
+        const totalPayouts = Number(payoutsResult[0]?.total_payouts || 0);
+        const listeroCommission = Number(salesAndCommissions[0]?.listero_commission || 0);
+
+        // Balance = ventas - premios - comisión listero (dimensión ventana)
+        const balance = totalSales - totalPayouts - listeroCommission;
+
+        // Obtener pagos y cobros acumulados usando Prisma ORM (igual que AccountPaymentRepository)
+        const payments = await prisma.accountPayment.findMany({
+            where: {
+                ventanaId: ventanaId,
+                isReversed: false,
+                date: {
+                    lte: endDate,
+                },
+            },
+            select: {
+                type: true,
+                amount: true,
+            },
+        });
+
+        // Calcular totales
+        const totalPaid = payments
+            .filter(p => p.type === "payment")
+            .reduce((sum, p) => sum + p.amount, 0);
+        const totalCollected = payments
+            .filter(p => p.type === "collection")
+            .reduce((sum, p) => sum + p.amount, 0);
+
+        // remainingBalance = balance - totalCollected + totalPaid
+        const remainingBalance = balance - totalCollected + totalPaid;
+
+        return {
+            balance,
+            remainingBalance,
+            ventanaId: ventana.id,
+            ventanaName: ventana.name,
+            updatedAt: new Date().toISOString(),
+        };
+    },
 };

@@ -24,6 +24,7 @@ router.post("/", validateBody(CreateTicketSchema), TicketController.create);
 router.get("/filter-options", TicketController.getFilterOptions);
 router.get("/numbers-summary/filter-options", TicketController.getNumbersSummaryFilterOptions);
 router.get("/numbers-summary", validateNumbersSummaryQuery, TicketController.numbersSummary);
+router.post("/numbers-summary/pdf", TicketController.numbersSummaryPdf);
 router.get("/by-number/:ticketNumber", validateTicketNumberParam, TicketController.getByTicketNumber);
 router.get("/:id", TicketController.getById);
 router.get("/", validateListTicketsQuery, TicketController.list);
