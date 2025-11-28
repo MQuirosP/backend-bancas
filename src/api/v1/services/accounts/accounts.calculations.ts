@@ -438,36 +438,6 @@ export async function getStatementDirect(
     AND j."deletedAt" IS NULL
   `;
 
-    // Obtener usuarios VENTANA por ventana (igual que commissions)
-    const ventanaIds = Array.from(new Set(jugadas.map((j) => j.ventana_id)));
-    const ventanaUsers = ventanaIds.length > 0
-        ? await prisma.user.findMany({
-            where: {
-                role: Role.VENTANA,
-                isActive: true,
-                deletedAt: null,
-                ventanaId: { in: ventanaIds },
-            },
-            select: {
-                id: true,
-                ventanaId: true,
-                commissionPolicyJson: true,
-                updatedAt: true,
-            },
-            orderBy: { updatedAt: "desc" },
-        })
-        : [];
-
-    // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
-    const userPolicyByVentana = new Map<string, any>();
-    const ventanaUserIdByVentana = new Map<string, string>();
-    for (const user of ventanaUsers) {
-        if (!user.ventanaId) continue;
-        if (!userPolicyByVentana.has(user.ventanaId)) {
-            userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
-            ventanaUserIdByVentana.set(user.ventanaId, user.id);
-        }
-    }
 
     // ✅ CRÍTICO: Agrupar jugadas por día y ventana/vendedor, calculando comisiones jugada por jugada
     // EXACTAMENTE igual que commissions (líneas 403-492)
@@ -488,57 +458,10 @@ export async function getStatementDirect(
     >();
 
     for (const jugada of jugadas) {
-        // Obtener política de usuario VENTANA para esta ventana específica
-        const userPolicyJson = userPolicyByVentana.get(jugada.ventana_id) ?? null;
-        const ventanaUserId = ventanaUserIdByVentana.get(jugada.ventana_id) ?? "";
-
-        let commissionListero = 0;
-
-        // ✅ CRÍTICO: Calcular comisión del listero jugada por jugada (igual que dashboard.service.ts)
-        if (userPolicyJson) {
-            // Si hay política de usuario VENTANA, usarla (prioridad más alta)
-            try {
-                const resolution = resolveCommissionFromPolicy(userPolicyJson, {
-                    userId: ventanaUserId,
-                    loteriaId: jugada.loteriaId,
-                    betType: jugada.type as "NUMERO" | "REVENTADO",
-                    finalMultiplierX: jugada.finalMultiplierX ?? null,
-                });
-                commissionListero = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
-            } catch (err) {
-                // Si falla, usar fallback con políticas de ventana/banca
-                const fallback = resolveCommission(
-                    {
-                        loteriaId: jugada.loteriaId,
-                        betType: jugada.type as "NUMERO" | "REVENTADO",
-                        finalMultiplierX: jugada.finalMultiplierX || 0,
-                        amount: jugada.amount,
-                    },
-                    null,
-                    jugada.ventana_policy,
-                    jugada.banca_policy
-                );
-                commissionListero = parseFloat((fallback.commissionAmount).toFixed(2));
-            }
-        } else {
-            // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
-            const ventanaCommission = resolveCommission(
-                {
-                    loteriaId: jugada.loteriaId,
-                    betType: jugada.type as "NUMERO" | "REVENTADO",
-                    finalMultiplierX: jugada.finalMultiplierX || 0,
-                    amount: jugada.amount,
-                },
-                null, // No hay política de usuario VENTANA
-                jugada.ventana_policy, // Política de ventana
-                jugada.banca_policy // Política de banca
-            );
-            commissionListero = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
-        }
-
-        // ✅ IMPORTANTE: Usar SIEMPRE el cálculo reciente desde políticas, NUNCA el snapshot
-        // El snapshot puede estar obsoleto o incorrecto. Recalcular desde políticas es confiable.
-        const commissionListeroFinal = commissionListero;
+        // ✅ CORREGIDO: Usar listeroCommissionAmount directamente de Jugada (igual que dashboard y mes)
+        // Esto asegura consistencia entre todos los cálculos
+        // El snapshot es la fuente de verdad para comisiones ya que es lo que se pagó en ese momento
+        const commissionListeroFinal = Number(jugada.listero_commission_amount || 0);
 
         const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
         const key = dimension === "ventana"
