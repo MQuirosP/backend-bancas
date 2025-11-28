@@ -454,11 +454,8 @@ export const DashboardService = {
   async calculateGanancia(filters: DashboardFilters, role?: Role): Promise<GananciaResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
-    const {
-      totalVentanaCommission,
-      extrasByVentana,
-      extrasByLoteria,
-    } = await computeVentanaCommissionFromPolicies(filters);
+    // ✅ CAMBIO: NO llamamos a computeVentanaCommissionFromPolicies()
+    // Las comisiones ya vienen del SQL snapshot (SUM(listeroCommissionAmount))
 
     const byVentanaResult = await prisma.$queryRaw<
       Array<{
@@ -595,9 +592,8 @@ export const DashboardService = {
     const totalSales = byVentanaResult.reduce((sum, v) => sum + Number(v.total_sales || 0), 0);
     const totalPayouts = byVentanaResult.reduce((sum, v) => sum + Number(v.total_payouts || 0), 0);
     const commissionUserTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_user || 0), 0);
-    // ✅ IMPORTANTE: Usar SOLO totalVentanaCommission (recalculado desde políticas)
-    // NO sumar commissionVentanaRawTotal (snapshot del SQL) para evitar doble conteo
-    const commissionVentanaTotal = totalVentanaCommission;
+    // ✅ CAMBIO: Usar SOLO snapshot del SQL (listeroCommissionAmount), NO recalculado desde políticas
+    const commissionVentanaTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
     const totalAmount = commissionUserTotal + commissionVentanaTotal;
 
     // Calcular ganancia neta según rol y dimensión
@@ -628,9 +624,8 @@ export const DashboardService = {
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
         const commissionUser = Number(row.commission_user) || 0;
-        // ✅ IMPORTANTE: Usar SOLO extrasByVentana (recalculado desde políticas)
-        // NO sumar row.commission_ventana (snapshot del SQL) para evitar doble conteo
-        const commissionVentana = extrasByVentana.get(row.ventana_id) || 0;
+        // ✅ CAMBIO: Usar SOLO snapshot del SQL (row.commission_ventana = SUM(listeroCommissionAmount))
+        const commissionVentana = Number(row.commission_ventana) || 0;
         const commissions = commissionUser + commissionVentana;
         // Calcular ganancia neta según rol y dimensión
         // Banca (ADMIN) con dimension=ventana: resta solo commissionVentana
@@ -667,9 +662,8 @@ export const DashboardService = {
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
         const commissionUser = Number(row.commission_user) || 0;
-        // ✅ IMPORTANTE: Usar SOLO extrasByLoteria (recalculado desde políticas)
-        // NO sumar row.commission_ventana (snapshot del SQL) para evitar doble conteo
-        const commissionVentana = extrasByLoteria.get(row.loteria_id) || 0;
+        // ✅ CAMBIO: Usar SOLO snapshot del SQL (row.commission_ventana = SUM(listeroCommissionAmount))
+        const commissionVentana = Number(row.commission_ventana) || 0;
         const commissions = commissionUser + commissionVentana;
         // Calcular ganancia neta: Banca viendo loterías siempre resta solo commissionVentana
         const net = sales - payout - commissionVentana;
