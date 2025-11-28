@@ -82,8 +82,10 @@ interface CxCResult {
     totalCollected: number;
     totalPaidToCustomer: number;
     amount: number; // compatibilidad: saldo positivo (CxC)
-    remainingBalance: number;
-    saldoAHoy: number; // ✅ NUEVO: Acumulado del mes completo (inmutable respecto período)
+    remainingBalance: number; // Período filtrado
+    monthlyAccumulated: {
+      remainingBalance: number; // ✅ NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
+    };
     isActive: boolean;
   }>;
 }
@@ -103,8 +105,10 @@ interface CxPResult {
     totalPaidToCustomer: number;
     totalPaidToVentana: number; // Para CxP según documento
     amount: number; // compatibilidad: saldo positivo (CxP)
-    remainingBalance: number;
-    saldoAHoy: number; // ✅ NUEVO: Acumulado del mes completo (inmutable respecto período)
+    remainingBalance: number; // Período filtrado
+    monthlyAccumulated: {
+      remainingBalance: number; // ✅ NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
+    };
     isActive: boolean;
   }>;
 }
@@ -994,17 +998,31 @@ export const DashboardService = {
     // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana
     const monthSaldoByVentana = new Map<string, number>();
     {
-      // Extraer año y mes de los filtros
-      const currentDate = new Date();
-      const monthStart = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), 1));
-      const monthEnd = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth() + 1, 0));
+      // ✅ CORREGIDO: Convertir fecha actual a zona horaria de Costa Rica (UTC-6)
+      // Primero, obtener la fecha UTC actual
+      const utcNow = new Date();
+      // Convertir a Costa Rica sumando 6 horas offset
+      const COSTA_RICA_UTC_OFFSET_MS = -6 * 60 * 60 * 1000; // UTC-6
+      const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
+
+      // Extraer año y mes en zona horaria de Costa Rica
+      const crYear = crNow.getUTCFullYear();
+      const crMonth = crNow.getUTCMonth(); // 0-based
+
+      // Calcular primer y último día del mes en Costa Rica
+      const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
+      const monthEnd = new Date(Date.UTC(crYear, crMonth + 1, 0));
+
+      // Convertir a strings de fecha para filtros
+      const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
+      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(new Date(Date.UTC(crYear, crMonth + 1, 0)).getUTCDate()).padStart(2, '0')}`;
 
       // Construir filtros WHERE para el mes completo (misma lógica que calculateCxC pero con fechas del mes)
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
         { ...filters, fromDate: monthStart, toDate: monthEnd },
-        monthStart.toISOString().split("T")[0],
-        monthEnd.toISOString().split("T")[0]
+        monthStartStr,
+        monthEndStr
       );
 
       // Obtener datos de ventanas para el mes completo
@@ -1184,8 +1202,10 @@ export const DashboardService = {
           totalCollected,
           totalPaidToCustomer,
           amount, // ✅ Usa remainingBalance recalculado
-          remainingBalance: recalculatedRemainingBalance, // ✅ Recalculado según rol
-          saldoAHoy: monthSaldoByVentana.get(entry.ventanaId) ?? 0, // ✅ NUEVO: Saldo a Hoy
+          remainingBalance: recalculatedRemainingBalance, // ✅ Recalculado según rol (período filtrado)
+          monthlyAccumulated: {
+            remainingBalance: monthSaldoByVentana.get(entry.ventanaId) ?? 0, // ✅ NUEVO: Saldo a Hoy (mes completo, inmutable)
+          },
           isActive: entry.isActive,
         };
       })
@@ -1491,15 +1511,30 @@ export const DashboardService = {
     // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana en CxP
     const monthSaldoByVentana = new Map<string, number>();
     {
-      const currentDate = new Date();
-      const monthStart = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), 1));
-      const monthEnd = new Date(Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth() + 1, 0));
+      // ✅ CORREGIDO: Convertir fecha actual a zona horaria de Costa Rica (UTC-6)
+      // Primero, obtener la fecha UTC actual
+      const utcNow = new Date();
+      // Convertir a Costa Rica sumando 6 horas offset
+      const COSTA_RICA_UTC_OFFSET_MS = -6 * 60 * 60 * 1000; // UTC-6
+      const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
+
+      // Extraer año y mes en zona horaria de Costa Rica
+      const crYear = crNow.getUTCFullYear();
+      const crMonth = crNow.getUTCMonth(); // 0-based
+
+      // Calcular primer y último día del mes en Costa Rica
+      const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
+      const monthEnd = new Date(Date.UTC(crYear, crMonth + 1, 0));
+
+      // Convertir a strings de fecha para filtros
+      const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
+      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(new Date(Date.UTC(crYear, crMonth + 1, 0)).getUTCDate()).padStart(2, '0')}`;
 
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
         { ...filters, fromDate: monthStart, toDate: monthEnd },
-        monthStart.toISOString().split("T")[0],
-        monthEnd.toISOString().split("T")[0]
+        monthStartStr,
+        monthEndStr
       );
 
       const monthVentanaData = await prisma.$queryRaw<Array<{ ventana_id: string; ventana_name: string; is_active: boolean; total_sales: number; total_payouts: number; commission_user: number; commission_ventana_raw: number; listero_commission_snapshot: number }>>(
@@ -1569,8 +1604,10 @@ export const DashboardService = {
           totalPaidToCustomer,
           totalPaidToVentana,
           amount, // ✅ Usa remainingBalance recalculado
-          remainingBalance: recalculatedRemainingBalance, // ✅ Recalculado según rol
-          saldoAHoy: monthSaldoByVentana.get(entry.ventanaId) ?? 0, // ✅ NUEVO: Saldo a Hoy
+          remainingBalance: recalculatedRemainingBalance, // ✅ Recalculado según rol (período filtrado)
+          monthlyAccumulated: {
+            remainingBalance: monthSaldoByVentana.get(entry.ventanaId) ?? 0, // ✅ NUEVO: Saldo a Hoy (mes completo, inmutable)
+          },
           isActive: entry.isActive,
         };
       })

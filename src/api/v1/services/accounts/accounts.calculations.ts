@@ -667,6 +667,12 @@ export async function getStatementDirect(
         Prisma.sql`t.status IN ('ACTIVE', 'EVALUATED', 'PAID')`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${monthStartDateCRStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${monthEndDateCRStr}::date`,
+        // ✅ NUEVO: Excluir sorteos CLOSED para no incluir datos de sorteos finalizados (mismo filtro que dashboard)
+        Prisma.sql`NOT EXISTS (
+            SELECT 1 FROM "Sorteo" s
+            WHERE s.id = t."sorteoId"
+            AND s.status = 'CLOSED'
+        )`,
     ];
 
     // Reutilizar filtros RBAC/banca
@@ -762,50 +768,9 @@ export async function getStatementDirect(
 
     // Procesar jugadas del mes (misma lógica que periodo filtrado)
     for (const jugada of monthlyJugadas) {
-        const userPolicyJson = userPolicyByVentana.get(jugada.ventana_id) ?? null;
-        const ventanaUserId = ventanaUserIdByVentana.get(jugada.ventana_id) ?? "";
-
-        let commissionListero = 0;
-
-        if (userPolicyJson) {
-            try {
-                const resolution = resolveCommissionFromPolicy(userPolicyJson, {
-                    userId: ventanaUserId,
-                    loteriaId: jugada.loteriaId,
-                    betType: jugada.type as "NUMERO" | "REVENTADO",
-                    finalMultiplierX: jugada.finalMultiplierX ?? null,
-                });
-                commissionListero = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
-            } catch (err) {
-                const fallback = resolveCommission(
-                    {
-                        loteriaId: jugada.loteriaId,
-                        betType: jugada.type as "NUMERO" | "REVENTADO",
-                        finalMultiplierX: jugada.finalMultiplierX || 0,
-                        amount: jugada.amount,
-                    },
-                    null,
-                    jugada.ventana_policy,
-                    jugada.banca_policy
-                );
-                commissionListero = parseFloat((fallback.commissionAmount).toFixed(2));
-            }
-        } else {
-            const ventanaCommission = resolveCommission(
-                {
-                    loteriaId: jugada.loteriaId,
-                    betType: jugada.type as "NUMERO" | "REVENTADO",
-                    finalMultiplierX: jugada.finalMultiplierX || 0,
-                    amount: jugada.amount,
-                },
-                null,
-                jugada.ventana_policy,
-                jugada.banca_policy
-            );
-            commissionListero = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
-        }
-
-        const commissionListeroFinal = commissionListero;
+        // ✅ CORREGIDO: Usar listeroCommissionAmount directamente de Jugada (igual que dashboard)
+        // Esto asegura consistencia entre ambos endpoints
+        const commissionListeroFinal = Number(jugada.listero_commission_amount || 0);
         const dateKey = jugada.business_date.toISOString().split("T")[0];
         const key = dimension === "ventana"
             ? `${dateKey}_${jugada.ventana_id}`
