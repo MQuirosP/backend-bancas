@@ -890,15 +890,10 @@ export const DashboardService = {
       entry.totalSales = Number(ventanaRow.total_sales) || 0;
       entry.totalPayouts = Number(ventanaRow.total_payouts) || 0;
 
-      // ✅ CRÍTICO: Usar SOLO comisiones recalculadas desde políticas
-      // NO sumar snapshot del SQL para evitar doble conteo (igual que calculateGanancia)
-      const extrasFromPolicies = extrasByVentana.get(ventanaId) || 0;
-
-      // Si tenemos comisiones recalculadas desde políticas, usarlas
-      // Sino, usar el snapshot de la DB como fallback
-      entry.totalListeroCommission = extrasFromPolicies > 0
-        ? extrasFromPolicies
-        : Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0;
+      // ✅ CORREGIDO: Usar SIEMPRE el snapshot de comisión del listero
+      // Esto asegura consistencia entre período filtrado y mes completo
+      // No recalcular desde políticas (causa discrepancias de 44 colones)
+      entry.totalListeroCommission = Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0;
       entry.totalVendedorCommission = Number(ventanaRow.commission_user) || 0;
     }
 
@@ -1403,15 +1398,10 @@ export const DashboardService = {
       entry.totalSales = Number(ventanaRow.total_sales) || 0;
       entry.totalPayouts = Number(ventanaRow.total_payouts) || 0;
 
-      // ✅ CRÍTICO: Usar SOLO comisiones recalculadas desde políticas
-      // NO sumar snapshot del SQL para evitar doble conteo (igual que calculateGanancia)
-      const extrasFromPolicies = extrasByVentana.get(ventanaId) || 0;
-
-      // Si tenemos comisiones recalculadas desde políticas, usarlas
-      // Sino, usar el snapshot de la DB como fallback
-      entry.totalListeroCommission = extrasFromPolicies > 0
-        ? extrasFromPolicies
-        : Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0;
+      // ✅ CORREGIDO: Usar SIEMPRE el snapshot de comisión del listero
+      // Esto asegura consistencia entre período filtrado y mes completo
+      // No recalcular desde políticas (causa discrepancias de 44 colones)
+      entry.totalListeroCommission = Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0;
       entry.totalVendedorCommission = Number(ventanaRow.commission_user) || 0;
     }
 
