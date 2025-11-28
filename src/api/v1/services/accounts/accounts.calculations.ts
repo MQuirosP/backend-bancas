@@ -152,11 +152,10 @@ export async function calculateDayStatement(
         }
     }
 
-    // ✅ CRÍTICO: Calcular saldo según ROL del usuario, NO según dimensión
-    // ADMIN siempre resta listeroCommission (independiente de dimensión)
-    // VENTANA siempre resta vendedorCommission
-    const effectiveUserRole = userRole || "ADMIN"; // Por defecto ADMIN si no se especifica
-    const balance = effectiveUserRole === "ADMIN"
+    // Calcular balance según dimensión:
+    // - Dimensión ventana: Ventas - Premios - Comisión Listero
+    // - Dimensión vendedor: Ventas - Premios - Comisión Vendedor
+    const balance = dimension === "ventana"
         ? totalSales - totalPayouts - totalListeroCommission
         : totalSales - totalPayouts - totalVendedorCommission;
 
@@ -513,8 +512,10 @@ export async function getStatementDirect(
     const statements = Array.from(byDateAndDimension.entries()).map(([key, entry]) => {
         const date = key.split("_")[0];
 
-        // Calcular balance según rol
-        const balance = userRole === "ADMIN"
+        // Calcular balance según dimensión:
+        // - Dimensión ventana: Ventas - Premios - Comisión Listero
+        // - Dimensión vendedor: Ventas - Premios - Comisión Vendedor
+        const balance = dimension === "ventana"
             ? entry.totalSales - entry.totalPayouts - entry.commissionListero
             : entry.totalSales - entry.totalPayouts - entry.commissionVendedor;
 
@@ -569,7 +570,10 @@ export async function getStatementDirect(
     const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
     const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
     const totalVendedorCommission = statements.reduce((sum, s) => sum + s.vendedorCommission, 0);
-    const totalBalance = userRole === "ADMIN"
+    // Balance total según dimensión:
+    // - Dimensión ventana: Ventas - Premios - Comisión Listero
+    // - Dimensión vendedor: Ventas - Premios - Comisión Vendedor
+    const totalBalance = dimension === "ventana"
         ? totalSales - totalPayouts - totalListeroCommission
         : totalSales - totalPayouts - totalVendedorCommission;
     const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
@@ -755,7 +759,10 @@ export async function getStatementDirect(
         (sum, entry) => sum + entry.commissionVendedor,
         0
     );
-    const monthlyTotalBalance = userRole === "ADMIN"
+    // Balance total mensual según dimensión:
+    // - Dimensión ventana: Ventas - Premios - Comisión Listero
+    // - Dimensión vendedor: Ventas - Premios - Comisión Vendedor
+    const monthlyTotalBalance = dimension === "ventana"
         ? monthlyTotalSales - monthlyTotalPayouts - monthlyTotalListeroCommission
         : monthlyTotalSales - monthlyTotalPayouts - monthlyTotalVendedorCommission;
 

@@ -167,11 +167,10 @@ export async function reversePayment(paymentId: string, userId: string, reason?:
     });
 
     // Calcular saldo base del día (sin pagos/cobros)
-    // Para ADMIN (dimension=ventana): resta solo listeroCommission
-    // Para VENDEDOR (dimension=vendedor): resta solo vendedorCommission
-    // Obtener dimension del statement (si tiene ventanaId es ventana, si tiene vendedorId es vendedor)
-    const isVentana = statement.ventanaId !== null && statement.vendedorId === null;
-    const baseBalance = isVentana
+    // Según dimensión:
+    // - Dimensión ventana: Ventas - Premios - Comisión Listero
+    // - Dimensión vendedor: Ventas - Premios - Comisión Vendedor
+    const baseBalance = statement.ventanaId && !statement.vendedorId
         ? statement.totalSales - statement.totalPayouts - (statement.listeroCommission || 0)
         : statement.totalSales - statement.totalPayouts - (statement.vendedorCommission || 0);
 
