@@ -6,6 +6,7 @@ import {
   validateCreatePaymentBody,
   validateGetPaymentHistoryQuery,
   validateReversePaymentBody,
+  validateGetCurrentBalanceQuery,
 } from "../validators/accounts.validator";
 import { protect, restrictTo } from "../../../middlewares/auth.middleware";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
@@ -39,5 +40,9 @@ router.post("/reverse-payment", validateReversePaymentBody, AccountsController.r
 // 5) Eliminar un estado de cuenta (solo ADMIN, solo si está vacío)
 // DELETE /accounts/statement/:id
 router.delete("/statement/:id", AccountsController.deleteStatement);
+
+// 6) Obtener balance acumulado actual de la ventana (solo VENTANA)
+// GET /accounts/balance/current
+router.get("/balance/current", validateGetCurrentBalanceQuery, AccountsController.getCurrentBalance);
 
 export default router;

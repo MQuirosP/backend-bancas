@@ -267,6 +267,151 @@ export const TicketController = {
   },
 
   /**
+   * POST /api/v1/tickets/numbers-summary/pdf
+   * Genera un PDF con la lista de números 00-99 con montos
+   */
+  async numbersSummaryPdf(req: AuthenticatedRequest, res: Response) {
+    try {
+      const startTime = Date.now();
+      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status } = req.body;
+
+      const me = req.user!;
+
+      req.logger?.info({
+        layer: "controller",
+        action: "TICKET_NUMBERS_SUMMARY_PDF_REQUEST",
+        payload: {
+          userId: me.id,
+          role: me.role,
+          bodyParams: { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId },
+        },
+      });
+
+      // Build auth context
+      const context: AuthContext = {
+        userId: me.id,
+        role: me.role,
+        ventanaId: me.ventanaId,
+        bancaId: req.bancaContext?.bancaId || null,
+      };
+
+      // Aplicar RBAC filters
+      const requestFilters: RequestFilters = {
+        ...(ventanaId ? { ventanaId } : {}),
+        ...(vendedorId ? { vendedorId } : {}),
+        ...(loteriaId ? { loteriaId } : {}),
+        ...(sorteoId ? { sorteoId } : {}),
+      };
+
+      const effectiveFilters = await applyRbacFilters(context, requestFilters);
+
+      // Determinar el scope efectivo según el rol
+      let effectiveScope = scope || 'mine';
+      if (me.role === Role.VENDEDOR) {
+        effectiveScope = 'mine';
+        effectiveFilters.vendedorId = me.id;
+      } else if (me.role === Role.VENTANA) {
+        effectiveScope = 'mine';
+      } else if (me.role === Role.ADMIN) {
+        effectiveScope = scope || 'all';
+      }
+
+      // Validar permisos
+      if (effectiveScope === 'all' && me.role !== Role.ADMIN) {
+        return res.status(403).json({
+          success: false,
+          error: "Solo los administradores pueden usar scope='all'",
+        });
+      }
+
+      req.logger?.info({
+        layer: "controller",
+        action: "TICKET_NUMBERS_SUMMARY_PDF_BEFORE_SERVICE",
+        payload: { effectiveFilters, effectiveScope },
+      });
+
+      // Obtener los datos del resumen
+      const result = await TicketService.numbersSummary(
+        {
+          date: date || "today",
+          fromDate,
+          toDate,
+          scope: effectiveScope,
+          dimension,
+          ventanaId: effectiveFilters.ventanaId,
+          vendedorId: effectiveFilters.vendedorId,
+          loteriaId: effectiveFilters.loteriaId,
+          sorteoId: effectiveFilters.sorteoId,
+          multiplierId,
+          status,
+        },
+        me.role,
+        me.id
+      );
+
+      req.logger?.info({
+        layer: "controller",
+        action: "TICKET_NUMBERS_SUMMARY_PDF_SERVICE_SUCCESS",
+        payload: {
+          metaKeys: Object.keys(result.meta),
+          dataLength: result.data.length,
+        },
+      });
+
+      // Generar el PDF
+      const { generateNumbersSummaryPDF } = await import('../services/pdf-generator.service');
+
+      req.logger?.info({
+        layer: "controller",
+        action: "TICKET_NUMBERS_SUMMARY_PDF_BEFORE_GENERATE",
+        payload: { meta: result.meta },
+      });
+
+      const pdfBuffer = await generateNumbersSummaryPDF({
+        meta: result.meta,
+        numbers: result.data,
+      });
+
+      const generationTime = Date.now() - startTime;
+
+      req.logger?.info({
+        layer: "controller",
+        action: "TICKET_NUMBERS_SUMMARY_PDF_GENERATED",
+        payload: {
+          userId: me.id,
+          pdfSize: pdfBuffer.length,
+          generationTimeMs: generationTime,
+        },
+      });
+
+      // Configurar headers HTTP para descarga
+      const timestamp = Date.now();
+      const filename = `lista-numeros-${timestamp}.pdf`;
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', pdfBuffer.length);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
+      return res.send(pdfBuffer);
+    } catch (err: any) {
+      req.logger?.error({
+        layer: "controller",
+        action: "TICKET_NUMBERS_SUMMARY_PDF_ERROR",
+        payload: {
+          message: err.message,
+          stack: err.stack,
+          name: err.name,
+          code: err.code,
+        },
+      });
+      throw err;
+    }
+  },
+
+  /**
    * GET /api/v1/tickets/by-number/:ticketNumber
    * Obtiene las jugadas de un ticket existente mediante su número
    * Endpoint público/inter-vendedor (no filtra por vendedor)

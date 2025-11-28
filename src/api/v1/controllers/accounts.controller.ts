@@ -612,5 +612,61 @@ export const AccountsController = {
 
     return success(res, result, 200);
   },
+
+  /**
+   * GET /api/v1/accounts/balance/current
+   * Obtiene el balance acumulado actual de una ventana
+   * Solo para usuarios VENTANA con scope=mine y dimension=ventana
+   */
+  async getCurrentBalance(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    const user = req.user;
+
+    // Solo usuarios VENTANA pueden usar este endpoint
+    if (user.role !== Role.VENTANA) {
+      throw new AppError("Solo usuarios VENTANA pueden consultar su balance", 403, "FORBIDDEN");
+    }
+
+    // Obtener ventanaId del usuario si no está en el token
+    let effectiveVentanaId = user.ventanaId;
+    if (!effectiveVentanaId) {
+      const userWithVentana = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { ventanaId: true },
+      });
+      effectiveVentanaId = userWithVentana?.ventanaId || null;
+    }
+
+    if (!effectiveVentanaId) {
+      throw new AppError("El usuario VENTANA no tiene una ventana asignada", 400, "NO_VENTANA");
+    }
+
+    const result = await AccountsService.getCurrentBalance(effectiveVentanaId);
+
+    // Log de auditoría
+    await ActivityService.log({
+      userId: user.id,
+      action: ActivityType.ACCOUNT_STATEMENT_VIEW,
+      targetType: "ACCOUNT_STATEMENT",
+      targetId: null,
+      details: {
+        action: "CURRENT_BALANCE",
+        ventanaId: effectiveVentanaId,
+      },
+      layer: "controller",
+      requestId: req.requestId,
+    });
+
+    req.logger?.info({
+      layer: "controller",
+      action: "CURRENT_BALANCE_VIEW",
+      userId: user.id,
+      requestId: req.requestId,
+      payload: { ventanaId: effectiveVentanaId },
+    });
+
+    return success(res, result);
+  },
 };
 

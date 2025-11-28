@@ -1149,9 +1149,12 @@ export const TicketService = {
       }
       const totalTickets = allUniqueTicketIds.size;
 
-      // Obtener información de ventana/vendedor si están presentes
+      // Obtener información de ventana/vendedor/loteria/sorteo si están presentes
       let ventanaName: string | undefined;
       let vendedorName: string | undefined;
+      let vendedorCode: string | undefined;
+      let loteriaName: string | undefined;
+      let sorteoDate: Date | undefined;
 
       if (params.ventanaId) {
         const ventana = await prisma.ventana.findUnique({
@@ -1164,9 +1167,26 @@ export const TicketService = {
       if (params.vendedorId) {
         const vendedor = await prisma.user.findUnique({
           where: { id: params.vendedorId },
-          select: { name: true },
+          select: { name: true, code: true },
         });
         vendedorName = vendedor?.name || undefined;
+        vendedorCode = vendedor?.code || undefined;
+      }
+
+      if (params.loteriaId) {
+        const loteria = await prisma.loteria.findUnique({
+          where: { id: params.loteriaId },
+          select: { name: true },
+        });
+        loteriaName = loteria?.name || undefined;
+      }
+
+      if (params.sorteoId) {
+        const sorteo = await prisma.sorteo.findUnique({
+          where: { id: params.sorteoId },
+          select: { scheduledAt: true },
+        });
+        sorteoDate = sorteo?.scheduledAt || undefined;
       }
 
       return {
@@ -1185,6 +1205,9 @@ export const TicketService = {
           ...(params.vendedorId ? { vendedorId: params.vendedorId } : {}),
           ...(ventanaName ? { ventanaName } : {}),
           ...(vendedorName ? { vendedorName } : {}),
+          ...(vendedorCode ? { vendedorCode } : {}),
+          ...(loteriaName ? { loteriaName } : {}),
+          ...(sorteoDate ? { sorteoDate } : {}),
         },
       };
     } catch (err: any) {
