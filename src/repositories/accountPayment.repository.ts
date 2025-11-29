@@ -277,7 +277,7 @@ export const AccountPaymentRepository = {
 
     // Agrupar por statementId y tipo
     const totalsMap = new Map<string, { totalPaid: number; totalCollected: number; totalPaymentsCollections: number }>();
-    
+
     // Inicializar todos los statements con 0
     for (const id of accountStatementIds) {
       totalsMap.set(id, { totalPaid: 0, totalCollected: 0, totalPaymentsCollections: 0 });
@@ -353,6 +353,16 @@ export const AccountPaymentRepository = {
             name: true,
           },
         },
+        ventana: {
+          select: {
+            name: true,
+          },
+        },
+        vendedor: {
+          select: {
+            name: true,
+          },
+        },
       },
       orderBy: { createdAt: "asc" },
     });
@@ -389,6 +399,10 @@ export const AccountPaymentRepository = {
         paidByName: payment.paidBy?.name || payment.paidByName,
         createdAt: payment.createdAt.toISOString(),
         updatedAt: payment.updatedAt.toISOString(),
+        ventanaId: payment.ventanaId,
+        ventanaName: (payment as any).ventana?.name,
+        vendedorId: payment.vendedorId,
+        vendedorName: (payment as any).vendedor?.name,
       });
     }
 

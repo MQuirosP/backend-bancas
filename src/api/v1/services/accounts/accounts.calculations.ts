@@ -497,16 +497,54 @@ export async function getStatementDirect(
         }
     }
 
-    // Obtener movimientos y desglose por sorteo
+    // Obtener movimientos (pagos/cobros) para el rango de fechas
+    const movementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
+        startDate,
+        endDate,
+        dimension,
+        ventanaId,
+        vendedorId,
+        bancaId
+    );
+
+    // ✅ NUEVO: Incorporar días que solo tienen movimientos (sin ventas)
+    for (const [dateKey, movements] of movementsByDate.entries()) {
+        for (const movement of movements) {
+            // Determinar ID según dimensión
+            const targetId = dimension === "ventana" ? movement.ventanaId : movement.vendedorId;
+            // Si estamos filtrando por dimensión y el movimiento no coincide, ignorar (aunque el repo ya filtra)
+            if (dimension === "ventana" && ventanaId && targetId !== ventanaId) continue;
+            if (dimension === "vendedor" && vendedorId && targetId !== vendedorId) continue;
+
+            // Si es scope='all' (admin), necesitamos agrupar por el ID del movimiento
+            // Si el movimiento no tiene ID (ej: pago global?), usar 'null'
+            const key = `${dateKey}_${targetId || 'null'}`;
+
+            if (!byDateAndDimension.has(key)) {
+                // Crear entrada vacía si no existe (día sin ventas)
+                byDateAndDimension.set(key, {
+                    ventanaId: movement.ventanaId,
+                    ventanaName: movement.ventanaName || "Desconocido",
+                    vendedorId: movement.vendedorId,
+                    vendedorName: movement.vendedorName || "Desconocido",
+                    totalSales: 0,
+                    totalPayouts: 0,
+                    totalTickets: new Set<string>(),
+                    commissionListero: 0,
+                    commissionVendedor: 0,
+                    payoutTickets: new Set<string>(),
+                });
+            }
+        }
+    }
+
+    // Obtener desglose por sorteo
     const statementDates = Array.from(new Set(Array.from(byDateAndDimension.keys()).map(k => k.split("_")[0]))).map(d => {
         const [year, month, day] = d.split('-').map(Number);
         return new Date(Date.UTC(year, month - 1, day));
     });
 
-    const [movementsByDate, sorteoBreakdownBatch] = await Promise.all([
-        AccountPaymentRepository.findMovementsByDateRange(startDate, endDate, dimension, ventanaId, vendedorId, bancaId),
-        getSorteoBreakdownBatch(statementDates, dimension, ventanaId, vendedorId, bancaId, userRole),
-    ]);
+    const sorteoBreakdownBatch = await getSorteoBreakdownBatch(statementDates, dimension, ventanaId, vendedorId, bancaId, userRole);
 
     // Construir statements desde el mapa agrupado
     const statements = Array.from(byDateAndDimension.entries()).map(([key, entry]) => {
@@ -520,7 +558,15 @@ export async function getStatementDirect(
             : entry.totalSales - entry.totalPayouts - entry.commissionVendedor;
 
         // Obtener movimientos y desglose por sorteo para esta fecha
-        const movements = movementsByDate.get(date) || [];
+        const allMovementsForDate = movementsByDate.get(date) || [];
+        // ✅ CRÍTICO: Filtrar movimientos que pertenecen a esta dimensión específica
+        const movements = allMovementsForDate.filter((m: any) => {
+            if (dimension === "ventana") {
+                return m.ventanaId === entry.ventanaId;
+            } else {
+                return m.vendedorId === entry.vendedorId;
+            }
+        });
         const bySorteo = sorteoBreakdownBatch.get(date) || [];
 
         // Calcular totales de pagos y cobros
@@ -742,6 +788,32 @@ export async function getStatementDirect(
         bancaId
     );
 
+    // ✅ NUEVO: Incorporar días que solo tienen movimientos al mapa mensual
+    for (const [dateKey, movements] of monthlyMovementsByDate.entries()) {
+        for (const movement of movements) {
+            const targetId = dimension === "ventana" ? movement.ventanaId : movement.vendedorId;
+            if (dimension === "ventana" && ventanaId && targetId !== ventanaId) continue;
+            if (dimension === "vendedor" && vendedorId && targetId !== vendedorId) continue;
+
+            const key = `${dateKey}_${targetId || 'null'}`;
+
+            if (!monthlyByDateAndDimension.has(key)) {
+                monthlyByDateAndDimension.set(key, {
+                    ventanaId: movement.ventanaId,
+                    ventanaName: movement.ventanaName || "Desconocido",
+                    vendedorId: movement.vendedorId,
+                    vendedorName: movement.vendedorName || "Desconocido",
+                    totalSales: 0,
+                    totalPayouts: 0,
+                    totalTickets: new Set<string>(),
+                    commissionListero: 0,
+                    commissionVendedor: 0,
+                    payoutTickets: new Set<string>(),
+                });
+            }
+        }
+    }
+
     // Calcular totales mensuales
     const monthlyTotalSales = Array.from(monthlyByDateAndDimension.values()).reduce(
         (sum, entry) => sum + entry.totalSales,
@@ -779,10 +851,26 @@ export async function getStatementDirect(
     }
 
     // Contar días saldados en el mes
-    const monthlySettledDays = Array.from(monthlyByDateAndDimension.values())
-        .filter(entry => {
-            const remainingBalance = entry.totalSales - entry.totalPayouts - entry.commissionListero - monthlyTotalCollected + monthlyTotalPaid;
-            return calculateIsSettled(entry.totalTickets.size, remainingBalance, monthlyTotalPaid, monthlyTotalCollected);
+    const monthlySettledDays = Array.from(monthlyByDateAndDimension.entries())
+        .filter(([key, entry]) => {
+            const date = key.split("_")[0];
+            // Obtener movimientos específicos para esta entrada (fecha + dimensión)
+            const allMovements = monthlyMovementsByDate.get(date) || [];
+            const movements = allMovements.filter((m: any) => {
+                if (dimension === "ventana") return m.ventanaId === entry.ventanaId;
+                else return m.vendedorId === entry.vendedorId;
+            });
+
+            const totalPaid = movements
+                .filter((m: any) => m.type === "payment" && !m.isReversed)
+                .reduce((sum: number, m: any) => sum + m.amount, 0);
+            const totalCollected = movements
+                .filter((m: any) => m.type === "collection" && !m.isReversed)
+                .reduce((sum: number, m: any) => sum + m.amount, 0);
+
+            const commission = dimension === "ventana" ? entry.commissionListero : entry.commissionVendedor;
+            const remainingBalance = entry.totalSales - entry.totalPayouts - commission - totalCollected + totalPaid;
+            return calculateIsSettled(entry.totalTickets.size, remainingBalance, totalPaid, totalCollected);
         }).length;
     const monthlyPendingDays = monthlyByDateAndDimension.size - monthlySettledDays;
 
