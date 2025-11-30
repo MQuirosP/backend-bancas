@@ -7,6 +7,7 @@ import prisma from "../../../core/prismaClient";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 import { isWithinSalesHours, validateTicketAgainstRules } from "../../../utils/loteriaRules";
 import { prepareCommissionContext, preCalculateCommissions } from "../../../utils/commissionPrecalc";
+import { getExclusionWhereCondition } from "./sorteo-listas.helpers";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { UserService } from "./user.service";
 import { nowCR, validateDate, formatDateCRWithTZ } from "../../../utils/datetime";
@@ -974,6 +975,12 @@ export const TicketService = {
         ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
         ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
       };
+
+      // ✅ NUEVO: Aplicar exclusión de listas si hay sorteoId
+      if (params.sorteoId) {
+        const exclusionCondition = await getExclusionWhereCondition(params.sorteoId);
+        Object.assign(ticketWhere, exclusionCondition);
+      }
 
       // Aplicar filtros según dimension y scope
       // Prioridad: dimension > filtros directos > scope

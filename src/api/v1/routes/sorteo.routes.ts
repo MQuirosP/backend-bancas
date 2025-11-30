@@ -1,6 +1,7 @@
 // src/api/v1/routes/sorteo.routes.ts
 import { Router } from "express";
 import { SorteoController } from "../controllers/sorteo.controller";
+import { SorteoListasController } from "../controllers/sorteo-listas.controller";
 import {
   validateCreateSorteo,
   validateUpdateSorteo,
@@ -11,6 +12,11 @@ import {
   validateEvaluatedSummaryQuery,
   validateSetActiveSorteo,
 } from "../validators/sorteo.validator";
+import {
+  validateIdParam as validateListaIdParam,
+  validateExcludeLista,
+  validateIncludeLista,
+} from "../validators/sorteo-listas.validator";
 import { protect } from "../../../middlewares/auth.middleware";
 import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
 import { SorteosAutoController } from "../controllers/sorteosAuto.controller";
@@ -92,6 +98,11 @@ router.patch(
   SorteoController.revertEvaluation
 );
 router.delete("/:id", requireAdmin, validateIdParam, SorteoController.delete);
+
+// Rutas de exclusión de listas (ADMIN only)
+router.get("/:id/listas", requireAdmin, validateListaIdParam, SorteoListasController.getListas);
+router.post("/:id/listas/exclude", requireAdmin, validateListaIdParam, validateExcludeLista, SorteoListasController.excludeLista);
+router.post("/:id/listas/include", requireAdmin, validateListaIdParam, validateIncludeLista, SorteoListasController.includeLista);
 
 // Lecturas
 // IMPORTANTE: Las rutas literales deben ir ANTES de las rutas con parámetros

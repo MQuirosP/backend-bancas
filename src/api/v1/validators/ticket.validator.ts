@@ -171,11 +171,14 @@ export const NumbersSummaryQuerySchema = z
         message: "vendedorId no puede usarse cuando dimension='listero' o 'ventana'",
       });
     }
-    if (val.dimension === "vendedor" && val.ventanaId) {
+    // ✅ CORREGIDO: Permitir ventanaId cuando dimension='vendedor'
+    // Es válido filtrar por vendedor Y ventana (vendedor pertenece a ventana)
+    // Solo rechazar si se pasa vendedorId sin ventanaId cuando dimension='vendedor'
+    if (val.dimension === "vendedor" && val.vendedorId && !val.ventanaId) {
       ctx.addIssue({
         code: "custom",
         path: ["ventanaId"],
-        message: "ventanaId no puede usarse cuando dimension='vendedor'",
+        message: "ventanaId es requerido cuando dimension='vendedor' y se especifica vendedorId",
       });
     }
   });

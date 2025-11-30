@@ -13,6 +13,7 @@ import { formatIsoLocal, normalizeDateCR, formatDateCRWithTZ } from "../../../ut
 import { getCRLocalComponents } from "../../../utils/businessDate";
 import { resolveDateRange } from "../../../utils/dateRange";
 import logger from "../../../core/logger";
+import { getExcludedTicketIds } from "./sorteo-listas.helpers";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
@@ -65,7 +66,7 @@ function formatTime12h(date: Date): string {
   let hours12 = hour % 12;
   hours12 = hours12 ? hours12 : 12; // 0 debe ser 12
   const minutesStr = String(minute).padStart(2, '0');
-  return `${hours12}:${minutesStr}${ampm}`;
+  return `${hours12}:${minutesStr}${ampm} `;
 }
 
 /**
@@ -75,7 +76,7 @@ function formatDateOnly(date: Date): string {
   const { year, month, day } = getCRLocalComponents(date); // ✅ Usar utilidad CR
   const mm = String(month).padStart(2, '0');
   const dd = String(day).padStart(2, '0');
-  return `${year}-${mm}-${dd}`;
+  return `${year} -${mm} -${dd} `;
 }
 
 export const SorteoService = {
@@ -295,7 +296,7 @@ export const SorteoService = {
 
     if (!allowedStatuses.includes(existing.status)) {
       throw new AppError(
-        `No se puede resetear a SCHEDULED desde estado ${existing.status}`,
+        `No se puede resetear a SCHEDULED desde estado ${existing.status} `,
         409
       );
     }
@@ -461,6 +462,9 @@ export const SorteoService = {
       extraOutcomeCode = (extraOutcomeCodeInput ?? mul.name ?? null) || null;
     }
 
+    // ✅ NUEVO: Obtener tickets excluidos ANTES de evaluar
+    const excludedTicketIds = await getExcludedTicketIds(id);
+
     // 3) Transacción
     const evaluationResult = await prisma.$transaction(async (tx) => {
       // 3.1 Snapshot del sorteo
@@ -486,6 +490,7 @@ export const SorteoService = {
             status: { not: "CANCELLED" }, // Excluir tickets cancelados
             isActive: true, // Solo tickets activos
             deletedAt: null, // Solo tickets no eliminados
+            id: { notIn: Array.from(excludedTicketIds) }, // ✅ NUEVO: Excluir tickets de listas bloqueadas
           },
           type: "NUMERO",
           number: winningNumber,
@@ -520,6 +525,7 @@ export const SorteoService = {
               status: { not: "CANCELLED" }, // Excluir tickets cancelados
               isActive: true, // Solo tickets activos
               deletedAt: null, // Solo tickets no eliminados
+              id: { notIn: Array.from(excludedTicketIds) }, // ✅ NUEVO: Excluir tickets de listas bloqueadas
             },
             type: "REVENTADO",
             reventadoNumber: winningNumber,
@@ -557,6 +563,7 @@ export const SorteoService = {
           status: { not: "CANCELLED" }, // Excluir tickets cancelados
           isActive: true, // Solo tickets activos
           deletedAt: null, // Solo tickets no eliminados
+          id: { notIn: Array.from(excludedTicketIds) }, // ✅ NUEVO: Excluir tickets de listas bloqueadas
         },
         select: { id: true },
       });
@@ -799,7 +806,7 @@ export const SorteoService = {
       return this.groupedByHour(params);
     }
 
-    throw new AppError(`Unsupported groupBy: ${params.groupBy}`, 400);
+    throw new AppError(`Unsupported groupBy: ${params.groupBy} `, 400);
   },
 
   /**
@@ -819,89 +826,89 @@ export const SorteoService = {
     ];
 
     if (params.loteriaId) {
-      whereConditions.push(Prisma.sql`s."loteriaId" = ${params.loteriaId}::uuid`);
+      whereConditions.push(Prisma.sql`s."loteriaId" = ${params.loteriaId}:: uuid`);
     }
 
     if (params.status) {
-      whereConditions.push(Prisma.sql`s."status" = ${params.status}::text`);
+      whereConditions.push(Prisma.sql`s."status" = ${params.status}:: text`);
     }
 
     if (params.isActive !== undefined) {
-      whereConditions.push(Prisma.sql`s."isActive" = ${params.isActive}`);
+      whereConditions.push(Prisma.sql`s."isActive" = ${params.isActive} `);
     }
 
     if (params.dateFrom || params.dateTo) {
       if (params.dateFrom) {
-        whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom}`);
+        whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom} `);
       }
       if (params.dateTo) {
-        whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo}`);
+        whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} `);
       }
     }
 
     const whereClause = whereConditions.length
-      ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`
+      ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")} `
       : Prisma.empty;
 
     // Query SQL con GROUP BY (PostgreSQL)
     // Usar CTE para evitar problemas con GROUP BY en subquery
     const query = Prisma.sql`
-      WITH grouped_sorteos AS (
-        SELECT
+      WITH grouped_sorteos AS(
+  SELECT
           s."loteriaId",
-          l.name as "loteriaName",
-          TO_CHAR(
-            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-            'HH24:MI'
-          ) as "hour24",
-          TO_CHAR(
-            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-            'HH12:MI AM'
-          ) as "hour12",
-          COUNT(*)::int as count,
-          MAX(s."scheduledAt") as "mostRecentDate",
-          STRING_AGG(s.id::text, ',') as "sorteoIds"
+  l.name as "loteriaName",
+  TO_CHAR(
+    s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+    'HH24:MI'
+  ) as "hour24",
+  TO_CHAR(
+    s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+    'HH12:MI AM'
+  ) as "hour12",
+  COUNT(*):: int as count,
+  MAX(s."scheduledAt") as "mostRecentDate",
+  STRING_AGG(s.id:: text, ',') as "sorteoIds"
         FROM "Sorteo" s
         INNER JOIN "Loteria" l ON l.id = s."loteriaId"
         ${whereClause}
         GROUP BY 
           s."loteriaId",
-          l.name,
-          TO_CHAR(
-            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-            'HH24:MI'
-          ),
-          TO_CHAR(
-            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-            'HH12:MI AM'
-          )
-      )
-      SELECT
-        gs."loteriaId",
-        gs."loteriaName",
-        gs."hour24",
-        gs."hour12",
+  l.name,
+  TO_CHAR(
+    s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+    'HH24:MI'
+  ),
+  TO_CHAR(
+    s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+    'HH12:MI AM'
+  )
+)
+SELECT
+gs."loteriaId",
+  gs."loteriaName",
+    gs."hour24",
+      gs."hour12",
         gs.count,
         gs."mostRecentDate",
-        gs."sorteoIds",
-        (
-          SELECT s2.id 
+          gs."sorteoIds",
+            (
+              SELECT s2.id 
           FROM "Sorteo" s2 
           WHERE s2."loteriaId" = gs."loteriaId"
             AND s2."deletedAt" IS NULL
             AND TO_CHAR(
-              s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-              'HH24:MI'
-            ) = gs."hour24"
+                s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+                'HH24:MI'
+              ) = gs."hour24"
             ${params.dateFrom ? Prisma.sql`AND s2."scheduledAt" >= ${params.dateFrom}` : Prisma.empty}
             ${params.dateTo ? Prisma.sql`AND s2."scheduledAt" <= ${params.dateTo}` : Prisma.empty}
           ORDER BY s2."scheduledAt" DESC
           LIMIT 1
         ) as "mostRecentSorteoId"
       FROM grouped_sorteos gs
-      ORDER BY 
-        gs."loteriaName" ASC,
-        gs."hour24" ASC
+      ORDER BY
+gs."loteriaName" ASC,
+  gs."hour24" ASC
     `;
 
     const results = await prisma.$queryRaw<Array<{
@@ -978,72 +985,72 @@ export const SorteoService = {
     ];
 
     if (params.loteriaId) {
-      whereConditions.push(Prisma.sql`s."loteriaId" = ${params.loteriaId}::uuid`);
+      whereConditions.push(Prisma.sql`s."loteriaId" = ${params.loteriaId}:: uuid`);
     }
 
     if (params.status) {
-      whereConditions.push(Prisma.sql`s."status" = ${params.status}::text`);
+      whereConditions.push(Prisma.sql`s."status" = ${params.status}:: text`);
     }
 
     if (params.isActive !== undefined) {
-      whereConditions.push(Prisma.sql`s."isActive" = ${params.isActive}`);
+      whereConditions.push(Prisma.sql`s."isActive" = ${params.isActive} `);
     }
 
     if (params.dateFrom || params.dateTo) {
       if (params.dateFrom) {
-        whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom}`);
+        whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom} `);
       }
       if (params.dateTo) {
-        whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo}`);
+        whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} `);
       }
     }
 
     const whereClause = whereConditions.length
-      ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`
+      ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")} `
       : Prisma.empty;
 
     // Query SQL con GROUP BY solo por hora (PostgreSQL)
     // Usar CTE para evitar problemas con GROUP BY en subquery
     const query = Prisma.sql`
-      WITH grouped_sorteos AS (
-        SELECT
+      WITH grouped_sorteos AS(
+    SELECT
           TO_CHAR(
-            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-            'HH24:MI'
-          ) as "hour24",
-          TO_CHAR(
-            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-            'HH12:MI AM'
-          ) as "hour12",
-          COUNT(*)::int as count,
-          MAX(s."scheduledAt") as "mostRecentDate",
-          STRING_AGG(s.id::text, ',') as "sorteoIds"
+      s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+      'HH24:MI'
+    ) as "hour24",
+    TO_CHAR(
+      s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+      'HH12:MI AM'
+    ) as "hour12",
+    COUNT(*):: int as count,
+    MAX(s."scheduledAt") as "mostRecentDate",
+    STRING_AGG(s.id:: text, ',') as "sorteoIds"
         FROM "Sorteo" s
         ${whereClause}
         GROUP BY 
           TO_CHAR(
-            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-            'HH24:MI'
-          ),
-          TO_CHAR(
-            s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-            'HH12:MI AM'
-          )
-      )
-      SELECT
-        gs."hour24",
-        gs."hour12",
-        gs.count,
-        gs."mostRecentDate",
-        gs."sorteoIds",
+      s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+      'HH24:MI'
+    ),
+    TO_CHAR(
+      s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+      'HH12:MI AM'
+    )
+  )
+SELECT
+gs."hour24",
+  gs."hour12",
+    gs.count,
+    gs."mostRecentDate",
+      gs."sorteoIds",
         (
           SELECT s2.id 
           FROM "Sorteo" s2 
           WHERE s2."deletedAt" IS NULL
             AND TO_CHAR(
-              s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
-              'HH24:MI'
-            ) = gs."hour24"
+            s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
+            'HH24:MI'
+          ) = gs."hour24"
             ${params.loteriaId ? Prisma.sql`AND s2."loteriaId" = ${params.loteriaId}::uuid` : Prisma.empty}
             ${params.dateFrom ? Prisma.sql`AND s2."scheduledAt" >= ${params.dateFrom}` : Prisma.empty}
             ${params.dateTo ? Prisma.sql`AND s2."scheduledAt" <= ${params.dateTo}` : Prisma.empty}
@@ -1051,8 +1058,8 @@ export const SorteoService = {
           LIMIT 1
         ) as "mostRecentSorteoId"
       FROM grouped_sorteos gs
-      ORDER BY 
-        gs."hour24" ASC
+      ORDER BY
+gs."hour24" ASC
     `;
 
     const results = await prisma.$queryRaw<Array<{
@@ -1509,7 +1516,7 @@ export const SorteoService = {
           let multiplierValue = 1;
 
           if (multiplier) {
-            multiplierName = multiplier.name || `x${multiplier.valueX}`;
+            multiplierName = multiplier.name || `x${multiplier.valueX} `;
             multiplierValue = multiplier.valueX || 1;
           } else if (multiplierId) {
             // Si hay multiplierId pero no hay relación cargada, usar valores por defecto
