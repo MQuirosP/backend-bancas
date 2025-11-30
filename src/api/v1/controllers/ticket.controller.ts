@@ -215,6 +215,12 @@ export const TicketController = {
     } else if (me.role === Role.VENTANA) {
       // VENTANA siempre usa scope='mine' (su ventana)
       effectiveScope = 'mine';
+      // ✅ FIX: Para dimension='listero', forzar el ventanaId del usuario VENTANA
+      if (dimension === 'listero') {
+        // Usar el ventanaId del effectiveFilters (que viene de RBAC)
+        // Esto evita que el frontend envíe el userId en lugar del ventanaId
+        effectiveFilters.ventanaId = effectiveFilters.ventanaId || me.ventanaId;
+      }
     } else if (me.role === Role.ADMIN) {
       // ADMIN puede usar scope='all' o 'mine'
       effectiveScope = scope || 'all';
@@ -228,8 +234,20 @@ export const TicketController = {
       });
     }
 
-    // Resolver rango de fechas
-    const dateRange = resolveDateRange(date || "today", fromDate, toDate);
+    // ✅ FIX: Regla especial - cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha
+    // (igual que en endpoint /tickets/list)
+    const hasSorteoId = effectiveFilters.sorteoId;
+    const hasExplicitDateRange = fromDate || toDate;
+
+    let dateRange: { fromAt: Date; toAt: Date; tz: string; description?: string } | null = null;
+
+    if (hasSorteoId && !hasExplicitDateRange) {
+      // NO aplicar filtro de fecha cuando hay sorteoId y no hay fechas explícitas
+      dateRange = null;
+    } else {
+      // Resolver rango de fechas normalmente
+      dateRange = resolveDateRange(date || "today", fromDate, toDate);
+    }
 
     req.logger?.info({
       layer: "controller",
@@ -242,6 +260,7 @@ export const TicketController = {
           fromAt: dateRange.fromAt.toISOString(),
           toAt: dateRange.toAt.toISOString(),
         } : null,
+        skippedDateFilter: hasSorteoId && !hasExplicitDateRange,
       },
     });
 
@@ -268,12 +287,19 @@ export const TicketController = {
 
   /**
    * POST /api/v1/tickets/numbers-summary/pdf
-   * Genera un PDF con la lista de números 00-99 con montos
+   * Genera un PDF o PNG con la lista de números 00-99 con montos
+   *
+   * Request Body:
+   * - format?: 'pdf' | 'png' (default: 'pdf')
+   * - ... (otros parámetros de numbers-summary)
+   *
+   * Response:
+   * - Content-Type: 'application/pdf' o 'image/png' según el formato
    */
   async numbersSummaryPdf(req: AuthenticatedRequest, res: Response) {
     try {
       const startTime = Date.now();
-      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status } = req.body;
+      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, format } = req.body;
 
       const me = req.user!;
 
@@ -381,21 +407,67 @@ export const TicketController = {
           userId: me.id,
           pdfSize: pdfBuffer.length,
           generationTimeMs: generationTime,
+          format: format || 'pdf',
         },
       });
 
+      // ✅ NUEVO: Convertir a PNG si se solicita
+      let finalBuffer: Buffer;
+      let contentType: string;
+      let fileExtension: string;
+
+      if (format === 'png') {
+        // Convertir PDF a PNG
+        const { pdfToPng } = await import('pdf-to-png-converter');
+
+        req.logger?.info({
+          layer: "controller",
+          action: "TICKET_NUMBERS_SUMMARY_CONVERTING_TO_PNG",
+          payload: { pdfSize: pdfBuffer.length },
+        });
+
+        // Convertir Buffer a Uint8Array para pdf-to-png-converter
+        const pdfUint8Array = new Uint8Array(pdfBuffer);
+        const pngPages = await pdfToPng(pdfUint8Array.buffer, {
+          pagesToProcess: [1], // Solo la primera página
+        });
+
+        if (!pngPages || pngPages.length === 0) {
+          throw new Error('Failed to convert PDF to PNG');
+        }
+
+        finalBuffer = pngPages[0].content as Buffer;
+        contentType = 'image/png';
+        fileExtension = 'png';
+
+        req.logger?.info({
+          layer: "controller",
+          action: "TICKET_NUMBERS_SUMMARY_PNG_GENERATED",
+          payload: {
+            userId: me.id,
+            pngSize: finalBuffer.length,
+            conversionTimeMs: Date.now() - startTime,
+          },
+        });
+      } else {
+        // Devolver PDF
+        finalBuffer = pdfBuffer;
+        contentType = 'application/pdf';
+        fileExtension = 'pdf';
+      }
+
       // Configurar headers HTTP para descarga
       const timestamp = Date.now();
-      const filename = `lista-numeros-${timestamp}.pdf`;
+      const filename = `lista-numeros-${timestamp}.${fileExtension}`;
 
-      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Type', contentType);
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Length', pdfBuffer.length);
+      res.setHeader('Content-Length', finalBuffer.length);
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
 
-      return res.send(pdfBuffer);
+      return res.send(finalBuffer);
     } catch (err: any) {
       req.logger?.error({
         layer: "controller",

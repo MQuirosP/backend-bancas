@@ -29,6 +29,9 @@ export interface VendedorSummary {
   totalSales: number;
   totalTickets: number;
   totalCommission: number;
+  // ✅ NUEVO: Commission breakdown por tipo de jugada
+  commissionByNumber: number;
+  commissionByReventado: number;
   isExcluded: boolean;
   exclusionId: string | null;
   exclusionReason: string | null;
@@ -44,6 +47,9 @@ export interface ListeroSummary {
   totalSales: number;
   totalTickets: number;
   totalCommission: number;
+  // ✅ NUEVO: Commission breakdown por tipo de jugada
+  commissionByNumber: number;
+  commissionByReventado: number;
   isExcluded: boolean;
   exclusionId: string | null;
   exclusionReason: string | null;

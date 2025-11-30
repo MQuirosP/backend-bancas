@@ -180,18 +180,21 @@ export async function applyRbacFilters(
       effective.vendedorId = requestFilters.vendedorId;
     }
 
-    // Si solicita un ventanaId diferente, rechazar
-    // Usar ventanaId (que puede venir del JWT o de la BD) en lugar de context.ventanaId
+    // ✅ FIX: Para usuarios VENTANA, ignorar el ventanaId del request y usar siempre el suyo
+    // Esto previene errores cuando el FE envía el userId en lugar del ventanaId
+    // El ventanaId del request se ignora completamente para este rol
     if (requestFilters.ventanaId && requestFilters.ventanaId !== ventanaId) {
-      throw new AppError('Cannot access that ventana', 403, {
-        code: 'RBAC_001',
-        details: [
-          {
-            field: 'ventanaId',
-            reason: 'You can only access your own ventana'
-          }
-        ]
+      logger.warn({
+        layer: 'rbac',
+        action: 'VENTANA_IGNORING_REQUEST_VENTANAID',
+        payload: {
+          userId: context.userId,
+          requestVentanaId: requestFilters.ventanaId,
+          actualVentanaId: ventanaId,
+          message: 'Ignoring incorrect ventanaId from request, using user ventanaId instead'
+        }
       });
+      // No lanzar error, simplemente ignorar el ventanaId del request
     }
   } else if (context.role === Role.ADMIN) {
     // ADMIN: si tiene banca activa (filtro de vista), filtrar por banca

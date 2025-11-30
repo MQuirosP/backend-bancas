@@ -953,20 +953,34 @@ export const TicketService = {
     userId: string
   ) {
     try {
-      // Resolver rango de fechas
-      const dateRange = resolveDateRange(
-        params.date || "today",
-        params.fromDate,
-        params.toDate
-      );
+      // ✅ FIX: Regla especial - cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha
+      const hasSorteoId = !!params.sorteoId;
+      const hasExplicitDateRange = !!(params.fromDate || params.toDate);
+
+      let dateRange: { fromAt: Date; toAt: Date } | null = null;
+
+      if (hasSorteoId && !hasExplicitDateRange) {
+        // NO aplicar filtro de fecha cuando hay sorteoId y no hay fechas explícitas
+        dateRange = null;
+      } else {
+        // Resolver rango de fechas normalmente
+        dateRange = resolveDateRange(
+          params.date || "today",
+          params.fromDate,
+          params.toDate
+        );
+      }
 
       // Construir filtro para tickets según dimension y scope
       const ticketWhere: any = {
         deletedAt: null,
-        createdAt: {
-          gte: dateRange.fromAt,
-          lte: dateRange.toAt,
-        },
+        // ✅ FIX: Solo aplicar filtro de fecha si dateRange no es null
+        ...(dateRange ? {
+          createdAt: {
+            gte: dateRange.fromAt,
+            lte: dateRange.toAt,
+          },
+        } : {}),
         // Excluir tickets CANCELLED por defecto
         // Si se especifica params.status, usar ese valor; si no, excluir CANCELLED
         status: params.status
@@ -1024,9 +1038,30 @@ export const TicketService = {
       }
       // Si scope='all' y no hay filtros específicos ni dimension, no agregar filtros de ventanaId/vendedorId
 
-      // Construir filtro para jugadas
+      // ✅ FIX: Obtener primero los tickets que cumplen los filtros, luego sus jugadas
+      // Esto es más robusto que usar nested queries complejas con ticket: ticketWhere
+      const tickets = await prisma.ticket.findMany({
+        where: ticketWhere,
+        select: {
+          id: true,
+        },
+      });
+
+      // Si no hay tickets, retornar respuesta vacía
+      if (tickets.length === 0) {
+        logger.warn({
+          layer: "service",
+          action: "TICKET_NUMBERS_SUMMARY_NO_TICKETS",
+          payload: { params, message: "No tickets found for the given filters" },
+        });
+        // Continuar con lógica normal - retornará ceros
+      }
+
+      const ticketIds = tickets.map(t => t.id);
+
+      // Construir filtro para jugadas usando los ticket IDs
       const jugadaWhere: any = {
-        ticket: ticketWhere,
+        ticketId: { in: ticketIds },
         deletedAt: null,
         ...(params.multiplierId
           ? {
@@ -1037,7 +1072,7 @@ export const TicketService = {
           : {}),
       };
 
-      // Obtener todas las jugadas que cumplen los filtros
+      // Obtener todas las jugadas que pertenecen a los tickets filtrados
       const jugadas = await prisma.jugada.findMany({
         where: jugadaWhere,
         select: {
@@ -1047,6 +1082,9 @@ export const TicketService = {
           reventadoNumber: true,
           type: true,
           amount: true,
+          // ✅ NUEVO: Campos para commission breakdown
+          commissionAmount: true,  // Comisión del vendedor
+          listeroCommissionAmount: true,  // Comisión del listero
         },
       });
 
@@ -1156,6 +1194,35 @@ export const TicketService = {
       }
       const totalTickets = allUniqueTicketIds.size;
 
+      // ✅ NUEVO: Calcular commission breakdown por tipo de jugada
+      let commissionByNumber = 0;
+      let commissionByReventado = 0;
+
+      for (const jugada of jugadas) {
+        // Determinar qué comisión usar según dimension
+        // Si dimension='vendedor' o vendedorId presente: usar commissionAmount (vendedor)
+        // Si dimension='listero' o ventanaId presente: usar listeroCommissionAmount (listero)
+        let commissionToUse = 0;
+
+        if (params.dimension === 'vendedor' || (params.vendedorId && !params.dimension)) {
+          commissionToUse = jugada.commissionAmount || 0;
+        } else if (params.dimension === 'listero' || params.ventanaId) {
+          commissionToUse = jugada.listeroCommissionAmount || 0;
+        } else {
+          // Default: usar listeroCommissionAmount
+          commissionToUse = jugada.listeroCommissionAmount || 0;
+        }
+
+        // Acumular por tipo
+        if (jugada.type === 'NUMERO') {
+          commissionByNumber += commissionToUse;
+        } else if (jugada.type === 'REVENTADO') {
+          commissionByReventado += commissionToUse;
+        }
+      }
+
+      const totalCommission = commissionByNumber + commissionByReventado;
+
       // Obtener información de ventana/vendedor/loteria/sorteo si están presentes
       let ventanaName: string | undefined;
       let vendedorName: string | undefined;
@@ -1207,6 +1274,10 @@ export const TicketService = {
           totalAmountByReventado,
           totalAmount,
           totalTickets,
+          // ✅ NUEVO: Commission breakdown
+          commissionByNumber,
+          commissionByReventado,
+          totalCommission,
           ...(params.dimension ? { dimension: params.dimension } : {}),
           ...(params.ventanaId ? { ventanaId: params.ventanaId } : {}),
           ...(params.vendedorId ? { vendedorId: params.vendedorId } : {}),
