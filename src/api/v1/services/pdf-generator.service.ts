@@ -178,13 +178,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
         }
       }
 
-      // 6. PIE DE PÁGINA (opcional)
-      doc.fontSize(8);
-      const footerY = doc.page.height - doc.page.margins.bottom;
-      doc.text(`Generado por Bancas Admin - ${generatedAt}`, 0, footerY, {
-        align: 'center',
-        width: doc.page.width,
-      });
+      // ✅ FIX: Eliminado pie de página que causaba página en blanco extra
 
       doc.end();
 

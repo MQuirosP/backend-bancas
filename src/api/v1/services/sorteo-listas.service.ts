@@ -43,7 +43,7 @@ export const SorteoListasService = {
             throw new AppError("Sorteo no encontrado", 404);
         }
 
-        // 2. Obtener todos los tickets del sorteo con comisiones
+        // 2. Obtener todos los tickets del sorteo con comisiones y jugadas
         const tickets = await prisma.ticket.findMany({
             where: {
                 sorteoId,
@@ -68,6 +68,16 @@ export const SorteoListasService = {
                         id: true,
                         name: true,
                         code: true,
+                    },
+                },
+                // ✅ NUEVO: Incluir jugadas para commission breakdown
+                jugadas: {
+                    where: {
+                        deletedAt: null,
+                    },
+                    select: {
+                        type: true,  // NUMERO o REVENTADO
+                        listeroCommissionAmount: true,  // Comisión del listero
                     },
                 },
             },
@@ -123,6 +133,9 @@ export const SorteoListasService = {
                 totalSales: number;
                 totalTickets: number;
                 totalCommission: number;
+                // ✅ NUEVO: Commission breakdown
+                commissionByNumber: number;
+                commissionByReventado: number;
             }>;
         }>();
 
@@ -149,13 +162,27 @@ export const SorteoListasService = {
                     totalSales: 0,
                     totalTickets: 0,
                     totalCommission: 0,
+                    commissionByNumber: 0,
+                    commissionByReventado: 0,
                 });
             }
 
             const vendedorEntry = ventanaEntry.vendedores.get(vendedorKey)!;
             vendedorEntry.totalSales += ticket.totalAmount;
             vendedorEntry.totalTickets += 1;
-            vendedorEntry.totalCommission += ticket.totalCommission ?? 0;
+
+            // ✅ FIX: Calcular commission breakdown por tipo de jugada usando listeroCommissionAmount
+            for (const jugada of ticket.jugadas) {
+                const commission = jugada.listeroCommissionAmount || 0;
+                if (jugada.type === 'NUMERO') {
+                    vendedorEntry.commissionByNumber += commission;
+                } else if (jugada.type === 'REVENTADO') {
+                    vendedorEntry.commissionByReventado += commission;
+                }
+            }
+
+            // ✅ FIX: totalCommission debe ser la suma de las comisiones del listero, no del vendedor
+            vendedorEntry.totalCommission = vendedorEntry.commissionByNumber + vendedorEntry.commissionByReventado;
         }
 
         // 6. Construir estructura de respuesta agrupada
@@ -171,6 +198,9 @@ export const SorteoListasService = {
             let ventanaTotalSales = 0;
             let ventanaTotalTickets = 0;
             let ventanaTotalCommission = 0;
+            // ✅ NUEVO: Acumuladores para commission breakdown de ventana
+            let ventanaCommissionByNumber = 0;
+            let ventanaCommissionByReventado = 0;
 
             for (const [vendedorKey, vendedorData] of ventanaData.vendedores.entries()) {
                 const exclusionKey = `${ventanaId}:${vendedorKey}`;
@@ -183,6 +213,9 @@ export const SorteoListasService = {
                     totalSales: vendedorData.totalSales,
                     totalTickets: vendedorData.totalTickets,
                     totalCommission: vendedorData.totalCommission,
+                    // ✅ NUEVO: Commission breakdown
+                    commissionByNumber: vendedorData.commissionByNumber,
+                    commissionByReventado: vendedorData.commissionByReventado,
                     isExcluded: !!exclusion,
                     exclusionId: exclusion?.id || null,
                     exclusionReason: exclusion?.reason || null,
@@ -194,6 +227,9 @@ export const SorteoListasService = {
                 ventanaTotalSales += vendedorData.totalSales;
                 ventanaTotalTickets += vendedorData.totalTickets;
                 ventanaTotalCommission += vendedorData.totalCommission;
+                // ✅ NUEVO: Acumular commission breakdown
+                ventanaCommissionByNumber += vendedorData.commissionByNumber;
+                ventanaCommissionByReventado += vendedorData.commissionByReventado;
 
                 if (exclusion) totalExcluded++;
             }
@@ -216,6 +252,9 @@ export const SorteoListasService = {
                 totalSales: ventanaTotalSales,
                 totalTickets: ventanaTotalTickets,
                 totalCommission: ventanaTotalCommission,
+                // ✅ NUEVO: Commission breakdown
+                commissionByNumber: ventanaCommissionByNumber,
+                commissionByReventado: ventanaCommissionByReventado,
                 isExcluded: !!ventanaExclusion,
                 exclusionId: ventanaExclusion?.id || null,
                 exclusionReason: ventanaExclusion?.reason || null,

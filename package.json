@@ -50,6 +50,7 @@
     "ioredis": "^5.8.2",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.1",
+    "pdf-to-png-converter": "^3.11.0",
     "pdfkit": "^0.17.2",
     "pdfmake": "^0.2.20",
     "pino": "^10.0.0",
