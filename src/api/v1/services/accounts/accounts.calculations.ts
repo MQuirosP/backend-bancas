@@ -26,10 +26,15 @@ export async function calculateDayStatement(
     // Construir WHERE clause
     // FIX: Usar businessDate en lugar de createdAt para agrupar correctamente por día de negocio
     const dateFilter = buildTicketDateFilter(date);
+
+    // ✅ NUEVO: Obtener tickets excluidos para esta fecha
+    const excludedTicketIds = await getExcludedTicketIdsForDate(date);
+
     const where: any = {
         ...dateFilter,
         deletedAt: null,
         status: { not: "CANCELLED" },
+        ...(excludedTicketIds.length > 0 ? { id: { notIn: excludedTicketIds } } : {}), // ✅ NUEVO: Excluir tickets bloqueados
     };
 
     // Filtrar por banca activa (para ADMIN multibanca)
@@ -359,6 +364,13 @@ export async function getStatementDirect(
         Prisma.sql`t.status IN ('ACTIVE', 'EVALUATED', 'PAID')`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`,
+        // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
+        Prisma.sql`NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND sle.ventana_id = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+        )`,
     ];
 
     // Filtrar por banca activa (para ADMIN multibanca)
@@ -626,6 +638,8 @@ export async function getStatementDirect(
     const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
     const totalRemainingBalance = statements.reduce((sum, s) => sum + s.remainingBalance, 0);
 
+
+
     // ✅ NUEVO: Calcular monthlyAccumulated (acumulado del mes COMPLETO)
     // Esto es INMUTABLE respecto al período filtrado (siempre es el mes completo)
     const [year, month] = effectiveMonth.split("-").map(Number);
@@ -645,6 +659,13 @@ export async function getStatementDirect(
             SELECT 1 FROM "Sorteo" s
             WHERE s.id = t."sorteoId"
             AND s.status = 'CLOSED'
+        )`,
+        // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
+        Prisma.sql`NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND sle.ventana_id = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
         )`,
     ];
 
@@ -912,4 +933,32 @@ export async function getStatementDirect(
             monthEndDate: toCRDateString(monthEndDate),
         },
     };
+}
+
+/**
+ * Helper para obtener IDs de tickets excluidos en una fecha específica
+ * Basado en la tabla sorteo_lista_exclusion
+ */
+async function getExcludedTicketIdsForDate(date: Date): Promise<string[]> {
+    // Convertir fecha a string YYYY-MM-DD para comparación SQL
+    // Nota: date viene como objeto Date UTC (00:00:00Z) que representa el día
+    const dateStr = date.toISOString().split('T')[0];
+
+    const excludedIds = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT t.id
+      FROM "Ticket" t
+      JOIN "sorteo_lista_exclusion" sle ON sle.sorteo_id = t."sorteoId"
+      WHERE
+        (
+          t."businessDate" = ${date}::date
+          OR (
+            t."businessDate" IS NULL
+            AND DATE(t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica') = ${date}::date
+          )
+        )
+        AND sle.ventana_id = t."ventanaId"
+        AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+    `;
+
+    return excludedIds.map(r => r.id);
 }

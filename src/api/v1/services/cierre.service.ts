@@ -314,6 +314,14 @@ export class CierreService {
       conditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
     }
 
+    // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
+    conditions.push(Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "sorteo_lista_exclusion" sle
+      WHERE sle.sorteo_id = t."sorteoId"
+      AND sle.ventana_id = t."ventanaId"
+      AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+    )`);
+
     // Combinar condiciones con AND
     if (conditions.length === 0) {
       return Prisma.empty;

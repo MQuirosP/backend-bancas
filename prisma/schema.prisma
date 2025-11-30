@@ -91,11 +91,11 @@ model User {
   activities               ActivityLog[]
   refreshTokens            RefreshToken[]
   restrictionRules         RestrictionRule[]
-  tickets                  Ticket[]             @relation("TicketVendedor")
-  ticketsCreated           Ticket[]             @relation("TicketCreatedBy")
-  ticketsPaid              Ticket[]             @relation("TicketPaidBy")
+  tickets                  Ticket[]               @relation("TicketVendedor")
+  ticketsCreated           Ticket[]               @relation("TicketCreatedBy")
+  ticketsPaid              Ticket[]               @relation("TicketPaidBy")
   TicketPayment            TicketPayment[]
-  ventana                  Ventana?             @relation(fields: [ventanaId], references: [id])
+  ventana                  Ventana?               @relation(fields: [ventanaId], references: [id])
   multiplierOverrides      MultiplierOverride[]
   savedReports             SavedReport[]
   exportJobs               ExportJob[]
@@ -103,10 +103,13 @@ model User {
   apiKeys                  ApiKey[]
   accountStatements        AccountStatement[]
   accountPayments          AccountPayment[]
-  accountPaymentsPaid      AccountPayment[]     @relation("AccountPaymentPaidBy")
-  accountPaymentsReversed  AccountPayment[]     @relation("AccountPaymentReversedBy")
+  accountPaymentsPaid      AccountPayment[]       @relation("AccountPaymentPaidBy")
+  accountPaymentsReversed  AccountPayment[]       @relation("AccountPaymentReversedBy")
   bancas                   UserBanca[]
-  sorteosAutoConfigUpdated SorteosAutoConfig[]  @relation("SorteosAutoConfigUpdatedBy")
+  sorteosAutoConfigUpdated SorteosAutoConfig[]    @relation("SorteosAutoConfigUpdatedBy")
+  exclusionsAsVentana      SorteoListaExclusion[] @relation("ExclusionVentana")
+  exclusionsAsVendedor     SorteoListaExclusion[] @relation("ExclusionVendedor")
+  exclusionsCreated        SorteoListaExclusion[] @relation("ExclusionExcludedBy")
 
   @@index([code])
   @@index([email])
@@ -191,7 +194,7 @@ model Ticket {
   paymentHistory  Json? // Historial completo de pagos
 
   // ✅ NUEVO: Cascada de cierre de sorteo
-  isSorteoClosed  Boolean   @default(false) // Marca si el sorteo fue cerrado (para exclusión de reportes)
+  isSorteoClosed Boolean @default(false) // Marca si el sorteo fue cerrado (para exclusión de reportes)
 
   jugadas       Jugada[]
   loteria       Loteria         @relation(fields: [loteriaId], references: [id])
@@ -302,9 +305,10 @@ model Sorteo {
   deletedByCascadeFrom String? // 'loteria', 'ventana', etc.
   deletedByCascadeId   String?      @db.Uuid // ID del recurso padre que causó la cascada
 
-  extraMultiplier LoteriaMultiplier? @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
-  loteria         Loteria            @relation(fields: [loteriaId], references: [id])
+  extraMultiplier LoteriaMultiplier?     @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
+  loteria         Loteria                @relation(fields: [loteriaId], references: [id])
   tickets         Ticket[]
+  exclusions      SorteoListaExclusion[] // Relación con exclusiones de listas
 
   @@unique([loteriaId, scheduledAt])
   @@index([loteriaId, scheduledAt])
@@ -315,6 +319,29 @@ model Sorteo {
   @@index([winningNumber])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_name_trgm", type: Gin)
   @@index([winningNumber(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_winning_trgm", type: Gin)
+}
+
+model SorteoListaExclusion {
+  id         String   @id @default(uuid()) @db.Uuid
+  sorteoId   String   @map("sorteo_id") @db.Uuid
+  ventanaId  String   @map("ventana_id") @db.Uuid
+  vendedorId String?  @map("vendedor_id") @db.Uuid // NULL = listero completo, NOT NULL = vendedor específico
+  excludedAt DateTime @default(now()) @map("excluded_at")
+  excludedBy String   @map("excluded_by") @db.Uuid
+  reason     String? // Campo opcional para auditoría
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  sorteo         Sorteo @relation(fields: [sorteoId], references: [id], onDelete: Cascade)
+  ventana        User   @relation("ExclusionVentana", fields: [ventanaId], references: [id])
+  vendedor       User?  @relation("ExclusionVendedor", fields: [vendedorId], references: [id])
+  excludedByUser User   @relation("ExclusionExcludedBy", fields: [excludedBy], references: [id])
+
+  @@unique([sorteoId, ventanaId, vendedorId])
+  @@index([sorteoId])
+  @@index([ventanaId])
+  @@index([vendedorId])
+  @@map("sorteo_lista_exclusion")
 }
 
 model ActivityLog {
