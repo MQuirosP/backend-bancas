@@ -109,8 +109,8 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
       const existingAnd = Array.isArray(where.AND)
         ? where.AND
         : where.AND
-        ? [where.AND]
-        : [];
+          ? [where.AND]
+          : [];
       where.AND = [...existingAnd, { OR: orConditions }];
     }
   }
@@ -215,6 +215,47 @@ function buildRawDateConditions(filters: VentasFilters) {
 }
 
 /**
+ * Helper para obtener condiciones de exclusión de listas
+ * Resuelve el workaround del esquema (ventanaId apunta a User)
+ */
+async function getExclusionsWhere(filters: VentasFilters): Promise<Prisma.TicketWhereInput> {
+  // Optimización: Si hay filtro de sorteo, solo buscar exclusiones para ese sorteo
+  const whereExclusion: Prisma.SorteoListaExclusionWhereInput = {};
+  if (filters.sorteoId) {
+    whereExclusion.sorteoId = filters.sorteoId;
+  }
+
+  const exclusions = await prisma.sorteoListaExclusion.findMany({
+    where: whereExclusion,
+    include: {
+      ventana: {
+        select: { ventanaId: true } // ventana es User, obtenemos su ventanaId real
+      }
+    }
+  });
+
+  if (exclusions.length === 0) {
+    return {};
+  }
+
+  const notConditions: Prisma.TicketWhereInput[] = exclusions
+    .filter(ex => ex.ventana?.ventanaId) // Asegurar que tenemos el ID real de la ventana
+    .map(ex => ({
+      sorteoId: ex.sorteoId,
+      ventanaId: ex.ventana!.ventanaId!, // ID real de la ventana
+      ...(ex.vendedorId ? { vendedorId: ex.vendedorId } : {}) // Si es específico de vendedor
+    }));
+
+  if (notConditions.length === 0) {
+    return {};
+  }
+
+  return {
+    NOT: notConditions
+  };
+}
+
+/**
  * VentasService
  * Expone endpoints para reportes y análisis de ventas
  */
@@ -225,7 +266,14 @@ export const VentasService = {
    */
   async list(page = 1, pageSize = 10, filters: VentasFilters = {}): Promise<PaginatedResult<any>> {
     try {
-      const where = buildWhereClause(filters);
+      const baseWhere = buildWhereClause(filters);
+      const exclusionWhere = await getExclusionsWhere(filters);
+
+      // Combinar filtros base con exclusiones
+      const where: Prisma.TicketWhereInput = {
+        AND: [baseWhere, exclusionWhere]
+      };
+
       const { skip, take } = getSkipTake(page, pageSize);
 
       // Determinar orderBy
@@ -331,7 +379,13 @@ export const VentasService = {
     myGain?: number;                    // ✅ NUEVO: Ganancia personal (Comisión Listero - Comisión Vendedor)
   }> {
     try {
-      const where = buildWhereClause(filters);
+      const baseWhere = buildWhereClause(filters);
+      const exclusionWhere = await getExclusionsWhere(filters);
+
+      // Combinar filtros base con exclusiones
+      const where: Prisma.TicketWhereInput = {
+        AND: [baseWhere, exclusionWhere]
+      };
 
       // Agregaciones en paralelo
       const [ticketsAgg, jugadasAgg, lastTicket, paymentStats] = await prisma.$transaction([
@@ -590,7 +644,13 @@ export const VentasService = {
         });
       }
 
-      const where = buildWhereClause(filters);
+      const baseWhere = buildWhereClause(filters);
+      const exclusionWhere = await getExclusionsWhere(filters);
+
+      // Combinar filtros base con exclusiones
+      const where: Prisma.TicketWhereInput = {
+        AND: [baseWhere, exclusionWhere]
+      };
 
       switch (dimension) {
         case "ventana": {
@@ -697,9 +757,9 @@ export const VentasService = {
           });
           const vendedores = await prisma.user.findMany({
             where: { id: { in: vendedorIds } },
-            select: { 
-              id: true, 
-              name: true, 
+            select: {
+              id: true,
+              name: true,
               username: true,
               code: true,
               isActive: true,
@@ -721,14 +781,14 @@ export const VentasService = {
           });
           // Obtener todos los tickets del vendedor para cálculos adicionales
           const allTickets = await prisma.ticket.findMany({
-            where: { 
+            where: {
               vendedorId: { in: vendedorIds },
               ...where,
             },
-            select: { 
-              id: true, 
-              vendedorId: true, 
-              isWinner: true, 
+            select: {
+              id: true,
+              vendedorId: true,
+              isWinner: true,
               status: true,
               createdAt: true,
               businessDate: true,
@@ -738,7 +798,7 @@ export const VentasService = {
 
           const ticketIds = jugadasAgg.map((p) => p.ticketId);
           const tickets = allTickets.filter((t) => ticketIds.includes(t.id));
-          
+
           const payoutByVendedor = new Map<string, number>();
           const commissionByVendedor = new Map<string, number>();
           const winningTicketsByVendedor = new Map<string, number>();
@@ -757,7 +817,7 @@ export const VentasService = {
 
           if (winningTickets.length > 0) {
             const winningTicketIds = winningTickets.map((t) => t.id);
-            
+
             // Obtener payouts de jugadas ganadoras
             const winningJugadas = await prisma.jugada.findMany({
               where: {
@@ -798,12 +858,12 @@ export const VentasService = {
             if (t.isWinner) {
               const ticketPaid = paidByTicket.get(t.id) ?? 0;
               const ticketPayout = payoutByTicket.get(t.id) ?? 0;
-              
+
               totalPaidByVendedor.set(
                 t.vendedorId,
                 (totalPaidByVendedor.get(t.vendedorId) ?? 0) + ticketPaid
               );
-              
+
               // Pending payment = payout - paid
               const pending = Math.max(0, ticketPayout - ticketPaid);
               pendingPaymentByVendedor.set(
@@ -865,13 +925,13 @@ export const VentasService = {
             const unpaidTicketsCount = unpaidTicketsByVendedor.get(r.vendedorId) ?? 0;
             const totalPaid = totalPaidByVendedor.get(r.vendedorId) ?? 0;
             const pendingPayment = pendingPaymentByVendedor.get(r.vendedorId) ?? 0;
-            
+
             // Calcular métricas derivadas
             const avgTicketAmount = ticketsCount > 0 ? ventasTotal / ticketsCount : 0;
             const winRate = ticketsCount > 0 ? (winningTicketsCount / ticketsCount) * 100 : 0;
             const payoutRate = ventasTotal > 0 ? (payoutTotal / ventasTotal) * 100 : 0;
             const activityDays = ticketDatesByVendedor.get(r.vendedorId)?.size ?? 0;
-            
+
             const lastTicketAt = lastTicketAtByVendedor.get(r.vendedorId);
             const firstTicketAt = firstTicketAtByVendedor.get(r.vendedorId);
 
