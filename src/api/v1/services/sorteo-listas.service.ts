@@ -335,13 +335,85 @@ export const SorteoListasService = {
         }
 
         // Verificar que la ventana existe
-        const ventana = await prisma.user.findUnique({
-            where: { id: data.ventanaId },
-            select: { id: true, role: true },
+        logger.info({
+            layer: "service",
+            action: "EXCLUDE_LISTA_VALIDATION",
+            payload: {
+                sorteoId,
+                ventanaId: data.ventanaId,
+                vendedorId: data.vendedorId,
+                message: "Validando ventanaId antes de exclusión"
+            }
         });
 
-        if (!ventana || ventana.role !== "VENTANA") {
-            throw new AppError("Ventana no encontrada o usuario no es VENTANA", 404);
+        let ventana = await prisma.ventana.findUnique({
+            where: { id: data.ventanaId },
+            select: { id: true, name: true, isActive: true },
+        });
+
+        // Fallback: Si no se encuentra como ventana, buscar como usuario (Listero)
+        if (!ventana) {
+            logger.info({
+                layer: "service",
+                action: "EXCLUDE_LISTA_RETRY_USER",
+                payload: {
+                    ventanaId: data.ventanaId,
+                    message: "Ventana no encontrada por ID, intentando buscar como Usuario (Listero)"
+                }
+            });
+
+            const user = await prisma.user.findUnique({
+                where: { id: data.ventanaId },
+                select: {
+                    id: true,
+                    role: true,
+                    ventanaId: true,
+                    ventana: {
+                        select: { id: true, name: true, isActive: true }
+                    }
+                }
+            });
+
+            if (user && user.role === 'VENTANA' && user.ventana) {
+                ventana = user.ventana;
+                // Actualizamos el ID para que el resto del flujo use el ID correcto de la ventana
+                // IMPORTANTE: Esto asegura que la exclusión se guarde con el ID correcto de la ventana
+                data.ventanaId = user.ventana.id;
+
+                logger.info({
+                    layer: "service",
+                    action: "EXCLUDE_LISTA_RESOLVED_FROM_USER",
+                    payload: {
+                        originalId: user.id,
+                        resolvedVentanaId: ventana.id,
+                        message: "ID resuelto exitosamente desde usuario listero"
+                    }
+                });
+            }
+        }
+
+        logger.info({
+            layer: "service",
+            action: "EXCLUDE_LISTA_VENTANA_FOUND",
+            payload: {
+                ventanaId: data.ventanaId,
+                found: !!ventana,
+                ventanaData: ventana,
+                message: "Resultado de búsqueda de ventana (final)"
+            }
+        });
+
+        if (!ventana) {
+            logger.warn({
+                layer: "service",
+                action: "OPERATIONAL_ERROR",
+                payload: {
+                    message: "Ventana no encontrada (ni como ventana ni como usuario listero)",
+                    ventanaId: data.ventanaId,
+                    sorteoId
+                }
+            });
+            throw new AppError("Ventana no encontrada", 404);
         }
 
         // Si se especifica vendedorId, verificar que existe y pertenece a la ventana
@@ -360,10 +432,52 @@ export const SorteoListasService = {
             }
         }
 
+        // WORKAROUND: El esquema de Prisma define la relación 'ventana' en SorteoListaExclusion
+        // apuntando al modelo User, no al modelo Ventana. Esto causa error de FK si usamos el ID de Ventana.
+        // Solución: Buscar el usuario listero asociado a esta ventana y usar SU ID.
+
+        let targetVentanaIdForDb = data.ventanaId;
+
+        // Si tenemos una ventana válida (encontrada arriba), buscar su usuario listero
+        if (ventana) {
+            const listeroUser = await prisma.user.findFirst({
+                where: {
+                    ventanaId: ventana.id,
+                    role: 'VENTANA',
+                    isActive: true
+                },
+                select: { id: true }
+            });
+
+            if (listeroUser) {
+                targetVentanaIdForDb = listeroUser.id;
+                logger.info({
+                    layer: "service",
+                    action: "EXCLUDE_LISTA_SCHEMA_WORKAROUND",
+                    payload: {
+                        ventanaId: ventana.id,
+                        listeroUserId: listeroUser.id,
+                        message: "Usando ID de usuario listero para satisfacer FK de esquema"
+                    }
+                });
+            } else {
+                // Si no hay listero, esto fallará por FK, pero intentamos buscar si el ID ya era de un usuario
+                // (el caso fallback de arriba ya manejó si el input era ID de usuario)
+                logger.warn({
+                    layer: "service",
+                    action: "EXCLUDE_LISTA_NO_LISTERO",
+                    payload: {
+                        ventanaId: ventana.id,
+                        message: "No se encontró usuario listero para la ventana. La exclusión podría fallar por FK."
+                    }
+                });
+            }
+        }
+
         // Crear exclusión (upsert para evitar duplicados)
         const whereClause = {
             sorteoId,
-            ventanaId: data.ventanaId,
+            ventanaId: targetVentanaIdForDb,
             vendedorId: data.vendedorId || null,
         };
 
@@ -373,7 +487,7 @@ export const SorteoListasService = {
             },
             create: {
                 sorteoId,
-                ventanaId: data.ventanaId,
+                ventanaId: targetVentanaIdForDb,
                 vendedorId: data.vendedorId || null,
                 excludedBy: userId,
                 reason: data.reason || null,

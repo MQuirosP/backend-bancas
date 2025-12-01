@@ -210,10 +210,13 @@ function buildTicketBaseFilters(
       AND s.status = 'CLOSED'
     )`,
     // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
+    // NOTA: Debido al workaround del esquema, sle.ventana_id contiene el ID del USUARIO listero.
+    // Debemos hacer JOIN con User para obtener el ID real de la ventana y compararlo con el ticket.
     Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "sorteo_lista_exclusion" sle
+      JOIN "User" u ON u.id = sle.ventana_id
       WHERE sle.sorteo_id = ${Prisma.raw(`${alias}."sorteoId"`)}
-      AND sle.ventana_id = ${Prisma.raw(`${alias}."ventanaId"`)}
+      AND u."ventanaId" = ${Prisma.raw(`${alias}."ventanaId"`)}
       AND (sle.vendedor_id IS NULL OR sle.vendedor_id = ${Prisma.raw(`${alias}."vendedorId"`)})
     )`,
   ];
