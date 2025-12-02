@@ -1,19 +1,57 @@
 export interface ExcludeListaDTO {
   ventanaId: string;
   vendedorId?: string | null; // NULL = excluir listero completo
+  multiplierId?: string | null; // NULL = todos los multiplicadores
   reason?: string;
 }
 
 export interface IncludeListaDTO {
   ventanaId: string;
   vendedorId?: string | null;
+  multiplierId?: string | null;
 }
 
 export interface ListaExclusionResponse {
   id: string;
   sorteoId: string;
+  sorteoName: string;
+  loteriaId: string;
+  loteriaName: string;
+  ventanaId: string;
+  ventanaName: string;
+  ventanaCode: string;
+  vendedorId: string | null;
+  vendedorName: string | null;
+  vendedorCode: string | null;
+  multiplierId: string | null;
+  multiplierName: string | null;
+  multiplierValue: number | null;
+  totalJugadas: number;
+  totalAmount: number;
+  excludedAt: string | null;
+  excludedBy: string | null;
+  excludedByName: string | null;
+  reason: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface ListaExclusionFilters {
+  sorteoId?: string;
+  ventanaId?: string;
+  vendedorId?: string;
+  multiplierId?: string;
+  fromDate?: string;
+  toDate?: string;
+  loteriaId?: string;
+}
+
+export interface ExcludeIncludeResponse {
+  id: string;
+  sorteoId: string;
   ventanaId: string;
   vendedorId: string | null;
+  multiplierId: string | null;
   excludedAt: string;
   excludedBy: string;
   reason: string | null;
@@ -38,6 +76,10 @@ export interface VendedorSummary {
   excludedAt: string | null;
   excludedBy: string | null;
   excludedByName: string | null;
+  // ✅ NUEVO: Multiplier info if specific exclusion exists
+  multiplierId?: string | null;
+  multiplierName?: string | null;
+  multiplierValue?: number | null; // Renamed from multiplierValueX for FE compatibility
 }
 
 export interface ListeroSummary {
@@ -58,6 +100,7 @@ export interface ListeroSummary {
   excludedByName: string | null;
   vendedores: VendedorSummary[];
 }
+
 
 export interface SorteoInfo {
   id: string;
