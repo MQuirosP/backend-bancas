@@ -985,7 +985,8 @@ export const TicketService = {
         // Si se especifica params.status, usar ese valor; si no, excluir CANCELLED
         status: params.status
           ? params.status
-          : { not: "CANCELLED" }, // Excluir CANCELLED si no se especifica
+          : { notIn: ["CANCELLED", "EXCLUDED"] }, // Excluir CANCELLED si no se especifica
+        isActive: true,
         ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
         ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
       };
@@ -1063,6 +1064,7 @@ export const TicketService = {
       const jugadaWhere: any = {
         ticketId: { in: ticketIds },
         deletedAt: null,
+        isActive: true,
         ...(params.multiplierId
           ? {
             // ✅ NUEVO: Filtrar por multiplicador (solo jugadas NUMERO tienen multiplierId)
