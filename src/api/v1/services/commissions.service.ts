@@ -66,8 +66,9 @@ export const CommissionsService = {
 
       // Construir filtros WHERE dinámicos según RBAC
       const whereConditions: Prisma.Sql[] = [
-        Prisma.sql`t."isActive" = true`,
         Prisma.sql`t."deletedAt" IS NULL`,
+        Prisma.sql`t."isActive" = true`,
+        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
         // ✅ NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
@@ -673,8 +674,9 @@ export const CommissionsService = {
 
       // Construir filtros WHERE dinámicos según RBAC
       const whereConditions: Prisma.Sql[] = [
-        Prisma.sql`t."isActive" = true`,
         Prisma.sql`t."deletedAt" IS NULL`,
+        Prisma.sql`t."isActive" = true`,
+        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
         // ✅ NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
@@ -1288,8 +1290,9 @@ export const CommissionsService = {
 
       // Construir filtros WHERE dinámicos según RBAC
       const whereConditions: Prisma.Sql[] = [
-        Prisma.sql`t."isActive" = true`,
         Prisma.sql`t."deletedAt" IS NULL`,
+        Prisma.sql`t."isActive" = true`,
+        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
         Prisma.sql`t."loteriaId" = ${loteriaId}::uuid`,

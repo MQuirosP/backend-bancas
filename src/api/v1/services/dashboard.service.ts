@@ -201,7 +201,8 @@ function buildTicketBaseFilters(
 ) {
   const conditions: Prisma.Sql[] = [
     Prisma.sql`${Prisma.raw(`${alias}."deletedAt"`)} IS NULL`,
-    Prisma.sql`${Prisma.raw(`${alias}."status"`)} IN ('ACTIVE', 'EVALUATED', 'PAID')`,
+    Prisma.sql`${Prisma.raw(`${alias}."isActive"`)} = true`,
+    Prisma.sql`${Prisma.raw(`${alias}."status"`)} IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
     ticketBusinessDateCondition(alias, fromDateStr, toDateStr),
     // ✅ NUEVO: Excluir sorteos CLOSED para no incluir datos de sorteos finalizados
     Prisma.sql`NOT EXISTS (
@@ -267,7 +268,8 @@ function buildTicketWhereInput(
 
   const baseWhere: Prisma.TicketWhereInput = {
     deletedAt: null,
-    status: { in: ["ACTIVE", "EVALUATED", "PAID"] },
+    isActive: true,
+    status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
     // ✅ NUEVO: Excluir tickets de sorteos CLOSED
     sorteo: {
       status: { not: "CLOSED" },

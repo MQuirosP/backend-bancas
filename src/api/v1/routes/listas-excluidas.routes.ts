@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { SorteoListasController } from "../controllers/sorteo-listas.controller";
-import { protect } from "../../../middlewares/auth.middleware";
-import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
+import { protect, restrictTo } from "../../../middlewares/auth.middleware";
+import { Role } from "@prisma/client";
 
 const router = Router();
 
-// Todas las rutas requieren autenticación y rol ADMIN
+// Todas las rutas requieren autenticación - permitir VENTANA y ADMIN
 router.use(protect);
-router.use(requireAdmin);
+router.use(restrictTo(Role.VENTANA, Role.ADMIN));
 
 /**
  * GET /api/v1/listas-excluidas
