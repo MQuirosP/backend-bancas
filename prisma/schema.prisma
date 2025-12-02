@@ -7,6 +7,8 @@ datasource db {
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
   // shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  // ⚠️ Shadow database deshabilitado para Supabase/PgBouncer
+  // Usar "prisma migrate deploy" en lugar de "prisma migrate dev"
 }
 
 model Banca {
@@ -110,6 +112,7 @@ model User {
   exclusionsAsVentana      SorteoListaExclusion[] @relation("ExclusionVentana")
   exclusionsAsVendedor     SorteoListaExclusion[] @relation("ExclusionVendedor")
   exclusionsCreated        SorteoListaExclusion[] @relation("ExclusionExcludedBy")
+  jugadasExcluded          Jugada[]               @relation("JugadaExcludedBy")
 
   @@index([code])
   @@index([email])
@@ -275,12 +278,21 @@ model Jugada {
   commissionRuleId        String? // Snapshot inmutable: ID de la regla que aplicó
   listeroCommissionAmount Float     @default(0) // ✅ Snapshot inmutable: comisión del listero (ventana) calculada desde políticas
 
-  multiplier LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
-  ticket     Ticket             @relation(fields: [ticketId], references: [id])
+  // ✅ NUEVO: Campos de exclusión de listas
+  isExcluded     Boolean   @default(false) // Marca si esta jugada fue excluida de reportes
+  excludedAt     DateTime? // Fecha de exclusión
+  excludedBy     String?   @db.Uuid // Usuario que excluyó
+  excludedReason String? // Motivo de la exclusión
+
+  multiplier     LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
+  ticket         Ticket             @relation(fields: [ticketId], references: [id])
+  excludedByUser User?              @relation("JugadaExcludedBy", fields: [excludedBy], references: [id])
 
   @@index([ticketId])
   @@index([type])
   @@index([reventadoNumber])
+  @@index([isActive, isExcluded]) // ✅ Para filtros rápidos
+  @@index([multiplierId, isExcluded]) // ✅ Para exclusión por multiplicador
 }
 
 model Sorteo {
@@ -322,25 +334,28 @@ model Sorteo {
 }
 
 model SorteoListaExclusion {
-  id         String   @id @default(uuid()) @db.Uuid
-  sorteoId   String   @map("sorteo_id") @db.Uuid
-  ventanaId  String   @map("ventana_id") @db.Uuid
-  vendedorId String?  @map("vendedor_id") @db.Uuid // NULL = listero completo, NOT NULL = vendedor específico
-  excludedAt DateTime @default(now()) @map("excluded_at")
-  excludedBy String   @map("excluded_by") @db.Uuid
-  reason     String? // Campo opcional para auditoría
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(uuid()) @db.Uuid
+  sorteoId     String   @map("sorteo_id") @db.Uuid
+  ventanaId    String   @map("ventana_id") @db.Uuid
+  vendedorId   String?  @map("vendedor_id") @db.Uuid // NULL = listero completo, NOT NULL = vendedor específico
+  multiplierId String?  @map("multiplier_id") @db.Uuid // NULL = todos los multiplicadores, NOT NULL = multiplicador específico
+  excludedAt   DateTime @default(now()) @map("excluded_at")
+  excludedBy   String   @map("excluded_by") @db.Uuid
+  reason       String? // Campo opcional para auditoría
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
-  sorteo         Sorteo @relation(fields: [sorteoId], references: [id], onDelete: Cascade)
-  ventana        User   @relation("ExclusionVentana", fields: [ventanaId], references: [id])
-  vendedor       User?  @relation("ExclusionVendedor", fields: [vendedorId], references: [id])
-  excludedByUser User   @relation("ExclusionExcludedBy", fields: [excludedBy], references: [id])
+  sorteo         Sorteo             @relation(fields: [sorteoId], references: [id], onDelete: Cascade)
+  ventana        User               @relation("ExclusionVentana", fields: [ventanaId], references: [id])
+  vendedor       User?              @relation("ExclusionVendedor", fields: [vendedorId], references: [id])
+  excludedByUser User               @relation("ExclusionExcludedBy", fields: [excludedBy], references: [id])
+  multiplier     LoteriaMultiplier? @relation("ExclusionMultiplier", fields: [multiplierId], references: [id])
 
-  @@unique([sorteoId, ventanaId, vendedorId])
+  @@unique([sorteoId, ventanaId, vendedorId, multiplierId])
   @@index([sorteoId])
   @@index([ventanaId])
   @@index([vendedorId])
+  @@index([multiplierId])
   @@map("sorteo_lista_exclusion")
 }
 
@@ -410,10 +425,11 @@ model LoteriaMultiplier {
   updatedAt         DateTime       @updatedAt
   kind              MultiplierKind @default(NUMERO)
 
-  jugadasAtSale    Jugada[]          @relation("JugadaMultiplierAtSale")
-  loteria          Loteria           @relation(fields: [loteriaId], references: [id])
-  appliedInSorteos Sorteo[]          @relation("SorteoExtraMultiplier")
-  restrictionRules RestrictionRule[]
+  jugadasAtSale         Jugada[]               @relation("JugadaMultiplierAtSale")
+  loteria               Loteria                @relation(fields: [loteriaId], references: [id])
+  appliedInSorteos      Sorteo[]               @relation("SorteoExtraMultiplier")
+  restrictionRules      RestrictionRule[]
+  sorteoListaExclusions SorteoListaExclusion[] @relation("ExclusionMultiplier")
 
   @@index([loteriaId, kind, isActive])
   @@index([appliesToSorteoId])
@@ -732,6 +748,7 @@ enum TicketStatus {
   PAGADO
   CANCELLED
   RESTORED
+  EXCLUDED
 }
 
 enum SorteoStatus {

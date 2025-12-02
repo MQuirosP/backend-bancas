@@ -33,4 +33,11 @@ router.post(
     SorteoListasController.includeLista
 );
 
+// GET /api/v1/sorteos/:id/listas/excluded - Obtener listas excluidas
+router.get(
+    "/:id/listas/excluded",
+    validateIdParam,
+    SorteoListasController.getExcludedListas
+);
+
 export default router;

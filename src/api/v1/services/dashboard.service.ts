@@ -212,12 +212,15 @@ function buildTicketBaseFilters(
     // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
     // NOTA: Debido al workaround del esquema, sle.ventana_id contiene el ID del USUARIO listero.
     // Debemos hacer JOIN con User para obtener el ID real de la ventana y compararlo con el ticket.
+    // ✅ FIX: Solo excluir el ticket completo si la exclusión es TOTAL (multiplier_id IS NULL).
+    // Las exclusiones parciales (por multiplicador) se manejan en las consultas de agregación (Jugada).
     Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "sorteo_lista_exclusion" sle
       JOIN "User" u ON u.id = sle.ventana_id
       WHERE sle.sorteo_id = ${Prisma.raw(`${alias}."sorteoId"`)}
       AND u."ventanaId" = ${Prisma.raw(`${alias}."ventanaId"`)}
       AND (sle.vendedor_id IS NULL OR sle.vendedor_id = ${Prisma.raw(`${alias}."vendedorId"`)})
+      AND sle.multiplier_id IS NULL
     )`,
   ];
 
@@ -486,6 +489,8 @@ export const DashboardService = {
             t.id,
             t."ventanaId",
             t."loteriaId",
+            t."sorteoId",
+            t."vendedorId",
             t."totalAmount",
             t."totalPayout",
             t."isWinner"
@@ -502,11 +507,22 @@ export const DashboardService = {
         sales_per_ventana AS (
           SELECT
             t."ventanaId" AS ventana_id,
-            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
-            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts,
+            COALESCE(SUM(j.amount), 0) AS total_sales,
+            COALESCE(SUM(j.payout), 0) AS total_payouts,
             COUNT(DISTINCT t.id) AS total_tickets,
             COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) AS winning_tickets
           FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
           GROUP BY t."ventanaId"
         ),
         commissions_per_ventana AS (
@@ -517,6 +533,15 @@ export const DashboardService = {
           FROM tickets_in_range t
           JOIN "Jugada" j ON j."ticketId" = t.id
           WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
           GROUP BY t."ventanaId"
         )
         SELECT
@@ -555,6 +580,8 @@ export const DashboardService = {
             t.id,
             t."ventanaId",
             t."loteriaId",
+            t."sorteoId",
+            t."vendedorId",
             t."totalAmount",
             t."totalPayout",
             t."isWinner"
@@ -564,11 +591,22 @@ export const DashboardService = {
         sales_per_loteria AS (
           SELECT
             t."loteriaId" AS loteria_id,
-            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
-            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts,
+            COALESCE(SUM(j.amount), 0) AS total_sales,
+            COALESCE(SUM(j.payout), 0) AS total_payouts,
             COUNT(DISTINCT t.id) AS total_tickets,
             COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) AS winning_tickets
           FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
           GROUP BY t."loteriaId"
         ),
         commissions_per_loteria AS (
@@ -579,6 +617,15 @@ export const DashboardService = {
           FROM tickets_in_range t
           JOIN "Jugada" j ON j."ticketId" = t.id
           WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
           GROUP BY t."loteriaId"
         )
         SELECT
@@ -729,6 +776,8 @@ export const DashboardService = {
           SELECT
             t.id,
             t."ventanaId",
+            t."sorteoId",
+            t."vendedorId",
             t."totalAmount",
             t."totalPayout"
           FROM "Ticket" t
@@ -737,9 +786,20 @@ export const DashboardService = {
         sales_per_ventana AS (
           SELECT
             t."ventanaId" AS ventana_id,
-            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
-            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts
+            COALESCE(SUM(j.amount), 0) AS total_sales,
+            COALESCE(SUM(j.payout), 0) AS total_payouts
           FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
           GROUP BY t."ventanaId"
         ),
         commissions_per_ventana AS (
@@ -751,6 +811,15 @@ export const DashboardService = {
           FROM tickets_in_range t
           JOIN "Jugada" j ON j."ticketId" = t.id
           WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
           GROUP BY t."ventanaId"
         )
         SELECT
@@ -1027,6 +1096,8 @@ export const DashboardService = {
             SELECT
               t.id,
               t."ventanaId",
+              t."sorteoId",
+              t."vendedorId",
               t."totalAmount",
               t."totalPayout"
             FROM "Ticket" t
@@ -1035,9 +1106,19 @@ export const DashboardService = {
           sales_per_ventana AS (
             SELECT
               t."ventanaId" AS ventana_id,
-              COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
-              COALESCE(SUM(t."totalPayout"), 0) AS total_payouts
+              COALESCE(SUM(j.amount), 0) AS total_sales,
+              COALESCE(SUM(j.payout), 0) AS total_payouts
             FROM tickets_in_range t
+            JOIN "Jugada" j ON j."ticketId" = t.id
+            WHERE j."deletedAt" IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM "sorteo_lista_exclusion" sle
+              JOIN "User" u ON u.id = sle.ventana_id
+              WHERE sle.sorteo_id = t."sorteoId"
+              AND u."ventanaId" = t."ventanaId"
+              AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+              AND sle.multiplier_id = j."multiplierId"
+            )
             GROUP BY t."ventanaId"
           ),
           commissions_per_ventana AS (
@@ -1049,6 +1130,14 @@ export const DashboardService = {
             FROM tickets_in_range t
             JOIN "Jugada" j ON j."ticketId" = t.id
             WHERE j."deletedAt" IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM "sorteo_lista_exclusion" sle
+              JOIN "User" u ON u.id = sle.ventana_id
+              WHERE sle.sorteo_id = t."sorteoId"
+              AND u."ventanaId" = t."ventanaId"
+              AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+              AND sle.multiplier_id = j."multiplierId"
+            )
             GROUP BY t."ventanaId"
           )
           SELECT
@@ -1234,6 +1323,8 @@ export const DashboardService = {
           SELECT
             t.id,
             t."ventanaId",
+            t."sorteoId",
+            t."vendedorId",
             t."totalAmount",
             t."totalPayout"
           FROM "Ticket" t
@@ -1242,9 +1333,20 @@ export const DashboardService = {
         sales_per_ventana AS (
           SELECT
             t."ventanaId" AS ventana_id,
-            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
-            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts
+            COALESCE(SUM(j.amount), 0) AS total_sales,
+            COALESCE(SUM(j.payout), 0) AS total_payouts
           FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
           GROUP BY t."ventanaId"
         ),
         commissions_per_ventana AS (
@@ -1256,6 +1358,15 @@ export const DashboardService = {
           FROM tickets_in_range t
           JOIN "Jugada" j ON j."ticketId" = t.id
           WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
           GROUP BY t."ventanaId"
         )
         SELECT
@@ -1648,6 +1759,7 @@ export const DashboardService = {
           FROM "Jugada" j
           JOIN tickets_in_range t ON t.id = j."ticketId"
           WHERE j."deletedAt" IS NULL
+            AND j."isExcluded" = false
         )
         SELECT
           ts.total_sales,
@@ -1881,6 +1993,7 @@ export const DashboardService = {
           FROM "Jugada" j
           JOIN tickets_in_range tir ON tir.id = j."ticketId"
           WHERE j."deletedAt" IS NULL
+            AND j."isExcluded" = false
         )
         SELECT
           j.number,
@@ -1916,6 +2029,7 @@ export const DashboardService = {
           FROM "Jugada" j
           JOIN tickets_in_range tir ON tir.id = j."ticketId"
           WHERE j."deletedAt" IS NULL
+            AND j."isExcluded" = false
         )
         SELECT
           j.number,
@@ -1950,6 +2064,7 @@ export const DashboardService = {
           FROM "Jugada" j
           JOIN tickets_in_range tir ON tir.id = j."ticketId"
           WHERE j."deletedAt" IS NULL
+            AND j."isExcluded" = false
         )
         SELECT
           l.id as loteria_id,
@@ -2174,6 +2289,7 @@ export const DashboardService = {
           FROM "Jugada" j
           JOIN tickets_in_range t ON t.id = j."ticketId"
           WHERE j."deletedAt" IS NULL
+            AND j."isExcluded" = false
         )
         SELECT
           ts.total_sales,

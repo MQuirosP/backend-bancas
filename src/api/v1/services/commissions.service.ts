@@ -70,6 +70,15 @@ export const CommissionsService = {
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
+        // ✅ NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
+        Prisma.sql`NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle
+          JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId"
+          AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+          AND sle.multiplier_id IS NULL
+        )`,
       ];
 
       // Filtrar por banca activa (para ADMIN multibanca)
@@ -204,6 +213,15 @@ export const CommissionsService = {
             INNER JOIN "Jugada" j ON j."ticketId" = t.id
             INNER JOIN "Ventana" v ON v.id = t."ventanaId"
             ${whereClause}
+            AND j."isExcluded" IS FALSE
+            AND NOT EXISTS (
+              SELECT 1 FROM "sorteo_lista_exclusion" sle
+              JOIN "User" u_ex ON u_ex.id = sle.ventana_id
+              WHERE sle.sorteo_id = t."sorteoId"
+              AND u_ex."ventanaId" = t."ventanaId"
+              AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+              AND sle.multiplier_id = j."multiplierId"
+            )
           `;
 
           // Agrupar jugadas por día y ventana, calculando todo desde las jugadas
@@ -319,6 +337,15 @@ export const CommissionsService = {
             INNER JOIN "Jugada" j ON j."ticketId" = t.id
             INNER JOIN "Ventana" v ON v.id = t."ventanaId"
             ${whereClause}
+            AND j."isExcluded" IS FALSE
+            AND NOT EXISTS (
+              SELECT 1 FROM "sorteo_lista_exclusion" sle
+              JOIN "User" u_ex ON u_ex.id = sle.ventana_id
+              WHERE sle.sorteo_id = t."sorteoId"
+              AND u_ex."ventanaId" = t."ventanaId"
+              AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+              AND sle.multiplier_id = j."multiplierId"
+            )
           `;
 
           // Agrupar jugadas por día y ventana, usando snapshots de comisión
@@ -444,9 +471,17 @@ export const CommissionsService = {
             j."commissionAmount" as commission_amount,
             j."listeroCommissionAmount" as listero_commission_amount
           FROM "Ticket" t
-          INNER JOIN "Jugada" j ON j."ticketId" = t.id AND j."deletedAt" IS NULL
+          INNER JOIN "Jugada" j ON j."ticketId" = t.id AND j."deletedAt" IS NULL AND j."isExcluded" IS FALSE
           INNER JOIN "User" u ON u.id = t."vendedorId"
           ${whereClause}
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u_ex ON u_ex.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u_ex."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
         `;
 
         // Agrupar jugadas por día y vendedor, usando snapshots de comisión
@@ -642,6 +677,15 @@ export const CommissionsService = {
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
+        // ✅ NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
+        Prisma.sql`NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle
+          JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId"
+          AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+          AND sle.multiplier_id IS NULL
+        )`,
       ];
 
       // Filtrar por banca activa (para ADMIN multibanca)
@@ -717,6 +761,14 @@ export const CommissionsService = {
           INNER JOIN "Loteria" l ON l.id = t."loteriaId"
           LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
           ${whereClause}
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u_ex ON u_ex.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u_ex."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
         `;
 
         // Agrupar por lotería y multiplicador, calculando comisiones jugada por jugada
@@ -1080,6 +1132,7 @@ export const CommissionsService = {
         INNER JOIN "Loteria" l ON l.id = t."loteriaId"
         LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
         ${whereClause}
+        AND j."isExcluded" IS FALSE
         GROUP BY l.id, l.name, lm.id, lm.name, lm."valueX", lm.kind, j.type
         ORDER BY l.name ASC, AVG(j."commissionPercent") DESC
       `;
@@ -1298,6 +1351,7 @@ export const CommissionsService = {
           LEFT JOIN "User" u ON u.id = t."vendedorId"
           LEFT JOIN "Ventana" v ON v.id = t."ventanaId"
           ${whereClause}
+          AND j."isExcluded" IS FALSE
           GROUP BY t.id, t."ticketNumber", t."totalAmount", t."createdAt", u.name, v.name
           ORDER BY t."createdAt" DESC
           LIMIT ${take} OFFSET ${skip}
@@ -1309,6 +1363,7 @@ export const CommissionsService = {
           FROM "Ticket" t
           INNER JOIN "Jugada" j ON j."ticketId" = t.id
           ${whereClause}
+          AND j."isExcluded" IS FALSE
         `,
       ]);
 
