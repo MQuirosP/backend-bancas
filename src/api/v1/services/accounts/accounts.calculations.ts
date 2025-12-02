@@ -33,7 +33,8 @@ export async function calculateDayStatement(
     const where: any = {
         ...dateFilter,
         deletedAt: null,
-        status: { not: "CANCELLED" },
+        isActive: true,
+        status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
         ...(excludedTicketIds.length > 0 ? { id: { notIn: excludedTicketIds } } : {}), // ✅ NUEVO: Excluir tickets bloqueados
     };
 
@@ -361,7 +362,8 @@ export async function getStatementDirect(
     // Construir filtros WHERE dinámicos según RBAC (igual que commissions)
     const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t.status IN ('ACTIVE', 'EVALUATED', 'PAID')`,
+        Prisma.sql`t."isActive" = true`,
+        Prisma.sql`t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`,
         // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
@@ -651,7 +653,8 @@ export async function getStatementDirect(
     // Construir WHERE conditions para el mes completo
     const monthlyWhereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t.status IN ('ACTIVE', 'EVALUATED', 'PAID')`,
+        Prisma.sql`t."isActive" = true`,
+        Prisma.sql`t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${monthStartDateCRStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${monthEndDateCRStr}::date`,
         // ✅ NUEVO: Excluir sorteos CLOSED para no incluir datos de sorteos finalizados (mismo filtro que dashboard)

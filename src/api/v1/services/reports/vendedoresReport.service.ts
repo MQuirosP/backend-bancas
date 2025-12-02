@@ -60,8 +60,8 @@ export const VendedoresReportService = {
         }
       }
     } else {
-      // Por defecto: solo ACTIVE y EVALUATED (excluir CANCELLED)
-      ticketStatusFilter = Prisma.sql`AND t.status IN ('ACTIVE', 'EVALUATED')`;
+      // Por defecto: solo ACTIVE, EVALUATED, PAID, y PAGADO (excluir CANCELLED y EXCLUDED)
+      ticketStatusFilter = Prisma.sql`AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`;
     }
 
     // Convertir fechas a strings en formato CR para comparación con businessDate

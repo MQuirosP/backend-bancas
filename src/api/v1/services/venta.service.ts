@@ -1200,7 +1200,8 @@ export const VentasService = {
 
       const whereSqlParts: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID')`
+        Prisma.sql`t."isActive" = true`,
+        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`
       ];
 
       if (dateCondition) {

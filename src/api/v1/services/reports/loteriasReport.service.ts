@@ -210,7 +210,8 @@ export const LoteriasReportService = {
           t."isWinner"
         FROM "Ticket" t
         WHERE t."deletedAt" IS NULL
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID')
+          AND t."isActive" = true
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND (
             COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
           ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date

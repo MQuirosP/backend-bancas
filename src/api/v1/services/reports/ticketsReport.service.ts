@@ -416,7 +416,7 @@ export const TicketsReportService = {
 
     const where: Prisma.TicketWhereInput = {
       status: TicketStatus.CANCELLED,
-      deletedAt: {
+      createdAt: {
         gte: dateRange.from,
         lte: dateRange.to,
       },
@@ -431,7 +431,7 @@ export const TicketsReportService = {
       where,
       skip,
       take: pageSize,
-      orderBy: { deletedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
       include: {
         loteria: { select: { id: true, name: true } },
         ventana: { select: { id: true, name: true } },
@@ -488,7 +488,7 @@ export const TicketsReportService = {
 
     // Agrupación por ventana
     const byVentanaQuery = Prisma.sql`
-      SELECT 
+      SELECT
         t."ventanaId",
         v.name as ventana_name,
         COUNT(*) as cancelled_count,
@@ -496,7 +496,7 @@ export const TicketsReportService = {
       FROM "Ticket" t
       INNER JOIN "Ventana" v ON t."ventanaId" = v.id
       WHERE t.status = 'CANCELLED'
-        AND t."deletedAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+        AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
         ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
         ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
         ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
