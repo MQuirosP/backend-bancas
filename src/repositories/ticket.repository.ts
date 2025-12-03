@@ -256,23 +256,6 @@ export const TicketRepository = {
     const actorRole = options?.actorRole ?? Role.VENDEDOR;
 
     // Toda la operación dentro de una transacción con retry y timeouts explícitos
-    // Pre-chequeo seguro: existencia de tabla TicketCounter (fuera de TX para evitar aborts)
-    let hasTicketCounter = false;
-    try {
-      const existsRows = await prisma.$queryRaw<{ present: boolean }[]>(
-        Prisma.sql`
-          SELECT EXISTS (
-            SELECT 1 FROM information_schema.tables
-            WHERE table_schema = current_schema()
-              AND lower(table_name) = 'ticketcounter'
-          ) AS present;
-        `
-      );
-      hasTicketCounter = Boolean(existsRows?.[0]?.present);
-    } catch (e) {
-      // Si falla el chequeo, asumimos que NO existe para no arriesgar abortos dentro de la TX
-      hasTicketCounter = false;
-    }
 
     const { ticket, warnings } = await withTransactionRetry(
       async (tx) => {
@@ -359,88 +342,94 @@ export const TicketRepository = {
         // Usar upsert atómico con bloqueo de fila para prevenir race conditions
         let nextNumber: string = '';
         let seqForLog: number | null = null;
-        let useLegacyFallback = false;
 
-        if (hasTicketCounter) {
-          try {
-            // Bloquear la fila de TicketCounter para evitar colisiones concurrentes
-            // Usar SELECT FOR UPDATE para asegurar atomicidad
-            const seqRows = await tx.$queryRaw<{ last: number }[]>(
-              Prisma.sql`
-                INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
-                VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
-                ON CONFLICT ("businessDate", "ventanaId")
-                DO UPDATE SET "last" = "TicketCounter"."last" + 1
-                RETURNING "last";
-              `
-            );
-            const seq = (seqRows?.[0]?.last ?? 1) as number;
-            seqForLog = seq;
-            const seqPadded = String(seq).padStart(5, '0');
-            const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
+        try {
+          // Incrementar contador atómicamente
+          const seqRows = await tx.$queryRaw<{ last: number }[]>(
+            Prisma.sql`
+              INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
+              VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
+              ON CONFLICT ("businessDate", "ventanaId")
+              DO UPDATE SET "last" = "TicketCounter"."last" + 1
+              RETURNING "last";
+            `
+          );
+          const seq = (seqRows?.[0]?.last ?? 1) as number;
+          seqForLog = seq;
+          const seqPadded = String(seq).padStart(5, '0');
+          const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
 
-            // Verificar que el ticketNumber no exista (doble validación)
-            const existing = await tx.ticket.findUnique({
-              where: { ticketNumber: candidateNumber },
-              select: { id: true },
-            });
+          // Verificar que el ticketNumber no exista (doble validación)
+          const existing = await tx.ticket.findUnique({
+            where: { ticketNumber: candidateNumber },
+            select: { id: true },
+          });
 
-            if (existing) {
-              // Si existe, usar fallback legacy
-              logger.warn({
-                layer: 'repository',
-                action: 'TICKET_COUNTER_COLLISION',
-                payload: {
-                  ticketNumber: candidateNumber,
-                  existingId: existing.id,
-                  note: 'Falling back to legacy generation',
-                },
-              });
-              useLegacyFallback = true;
-            } else {
-              // Si no existe, usar el número generado
-              nextNumber = candidateNumber;
-            }
-          } catch (error: any) {
-            // Si hay error con TicketCounter, usar fallback legacy
-            logger.warn({
+          if (existing) {
+            // Colisión detectada - esto no debería ocurrir en condiciones normales
+            logger.error({
               layer: 'repository',
-              action: 'TICKET_COUNTER_ERROR',
+              action: 'TICKET_NUMBER_COLLISION',
               payload: {
-                error: error.message,
-                note: 'Falling back to legacy generation',
+                ticketNumber: candidateNumber,
+                existingId: existing.id,
+                businessDate: bd.businessDate,
+                ventanaId,
+                sequence: seq,
               },
             });
-            useLegacyFallback = true;
+            throw new AppError(
+              `Colisión en numeración de ticket: ${candidateNumber} ya existe`,
+              500,
+              'TICKET_NUMBER_COLLISION'
+            );
           }
-        } else {
-          useLegacyFallback = true;
-        }
 
-        if (useLegacyFallback) {
-          // Fallback seguro: usar función legacy dentro de TX, sin provocar errores previos
-          logger.warn({
+          nextNumber = candidateNumber;
+
+          logger.info({
             layer: 'repository',
-            action: 'TICKET_COUNTER_MISSING_FALLBACK',
-            payload: { note: 'Using legacy generate_ticket_number()', businessDateISO: bd.businessDateISO },
+            action: 'TICKET_NUMBER_GENERATED',
+            payload: {
+              ticketNumber: nextNumber,
+              businessDate: bd.businessDate,
+              sequence: seq,
+            },
           });
-          const [seqRow] = await tx.$queryRawUnsafe<{ next_number: string }[]>(
-            `SELECT generate_ticket_number() AS next_number`
+        } catch (error: any) {
+          // Error al generar número de ticket
+          if (error.code === 'TICKET_NUMBER_COLLISION') {
+            throw error; // Re-lanzar colisiones
+          }
+
+          // Verificar si es error de tabla inexistente
+          if (error.message?.includes('TicketCounter') || error.code === '42P01') {
+            logger.error({
+              layer: 'repository',
+              action: 'TICKET_COUNTER_TABLE_MISSING',
+              payload: {
+                error: error.message,
+                note: 'La tabla TicketCounter no existe. Ejecutar migración 20251103121500',
+              },
+            });
+            throw new AppError(
+              'Sistema de numeración no configurado. Contacte al administrador.',
+              500,
+              'TICKET_COUNTER_MISSING'
+            );
+          }
+
+          // Otro error
+          logger.error({
+            layer: 'repository',
+            action: 'TICKET_NUMBER_GENERATION_ERROR',
+            payload: { error: error.message },
+          });
+          throw new AppError(
+            'Error al generar número de ticket',
+            500,
+            'TICKET_NUMBER_ERROR'
           );
-          if (!seqRow?.next_number) {
-            throw new AppError('Failed to generate ticket number (fallback)', 500, 'SEQ_ERROR');
-          }
-          // Reescribir el prefijo a CR (YYMMDD) preservando el sufijo generado por la función legacy
-          // Formato legacy: TYYMMDD-<BASE36(6)>-<CD2>
-          const raw = String(seqRow.next_number);
-          const firstDash = raw.indexOf('-');
-          if (firstDash > 0) {
-            const suffix = raw.substring(firstDash + 1); // <BASE36>-<CD2>
-            nextNumber = `T${bd.prefixYYMMDD}-${suffix}`;
-          } else {
-            // Si el formato inesperadamente no contiene '-', usa el valor como viene (último recurso)
-            nextNumber = raw;
-          }
         }
 
         // Asegurar que nextNumber siempre esté asignado
@@ -1282,23 +1271,6 @@ export const TicketRepository = {
       },
     });
 
-    // Pre-chequeo de TicketCounter (igual que método original)
-    let hasTicketCounter = false;
-    try {
-      const existsRows = await prisma.$queryRaw<{ present: boolean }[]>(
-        Prisma.sql`
-          SELECT EXISTS (
-            SELECT 1 FROM information_schema.tables
-            WHERE table_schema = current_schema()
-              AND lower(table_name) = 'ticketcounter'
-          ) AS present;
-        `
-      );
-      hasTicketCounter = Boolean(existsRows?.[0]?.present);
-    } catch (e) {
-      hasTicketCounter = false;
-    }
-
     const { ticket, warnings } = await withTransactionRetry(
       async (tx) => {
         const warnings: TicketWarning[] = [];
@@ -1355,59 +1327,96 @@ export const TicketRepository = {
           cutoffHour,
         });
 
-        // 4) Generar número de ticket (igual que método original)
+        // 4) Generar número de ticket
         let nextNumber: string = '';
         let seqForLog: number | null = null;
-        let useLegacyFallback = false;
 
-        if (hasTicketCounter) {
-          try {
-            const seqRows = await tx.$queryRaw<{ last: number }[]>(
-              Prisma.sql`
-                INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
-                VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
-                ON CONFLICT ("businessDate", "ventanaId")
-                DO UPDATE SET "last" = "TicketCounter"."last" + 1
-                RETURNING "last";
-              `
-            );
-            const seq = (seqRows?.[0]?.last ?? 1) as number;
-            seqForLog = seq;
-            const seqPadded = String(seq).padStart(5, '0');
-            const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
-
-            const existing = await tx.ticket.findUnique({
-              where: { ticketNumber: candidateNumber },
-              select: { id: true },
-            });
-
-            if (existing) {
-              useLegacyFallback = true;
-            } else {
-              nextNumber = candidateNumber;
-            }
-          } catch (error: any) {
-            useLegacyFallback = true;
-          }
-        } else {
-          useLegacyFallback = true;
-        }
-
-        if (useLegacyFallback) {
-          const [seqRow] = await tx.$queryRawUnsafe<{ next_number: string }[]>(
-            `SELECT generate_ticket_number() AS next_number`
+        try {
+          // Incrementar contador atómicamente
+          const seqRows = await tx.$queryRaw<{ last: number }[]>(
+            Prisma.sql`
+              INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
+              VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
+              ON CONFLICT ("businessDate", "ventanaId")
+              DO UPDATE SET "last" = "TicketCounter"."last" + 1
+              RETURNING "last";
+            `
           );
-          if (!seqRow?.next_number) {
-            throw new AppError('Failed to generate ticket number (fallback)', 500, 'SEQ_ERROR');
+          const seq = (seqRows?.[0]?.last ?? 1) as number;
+          seqForLog = seq;
+          const seqPadded = String(seq).padStart(5, '0');
+          const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
+
+          const existing = await tx.ticket.findUnique({
+            where: { ticketNumber: candidateNumber },
+            select: { id: true },
+          });
+
+          if (existing) {
+            // Colisión detectada - esto no debería ocurrir en condiciones normales
+            logger.error({
+              layer: 'repository',
+              action: 'TICKET_NUMBER_COLLISION',
+              payload: {
+                ticketNumber: candidateNumber,
+                existingId: existing.id,
+                businessDate: bd.businessDate,
+                ventanaId,
+                sequence: seq,
+              },
+            });
+            throw new AppError(
+              `Colisión en numeración de ticket: ${candidateNumber} ya existe`,
+              500,
+              'TICKET_NUMBER_COLLISION'
+            );
           }
-          const raw = String(seqRow.next_number);
-          const firstDash = raw.indexOf('-');
-          if (firstDash > 0) {
-            const suffix = raw.substring(firstDash + 1);
-            nextNumber = `T${bd.prefixYYMMDD}-${suffix}`;
-          } else {
-            nextNumber = raw;
+
+          nextNumber = candidateNumber;
+
+          logger.info({
+            layer: 'repository',
+            action: 'TICKET_NUMBER_GENERATED',
+            payload: {
+              ticketNumber: nextNumber,
+              businessDate: bd.businessDate,
+              sequence: seq,
+            },
+          });
+        } catch (error: any) {
+          // Error al generar número de ticket
+          if (error.code === 'TICKET_NUMBER_COLLISION') {
+            throw error; // Re-lanzar colisiones
           }
+
+          // Verificar si es error de tabla inexistente
+          if (error.message?.includes('TicketCounter') || error.code === '42P01') {
+            logger.error({
+              layer: 'repository',
+              action: 'TICKET_COUNTER_TABLE_MISSING',
+              payload: {
+                error: error.message,
+                note: 'La tabla TicketCounter no existe. Ejecutar migración 20251103121500',
+              },
+            });
+            throw new AppError(
+              'Sistema de numeración no configurado. Contacte al administrador.',
+              500,
+              'TICKET_COUNTER_MISSING'
+            );
+          }
+
+          // Otro error
+          logger.error({
+            layer: 'repository',
+            action: 'TICKET_NUMBER_GENERATION_ERROR',
+            payload: { error: error.message },
+          });
+          throw new AppError(
+            'Error al generar número de ticket',
+            500,
+            'TICKET_NUMBER_ERROR'
+          );
         }
 
         if (!nextNumber) {
