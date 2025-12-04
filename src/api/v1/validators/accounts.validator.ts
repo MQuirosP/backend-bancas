@@ -153,3 +153,75 @@ export const GetCurrentBalanceQuerySchema = z
  * Middleware de validación para GET /accounts/balance/current
  */
 export const validateGetCurrentBalanceQuery = validateQuery(GetCurrentBalanceQuerySchema);
+
+/**
+ * Schema para GET /api/v1/accounts/export
+ * Exportación de estados de cuenta en CSV, Excel o PDF
+ */
+export const AccountStatementExportQuerySchema = z
+  .object({
+    // Formato de exportación (obligatorio)
+    format: z.enum(["csv", "excel", "pdf"]),
+
+    // Filtros de fecha (CR timezone, YYYY-MM-DD format)
+    month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional(),
+    fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+
+    // Scope y dimension
+    scope: z.enum(["mine", "ventana", "all"]),
+    dimension: z.enum(["ventana", "vendedor"]),
+
+    // Filtros opcionales (según rol)
+    ventanaId: z.string().uuid().optional(),
+    vendedorId: z.string().uuid().optional(),
+
+    // Opciones de exportación
+    includeBreakdown: z.coerce.boolean().optional().default(true),
+    includeMovements: z.coerce.boolean().optional().default(true),
+    sort: z.enum(["asc", "desc"]).optional().default("desc"),
+
+    _: z.string().optional(), // Para evitar caché del navegador (ignorado)
+  })
+  .strict()
+  .superRefine((val, ctx) => {
+    // month y date son mutuamente exclusivos
+    if (val.month && val.date) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["month"],
+        message: "Los parámetros 'month' y 'date' son mutuamente exclusivos",
+      });
+    }
+
+    // Si date es 'range', fromDate y toDate son requeridos
+    if (val.date === "range") {
+      if (!val.fromDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["fromDate"],
+          message: "fromDate es requerido cuando date='range'",
+        });
+      }
+      if (!val.toDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["toDate"],
+          message: "toDate es requerido cuando date='range'",
+        });
+      }
+      if (val.fromDate && val.toDate && val.fromDate > val.toDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["toDate"],
+          message: "fromDate debe ser menor o igual a toDate",
+        });
+      }
+    }
+  });
+
+/**
+ * Middleware de validación para GET /accounts/export
+ */
+export const validateAccountStatementExportQuery = validateQuery(AccountStatementExportQuerySchema);
