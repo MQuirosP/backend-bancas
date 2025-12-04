@@ -331,14 +331,20 @@ export class CommissionsExportService {
   ): Promise<CommissionWarning[]> {
     const warnings: CommissionWarning[] = [];
 
-    // 1. Detectar listeros sin política de comisión
+    // 1. Detectar listeros sin política de comisión o con políticas incompletas
     const ventanasSinPolitica = await prisma.$queryRaw<
-      Array<{ ventana_id: string; ventana_name: string; user_name: string | null }>
+      Array<{
+        ventana_id: string;
+        ventana_name: string;
+        user_name: string | null;
+        commission_policy_json: any | null;
+      }>
     >`
       SELECT DISTINCT
         v.id as ventana_id,
         v.name as ventana_name,
-        u.name as user_name
+        u.name as user_name,
+        u."commissionPolicyJson" as commission_policy_json
       FROM "Ticket" t
       INNER JOIN "Ventana" v ON v.id = t."ventanaId"
       LEFT JOIN "User" u ON u."ventanaId" = v.id AND u.role = 'VENTANA'
@@ -346,17 +352,48 @@ export class CommissionsExportService {
         AND t."isActive" = true
         AND COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date
         AND COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date
-        AND (u."commissionPolicyJson" IS NULL OR u."commissionPolicyJson" = '{}')
+        AND (
+          u.id IS NULL  -- No existe usuario VENTANA
+          OR u."commissionPolicyJson" IS NULL  -- No tiene política
+          OR u."commissionPolicyJson" = '{}'  -- Política vacía
+        )
         ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
     `;
 
     for (const row of ventanasSinPolitica) {
-      warnings.push({
-        type: 'missing_policy',
-        description: `El listero "${row.ventana_name}" no tiene política de comisión configurada`,
-        affectedEntity: row.ventana_name,
-        severity: 'high',
-      });
+      // Verificar si la política está vacía o realmente no tiene loterías configuradas
+      let hasValidPolicy = false;
+
+      if (row.commission_policy_json) {
+        const policy = typeof row.commission_policy_json === 'string'
+          ? JSON.parse(row.commission_policy_json)
+          : row.commission_policy_json;
+
+        // Verificar si tiene al menos una lotería con políticas
+        if (policy && typeof policy === 'object') {
+          const loterias = Object.keys(policy);
+          hasValidPolicy = loterias.length > 0 && loterias.some(key => {
+            const loteriaPolicy = policy[key];
+            return loteriaPolicy && typeof loteriaPolicy === 'object' && Object.keys(loteriaPolicy).length > 0;
+          });
+        }
+      }
+
+      // Solo agregar warning si realmente no tiene política válida
+      if (!hasValidPolicy) {
+        const reason = !row.user_name
+          ? 'no tiene usuario VENTANA asociado'
+          : !row.commission_policy_json
+            ? 'no tiene política de comisión configurada'
+            : 'tiene política de comisión vacía o incompleta';
+
+        warnings.push({
+          type: 'missing_policy',
+          description: `El listero "${row.ventana_name}" ${reason}`,
+          affectedEntity: row.ventana_name,
+          severity: 'high',
+        });
+      }
     }
 
     // 2. Detectar exclusiones activas
