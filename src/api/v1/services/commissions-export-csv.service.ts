@@ -44,6 +44,12 @@ export class CommissionsExportCsvService {
       lines.push(this.generateWarningsSection(payload));
     }
 
+    // Políticas de comisión (si están incluidas)
+    if (payload.policies && payload.policies.length > 0) {
+      lines.push(''); // Línea vacía
+      lines.push(this.generatePoliciesSection(payload));
+    }
+
     // Totales
     lines.push(''); // Línea vacía
     lines.push(this.generateTotalsSection(payload));
@@ -142,6 +148,36 @@ export class CommissionsExportCsvService {
       const severity = this.escapeCsv(warning.severity.toUpperCase());
 
       lines.push(`${type},${description},${affected},${severity}`);
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Genera sección de políticas de comisión
+   */
+  private static generatePoliciesSection(payload: CommissionExportPayload): string {
+    const lines: string[] = [];
+    const isDimensionVentana = payload.metadata.filters.dimension === 'ventana';
+
+    lines.push('POLÍTICAS DE COMISIÓN CONFIGURADAS');
+    lines.push(''); // Línea vacía
+
+    // Encabezado
+    const entityLabel = isDimensionVentana ? 'Listero' : 'Vendedor';
+    lines.push(`${entityLabel},Lotería,Tipo de Apuesta,Rango Multiplicador,% Comisión`);
+
+    // Datos
+    for (const policy of payload.policies || []) {
+      for (const rule of policy.rules) {
+        const entityName = this.escapeCsv(policy.entityName);
+        const loteriaName = this.escapeCsv(rule.loteriaName);
+        const betType = this.escapeCsv(rule.betType);
+        const multiplierRange = this.escapeCsv(rule.multiplierRange);
+        const percent = rule.percent.toFixed(2) + '%';
+
+        lines.push(`${entityName},${loteriaName},${betType},${multiplierRange},${percent}`);
+      }
     }
 
     return lines.join('\n');

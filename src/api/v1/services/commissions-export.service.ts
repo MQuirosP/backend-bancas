@@ -8,6 +8,8 @@ import {
   ExportFormat,
   CommissionBreakdownItem,
   CommissionWarning,
+  CommissionPolicy,
+  CommissionPolicyRule,
 } from '../types/commissions-export.types';
 import prisma from '../../../core/prismaClient';
 import { resolveDateRange } from '../../../utils/dateRange';
@@ -64,6 +66,9 @@ export class CommissionsExportService {
         warnings = await this.detectWarnings(fromDateStr, toDateStr, filters);
       }
 
+      // 4.5. Obtener políticas de comisión configuradas
+      const policies = await this.getPolicies(fromDateStr, toDateStr, filters);
+
       // 5. Obtener nombres de entidades para metadata
       let ventanaName: string | undefined = undefined;
       let vendedorName: string | undefined = undefined;
@@ -100,6 +105,7 @@ export class CommissionsExportService {
         summary,
         breakdown,
         warnings,
+        policies,
         metadata: {
           generatedAt: new Date(),
           timezone: 'America/Costa_Rica',
@@ -331,68 +337,7 @@ export class CommissionsExportService {
   ): Promise<CommissionWarning[]> {
     const warnings: CommissionWarning[] = [];
 
-    // 1. Detectar listeros sin política de comisión o con políticas incompletas
-    const ventanasSinPolitica = await prisma.$queryRaw<
-      Array<{
-        ventana_id: string;
-        ventana_name: string;
-        user_name: string | null;
-        commission_policy_json: any | null;
-      }>
-    >`
-      SELECT DISTINCT
-        v.id as ventana_id,
-        v.name as ventana_name,
-        u.name as user_name,
-        u."commissionPolicyJson" as commission_policy_json
-      FROM "Ticket" t
-      INNER JOIN "Ventana" v ON v.id = t."ventanaId"
-      LEFT JOIN "User" u ON u."ventanaId" = v.id AND u.role = 'VENTANA'
-      WHERE t."deletedAt" IS NULL
-        AND t."isActive" = true
-        AND COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date
-        AND COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date
-        AND (
-          u.id IS NULL  -- No existe usuario VENTANA
-          OR u."commissionPolicyJson" IS NULL  -- No tiene política
-          OR u."commissionPolicyJson" = '{}'  -- Política vacía
-        )
-        ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
-    `;
-
-    for (const row of ventanasSinPolitica) {
-      // Verificar si la política tiene reglas configuradas
-      let hasValidPolicy = false;
-
-      if (row.commission_policy_json) {
-        const policy = typeof row.commission_policy_json === 'string'
-          ? JSON.parse(row.commission_policy_json)
-          : row.commission_policy_json;
-
-        // Verificar si tiene un array de rules con al menos una regla
-        if (policy && typeof policy === 'object' && Array.isArray(policy.rules)) {
-          hasValidPolicy = policy.rules.length > 0;
-        }
-      }
-
-      // Solo agregar warning si realmente no tiene política válida
-      if (!hasValidPolicy) {
-        const reason = !row.user_name
-          ? 'no tiene usuario VENTANA asociado'
-          : !row.commission_policy_json
-            ? 'no tiene política de comisión configurada'
-            : 'tiene política de comisión vacía (sin reglas configuradas)';
-
-        warnings.push({
-          type: 'missing_policy',
-          description: `El listero "${row.ventana_name}" ${reason}`,
-          affectedEntity: row.ventana_name,
-          severity: 'high',
-        });
-      }
-    }
-
-    // 2. Detectar exclusiones activas
+    // Detectar exclusiones activas
     const exclusionesActivas = await prisma.$queryRaw<
       Array<{ sorteo_name: string; ventana_name: string; multiplier_name: string | null }>
     >`
@@ -421,6 +366,165 @@ export class CommissionsExportService {
     }
 
     return warnings;
+  }
+
+  /**
+   * Obtiene políticas de comisión configuradas para las entidades del reporte
+   */
+  private static async getPolicies(
+    fromDateStr: string,
+    toDateStr: string,
+    filters: {
+      scope: string;
+      dimension: string;
+      ventanaId?: string;
+      vendedorId?: string;
+      bancaId?: string;
+    }
+  ): Promise<CommissionPolicy[]> {
+    const policies: CommissionPolicy[] = [];
+
+    if (filters.dimension === 'ventana') {
+      // Obtener políticas de ventanas/listeros
+      const whereConditions = [];
+      if (filters.ventanaId) {
+        whereConditions.push(`v.id = '${filters.ventanaId}'::uuid`);
+      }
+      if (filters.bancaId) {
+        whereConditions.push(`v."bancaId" = '${filters.bancaId}'::uuid`);
+      }
+
+      const whereClause = whereConditions.length > 0
+        ? `WHERE ${whereConditions.join(' AND ')}`
+        : '';
+
+      const ventanas = await prisma.$queryRaw<
+        Array<{
+          ventana_id: string;
+          ventana_name: string;
+          commission_policy_json: any | null;
+        }>
+      >`
+        SELECT DISTINCT
+          v.id as ventana_id,
+          v.name as ventana_name,
+          u."commissionPolicyJson" as commission_policy_json
+        FROM "Ventana" v
+        LEFT JOIN "User" u ON u."ventanaId" = v.id AND u.role = 'VENTANA'
+        ${Prisma.raw(whereClause)}
+      `;
+
+      // Obtener datos de loterías para mapear IDs a nombres
+      const loterias = await prisma.loteria.findMany({
+        select: { id: true, name: true },
+      });
+      const loteriaMap = new Map(loterias.map(l => [l.id, l.name]));
+
+      for (const ventana of ventanas) {
+        const rules: CommissionPolicyRule[] = [];
+
+        if (ventana.commission_policy_json) {
+          const policy = typeof ventana.commission_policy_json === 'string'
+            ? JSON.parse(ventana.commission_policy_json)
+            : ventana.commission_policy_json;
+
+          if (policy?.rules && Array.isArray(policy.rules)) {
+            for (const rule of policy.rules) {
+              const loteriaName = loteriaMap.get(rule.loteriaId) || 'Desconocida';
+              const multiplierRange = rule.multiplierRange
+                ? `${rule.multiplierRange.min}-${rule.multiplierRange.max}`
+                : 'N/A';
+
+              rules.push({
+                loteriaName,
+                betType: rule.betType,
+                multiplierRange,
+                percent: rule.percent,
+              });
+            }
+          }
+        }
+
+        if (rules.length > 0) {
+          policies.push({
+            entityId: ventana.ventana_id,
+            entityName: ventana.ventana_name,
+            rules,
+          });
+        }
+      }
+    } else if (filters.dimension === 'vendedor') {
+      // Obtener políticas de vendedores
+      const whereConditions = [];
+      if (filters.vendedorId) {
+        whereConditions.push(`u.id = '${filters.vendedorId}'::uuid`);
+      }
+      if (filters.ventanaId) {
+        whereConditions.push(`u."ventanaId" = '${filters.ventanaId}'::uuid`);
+      }
+
+      const whereClause = whereConditions.length > 0
+        ? `WHERE ${whereConditions.join(' AND ')}`
+        : '';
+
+      const vendedores = await prisma.$queryRaw<
+        Array<{
+          vendedor_id: string;
+          vendedor_name: string;
+          commission_policy_json: any | null;
+        }>
+      >`
+        SELECT DISTINCT
+          u.id as vendedor_id,
+          u.name as vendedor_name,
+          u."commissionPolicyJson" as commission_policy_json
+        FROM "User" u
+        WHERE u.role = 'VENDEDOR'
+          ${whereConditions.length > 0 ? Prisma.raw(`AND ${whereConditions.join(' AND ')}`) : Prisma.empty}
+      `;
+
+      // Obtener datos de loterías
+      const loterias = await prisma.loteria.findMany({
+        select: { id: true, name: true },
+      });
+      const loteriaMap = new Map(loterias.map(l => [l.id, l.name]));
+
+      for (const vendedor of vendedores) {
+        const rules: CommissionPolicyRule[] = [];
+
+        if (vendedor.commission_policy_json) {
+          const policy = typeof vendedor.commission_policy_json === 'string'
+            ? JSON.parse(vendedor.commission_policy_json)
+            : vendedor.commission_policy_json;
+
+          if (policy?.rules && Array.isArray(policy.rules)) {
+            for (const rule of policy.rules) {
+              const loteriaName = loteriaMap.get(rule.loteriaId) || 'Desconocida';
+              const multiplierRange = rule.multiplierRange
+                ? `${rule.multiplierRange.min}-${rule.multiplierRange.max}`
+                : 'N/A';
+
+              rules.push({
+                loteriaName,
+                betType: rule.betType,
+                multiplierRange,
+                percent: rule.percent,
+              });
+            }
+          }
+        }
+
+        if (rules.length > 0) {
+          policies.push({
+            entityId: vendedor.vendedor_id,
+            entityName: vendedor.vendedor_name,
+            rules,
+          });
+        }
+      }
+    }
+
+    return policies;
   }
 
   /**

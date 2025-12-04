@@ -29,6 +29,11 @@ export class CommissionsExportExcelService {
       this.addWarningsSheet(workbook, payload);
     }
 
+    // Hoja 4: Políticas de comisión (si están incluidas)
+    if (payload.policies && payload.policies.length > 0) {
+      this.addPoliciesSheet(workbook, payload);
+    }
+
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
   }
@@ -210,6 +215,53 @@ export class CommissionsExportExcelService {
           pattern: 'solid',
           fgColor: { argb: 'FFFFE699' }, // Amarillo claro
         };
+      }
+    }
+
+    // Ajustar anchos de columna
+    this.autoSizeColumns(sheet);
+
+    // Congelar encabezado
+    sheet.views = [{ state: 'frozen', xSplit: 0, ySplit: headerRow.number }];
+  }
+
+  /**
+   * Agrega hoja de políticas de comisión
+   */
+  private static addPoliciesSheet(workbook: ExcelJS.Workbook, payload: CommissionExportPayload): void {
+    const sheet = workbook.addWorksheet('Políticas de Comisión');
+    const isDimensionVentana = payload.metadata.filters.dimension === 'ventana';
+
+    // Título
+    sheet.addRow(['Políticas de Comisión Configuradas']).font = { bold: true, size: 14 };
+    sheet.addRow(['Dimensión:', isDimensionVentana ? 'Listeros' : 'Vendedores']);
+    sheet.addRow([]); // Fila vacía
+
+    // Encabezados
+    const headerRow = sheet.addRow([
+      isDimensionVentana ? 'Listero' : 'Vendedor',
+      'Lotería',
+      'Tipo de Apuesta',
+      'Rango Multiplicador',
+      '% Comisión',
+    ]);
+
+    this.styleHeaderRow(headerRow);
+
+    // Datos
+    for (const policy of payload.policies || []) {
+      for (const rule of policy.rules) {
+        const row = sheet.addRow([
+          policy.entityName,
+          rule.loteriaName,
+          rule.betType,
+          rule.multiplierRange,
+          rule.percent / 100, // Excel formateará como porcentaje
+        ]);
+
+        // Formato especial para porcentaje
+        row.getCell(5).numFmt = '0.00%';
+        row.alignment = { horizontal: 'left', vertical: 'middle' };
       }
     }
 
