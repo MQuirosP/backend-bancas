@@ -1,6 +1,7 @@
 // src/api/v1/controllers/commissions.controller.ts
 import { Response } from "express";
 import { CommissionsService } from "../services/commissions.service";
+import { CommissionsExportService } from "../services/commissions-export.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { Role } from "@prisma/client";
@@ -8,6 +9,7 @@ import { AppError } from "../../../core/errors";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
 import prisma from "../../../core/prismaClient";
+import { ExportFormat } from "../types/commissions-export.types";
 
 export const CommissionsController = {
   /**
@@ -388,6 +390,135 @@ export const CommissionsController = {
       },
       effectiveFilters,
     });
+  },
+
+  /**
+   * 4) Exportación de comisiones
+   * GET /api/v1/commissions/export
+   */
+  async export(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    const {
+      format,
+      date = "today",
+      fromDate,
+      toDate,
+      scope,
+      dimension,
+      includeBreakdown = true,
+      includeWarnings = true,
+      ...rest
+    } = req.query as any;
+
+    // Asegurar que las fechas sean strings, no arrays
+    const fromDateStr = Array.isArray(fromDate) ? fromDate[0] : fromDate;
+    const toDateStr = Array.isArray(toDate) ? toDate[0] : toDate;
+    const dateStr = Array.isArray(date) ? date[0] : date;
+    const formatStr = Array.isArray(format) ? format[0] : format;
+
+    // Validar scope y dimension según rol
+    if (req.user.role === Role.VENDEDOR) {
+      if (scope !== "mine" || dimension !== "vendedor") {
+        throw new AppError("VENDEDOR can only view own commissions with dimension=vendedor", 403);
+      }
+      rest.scope = "mine";
+      rest.dimension = "vendedor";
+    } else if (req.user.role === Role.VENTANA) {
+      if (scope !== "mine") {
+        throw new AppError("VENTANA can only view own commissions (scope=mine)", 403);
+      }
+      rest.scope = "mine";
+    }
+
+    // Aplicar RBAC para obtener filtros efectivos
+    const context: AuthContext = {
+      userId: req.user.id,
+      role: req.user.role,
+      ventanaId: req.user.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null,
+    };
+    const effectiveFilters = await applyRbacFilters(context, rest);
+
+    // Construir filtros para el servicio
+    const filters: {
+      scope: string;
+      dimension: string;
+      ventanaId?: string;
+      vendedorId?: string;
+      bancaId?: string;
+    } = {
+      scope: scope as string,
+      dimension: dimension as string,
+    };
+
+    if (effectiveFilters.ventanaId) {
+      filters.ventanaId = effectiveFilters.ventanaId;
+    }
+    if (effectiveFilters.vendedorId) {
+      filters.vendedorId = effectiveFilters.vendedorId;
+    }
+    if (effectiveFilters.bancaId) {
+      filters.bancaId = effectiveFilters.bancaId;
+    }
+
+    // Si dimension=ventana, obtener el userId del usuario VENTANA
+    let ventanaUserId: string | undefined = undefined;
+    if (filters.dimension === "ventana") {
+      if (req.user.role === Role.VENTANA) {
+        ventanaUserId = req.user.id;
+      } else if (req.user.role === Role.ADMIN && filters.ventanaId) {
+        const ventanaUser = await prisma.user.findFirst({
+          where: {
+            role: Role.VENTANA,
+            ventanaId: filters.ventanaId,
+            isActive: true,
+          },
+          select: { id: true },
+        });
+        if (ventanaUser) {
+          ventanaUserId = ventanaUser.id;
+        }
+      }
+    }
+
+    // Opciones de exportación
+    const options = {
+      includeBreakdown: includeBreakdown === true || includeBreakdown === "true",
+      includeWarnings: includeWarnings === true || includeWarnings === "true",
+    };
+
+    // Generar exportación
+    const result = await CommissionsExportService.export(
+      formatStr as ExportFormat,
+      dateStr,
+      fromDateStr,
+      toDateStr,
+      filters,
+      options,
+      ventanaUserId
+    );
+
+    req.logger?.info({
+      layer: "controller",
+      action: "COMMISSIONS_EXPORT",
+      payload: {
+        format: formatStr,
+        date: dateStr,
+        scope,
+        dimension,
+        effectiveFilters,
+        filename: result.filename,
+      },
+    });
+
+    // Configurar headers para descarga
+    res.setHeader("Content-Type", result.mimeType);
+    res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    res.setHeader("Content-Length", result.buffer.length);
+
+    // Enviar archivo
+    return res.send(result.buffer);
   },
 };
 
