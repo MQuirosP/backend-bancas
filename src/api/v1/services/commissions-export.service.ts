@@ -361,7 +361,7 @@ export class CommissionsExportService {
     `;
 
     for (const row of ventanasSinPolitica) {
-      // Verificar si la política está vacía o realmente no tiene loterías configuradas
+      // Verificar si la política tiene reglas configuradas
       let hasValidPolicy = false;
 
       if (row.commission_policy_json) {
@@ -369,13 +369,9 @@ export class CommissionsExportService {
           ? JSON.parse(row.commission_policy_json)
           : row.commission_policy_json;
 
-        // Verificar si tiene al menos una lotería con políticas
-        if (policy && typeof policy === 'object') {
-          const loterias = Object.keys(policy);
-          hasValidPolicy = loterias.length > 0 && loterias.some(key => {
-            const loteriaPolicy = policy[key];
-            return loteriaPolicy && typeof loteriaPolicy === 'object' && Object.keys(loteriaPolicy).length > 0;
-          });
+        // Verificar si tiene un array de rules con al menos una regla
+        if (policy && typeof policy === 'object' && Array.isArray(policy.rules)) {
+          hasValidPolicy = policy.rules.length > 0;
         }
       }
 
@@ -385,7 +381,7 @@ export class CommissionsExportService {
           ? 'no tiene usuario VENTANA asociado'
           : !row.commission_policy_json
             ? 'no tiene política de comisión configurada'
-            : 'tiene política de comisión vacía o incompleta';
+            : 'tiene política de comisión vacía (sin reglas configuradas)';
 
         warnings.push({
           type: 'missing_policy',
