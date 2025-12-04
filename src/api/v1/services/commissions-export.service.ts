@@ -385,9 +385,18 @@ export class CommissionsExportService {
     const policies: CommissionPolicy[] = [];
 
     if (filters.dimension === 'ventana') {
-      // Obtener políticas de ventanas/listeros (todas las ventanas del contexto, no solo la filtrada)
-      const whereClause = filters.bancaId
-        ? Prisma.raw(`WHERE v."bancaId" = '${filters.bancaId}'::uuid`)
+      // Obtener políticas de ventanas/listeros respetando los filtros
+      const whereConditions: string[] = [];
+
+      if (filters.ventanaId) {
+        whereConditions.push(`v.id = '${filters.ventanaId}'::uuid`);
+      }
+      if (filters.bancaId) {
+        whereConditions.push(`v."bancaId" = '${filters.bancaId}'::uuid`);
+      }
+
+      const whereClause = whereConditions.length > 0
+        ? Prisma.raw(`WHERE ${whereConditions.join(' AND ')}`)
         : Prisma.empty;
 
       const ventanas = await prisma.$queryRaw<
@@ -445,9 +454,15 @@ export class CommissionsExportService {
         }
       }
     } else if (filters.dimension === 'vendedor') {
-      // Obtener políticas de vendedores (todos los vendedores del contexto, no solo el filtrado)
+      // Obtener políticas de vendedores respetando los filtros
       let whereClause = Prisma.sql`WHERE u.role = 'VENDEDOR'`;
 
+      if (filters.vendedorId) {
+        whereClause = Prisma.sql`${whereClause} AND u.id = ${filters.vendedorId}::uuid`;
+      }
+      if (filters.ventanaId) {
+        whereClause = Prisma.sql`${whereClause} AND u."ventanaId" = ${filters.ventanaId}::uuid`;
+      }
       if (filters.bancaId) {
         whereClause = Prisma.sql`${whereClause} AND v."bancaId" = ${filters.bancaId}::uuid`;
       }
