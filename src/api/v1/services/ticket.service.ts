@@ -167,7 +167,7 @@ export const TicketService = {
       const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
         bancaId: ventana.bancaId,
         ventanaId,
-        userId,
+        userId: effectiveVendedorId, // ✅ CORRECCIÓN: Usar el vendedor efectivo para respetar sus reglas
         defaultCutoff: 5,
       });
 
