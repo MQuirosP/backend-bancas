@@ -1,5 +1,6 @@
 // src/repositories/restrictionRule.repository.ts
 import prisma from "../core/prismaClient";
+import logger from "../core/logger";
 import { getCRLocalComponents } from "../utils/businessDate";
 import { SalesService } from "../api/v1/services/sales.service";
 import { getCachedCutoff, setCachedCutoff, invalidateRestrictionCaches } from "../utils/restrictionCache";
@@ -475,7 +476,16 @@ export const RestrictionRuleRepository = {
     // ✅ OPTIMIZACIÓN: Intentar obtener de caché primero
     const cached = await getCachedCutoff({ bancaId, ventanaId, userId });
     if (cached) {
-      return cached;
+      // ✅ VALIDACIÓN DEFENSIVA: Verificar que el valor cacheado sea válido
+      if (typeof cached.minutes === 'number' && !isNaN(cached.minutes) && cached.minutes >= 0) {
+        return cached;
+      }
+      // Si el valor cacheado está corrupto, continuar con consulta a BD
+      logger.warn({
+        layer: 'repository',
+        action: 'CORRUPTED_CACHE_CUTOFF',
+        payload: { bancaId, ventanaId, userId, cached }
+      });
     }
 
     // Si no está en caché, consultar DB

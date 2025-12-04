@@ -200,7 +200,7 @@ export const TicketService = {
       if (now >= effectiveLimitTime) {
         const minsLeft = Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000));
         throw new AppError(
-          `Venta bloqueada: faltan ${minsLeft} min para el sorteo (cutoff=${cutoff.minutes} min, source=${cutoff.source})`,
+          `Venta bloqueada: faltan ${minsLeft} min para el sorteo (cutoff=${safeMinutes} min, source=${cutoff.source})`,
           409
         );
       }
