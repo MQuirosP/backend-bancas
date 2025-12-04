@@ -396,13 +396,15 @@ export class CommissionsExportPdfService {
    */
   private static addFooter(doc: PDFKit.PDFDocument, payload: CommissionExportPayload): void {
     const pages = doc.bufferedPageRange();
+    const totalPages = pages.count;
 
-    for (let i = 0; i < pages.count; i++) {
-      doc.switchToPage(i);
+    for (let i = 0; i < totalPages; i++) {
+      const pageIndex = pages.start + i;
+      doc.switchToPage(pageIndex);
 
       doc.fontSize(8).font('Helvetica');
       doc.text(
-        `Página ${i + 1} de ${pages.count}`,
+        `Página ${i + 1} de ${totalPages}`,
         50,
         doc.page.height - 30,
         { align: 'center' }
