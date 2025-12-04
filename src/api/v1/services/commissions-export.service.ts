@@ -385,18 +385,10 @@ export class CommissionsExportService {
     const policies: CommissionPolicy[] = [];
 
     if (filters.dimension === 'ventana') {
-      // Obtener políticas de ventanas/listeros
-      const whereConditions = [];
-      if (filters.ventanaId) {
-        whereConditions.push(`v.id = '${filters.ventanaId}'::uuid`);
-      }
-      if (filters.bancaId) {
-        whereConditions.push(`v."bancaId" = '${filters.bancaId}'::uuid`);
-      }
-
-      const whereClause = whereConditions.length > 0
-        ? `WHERE ${whereConditions.join(' AND ')}`
-        : '';
+      // Obtener políticas de ventanas/listeros (todas las ventanas del contexto, no solo la filtrada)
+      const whereClause = filters.bancaId
+        ? Prisma.raw(`WHERE v."bancaId" = '${filters.bancaId}'::uuid`)
+        : Prisma.empty;
 
       const ventanas = await prisma.$queryRaw<
         Array<{
@@ -405,13 +397,12 @@ export class CommissionsExportService {
           commission_policy_json: any | null;
         }>
       >`
-        SELECT DISTINCT
+        SELECT
           v.id as ventana_id,
           v.name as ventana_name,
-          u."commissionPolicyJson" as commission_policy_json
+          v."commissionPolicyJson" as commission_policy_json
         FROM "Ventana" v
-        LEFT JOIN "User" u ON u."ventanaId" = v.id AND u.role = 'VENTANA'
-        ${Prisma.raw(whereClause)}
+        ${whereClause}
       `;
 
       // Obtener datos de loterías para mapear IDs a nombres
@@ -454,18 +445,12 @@ export class CommissionsExportService {
         }
       }
     } else if (filters.dimension === 'vendedor') {
-      // Obtener políticas de vendedores
-      const whereConditions = [];
-      if (filters.vendedorId) {
-        whereConditions.push(`u.id = '${filters.vendedorId}'::uuid`);
-      }
-      if (filters.ventanaId) {
-        whereConditions.push(`u."ventanaId" = '${filters.ventanaId}'::uuid`);
-      }
+      // Obtener políticas de vendedores (todos los vendedores del contexto, no solo el filtrado)
+      let whereClause = Prisma.sql`WHERE u.role = 'VENDEDOR'`;
 
-      const whereClause = whereConditions.length > 0
-        ? `WHERE ${whereConditions.join(' AND ')}`
-        : '';
+      if (filters.bancaId) {
+        whereClause = Prisma.sql`${whereClause} AND v."bancaId" = ${filters.bancaId}::uuid`;
+      }
 
       const vendedores = await prisma.$queryRaw<
         Array<{
@@ -474,13 +459,13 @@ export class CommissionsExportService {
           commission_policy_json: any | null;
         }>
       >`
-        SELECT DISTINCT
+        SELECT
           u.id as vendedor_id,
           u.name as vendedor_name,
           u."commissionPolicyJson" as commission_policy_json
         FROM "User" u
-        WHERE u.role = 'VENDEDOR'
-          ${whereConditions.length > 0 ? Prisma.raw(`AND ${whereConditions.join(' AND ')}`) : Prisma.empty}
+        LEFT JOIN "Ventana" v ON u."ventanaId" = v.id
+        ${whereClause}
       `;
 
       // Obtener datos de loterías
