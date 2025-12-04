@@ -1,6 +1,7 @@
 // src/api/v1/controllers/accounts.controller.ts
 import { Response } from "express";
 import { AccountsService } from "../services/accounts.service";
+import { AccountsExportService } from "../services/accounts-export.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { AppError } from "../../../core/errors";
@@ -10,6 +11,7 @@ import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
+import { ExportFormat } from "../types/accounts-export.types";
 
 export const AccountsController = {
   /**
@@ -667,6 +669,176 @@ export const AccountsController = {
     });
 
     return success(res, result);
+  },
+
+  /**
+   * GET /api/v1/accounts/export
+   * Exporta estados de cuenta en CSV, Excel o PDF
+   */
+  async export(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    const {
+      format,
+      month,
+      date,
+      fromDate,
+      toDate,
+      scope,
+      dimension,
+      ventanaId,
+      vendedorId,
+      sort,
+      includeBreakdown,
+      includeMovements,
+    } = req.query as any;
+
+    const user = req.user;
+
+    // Construir filtros según rol
+    let filters: any;
+
+    if (user.role === Role.VENDEDOR) {
+      if (scope !== "mine" || dimension !== "vendedor") {
+        throw new AppError("Los vendedores solo pueden exportar su propio estado de cuenta", 403, "FORBIDDEN");
+      }
+      filters = {
+        month,
+        date,
+        fromDate,
+        toDate,
+        scope: "mine" as const,
+        dimension: "vendedor" as const,
+        vendedorId: user.id,
+        sort: sort || "desc",
+        userRole: user.role,
+      };
+    } else if (user.role === Role.VENTANA) {
+      if (scope === "all") {
+        throw new AppError("Los usuarios VENTANA no pueden usar scope='all'", 403, "FORBIDDEN");
+      }
+
+      // Obtener ventanaId del usuario
+      let effectiveVentanaId = user.ventanaId;
+      if (!effectiveVentanaId) {
+        const userWithVentana = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { ventanaId: true },
+        });
+        effectiveVentanaId = userWithVentana?.ventanaId || null;
+      }
+
+      if (!effectiveVentanaId) {
+        throw new AppError("El usuario VENTANA no tiene una ventana asignada", 400, "NO_VENTANA");
+      }
+
+      if (scope === "mine") {
+        if (dimension !== "ventana") {
+          throw new AppError("Los usuarios VENTANA con scope='mine' deben usar dimension='ventana'", 400, "INVALID_DIMENSION");
+        }
+        filters = {
+          month,
+          date,
+          fromDate,
+          toDate,
+          scope: "mine" as const,
+          dimension: "ventana" as const,
+          ventanaId: effectiveVentanaId,
+          sort: sort || "desc",
+          userRole: user.role,
+        };
+      } else if (scope === "ventana") {
+        if (dimension !== "vendedor") {
+          throw new AppError("Los usuarios VENTANA con scope='ventana' deben usar dimension='vendedor'", 400, "INVALID_DIMENSION");
+        }
+        if (!vendedorId) {
+          throw new AppError("Se requiere vendedorId cuando scope='ventana' y dimension='vendedor'", 400, "VENDEDOR_ID_REQUIRED");
+        }
+        // Validar que el vendedor pertenece a la ventana
+        const vendedor = await prisma.user.findUnique({
+          where: { id: vendedorId },
+          select: { ventanaId: true, role: true },
+        });
+        if (!vendedor || vendedor.ventanaId !== effectiveVentanaId || vendedor.role !== Role.VENDEDOR) {
+          throw new AppError("El vendedor no pertenece a tu ventana", 403, "FORBIDDEN");
+        }
+        filters = {
+          month,
+          date,
+          fromDate,
+          toDate,
+          scope: "ventana" as const,
+          dimension: "vendedor" as const,
+          ventanaId: effectiveVentanaId,
+          vendedorId,
+          sort: sort || "desc",
+          userRole: user.role,
+        };
+      } else {
+        throw new AppError("Scope inválido", 400, "INVALID_SCOPE");
+      }
+    } else if (user.role === Role.ADMIN) {
+      filters = {
+        month,
+        date,
+        fromDate,
+        toDate,
+        scope,
+        dimension,
+        ventanaId,
+        vendedorId,
+        bancaId: user.bancaId,
+        sort: sort || "desc",
+        userRole: user.role,
+      };
+    } else {
+      throw new AppError("Rol no permitido", 403, "FORBIDDEN");
+    }
+
+    // Generar exportación
+    const { buffer, filename, mimeType } = await AccountsExportService.export(filters, {
+      format: format as ExportFormat,
+      includeBreakdown: includeBreakdown === "true" || includeBreakdown === true,
+      includeMovements: includeMovements === "true" || includeMovements === true,
+    });
+
+    // Log de auditoría
+    await ActivityService.log({
+      userId: user.id,
+      action: ActivityType.ACCOUNT_STATEMENT_VIEW,
+      targetType: "ACCOUNT_STATEMENT",
+      targetId: null,
+      details: {
+        action: "EXPORT",
+        format,
+        filters: {
+          month,
+          date,
+          fromDate,
+          toDate,
+          scope,
+          dimension,
+          ventanaId: filters.ventanaId || null,
+          vendedorId: filters.vendedorId || null,
+        },
+        filename,
+      },
+      layer: "controller",
+      requestId: req.requestId,
+    });
+
+    req.logger?.info({
+      layer: "controller",
+      action: "ACCOUNTS_EXPORT",
+      userId: user.id,
+      requestId: req.requestId,
+      payload: { format, filename },
+    });
+
+    // Enviar archivo
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(buffer);
   },
 };
 
