@@ -252,7 +252,7 @@ export class CommissionsExportService {
         v.name as ventana_name,
         u.name as vendedor_name,
         l.name as loteria_name,
-        s."scheduledAt"::time::text as sorteo_time,
+        (s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')::time::text as sorteo_time,
         lm.name as multiplier_name,
         lm."valueX" as multiplier_value_x,
         lm.kind as multiplier_kind,
