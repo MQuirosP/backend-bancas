@@ -42,6 +42,12 @@ export class CommissionsExportPdfService {
           this.addWarningsSection(doc, payload);
         }
 
+        // Políticas de comisión (si están incluidas)
+        if (payload.policies && payload.policies.length > 0) {
+          doc.addPage();
+          this.addPoliciesTable(doc, payload);
+        }
+
         // Pie de página
         this.addFooter(doc, payload);
 
@@ -310,6 +316,78 @@ export class CommissionsExportPdfService {
       doc.text(`Afecta a: ${warning.affectedEntity}`, 60, y + 28);
 
       y += 50;
+    }
+  }
+
+  /**
+   * Agrega tabla de políticas de comisión
+   */
+  private static addPoliciesTable(doc: PDFKit.PDFDocument, payload: CommissionExportPayload): void {
+    const isDimensionVentana = payload.metadata.filters.dimension === 'ventana';
+    const pageWidth = doc.page.width - 100;
+    const startX = 50;
+    let y = 50;
+
+    // Título
+    doc.fontSize(14).font('Helvetica-Bold').text('Políticas de Comisión Configuradas', startX, y);
+    doc.fontSize(10).font('Helvetica').text(`Dimensión: ${isDimensionVentana ? 'Listeros' : 'Vendedores'}`, startX, y + 20);
+    y += 45;
+
+    // Encabezados
+    const entityLabel = isDimensionVentana ? 'Listero' : 'Vendedor';
+    const headers = [entityLabel, 'Lotería', 'Tipo de Apuesta', 'Rango Multiplicador', '% Comisión'];
+    const colWidths = [130, 130, 120, 140, 100];
+
+    // Dibujar encabezado
+    doc.fontSize(9).font('Helvetica-Bold');
+    doc.fillColor('#4472C4').rect(startX, y, pageWidth, 20).fill();
+    doc.fillColor('white');
+
+    let x = startX;
+    headers.forEach((header, i) => {
+      doc.text(header, x + 5, y + 5, { width: colWidths[i] - 10, align: 'center' });
+      x += colWidths[i];
+    });
+
+    y += 20;
+    doc.fillColor('black');
+
+    // Datos
+    doc.fontSize(8).font('Helvetica');
+    let rowIndex = 0;
+
+    for (const policy of payload.policies || []) {
+      for (const rule of policy.rules) {
+        // Verificar si necesitamos nueva página
+        if (y > doc.page.height - 100) {
+          doc.addPage();
+          y = 50;
+        }
+
+        // Fondo alternado
+        if (rowIndex % 2 === 1) {
+          doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, 18).fill();
+          doc.fillColor('black');
+        }
+
+        x = startX;
+        const values = [
+          policy.entityName,
+          rule.loteriaName,
+          rule.betType,
+          rule.multiplierRange,
+          rule.percent.toFixed(2) + '%',
+        ];
+
+        values.forEach((value, i) => {
+          const align = i === 4 ? 'right' : 'left';
+          doc.text(value, x + 5, y + 4, { width: colWidths[i] - 10, align });
+          x += colWidths[i];
+        });
+
+        y += 18;
+        rowIndex++;
+      }
     }
   }
 

@@ -50,6 +50,25 @@ export interface CommissionWarning {
 }
 
 /**
+ * Regla de política de comisión
+ */
+export interface CommissionPolicyRule {
+  loteriaName: string;
+  betType: string;
+  multiplierRange: string;
+  percent: number;
+}
+
+/**
+ * Política de comisión por entidad
+ */
+export interface CommissionPolicy {
+  entityId: string;
+  entityName: string;
+  rules: CommissionPolicyRule[];
+}
+
+/**
  * Datos completos para exportación
  */
 export interface CommissionExportPayload {
@@ -61,6 +80,9 @@ export interface CommissionExportPayload {
 
   // Advertencias (opcional)
   warnings?: CommissionWarning[];
+
+  // Políticas de comisión (opcional)
+  policies?: CommissionPolicy[];
 
   // Metadata
   metadata: {
