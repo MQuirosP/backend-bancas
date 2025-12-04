@@ -7,10 +7,12 @@ import {
   validateGetPaymentHistoryQuery,
   validateReversePaymentBody,
   validateGetCurrentBalanceQuery,
+  validateAccountStatementExportQuery,
 } from "../validators/accounts.validator";
 import { protect, restrictTo } from "../../../middlewares/auth.middleware";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import { Role } from "@prisma/client";
+import rateLimit from "express-rate-limit";
 
 const router = Router();
 
@@ -20,6 +22,21 @@ router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.ADMIN));
 
 // Middleware de contexto de banca DESPUÉS de protect (para que req.user esté disponible)
 router.use(bancaContextMiddleware);
+
+// Rate limiter específico para exportaciones
+const exportLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minuto
+  max: 10, // 10 exportaciones por minuto por usuario
+  skipSuccessfulRequests: false,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      error: "Demasiadas exportaciones. Por favor espere un momento antes de intentar nuevamente.",
+    });
+  },
+});
 
 // 1) Obtener estado de cuenta día a día del mes
 // GET /accounts/statement
@@ -44,5 +61,9 @@ router.delete("/statement/:id", AccountsController.deleteStatement);
 // 6) Obtener balance acumulado actual de la ventana (solo VENTANA)
 // GET /accounts/balance/current
 router.get("/balance/current", validateGetCurrentBalanceQuery, AccountsController.getCurrentBalance);
+
+// 7) Exportar estados de cuenta (CSV, Excel, PDF)
+// GET /accounts/export
+router.get("/export", exportLimiter, validateAccountStatementExportQuery, AccountsController.export);
 
 export default router;

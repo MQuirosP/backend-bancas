@@ -1,5 +1,6 @@
 // src/api/v1/services/commissions-export-pdf.service.ts
 import PDFDocument from 'pdfkit';
+import path from 'path';
 import { CommissionExportPayload } from '../types/commissions-export.types';
 
 /**
@@ -16,13 +17,21 @@ export class CommissionsExportPdfService {
           size: 'LETTER',
           layout: 'landscape',
           margins: { top: 50, bottom: 50, left: 50, right: 50 },
+          autoFirstPage: false, // ✅ CRÍTICO: Evitar página en blanco inicial
         });
+
+        // Registrar fuentes personalizadas para soportar ₡
+        doc.registerFont('Helvetica', path.join(process.cwd(), 'src/assets/fonts/Regular.ttf'));
+        doc.registerFont('Helvetica-Bold', path.join(process.cwd(), 'src/assets/fonts/Bold.ttf'));
 
         const chunks: Buffer[] = [];
 
         doc.on('data', (chunk) => chunks.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(chunks)));
         doc.on('error', reject);
+
+        // Agregar primera página manualmente
+        doc.addPage();
 
         // Encabezado del documento
         this.addHeader(doc, payload);
@@ -101,9 +110,10 @@ export class CommissionsExportPdfService {
       ? ['Fecha', 'Listero', 'Ventas', 'Tickets', 'Com. Listero', 'Com. Vendedor', 'Ganancia']
       : ['Fecha', 'Vendedor', 'Ventas', 'Tickets', 'Com. Vendedor', 'Com. Listero', 'Ganancia'];
 
+    // Ajuste de anchos (Letter Landscape ~792pt, margins 50 => ~692pt disponibles)
     const colWidths = isDimensionVentana
-      ? [80, 120, 90, 60, 90, 90, 90]
-      : [80, 120, 90, 60, 90, 90, 90];
+      ? [80, 140, 95, 60, 95, 95, 95] // Total: 660
+      : [80, 140, 95, 60, 95, 95, 95];
 
     // Dibujar encabezado
     doc.fontSize(9).font('Helvetica-Bold');
@@ -112,7 +122,8 @@ export class CommissionsExportPdfService {
 
     let x = startX;
     headers.forEach((header, i) => {
-      doc.text(header, x + 5, y + 5, { width: colWidths[i] - 10, align: 'center' });
+      const align = i >= 2 ? 'right' : 'left';
+      doc.text(header, x + 5, y + 5, { width: colWidths[i] - 10, align });
       x += colWidths[i];
     });
 
@@ -123,53 +134,89 @@ export class CommissionsExportPdfService {
     doc.fontSize(8).font('Helvetica');
 
     for (const item of payload.summary) {
-      // Verificar si necesitamos nueva página
-      if (y > doc.page.height - 100) {
-        doc.addPage();
-        y = 50;
-      }
-
-      // Fondo alternado
-      const rowIndex = payload.summary.indexOf(item);
-      if (rowIndex % 2 === 1) {
-        doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, 18).fill();
-        doc.fillColor('black');
-      }
-
-      x = startX;
       const date = this.formatDate(item.date);
       const entity = isDimensionVentana ? item.ventanaName || '-' : item.vendedorName || '-';
 
       const values = isDimensionVentana
         ? [
-            date,
-            entity,
-            this.formatCurrency(item.totalSales),
-            item.totalTickets.toString(),
-            this.formatCurrency(item.commissionListero || 0),
-            this.formatCurrency(item.commissionVendedor || 0),
-            this.formatCurrency((item.commissionListero || 0) - (item.commissionVendedor || 0)),
-          ]
+          date,
+          entity,
+          this.formatCurrency(item.totalSales),
+          item.totalTickets.toString(),
+          this.formatCurrency(item.commissionListero || 0),
+          this.formatCurrency(item.commissionVendedor || 0),
+          this.formatCurrency((item.commissionListero || 0) - (item.commissionVendedor || 0)),
+        ]
         : [
-            date,
-            entity,
-            this.formatCurrency(item.totalSales),
-            item.totalTickets.toString(),
-            this.formatCurrency(item.commissionVendedor || 0),
-            this.formatCurrency(item.commissionListero || 0),
-            this.formatCurrency(item.net || 0),
-          ];
+          date,
+          entity,
+          this.formatCurrency(item.totalSales),
+          item.totalTickets.toString(),
+          this.formatCurrency(item.commissionVendedor || 0),
+          this.formatCurrency(item.commissionListero || 0),
+          this.formatCurrency(item.net || 0),
+        ];
+
+      // ✅ CRÍTICO: Calcular altura dinámica basada en TODAS las columnas
+      let maxCellHeight = 0;
+      values.forEach((val, i) => {
+        const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
+        if (h > maxCellHeight) maxCellHeight = h;
+      });
+
+      const rowHeight = Math.max(18, maxCellHeight + 8);
+
+      // Verificar si necesitamos nueva página
+      if (y + rowHeight > doc.page.height - 50) {
+        doc.addPage();
+        y = 50;
+
+        // Redibujar encabezado
+        doc.fontSize(9).font('Helvetica-Bold');
+        doc.fillColor('#4472C4').rect(startX, y, pageWidth, 20).fill();
+        doc.fillColor('white');
+
+        x = startX;
+        headers.forEach((header, i) => {
+          const align = i >= 2 ? 'right' : 'left';
+          doc.text(header, x + 5, y + 5, { width: colWidths[i] - 10, align });
+          x += colWidths[i];
+        });
+
+        y += 20;
+        doc.fillColor('black');
+        doc.fontSize(8).font('Helvetica');
+      }
+
+      // Fondo alternado
+      const rowIndex = payload.summary.indexOf(item);
+      if (rowIndex % 2 === 1) {
+        doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, rowHeight).fill();
+        doc.fillColor('black');
+      }
+
+      x = startX;
 
       values.forEach((value, i) => {
         const align = i >= 2 ? 'right' : 'left';
-        doc.text(value, x + 5, y + 4, { width: colWidths[i] - 10, align });
+        // Centrar verticalmente
+        const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
+        const topPadding = (rowHeight - cellHeight) / 2;
+
+        doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
         x += colWidths[i];
       });
 
-      y += 18;
+      y += rowHeight;
     }
 
     // Fila de totales
+    // Verificar espacio para totales
+    if (y > doc.page.height - 50) {
+      doc.addPage();
+      y = 50;
+    }
+
     doc.fontSize(9).font('Helvetica-Bold');
     doc.fillColor('#203764').rect(startX, y, pageWidth, 20).fill();
     doc.fillColor('white');
@@ -177,23 +224,23 @@ export class CommissionsExportPdfService {
     x = startX;
     const totalValues = isDimensionVentana
       ? [
-          'TOTAL',
-          '-',
-          this.formatCurrency(payload.metadata.totals.totalSales),
-          payload.metadata.totals.totalTickets.toString(),
-          this.formatCurrency(payload.metadata.totals.commissionListero || 0),
-          this.formatCurrency(payload.metadata.totals.commissionVendedor || 0),
-          this.formatCurrency((payload.metadata.totals.commissionListero || 0) - (payload.metadata.totals.commissionVendedor || 0)),
-        ]
+        'TOTAL',
+        '-',
+        this.formatCurrency(payload.metadata.totals.totalSales),
+        payload.metadata.totals.totalTickets.toString(),
+        this.formatCurrency(payload.metadata.totals.commissionListero || 0),
+        this.formatCurrency(payload.metadata.totals.commissionVendedor || 0),
+        this.formatCurrency((payload.metadata.totals.commissionListero || 0) - (payload.metadata.totals.commissionVendedor || 0)),
+      ]
       : [
-          'TOTAL',
-          '-',
-          this.formatCurrency(payload.metadata.totals.totalSales),
-          payload.metadata.totals.totalTickets.toString(),
-          this.formatCurrency(payload.metadata.totals.commissionVendedor || 0),
-          this.formatCurrency(payload.metadata.totals.commissionListero || 0),
-          this.formatCurrency(payload.metadata.totals.net || 0),
-        ];
+        'TOTAL',
+        '-',
+        this.formatCurrency(payload.metadata.totals.totalSales),
+        payload.metadata.totals.totalTickets.toString(),
+        this.formatCurrency(payload.metadata.totals.commissionVendedor || 0),
+        this.formatCurrency(payload.metadata.totals.commissionListero || 0),
+        this.formatCurrency(payload.metadata.totals.net || 0),
+      ];
 
     totalValues.forEach((value, i) => {
       const align = i >= 2 ? 'right' : 'left';
@@ -242,29 +289,57 @@ export class CommissionsExportPdfService {
     doc.fontSize(7).font('Helvetica');
 
     for (const item of payload.breakdown || []) {
+      const date = this.formatDate(item.date);
+      const entity = isDimensionVentana ? (item.ventanaName || '-') : (item.vendedorName || '-');
+      const loteria = item.loteriaName.substring(0, 15);
+      const sorteo = item.sorteoTime;
+      const multiplier = item.multiplierName.substring(0, 18);
+
+      // ✅ CRÍTICO: Calcular altura dinámica
+      // Considerar columnas de texto largo: Entity (1), Loteria (2), Multiplier (4)
+      const h1 = doc.heightOfString(entity, { width: colWidths[1] - 6 });
+      const h2 = doc.heightOfString(loteria, { width: colWidths[2] - 6 });
+      const h4 = doc.heightOfString(multiplier, { width: colWidths[4] - 6 });
+
+      const maxTextHeight = Math.max(h1, h2, h4);
+      const rowHeight = Math.max(16, maxTextHeight + 6);
+
       // Verificar si necesitamos nueva página
-      if (y > doc.page.height - 100) {
+      if (y + rowHeight > doc.page.height - 50) {
         doc.addPage();
         y = 50;
+
+        // Redibujar encabezado
+        doc.fontSize(8).font('Helvetica-Bold');
+        doc.fillColor('#4472C4').rect(startX, y, pageWidth, 18).fill();
+        doc.fillColor('white');
+
+        x = startX;
+        headers.forEach((header, i) => {
+          doc.text(header, x + 3, y + 4, { width: colWidths[i] - 6, align: 'center' });
+          x += colWidths[i];
+        });
+
+        y += 18;
+        doc.fillColor('black');
+        doc.fontSize(7).font('Helvetica');
       }
 
       // Fondo alternado
       const rowIndex = (payload.breakdown || []).indexOf(item);
       if (rowIndex % 2 === 1) {
-        doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, 16).fill();
+        doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, rowHeight).fill();
         doc.fillColor('black');
       }
 
       x = startX;
-      const date = this.formatDate(item.date);
-      const entity = isDimensionVentana ? (item.ventanaName || '-') : (item.vendedorName || '-');
 
       const values = [
         date,
         entity,
-        item.loteriaName.substring(0, 15), // Truncar si es muy largo
-        item.sorteoTime,
-        item.multiplierName.substring(0, 18),
+        loteria,
+        sorteo,
+        multiplier,
         this.formatCurrency(item.totalSales),
         this.formatCurrency(item.commission),
         item.commissionPercent.toFixed(2) + '%',
@@ -273,11 +348,15 @@ export class CommissionsExportPdfService {
 
       values.forEach((value, i) => {
         const align = i >= 5 ? 'right' : 'left';
-        doc.text(value, x + 3, y + 3, { width: colWidths[i] - 6, align });
+        // Centrar verticalmente
+        const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 6 });
+        const topPadding = (rowHeight - cellHeight) / 2;
+
+        doc.text(value, x + 3, y + topPadding, { width: colWidths[i] - 6, align });
         x += colWidths[i];
       });
 
-      y += 16;
+      y += rowHeight;
     }
   }
 
@@ -294,8 +373,12 @@ export class CommissionsExportPdfService {
     doc.fontSize(9).font('Helvetica');
 
     for (const warning of payload.warnings || []) {
+      // Calcular altura dinámica del contenido
+      const descHeight = doc.heightOfString(warning.description, { width: doc.page.width - 120 });
+      const boxHeight = Math.max(40, descHeight + 30);
+
       // Verificar si necesitamos nueva página
-      if (y > doc.page.height - 150) {
+      if (y + boxHeight > doc.page.height - 50) {
         doc.addPage();
         y = 50;
       }
@@ -308,14 +391,14 @@ export class CommissionsExportPdfService {
         bgColor = '#FFEDCC'; // Naranja claro
       }
 
-      doc.fillColor(bgColor).rect(50, y, doc.page.width - 100, 40).fill();
+      doc.fillColor(bgColor).rect(50, y, doc.page.width - 100, boxHeight).fill();
       doc.fillColor('black');
 
       doc.font('Helvetica-Bold').text(`${this.getWarningTypeLabel(warning.type)} (${warning.severity.toUpperCase()})`, 60, y + 5);
-      doc.font('Helvetica').text(`${warning.description}`, 60, y + 18);
-      doc.text(`Afecta a: ${warning.affectedEntity}`, 60, y + 28);
+      doc.font('Helvetica').text(`${warning.description}`, 60, y + 18, { width: doc.page.width - 120 });
+      doc.text(`Afecta a: ${warning.affectedEntity}`, 60, y + 18 + descHeight + 5);
 
-      y += 50;
+      y += boxHeight + 10;
     }
   }
 
@@ -358,22 +441,45 @@ export class CommissionsExportPdfService {
 
     for (const policy of payload.policies || []) {
       for (const rule of policy.rules) {
+        const entity = policy.entityName;
+        const loteria = rule.loteriaName;
+
+        // ✅ CRÍTICO: Calcular altura dinámica
+        const h1 = doc.heightOfString(entity, { width: colWidths[0] - 10 });
+        const h2 = doc.heightOfString(loteria, { width: colWidths[1] - 10 });
+        const rowHeight = Math.max(18, h1 + 8, h2 + 8);
+
         // Verificar si necesitamos nueva página
-        if (y > doc.page.height - 100) {
+        if (y + rowHeight > doc.page.height - 50) {
           doc.addPage();
           y = 50;
+
+          // Redibujar encabezado
+          doc.fontSize(9).font('Helvetica-Bold');
+          doc.fillColor('#4472C4').rect(startX, y, pageWidth, 20).fill();
+          doc.fillColor('white');
+
+          x = startX;
+          headers.forEach((header, i) => {
+            doc.text(header, x + 5, y + 5, { width: colWidths[i] - 10, align: 'center' });
+            x += colWidths[i];
+          });
+
+          y += 20;
+          doc.fillColor('black');
+          doc.fontSize(8).font('Helvetica');
         }
 
         // Fondo alternado
         if (rowIndex % 2 === 1) {
-          doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, 18).fill();
+          doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, rowHeight).fill();
           doc.fillColor('black');
         }
 
         x = startX;
         const values = [
-          policy.entityName,
-          rule.loteriaName,
+          entity,
+          loteria,
           rule.betType,
           rule.multiplierRange,
           rule.percent.toFixed(2) + '%',
@@ -381,11 +487,15 @@ export class CommissionsExportPdfService {
 
         values.forEach((value, i) => {
           const align = i === 4 ? 'right' : 'left';
-          doc.text(value, x + 5, y + 4, { width: colWidths[i] - 10, align });
+          // Centrar verticalmente
+          const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
+          const topPadding = (rowHeight - cellHeight) / 2;
+
+          doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
           x += colWidths[i];
         });
 
-        y += 18;
+        y += rowHeight;
         rowIndex++;
       }
     }
@@ -402,20 +512,27 @@ export class CommissionsExportPdfService {
       const pageIndex = pages.start + i;
       doc.switchToPage(pageIndex);
 
+      // ✅ CRÍTICO: Desactivar márgenes temporalmente para escribir en el pie de página sin generar nueva hoja
+      const oldMargins = doc.page.margins;
+      doc.page.margins = { top: 0, bottom: 0, left: 0, right: 0 };
+
       doc.fontSize(8).font('Helvetica');
       doc.text(
         `Página ${i + 1} de ${totalPages}`,
         50,
         doc.page.height - 30,
-        { align: 'center' }
+        { align: 'center', width: doc.page.width - 100 }
       );
 
       doc.text(
         'Generado por Sistema de Bancas',
         50,
         doc.page.height - 20,
-        { align: 'center' }
+        { align: 'center', width: doc.page.width - 100 }
       );
+
+      // Restaurar márgenes
+      doc.page.margins = oldMargins;
     }
   }
 
@@ -444,7 +561,10 @@ export class CommissionsExportPdfService {
    * Formatea número como moneda
    */
   private static formatCurrency(value: number): string {
-    return '₡' + value.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (value < 0) {
+      return `-(${Math.abs(value).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')})`;
+    }
+    return value.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   }
 
   /**
