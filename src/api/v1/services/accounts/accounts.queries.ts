@@ -325,7 +325,7 @@ export async function getSorteoBreakdownBatch(
         entry.sales += ticket.totalAmount || 0;
         entry.ticketCount += 1;
 
-        // ✅ CRÍTICO: Calcular comisiones jugada por jugada desde políticas (igual que getSorteoBreakdown)
+        // ✅ CRÍTICO: Calcular comisiones usando el snapshot inmutable en Jugada
         for (const jugada of ticket.jugadas) {
             // Payouts
             if (jugada.isWinner) {
@@ -337,59 +337,8 @@ export async function getSorteoBreakdownBatch(
                 entry.vendedorCommission += jugada.commissionAmount || 0;
             }
 
-            // ✅ CRÍTICO: Comisión del listero - calcular desde políticas (igual que getSorteoBreakdown)
-            // Prioridad: USER VENTANA policy → VENTANA policy → BANCA policy
-            if (ticket.ventanaId) {
-                const userPolicyJson = userPolicyByVentana.get(ticket.ventanaId) ?? null;
-                const ventanaUserId = ventanaUserIdByVentana.get(ticket.ventanaId) ?? "";
-                const ventanaPolicy = ticket.ventana?.commissionPolicyJson as any;
-                const bancaPolicy = ticket.ventana?.banca?.commissionPolicyJson as any;
-
-                let listeroCommission = 0;
-
-                if (userPolicyJson) {
-                    // Si hay política de usuario VENTANA, usarla (prioridad más alta)
-                    try {
-                        const resolution = resolveCommissionFromPolicy(userPolicyJson, {
-                            userId: ventanaUserId,
-                            loteriaId: ticket.loteriaId,
-                            betType: jugada.type as "NUMERO" | "REVENTADO",
-                            finalMultiplierX: jugada.finalMultiplierX ?? null,
-                        });
-                        listeroCommission = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
-                    } catch (err) {
-                        // Si falla, usar fallback con políticas de ventana/banca
-                        const fallback = resolveCommission(
-                            {
-                                loteriaId: ticket.loteriaId,
-                                betType: jugada.type as "NUMERO" | "REVENTADO",
-                                finalMultiplierX: jugada.finalMultiplierX || 0,
-                                amount: jugada.amount,
-                            },
-                            null,
-                            ventanaPolicy,
-                            bancaPolicy
-                        );
-                        listeroCommission = parseFloat((fallback.commissionAmount).toFixed(2));
-                    }
-                } else {
-                    // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
-                    const ventanaCommission = resolveCommission(
-                        {
-                            loteriaId: ticket.loteriaId,
-                            betType: jugada.type as "NUMERO" | "REVENTADO",
-                            finalMultiplierX: jugada.finalMultiplierX || 0,
-                            amount: jugada.amount,
-                        },
-                        null, // No hay política de usuario VENTANA
-                        ventanaPolicy, // Política de ventana
-                        bancaPolicy // Política de banca
-                    );
-                    listeroCommission = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
-                }
-
-                entry.listeroCommission += listeroCommission;
-            }
+            // Comisión del listero (usar snapshot)
+            entry.listeroCommission += jugada.listeroCommissionAmount || 0;
         }
     }
 
@@ -597,7 +546,7 @@ export async function getSorteoBreakdown(
         entry.sales += ticket.totalAmount || 0;
         entry.ticketCount += 1;
 
-        // ✅ CRÍTICO: Calcular comisiones jugada por jugada desde políticas (igual que commissions.service.ts)
+        // ✅ CRÍTICO: Calcular comisiones usando el snapshot inmutable en Jugada
         for (const jugada of ticket.jugadas) {
             // Payouts
             if (jugada.isWinner) {
@@ -609,59 +558,8 @@ export async function getSorteoBreakdown(
                 entry.vendedorCommission += jugada.commissionAmount || 0;
             }
 
-            // ✅ CRÍTICO: Comisión del listero - calcular desde políticas (igual que commissions.service.ts)
-            // Prioridad: USER VENTANA policy → VENTANA policy → BANCA policy
-            if (ticket.ventanaId) {
-                const userPolicyJson = userPolicyByVentana.get(ticket.ventanaId) ?? null;
-                const ventanaUserId = ventanaUserIdByVentana.get(ticket.ventanaId) ?? "";
-                const ventanaPolicy = ticket.ventana?.commissionPolicyJson as any;
-                const bancaPolicy = ticket.ventana?.banca?.commissionPolicyJson as any;
-
-                let listeroCommission = 0;
-
-                if (userPolicyJson) {
-                    // Si hay política de usuario VENTANA, usarla (prioridad más alta)
-                    try {
-                        const resolution = resolveCommissionFromPolicy(userPolicyJson, {
-                            userId: ventanaUserId,
-                            loteriaId: ticket.loteriaId,
-                            betType: jugada.type as "NUMERO" | "REVENTADO",
-                            finalMultiplierX: jugada.finalMultiplierX ?? null,
-                        });
-                        listeroCommission = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
-                    } catch (err) {
-                        // Si falla, usar fallback con políticas de ventana/banca
-                        const fallback = resolveCommission(
-                            {
-                                loteriaId: ticket.loteriaId,
-                                betType: jugada.type as "NUMERO" | "REVENTADO",
-                                finalMultiplierX: jugada.finalMultiplierX || 0,
-                                amount: jugada.amount,
-                            },
-                            null,
-                            ventanaPolicy,
-                            bancaPolicy
-                        );
-                        listeroCommission = parseFloat((fallback.commissionAmount).toFixed(2));
-                    }
-                } else {
-                    // Si NO hay política de usuario VENTANA, usar políticas de ventana/banca
-                    const ventanaCommission = resolveCommission(
-                        {
-                            loteriaId: ticket.loteriaId,
-                            betType: jugada.type as "NUMERO" | "REVENTADO",
-                            finalMultiplierX: jugada.finalMultiplierX || 0,
-                            amount: jugada.amount,
-                        },
-                        null, // No hay política de usuario VENTANA
-                        ventanaPolicy, // Política de ventana
-                        bancaPolicy // Política de banca
-                    );
-                    listeroCommission = parseFloat((ventanaCommission.commissionAmount).toFixed(2));
-                }
-
-                entry.listeroCommission += listeroCommission;
-            }
+            // Comisión del listero (usar snapshot)
+            entry.listeroCommission += jugada.listeroCommissionAmount || 0;
         }
     }
 

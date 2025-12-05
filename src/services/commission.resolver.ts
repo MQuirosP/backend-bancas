@@ -206,16 +206,8 @@ export function resolveCommission(
     const match = findMatchingRule(userPolicy, input);
     if (match) {
       const commissionAmount = parseFloat(((input.amount * match.percent) / 100).toFixed(2));
-      logger.info({
-        layer: "service",
-        action: "COMMISSION_RESOLVED",
-        payload: {
-          origin: "USER",
-          percent: match.percent,
-          ruleId: match.ruleId,
-          amount: commissionAmount,
-        },
-      });
+      // logger.info removed for performance
+
       return {
         commissionPercent: match.percent,
         commissionAmount,
@@ -231,16 +223,8 @@ export function resolveCommission(
     const match = findMatchingRule(ventanaPolicy, input);
     if (match) {
       const commissionAmount = parseFloat(((input.amount * match.percent) / 100).toFixed(2));
-      logger.info({
-        layer: "service",
-        action: "COMMISSION_RESOLVED",
-        payload: {
-          origin: "VENTANA",
-          percent: match.percent,
-          ruleId: match.ruleId,
-          amount: commissionAmount,
-        },
-      });
+      // logger.info removed for performance
+
       return {
         commissionPercent: match.percent,
         commissionAmount,
@@ -256,16 +240,8 @@ export function resolveCommission(
     const match = findMatchingRule(bancaPolicy, input);
     if (match) {
       const commissionAmount = parseFloat(((input.amount * match.percent) / 100).toFixed(2));
-      logger.info({
-        layer: "service",
-        action: "COMMISSION_RESOLVED",
-        payload: {
-          origin: "BANCA",
-          percent: match.percent,
-          ruleId: match.ruleId,
-          amount: commissionAmount,
-        },
-      });
+      // logger.info removed for performance
+
       return {
         commissionPercent: match.percent,
         commissionAmount,
