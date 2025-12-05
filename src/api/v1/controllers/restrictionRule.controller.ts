@@ -47,7 +47,23 @@ export const RestrictionRuleController = {
       query.bancaId = req.bancaContext.bancaId;
     }
 
+    req.logger?.info({
+      layer: "controller",
+      action: "RESTRICTION_LIST_DEBUG",
+      payload: { query, userIdParam: query.userId }
+    });
+
     const result = await RestrictionRuleService.list(query);
+
+    req.logger?.info({
+      layer: "controller",
+      action: "RESTRICTION_LIST_RESULT",
+      payload: {
+        count: result.data.length,
+        sample: result.data[0] ? Object.keys(result.data[0]) : "empty"
+      }
+    });
+
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 
