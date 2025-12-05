@@ -6,13 +6,16 @@ import prisma from "../../../core/prismaClient";
  * Soporta exclusión por multiplierId
  */
 export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string>> {
-    // Obtener todas las exclusiones del sorteo
+    // ✅ OPTIMIZED: Single query with include to get ventana relation
     const exclusions = await prisma.sorteoListaExclusion.findMany({
         where: { sorteoId },
         select: {
             ventanaId: true,
             vendedorId: true,
             multiplierId: true,
+            ventana: {
+                select: { ventanaId: true },
+            },
         },
     });
 
@@ -20,24 +23,9 @@ export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string
         return new Set();
     }
 
-    // WORKAROUND: ventanaId en la tabla apunta al User (listero), no a Ventana
-    // Necesitamos obtener el ventanaId real de cada usuario listero
-    const ventanaUserIds = Array.from(new Set(exclusions.map(e => e.ventanaId)));
-    const ventanaUsers = await prisma.user.findMany({
-        where: { id: { in: ventanaUserIds } },
-        select: { id: true, ventanaId: true },
-    });
-    
-    const userIdToVentanaId = new Map<string, string>();
-    for (const user of ventanaUsers) {
-        if (user.ventanaId) {
-            userIdToVentanaId.set(user.id, user.ventanaId);
-        }
-    }
-
     // Construir condiciones WHERE para tickets excluidos
     const orConditions = exclusions.map((exclusion) => {
-        const realVentanaId = userIdToVentanaId.get(exclusion.ventanaId);
+        const realVentanaId = exclusion.ventana?.ventanaId;
         if (!realVentanaId) return null;
 
         const baseCondition: any = {
@@ -84,12 +72,16 @@ export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string
  * Soporta exclusión por multiplierId
  */
 export async function getExclusionWhereCondition(sorteoId: string): Promise<any> {
+    // ✅ OPTIMIZED: Single query with include to get ventana relation
     const exclusions = await prisma.sorteoListaExclusion.findMany({
         where: { sorteoId },
         select: {
             ventanaId: true,
             vendedorId: true,
             multiplierId: true,
+            ventana: {
+                select: { ventanaId: true },
+            },
         },
     });
 
@@ -97,23 +89,9 @@ export async function getExclusionWhereCondition(sorteoId: string): Promise<any>
         return {}; // Sin exclusiones
     }
 
-    // WORKAROUND: ventanaId en la tabla apunta al User (listero), no a Ventana
-    const ventanaUserIds = Array.from(new Set(exclusions.map(e => e.ventanaId)));
-    const ventanaUsers = await prisma.user.findMany({
-        where: { id: { in: ventanaUserIds } },
-        select: { id: true, ventanaId: true },
-    });
-    
-    const userIdToVentanaId = new Map<string, string>();
-    for (const user of ventanaUsers) {
-        if (user.ventanaId) {
-            userIdToVentanaId.set(user.id, user.ventanaId);
-        }
-    }
-
     // Construir condición NOT para excluir tickets
     const orConditions = exclusions.map((exclusion) => {
-        const realVentanaId = userIdToVentanaId.get(exclusion.ventanaId);
+        const realVentanaId = exclusion.ventana?.ventanaId;
         if (!realVentanaId) return null;
 
         const condition: any = {

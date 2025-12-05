@@ -1039,12 +1039,59 @@ export const TicketService = {
       }
       // Si scope='all' y no hay filtros específicos ni dimension, no agregar filtros de ventanaId/vendedorId
 
-      // ✅ FIX: Obtener primero los tickets que cumplen los filtros, luego sus jugadas
-      // Esto es más robusto que usar nested queries complejas con ticket: ticketWhere
+      // ✅ OPTIMIZED: Fetch tickets with jugadas and metadata in a single query
+      // Build jugada filter for nested query
+      const jugadaFilter: any = {
+        deletedAt: null,
+        isActive: true,
+        ...(params.multiplierId
+          ? {
+            // Filter by multiplier (only NUMERO jugadas have multiplierId)
+            multiplierId: params.multiplierId,
+            type: 'NUMERO',
+          }
+          : {}),
+      };
+
       const tickets = await prisma.ticket.findMany({
         where: ticketWhere,
         select: {
           id: true,
+          // Include jugadas directly
+          jugadas: {
+            where: jugadaFilter,
+            select: {
+              id: true,
+              ticketId: true,
+              number: true,
+              reventadoNumber: true,
+              type: true,
+              amount: true,
+              commissionAmount: true,
+              listeroCommissionAmount: true,
+            },
+          },
+          // Include metadata to avoid separate queries
+          ...(params.ventanaId ? {
+            ventana: {
+              select: { name: true },
+            },
+          } : {}),
+          ...(params.vendedorId ? {
+            vendedor: {
+              select: { name: true, code: true },
+            },
+          } : {}),
+          ...(params.loteriaId ? {
+            loteria: {
+              select: { name: true },
+            },
+          } : {}),
+          ...(params.sorteoId ? {
+            sorteo: {
+              select: { scheduledAt: true },
+            },
+          } : {}),
         },
       });
 
@@ -1058,37 +1105,15 @@ export const TicketService = {
         // Continuar con lógica normal - retornará ceros
       }
 
-      const ticketIds = tickets.map(t => t.id);
+      // Flatten jugadas from all tickets
+      const jugadas = tickets.flatMap(t => t.jugadas);
 
-      // Construir filtro para jugadas usando los ticket IDs
-      const jugadaWhere: any = {
-        ticketId: { in: ticketIds },
-        deletedAt: null,
-        isActive: true,
-        ...(params.multiplierId
-          ? {
-            // ✅ NUEVO: Filtrar por multiplicador (solo jugadas NUMERO tienen multiplierId)
-            multiplierId: params.multiplierId,
-            type: 'NUMERO', // Solo jugadas NUMERO tienen multiplicador
-          }
-          : {}),
-      };
-
-      // Obtener todas las jugadas que pertenecen a los tickets filtrados
-      const jugadas = await prisma.jugada.findMany({
-        where: jugadaWhere,
-        select: {
-          id: true,
-          ticketId: true,
-          number: true,
-          reventadoNumber: true,
-          type: true,
-          amount: true,
-          // ✅ NUEVO: Campos para commission breakdown
-          commissionAmount: true,  // Comisión del vendedor
-          listeroCommissionAmount: true,  // Comisión del listero
-        },
-      });
+      // Extract metadata from first ticket (all tickets share same filters)
+      const ventanaName = tickets[0]?.ventana?.name;
+      const vendedorName = tickets[0]?.vendedor?.name;
+      const vendedorCode = tickets[0]?.vendedor?.code;
+      const loteriaName = tickets[0]?.loteria?.name;
+      const sorteoDate = tickets[0]?.sorteo?.scheduledAt;
 
       // Agrupar por número y tipo
       // Para NUMERO: usar jugada.number
@@ -1224,46 +1249,6 @@ export const TicketService = {
       }
 
       const totalCommission = commissionByNumber + commissionByReventado;
-
-      // Obtener información de ventana/vendedor/loteria/sorteo si están presentes
-      let ventanaName: string | undefined;
-      let vendedorName: string | undefined;
-      let vendedorCode: string | undefined;
-      let loteriaName: string | undefined;
-      let sorteoDate: Date | undefined;
-
-      if (params.ventanaId) {
-        const ventana = await prisma.ventana.findUnique({
-          where: { id: params.ventanaId },
-          select: { name: true },
-        });
-        ventanaName = ventana?.name;
-      }
-
-      if (params.vendedorId) {
-        const vendedor = await prisma.user.findUnique({
-          where: { id: params.vendedorId },
-          select: { name: true, code: true },
-        });
-        vendedorName = vendedor?.name || undefined;
-        vendedorCode = vendedor?.code || undefined;
-      }
-
-      if (params.loteriaId) {
-        const loteria = await prisma.loteria.findUnique({
-          where: { id: params.loteriaId },
-          select: { name: true },
-        });
-        loteriaName = loteria?.name || undefined;
-      }
-
-      if (params.sorteoId) {
-        const sorteo = await prisma.sorteo.findUnique({
-          where: { id: params.sorteoId },
-          select: { scheduledAt: true },
-        });
-        sorteoDate = sorteo?.scheduledAt || undefined;
-      }
 
       return {
         data,
