@@ -15,6 +15,7 @@ export const ExcludeListaSchema = z.object({
 export const IncludeListaSchema = z.object({
     ventanaId: z.uuid("ventanaId inválido"),
     vendedorId: z.uuid("vendedorId inválido").nullable().optional(),
+    multiplierId: z.uuid("multiplierId inválido").nullable().optional(),
 }).strict();
 
 export const validateIdParam = (req: Request, res: Response, next: NextFunction) =>
