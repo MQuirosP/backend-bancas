@@ -756,7 +756,11 @@ const SorteoRepository = {
       whereConditions.push(Prisma.sql`s."loteriaId" = ${loteriaId}::uuid`);
     }
     if (status) {
-      whereConditions.push(Prisma.sql`s."status" = ${status}::text`);
+      // ✅ Convertir enum a string literal para PostgreSQL
+      // Prisma.sql necesita el valor como string literal, no como enum TypeScript
+      // Usar Prisma.raw() para insertar el string literal directamente en SQL (escapar comillas simples)
+      const statusStr = String(status);
+      whereConditions.push(Prisma.sql`s."status" = ${Prisma.raw(`'${statusStr.replace(/'/g, "''")}'`)}`);
     }
     if (typeof isActive === 'boolean') {
       whereConditions.push(Prisma.sql`s."isActive" = ${isActive}`);
