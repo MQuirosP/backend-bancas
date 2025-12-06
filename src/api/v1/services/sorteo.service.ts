@@ -1,5 +1,5 @@
 // src/modules/sorteos/services/sorteo.service.ts
-import { ActivityType, Prisma, SorteoStatus, TicketStatus } from "@prisma/client";
+import { ActivityType, Prisma, Role, SorteoStatus, TicketStatus } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import ActivityService from "../../../core/activity.service";
@@ -15,6 +15,7 @@ import { resolveDateRange } from "../../../utils/dateRange";
 import logger from "../../../core/logger";
 import { getExcludedTicketIds } from "./sorteo-listas.helpers";
 import { resolveDigits } from "../../../utils/loteriaRules";
+import { parseCommissionPolicy, CommissionPolicy, CommissionRule } from "../../../services/commission.resolver";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
@@ -747,6 +748,190 @@ export const SorteoService = {
     return serializeSorteo(reverted);
   },
 
+  /**
+   * ✅ Helper: Obtener multiplicadores activos tipo NUMERO de una lotería
+   */
+  async getActiveMultipliers(loteriaId: string): Promise<Array<{ id: string; valueX: number }>> {
+    const multipliers = await prisma.loteriaMultiplier.findMany({
+      where: {
+        loteriaId,
+        kind: 'NUMERO',
+        isActive: true,
+      },
+      select: {
+        id: true,
+        valueX: true,
+      },
+    });
+    return multipliers;
+  },
+
+  /**
+   * ✅ Helper: Obtener política de comisiones (USER → VENTANA fallback)
+   */
+  async getCommissionPolicy(userId: string, ventanaId: string | null | undefined): Promise<CommissionPolicy | null> {
+    if (!ventanaId) {
+      return null;
+    }
+
+    // Obtener políticas en paralelo
+    const [user, ventana] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { commissionPolicyJson: true },
+      }),
+      prisma.ventana.findUnique({
+        where: { id: ventanaId },
+        select: { commissionPolicyJson: true },
+      }),
+    ]);
+
+    // Prioridad: USER → VENTANA
+    const policyJson = user?.commissionPolicyJson ?? ventana?.commissionPolicyJson ?? null;
+    if (!policyJson) {
+      return null;
+    }
+
+    return parseCommissionPolicy(policyJson, user?.commissionPolicyJson ? 'USER' : 'VENTANA');
+  },
+
+  /**
+   * ✅ Helper: Verificar si un sorteo debe mostrarse según política de comisiones
+   * Solo muestra si hay reglas específicas que cubran al menos un multiplicador activo
+   * NO considera defaultPercent - solo reglas explícitas
+   */
+  async shouldShowSorteo(
+    sorteo: { id: string; loteriaId: string },
+    activeMultipliers: Array<{ id: string; valueX: number }>,
+    commissionPolicy: CommissionPolicy
+  ): Promise<boolean> {
+    // Si la lotería no tiene multiplicadores activos, siempre mostrar
+    if (!activeMultipliers || activeMultipliers.length === 0) {
+      return true;
+    }
+
+    // Verificar si AL MENOS UN multiplicador tiene regla específica
+    const hasPolicyForAnyMultiplier = activeMultipliers.some(multiplier => {
+      const multiplierValue = multiplier.valueX;
+
+      // Buscar regla específica que cubra este multiplicador
+      const matchingRule = commissionPolicy.rules.find(rule => {
+        // Verificar rango de multiplicador
+        if (!rule.multiplierRange) {
+          return false; // Solo considerar reglas con rango explícito
+        }
+
+        const inRange = multiplierValue >= rule.multiplierRange.min && 
+                        multiplierValue <= rule.multiplierRange.max;
+        
+        if (!inRange) return false;
+
+        // Si tiene loteriaId específica, debe coincidir (null = aplica a todas)
+        if (rule.loteriaId !== null && rule.loteriaId !== sorteo.loteriaId) {
+          return false;
+        }
+
+        // Verificar tipo de apuesta (NUMERO, REVENTADO, o null para ambos)
+        if (rule.betType !== null && rule.betType !== 'NUMERO') {
+          return false;
+        }
+
+        return true;
+      });
+
+      // Si hay regla específica para este multiplicador, tiene política
+      return matchingRule !== undefined;
+    });
+
+    // Solo mostrar si hay reglas específicas que cubran algún multiplicador
+    // NO se considera defaultPercent - solo reglas explícitas
+    return hasPolicyForAnyMultiplier;
+  },
+
+  /**
+   * ✅ Helper: Filtrar sorteos por política de comisiones
+   * Solo aplica para VENDEDOR - otros roles ven todos los sorteos
+   */
+  async filterSorteosByCommissionPolicy(
+    sorteos: Array<{ id: string; loteriaId: string }>,
+    userId: string,
+    ventanaId: string
+  ): Promise<{ filteredSorteos: Array<{ id: string; loteriaId: string }>; filteredTotal: number }> {
+    // Obtener política de comisiones
+    const commissionPolicy = await this.getCommissionPolicy(userId, ventanaId);
+    
+    // Si no hay política, ocultar todos los sorteos con multiplicadores activos
+    if (!commissionPolicy) {
+      const sorteosWithoutMultipliers: Array<{ id: string; loteriaId: string }> = [];
+      
+      for (const sorteo of sorteos) {
+        const multipliers = await this.getActiveMultipliers(sorteo.loteriaId);
+        // Solo mostrar si no tiene multiplicadores activos
+        if (multipliers.length === 0) {
+          sorteosWithoutMultipliers.push(sorteo);
+        } else {
+          logger.debug({
+            layer: "service",
+            action: "SORTEO_FILTERED_NO_POLICY",
+            payload: {
+              sorteoId: sorteo.id,
+              loteriaId: sorteo.loteriaId,
+              userId,
+              reason: "NO_COMMISSION_POLICY",
+            },
+          });
+        }
+      }
+      
+      return {
+        filteredSorteos: sorteosWithoutMultipliers,
+        filteredTotal: sorteosWithoutMultipliers.length,
+      };
+    }
+
+    // Filtrar sorteos según política
+    const filteredSorteos: Array<{ id: string; loteriaId: string }> = [];
+    
+    // ✅ OPTIMIZACIÓN: Agrupar sorteos por loteriaId para evitar queries duplicadas
+    const loteriaIds = [...new Set(sorteos.map(s => s.loteriaId))];
+    const multipliersByLoteria = new Map<string, Array<{ id: string; valueX: number }>>();
+    
+    // Obtener multiplicadores para todas las loterías en paralelo
+    await Promise.all(
+      loteriaIds.map(async (loteriaId) => {
+        const multipliers = await this.getActiveMultipliers(loteriaId);
+        multipliersByLoteria.set(loteriaId, multipliers);
+      })
+    );
+
+    // Verificar cada sorteo
+    for (const sorteo of sorteos) {
+      const multipliers = multipliersByLoteria.get(sorteo.loteriaId) || [];
+      const shouldShow = await this.shouldShowSorteo(sorteo, multipliers, commissionPolicy);
+      
+      if (shouldShow) {
+        filteredSorteos.push(sorteo);
+      } else {
+        logger.debug({
+          layer: "service",
+          action: "SORTEO_FILTERED_NO_SPECIFIC_RULE",
+          payload: {
+            sorteoId: sorteo.id,
+            loteriaId: sorteo.loteriaId,
+            userId,
+            multipliersCount: multipliers.length,
+            reason: "NO_SPECIFIC_RULE_FOR_MULTIPLIERS",
+          },
+        });
+      }
+    }
+
+    return {
+      filteredSorteos,
+      filteredTotal: filteredSorteos.length,
+    };
+  },
+
   async list(params: {
     loteriaId?: string;
     page?: number;
@@ -757,27 +942,37 @@ export const SorteoService = {
     dateFrom?: Date;
     dateTo?: Date;
     groupBy?: "hour" | "loteria-hour";
+    // ✅ NUEVO: Información del usuario para filtrado por política de comisiones
+    userId?: string;
+    role?: Role;
+    ventanaId?: string | null;
   }) {
     // Early return: sin groupBy, usar lógica existente
     if (!params.groupBy) {
       const p = params.page && params.page > 0 ? params.page : 1;
       const ps = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
 
-      // Intentar obtener del cache
-      const { getCachedSorteoList, setCachedSorteoList } = require('../../../utils/sorteoCache');
-      const cached = getCachedSorteoList({
-        loteriaId: params.loteriaId,
-        page: p,
-        pageSize: ps,
-        status: params.status,
-        search: params.search?.trim() || undefined,
-        isActive: params.isActive,
-        dateFrom: params.dateFrom,
-        dateTo: params.dateTo,
-      });
+      // ✅ Para VENDEDOR, no usar caché (cada vendedor tiene políticas diferentes)
+      // Para otros roles, usar caché normalmente
+      const isVendedor = params.role === Role.VENDEDOR;
+      
+      if (!isVendedor) {
+        // Intentar obtener del cache solo para ADMIN/VENTANA
+        const { getCachedSorteoList, setCachedSorteoList } = require('../../../utils/sorteoCache');
+        const cached = getCachedSorteoList({
+          loteriaId: params.loteriaId,
+          page: p,
+          pageSize: ps,
+          status: params.status,
+          search: params.search?.trim() || undefined,
+          isActive: params.isActive,
+          dateFrom: params.dateFrom,
+          dateTo: params.dateTo,
+        });
 
-      if (cached) {
-        return cached;
+        if (cached) {
+          return cached;
+        }
       }
 
       const { data, total } = await SorteoRepository.list({
@@ -791,12 +986,41 @@ export const SorteoService = {
         dateTo: params.dateTo,
       });
 
-      const serialized = serializeSorteos(data);
-      const totalPages = Math.ceil(total / ps);
+      // ✅ Aplicar filtrado por política de comisiones solo para VENDEDOR
+      let filteredData = data;
+      let filteredTotal = total;
+
+      if (isVendedor && params.userId && params.ventanaId) {
+        const filterResult = await this.filterSorteosByCommissionPolicy(
+          data.map(s => ({ id: s.id, loteriaId: s.loteriaId })),
+          params.userId,
+          params.ventanaId
+        );
+        
+        // Crear Set de IDs filtrados para mantener el orden y estructura completa
+        const filteredIds = new Set(filterResult.filteredSorteos.map(s => s.id));
+        filteredData = data.filter(s => filteredIds.has(s.id));
+        filteredTotal = filterResult.filteredTotal;
+        
+        logger.info({
+          layer: "service",
+          action: "SORTEO_LIST_FILTERED_BY_COMMISSION_POLICY",
+          payload: {
+            userId: params.userId,
+            role: params.role,
+            originalCount: data.length,
+            filteredCount: filteredData.length,
+            hiddenCount: data.length - filteredData.length,
+          },
+        });
+      }
+
+      const serialized = serializeSorteos(filteredData);
+      const totalPages = Math.ceil(filteredTotal / ps);
       const result = {
         data: serialized,
         meta: {
-          total,
+          total: filteredTotal,
           page: p,
           pageSize: ps,
           totalPages,
@@ -807,21 +1031,24 @@ export const SorteoService = {
         },
       };
 
-      // Guardar en cache
-      setCachedSorteoList(
-        {
-          loteriaId: params.loteriaId,
-          page: p,
-          pageSize: ps,
-          status: params.status,
-          search: params.search?.trim() || undefined,
-          isActive: params.isActive,
-          dateFrom: params.dateFrom,
-          dateTo: params.dateTo,
-        },
-        result.data,
-        result.meta
-      );
+      // Guardar en cache solo para ADMIN/VENTANA
+      if (!isVendedor) {
+        const { setCachedSorteoList } = require('../../../utils/sorteoCache');
+        setCachedSorteoList(
+          {
+            loteriaId: params.loteriaId,
+            page: p,
+            pageSize: ps,
+            status: params.status,
+            search: params.search?.trim() || undefined,
+            isActive: params.isActive,
+            dateFrom: params.dateFrom,
+            dateTo: params.dateTo,
+          },
+          result.data,
+          result.meta
+        );
+      }
 
       return result;
     }
