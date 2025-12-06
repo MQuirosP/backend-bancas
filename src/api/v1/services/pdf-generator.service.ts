@@ -13,6 +13,8 @@ interface NumbersSummaryData {
     totalAmount: number;
     totalAmountByNumber: number;
     totalAmountByReventado: number;
+    sorteoDigits?: number; // ✅ NUEVO: Número de dígitos (2 o 3)
+    maxNumber?: number;    // ✅ NUEVO: Número máximo (99 o 999)
   };
   numbers: Array<{
     number: string;
@@ -56,29 +58,50 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
       // Configuración de fuente (Courier = monoespaciada)
       doc.font('Courier');
 
-      // 1. ENCABEZADO DEL REPORTE
-      const userName = data.meta.vendedorName || data.meta.ventanaName || 'Usuario';
-      const userCode = data.meta.vendedorCode ? ` (${data.meta.vendedorCode})` : '';
-      const generatedAt = new Date().toLocaleString('es-CR', {
-        timeZone: 'America/Costa_Rica',
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
+      // ✅ El encabezado se renderizará en cada página usando la función renderHeader
+
+      // ✅ Detectar número de dígitos dinámicamente
+      const sorteoDigits = data.meta.sorteoDigits ?? 2;
+      const padLength = sorteoDigits;
+
+      // Crear un mapa de números para acceso rápido
+      const numbersMap = new Map<string, { amountByNumber: number; amountByReventado: number }>();
+      data.numbers.forEach((item) => {
+        numbersMap.set(item.number.padStart(padLength, '0'), {
+          amountByNumber: item.amountByNumber,
+          amountByReventado: item.amountByReventado,
+        });
       });
 
-      doc.fontSize(11).font('Courier-Bold');
-      doc.text(`Usuario: ${userName}${userCode}`, { align: 'left' });
-      doc.font('Courier');
-      doc.fontSize(9);
-      doc.text(`Fecha y hora de generación: ${generatedAt}`, { align: 'left' });
-
-      if (data.meta.loteriaName) {
-        doc.text(`Sorteo: ${data.meta.loteriaName}`, { align: 'left' });
+      // ✅ Para PDF, SIEMPRE generar TODOS los números (0-99 para 2 dígitos, 0-999 para 3 dígitos)
+      // No usar el rango recibido, sino el rango completo según sorteoDigits
+      const maxNumber = sorteoDigits === 3 ? 999 : 99;
+      
+      // ✅ Asegurar que todos los números existan (rango completo)
+      for (let i = 0; i <= maxNumber; i++) {
+        const num = i.toString().padStart(padLength, '0');
+        if (!numbersMap.has(num)) {
+          numbersMap.set(num, { amountByNumber: 0, amountByReventado: 0 });
+        }
       }
-      if (data.meta.sorteoDate) {
-        const sorteoDateStr = data.meta.sorteoDate.toLocaleString('es-CR', {
+
+      // ✅ Configuración de columnas dinámica
+      const columnWidth = sorteoDigits === 3 ? 140 : 130; // Más ancho para 3 dígitos
+      const leftMargin = doc.page.margins.left;
+      
+      // Para 2 dígitos: 4 columnas de 25 números cada una (0-24, 25-49, 50-74, 75-99) = 1 página
+      // Para 3 dígitos: 4 columnas de 25 números cada una por página (100 números por página) = 10 páginas
+      const numbersPerColumn = 25;
+      const numbersPerPage = numbersPerColumn * 4; // 100 números por página
+
+      // Altura de línea
+      const lineHeight = 11;
+      
+      // ✅ Función helper para renderizar encabezado en cada página
+      const renderHeader = () => {
+        const userName = data.meta.vendedorName || data.meta.ventanaName || 'Usuario';
+        const userCode = data.meta.vendedorCode ? ` (${data.meta.vendedorCode})` : '';
+        const generatedAt = new Date().toLocaleString('es-CR', {
           timeZone: 'America/Costa_Rica',
           day: '2-digit',
           month: '2-digit',
@@ -86,102 +109,117 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
           hour: '2-digit',
           minute: '2-digit',
         });
-        doc.text(`Fecha del sorteo: ${sorteoDateStr}`, { align: 'left' });
-      }
 
-      doc.moveDown(0.5);
+        doc.fontSize(11).font('Courier-Bold');
+        doc.text(`Usuario: ${userName}${userCode}`, { align: 'left' });
+        doc.font('Courier');
+        doc.fontSize(9);
+        doc.text(`Fecha y hora de generación: ${generatedAt}`, { align: 'left' });
 
-      // 2. LÍNEA SEPARADORA
-      doc.text('--------------------------------------------------------', { align: 'center' });
-      doc.moveDown(0.5);
-
-      // 3. TOTALES GENERALES
-      doc.fontSize(12).font('Courier-Bold');
-      doc.text(`TOTAL GENERAL: ¢ ${formatCurrency(data.meta.totalAmount)}`, { align: 'center' });
-      doc.fontSize(10).font('Courier');
-      doc.text(`Normal: ¢ ${formatCurrency(data.meta.totalAmountByNumber)}`, { align: 'center' });
-      doc.text(`Reventados: ¢ ${formatCurrency(data.meta.totalAmountByReventado)}`, { align: 'center' });
-      doc.moveDown(0.5);
-
-      // 4. LÍNEA SEPARADORA
-      doc.text('--------------------------------------------------------', { align: 'center' });
-      doc.moveDown(1);
-
-      // 5. LISTADO DE NÚMEROS EN 4 COLUMNAS
-      doc.fontSize(9).font('Courier');
-
-      // Crear un mapa de números para acceso rápido
-      const numbersMap = new Map<string, { amountByNumber: number; amountByReventado: number }>();
-      data.numbers.forEach((item) => {
-        numbersMap.set(item.number.padStart(2, '0'), {
-          amountByNumber: item.amountByNumber,
-          amountByReventado: item.amountByReventado,
-        });
-      });
-
-      // Asegurar que todos los números 00-99 existan
-      for (let i = 0; i <= 99; i++) {
-        const num = i.toString().padStart(2, '0');
-        if (!numbersMap.has(num)) {
-          numbersMap.set(num, { amountByNumber: 0, amountByReventado: 0 });
+        if (data.meta.loteriaName) {
+          doc.text(`Sorteo: ${data.meta.loteriaName}`, { align: 'left' });
         }
-      }
+        if (data.meta.sorteoDate) {
+          const sorteoDateStr = data.meta.sorteoDate.toLocaleString('es-CR', {
+            timeZone: 'America/Costa_Rica',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+          doc.text(`Fecha del sorteo: ${sorteoDateStr}`, { align: 'left' });
+        }
 
-      // Configuración de columnas
-      const columnWidth = 130;
-      const leftMargin = doc.page.margins.left;
-      const columns = [
-        { start: 0, end: 24, x: leftMargin },
-        { start: 25, end: 49, x: leftMargin + columnWidth },
-        { start: 50, end: 74, x: leftMargin + columnWidth * 2 },
-        { start: 75, end: 99, x: leftMargin + columnWidth * 3 },
-      ];
+        doc.moveDown(0.5);
+        doc.text('--------------------------------------------------------', { align: 'center' });
+        doc.moveDown(0.5);
+        doc.fontSize(12).font('Courier-Bold');
+        doc.text(`TOTAL GENERAL: ¢ ${formatCurrency(data.meta.totalAmount)}`, { align: 'center' });
+        doc.fontSize(10).font('Courier');
+        doc.text(`Normal: ¢ ${formatCurrency(data.meta.totalAmountByNumber)}`, { align: 'center' });
+        doc.text(`Reventados: ¢ ${formatCurrency(data.meta.totalAmountByReventado)}`, { align: 'center' });
+        doc.moveDown(0.5);
+        doc.text('--------------------------------------------------------', { align: 'center' });
+        doc.moveDown(1);
+      };
 
-      // Altura de línea
-      const lineHeight = 11;
-      let currentY = doc.y;
+      // ✅ Renderizar números por bloques de 100 (cada bloque en una página separada)
+      let currentPageStart = 0;
+      let isFirstPage = true;
 
-      // Renderizar las 25 filas (cada fila tiene 4 columnas)
-      for (let row = 0; row < 25; row++) {
-        columns.forEach((col) => {
-          const num = (col.start + row).toString().padStart(2, '0');
-          const data = numbersMap.get(num);
-          if (!data) return;
-
-          const normalAmount = formatCurrency(data.amountByNumber);
-          const reventadoAmount = formatCurrency(data.amountByReventado);
-
-          let text = '';
-          if (data.amountByNumber > 0 && data.amountByReventado > 0) {
-            // Ambos
-            text = `${num} - ¢ ${normalAmount}  R - ¢ ${reventadoAmount}`;
-          } else if (data.amountByNumber > 0) {
-            // Solo normal
-            text = `${num} - ¢ ${normalAmount}`;
-          } else if (data.amountByReventado > 0) {
-            // Solo reventado
-            text = `${num} - ¢ 0  R - ¢ ${reventadoAmount}`;
-          } else {
-            // Ninguno
-            text = `${num} - ¢ 0`;
-          }
-
-          doc.text(text, col.x, currentY, { width: columnWidth - 5, lineBreak: false });
-        });
-
-        currentY += lineHeight;
-
-        // Si llegamos al final de la página, crear nueva página
-        if (currentY > doc.page.height - doc.page.margins.bottom - 30) {
+      while (currentPageStart <= maxNumber) {
+        // Si no es la primera página, crear nueva página antes de renderizar encabezado
+        if (!isFirstPage) {
           doc.addPage();
-          currentY = doc.page.margins.top;
+        } else {
+          isFirstPage = false;
         }
+        
+        // Renderizar encabezado en cada página
+        renderHeader();
+
+        // Calcular rango de números para esta página
+        const pageEnd = Math.min(currentPageStart + numbersPerPage - 1, maxNumber);
+        const numbersInPage = pageEnd - currentPageStart + 1;
+        const rowsInPage = Math.ceil(numbersInPage / 4);
+
+        // Configurar columnas para esta página
+        const columns = [
+          { start: currentPageStart, x: leftMargin },
+          { start: currentPageStart + numbersPerColumn, x: leftMargin + columnWidth },
+          { start: currentPageStart + numbersPerColumn * 2, x: leftMargin + columnWidth * 2 },
+          { start: currentPageStart + numbersPerColumn * 3, x: leftMargin + columnWidth * 3 },
+        ];
+
+        // Posición Y inicial después del encabezado
+        let currentY = doc.y;
+        doc.fontSize(9).font('Courier');
+
+        // Renderizar filas de esta página
+        for (let row = 0; row < rowsInPage; row++) {
+          columns.forEach((col) => {
+            const numValue = col.start + row;
+            if (numValue > maxNumber) return; // Saltar si excede el máximo
+
+            const num = numValue.toString().padStart(padLength, '0');
+            const numData = numbersMap.get(num);
+            if (!numData) return;
+
+            const normalAmount = formatCurrency(numData.amountByNumber);
+            const reventadoAmount = formatCurrency(numData.amountByReventado);
+
+            let text = '';
+            if (numData.amountByNumber > 0 && numData.amountByReventado > 0) {
+              // Ambos
+              text = `${num} - ¢ ${normalAmount}  R - ¢ ${reventadoAmount}`;
+            } else if (numData.amountByNumber > 0) {
+              // Solo normal
+              text = `${num} - ¢ ${normalAmount}`;
+            } else if (numData.amountByReventado > 0) {
+              // Solo reventado
+              text = `${num} - ¢ 0  R - ¢ ${reventadoAmount}`;
+            } else {
+              // Ninguno
+              text = `${num} - ¢ 0`;
+            }
+
+            doc.text(text, col.x, currentY, { width: columnWidth - 5, lineBreak: false });
+          });
+
+          currentY += lineHeight;
+        }
+
+        // Avanzar al siguiente rango de 100 números
+        currentPageStart += numbersPerPage;
       }
 
       // ✅ FIX: Eliminado pie de página que causaba página en blanco extra
 
       doc.end();
 
+      const userName = data.meta.vendedorName || data.meta.ventanaName || 'Usuario';
+      
       logger.info({
         layer: 'service',
         action: 'PDF_GENERATED',
@@ -189,6 +227,9 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
           userName,
           totalNumbers: data.numbers.length,
           totalAmount: data.meta.totalAmount,
+          sorteoDigits,
+          maxNumber,
+          numbersRange: `0-${maxNumber}`,
         },
       });
     } catch (err: any) {

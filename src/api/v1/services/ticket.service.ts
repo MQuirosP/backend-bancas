@@ -1050,19 +1050,21 @@ export const TicketService = {
         const sorteo = await prisma.sorteo.findUnique({
           where: { id: params.sorteoId },
           select: {
-            digits: true,
             name: true,
             loteria: {
               select: { rulesJson: true }
             }
           },
         });
-        sorteoDigits = sorteo?.digits ?? 2;
         sorteoName = sorteo?.name || '';
 
-        // Extraer reventadoEnabled de loteriaRules
+        // Extraer reventadoEnabled y digits de loteriaRules
         const loteriaRules = sorteo?.loteria?.rulesJson as any;
         reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
+        
+        // ✅ Usar resolveDigits para obtener digits desde rulesJson
+        const { resolveDigits } = await import('../../../utils/loteriaRules');
+        sorteoDigits = resolveDigits(loteriaRules, 2);
       } else if (params.loteriaId) {
         // Si solo hay loteriaId (sin sorteoId), consultar la lotería
         const loteria = await prisma.loteria.findUnique({
@@ -1072,6 +1074,10 @@ export const TicketService = {
 
         const loteriaRules = loteria?.rulesJson as any;
         reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
+        
+        // ✅ Usar resolveDigits para obtener digits desde rulesJson
+        const { resolveDigits } = await import('../../../utils/loteriaRules');
+        sorteoDigits = resolveDigits(loteriaRules, 2);
       }
 
       // ✅ Calcular rango dinámico basado en digits
@@ -1296,6 +1302,12 @@ export const TicketService = {
 
       const totalCommission = commissionByNumber + commissionByReventado;
 
+      // ✅ NUEVO: Obtener solo los números que tienen apuestas (amountByNumber > 0 o amountByReventado > 0)
+      const numbersWithBets = Array.from(numbersMap.entries())
+        .filter(([_, numData]) => numData.amountByNumber > 0 || numData.amountByReventado > 0)
+        .map(([number, _]) => number)
+        .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+
       return {
         data,
         meta: {
@@ -1327,6 +1339,8 @@ export const TicketService = {
           commissionByNumber,
           commissionByReventado,
           totalCommission,
+          // ✅ NUEVO: Números que tienen apuestas
+          numbersWithBets,
           ...(params.dimension ? { dimension: params.dimension } : {}),
           ...(params.ventanaId ? { ventanaId: params.ventanaId } : {}),
           ...(params.vendedorId ? { vendedorId: params.vendedorId } : {}),
