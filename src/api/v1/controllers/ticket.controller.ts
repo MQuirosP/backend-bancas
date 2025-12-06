@@ -173,7 +173,7 @@ export const TicketController = {
   },
 
   async numbersSummary(req: AuthenticatedRequest, res: Response) {
-    const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status } = req.query as any;
+    const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, page, pageSize } = req.query as any;
 
     const me = req.user!;
 
@@ -184,7 +184,7 @@ export const TicketController = {
       payload: {
         userId: me.id,
         role: me.role,
-        queryParams: { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId },
+        queryParams: { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, page, pageSize },
       },
     });
 
@@ -277,6 +277,8 @@ export const TicketController = {
         sorteoId: effectiveFilters.sorteoId,
         multiplierId, // ✅ NUEVO
         status, // ✅ NUEVO
+        page, // ✅ FIX: Paginación para MONAZOS
+        pageSize, // ✅ FIX: Paginación para MONAZOS
       },
       me.role,
       me.id

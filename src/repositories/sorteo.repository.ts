@@ -52,6 +52,7 @@ const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
     ? d.scheduledAt
     : parseCostaRicaDateTime(d.scheduledAt), // Fallback por si acaso
   loteria: { connect: { id: d.loteriaId } },
+  digits: d.digits, // ✅ Mapear campo digits
   // extraOutcomeCode, extraMultiplierId/X se quedan nulos al crear
 });
 
@@ -63,6 +64,7 @@ const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
       : parseCostaRicaDateTime(d.scheduledAt) // Fallback por si acaso
     : undefined,
   name: d.name ?? undefined,
+  digits: d.digits ?? undefined, // ✅ Mapear campo digits
   ...(d.loteriaId ? { loteria: { connect: { id: d.loteriaId } } } : {}),
   ...(typeof d.isActive === "boolean" ? { isActive: d.isActive } : {}),
   // No se permite tocar status/winning/extraOutcome/extraMultiplier aquí
@@ -773,6 +775,7 @@ const SorteoRepository = {
           extraMultiplierId: true,
           extraMultiplierX: true,
           extraOutcomeCode: true,
+          digits: true, // ✅ Retornar digits al listar
           deletedByCascade: true,
           deletedByCascadeFrom: true,
           deletedByCascadeId: true,

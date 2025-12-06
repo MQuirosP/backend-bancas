@@ -932,7 +932,7 @@ export const TicketService = {
   },
 
   /**
-   * Obtiene resumen de números del 00 al 99 con montos por tipo (NÚMERO vs REVENTADO)
+   * Obtiene resumen de números dinámicamente (0-99 o 0-999) con montos por tipo (NÚMERO vs REVENTADO)
    * GET /api/v1/tickets/numbers-summary
    */
   async numbersSummary(
@@ -948,6 +948,8 @@ export const TicketService = {
       sorteoId?: string;
       multiplierId?: string; // ✅ NUEVO
       status?: string; // ✅ NUEVO
+      page?: number; // ✅ NUEVO: Paginación (0-9 para MONAZOS)
+      pageSize?: number; // ✅ NUEVO: Tamaño de página (default: 100)
     },
     role: string,
     userId: string
@@ -1039,6 +1041,42 @@ export const TicketService = {
       }
       // Si scope='all' y no hay filtros específicos ni dimension, no agregar filtros de ventanaId/vendedorId
 
+      // ✅ NUEVO: Obtener sorteo/lotería para detectar digits y reventadoEnabled
+      let sorteoDigits = 2; // Default
+      let sorteoName = '';
+      let reventadoEnabled = true; // Default (asumir habilitado si no se puede determinar)
+
+      if (params.sorteoId) {
+        const sorteo = await prisma.sorteo.findUnique({
+          where: { id: params.sorteoId },
+          select: {
+            digits: true,
+            name: true,
+            loteria: {
+              select: { rulesJson: true }
+            }
+          },
+        });
+        sorteoDigits = sorteo?.digits || 2;
+        sorteoName = sorteo?.name || '';
+
+        // Extraer reventadoEnabled de loteriaRules
+        const loteriaRules = sorteo?.loteria?.rulesJson as any;
+        reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
+      } else if (params.loteriaId) {
+        // Si solo hay loteriaId (sin sorteoId), consultar la lotería
+        const loteria = await prisma.loteria.findUnique({
+          where: { id: params.loteriaId },
+          select: { rulesJson: true }
+        });
+
+        const loteriaRules = loteria?.rulesJson as any;
+        reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
+      }
+
+      // ✅ Calcular rango dinámico basado en digits
+      const maxNumber = Math.pow(10, sorteoDigits) - 1; // 2 digits -> 99, 3 digits -> 999
+
       // ✅ OPTIMIZED: Fetch tickets with jugadas and metadata in a single query
       // Build jugada filter for nested query
       const jugadaFilter: any = {
@@ -1125,34 +1163,26 @@ export const TicketService = {
         ticketIdsByReventado: Set<string>;
       }>();
 
-      // Inicializar todos los números del 00 al 99
-      for (let i = 0; i <= 99; i++) {
-        const numStr = String(i).padStart(2, '0');
-        numbersMap.set(numStr, {
-          amountByNumber: 0,
-          amountByReventado: 0,
-          ticketIdsByNumber: new Set(),
-          ticketIdsByReventado: new Set(),
-        });
-      }
+      // ✅ Inicialización dinámica: solo crear entradas para números con ventas (lazy)
+      // No inicializamos aquí - se crearán bajo demanda en el loop de jugadas
 
       // Procesar jugadas
       for (const jugada of jugadas) {
         let numberToUse: string;
 
         if (jugada.type === 'NUMERO') {
-          numberToUse = jugada.number.padStart(2, '0');
+          numberToUse = jugada.number.padStart(sorteoDigits, '0');
         } else if (jugada.type === 'REVENTADO') {
           // Para REVENTADO, usar reventadoNumber si existe, sino usar number
-          numberToUse = (jugada.reventadoNumber || jugada.number).padStart(2, '0');
+          numberToUse = (jugada.reventadoNumber || jugada.number).padStart(sorteoDigits, '0');
         } else {
           // Por defecto, tratar como NUMERO (compatibilidad con datos antiguos)
-          numberToUse = jugada.number.padStart(2, '0');
+          numberToUse = jugada.number.padStart(sorteoDigits, '0');
         }
 
-        // Validar que el número esté en el rango 00-99
+        // ✅ Validar que el número esté en el rango dinámico (0 a maxNumber)
         const numValue = parseInt(numberToUse, 10);
-        if (numValue < 0 || numValue > 99) {
+        if (numValue < 0 || numValue > maxNumber) {
           continue; // Saltar números inválidos
         }
 
@@ -1181,9 +1211,23 @@ export const TicketService = {
         }
       }
 
-      // Construir array de respuesta ordenado de 00 a 99
-      const data = Array.from({ length: 100 }, (_, i) => {
-        const numStr = String(i).padStart(2, '0');
+      // ✅ Determinar rango de números a retornar (paginación)
+      const pageSize = params.pageSize || 100;
+      const page = params.page;
+
+      let startNumber = 0;
+      let endNumber = maxNumber;
+
+      if (page !== undefined) {
+        // Si se especifica página, calcular rango
+        startNumber = page * pageSize;
+        endNumber = Math.min(startNumber + pageSize - 1, maxNumber);
+      }
+
+      // ✅ Construir array de respuesta ordenado dinámicamente
+      const data = Array.from({ length: endNumber - startNumber + 1 }, (_, i) => {
+        const numValue = startNumber + i;
+        const numStr = String(numValue).padStart(sorteoDigits, '0');
         const numData = numbersMap.get(numStr) || {
           amountByNumber: 0,
           amountByReventado: 0,
@@ -1208,17 +1252,19 @@ export const TicketService = {
         };
       });
 
-      // Calcular totales
-      const totalAmountByNumber = data.reduce((sum, n) => sum + n.amountByNumber, 0);
-      const totalAmountByReventado = data.reduce((sum, n) => sum + n.amountByReventado, 0);
-      const totalAmount = totalAmountByNumber + totalAmountByReventado;
-
-      // Contar tickets únicos totales
+      // ✅ Calcular totales GLOBALES (de todos los números, no solo la página actual)
+      let totalAmountByNumber = 0;
+      let totalAmountByReventado = 0;
       const allUniqueTicketIds = new Set<string>();
+
       for (const numData of numbersMap.values()) {
+        totalAmountByNumber += numData.amountByNumber;
+        totalAmountByReventado += numData.amountByReventado;
         numData.ticketIdsByNumber.forEach(id => allUniqueTicketIds.add(id));
         numData.ticketIdsByReventado.forEach(id => allUniqueTicketIds.add(id));
       }
+
+      const totalAmount = totalAmountByNumber + totalAmountByReventado;
       const totalTickets = allUniqueTicketIds.size;
 
       // ✅ NUEVO: Calcular commission breakdown por tipo de jugada
@@ -1256,7 +1302,23 @@ export const TicketService = {
           dateFilter: params.date || "today",
           ...(params.fromDate ? { fromDate: params.fromDate } : {}),
           ...(params.toDate ? { toDate: params.toDate } : {}),
-          totalNumbers: 100,
+          // ✅ NUEVO: Metadatos dinámicos basados en sorteo.digits
+          totalNumbers: maxNumber + 1,
+          sorteoDigits,
+          maxNumber,
+          reventadoEnabled, // ✅ NUEVO: Indica si reventado está habilitado (para mostrar/ocultar columnas en FE)
+          ...(sorteoName ? { sorteoName } : {}),
+          // ✅ NUEVO: Metadatos de paginación
+          ...(page !== undefined ? {
+            pagination: {
+              page,
+              pageSize,
+              startNumber,
+              endNumber,
+              totalPages: Math.ceil((maxNumber + 1) / pageSize),
+              returnedCount: data.length,
+            }
+          } : {}),
           totalAmountByNumber,
           totalAmountByReventado,
           totalAmount,

@@ -6,20 +6,20 @@ export const RestrictionRuleIdParamSchema = z.object({
   id: z.uuid("id inválido (UUID)"),
 }).strict();
 
-// Validación para número individual (00-99 para restricciones de números)
-const NUMBER_00_99 = z
+// ✅ Validación para número individual (0-999 para soportar TICA y MONAZOS)
+const NUMBER_0_999 = z
   .string()
   .trim()
-  .regex(/^\d{2}$/, "number debe ser de 2 dígitos (00-99)")
+  .regex(/^\d{1,3}$/, "number debe ser de 1-3 dígitos (0-999)")
   .refine((val) => {
     const num = Number(val);
-    return num >= 0 && num <= 99;
-  }, "number debe estar entre 00 y 99");
+    return num >= 0 && num <= 999;
+  }, "number debe estar entre 0 y 999");
 
 // Validación para number: acepta string (legacy) o array de strings
 const NUMBER_VALIDATOR = z.union([
-  NUMBER_00_99, // string legacy
-  z.array(NUMBER_00_99).min(1).max(100), // array de strings
+  NUMBER_0_999, // string legacy
+  z.array(NUMBER_0_999).min(1).max(1000), // ✅ array de strings (max 1000 para MONAZOS)
 ]).refine(
   (val) => {
     // Si es array, validar que no haya duplicados
@@ -196,7 +196,7 @@ export const UpdateRestrictionRuleSchema = z.object({
 
   isActive: z.coerce.boolean().optional(), // Estado activo/inactivo
   isAutoDate: z.coerce.boolean().optional(), // Si true, number se actualiza automáticamente al día del mes
-  number: NUMBER_00_99.optional(), // Solo string en PATCH, no array
+  number: NUMBER_0_999.optional(), // ✅ Solo string en PATCH, no array (soporta 0-999)
   maxAmount: z.coerce.number().positive().optional(),
   maxTotal: z.coerce.number().positive().optional(),
   baseAmount: z.coerce.number().nonnegative().optional(), // Monto base (>= 0)
