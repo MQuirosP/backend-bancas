@@ -574,10 +574,10 @@ export const TicketController = {
           return res.send(finalBuffer);
 
         } else if (sorteoDigits === 3) {
-          // ✅ Monazos (3 dígitos): 10 PNGs paginados (000-099, 100-199, ..., 900-999)
-          // El PDF tiene exactamente 10 páginas para monazos (una por cada bloque de 100 números)
-          // Generar array de números de página [1, 2, 3, ..., 10]
-          const maxPages = 10;
+          // ✅ Monazos (3 dígitos): 5 PNGs paginados (000-199, 200-399, ..., 800-999)
+          // El PDF tiene exactamente 5 páginas para monazos (una por cada bloque de 200 números)
+          // Generar array de números de página [1, 2, 3, 4, 5]
+          const maxPages = 5;
           const pageNumbers = Array.from({ length: maxPages }, (_, i) => i + 1);
           
           req.logger?.info({

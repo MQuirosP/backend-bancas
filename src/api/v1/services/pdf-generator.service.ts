@@ -106,9 +106,9 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
       const leftMargin = doc.page.margins.left;
       
       // Para 2 dígitos: 4 columnas de 25 números cada una (0-24, 25-49, 50-74, 75-99) = 1 página
-      // Para 3 dígitos: 4 columnas de 25 números cada una por página (100 números por página) = 10 páginas
-      const numbersPerColumn = 25;
-      const numbersPerPage = numbersPerColumn * 4; // 100 números por página
+      // Para 3 dígitos: 4 columnas de 50 números cada una por página (200 números por página) = 5 páginas
+      const numbersPerColumn = sorteoDigits === 3 ? 50 : 25; // 50 números por columna para monazos, 25 para tiempos
+      const numbersPerPage = numbersPerColumn * 4; // 200 números por página para monazos, 100 para tiempos
 
       // Altura de línea
       const lineHeight = 11;
