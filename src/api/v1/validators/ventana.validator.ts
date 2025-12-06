@@ -85,10 +85,32 @@ export const CreateVentanaSchema = z
       .nullable()
       .transform((v) => (v === "" ? null : (v ?? null))),
     settings: VentanaSettingsSchema.nullable().optional(),
+    // ✅ NUEVOS CAMPOS requeridos para creación de usuario
+    username: z
+      .string()
+      .trim()
+      .min(3, "username debe tener al menos 3 caracteres")
+      .max(100, "username debe tener máximo 100 caracteres")
+      .regex(/^[a-zA-Z0-9_-]+$/, "username solo puede contener letras, números, guiones bajos y guiones"),
+    password: z
+      .string()
+      .min(6, "La contraseña debe tener al menos 6 caracteres"),
   })
   .strict();
 
-export const UpdateVentanaSchema = CreateVentanaSchema.partial().strict();
+export const UpdateVentanaSchema = CreateVentanaSchema.partial()
+  .extend({
+    // ✅ Campos opcionales para actualizar usuario asociado
+    username: z
+      .string()
+      .trim()
+      .min(3, "username debe tener al menos 3 caracteres")
+      .max(100, "username debe tener máximo 100 caracteres")
+      .regex(/^[a-zA-Z0-9_-]+$/, "username solo puede contener letras, números, guiones bajos y guiones")
+      .optional(),
+    password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres").optional(),
+  })
+  .strict();
 
 // Query: coaccionamos números y boolean para aceptar strings ("1","true", etc.)
 export const ListVentanasQuerySchema = z

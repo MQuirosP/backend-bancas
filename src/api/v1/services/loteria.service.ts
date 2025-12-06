@@ -7,6 +7,7 @@ import { paginateOffset } from "../../../utils/pagination";
 import { computeOccurrences } from '../../../utils/schedule';
 import { formatIsoLocal } from '../../../utils/datetime';
 import SorteoRepository from '../../../repositories/sorteo.repository';
+import { resolveDigits } from '../../../utils/loteriaRules';
 
 export const LoteriaService = {
   async create(
@@ -332,6 +333,9 @@ export const LoteriaService = {
     if (!loteria.isActive) throw new Error("Lotería inactiva")
 
     const rules = (loteria.rulesJson ?? {}) as any
+    // ✅ Obtener digits de la lotería para heredar a los sorteos
+    const loteriaDigits = resolveDigits(rules)
+    
     // Si forceCreate=true (llamada manual desde endpoint), ignorar la bandera autoCreateSorteos
     // La bandera solo aplica para la autogeneración automática (cron jobs)
     if (!forceCreate && rules?.autoCreateSorteos === false) {
@@ -437,7 +441,8 @@ export const LoteriaService = {
       };
     }
 
-    const result = await SorteoRepository.bulkCreateIfMissing(loteriaId, subset)
+    // ✅ Pasar digits de la lotería para que los sorteos lo hereden
+    const result = await SorteoRepository.bulkCreateIfMissing(loteriaId, subset, loteriaDigits)
     
     // Invalidar cache de sorteos si se crearon nuevos
     const createdCount = Array.isArray(result.created) ? result.created.length : (typeof result.created === 'number' ? result.created : 0);

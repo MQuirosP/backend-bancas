@@ -8,6 +8,13 @@ export type CreateVentanaInput = {
   email?: string;
   isActive?: boolean;
   settings?: Record<string, any> | null;
+  // ✅ NUEVOS CAMPOS requeridos para creación de usuario
+  username: string;            // REQUERIDO: username del usuario VENTANA
+  password: string;            // REQUERIDO: password del usuario VENTANA
 };
 
-export type UpdateVentanaInput = Partial<CreateVentanaInput>;
+export type UpdateVentanaInput = Partial<Omit<CreateVentanaInput, 'username' | 'password'>> & {
+  // ✅ Campos opcionales para actualizar usuario asociado
+  username?: string;           // Opcional: actualizar username del usuario asociado
+  password?: string;           // Opcional: actualizar password del usuario asociado
+};

@@ -4,8 +4,15 @@ import { AuthenticatedRequest } from "../../../core/types";
 
 export const VentanaController = {
   async create(req: AuthenticatedRequest, res: Response) {
-    const ventana = await VentanaService.create(req.body, req.user!.id);
-    res.status(201).json({ success: true, data: ventana });
+    const result = await VentanaService.create(req.body, req.user!.id);
+    const { _meta, ...ventanaData } = result as any;
+    
+    res.status(201).json({
+      success: true,
+      message: "Listero y usuario creados correctamente",
+      data: ventanaData,
+      meta: _meta || { userCreated: false },
+    });
   },
 
   async update(req: AuthenticatedRequest, res: Response) {
