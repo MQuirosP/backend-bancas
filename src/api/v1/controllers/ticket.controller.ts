@@ -301,7 +301,7 @@ export const TicketController = {
   async numbersSummaryPdf(req: AuthenticatedRequest, res: Response) {
     try {
       const startTime = Date.now();
-      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, format } = req.body;
+      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, format, page, pageSize } = req.body;
 
       const me = req.user!;
 
@@ -358,7 +358,8 @@ export const TicketController = {
         payload: { effectiveFilters, effectiveScope },
       });
 
-      // Obtener los datos del resumen
+      // ✅ Para PDF/PNG, NO usar paginación - siempre obtener TODOS los números
+      // La paginación solo se usa para la API de consulta, no para generación de archivos
       const result = await TicketService.numbersSummary(
         {
           date: date || "today",
@@ -372,6 +373,7 @@ export const TicketController = {
           sorteoId: effectiveFilters.sorteoId,
           multiplierId,
           status,
+          // NO pasar page ni pageSize - siempre obtener todos los números
         },
         me.role,
         me.id
@@ -413,63 +415,188 @@ export const TicketController = {
         },
       });
 
-      // ✅ NUEVO: Convertir a PNG si se solicita
-      let finalBuffer: Buffer;
-      let contentType: string;
-      let fileExtension: string;
-
+      // ✅ Convertir a PNG si se solicita
       if (format === 'png') {
-        // Convertir PDF a PNG
-        const { pdfToPng } = await import('pdf-to-png-converter');
+        const sorteoDigits = result.meta.sorteoDigits ?? 2;
 
         req.logger?.info({
           layer: "controller",
           action: "TICKET_NUMBERS_SUMMARY_CONVERTING_TO_PNG",
-          payload: { pdfSize: pdfBuffer.length },
-        });
-
-        // Convertir Buffer a Uint8Array para pdf-to-png-converter
-        const pdfUint8Array = new Uint8Array(pdfBuffer);
-        const pngPages = await pdfToPng(pdfUint8Array.buffer, {
-          pagesToProcess: [1], // Solo la primera página
-        });
-
-        if (!pngPages || pngPages.length === 0) {
-          throw new Error('Failed to convert PDF to PNG');
-        }
-
-        finalBuffer = pngPages[0].content as Buffer;
-        contentType = 'image/png';
-        fileExtension = 'png';
-
-        req.logger?.info({
-          layer: "controller",
-          action: "TICKET_NUMBERS_SUMMARY_PNG_GENERATED",
           payload: {
-            userId: me.id,
-            pngSize: finalBuffer.length,
-            conversionTimeMs: Date.now() - startTime,
+            pdfSize: pdfBuffer.length,
+            sorteoDigits,
+            isMonazo: sorteoDigits === 3,
           },
         });
+
+        const { pdfToPng } = await import('pdf-to-png-converter');
+        const pdfUint8Array = new Uint8Array(pdfBuffer);
+
+        if (sorteoDigits === 2) {
+          // ✅ Tiempos (2 dígitos): 1 PNG con todos los números (00-99)
+          const pngPages = await pdfToPng(pdfUint8Array.buffer, {
+            pagesToProcess: [1], // Solo la primera página
+          });
+
+          if (!pngPages || pngPages.length === 0) {
+            throw new Error('Failed to convert PDF to PNG');
+          }
+
+          const finalBuffer = pngPages[0].content as Buffer;
+          const timestamp = Date.now();
+          const filename = `lista-numeros-${timestamp}.png`;
+
+          req.logger?.info({
+            layer: "controller",
+            action: "TICKET_NUMBERS_SUMMARY_PNG_GENERATED",
+            payload: {
+              userId: me.id,
+              pngSize: finalBuffer.length,
+              conversionTimeMs: Date.now() - startTime,
+              type: 'tiempos',
+            },
+          });
+
+          res.setHeader('Content-Type', 'image/png');
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+          res.setHeader('Content-Length', finalBuffer.length);
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+
+          return res.send(finalBuffer);
+
+        } else if (sorteoDigits === 3) {
+          // ✅ Monazos (3 dígitos): 10 PNGs paginados (000-099, 100-199, ..., 900-999)
+          // El PDF tiene exactamente 10 páginas para monazos (una por cada bloque de 100 números)
+          // Generar array de números de página [1, 2, 3, ..., 10]
+          const maxPages = 10;
+          const pageNumbers = Array.from({ length: maxPages }, (_, i) => i + 1);
+          
+          req.logger?.info({
+            layer: "controller",
+            action: "TICKET_NUMBERS_SUMMARY_PNG_MONAZOS_CONVERTING",
+            payload: {
+              userId: me.id,
+              pdfSize: pdfBuffer.length,
+              pagesToConvert: pageNumbers,
+              type: 'monazos',
+            },
+          });
+          
+          const allPngPages = await pdfToPng(pdfUint8Array.buffer, {
+            pagesToProcess: pageNumbers, // Convertir todas las 10 páginas
+          });
+
+          if (!allPngPages || allPngPages.length === 0) {
+            throw new Error('Failed to convert PDF to PNG');
+          }
+
+          req.logger?.info({
+            layer: "controller",
+            action: "TICKET_NUMBERS_SUMMARY_PNG_MONAZOS_GENERATED",
+            payload: {
+              userId: me.id,
+              totalPages: allPngPages.length,
+              expectedPages: maxPages,
+              conversionTimeMs: Date.now() - startTime,
+              type: 'monazos',
+            },
+          });
+
+          // ✅ Generar JSON con estructura requerida
+          // Filtrar páginas sin contenido y mapear a formato requerido
+          const pages = allPngPages
+            .filter((pngPage) => pngPage && pngPage.content !== undefined && pngPage.content !== null)
+            .map((pngPage, index) => {
+              const buffer = pngPage.content as Buffer;
+              if (!buffer) {
+                req.logger?.warn({
+                  layer: "controller",
+                  action: "TICKET_NUMBERS_SUMMARY_PNG_PAGE_MISSING_CONTENT",
+                  payload: { pageIndex: index },
+                });
+                return null;
+              }
+              
+              // ✅ Convertir Buffer a base64 puro (sin prefijo data URL)
+              // El frontend agregará el prefijo si lo necesita para Web Share API
+              const base64String = buffer.toString('base64');
+              
+              req.logger?.info({
+                layer: "controller",
+                action: "TICKET_NUMBERS_SUMMARY_PNG_PAGE_GENERATED",
+                payload: {
+                  pageIndex: index,
+                  bufferSize: buffer.length,
+                  base64Length: base64String.length,
+                },
+              });
+              
+              return {
+                page: index,
+                filename: `lista-numeros-page-${index + 1}.png`,
+                image: base64String, // Base64 puro (sin prefijo data URL)
+              };
+            })
+            .filter((page) => page !== null) as Array<{ page: number; filename: string; image: string }>; // Eliminar páginas nulas y tipar
+
+          if (pages.length === 0) {
+            throw new Error('No PNG pages were generated successfully');
+          }
+
+          req.logger?.info({
+            layer: "controller",
+            action: "TICKET_NUMBERS_SUMMARY_PNG_MONAZOS_FINAL",
+            payload: {
+              userId: me.id,
+              totalPages: pages.length,
+              numbersWithBetsCount: result.meta.numbersWithBets?.length || 0,
+            },
+          });
+
+          // ✅ Retornar JSON con páginas y números con apuestas
+          return res.json({
+            pages,
+            numbersWithBets: result.meta.numbersWithBets || [], // Números que tienen apuestas
+          });
+        } else {
+          // Fallback: tratar como tiempos (2 dígitos)
+          const pngPages = await pdfToPng(pdfUint8Array.buffer, {
+            pagesToProcess: [1],
+          });
+
+          if (!pngPages || pngPages.length === 0) {
+            throw new Error('Failed to convert PDF to PNG');
+          }
+
+          const finalBuffer = pngPages[0].content as Buffer;
+          const timestamp = Date.now();
+          const filename = `lista-numeros-${timestamp}.png`;
+
+          res.setHeader('Content-Type', 'image/png');
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+          res.setHeader('Content-Length', finalBuffer.length);
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+
+          return res.send(finalBuffer);
+        }
       } else {
-        // Devolver PDF
-        finalBuffer = pdfBuffer;
-        contentType = 'application/pdf';
-        fileExtension = 'pdf';
+        // ✅ Devolver PDF
+        const timestamp = Date.now();
+        const filename = `lista-numeros-${timestamp}.pdf`;
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Length', pdfBuffer.length);
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+
+        return res.send(pdfBuffer);
       }
-
-      // Configurar headers HTTP para descarga
-      const timestamp = Date.now();
-      const filename = `lista-numeros-${timestamp}.${fileExtension}`;
-
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Length', finalBuffer.length);
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-
-      return res.send(finalBuffer);
     } catch (err: any) {
       req.logger?.error({
         layer: "controller",
