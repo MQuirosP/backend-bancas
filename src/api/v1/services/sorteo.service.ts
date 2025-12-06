@@ -14,6 +14,7 @@ import { getCRLocalComponents } from "../../../utils/businessDate";
 import { resolveDateRange } from "../../../utils/dateRange";
 import logger from "../../../core/logger";
 import { getExcludedTicketIds } from "./sorteo-listas.helpers";
+import { resolveDigits } from "../../../utils/loteriaRules";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
@@ -81,14 +82,24 @@ function formatDateOnly(date: Date): string {
 
 export const SorteoService = {
   async create(data: CreateSorteoDTO, userId: string) {
+    // ✅ Obtener lotería con rulesJson para heredar digits
     const loteria = await prisma.loteria.findUnique({
       where: { id: data.loteriaId },
-      select: { id: true, isActive: true },
+      select: { id: true, isActive: true, rulesJson: true },
     });
     if (!loteria || !loteria.isActive)
       throw new AppError("Lotería no encontrada", 404);
 
-    const s = await SorteoRepository.create(data);
+    // ✅ Heredar digits de la lotería si no se proporciona explícitamente
+    const loteriaRules = loteria.rulesJson as any;
+    const inheritedDigits = resolveDigits(loteriaRules);
+    const finalDigits = data.digits ?? inheritedDigits;
+
+    // Crear sorteo con digits heredado o explícito
+    const s = await SorteoRepository.create({
+      ...data,
+      digits: finalDigits,
+    });
 
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
@@ -97,7 +108,8 @@ export const SorteoService = {
     const details: Prisma.InputJsonObject = {
       loteriaId: data.loteriaId,
       scheduledAt: formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')), // ✅ Normalizar y formatear con timezone
-      digits: data.digits ?? 2,
+      digits: finalDigits,
+      digitsSource: data.digits ? 'explicit' : 'inherited',
     };
 
     await ActivityService.log({

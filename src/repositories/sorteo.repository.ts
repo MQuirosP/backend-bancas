@@ -52,7 +52,7 @@ const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
     ? d.scheduledAt
     : parseCostaRicaDateTime(d.scheduledAt), // Fallback por si acaso
   loteria: { connect: { id: d.loteriaId } },
-  digits: d.digits, // ✅ Mapear campo digits
+  digits: d.digits ?? 2, // ✅ Mapear campo digits (default 2 si no viene, aunque debería venir del service)
   // extraOutcomeCode, extraMultiplierId/X se quedan nulos al crear
 });
 
@@ -1185,7 +1185,7 @@ const SorteoRepository = {
     return { count: result.count, sorteosIds };
   },
 
-  async bulkCreateIfMissing(loteriaId: string, occurrences: Array<{ scheduledAt: Date; name: string }>) {
+  async bulkCreateIfMissing(loteriaId: string, occurrences: Array<{ scheduledAt: Date; name: string }>, digits: number = 2) {
     if (occurrences.length === 0) return { created: [], skipped: [], alreadyExists: [], processed: [] }
 
     // Ordenar y construir claves por timestamp para deduplicación robusta
@@ -1234,6 +1234,7 @@ const SorteoRepository = {
             scheduledAt: new Date(it.ts),
             status: SorteoStatus.SCHEDULED,
             isActive: true,
+            digits, // ✅ Heredar digits de la lotería
           })),
           skipDuplicates: true,
         });

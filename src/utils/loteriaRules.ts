@@ -25,6 +25,7 @@ export type RulesJson = {
     featured?: boolean
   }
   baseMultiplierX?: number
+  digits?: number              // ✅ Número de dígitos del sorteo (2 para tiempos, 3 para monazos). Default: 2
   salesHours?: {
     sunday?: { start?: string; end?: string }
     monday?: { start?: string; end?: string }
@@ -142,4 +143,12 @@ export function validateTicketAgainstRules(input: {
   }
 
   return { ok: true }
+}
+
+// 5. Resolver digits efectivo desde rulesJson
+export function resolveDigits(rules?: RulesJson | null, fallback: number = 2): number {
+  if (rules?.digits != null && (rules.digits === 2 || rules.digits === 3)) {
+    return rules.digits
+  }
+  return fallback
 }

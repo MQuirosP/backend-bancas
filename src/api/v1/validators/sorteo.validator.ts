@@ -9,7 +9,7 @@ export const CreateSorteoSchema = z.object({
   loteriaId: z.uuid("loteriaId inválido"),
   scheduledAt: zodDateCR(), // ✅ Normaliza automáticamente a CR timezone
   name: z.string().trim().min(1).max(100),
-  digits: z.number().int().min(2).max(3).optional().default(2), // 2 o 3 dígitos
+  digits: z.number().int().min(2).max(3).optional(), // ✅ Opcional: se hereda de la lotería si no se proporciona
   isActive: z.coerce.boolean().optional(),
 }).strict();
 

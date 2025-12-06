@@ -1057,7 +1057,7 @@ export const TicketService = {
             }
           },
         });
-        sorteoDigits = sorteo?.digits || 2;
+        sorteoDigits = sorteo?.digits ?? 2;
         sorteoName = sorteo?.name || '';
 
         // Extraer reventadoEnabled de loteriaRules
