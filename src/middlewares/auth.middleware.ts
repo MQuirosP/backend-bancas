@@ -6,7 +6,7 @@ import { AuthenticatedRequest } from "../core/types";
 import { Role } from "@prisma/client";
 import prisma from "../core/prismaClient";
 
-export const protect = (
+export const protect = async (
   req: AuthenticatedRequest,
   _res: Response,
   next: NextFunction
@@ -30,7 +30,27 @@ export const protect = (
     if (!decoded.sub || !role) {
       throw new AppError("Invalid token", 401);
     }
-    req.user = { id: decoded.sub, role };
+    
+    // ✅ Extraer ventanaId del JWT si está presente
+    let ventanaId: string | null | undefined = decoded.ventanaId ?? null;
+    
+    // ✅ Para VENDEDOR: Verificar si ventanaId en JWT coincide con BD
+    // Si no coincide o no está en JWT, obtenerlo de la BD (maneja cambio de ventana sin logout/login)
+    if (role === Role.VENDEDOR) {
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.sub },
+        select: { ventanaId: true }
+      });
+      
+      // Si el ventanaId en BD es diferente al del JWT, usar el de BD (más actualizado)
+      if (user && user.ventanaId !== ventanaId) {
+        ventanaId = user.ventanaId;
+        // Log para debugging - el usuario debería hacer logout/login para actualizar el JWT
+        console.warn(`[AUTH] VENDEDOR ${decoded.sub} cambió de ventana. JWT tiene ${decoded.ventanaId}, BD tiene ${user.ventanaId}. Usando BD.`);
+      }
+    }
+    
+    req.user = { id: decoded.sub, role, ventanaId };
     next();
   } catch {
     throw new AppError("Invalid token", 401);

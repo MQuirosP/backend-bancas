@@ -67,27 +67,48 @@ const VendedorRepository = {
   },
 
   async update(id: string, data: VendedorUpdateParams) {
+    // ✅ Obtener ventanaId actual para comparar si cambió
+    const current = await prisma.user.findUnique({
+      where: { id },
+      select: { ventanaId: true },
+    });
+
+    const updateData: Prisma.UserUpdateInput = {
+      ...(data.name !== undefined ? { name: data.name } : {}),
+      ...(data.email !== undefined
+        ? { email: data.email ? data.email.toLowerCase() : null }
+        : {}),
+      ...(data.passwordHash ? { password: data.passwordHash } : {}),
+      ...(typeof data.isActive === "boolean"
+        ? { isActive: data.isActive }
+        : {}),
+    };
+
+    // ✅ Manejar cambio de ventana explícitamente
+    if (data.ventanaId !== undefined) {
+      if (data.ventanaId) {
+        // Conectar a nueva ventana (Prisma maneja automáticamente el disconnect de la anterior)
+        updateData.ventana = { connect: { id: data.ventanaId } };
+      } else {
+        // Desconectar de ventana (si ventanaId es null)
+        updateData.ventana = { disconnect: true };
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id },
-      data: {
-        ...(data.name !== undefined ? { name: data.name } : {}),
-        ...(data.email !== undefined
-          ? { email: data.email ? data.email.toLowerCase() : null }
-          : {}),
-        ...(data.passwordHash ? { password: data.passwordHash } : {}),
-        ...(typeof data.isActive === "boolean"
-          ? { isActive: data.isActive }
-          : {}),
-        ...(data.ventanaId
-          ? { ventana: { connect: { id: data.ventanaId } } }
-          : {}),
-      } satisfies Prisma.UserUpdateInput,
+      data: updateData,
     });
 
     logger.info({
       layer: "repository",
       action: "VENDEDOR_UPDATE_DB",
-      payload: { userId: id },
+      payload: {
+        userId: id,
+        ventanaIdChanged: data.ventanaId !== undefined && current?.ventanaId !== data.ventanaId,
+        oldVentanaId: current?.ventanaId,
+        newVentanaId: data.ventanaId,
+      },
     });
     return user;
   },
