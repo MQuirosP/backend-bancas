@@ -344,48 +344,66 @@ export const TicketRepository = {
         let seqForLog: number | null = null;
 
         try {
-          // Incrementar contador atómicamente
-          const seqRows = await tx.$queryRaw<{ last: number }[]>(
-            Prisma.sql`
-              INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
-              VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
-              ON CONFLICT ("businessDate", "ventanaId")
-              DO UPDATE SET "last" = "TicketCounter"."last" + 1
-              RETURNING "last";
-            `
-          );
-          const seq = (seqRows?.[0]?.last ?? 1) as number;
-          seqForLog = seq;
-          const seqPadded = String(seq).padStart(5, '0');
-          const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
+          // ✅ Incrementar contador atómicamente con reintento automático en caso de colisión
+          // Usar loop de reintento máximo 5 veces para manejar race conditions
+          let seq: number = 0;
+          let attempts = 0;
+          const maxAttempts = 5;
+          
+          while (attempts < maxAttempts) {
+            attempts++;
+            
+            // Incrementar contador atómicamente
+            const seqRows = await tx.$queryRaw<{ last: number }[]>(
+              Prisma.sql`
+                INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
+                VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
+                ON CONFLICT ("businessDate", "ventanaId")
+                DO UPDATE SET "last" = "TicketCounter"."last" + 1
+                RETURNING "last";
+              `
+            );
+            
+            seq = (seqRows?.[0]?.last ?? 1) as number;
+            const seqPadded = String(seq).padStart(5, '0');
+            const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
 
-          // Verificar que el ticketNumber no exista (doble validación)
-          const existing = await tx.ticket.findUnique({
-            where: { ticketNumber: candidateNumber },
-            select: { id: true },
-          });
+            // Verificar que el ticketNumber no exista (doble validación)
+            const existing = await tx.ticket.findUnique({
+              where: { ticketNumber: candidateNumber },
+              select: { id: true },
+            });
 
-          if (existing) {
-            // Colisión detectada - esto no debería ocurrir en condiciones normales
-            logger.error({
+            if (!existing) {
+              // ✅ Número disponible - usar este
+              nextNumber = candidateNumber;
+              seqForLog = seq;
+              break;
+            }
+            
+            // Colisión detectada - registrar y reintentar
+            logger.warn({
               layer: 'repository',
-              action: 'TICKET_NUMBER_COLLISION',
+              action: 'TICKET_NUMBER_COLLISION_RETRY',
               payload: {
                 ticketNumber: candidateNumber,
                 existingId: existing.id,
                 businessDate: bd.businessDate,
                 ventanaId,
                 sequence: seq,
+                attempt: attempts,
               },
             });
-            throw new AppError(
-              `Colisión en numeración de ticket: ${candidateNumber} ya existe`,
-              500,
-              'TICKET_NUMBER_COLLISION'
-            );
+            
+            // Si es el último intento, lanzar error
+            if (attempts >= maxAttempts) {
+              throw new AppError(
+                `No se pudo generar número de ticket único después de ${maxAttempts} intentos`,
+                500,
+                'TICKET_NUMBER_COLLISION'
+              );
+            }
           }
-
-          nextNumber = candidateNumber;
 
           logger.info({
             layer: 'repository',
@@ -1332,47 +1350,65 @@ export const TicketRepository = {
         let seqForLog: number | null = null;
 
         try {
-          // Incrementar contador atómicamente
-          const seqRows = await tx.$queryRaw<{ last: number }[]>(
-            Prisma.sql`
-              INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
-              VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
-              ON CONFLICT ("businessDate", "ventanaId")
-              DO UPDATE SET "last" = "TicketCounter"."last" + 1
-              RETURNING "last";
-            `
-          );
-          const seq = (seqRows?.[0]?.last ?? 1) as number;
-          seqForLog = seq;
-          const seqPadded = String(seq).padStart(5, '0');
-          const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
+          // ✅ Incrementar contador atómicamente con reintento automático en caso de colisión
+          // Usar loop de reintento máximo 5 veces para manejar race conditions
+          let seq: number = 0;
+          let attempts = 0;
+          const maxAttempts = 5;
+          
+          while (attempts < maxAttempts) {
+            attempts++;
+            
+            // Incrementar contador atómicamente
+            const seqRows = await tx.$queryRaw<{ last: number }[]>(
+              Prisma.sql`
+                INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
+                VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
+                ON CONFLICT ("businessDate", "ventanaId")
+                DO UPDATE SET "last" = "TicketCounter"."last" + 1
+                RETURNING "last";
+              `
+            );
+            
+            seq = (seqRows?.[0]?.last ?? 1) as number;
+            const seqPadded = String(seq).padStart(5, '0');
+            const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
 
-          const existing = await tx.ticket.findUnique({
-            where: { ticketNumber: candidateNumber },
-            select: { id: true },
-          });
+            const existing = await tx.ticket.findUnique({
+              where: { ticketNumber: candidateNumber },
+              select: { id: true },
+            });
 
-          if (existing) {
-            // Colisión detectada - esto no debería ocurrir en condiciones normales
-            logger.error({
+            if (!existing) {
+              // ✅ Número disponible - usar este
+              nextNumber = candidateNumber;
+              seqForLog = seq;
+              break;
+            }
+            
+            // Colisión detectada - registrar y reintentar
+            logger.warn({
               layer: 'repository',
-              action: 'TICKET_NUMBER_COLLISION',
+              action: 'TICKET_NUMBER_COLLISION_RETRY',
               payload: {
                 ticketNumber: candidateNumber,
                 existingId: existing.id,
                 businessDate: bd.businessDate,
                 ventanaId,
                 sequence: seq,
+                attempt: attempts,
               },
             });
-            throw new AppError(
-              `Colisión en numeración de ticket: ${candidateNumber} ya existe`,
-              500,
-              'TICKET_NUMBER_COLLISION'
-            );
+            
+            // Si es el último intento, lanzar error
+            if (attempts >= maxAttempts) {
+              throw new AppError(
+                `No se pudo generar número de ticket único después de ${maxAttempts} intentos`,
+                500,
+                'TICKET_NUMBER_COLLISION'
+              );
+            }
           }
-
-          nextNumber = candidateNumber;
 
           logger.info({
             layer: 'repository',
