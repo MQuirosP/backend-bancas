@@ -301,7 +301,7 @@ export const TicketController = {
   async numbersSummaryPdf(req: AuthenticatedRequest, res: Response) {
     try {
       const startTime = Date.now();
-      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, format, page, pageSize } = req.body;
+      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, format, page, pageSize, onlyWithSales } = req.body;
 
       const me = req.user!;
 
@@ -418,6 +418,7 @@ export const TicketController = {
       // ✅ Convertir a PNG si se solicita
       if (format === 'png') {
         const sorteoDigits = result.meta.sorteoDigits ?? 2;
+        const shouldFilterBySales = onlyWithSales === true && sorteoDigits === 3;
 
         req.logger?.info({
           layer: "controller",
@@ -426,11 +427,117 @@ export const TicketController = {
             pdfSize: pdfBuffer.length,
             sorteoDigits,
             isMonazo: sorteoDigits === 3,
+            onlyWithSales,
+            shouldFilterBySales,
           },
         });
 
         const { pdfToPng } = await import('pdf-to-png-converter');
         const pdfUint8Array = new Uint8Array(pdfBuffer);
+
+        // ✅ NUEVO: Si onlyWithSales === true y es monazos (3 dígitos), generar PNG único filtrado
+        if (shouldFilterBySales) {
+          const numbersWithBets = result.meta.numbersWithBets || [];
+          
+          if (numbersWithBets.length === 0) {
+            // No hay números con ventas - retornar PNG vacío o error
+            req.logger?.warn({
+              layer: "controller",
+              action: "TICKET_NUMBERS_SUMMARY_PNG_NO_SALES",
+              payload: {
+                userId: me.id,
+                sorteoId,
+                message: "No hay números con ventas para generar PNG filtrado",
+              },
+            });
+            
+            // Retornar PNG vacío con mensaje
+            const { generateNumbersSummaryPDF } = await import('../services/pdf-generator.service');
+            const emptyPdfBuffer = await generateNumbersSummaryPDF({
+              meta: result.meta,
+              numbers: [], // Sin números
+            });
+            
+            const emptyPngPages = await pdfToPng(new Uint8Array(emptyPdfBuffer).buffer, {
+              pagesToProcess: [1],
+            });
+            
+            if (!emptyPngPages || emptyPngPages.length === 0) {
+              throw new Error('Failed to convert empty PDF to PNG');
+            }
+            
+            const finalBuffer = emptyPngPages[0].content as Buffer;
+            const timestamp = Date.now();
+            const filename = `lista-numeros-sin-ventas-${timestamp}.png`;
+            
+            res.setHeader('Content-Type', 'image/png');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Content-Length', finalBuffer.length);
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+            
+            return res.send(finalBuffer);
+          }
+          
+          // ✅ Filtrar números para incluir solo los que tienen ventas
+          const sorteoDigits = result.meta.sorteoDigits ?? 3;
+          const filteredNumbers = result.data.filter((item: any) => 
+            numbersWithBets.includes(item.number.padStart(sorteoDigits, '0'))
+          );
+          
+          req.logger?.info({
+            layer: "controller",
+            action: "TICKET_NUMBERS_SUMMARY_PNG_FILTERING",
+            payload: {
+              userId: me.id,
+              totalNumbers: result.data.length,
+              filteredNumbers: filteredNumbers.length,
+              numbersWithBets: numbersWithBets.length,
+            },
+          });
+          
+          // ✅ Generar PDF con solo números filtrados
+          const { generateNumbersSummaryPDF } = await import('../services/pdf-generator.service');
+          const filteredPdfBuffer = await generateNumbersSummaryPDF({
+            meta: result.meta,
+            numbers: filteredNumbers,
+          });
+          
+          // ✅ Convertir a PNG único (primera página)
+          const filteredPngPages = await pdfToPng(new Uint8Array(filteredPdfBuffer).buffer, {
+            pagesToProcess: [1],
+          });
+          
+          if (!filteredPngPages || filteredPngPages.length === 0) {
+            throw new Error('Failed to convert filtered PDF to PNG');
+          }
+          
+          const finalBuffer = filteredPngPages[0].content as Buffer;
+          const timestamp = Date.now();
+          const filename = `lista-numeros-filtrado-${timestamp}.png`;
+          
+          req.logger?.info({
+            layer: "controller",
+            action: "TICKET_NUMBERS_SUMMARY_PNG_FILTERED_GENERATED",
+            payload: {
+              userId: me.id,
+              pngSize: finalBuffer.length,
+              filteredNumbersCount: filteredNumbers.length,
+              conversionTimeMs: Date.now() - startTime,
+              type: 'monazos-filtered',
+            },
+          });
+          
+          res.setHeader('Content-Type', 'image/png');
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+          res.setHeader('Content-Length', finalBuffer.length);
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+          
+          return res.send(finalBuffer);
+        }
 
         if (sorteoDigits === 2) {
           // ✅ Tiempos (2 dígitos): 1 PNG con todos los números (00-99)
