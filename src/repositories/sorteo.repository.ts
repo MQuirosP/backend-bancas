@@ -746,45 +746,165 @@ const SorteoRepository = {
 
     const skip = Math.max(0, (page - 1) * pageSize);
 
-    // Optimización: Usar Promise.all en lugar de $transaction para mejor performance
-    // (no necesitamos transacción para queries de solo lectura)
-    const [data, total] = await Promise.all([
-      prisma.sorteo.findMany({
-        where,
-        skip,
-        take: pageSize,
-        // 🔑 Orden cronológico descendente (más recientes primero)
-        orderBy: [
-          { scheduledAt: 'desc' },
-          { createdAt: 'desc' }, // desempate estable
-        ],
-        select: {
-          id: true,
-          loteriaId: true,
-          scheduledAt: true,
-          status: true,
-          winningNumber: true,
-          hasWinner: true,
-          isActive: true,
-          deletedAt: true,
-          deletedBy: true,
-          deletedReason: true,
-          createdAt: true,
-          updatedAt: true,
-          name: true,
-          extraMultiplierId: true,
-          extraMultiplierX: true,
-          extraOutcomeCode: true,
-          digits: true, // ✅ Retornar digits al listar
-          deletedByCascade: true,
-          deletedByCascadeFrom: true,
-          deletedByCascadeId: true,
-          loteria: { select: { id: true, name: true, rulesJson: true } },
-          extraMultiplier: { select: { id: true, name: true, valueX: true } },
-        },
-      }),
-      prisma.sorteo.count({ where }),
+    // ✅ Optimización: Usar SQL raw con subconsultas para hasSales y ticketCount
+    // Evita N+1 queries y calcula ambos campos en una sola query
+    const whereConditions: Prisma.Sql[] = [
+      Prisma.sql`s."deletedAt" IS NULL`,
+    ];
+
+    if (loteriaId) {
+      whereConditions.push(Prisma.sql`s."loteriaId" = ${loteriaId}::uuid`);
+    }
+    if (status) {
+      whereConditions.push(Prisma.sql`s."status" = ${status}::text`);
+    }
+    if (typeof isActive === 'boolean') {
+      whereConditions.push(Prisma.sql`s."isActive" = ${isActive}`);
+    }
+    if (dateFrom) {
+      whereConditions.push(Prisma.sql`s."scheduledAt" >= ${dateFrom}`);
+    }
+    if (dateTo) {
+      whereConditions.push(Prisma.sql`s."scheduledAt" <= ${dateTo}`);
+    }
+    if (q) {
+      whereConditions.push(Prisma.sql`(
+        s."name" ILIKE ${`%${q}%`} OR
+        s."winningNumber" ILIKE ${`%${q}%`} OR
+        l."name" ILIKE ${`%${q}%`}
+      )`);
+    }
+
+    const whereSql = whereConditions.length > 0
+      ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`
+      : Prisma.empty;
+
+    // Query SQL optimizada con subconsultas para hasSales y ticketCount
+    const dataQuery = Prisma.sql`
+      SELECT 
+        s.id,
+        s."loteriaId",
+        s."scheduledAt",
+        s."status",
+        s."winningNumber",
+        s."hasWinner",
+        s."isActive",
+        s."deletedAt",
+        s."deletedBy",
+        s."deletedReason",
+        s."createdAt",
+        s."updatedAt",
+        s."name",
+        s."extraMultiplierId",
+        s."extraMultiplierX",
+        s."extraOutcomeCode",
+        s."digits",
+        s."deletedByCascade",
+        s."deletedByCascadeFrom",
+        s."deletedByCascadeId",
+        -- ✅ NUEVO: Campos de ventas
+        EXISTS(
+          SELECT 1 FROM "Ticket" t
+          WHERE t."sorteoId" = s.id
+          AND t."status" != 'CANCELLED'
+          AND t."deletedAt" IS NULL
+        ) as "hasSales",
+        (
+          SELECT COUNT(*)::int FROM "Ticket" t
+          WHERE t."sorteoId" = s.id
+          AND t."status" != 'CANCELLED'
+          AND t."deletedAt" IS NULL
+        ) as "ticketCount",
+        -- Relaciones
+        json_build_object(
+          'id', l.id,
+          'name', l."name",
+          'rulesJson', l."rulesJson"
+        ) as loteria,
+        CASE 
+          WHEN em.id IS NOT NULL THEN
+            json_build_object(
+              'id', em.id,
+              'name', em."name",
+              'valueX', em."valueX"
+            )
+          ELSE NULL
+        END as "extraMultiplier"
+      FROM "Sorteo" s
+      INNER JOIN "Loteria" l ON l.id = s."loteriaId"
+      LEFT JOIN "LoteriaMultiplier" em ON em.id = s."extraMultiplierId"
+      ${whereSql}
+      ORDER BY s."scheduledAt" DESC, s."createdAt" DESC
+      LIMIT ${pageSize} OFFSET ${skip}
+    `;
+
+    const countQuery = Prisma.sql`
+      SELECT COUNT(*)::int as total
+      FROM "Sorteo" s
+      INNER JOIN "Loteria" l ON l.id = s."loteriaId"
+      ${whereSql}
+    `;
+
+    const [dataRows, countRows] = await Promise.all([
+      prisma.$queryRaw<Array<{
+        id: string;
+        loteriaId: string;
+        scheduledAt: Date;
+        status: string;
+        winningNumber: string | null;
+        hasWinner: boolean;
+        isActive: boolean;
+        deletedAt: Date | null;
+        deletedBy: string | null;
+        deletedReason: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+        name: string;
+        extraMultiplierId: string | null;
+        extraMultiplierX: number | null;
+        extraOutcomeCode: string | null;
+        digits: number;
+        deletedByCascade: boolean;
+        deletedByCascadeFrom: string | null;
+        deletedByCascadeId: string | null;
+        hasSales: boolean;
+        ticketCount: number;
+        loteria: { id: string; name: string; rulesJson: any };
+        extraMultiplier: { id: string; name: string; valueX: number } | null;
+      }>>(dataQuery),
+      prisma.$queryRaw<Array<{ total: number }>>(countQuery),
     ]);
+
+    const total = countRows[0]?.total || 0;
+
+    // Mapear resultados a formato esperado por Prisma
+    const data = dataRows.map((row) => ({
+      id: row.id,
+      loteriaId: row.loteriaId,
+      scheduledAt: row.scheduledAt,
+      status: row.status as SorteoStatus,
+      winningNumber: row.winningNumber,
+      hasWinner: row.hasWinner,
+      isActive: row.isActive,
+      deletedAt: row.deletedAt,
+      deletedBy: row.deletedBy,
+      deletedReason: row.deletedReason,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      name: row.name,
+      extraMultiplierId: row.extraMultiplierId,
+      extraMultiplierX: row.extraMultiplierX,
+      extraOutcomeCode: row.extraOutcomeCode,
+      digits: row.digits,
+      deletedByCascade: row.deletedByCascade,
+      deletedByCascadeFrom: row.deletedByCascadeFrom,
+      deletedByCascadeId: row.deletedByCascadeId,
+      // ✅ NUEVO: Campos de ventas
+      hasSales: row.hasSales,
+      ticketCount: row.ticketCount,
+      loteria: row.loteria,
+      extraMultiplier: row.extraMultiplier,
+    }));
 
     return { data, total };
   },
