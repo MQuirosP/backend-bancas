@@ -31,17 +31,17 @@ function normalizeAndValidateNumbers(
     }
 
     const trimmed = num.trim();
-    if (!/^\d{2}$/.test(trimmed)) {
+    if (!/^\d{1,3}$/.test(trimmed)) {
       throw new AppError(
-        `Número inválido: '${num}'. Debe ser de 2 dígitos (00-99)`,
+        `Número inválido: '${num}'. Debe ser numérico (0-999)`,
         400
       );
     }
 
     const numValue = Number(trimmed);
-    if (numValue < 0 || numValue > 99) {
+    if (numValue < 0 || numValue > 999) {
       throw new AppError(
-        `Número fuera de rango: '${num}'. Debe estar entre 00 y 99`,
+        `Número fuera de rango: '${num}'. Debe estar entre 0 y 999`,
         400
       );
     }

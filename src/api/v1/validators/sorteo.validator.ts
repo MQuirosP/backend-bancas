@@ -3,24 +3,26 @@ import { Request, Response, NextFunction } from "express";
 import { validateBody, validateParams, validateQuery, zodDateCR } from "../../../middlewares/validate.middleware";
 
 const IdParamSchema = z.object({ id: z.uuid("id inválido (UUID)") }).strict();
-const twoDigit = z.string().regex(/^\d{2}$/, "winningNumber debe ser 2 dígitos (00-99)");
+const winningNumberSchema = z.string().regex(/^\d{1,3}$/, "winningNumber debe ser numérico (1-3 dígitos)");
 
 export const CreateSorteoSchema = z.object({
   loteriaId: z.uuid("loteriaId inválido"),
   scheduledAt: zodDateCR(), // ✅ Normaliza automáticamente a CR timezone
   name: z.string().trim().min(1).max(100),
+  digits: z.number().int().min(2).max(3).optional().default(2), // 2 o 3 dígitos
   isActive: z.coerce.boolean().optional(),
 }).strict();
 
 export const UpdateSorteoSchema = z.object({
   loteriaId: z.uuid("loteriaId inválido").optional(),
   name: z.string().trim().min(1).max(100).optional(),
+  digits: z.number().int().min(2).max(3).optional(),
   scheduledAt: zodDateCR().optional(), // ✅ Normaliza automáticamente a CR timezone
   isActive: z.coerce.boolean().optional(),
 }).strict();
 
 export const EvaluateSorteoSchema = z.object({
-  winningNumber: twoDigit,
+  winningNumber: winningNumberSchema,
   extraMultiplierId: z.uuid("extraMultiplierId inválido").nullable().optional(),
   extraOutcomeCode: z.string().trim().min(1).max(50).nullable().optional(),
 }).strict();

@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { validateQuery } from "../../../middlewares/validate.middleware";
 
-const numeroSchema = z.string().regex(/^\d{1,2}$/, "Número debe ser 0..99 (uno o dos dígitos)");
+const numeroSchema = z.string().regex(/^\d{1,3}$/, "Número debe ser 0..999 (1-3 dígitos)");
 
 const JugadaNumeroSchema = z.object({
   type: z.literal("NUMERO"),
@@ -68,8 +68,8 @@ export const ListTicketsQuerySchema = z
     scope: z.enum(["mine", "all"]).optional().default("mine"),
     winnersOnly: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"),
 
-    // ✅ NUEVO: Búsqueda por número de jugada (1-2 dígitos, búsqueda exacta)
-    number: z.string().regex(/^\d{1,2}$/, "El número debe ser de 1-2 dígitos (0-99)").optional(),
+    // ✅ NUEVO: Búsqueda por número de jugada (1-3 dígitos, búsqueda exacta)
+    number: z.string().regex(/^\d{1,3}$/, "El número debe ser de 1-3 dígitos (0-999)").optional(),
 
     // Filtros de fecha (STANDARDIZADO - mismo patrón que Venta/Dashboard)
     // Fechas: date (today|yesterday|week|month|year|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range
@@ -128,6 +128,9 @@ export const NumbersSummaryQuerySchema = z
     sorteoId: z.uuid().optional(),
     multiplierId: z.uuid().optional(), // ✅ NUEVO: Filtrar por multiplicador específico
     status: z.enum(["ACTIVE", "EVALUATED", "PAID", "CANCELLED"]).optional(), // ✅ NUEVO: Filtrar por estado de ticket
+    // ✅ NUEVO: Paginación para MONAZOS (1000 números)
+    page: z.coerce.number().int().min(0).max(9).optional(), // 0-9 para 10 centenas (0=000-099, 1=100-199, ..., 9=900-999)
+    pageSize: z.coerce.number().int().min(1).max(1000).optional().default(100), // Tamaño de página (default: 100)
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()

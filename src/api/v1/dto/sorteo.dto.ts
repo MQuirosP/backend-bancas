@@ -5,12 +5,14 @@ export interface CreateSorteoDTO {
   loteriaId: string;
   scheduledAt: Date | string;
   isActive?: boolean;
+  digits?: number;
 }
 
 export interface UpdateSorteoDTO {
   loteriaId?: string;
   scheduledAt?: Date | string;
   name?: string;
+  digits?: number;
   status?: SorteoStatus;
   isActive?: boolean;
   winningNumber?: string;

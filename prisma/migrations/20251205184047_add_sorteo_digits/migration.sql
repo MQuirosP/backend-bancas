@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Sorteo" ADD COLUMN "digits" INTEGER NOT NULL DEFAULT 2;

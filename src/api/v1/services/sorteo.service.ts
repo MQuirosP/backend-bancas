@@ -97,6 +97,7 @@ export const SorteoService = {
     const details: Prisma.InputJsonObject = {
       loteriaId: data.loteriaId,
       scheduledAt: formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')), // ✅ Normalizar y formatear con timezone
+      digits: data.digits ?? 2,
     };
 
     await ActivityService.log({
@@ -130,6 +131,7 @@ export const SorteoService = {
       name: data.name,
       loteriaId: data.loteriaId,
       scheduledAt: data.scheduledAt,
+      digits: data.digits, // ✅ Allow updating digits
       isActive: data.isActive,
     } as UpdateSorteoDTO);
 
@@ -142,6 +144,9 @@ export const SorteoService = {
     if (data.loteriaId && data.loteriaId !== existing.loteriaId) details.loteriaId = data.loteriaId;
     if (data.scheduledAt) {
       details.scheduledAt = formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')); // ✅ Normalizar y formatear con timezone
+    }
+    if (data.digits && data.digits !== (existing as any).digits) {
+      details.digits = data.digits;
     }
     if (data.isActive !== undefined && data.isActive !== (existing as any).isActive) {
       details.isActive = data.isActive;
@@ -424,7 +429,16 @@ export const SorteoService = {
       throw new AppError("Solo se puede evaluar desde OPEN", 409);
     }
 
-    // 2) Resolver multiplicador extra (si viene) y etiqueta neutra
+    // 2) Validar longitud del número ganador según configuración del sorteo
+    const requiredDigits = (existing as any).digits ?? 2;
+    if (winningNumber.length !== requiredDigits) {
+      throw new AppError(
+        `El número ganador debe tener ${requiredDigits} dígitos (recibido: ${winningNumber.length})`,
+        400
+      );
+    }
+
+    // 3) Resolver multiplicador extra (si viene) y etiqueta neutra
     // Si no viene extraMultiplierId, significa que no salió multiplicador → extraX = 0
     let extraX: number = 0;
     let extraOutcomeCode: string | null = null;
