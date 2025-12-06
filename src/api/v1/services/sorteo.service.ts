@@ -39,13 +39,16 @@ function sanitizeLoteria(loteria: any) {
   return rest;
 }
 
-function serializeSorteo<T extends { scheduledAt?: Date | null; loteria?: any }>(sorteo: T) {
+function serializeSorteo<T extends { scheduledAt?: Date | null; loteria?: any; hasSales?: boolean; ticketCount?: number }>(sorteo: T) {
   if (!sorteo) return sorteo;
   const reventadoEnabled = extractReventadoEnabled(sorteo.loteria);
   const serialized = {
     ...sorteo,
     scheduledAt: sorteo.scheduledAt ? formatIsoLocal(sorteo.scheduledAt) : null,
     reventadoEnabled,
+    // ✅ NUEVO: Campos de ventas (opcionales para compatibilidad)
+    ...(sorteo.hasSales !== undefined ? { hasSales: sorteo.hasSales } : {}),
+    ...(sorteo.ticketCount !== undefined ? { ticketCount: sorteo.ticketCount } : {}),
   };
   if (sorteo.loteria) {
     (serialized as any).loteria = sanitizeLoteria(sorteo.loteria);
