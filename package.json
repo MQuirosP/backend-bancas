@@ -28,6 +28,8 @@
     "normalize:legacy-tickets": "npx dotenv-cli -e .env.local -- ts-node src/scripts/normalize-legacy-tickets.ts",
     "normalize:legacy-tickets:dry-run": "npx dotenv-cli -e .env.local -- ts-node src/scripts/normalize-legacy-tickets.ts --dry-run",
     "check:legacy-tickets": "npx dotenv-cli -e .env.local -- ts-node src/scripts/check-legacy-tickets.ts",
+    "test:ticket-numbers": "npx dotenv-cli -e .env.local -- ts-node scripts/test-ticket-number-safe.ts",
+    "diagnose:ticket-numbers": "npx dotenv-cli -e .env.local -- ts-node scripts/diagnose-ticket-numbers.ts",
     "maintenance": "npx dotenv-cli -e .env.local -- ts-node src/tools/maintenance/index.ts",
     "test": "npx dotenv-cli -e .env.test -- jest --runInBand --detectOpenHandles",
     "test:watch": "npx dotenv-cli -e .env.test -- jest --watch",
