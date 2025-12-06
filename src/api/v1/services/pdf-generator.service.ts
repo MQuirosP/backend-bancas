@@ -73,15 +73,31 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
         });
       });
 
-      // ✅ Para PDF, SIEMPRE generar TODOS los números (0-99 para 2 dígitos, 0-999 para 3 dígitos)
-      // No usar el rango recibido, sino el rango completo según sorteoDigits
+      // ✅ Determinar si debemos generar todos los números o solo los filtrados
+      // Si data.numbers está vacío o tiene menos números que el rango completo, asumimos que está filtrado
       const maxNumber = sorteoDigits === 3 ? 999 : 99;
+      const isFiltered = data.numbers.length < maxNumber + 1;
       
-      // ✅ Asegurar que todos los números existan (rango completo)
-      for (let i = 0; i <= maxNumber; i++) {
-        const num = i.toString().padStart(padLength, '0');
-        if (!numbersMap.has(num)) {
-          numbersMap.set(num, { amountByNumber: 0, amountByReventado: 0 });
+      if (isFiltered) {
+        // ✅ Modo filtrado: solo generar los números que están en la lista
+        // No agregar números faltantes, solo usar los que están presentes
+        logger.info({
+          layer: 'service',
+          action: 'PDF_GENERATION_FILTERED_MODE',
+          payload: {
+            totalNumbers: data.numbers.length,
+            maxNumber,
+            sorteoDigits,
+          },
+        });
+      } else {
+        // ✅ Modo completo: generar todos los números del rango
+        // Asegurar que todos los números existan (rango completo)
+        for (let i = 0; i <= maxNumber; i++) {
+          const num = i.toString().padStart(padLength, '0');
+          if (!numbersMap.has(num)) {
+            numbersMap.set(num, { amountByNumber: 0, amountByReventado: 0 });
+          }
         }
       }
 
@@ -144,51 +160,61 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
         doc.moveDown(1);
       };
 
-      // ✅ Renderizar números por bloques de 100 (cada bloque en una página separada)
-      let currentPageStart = 0;
-      let isFirstPage = true;
-
-      while (currentPageStart <= maxNumber) {
-        // Si no es la primera página, crear nueva página antes de renderizar encabezado
-        if (!isFirstPage) {
-          doc.addPage();
-        } else {
-          isFirstPage = false;
-        }
+      // ✅ Renderizar números según el modo (filtrado o completo)
+      if (isFiltered) {
+        // ✅ Modo filtrado: solo generar los números que están en numbersMap
+        // Obtener lista ordenada de números
+        const sortedNumbers = Array.from(numbersMap.keys())
+          .map(num => parseInt(num, 10))
+          .sort((a, b) => a - b);
         
-        // Renderizar encabezado en cada página
-        renderHeader();
-
-        // Calcular rango de números para esta página
-        const pageEnd = Math.min(currentPageStart + numbersPerPage - 1, maxNumber);
-        const numbersInPage = pageEnd - currentPageStart + 1;
-        const rowsInPage = Math.ceil(numbersInPage / 4);
-
-        // Configurar columnas para esta página
-        const columns = [
-          { start: currentPageStart, x: leftMargin },
-          { start: currentPageStart + numbersPerColumn, x: leftMargin + columnWidth },
-          { start: currentPageStart + numbersPerColumn * 2, x: leftMargin + columnWidth * 2 },
-          { start: currentPageStart + numbersPerColumn * 3, x: leftMargin + columnWidth * 3 },
-        ];
-
-        // Posición Y inicial después del encabezado
-        let currentY = doc.y;
-        doc.fontSize(9).font('Courier');
-
-        // Renderizar filas de esta página
-        for (let row = 0; row < rowsInPage; row++) {
-          columns.forEach((col) => {
-            const numValue = col.start + row;
-            if (numValue > maxNumber) return; // Saltar si excede el máximo
-
+        if (sortedNumbers.length === 0) {
+          // No hay números - solo renderizar encabezado
+          renderHeader();
+          doc.fontSize(10).font('Courier');
+          doc.text('No hay números con ventas', { align: 'center' });
+        } else {
+          // Renderizar encabezado
+          renderHeader();
+          
+          // Posición Y inicial después del encabezado
+          let currentY = doc.y;
+          doc.fontSize(9).font('Courier');
+          
+          // Calcular cuántas filas caben en una página
+          const availableHeight = doc.page.height - doc.page.margins.top - doc.page.margins.bottom - 200; // 200px para encabezado
+          const maxRowsPerPage = Math.floor(availableHeight / lineHeight);
+          
+          // Renderizar números en columnas (4 columnas)
+          let columnIndex = 0;
+          const startX = leftMargin;
+          
+          for (let i = 0; i < sortedNumbers.length; i++) {
+            const numValue = sortedNumbers[i];
             const num = numValue.toString().padStart(padLength, '0');
             const numData = numbersMap.get(num);
-            if (!numData) return;
-
+            if (!numData) continue;
+            
+            const column = columnIndex % 4;
+            const row = Math.floor(columnIndex / 4);
+            
+            // Si necesitamos nueva página, crearla
+            if (row > 0 && row % maxRowsPerPage === 0) {
+              doc.addPage();
+              renderHeader();
+              currentY = doc.y;
+              columnIndex = 0;
+              // Reiniciar el cálculo para este número
+              i--; // Volver al número anterior para procesarlo en la nueva página
+              continue;
+            }
+            
+            const x = startX + column * columnWidth;
+            const y = currentY + (row % maxRowsPerPage) * lineHeight;
+            
             const normalAmount = formatCurrency(numData.amountByNumber);
             const reventadoAmount = formatCurrency(numData.amountByReventado);
-
+            
             let text = '';
             if (numData.amountByNumber > 0 && numData.amountByReventado > 0) {
               // Ambos
@@ -200,18 +226,84 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
               // Solo reventado
               text = `${num} - ¢ 0  R - ¢ ${reventadoAmount}`;
             } else {
-              // Ninguno
+              // Ninguno (no debería pasar en modo filtrado, pero por seguridad)
               text = `${num} - ¢ 0`;
             }
-
-            doc.text(text, col.x, currentY, { width: columnWidth - 5, lineBreak: false });
-          });
-
-          currentY += lineHeight;
+            
+            doc.text(text, x, y, { width: columnWidth - 5, lineBreak: false });
+            columnIndex++;
+          }
         }
+      } else {
+        // ✅ Modo completo: generar todos los números por bloques de 100
+        let currentPageStart = 0;
+        let isFirstPage = true;
 
-        // Avanzar al siguiente rango de 100 números
-        currentPageStart += numbersPerPage;
+        while (currentPageStart <= maxNumber) {
+          // Si no es la primera página, crear nueva página antes de renderizar encabezado
+          if (!isFirstPage) {
+            doc.addPage();
+          } else {
+            isFirstPage = false;
+          }
+          
+          // Renderizar encabezado en cada página
+          renderHeader();
+
+          // Calcular rango de números para esta página
+          const pageEnd = Math.min(currentPageStart + numbersPerPage - 1, maxNumber);
+          const numbersInPage = pageEnd - currentPageStart + 1;
+          const rowsInPage = Math.ceil(numbersInPage / 4);
+
+          // Configurar columnas para esta página
+          const columns = [
+            { start: currentPageStart, x: leftMargin },
+            { start: currentPageStart + numbersPerColumn, x: leftMargin + columnWidth },
+            { start: currentPageStart + numbersPerColumn * 2, x: leftMargin + columnWidth * 2 },
+            { start: currentPageStart + numbersPerColumn * 3, x: leftMargin + columnWidth * 3 },
+          ];
+
+          // Posición Y inicial después del encabezado
+          let currentY = doc.y;
+          doc.fontSize(9).font('Courier');
+
+          // Renderizar filas de esta página
+          for (let row = 0; row < rowsInPage; row++) {
+            columns.forEach((col) => {
+              const numValue = col.start + row;
+              if (numValue > maxNumber) return; // Saltar si excede el máximo
+
+              const num = numValue.toString().padStart(padLength, '0');
+              const numData = numbersMap.get(num);
+              if (!numData) return;
+
+              const normalAmount = formatCurrency(numData.amountByNumber);
+              const reventadoAmount = formatCurrency(numData.amountByReventado);
+
+              let text = '';
+              if (numData.amountByNumber > 0 && numData.amountByReventado > 0) {
+                // Ambos
+                text = `${num} - ¢ ${normalAmount}  R - ¢ ${reventadoAmount}`;
+              } else if (numData.amountByNumber > 0) {
+                // Solo normal
+                text = `${num} - ¢ ${normalAmount}`;
+              } else if (numData.amountByReventado > 0) {
+                // Solo reventado
+                text = `${num} - ¢ 0  R - ¢ ${reventadoAmount}`;
+              } else {
+                // Ninguno
+                text = `${num} - ¢ 0`;
+              }
+
+              doc.text(text, col.x, currentY, { width: columnWidth - 5, lineBreak: false });
+            });
+
+            currentY += lineHeight;
+          }
+
+          // Avanzar al siguiente rango de 100 números
+          currentPageStart += numbersPerPage;
+        }
       }
 
       // ✅ FIX: Eliminado pie de página que causaba página en blanco extra
