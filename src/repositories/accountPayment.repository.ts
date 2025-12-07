@@ -320,7 +320,8 @@ export const AccountPaymentRepository = {
         gte: startDate,
         lte: endDate,
       },
-      isReversed: false,
+      // ✅ CRÍTICO: Incluir TODOS los movimientos (activos y revertidos) para auditoría
+      // Los cálculos en accounts.calculations.ts filtran !isReversed cuando es necesario
     };
 
     if (dimension === "ventana") {
@@ -393,7 +394,8 @@ export const AccountPaymentRepository = {
         notes: payment.notes,
         isFinal: payment.isFinal,
         isReversed: payment.isReversed,
-        reversedAt: payment.reversedAt,
+        // ✅ CRÍTICO: Serializar reversedAt como ISO string para consistencia con la API
+        reversedAt: payment.reversedAt ? payment.reversedAt.toISOString() : null,
         reversedBy: payment.reversedBy,
         paidById: payment.paidById,
         paidByName: payment.paidBy?.name || payment.paidByName,

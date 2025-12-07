@@ -269,7 +269,8 @@ export async function getSorteoBreakdownBatch(
         }
     }
 
-    // Crear Map por fecha
+    // ✅ CRÍTICO: Crear Map por fecha Y dimensión (ventanaId/vendedorId)
+    // Clave: `${dateKey}_${ventanaId}` o `${dateKey}_${vendedorId}`
     const resultMap = new Map<string, Map<string, {
         sorteoId: string;
         sorteoName: string;
@@ -283,13 +284,21 @@ export async function getSorteoBreakdownBatch(
         ticketCount: number;
     }>>();
 
-    // Inicializar mapas por fecha
+    // Inicializar mapas por fecha y dimensión
     for (const date of dates) {
         const dateKey = date.toISOString().split("T")[0];
-        resultMap.set(dateKey, new Map());
+        // Si hay filtro específico, crear solo una entrada
+        if (dimension === "ventana" && ventanaId) {
+            resultMap.set(`${dateKey}_${ventanaId}`, new Map());
+        } else if (dimension === "vendedor" && vendedorId) {
+            resultMap.set(`${dateKey}_${vendedorId}`, new Map());
+        } else {
+            // Si scope=all, necesitamos crear entradas para cada ventana/vendedor que tenga tickets
+            // Pero no sabemos cuáles son hasta procesar los tickets, así que inicializamos dinámicamente
+        }
     }
 
-    // Agrupar tickets por fecha y sorteo
+    // Agrupar tickets por fecha, dimensión y sorteo
     for (const ticket of tickets) {
         if (!ticket.sorteoId || !ticket.sorteo) continue;
 
@@ -300,8 +309,24 @@ export async function getSorteoBreakdownBatch(
         ticketDate.setUTCHours(0, 0, 0, 0);
         const dateKey = ticketDate.toISOString().split("T")[0];
 
-        const sorteoMap = resultMap.get(dateKey);
-        if (!sorteoMap) continue; // Skip si la fecha no está en el rango
+        // ✅ CRÍTICO: Determinar la clave según dimensión
+        let mapKey: string;
+        if (dimension === "ventana") {
+            const targetVentanaId = ventanaId || ticket.ventanaId;
+            if (!targetVentanaId) continue;
+            mapKey = `${dateKey}_${targetVentanaId}`;
+        } else {
+            const targetVendedorId = vendedorId || ticket.vendedorId;
+            if (!targetVendedorId) continue;
+            mapKey = `${dateKey}_${targetVendedorId}`;
+        }
+
+        let sorteoMap = resultMap.get(mapKey);
+        if (!sorteoMap) {
+            // Crear mapa si no existe (para scope=all)
+            sorteoMap = new Map();
+            resultMap.set(mapKey, sorteoMap);
+        }
 
         const sorteoId = ticket.sorteo.id;
         let entry = sorteoMap.get(sorteoId);
@@ -343,6 +368,7 @@ export async function getSorteoBreakdownBatch(
     }
 
     // Convertir a formato de respuesta
+    // ✅ CRÍTICO: Mantener clave `${dateKey}_${ventanaId}` o `${dateKey}_${vendedorId}`
     const finalMap = new Map<string, Array<{
         sorteoId: string;
         sorteoName: string;
@@ -357,7 +383,7 @@ export async function getSorteoBreakdownBatch(
         ticketCount: number;
     }>>();
 
-    for (const [dateKey, sorteoMap] of resultMap.entries()) {
+    for (const [mapKey, sorteoMap] of resultMap.entries()) {
         const result = Array.from(sorteoMap.values())
             .map((entry) => ({
                 sorteoId: entry.sorteoId,
@@ -379,7 +405,7 @@ export async function getSorteoBreakdownBatch(
             }))
             .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
 
-        finalMap.set(dateKey, result);
+        finalMap.set(mapKey, result);
     }
 
     return finalMap;
@@ -605,7 +631,7 @@ export async function getMovementsForDay(
     notes: string | null;
     isFinal: boolean;
     isReversed: boolean;
-    reversedAt: Date | null;
+    reversedAt: string | null; // ✅ Cambiado a string para serialización ISO
     reversedBy: string | null;
     paidById: string;
     paidByName: string;
@@ -628,7 +654,8 @@ export async function getMovementsForDay(
             notes: p.notes,
             isFinal: p.isFinal,
             isReversed: p.isReversed,
-            reversedAt: p.reversedAt,
+            // ✅ CRÍTICO: Serializar reversedAt como ISO string para consistencia con la API
+            reversedAt: p.reversedAt ? p.reversedAt.toISOString() : null,
             reversedBy: p.reversedBy,
             paidById: p.paidById,
             paidByName: p.paidByName,

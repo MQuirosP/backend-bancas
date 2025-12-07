@@ -6,7 +6,7 @@ import UserRepository from '../../../repositories/user.repository';
 import { Role, ActivityType } from '@prisma/client';
 import { normalizePhone } from "../../../utils/phoneNormalizer";
 import ActivityService from '../../../core/activity.service';
-import { parseCommissionPolicy } from '../../../services/commission.resolver';
+import { parseCommissionPolicy, CommissionRule } from '../../../services/commission.resolver';
 
 /**
  * Deep merge de configuraciones (parcial)
@@ -509,7 +509,7 @@ export const UserService = {
     }
 
     // Pre-filtrar reglas aplicables para optimizar
-    const applicableRules = policy.rules.filter((rule) => {
+    const applicableRules = policy.rules.filter((rule: CommissionRule) => {
       const loteriaMatches = rule.loteriaId === null || rule.loteriaId === loteriaId;
       const betTypeMatches = rule.betType === null || rule.betType === betType;
       return loteriaMatches && betTypeMatches && !!rule.multiplierRange;
