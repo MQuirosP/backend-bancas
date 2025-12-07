@@ -1,7 +1,7 @@
 import { Prisma, Role } from "@prisma/client";
 import prisma from "../../../../core/prismaClient";
-import { resolveCommission } from "../../../../services/commission.resolver";
-import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
+import { commissionSnapshotService } from "../../../../services/commission/CommissionSnapshotService";
+import { resolveCommission } from "../../../../services/commission.resolver"; // Mantener para fallback
 
 /**
  * Helper: Calcula si un estado de cuenta está saldado
@@ -24,258 +24,76 @@ export async function computeListeroCommissionsForWhere(
 ): Promise<Map<string, number>> {
     const result = new Map<string, number>();
 
-    const jugadas = await prisma.jugada.findMany({
-        where: {
-            ticket: ticketWhere,
-            deletedAt: null,
-        },
-        select: {
-            amount: true,
-            type: true,
-            finalMultiplierX: true,
-            ticket: {
-                select: {
-                    loteriaId: true,
-                    ventanaId: true,
-                    ventana: {
-                        select: {
-                            commissionPolicyJson: true,
-                            banca: {
-                                select: {
-                                    commissionPolicyJson: true,
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        },
+    // ✅ OPTIMIZACIÓN: Obtener tickets que cumplen el WHERE para luego leer snapshots
+    const tickets = await prisma.ticket.findMany({
+        where: ticketWhere,
+        select: { id: true },
     });
 
-    if (jugadas.length === 0) {
+    if (tickets.length === 0) {
         return result;
     }
 
-    const ventanaIds = Array.from(
-        new Set(
-            jugadas
-                .map((j) => j.ticket.ventanaId)
-                .filter((id): id is string => typeof id === "string")
-        )
-    );
+    const ticketIds = tickets.map((t) => t.id);
 
-    const ventanasWithBancas = ventanaIds.length
-        ? await prisma.ventana.findMany({
-            where: { id: { in: ventanaIds } },
-            select: {
-                id: true,
-                commissionPolicyJson: true,
-                banca: {
-                    select: { commissionPolicyJson: true },
-                },
-            },
-        })
-        : [];
+    // ✅ USAR SNAPSHOTS: Leer snapshots directamente de BD en lugar de recalcular
+    const snapshotsByTicket = await commissionSnapshotService.getSnapshotsForTickets(ticketIds);
 
-    const ventanaUsers = ventanaIds.length
-        ? await prisma.user.findMany({
-            where: {
-                role: Role.VENTANA,
-                isActive: true,
-                deletedAt: null,
-                ventanaId: { in: ventanaIds },
-            },
-            select: {
-                id: true,
-                ventanaId: true,
-                commissionPolicyJson: true,
-                updatedAt: true,
-            },
-            orderBy: { updatedAt: "desc" },
-        })
-        : [];
+    // Agregar por ventana usando snapshots
+    for (const [ticketId, snapshots] of snapshotsByTicket.entries()) {
+        // Obtener ventanaId del primer snapshot (todos los snapshots de un ticket tienen la misma ventanaId)
+        if (snapshots.length === 0) continue;
+        const ventanaId = snapshots[0].ventanaId;
 
-    const policiesMap = new Map<
-        string,
-        {
-            userPolicy: any;
-            ventanaPolicy: any;
-            bancaPolicy: any;
-            ventanaUserId: string | null;
+        // Sumar comisiones del listero desde snapshots
+        const totalListeroCommission = snapshots.reduce(
+            (sum, snap) => sum + snap.listeroSnapshot.commissionAmount,
+            0
+        );
+
+        if (totalListeroCommission > 0) {
+            result.set(ventanaId, (result.get(ventanaId) || 0) + totalListeroCommission);
         }
-    >();
-
-    ventanasWithBancas.forEach((ventana) => {
-        policiesMap.set(ventana.id, {
-            userPolicy: null,
-            ventanaPolicy: ventana.commissionPolicyJson as any,
-            bancaPolicy: ventana.banca?.commissionPolicyJson as any,
-            ventanaUserId: null,
-        });
-    });
-
-    ventanaUsers.forEach((user) => {
-        if (!user.ventanaId) return;
-        const existing =
-            policiesMap.get(user.ventanaId) || {
-                userPolicy: null,
-                ventanaPolicy: null,
-                bancaPolicy: null,
-                ventanaUserId: null,
-            };
-        if (!existing.userPolicy) {
-            existing.userPolicy = user.commissionPolicyJson as any;
-            existing.ventanaUserId = user.id;
-        }
-        policiesMap.set(user.ventanaId, existing);
-    });
-
-    for (const jugada of jugadas) {
-        const ventanaId = jugada.ticket.ventanaId;
-        if (!ventanaId) continue;
-
-        const policies = policiesMap.get(ventanaId) || {
-            userPolicy: null,
-            ventanaPolicy: null,
-            bancaPolicy: null,
-            ventanaUserId: null,
-        };
-
-        const ventanaPolicy =
-            (jugada.ticket.ventana?.commissionPolicyJson as any) ?? policies.ventanaPolicy;
-        const bancaPolicy =
-            (jugada.ticket.ventana?.banca?.commissionPolicyJson as any) ?? policies.bancaPolicy;
-        const userPolicy = policies.userPolicy;
-        const ventanaUserId = policies.ventanaUserId ?? ventanaId;
-
-        // Actualizar cache en caso de que obtengamos políticas desde el ticket
-        policiesMap.set(ventanaId, {
-            userPolicy,
-            ventanaPolicy,
-            bancaPolicy,
-            ventanaUserId,
-        });
-
-        let commissionAmount = 0;
-
-        if (userPolicy) {
-            try {
-                const resolution = resolveCommissionFromPolicy(userPolicy as any, {
-                    userId: ventanaUserId ?? ventanaId,
-                    loteriaId: jugada.ticket.loteriaId,
-                    betType: jugada.type as "NUMERO" | "REVENTADO",
-                    finalMultiplierX: jugada.finalMultiplierX ?? null,
-                });
-                commissionAmount = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
-            } catch {
-                const fallback = resolveCommission(
-                    {
-                        loteriaId: jugada.ticket.loteriaId,
-                        betType: jugada.type as "NUMERO" | "REVENTADO",
-                        finalMultiplierX: jugada.finalMultiplierX || 0,
-                        amount: jugada.amount,
-                    },
-                    null,
-                    ventanaPolicy,
-                    bancaPolicy
-                );
-                commissionAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
-            }
-        } else {
-            const fallback = resolveCommission(
-                {
-                    loteriaId: jugada.ticket.loteriaId,
-                    betType: jugada.type as "NUMERO" | "REVENTADO",
-                    finalMultiplierX: jugada.finalMultiplierX || 0,
-                    amount: jugada.amount,
-                },
-                null,
-                ventanaPolicy,
-                bancaPolicy
-            );
-            commissionAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
-        }
-
-        if (commissionAmount <= 0) continue;
-
-        result.set(ventanaId, (result.get(ventanaId) || 0) + commissionAmount);
     }
 
     return result;
 }
 
 /**
- * Calcula comisiones para un ticket
- * Nota: Las comisiones ya están guardadas en Jugada (commissionAmount, commissionOrigin)
- * Para el estado de cuenta, separamos comisiones de listero y vendedor
+ * Calcula comisiones para un ticket usando snapshots guardados en BD
+ * ✅ OPTIMIZADO: Usa snapshots en lugar de recalcular desde políticas
  * 
  * Lógica:
- * - Si dimension='ventana': La comisión guardada en Jugada es del listero (ventana)
- * - Si dimension='vendedor': La comisión guardada en Jugada es del vendedor
- *   - Para calcular la comisión del listero, necesitamos obtener la política de la ventana
- *   - La comisión del listero = comisión de la ventana - comisión del vendedor
+ * - Si dimension='ventana': Usa listeroCommissionAmount del snapshot
+ * - Si dimension='vendedor': Usa commissionAmount del snapshot (vendedor) y listeroCommissionAmount (listero)
  */
 export async function calculateCommissionsForTicket(
     ticket: any,
     dimension: "ventana" | "vendedor"
 ): Promise<{ listeroCommission: number; vendedorCommission: number }> {
-    const jugadas = ticket.jugadas || [];
+    const ticketId = ticket.id;
+    
+    // ✅ USAR SNAPSHOTS: Leer snapshots directamente de BD
+    const snapshotsByTicket = await commissionSnapshotService.getSnapshotsForTickets([ticketId]);
+    const snapshots = snapshotsByTicket.get(ticketId) || [];
+
     let listeroCommission = 0;
     let vendedorCommission = 0;
 
     if (dimension === "ventana") {
-        // Si es ventana, toda la comisión guardada es del listero
-        for (const jugada of jugadas) {
-            const commissionAmount = jugada.commissionAmount || 0;
-            listeroCommission += commissionAmount;
+        // Si es ventana, usar listeroCommissionAmount del snapshot
+        for (const snap of snapshots) {
+            listeroCommission += snap.listeroSnapshot.commissionAmount;
         }
         vendedorCommission = 0; // No hay comisión de vendedor en este caso
     } else {
-        // Si es vendedor, obtener la ventana UNA VEZ por ticket (no por jugada)
-        let ventanaPolicy: any = null;
-        let bancaPolicy: any = null;
-
-        if (ticket.ventanaId) {
-            const ventana = await prisma.ventana.findUnique({
-                where: { id: ticket.ventanaId },
-                select: {
-                    commissionPolicyJson: true,
-                    banca: {
-                        select: {
-                            commissionPolicyJson: true,
-                        },
-                    },
-                },
-            });
-            ventanaPolicy = ventana?.commissionPolicyJson as any;
-            bancaPolicy = ventana?.banca?.commissionPolicyJson as any;
-        }
-
-        // Calcular comisiones para todas las jugadas del ticket
-        for (const jugada of jugadas) {
-            // La comisión guardada es del vendedor
-            const commissionAmount = jugada.commissionAmount || 0;
-            vendedorCommission += commissionAmount;
-
-            // Calcular comisión de la ventana usando la jerarquía VENTANA → BANCA
-            // Nota: Pasamos null para userPolicy para que use solo VENTANA → BANCA
-            const res = resolveCommission(
-                {
-                    loteriaId: ticket.loteriaId,
-                    betType: jugada.type as "NUMERO" | "REVENTADO",
-                    finalMultiplierX: jugada.finalMultiplierX || 0,
-                    amount: jugada.amount,
-                },
-                null, // No usar política del vendedor para calcular comisión del listero
-                ventanaPolicy, // Usar política de la ventana (obtenida una vez por ticket)
-                bancaPolicy // Usar política de la banca como fallback (obtenida una vez por ticket)
-            );
-
-            const ventanaCommissionAmount = res.commissionAmount;
-
-            // La comisión del listero es la diferencia entre la de la ventana y la del vendedor
-            // Si la comisión del vendedor es mayor o igual a la de la ventana, el listero no recibe comisión
-            listeroCommission += Math.max(0, ventanaCommissionAmount - commissionAmount);
+        // Si es vendedor, usar ambos snapshots
+        for (const snap of snapshots) {
+            // La comisión del vendedor está en snapshot.commissionAmount
+            vendedorCommission += snap.snapshot.commissionAmount;
+            
+            // La comisión del listero está en listeroSnapshot.commissionAmount
+            listeroCommission += snap.listeroSnapshot.commissionAmount;
         }
     }
 
