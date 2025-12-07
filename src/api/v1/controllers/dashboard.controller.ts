@@ -50,9 +50,10 @@ export const DashboardController = {
 
     const query = req.query as any;
 
-    // Resolver rango de fechas (usa el mismo patrón que Venta)
-    // Si se envía fromDate y toDate, usar automáticamente 'range'
-    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
+    // Resolver rango de fechas
+    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
+    const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     // Aplicar RBAC
@@ -84,8 +85,9 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // Si se envía fromDate y toDate, usar automáticamente 'range'
-    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
+    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
+    const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
@@ -122,8 +124,9 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // Si se envía fromDate y toDate, usar automáticamente 'range'
-    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
+    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
+    const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
@@ -158,8 +161,9 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // Si se envía fromDate y toDate, usar automáticamente 'range'
-    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
+    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
+    const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
@@ -195,8 +199,9 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // Si se envía fromDate y toDate, usar automáticamente 'range'
-    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
+    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
+    const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
@@ -238,8 +243,9 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // Si se envía fromDate y toDate, usar automáticamente 'range'
-    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
+    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
+    const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
@@ -278,8 +284,9 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // Si se envía fromDate y toDate, usar automáticamente 'range'
-    const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
+    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
+    const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     const { ventanaId, bancaId } = await applyDashboardRbac(req, query);

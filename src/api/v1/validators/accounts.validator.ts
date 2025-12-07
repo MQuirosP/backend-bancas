@@ -21,6 +21,15 @@ export const GetStatementQuerySchema = z
   })
   .strict()
   .superRefine((val, ctx) => {
+    // ✅ CRÍTICO: Validar que date=range cuando hay fromDate/toDate
+    if ((val.fromDate || val.toDate) && val.date !== 'range') {
+      ctx.addIssue({
+        code: "custom",
+        path: ["date"],
+        message: "date debe ser 'range' cuando se proporcionan fromDate o toDate",
+      });
+    }
+
     // Si date es 'range', fromDate y toDate son requeridos
     if (val.date === "range") {
       if (!val.fromDate) {
@@ -192,6 +201,15 @@ export const AccountStatementExportQuerySchema = z
         code: "custom",
         path: ["month"],
         message: "Los parámetros 'month' y 'date' son mutuamente exclusivos",
+      });
+    }
+
+    // ✅ CRÍTICO: Validar que date=range cuando hay fromDate/toDate
+    if ((val.fromDate || val.toDate) && val.date !== 'range') {
+      ctx.addIssue({
+        code: "custom",
+        path: ["date"],
+        message: "date debe ser 'range' cuando se proporcionan fromDate o toDate",
       });
     }
 

@@ -23,19 +23,43 @@ export const CommissionsListQuerySchema = z
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
-  .refine(
-    (data) => {
-      // Si date=range, fromDate y toDate son requeridos
-      if (data.date === "range") {
-        return !!data.fromDate && !!data.toDate;
-      }
-      return true;
-    },
-    {
-      message: "fromDate and toDate are required when date=range",
-      path: ["date"],
+  .superRefine((val, ctx) => {
+    // ✅ CRÍTICO: Validar que date=range cuando hay fromDate/toDate
+    if ((val.fromDate || val.toDate) && val.date !== 'range') {
+      ctx.addIssue({
+        code: "custom",
+        path: ["date"],
+        message: "date debe ser 'range' cuando se proporcionan fromDate o toDate",
+      });
     }
-  );
+
+    // Si date=range, fromDate y toDate son requeridos
+    if (val.date === "range") {
+      if (!val.fromDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["fromDate"],
+          message: "fromDate es requerido cuando date='range'",
+        });
+      }
+      if (!val.toDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["toDate"],
+          message: "toDate es requerido cuando date='range'",
+        });
+      }
+      
+      // ✅ Validar fromDate ≤ toDate
+      if (val.fromDate && val.toDate && val.fromDate > val.toDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["toDate"],
+          message: "toDate debe ser mayor o igual a fromDate",
+        });
+      }
+    }
+  });
 
 /**
  * Schema para GET /api/v1/commissions/detail
@@ -114,19 +138,43 @@ export const CommissionsExportQuerySchema = z
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
-  .refine(
-    (data) => {
-      // Si date=range, fromDate y toDate son requeridos
-      if (data.date === "range") {
-        return !!data.fromDate && !!data.toDate;
-      }
-      return true;
-    },
-    {
-      message: "fromDate and toDate are required when date=range",
-      path: ["date"],
+  .superRefine((val, ctx) => {
+    // ✅ CRÍTICO: Validar que date=range cuando hay fromDate/toDate
+    if ((val.fromDate || val.toDate) && val.date !== 'range') {
+      ctx.addIssue({
+        code: "custom",
+        path: ["date"],
+        message: "date debe ser 'range' cuando se proporcionan fromDate o toDate",
+      });
     }
-  );
+
+    // Si date=range, fromDate y toDate son requeridos
+    if (val.date === "range") {
+      if (!val.fromDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["fromDate"],
+          message: "fromDate es requerido cuando date='range'",
+        });
+      }
+      if (!val.toDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["toDate"],
+          message: "toDate es requerido cuando date='range'",
+        });
+      }
+      
+      // ✅ Validar fromDate ≤ toDate
+      if (val.fromDate && val.toDate && val.fromDate > val.toDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["toDate"],
+          message: "toDate debe ser mayor o igual a fromDate",
+        });
+      }
+    }
+  });
 
 // Middlewares de validación
 export const validateCommissionsListQuery = validateQuery(CommissionsListQuerySchema);
