@@ -4,6 +4,7 @@ import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { Prisma } from "@prisma/client";
 import { CreateBancaInput, UpdateBancaInput } from "../api/v1/dto/banca.dto";
+import { invalidateRestrictionCaches } from "../utils/restrictionCache";
 
 // Mapeadores DTO -> Prisma
 const toPrismaCreate = (d: CreateBancaInput): Prisma.BancaCreateInput => ({
@@ -70,10 +71,71 @@ const BancaRepository = {
   },
 
   async update(id: string, data: UpdateBancaInput) {
+    // ✅ CORRECCIÓN: Actualizar RestrictionRule cuando se actualiza salesCutoffMinutes
+    // La resolución del cutoff busca en RestrictionRule, no en el campo de la tabla Banca
+    if (typeof data.salesCutoffMinutes === 'number') {
+      const cutoffMinutes = Math.trunc(data.salesCutoffMinutes);
+      
+      // Buscar regla de cutoff existente para esta banca (sin number, con salesCutoffMinutes)
+      const existingRule = await prisma.restrictionRule.findFirst({
+        where: {
+          bancaId: id,
+          number: null,
+          salesCutoffMinutes: { not: null },
+          isActive: true,
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+
+      if (existingRule) {
+        // Actualizar regla existente
+        await prisma.restrictionRule.update({
+          where: { id: existingRule.id },
+          data: {
+            salesCutoffMinutes: cutoffMinutes,
+            isActive: true,
+          },
+        });
+        
+        logger.info({
+          layer: "repository",
+          action: "BANCA_CUTOFF_RULE_UPDATED",
+          payload: { 
+            bancaId: id, 
+            restrictionRuleId: existingRule.id,
+            salesCutoffMinutes: cutoffMinutes 
+          },
+        });
+      } else {
+        // Crear nueva regla si no existe
+        await prisma.restrictionRule.create({
+          data: {
+            bancaId: id,
+            salesCutoffMinutes: cutoffMinutes,
+            number: null,
+            isActive: true,
+          },
+        });
+        
+        logger.info({
+          layer: "repository",
+          action: "BANCA_CUTOFF_RULE_CREATED",
+          payload: { 
+            bancaId: id,
+            salesCutoffMinutes: cutoffMinutes 
+          },
+        });
+      }
+      
+      // Invalidar caché de cutoff para esta banca
+      await invalidateRestrictionCaches({ bancaId: id });
+    }
+
     const banca = await prisma.banca.update({
       where: { id },
       data: toPrismaUpdate(data),
     });
+    
     logger.info({
       layer: "repository",
       action: "BANCA_UPDATE_DB",
