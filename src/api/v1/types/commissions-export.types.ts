@@ -10,10 +10,10 @@ export type ExportFormat = 'csv' | 'excel' | 'pdf';
  */
 export interface CommissionExportData {
   date: string; // YYYY-MM-DD
-  ventanaId?: string;
-  ventanaName?: string;
-  vendedorId?: string;
-  vendedorName?: string;
+  ventanaId?: string | null; // ✅ null cuando hay agrupación
+  ventanaName?: string | null; // ✅ null cuando hay agrupación
+  vendedorId?: string | null; // ✅ null cuando hay agrupación
+  vendedorName?: string | null; // ✅ null cuando hay agrupación
   totalSales: number;
   totalTickets: number;
   totalCommission: number;
@@ -21,6 +21,31 @@ export interface CommissionExportData {
   commissionListero?: number;
   commissionVendedor?: number;
   net?: number;
+  // ✅ NUEVO: Desglose por entidad (cuando hay agrupación)
+  byVentana?: Array<{
+    ventanaId: string;
+    ventanaName: string;
+    totalSales: number;
+    totalTickets: number;
+    totalCommission: number;
+    totalPayouts?: number;
+    commissionListero?: number;
+    commissionVendedor?: number;
+    net?: number;
+  }>;
+  byVendedor?: Array<{
+    vendedorId: string;
+    vendedorName: string;
+    ventanaId: string;
+    ventanaName: string;
+    totalSales: number;
+    totalTickets: number;
+    totalCommission: number;
+    totalPayouts?: number;
+    commissionListero?: number;
+    commissionVendedor?: number;
+    net?: number;
+  }>;
 }
 
 /**
