@@ -7,6 +7,8 @@ import logger from "../../../core/logger";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { commissionSnapshotService, CommissionSnapshotFilters } from "../../../services/commission/CommissionSnapshotService";
 import { commissionAggregationService } from "../../../services/commission/CommissionAggregationService";
+import { toCRDateString } from "./accounts/accounts.dates.utils";
+import { dateRangeUTCToCRStrings, postgresDateToCRString, isDateInCRRange } from "../../../utils/crDateService";
 
 /**
  * Filtros para queries de comisiones
@@ -18,6 +20,33 @@ interface CommissionsFilters {
   vendedorId?: string;
   loteriaId?: string;
   multiplierId?: string;
+}
+
+/**
+ * Convierte business_date desde resultados SQL a fecha CR (YYYY-MM-DD)
+ * 
+ * ⚠️ CRÍTICO: Cuando PostgreSQL devuelve DATE(... AT TIME ZONE 'America/Costa_Rica'),
+ * devuelve un DATE (sin hora) que representa el día calendario en CR.
+ * 
+ * Cuando Prisma recibe un DATE de PostgreSQL, lo convierte a un Date JavaScript
+ * con hora 00:00:00.000Z. Este Date ya representa correctamente el día calendario,
+ * NO necesita ajuste de zona horaria porque DATE no tiene componente de hora.
+ * 
+ * Ejemplo:
+ * - PostgreSQL: DATE('2025-12-06 00:00:00' AT TIME ZONE 'America/Costa_Rica') = '2025-12-06' (DATE)
+ * - Prisma lo convierte a: Date('2025-12-06T00:00:00.000Z')
+ * - Este Date ya representa el día 2025-12-06 correctamente, solo extraer YYYY-MM-DD
+ * 
+ * Solución: Extraer directamente año, mes, día sin ajustar zona horaria
+ */
+function businessDateToCRString(businessDate: Date): string {
+  // business_date viene como DATE desde SQL (sin hora, solo día calendario)
+  // Prisma lo convierte a Date con 00:00:00.000Z, pero ya representa el día correcto
+  // Extraer directamente año, mes, día sin ajustar zona horaria
+  const year = businessDate.getUTCFullYear();
+  const month = String(businessDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(businessDate.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 /**
@@ -59,12 +88,10 @@ export const CommissionsService = {
     try {
       // Resolver rango de fechas
       const dateRange = resolveDateRange(date, fromDate, toDate);
-      const COSTA_RICA_OFFSET_HOURS = -6;
-      const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
-      const fromDateCr = new Date(dateRange.fromAt.getTime() + offsetMs);
-      const toDateCr = new Date(dateRange.toAt.getTime() + offsetMs);
-      const fromDateStr = fromDateCr.toISOString().split("T")[0];
-      const toDateStr = toDateCr.toISOString().split("T")[0];
+      // ✅ CORRECCIÓN CRÍTICA: Usar servicio centralizado para conversión de fechas
+      const { startDateCRStr, endDateCRStr } = dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
+      const fromDateStr = startDateCRStr;
+      const toDateStr = endDateCRStr;
 
       // Construir filtros WHERE dinámicos según RBAC
       const whereConditions: Prisma.Sql[] = [
@@ -157,6 +184,33 @@ export const CommissionsService = {
           ORDER BY business_date DESC, v.name ASC
         `;
 
+        // ✅ CRÍTICO: Filtrar resultados SQL que puedan estar fuera del período
+        // Aunque el WHERE clause filtra, puede haber casos edge donde PostgreSQL incluya datos del día siguiente
+        const filteredResult = result.filter((r) => {
+          const dateKey = postgresDateToCRString(r.business_date);
+          const isInRange = isDateInCRRange(dateKey, startDateCRStr, endDateCRStr);
+          
+          // ✅ DEBUG: Log detallado para identificar problemas
+          if (!isInRange) {
+            logger.debug({
+              layer: "service",
+              action: "COMMISSIONS_FILTER_OUT_OF_RANGE",
+              payload: {
+                business_date_iso: r.business_date.toISOString(),
+                business_date_utc: r.business_date.getUTCFullYear() + '-' + 
+                  String(r.business_date.getUTCMonth() + 1).padStart(2, '0') + '-' + 
+                  String(r.business_date.getUTCDate()).padStart(2, '0'),
+                dateKey,
+                startDateCRStr,
+                endDateCRStr,
+                ventana_id: r.ventana_id,
+              },
+            });
+          }
+          
+          return isInRange;
+        });
+
         logger.info({
           layer: "service",
           action: "COMMISSIONS_LIST_VENTANA",
@@ -165,8 +219,17 @@ export const CommissionsService = {
               fromAt: dateRange.fromAt.toISOString(),
               toAt: dateRange.toAt.toISOString(),
             },
+            dateRangeCR: {
+              startDateCRStr,
+              endDateCRStr,
+            },
             filters,
             resultCount: result.length,
+            filteredResultCount: filteredResult.length,
+            resultDates: result.map(r => ({
+              business_date_iso: r.business_date.toISOString(),
+              dateKey: postgresDateToCRString(r.business_date),
+            })),
           },
         });
 
@@ -242,12 +305,48 @@ export const CommissionsService = {
             }
           >();
 
+          // ✅ DEBUG: Log para entender qué jugadas se están procesando
+          const ventanasSeen = new Set<string>();
+          let jugadasFiltered = 0;
+          let jugadasProcessed = 0;
+
+          logger.info({
+            layer: "service",
+            action: "COMMISSIONS_DATE_FILTER_DEBUG",
+            payload: {
+              startDateCRStr,
+              endDateCRStr,
+              dateRange: {
+                fromAt: dateRange.fromAt.toISOString(),
+                toAt: dateRange.toAt.toISOString(),
+              },
+            },
+          });
+
           for (const jugada of jugadas) {
             // Usar snapshot de comisión del listero guardado en BD, NO recalcular
             const commissionListero = Number(jugada.listero_commission_amount || 0);
 
-            const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
+            const dateKey = postgresDateToCRString(jugada.business_date);
+            // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+            if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
+              jugadasFiltered++;
+              logger.debug({
+                layer: "service",
+                action: "COMMISSIONS_FILTERED_JUGADA",
+                payload: {
+                  dateKey,
+                  startDateCRStr,
+                  endDateCRStr,
+                  business_date_iso: jugada.business_date.toISOString(),
+                  ventana_id: jugada.ventana_id,
+                },
+              });
+              continue; // Saltar jugadas fuera del período
+            }
+            jugadasProcessed++;
             const key = `${dateKey}_${jugada.ventana_id}`;
+            ventanasSeen.add(jugada.ventana_id);
 
             let entry = byDateAndVentana.get(key);
             if (!entry) {
@@ -274,32 +373,52 @@ export const CommissionsService = {
             }
           }
 
-          // Convertir a formato de respuesta
-          const items = Array.from(byDateAndVentana.entries()).map(([key, entry]) => {
-            const date = key.split("_")[0];
-            // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
-            // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
-            const totalCommission = entry.commissionListero;
-            return {
-              date, // YYYY-MM-DD
-              ventanaId: entry.ventanaId,
-              ventanaName: entry.ventanaName,
-              totalSales: entry.totalSales,
-              totalTickets: entry.totalTickets.size,
-              totalCommission, // Solo comisión de listero (ventana)
-              totalPayouts: entry.totalPayouts,
-              commissionListero: entry.commissionListero,
-              commissionVendedor: entry.commissionVendedor,
-              // Ganancia neta para VENTANA: ventas - premios - comisión listero
-              net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
-            };
-          }).sort((a, b) => {
-            // Ordenar por fecha DESC, luego por nombre de ventana ASC
-            if (a.date !== b.date) {
-              return b.date.localeCompare(a.date);
-            }
-            return a.ventanaName.localeCompare(b.ventanaName);
+          logger.info({
+            layer: "service",
+            action: "COMMISSIONS_PROCESSING_JUGADAS",
+            payload: {
+              totalJugadas: jugadas.length,
+              jugadasFiltered,
+              jugadasProcessed,
+              ventanasSeen: Array.from(ventanasSeen),
+              byDateAndVentanaSize: byDateAndVentana.size,
+              byDateAndVentanaKeys: Array.from(byDateAndVentana.keys()),
+            },
           });
+
+          // Convertir a formato de respuesta
+          const items = Array.from(byDateAndVentana.entries())
+            .map(([key, entry]) => {
+              const date = key.split("_")[0];
+              // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado (doble verificación)
+              if (date < startDateCRStr || date > endDateCRStr) {
+                return null; // Marcar para filtrar después
+              }
+              // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
+              // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
+              const totalCommission = entry.commissionListero;
+              return {
+                date, // YYYY-MM-DD
+                ventanaId: entry.ventanaId,
+                ventanaName: entry.ventanaName,
+                totalSales: entry.totalSales,
+                totalTickets: entry.totalTickets.size,
+                totalCommission, // Solo comisión de listero (ventana)
+                totalPayouts: entry.totalPayouts,
+                commissionListero: entry.commissionListero,
+                commissionVendedor: entry.commissionVendedor,
+                // Ganancia neta para VENTANA: ventas - premios - comisión listero
+                net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
+              };
+            })
+            .filter((item): item is NonNullable<typeof item> => item !== null) // Filtrar nulls
+            .sort((a, b) => {
+              // Ordenar por fecha DESC, luego por nombre de ventana ASC
+              if (a.date !== b.date) {
+                return b.date.localeCompare(a.date);
+              }
+              return a.ventanaName.localeCompare(b.ventanaName);
+            });
 
           return items;
         }
@@ -366,12 +485,48 @@ export const CommissionsService = {
             }
           >();
 
+          // ✅ DEBUG: Log para entender qué jugadas se están procesando
+          const ventanasSeen = new Set<string>();
+          let jugadasFiltered = 0;
+          let jugadasProcessed = 0;
+
+          logger.info({
+            layer: "service",
+            action: "COMMISSIONS_DATE_FILTER_DEBUG",
+            payload: {
+              startDateCRStr,
+              endDateCRStr,
+              dateRange: {
+                fromAt: dateRange.fromAt.toISOString(),
+                toAt: dateRange.toAt.toISOString(),
+              },
+            },
+          });
+
           for (const jugada of jugadas) {
             // Usar snapshot de comisión del listero guardado en BD, NO recalcular
             const commissionListero = Number(jugada.listero_commission_amount || 0);
 
-            const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
+            const dateKey = postgresDateToCRString(jugada.business_date);
+            // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+            if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
+              jugadasFiltered++;
+              logger.debug({
+                layer: "service",
+                action: "COMMISSIONS_FILTERED_JUGADA",
+                payload: {
+                  dateKey,
+                  startDateCRStr,
+                  endDateCRStr,
+                  business_date_iso: jugada.business_date.toISOString(),
+                  ventana_id: jugada.ventana_id,
+                },
+              });
+              continue; // Saltar jugadas fuera del período
+            }
+            jugadasProcessed++;
             const key = `${dateKey}_${jugada.ventana_id}`;
+            ventanasSeen.add(jugada.ventana_id);
 
             let entry = byDateAndVentana.get(key);
             if (!entry) {
@@ -398,54 +553,81 @@ export const CommissionsService = {
             }
           }
 
-          // Convertir a formato de respuesta
-          const items = Array.from(byDateAndVentana.entries()).map(([key, entry]) => {
-            const date = key.split("_")[0];
-            // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
-            // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
-            const totalCommission = entry.commissionListero;
-            return {
-              date, // YYYY-MM-DD
-              ventanaId: entry.ventanaId,
-              ventanaName: entry.ventanaName,
-              totalSales: entry.totalSales,
-              totalTickets: entry.totalTickets.size,
-              totalCommission, // Solo comisión de listero (ventana)
-              totalPayouts: entry.totalPayouts,
-              commissionListero: entry.commissionListero,
-              commissionVendedor: entry.commissionVendedor,
-              // Ganancia neta para VENTANA: ventas - premios - comisión listero
-              net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
-            };
-          }).sort((a, b) => {
-            // Ordenar por fecha DESC, luego por nombre de ventana ASC
-            if (a.date !== b.date) {
-              return b.date.localeCompare(a.date);
-            }
-            return a.ventanaName.localeCompare(b.ventanaName);
+          logger.info({
+            layer: "service",
+            action: "COMMISSIONS_PROCESSING_JUGADAS",
+            payload: {
+              totalJugadas: jugadas.length,
+              jugadasFiltered,
+              jugadasProcessed,
+              ventanasSeen: Array.from(ventanasSeen),
+              byDateAndVentanaSize: byDateAndVentana.size,
+              byDateAndVentanaKeys: Array.from(byDateAndVentana.keys()),
+            },
           });
+
+          // Convertir a formato de respuesta
+          const items = Array.from(byDateAndVentana.entries())
+            .map(([key, entry]) => {
+              const date = key.split("_")[0];
+              // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado (doble verificación)
+              if (date < startDateCRStr || date > endDateCRStr) {
+                return null; // Marcar para filtrar después
+              }
+              // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
+              // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
+              const totalCommission = entry.commissionListero;
+              return {
+                date, // YYYY-MM-DD
+                ventanaId: entry.ventanaId,
+                ventanaName: entry.ventanaName,
+                totalSales: entry.totalSales,
+                totalTickets: entry.totalTickets.size,
+                totalCommission, // Solo comisión de listero (ventana)
+                totalPayouts: entry.totalPayouts,
+                commissionListero: entry.commissionListero,
+                commissionVendedor: entry.commissionVendedor,
+                // Ganancia neta para VENTANA: ventas - premios - comisión listero
+                net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
+              };
+            })
+            .filter((item): item is NonNullable<typeof item> => item !== null) // Filtrar nulls
+            .sort((a, b) => {
+              // Ordenar por fecha DESC, luego por nombre de ventana ASC
+              if (a.date !== b.date) {
+                return b.date.localeCompare(a.date);
+              }
+              return a.ventanaName.localeCompare(b.ventanaName);
+            });
 
           return items;
         }
 
         // Fallback: solo si realmente no hay forma de calcular (caso edge muy raro)
         // Este caso no debería ocurrir en producción si las ventanas tienen políticas configuradas
-        return result.map((r) => {
-          const commissionVendedor = parseFloat(r.total_commission);
-          return {
-            date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
-            ventanaId: r.ventana_id,
-            ventanaName: r.ventana_name,
-            totalSales: parseFloat(r.total_sales),
-            totalTickets: parseInt(r.total_tickets, 10),
-            totalCommission: commissionVendedor, // Fallback: usar snapshot del vendedor (no ideal)
-            totalPayouts: parseFloat(r.total_payouts),
-            commissionListero: 0,
-            commissionVendedor,
-            // Ganancia neta para VENTANA: ventas - premios - comisión listero
-            net: parseFloat(r.total_sales) - parseFloat(r.total_payouts) - 0, // commissionListero is 0 in fallback
-          };
-        });
+        return filteredResult
+          .map((r) => {
+            const dateKey = postgresDateToCRString(r.business_date);
+            // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+            if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
+              return null; // Marcar para filtrar después
+            }
+            const commissionVendedor = parseFloat(r.total_commission);
+            return {
+              date: dateKey,
+              ventanaId: r.ventana_id,
+              ventanaName: r.ventana_name,
+              totalSales: parseFloat(r.total_sales),
+              totalTickets: parseInt(r.total_tickets, 10),
+              totalCommission: commissionVendedor, // Fallback: usar snapshot del vendedor (no ideal)
+              totalPayouts: parseFloat(r.total_payouts),
+              commissionListero: 0,
+              commissionVendedor,
+              // Ganancia neta para VENTANA: ventas - premios - comisión listero
+              net: parseFloat(r.total_sales) - parseFloat(r.total_payouts) - 0, // commissionListero is 0 in fallback
+            };
+          })
+          .filter((item): item is NonNullable<typeof item> => item !== null); // Filtrar nulls
       } else if (filters.dimension === "vendedor") {
         // Agrupar por día Y por vendedor
         // Usar snapshots de comisión guardados en la BD (listeroCommissionAmount)
@@ -503,7 +685,11 @@ export const CommissionsService = {
         >();
 
         for (const jugada of jugadas) {
-          const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
+            const dateKey = postgresDateToCRString(jugada.business_date);
+            // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+            if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
+              continue; // Saltar jugadas fuera del período
+            }
           const key = `${dateKey}_${jugada.vendedor_id}`;
 
           let entry = byDateAndVendedor.get(key);
@@ -612,15 +798,24 @@ export const CommissionsService = {
           },
         });
 
-        return result.map((r) => ({
-          date: r.business_date.toISOString().split("T")[0], // YYYY-MM-DD
-          totalSales: parseFloat(r.total_sales),
-          totalPayouts: parseFloat(r.total_payouts),
-          totalTickets: parseInt(r.total_tickets, 10),
-          totalCommission: parseFloat(r.total_commission),
-          commissionListero: undefined,
-          commissionVendedor: undefined,
-        }));
+        return result
+          .map((r) => {
+            const dateKey = postgresDateToCRString(r.business_date);
+            // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+            if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
+              return null; // Marcar para filtrar después
+            }
+            return {
+              date: dateKey,
+              totalSales: parseFloat(r.total_sales),
+              totalPayouts: parseFloat(r.total_payouts),
+              totalTickets: parseInt(r.total_tickets, 10),
+              totalCommission: parseFloat(r.total_commission),
+              commissionListero: undefined,
+              commissionVendedor: undefined,
+            };
+          })
+          .filter((item): item is NonNullable<typeof item> => item !== null); // Filtrar nulls
       }
     } catch (err: any) {
       logger.error({
@@ -667,12 +862,13 @@ export const CommissionsService = {
     try {
       // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
-      const COSTA_RICA_OFFSET_HOURS = -6;
-      const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
-      const fromDateCr = new Date(dateRange.fromAt.getTime() + offsetMs);
-      const toDateCr = new Date(dateRange.toAt.getTime() + offsetMs);
-      const fromDateStr = fromDateCr.toISOString().split("T")[0];
-      const toDateStr = toDateCr.toISOString().split("T")[0];
+      // ✅ CORRECCIÓN: Usar toCRDateString de forma consistente (igual que accounts)
+      const startDateCRStr = toCRDateString(dateRange.fromAt);
+      // Para endDate, restar 6 horas antes de convertir para evitar incluir el día siguiente
+      const endDateAdjusted = new Date(dateRange.toAt.getTime() - (6 * 60 * 60 * 1000));
+      const endDateCRStr = toCRDateString(endDateAdjusted);
+      const fromDateStr = startDateCRStr;
+      const toDateStr = endDateCRStr;
 
       // Construir filtros WHERE dinámicos según RBAC
       const whereConditions: Prisma.Sql[] = [
@@ -1273,12 +1469,13 @@ export const CommissionsService = {
 
       // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
-      const COSTA_RICA_OFFSET_HOURS = -6;
-      const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
-      const fromDateCr = new Date(dateRange.fromAt.getTime() + offsetMs);
-      const toDateCr = new Date(dateRange.toAt.getTime() + offsetMs);
-      const fromDateStr = fromDateCr.toISOString().split("T")[0];
-      const toDateStr = toDateCr.toISOString().split("T")[0];
+      // ✅ CORRECCIÓN: Usar toCRDateString de forma consistente (igual que accounts)
+      const startDateCRStr = toCRDateString(dateRange.fromAt);
+      // Para endDate, restar 6 horas antes de convertir para evitar incluir el día siguiente
+      const endDateAdjusted = new Date(dateRange.toAt.getTime() - (6 * 60 * 60 * 1000));
+      const endDateCRStr = toCRDateString(endDateAdjusted);
+      const fromDateStr = startDateCRStr;
+      const toDateStr = endDateCRStr;
 
       // Si dimension=ventana, obtener la política de comisiones del usuario VENTANA
       let ventanaUserPolicy: any = null;
