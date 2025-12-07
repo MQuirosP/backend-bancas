@@ -252,3 +252,4 @@ export class CommissionResolver {
 // Instancia singleton para uso directo
 export const commissionResolver = new CommissionResolver();
 
+
