@@ -65,10 +65,10 @@ export const CommissionsService = {
     ventanaUserId?: string // ID del usuario VENTANA cuando dimension=ventana
   ): Promise<Array<{
     date: string;
-    ventanaId?: string;
-    ventanaName?: string;
-    vendedorId?: string;
-    vendedorName?: string;
+    ventanaId?: string | null;
+    ventanaName?: string | null;
+    vendedorId?: string | null;
+    vendedorName?: string | null;
     totalSales: number;
     totalTickets: number;
     totalCommission: number;
@@ -76,6 +76,31 @@ export const CommissionsService = {
     commissionListero?: number;
     commissionVendedor?: number;
     net?: number; // ✅ NUEVO: Ganancia neta (totalSales - totalPayouts - commissionVendedor)
+    // ✅ NUEVO: Desglose por entidad (cuando hay agrupación)
+    byVentana?: Array<{
+      ventanaId: string;
+      ventanaName: string;
+      totalSales: number;
+      totalTickets: number;
+      totalCommission: number;
+      totalPayouts?: number;
+      commissionListero?: number;
+      commissionVendedor?: number;
+      net?: number;
+    }>;
+    byVendedor?: Array<{
+      vendedorId: string;
+      vendedorName: string;
+      ventanaId: string;
+      ventanaName: string;
+      totalSales: number;
+      totalTickets: number;
+      totalCommission: number;
+      totalPayouts?: number;
+      commissionListero?: number;
+      commissionVendedor?: number;
+      net?: number;
+    }>;
   }>> {
     try {
       // Resolver rango de fechas
@@ -84,6 +109,26 @@ export const CommissionsService = {
       const { startDateCRStr, endDateCRStr } = dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
       const fromDateStr = startDateCRStr;
       const toDateStr = endDateCRStr;
+
+      // ✅ NUEVO: Detectar si debemos agrupar por fecha solamente (sin separar por entidad)
+      // Agrupamos cuando dimension=ventana y ventanaId NO está especificado
+      // o cuando dimension=vendedor y vendedorId NO está especificado
+      // ✅ CRÍTICO: Verificar tanto undefined como null y cadena vacía
+      const shouldGroupByDate = 
+          (filters.dimension === "ventana" && (!filters.ventanaId || filters.ventanaId === "" || filters.ventanaId === null)) ||
+          (filters.dimension === "vendedor" && (!filters.vendedorId || filters.vendedorId === "" || filters.vendedorId === null));
+      
+      // ✅ DEBUG: Log para verificar agrupación
+      logger.info({
+          layer: "service",
+          action: "COMMISSIONS_GROUPING_CHECK",
+          payload: {
+              dimension: filters.dimension,
+              ventanaId: filters.ventanaId || null,
+              vendedorId: filters.vendedorId || null,
+              shouldGroupByDate,
+          },
+      });
 
       // Construir filtros WHERE dinámicos según RBAC
       const whereConditions: Prisma.Sql[] = [
@@ -282,9 +327,25 @@ export const CommissionsService = {
             )
           `;
 
-          // Agrupar jugadas por día y ventana, calculando todo desde las jugadas
+          // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
+          // Si no, agrupar por fecha + ventana (comportamiento original)
           const byDateAndVentana = new Map<
             string,
+            {
+              ventanaId: string | null;
+              ventanaName: string | null;
+              totalSales: number;
+              totalPayouts: number;
+              totalTickets: Set<string>;
+              commissionListero: number;
+              commissionVendedor: number;
+              payoutTickets: Set<string>;
+            }
+          >();
+
+          // ✅ NUEVO: Mapa para desglose por entidad (byVentana) cuando hay agrupación
+          const breakdownByEntity = new Map<
+            string, // `${dateKey}_${ventanaId}`
             {
               ventanaId: string;
               ventanaName: string;
@@ -337,14 +398,22 @@ export const CommissionsService = {
               continue; // Saltar jugadas fuera del período
             }
             jugadasProcessed++;
-            const key = `${dateKey}_${jugada.ventana_id}`;
+            
+            // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + ventana
+            const groupKey = shouldGroupByDate
+                ? dateKey // Solo fecha cuando hay agrupación
+                : `${dateKey}_${jugada.ventana_id}`;
+
+            // Clave para el desglose por entidad (siempre incluye entidad)
+            const breakdownKey = `${dateKey}_${jugada.ventana_id}`;
             ventanasSeen.add(jugada.ventana_id);
 
-            let entry = byDateAndVentana.get(key);
+            // Obtener o crear entrada principal (agrupada por fecha si shouldGroupByDate)
+            let entry = byDateAndVentana.get(groupKey);
             if (!entry) {
               entry = {
-                ventanaId: jugada.ventana_id,
-                ventanaName: jugada.ventana_name,
+                ventanaId: shouldGroupByDate ? null : jugada.ventana_id,
+                ventanaName: shouldGroupByDate ? null : jugada.ventana_name,
                 totalSales: 0,
                 totalPayouts: 0,
                 totalTickets: new Set<string>(),
@@ -352,9 +421,38 @@ export const CommissionsService = {
                 commissionVendedor: 0,
                 payoutTickets: new Set<string>(),
               };
-              byDateAndVentana.set(key, entry);
+              byDateAndVentana.set(groupKey, entry);
             }
 
+            // ✅ NUEVO: Mantener desglose por entidad cuando hay agrupación
+            if (shouldGroupByDate) {
+              let breakdownEntry = breakdownByEntity.get(breakdownKey);
+              if (!breakdownEntry) {
+                breakdownEntry = {
+                  ventanaId: jugada.ventana_id,
+                  ventanaName: jugada.ventana_name,
+                  totalSales: 0,
+                  totalPayouts: 0,
+                  totalTickets: new Set<string>(),
+                  commissionListero: 0,
+                  commissionVendedor: 0,
+                  payoutTickets: new Set<string>(),
+                };
+                breakdownByEntity.set(breakdownKey, breakdownEntry);
+              }
+
+              // Actualizar desglose por entidad
+              breakdownEntry.totalSales += jugada.amount;
+              breakdownEntry.totalTickets.add(jugada.ticket_id);
+              breakdownEntry.commissionListero += commissionListero;
+              breakdownEntry.commissionVendedor += Number(jugada.commission_amount || 0);
+              if (!breakdownEntry.payoutTickets.has(jugada.ticket_id)) {
+                breakdownEntry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+                breakdownEntry.payoutTickets.add(jugada.ticket_id);
+              }
+            }
+
+            // Actualizar entrada principal (agrupada)
             entry.totalSales += jugada.amount;
             entry.totalTickets.add(jugada.ticket_id);
             entry.commissionListero += commissionListero;
@@ -381,7 +479,8 @@ export const CommissionsService = {
           // Convertir a formato de respuesta
           const items = Array.from(byDateAndVentana.entries())
             .map(([key, entry]) => {
-              const date = key.split("_")[0];
+              // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_ventana
+              const date = shouldGroupByDate ? key : key.split("_")[0];
               // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado (doble verificación)
               if (date < startDateCRStr || date > endDateCRStr) {
                 return null; // Marcar para filtrar después
@@ -389,10 +488,13 @@ export const CommissionsService = {
               // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
               // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
               const totalCommission = entry.commissionListero;
-              return {
+              
+              const item: any = {
                 date, // YYYY-MM-DD
                 ventanaId: entry.ventanaId,
                 ventanaName: entry.ventanaName,
+                vendedorId: null,
+                vendedorName: null,
                 totalSales: entry.totalSales,
                 totalTickets: entry.totalTickets.size,
                 totalCommission, // Solo comisión de listero (ventana)
@@ -402,14 +504,42 @@ export const CommissionsService = {
                 // Ganancia neta para VENTANA: ventas - premios - comisión listero
                 net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
               };
+
+              // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
+              if (shouldGroupByDate) {
+                const ventanaBreakdown: any[] = [];
+                for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
+                  const breakdownDate = breakdownKey.split("_")[0];
+                  if (breakdownDate === date) {
+                    const breakdownTotalCommission = breakdownEntry.commissionListero;
+                    ventanaBreakdown.push({
+                      ventanaId: breakdownEntry.ventanaId,
+                      ventanaName: breakdownEntry.ventanaName,
+                      totalSales: breakdownEntry.totalSales,
+                      totalTickets: breakdownEntry.totalTickets.size,
+                      totalCommission: breakdownTotalCommission,
+                      totalPayouts: breakdownEntry.totalPayouts,
+                      commissionListero: breakdownEntry.commissionListero,
+                      commissionVendedor: breakdownEntry.commissionVendedor,
+                      net: breakdownEntry.totalSales - breakdownEntry.totalPayouts - breakdownEntry.commissionListero,
+                    });
+                  }
+                }
+                item.byVentana = ventanaBreakdown.sort((a, b) => a.ventanaName.localeCompare(b.ventanaName));
+              }
+
+              return item;
             })
             .filter((item): item is NonNullable<typeof item> => item !== null) // Filtrar nulls
             .sort((a, b) => {
-              // Ordenar por fecha DESC, luego por nombre de ventana ASC
+              // Ordenar por fecha DESC, luego por nombre de ventana ASC (si no hay agrupación)
               if (a.date !== b.date) {
                 return b.date.localeCompare(a.date);
               }
-              return a.ventanaName.localeCompare(b.ventanaName);
+              if (shouldGroupByDate) {
+                return 0; // No hay ordenamiento secundario cuando hay agrupación
+              }
+              return (a.ventanaName || "").localeCompare(b.ventanaName || "");
             });
 
           return items;
@@ -462,9 +592,25 @@ export const CommissionsService = {
             )
           `;
 
-          // Agrupar jugadas por día y ventana, usando snapshots de comisión
+          // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
+          // Si no, agrupar por fecha + ventana (comportamiento original)
           const byDateAndVentana = new Map<
             string,
+            {
+              ventanaId: string | null;
+              ventanaName: string | null;
+              totalSales: number;
+              totalPayouts: number;
+              totalTickets: Set<string>;
+              commissionListero: number;
+              commissionVendedor: number;
+              payoutTickets: Set<string>;
+            }
+          >();
+
+          // ✅ NUEVO: Mapa para desglose por entidad (byVentana) cuando hay agrupación
+          const breakdownByEntity = new Map<
+            string, // `${dateKey}_${ventanaId}`
             {
               ventanaId: string;
               ventanaName: string;
@@ -517,14 +663,22 @@ export const CommissionsService = {
               continue; // Saltar jugadas fuera del período
             }
             jugadasProcessed++;
-            const key = `${dateKey}_${jugada.ventana_id}`;
+            
+            // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + ventana
+            const groupKey = shouldGroupByDate
+                ? dateKey // Solo fecha cuando hay agrupación
+                : `${dateKey}_${jugada.ventana_id}`;
+
+            // Clave para el desglose por entidad (siempre incluye entidad)
+            const breakdownKey = `${dateKey}_${jugada.ventana_id}`;
             ventanasSeen.add(jugada.ventana_id);
 
-            let entry = byDateAndVentana.get(key);
+            // Obtener o crear entrada principal (agrupada por fecha si shouldGroupByDate)
+            let entry = byDateAndVentana.get(groupKey);
             if (!entry) {
               entry = {
-                ventanaId: jugada.ventana_id,
-                ventanaName: jugada.ventana_name,
+                ventanaId: shouldGroupByDate ? null : jugada.ventana_id,
+                ventanaName: shouldGroupByDate ? null : jugada.ventana_name,
                 totalSales: 0,
                 totalPayouts: 0,
                 totalTickets: new Set<string>(),
@@ -532,9 +686,38 @@ export const CommissionsService = {
                 commissionVendedor: 0,
                 payoutTickets: new Set<string>(),
               };
-              byDateAndVentana.set(key, entry);
+              byDateAndVentana.set(groupKey, entry);
             }
 
+            // ✅ NUEVO: Mantener desglose por entidad cuando hay agrupación
+            if (shouldGroupByDate) {
+              let breakdownEntry = breakdownByEntity.get(breakdownKey);
+              if (!breakdownEntry) {
+                breakdownEntry = {
+                  ventanaId: jugada.ventana_id,
+                  ventanaName: jugada.ventana_name,
+                  totalSales: 0,
+                  totalPayouts: 0,
+                  totalTickets: new Set<string>(),
+                  commissionListero: 0,
+                  commissionVendedor: 0,
+                  payoutTickets: new Set<string>(),
+                };
+                breakdownByEntity.set(breakdownKey, breakdownEntry);
+              }
+
+              // Actualizar desglose por entidad
+              breakdownEntry.totalSales += jugada.amount;
+              breakdownEntry.totalTickets.add(jugada.ticket_id);
+              breakdownEntry.commissionListero += commissionListero;
+              breakdownEntry.commissionVendedor += Number(jugada.commission_amount || 0);
+              if (!breakdownEntry.payoutTickets.has(jugada.ticket_id)) {
+                breakdownEntry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+                breakdownEntry.payoutTickets.add(jugada.ticket_id);
+              }
+            }
+
+            // Actualizar entrada principal (agrupada)
             entry.totalSales += jugada.amount;
             entry.totalTickets.add(jugada.ticket_id);
             entry.commissionListero += commissionListero;
@@ -561,7 +744,8 @@ export const CommissionsService = {
           // Convertir a formato de respuesta
           const items = Array.from(byDateAndVentana.entries())
             .map(([key, entry]) => {
-              const date = key.split("_")[0];
+              // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_ventana
+              const date = shouldGroupByDate ? key : key.split("_")[0];
               // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado (doble verificación)
               if (date < startDateCRStr || date > endDateCRStr) {
                 return null; // Marcar para filtrar después
@@ -569,10 +753,13 @@ export const CommissionsService = {
               // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
               // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
               const totalCommission = entry.commissionListero;
-              return {
+              
+              const item: any = {
                 date, // YYYY-MM-DD
                 ventanaId: entry.ventanaId,
                 ventanaName: entry.ventanaName,
+                vendedorId: null,
+                vendedorName: null,
                 totalSales: entry.totalSales,
                 totalTickets: entry.totalTickets.size,
                 totalCommission, // Solo comisión de listero (ventana)
@@ -582,14 +769,42 @@ export const CommissionsService = {
                 // Ganancia neta para VENTANA: ventas - premios - comisión listero
                 net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
               };
+
+              // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
+              if (shouldGroupByDate) {
+                const ventanaBreakdown: any[] = [];
+                for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
+                  const breakdownDate = breakdownKey.split("_")[0];
+                  if (breakdownDate === date) {
+                    const breakdownTotalCommission = breakdownEntry.commissionListero;
+                    ventanaBreakdown.push({
+                      ventanaId: breakdownEntry.ventanaId,
+                      ventanaName: breakdownEntry.ventanaName,
+                      totalSales: breakdownEntry.totalSales,
+                      totalTickets: breakdownEntry.totalTickets.size,
+                      totalCommission: breakdownTotalCommission,
+                      totalPayouts: breakdownEntry.totalPayouts,
+                      commissionListero: breakdownEntry.commissionListero,
+                      commissionVendedor: breakdownEntry.commissionVendedor,
+                      net: breakdownEntry.totalSales - breakdownEntry.totalPayouts - breakdownEntry.commissionListero,
+                    });
+                  }
+                }
+                item.byVentana = ventanaBreakdown.sort((a, b) => a.ventanaName.localeCompare(b.ventanaName));
+              }
+
+              return item;
             })
             .filter((item): item is NonNullable<typeof item> => item !== null) // Filtrar nulls
             .sort((a, b) => {
-              // Ordenar por fecha DESC, luego por nombre de ventana ASC
+              // Ordenar por fecha DESC, luego por nombre de ventana ASC (si no hay agrupación)
               if (a.date !== b.date) {
                 return b.date.localeCompare(a.date);
               }
-              return a.ventanaName.localeCompare(b.ventanaName);
+              if (shouldGroupByDate) {
+                return 0; // No hay ordenamiento secundario cuando hay agrupación
+              }
+              return (a.ventanaName || "").localeCompare(b.ventanaName || "");
             });
 
           return items;
@@ -628,6 +843,8 @@ export const CommissionsService = {
             business_date: Date;
             vendedor_id: string;
             vendedor_name: string;
+            ventana_id: string;
+            ventana_name: string;
             ticket_id: string;
             amount: number;
             ticket_total_payout: number | null;
@@ -642,6 +859,8 @@ export const CommissionsService = {
             ) as business_date,
             t."vendedorId" as vendedor_id,
             u.name as vendedor_name,
+            v.id as ventana_id,
+            v.name as ventana_name,
             t.id as ticket_id,
             j.amount,
             t."totalPayout" as ticket_total_payout,
@@ -650,6 +869,7 @@ export const CommissionsService = {
           FROM "Ticket" t
           INNER JOIN "Jugada" j ON j."ticketId" = t.id AND j."deletedAt" IS NULL AND j."isExcluded" IS FALSE
           INNER JOIN "User" u ON u.id = t."vendedorId"
+          INNER JOIN "Ventana" v ON v.id = t."ventanaId"
           ${whereClause}
           AND NOT EXISTS (
             SELECT 1 FROM "sorteo_lista_exclusion" sle
@@ -661,12 +881,32 @@ export const CommissionsService = {
           )
         `;
 
-        // Agrupar jugadas por día y vendedor, usando snapshots de comisión
+        // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
+        // Si no, agrupar por fecha + vendedor (comportamiento original)
         const byDateAndVendedor = new Map<
           string,
           {
+            vendedorId: string | null;
+            vendedorName: string | null;
+            ventanaId: string | null;
+            ventanaName: string | null;
+            totalSales: number;
+            totalPayouts: number;
+            totalTickets: Set<string>;
+            commissionListero: number;
+            commissionVendedor: number;
+            payoutTickets: Set<string>;
+          }
+        >();
+
+        // ✅ NUEVO: Mapa para desglose por entidad (byVendedor) cuando hay agrupación
+        const breakdownByEntity = new Map<
+          string, // `${dateKey}_${vendedorId}`
+          {
             vendedorId: string;
             vendedorName: string;
+            ventanaId: string;
+            ventanaName: string;
             totalSales: number;
             totalPayouts: number;
             totalTickets: Set<string>;
@@ -682,32 +922,73 @@ export const CommissionsService = {
             if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
               continue; // Saltar jugadas fuera del período
             }
-          const key = `${dateKey}_${jugada.vendedor_id}`;
 
-          let entry = byDateAndVendedor.get(key);
-          if (!entry) {
-            entry = {
-              vendedorId: jugada.vendedor_id,
-              vendedorName: jugada.vendedor_name,
-              totalSales: 0,
-              totalPayouts: 0,
-              totalTickets: new Set<string>(),
-              commissionListero: 0,
-              commissionVendedor: 0,
-              payoutTickets: new Set<string>(),
-            };
-            byDateAndVendedor.set(key, entry);
-          }
+            // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + vendedor
+            const groupKey = shouldGroupByDate
+                ? dateKey // Solo fecha cuando hay agrupación
+                : `${dateKey}_${jugada.vendedor_id}`;
 
-          entry.totalSales += jugada.amount;
-          entry.totalTickets.add(jugada.ticket_id);
-          // Usar snapshot de comisión del listero guardado en BD
-          entry.commissionListero += Number(jugada.listero_commission_amount || 0);
-          entry.commissionVendedor += Number(jugada.commission_amount || 0);
-          if (!entry.payoutTickets.has(jugada.ticket_id)) {
-            entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-            entry.payoutTickets.add(jugada.ticket_id);
-          }
+            // Clave para el desglose por entidad (siempre incluye entidad)
+            const breakdownKey = `${dateKey}_${jugada.vendedor_id}`;
+
+            // Obtener o crear entrada principal (agrupada por fecha si shouldGroupByDate)
+            let entry = byDateAndVendedor.get(groupKey);
+            if (!entry) {
+              entry = {
+                vendedorId: shouldGroupByDate ? null : jugada.vendedor_id,
+                vendedorName: shouldGroupByDate ? null : jugada.vendedor_name,
+                ventanaId: shouldGroupByDate ? null : jugada.ventana_id,
+                ventanaName: shouldGroupByDate ? null : jugada.ventana_name,
+                totalSales: 0,
+                totalPayouts: 0,
+                totalTickets: new Set<string>(),
+                commissionListero: 0,
+                commissionVendedor: 0,
+                payoutTickets: new Set<string>(),
+              };
+              byDateAndVendedor.set(groupKey, entry);
+            }
+
+            // ✅ NUEVO: Mantener desglose por entidad cuando hay agrupación
+            if (shouldGroupByDate) {
+              let breakdownEntry = breakdownByEntity.get(breakdownKey);
+              if (!breakdownEntry) {
+                breakdownEntry = {
+                  vendedorId: jugada.vendedor_id,
+                  vendedorName: jugada.vendedor_name,
+                  ventanaId: jugada.ventana_id,
+                  ventanaName: jugada.ventana_name,
+                  totalSales: 0,
+                  totalPayouts: 0,
+                  totalTickets: new Set<string>(),
+                  commissionListero: 0,
+                  commissionVendedor: 0,
+                  payoutTickets: new Set<string>(),
+                };
+                breakdownByEntity.set(breakdownKey, breakdownEntry);
+              }
+
+              // Actualizar desglose por entidad
+              breakdownEntry.totalSales += jugada.amount;
+              breakdownEntry.totalTickets.add(jugada.ticket_id);
+              breakdownEntry.commissionListero += Number(jugada.listero_commission_amount || 0);
+              breakdownEntry.commissionVendedor += Number(jugada.commission_amount || 0);
+              if (!breakdownEntry.payoutTickets.has(jugada.ticket_id)) {
+                breakdownEntry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+                breakdownEntry.payoutTickets.add(jugada.ticket_id);
+              }
+            }
+
+            // Actualizar entrada principal (agrupada)
+            entry.totalSales += jugada.amount;
+            entry.totalTickets.add(jugada.ticket_id);
+            // Usar snapshot de comisión del listero guardado en BD
+            entry.commissionListero += Number(jugada.listero_commission_amount || 0);
+            entry.commissionVendedor += Number(jugada.commission_amount || 0);
+            if (!entry.payoutTickets.has(jugada.ticket_id)) {
+              entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+              entry.payoutTickets.add(jugada.ticket_id);
+            }
         }
 
         logger.info({
@@ -725,11 +1006,15 @@ export const CommissionsService = {
 
         // Convertir a formato de respuesta
         const items = Array.from(byDateAndVendedor.entries()).map(([key, entry]) => {
-          const date = key.split("_")[0];
-          return {
+          // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_vendedor
+          const date = shouldGroupByDate ? key : key.split("_")[0];
+          
+          const item: any = {
             date, // YYYY-MM-DD
             vendedorId: entry.vendedorId,
             vendedorName: entry.vendedorName,
+            ventanaId: entry.ventanaId,
+            ventanaName: entry.ventanaName,
             totalSales: entry.totalSales,
             totalTickets: entry.totalTickets.size,
             totalCommission: entry.commissionListero + entry.commissionVendedor,
@@ -742,12 +1027,42 @@ export const CommissionsService = {
             gananciaNeta: entry.totalSales - entry.totalPayouts - entry.commissionListero,
             net: entry.totalSales - entry.totalPayouts - entry.commissionListero, // Alias
           };
+
+          // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
+          if (shouldGroupByDate) {
+            const vendedorBreakdown: any[] = [];
+            for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
+              const breakdownDate = breakdownKey.split("_")[0];
+              if (breakdownDate === date) {
+                const breakdownTotalCommission = breakdownEntry.commissionListero + breakdownEntry.commissionVendedor;
+                vendedorBreakdown.push({
+                  vendedorId: breakdownEntry.vendedorId,
+                  vendedorName: breakdownEntry.vendedorName,
+                  ventanaId: breakdownEntry.ventanaId,
+                  ventanaName: breakdownEntry.ventanaName,
+                  totalSales: breakdownEntry.totalSales,
+                  totalTickets: breakdownEntry.totalTickets.size,
+                  totalCommission: breakdownTotalCommission,
+                  totalPayouts: breakdownEntry.totalPayouts,
+                  commissionListero: breakdownEntry.commissionListero,
+                  commissionVendedor: breakdownEntry.commissionVendedor,
+                  net: breakdownEntry.totalSales - breakdownEntry.totalPayouts - breakdownEntry.commissionListero,
+                });
+              }
+            }
+            item.byVendedor = vendedorBreakdown.sort((a, b) => a.vendedorName.localeCompare(b.vendedorName));
+          }
+
+          return item;
         }).sort((a, b) => {
-          // Ordenar por fecha DESC, luego por nombre ASC
+          // Ordenar por fecha DESC, luego por nombre ASC (si no hay agrupación)
           if (a.date !== b.date) {
             return b.date.localeCompare(a.date);
           }
-          return a.vendedorName.localeCompare(b.vendedorName);
+          if (shouldGroupByDate) {
+            return 0; // No hay ordenamiento secundario cuando hay agrupación
+          }
+          return (a.vendedorName || "").localeCompare(b.vendedorName || "");
         });
 
         return items;
