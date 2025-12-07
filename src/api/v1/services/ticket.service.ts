@@ -6,7 +6,8 @@ import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 import { isWithinSalesHours, validateTicketAgainstRules } from "../../../utils/loteriaRules";
-import { prepareCommissionContext, preCalculateCommissions } from "../../../utils/commissionPrecalc";
+import { commissionService } from "../../../services/commission/CommissionService";
+import { CommissionContext } from "../../../services/commission/types/CommissionContext";
 import { getExclusionWhereCondition } from "./sorteo-listas.helpers";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { UserService } from "./user.service";
@@ -289,7 +290,7 @@ export const TicketService = {
       ]);
 
       // Preparar contexto de comisiones (parsear y cachear políticas)
-      const commissionContext = await prepareCommissionContext(
+      const commissionContext = await commissionService.prepareContext(
         effectiveVendedorId,
         ventanaId,
         ventana.bancaId,

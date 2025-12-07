@@ -1,20 +1,13 @@
 // src/utils/commissionPrecalc.ts
-import { CommissionSnapshot, CommissionMatchInput, findMatchingRule, parseCommissionPolicy } from '../services/commission.resolver';
-import { getCachedCommissionPolicy } from './commissionCache';
-import logger from '../core/logger';
+// ⚠️ DEPRECATED: Este archivo está deprecado. Usar CommissionService de src/services/commission/CommissionService.ts
+// Se mantiene por compatibilidad durante la migración
+
+import { commissionService } from '../services/commission/CommissionService';
+import { CommissionSnapshot, CommissionMatchInput } from '../services/commission/types/CommissionTypes';
+import { CommissionContext } from '../services/commission/types/CommissionContext';
 
 /**
- * Contexto de políticas de comisión ya parseadas y cacheadas
- */
-export interface CommissionContext {
-  userPolicy: any;
-  ventanaPolicy: any;
-  bancaPolicy: any;
-  listeroPolicy: any;
-}
-
-/**
- * Prepara el contexto de comisiones (parsea y cachea políticas)
+ * @deprecated Usar CommissionService.prepareContext() en su lugar
  */
 export async function prepareCommissionContext(
   userId: string | null,
@@ -25,78 +18,30 @@ export async function prepareCommissionContext(
   bancaPolicyJson: any,
   listeroPolicyJson: any = null
 ): Promise<CommissionContext> {
-  const userPolicy = userId ? await getCachedCommissionPolicy("USER", userId, userPolicyJson) : null;
-  const ventanaPolicy = await getCachedCommissionPolicy("VENTANA", ventanaId, ventanaPolicyJson);
-  const bancaPolicy = await getCachedCommissionPolicy("BANCA", bancaId, bancaPolicyJson);
-  const listeroPolicy = listeroPolicyJson ? parseCommissionPolicy(listeroPolicyJson, "USER") : null;
-
-  return {
-    userPolicy,
-    ventanaPolicy,
-    bancaPolicy,
-    listeroPolicy,
-  };
+  return commissionService.prepareContext(
+    userId,
+    ventanaId,
+    bancaId,
+    userPolicyJson,
+    ventanaPolicyJson,
+    bancaPolicyJson,
+    listeroPolicyJson
+  );
 }
 
 /**
- * Pre-calcula comisiones para múltiples jugadas usando políticas ya parseadas
- * Versión optimizada que evita parsing repetitivo
+ * @deprecated Usar CommissionService.calculateCommissionForJugada() en su lugar
  */
 export function resolveCommissionFast(
   input: CommissionMatchInput,
   context: CommissionContext
 ): CommissionSnapshot {
-  // Intentar resolver desde USER
-  if (context.userPolicy) {
-    const match = findMatchingRule(context.userPolicy, input);
-    if (match) {
-      const commissionAmount = parseFloat(((input.amount * match.percent) / 100).toFixed(2));
-      return {
-        commissionPercent: match.percent,
-        commissionAmount,
-        commissionOrigin: "USER",
-        commissionRuleId: match.ruleId,
-      };
-    }
-  }
-
-  // Intentar resolver desde VENTANA
-  if (context.ventanaPolicy) {
-    const match = findMatchingRule(context.ventanaPolicy, input);
-    if (match) {
-      const commissionAmount = parseFloat(((input.amount * match.percent) / 100).toFixed(2));
-      return {
-        commissionPercent: match.percent,
-        commissionAmount,
-        commissionOrigin: "VENTANA",
-        commissionRuleId: match.ruleId,
-      };
-    }
-  }
-
-  // Intentar resolver desde BANCA
-  if (context.bancaPolicy) {
-    const match = findMatchingRule(context.bancaPolicy, input);
-    if (match) {
-      const commissionAmount = parseFloat(((input.amount * match.percent) / 100).toFixed(2));
-      return {
-        commissionPercent: match.percent,
-        commissionAmount,
-        commissionOrigin: "BANCA",
-        commissionRuleId: match.ruleId,
-      };
-    }
-  }
-
-  // Si no hay match
-  return {
-    commissionPercent: 0,
-    commissionAmount: 0,
-    commissionOrigin: null,
-    commissionRuleId: null,
-  };
+  return commissionService.calculateCommissionForJugada(input, context);
 }
 
+/**
+ * @deprecated Usar CommissionService.calculateCommissionsForJugadas() en su lugar
+ */
 export function preCalculateCommissions(
   jugadas: Array<{
     type: "NUMERO" | "REVENTADO";
@@ -116,20 +61,8 @@ export function preCalculateCommissions(
   commissionOrigin: "USER" | "VENTANA" | "BANCA" | null;
   commissionRuleId: string | null;
 }> {
-  return jugadas.map((j) => {
-    const commission = resolveCommissionFast(
-      {
-        loteriaId,
-        betType: j.type,
-        finalMultiplierX: j.finalMultiplierX,
-        amount: j.amount,
-      },
-      context
-    );
-
-    return {
-      ...j,
-      ...commission,
-    };
-  });
+  return commissionService.calculateCommissionsForJugadas(jugadas, loteriaId, context);
 }
+
+// Re-exportar tipos para compatibilidad
+export type { CommissionContext };

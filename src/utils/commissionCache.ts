@@ -1,5 +1,6 @@
 // src/utils/commissionCache.ts
-import { CommissionPolicy } from '../services/commission.resolver';
+import { CommissionPolicy } from '../services/commission/types/CommissionTypes';
+import { parseCommissionPolicy } from '../services/commission/utils/PolicyParser';
 import logger from '../core/logger';
 
 /**
@@ -31,8 +32,7 @@ export function getCachedCommissionPolicy(
     return cached.policy;
   }
 
-  // Parsear política (usar función del resolver)
-  const { parseCommissionPolicy } = require('../services/commission.resolver');
+  // Parsear política usando el nuevo parser
   const policy = parseCommissionPolicy(policyJson, entityType);
 
   // Cachear resultado

@@ -581,7 +581,11 @@ export async function getStatementDirect(
                 return m.vendedorId === entry.vendedorId;
             }
         });
-        const bySorteo = sorteoBreakdownBatch.get(date) || [];
+        // ✅ CRÍTICO: Obtener desglose por sorteo usando clave `${date}_${ventanaId}` o `${date}_${vendedorId}`
+        const sorteoKey = dimension === "ventana"
+            ? `${date}_${entry.ventanaId}`
+            : `${date}_${entry.vendedorId || 'null'}`;
+        const bySorteo = sorteoBreakdownBatch.get(sorteoKey) || [];
 
         // Calcular totales de pagos y cobros
         const totalPaid = movements
@@ -638,7 +642,9 @@ export async function getStatementDirect(
         : totalSales - totalPayouts - totalVendedorCommission;
     const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
     const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
-    const totalRemainingBalance = statements.reduce((sum, s) => sum + s.remainingBalance, 0);
+    // ✅ CRÍTICO: Calcular totalRemainingBalance desde los totales agregados, NO sumando remainingBalance individuales
+    // Esto asegura consistencia matemática: remainingBalance = balance - totalCollected + totalPaid
+    const totalRemainingBalance = totalBalance - totalCollected + totalPaid;
 
 
 
@@ -898,6 +904,8 @@ export async function getStatementDirect(
         }).length;
     const monthlyPendingDays = monthlyByDateAndDimension.size - monthlySettledDays;
 
+    // ✅ CRÍTICO: Calcular monthlyRemainingBalance desde los totales agregados del mes
+    // Esto asegura consistencia matemática: remainingBalance = balance - totalCollected + totalPaid
     const monthlyRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
 
     const monthlyAccumulated: StatementTotals = {
