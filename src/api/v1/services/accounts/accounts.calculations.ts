@@ -5,7 +5,8 @@ import { AppError } from "../../../../core/errors";
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
 import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";
 import { calculateIsSettled } from "./accounts.commissions";
-import { buildTicketDateFilter, toCRDateString } from "./accounts.dates.utils";
+import { buildTicketDateFilter } from "./accounts.dates.utils";
+import { crDateService } from "../../../../utils/crDateService";
 import { AccountsFilters, DayStatement, StatementTotals } from "./accounts.types";
 import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
 import { resolveCommission } from "../../../../services/commission.resolver";
@@ -356,17 +357,8 @@ export async function getStatementDirect(
     userRole: "ADMIN" | "VENTANA" | "VENDEDOR" = "ADMIN",
     sort: "asc" | "desc" = "desc"
 ) {
-    // ✅ SOLUCIÓN DEFINITIVA: Usar directamente las fechas CR desde resolveDateRange
-    // En lugar de convertir Date UTC (que tiene problemas de zona horaria),
-    // extraer directamente la fecha CR del Date UTC restando el offset antes de convertir
-    // startDate es 06:00 UTC del día en CR, restar 6 horas para obtener 00:00 UTC = día correcto
-    const startDateCR = new Date(startDate.getTime() - (6 * 60 * 60 * 1000));
-    const startDateCRStr = startDateCR.toISOString().split('T')[0];
-    
-    // endDate es 05:59:59.999 UTC del día siguiente (fin del día anterior en CR)
-    // Restar 6 horas para obtener 23:59:59.999 UTC del día anterior = día correcto
-    const endDateCR = new Date(endDate.getTime() - (6 * 60 * 60 * 1000));
-    const endDateCRStr = endDateCR.toISOString().split('T')[0];
+    // ✅ CORRECCIÓN: Usar servicio centralizado para conversión de fechas
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
 
     // Construir filtros WHERE dinámicos según RBAC (igual que commissions)
     const whereConditions: Prisma.Sql[] = [
@@ -485,10 +477,10 @@ export async function getStatementDirect(
         // El snapshot es la fuente de verdad para comisiones ya que es lo que se pagó en ese momento
         const commissionListeroFinal = Number(jugada.listero_commission_amount || 0);
 
-        const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
+        const dateKey = crDateService.postgresDateToCRString(jugada.business_date);
         
         // ✅ CRÍTICO: Filtrar jugadas fuera del período solicitado ANTES de agregarlas al mapa
-        if (dateKey < startDateCRStr || dateKey > endDateCRStr) {
+        if (!crDateService.isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
             continue; // Saltar jugadas fuera del período
         }
         
@@ -682,8 +674,8 @@ export async function getStatementDirect(
     const [year, month] = effectiveMonth.split("-").map(Number);
     const monthStartDate = new Date(Date.UTC(year, month - 1, 1)); // Primer día del mes
     const monthEndDate = new Date(Date.UTC(year, month, 0)); // Último día del mes
-    const monthStartDateCRStr = toCRDateString(monthStartDate);
-    const monthEndDateCRStr = toCRDateString(monthEndDate);
+    const monthStartDateCRStr = crDateService.dateUTCToCRString(monthStartDate);
+    const monthEndDateCRStr = crDateService.dateUTCToCRString(monthEndDate);
 
     // Construir WHERE conditions para el mes completo
     const monthlyWhereConditions: Prisma.Sql[] = [
@@ -803,7 +795,7 @@ export async function getStatementDirect(
         // ✅ CORREGIDO: Usar listeroCommissionAmount directamente de Jugada (igual que dashboard)
         // Esto asegura consistencia entre ambos endpoints
         const commissionListeroFinal = Number(jugada.listero_commission_amount || 0);
-        const dateKey = jugada.business_date.toISOString().split("T")[0];
+        const dateKey = crDateService.postgresDateToCRString(jugada.business_date);
         const key = dimension === "ventana"
             ? `${dateKey}_${jugada.ventana_id}`
             : `${dateKey}_${jugada.vendedor_id || 'null'}`;
@@ -969,8 +961,8 @@ export async function getStatementDirect(
             endDate: endDateCRStr,
             dimension,
             totalDays: daysInMonth,
-            monthStartDate: toCRDateString(monthStartDate),
-            monthEndDate: toCRDateString(monthEndDate),
+            monthStartDate: crDateService.dateUTCToCRString(monthStartDate),
+            monthEndDate: crDateService.dateUTCToCRString(monthEndDate),
         },
     };
 }
@@ -982,7 +974,7 @@ export async function getStatementDirect(
 async function getExcludedTicketIdsForDate(date: Date): Promise<string[]> {
     // Convertir fecha a string YYYY-MM-DD para comparación SQL
     // Nota: date viene como objeto Date UTC (00:00:00Z) que representa el día
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = crDateService.dateUTCToCRString(date);
 
     const excludedIds = await prisma.$queryRaw<{ id: string }[]>`
       SELECT t.id

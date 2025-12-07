@@ -4,7 +4,8 @@ import logger from "../../../../core/logger";
 import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";
 import { resolveCommission } from "../../../../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
-import { toCRDateString, buildTicketDateFilter } from "./accounts.dates.utils";
+import { buildTicketDateFilter } from "./accounts.dates.utils";
+import { crDateService } from "../../../../utils/crDateService";
 
 /**
  * ✅ OPTIMIZACIÓN: Lee resúmenes diarios de la vista materializada
@@ -31,9 +32,8 @@ export async function getDailySummariesFromMaterializedView(
     try {
         // ⚠️ CRÍTICO: Convertir fechas UTC a fechas CR antes de usar en SQL
         // startDate y endDate son instantes UTC que representan días en CR
-        // NO usar toISOString().split('T')[0] directamente (extrae fecha UTC, no CR)
-        const startDateCR = toCRDateString(startDate);
-        const endDateCR = toCRDateString(endDate);
+        // Usar servicio centralizado para conversión de fechas
+        const { startDateCRStr: startDateCR, endDateCRStr: endDateCR } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
 
         // ⚠️ CRÍTICO: Usar límite exclusivo para excluir el inicio del día siguiente
         // endDate representa el fin del último día incluido (ej: 2025-11-20T05:59:59.999Z = fin del 19 en CR)
@@ -109,9 +109,9 @@ export async function getDailySummariesFromMaterializedView(
 
         for (const summary of summaries) {
             // ⚠️ CRÍTICO: summary.date viene de la BD como DATE (sin hora), representando un día calendario en CR
-            // Usar toCRDateString para obtener la fecha CR correcta (aunque summary.date ya debería estar en CR)
-            // Esto asegura consistencia con el resto del código
-            const dateKey = toCRDateString(summary.date);
+            // Usar servicio centralizado para obtener la fecha CR correcta
+            // summary.date viene de PostgreSQL DATE, usar postgresDateToCRString
+            const dateKey = crDateService.postgresDateToCRString(summary.date);
             resultMap.set(dateKey, {
                 date: summary.date,
                 ventanaId: summary.ventanaId,

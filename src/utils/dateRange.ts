@@ -85,12 +85,20 @@ export interface DateRangeResolution {
  * 1. Semantic tokens: 'today', 'yesterday', 'week', 'month', 'year'
  * 2. Custom range: date='range' con fromDate/toDate en YYYY-MM-DD
  *
+ * ⚠️ REGLAS CRÍTICAS:
+ * - Si se proporciona fromDate o toDate, date DEBE ser 'range'
+ * - Si date='range', fromDate y toDate son REQUERIDOS
+ * - fromDate debe ser ≤ toDate
+ * - toDate debe ser ≤ today (fecha actual en CR)
+ * - Todas las fechas deben estar en formato YYYY-MM-DD
+ *
  * @param date 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'range'
- * @param fromDate YYYY-MM-DD (requerido si date='range')
- * @param toDate YYYY-MM-DD (requerido si date='range')
+ * @param fromDate YYYY-MM-DD (requerido si date='range', o si date no es 'range' pero se proporciona toDate)
+ * @param toDate YYYY-MM-DD (requerido si date='range', o si date no es 'range' pero se proporciona fromDate)
  * @param serverNow Fecha actual (para testing); defecto: new Date()
  *
  * @throws AppError(400, 'SLS_2001') si fechas son inválidas
+ * @throws AppError(400, 'SLS_2001') si date no es 'range' pero se proporcionan fromDate/toDate
  * @throws AppError(400, 'SLS_2001') si rango es futuro
  * @throws AppError(400, 'SLS_2001') si fromDate > toDate
  */
@@ -100,6 +108,19 @@ export function resolveDateRange(
   toDate?: string,
   serverNow: Date = new Date()
 ): DateRangeResolution {
+  // ✅ CRÍTICO: Validar que si hay fromDate/toDate, date debe ser 'range'
+  if ((fromDate || toDate) && date !== 'range') {
+    throw new AppError('date must be "range" when fromDate or toDate are provided', 400, {
+      code: 'SLS_2001',
+      details: [
+        {
+          field: 'date',
+          reason: 'date must be "range" when using fromDate or toDate'
+        }
+      ]
+    });
+  }
+
   // Validar parámetro 'date'
   const validDates = ['today', 'yesterday', 'week', 'month', 'year', 'range'];
   if (!validDates.includes(date)) {

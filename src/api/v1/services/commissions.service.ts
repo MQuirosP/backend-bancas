@@ -7,8 +7,8 @@ import logger from "../../../core/logger";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { commissionSnapshotService, CommissionSnapshotFilters } from "../../../services/commission/CommissionSnapshotService";
 import { commissionAggregationService } from "../../../services/commission/CommissionAggregationService";
-import { toCRDateString } from "./accounts/accounts.dates.utils";
-import { dateRangeUTCToCRStrings, postgresDateToCRString, isDateInCRRange } from "../../../utils/crDateService";
+import { crDateService } from "../../../utils/crDateService";
+const { dateRangeUTCToCRStrings, postgresDateToCRString, isDateInCRRange } = crDateService;
 
 /**
  * Filtros para queries de comisiones
@@ -39,15 +39,7 @@ interface CommissionsFilters {
  * 
  * Solución: Extraer directamente año, mes, día sin ajustar zona horaria
  */
-function businessDateToCRString(businessDate: Date): string {
-  // business_date viene como DATE desde SQL (sin hora, solo día calendario)
-  // Prisma lo convierte a Date con 00:00:00.000Z, pero ya representa el día correcto
-  // Extraer directamente año, mes, día sin ajustar zona horaria
-  const year = businessDate.getUTCFullYear();
-  const month = String(businessDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(businessDate.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
+// ⚠️ DEPRECATED: Usar crDateService.postgresDateToCRString() en su lugar
 
 /**
  * Commissions Service
@@ -862,11 +854,8 @@ export const CommissionsService = {
     try {
       // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
-      // ✅ CORRECCIÓN: Usar toCRDateString de forma consistente (igual que accounts)
-      const startDateCRStr = toCRDateString(dateRange.fromAt);
-      // Para endDate, restar 6 horas antes de convertir para evitar incluir el día siguiente
-      const endDateAdjusted = new Date(dateRange.toAt.getTime() - (6 * 60 * 60 * 1000));
-      const endDateCRStr = toCRDateString(endDateAdjusted);
+      // ✅ CORRECCIÓN: Usar servicio centralizado para conversión de fechas
+      const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
       const fromDateStr = startDateCRStr;
       const toDateStr = endDateCRStr;
 
@@ -1469,11 +1458,8 @@ export const CommissionsService = {
 
       // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
-      // ✅ CORRECCIÓN: Usar toCRDateString de forma consistente (igual que accounts)
-      const startDateCRStr = toCRDateString(dateRange.fromAt);
-      // Para endDate, restar 6 horas antes de convertir para evitar incluir el día siguiente
-      const endDateAdjusted = new Date(dateRange.toAt.getTime() - (6 * 60 * 60 * 1000));
-      const endDateCRStr = toCRDateString(endDateAdjusted);
+      // ✅ CORRECCIÓN: Usar servicio centralizado para conversión de fechas
+      const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
       const fromDateStr = startDateCRStr;
       const toDateStr = endDateCRStr;
 
