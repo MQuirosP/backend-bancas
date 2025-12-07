@@ -120,11 +120,11 @@ export class CommissionAggregationService {
         dateParts.push(Prisma.sql`t."businessDate" <= ${filters.dateTo}`);
       }
       if (dateParts.length > 0) {
-        whereConditions.push(Prisma.sql`(${Prisma.sql.join(dateParts, Prisma.sql` AND `)})`);
+        whereConditions.push(Prisma.sql`(${Prisma.join(dateParts, ' AND ')})`);
       }
     }
 
-    const whereSql = Prisma.sql.join(whereConditions, Prisma.sql` AND `);
+    const whereSql = Prisma.join(whereConditions, ' AND ');
 
     const result = await prisma.$queryRaw<Array<{
       ventana_id: string;
@@ -213,11 +213,11 @@ export class CommissionAggregationService {
         dateParts.push(Prisma.sql`t."businessDate" <= ${filters.dateTo}`);
       }
       if (dateParts.length > 0) {
-        whereConditions.push(Prisma.sql`(${Prisma.sql.join(dateParts, Prisma.sql` AND `)})`);
+        whereConditions.push(Prisma.sql`(${Prisma.join(dateParts, ' AND ')})`);
       }
     }
 
-    const whereSql = Prisma.sql.join(whereConditions, Prisma.sql` AND `);
+    const whereSql = Prisma.join(whereConditions, ' AND ');
 
     const result = await prisma.$queryRaw<Array<{
       vendedor_id: string;
@@ -312,11 +312,11 @@ export class CommissionAggregationService {
         dateParts.push(Prisma.sql`t."businessDate" <= ${filters.dateTo}`);
       }
       if (dateParts.length > 0) {
-        whereConditions.push(Prisma.sql`(${Prisma.sql.join(dateParts, Prisma.sql` AND `)})`);
+        whereConditions.push(Prisma.sql`(${Prisma.join(dateParts, ' AND ')})`);
       }
     }
 
-    const whereSql = Prisma.sql.join(whereConditions, Prisma.sql` AND `);
+    const whereSql = Prisma.join(whereConditions, ' AND ');
 
     const result = await prisma.$queryRaw<Array<{
       loteria_id: string;
@@ -405,11 +405,11 @@ export class CommissionAggregationService {
         dateParts.push(Prisma.sql`t."businessDate" <= ${filters.dateTo}`);
       }
       if (dateParts.length > 0) {
-        whereConditions.push(Prisma.sql`(${Prisma.sql.join(dateParts, Prisma.sql` AND `)})`);
+        whereConditions.push(Prisma.sql`(${Prisma.join(dateParts, ' AND ')})`);
       }
     }
 
-    const whereSql = Prisma.sql.join(whereConditions, Prisma.sql` AND `);
+    const whereSql = Prisma.join(whereConditions, ' AND ');
 
     const result = await prisma.$queryRaw<Array<{
       sorteo_id: string;
@@ -498,11 +498,11 @@ export class CommissionAggregationService {
         dateParts.push(Prisma.sql`t."businessDate" <= ${filters.dateTo}`);
       }
       if (dateParts.length > 0) {
-        whereConditions.push(Prisma.sql`(${Prisma.sql.join(dateParts, Prisma.sql` AND `)})`);
+        whereConditions.push(Prisma.sql`(${Prisma.join(dateParts, ' AND ')})`);
       }
     }
 
-    const whereSql = Prisma.sql.join(whereConditions, Prisma.sql` AND `);
+    const whereSql = Prisma.join(whereConditions, ' AND ');
 
     const result = await prisma.$queryRaw<Array<{
       total_sales: number;
