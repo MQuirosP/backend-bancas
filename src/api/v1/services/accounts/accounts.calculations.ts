@@ -356,8 +356,17 @@ export async function getStatementDirect(
     userRole: "ADMIN" | "VENTANA" | "VENDEDOR" = "ADMIN",
     sort: "asc" | "desc" = "desc"
 ) {
-    const startDateCRStr = toCRDateString(startDate);
-    const endDateCRStr = toCRDateString(endDate);
+    // ✅ SOLUCIÓN DEFINITIVA: Usar directamente las fechas CR desde resolveDateRange
+    // En lugar de convertir Date UTC (que tiene problemas de zona horaria),
+    // extraer directamente la fecha CR del Date UTC restando el offset antes de convertir
+    // startDate es 06:00 UTC del día en CR, restar 6 horas para obtener 00:00 UTC = día correcto
+    const startDateCR = new Date(startDate.getTime() - (6 * 60 * 60 * 1000));
+    const startDateCRStr = startDateCR.toISOString().split('T')[0];
+    
+    // endDate es 05:59:59.999 UTC del día siguiente (fin del día anterior en CR)
+    // Restar 6 horas para obtener 23:59:59.999 UTC del día anterior = día correcto
+    const endDateCR = new Date(endDate.getTime() - (6 * 60 * 60 * 1000));
+    const endDateCRStr = endDateCR.toISOString().split('T')[0];
 
     // Construir filtros WHERE dinámicos según RBAC (igual que commissions)
     const whereConditions: Prisma.Sql[] = [
@@ -477,6 +486,12 @@ export async function getStatementDirect(
         const commissionListeroFinal = Number(jugada.listero_commission_amount || 0);
 
         const dateKey = jugada.business_date.toISOString().split("T")[0]; // YYYY-MM-DD
+        
+        // ✅ CRÍTICO: Filtrar jugadas fuera del período solicitado ANTES de agregarlas al mapa
+        if (dateKey < startDateCRStr || dateKey > endDateCRStr) {
+            continue; // Saltar jugadas fuera del período
+        }
+        
         const key = dimension === "ventana"
             ? `${dateKey}_${jugada.ventana_id}`
             : `${dateKey}_${jugada.vendedor_id || 'null'}`;
@@ -522,7 +537,13 @@ export async function getStatementDirect(
     );
 
     // ✅ NUEVO: Incorporar días que solo tienen movimientos (sin ventas)
+    // ✅ CRÍTICO: Filtrar movimientos fuera del período solicitado ANTES de agregarlos al mapa
     for (const [dateKey, movements] of movementsByDate.entries()) {
+        // Filtrar fechas fuera del período
+        if (dateKey < startDateCRStr || dateKey > endDateCRStr) {
+            continue; // Saltar movimientos fuera del período
+        }
+        
         for (const movement of movements) {
             // Determinar ID según dimensión
             const targetId = dimension === "ventana" ? movement.ventanaId : movement.vendedorId;
@@ -561,7 +582,15 @@ export async function getStatementDirect(
     const sorteoBreakdownBatch = await getSorteoBreakdownBatch(statementDates, dimension, ventanaId, vendedorId, bancaId, userRole);
 
     // Construir statements desde el mapa agrupado
-    const statements = Array.from(byDateAndDimension.entries()).map(([key, entry]) => {
+    // ✅ CRÍTICO: Filtrar solo fechas dentro del período solicitado
+    // Nota: startDateCRStr y endDateCRStr ya están declaradas arriba (línea 359-360)
+    const statements = Array.from(byDateAndDimension.entries())
+        .filter(([key]) => {
+            const date = key.split("_")[0];
+            // Solo incluir fechas dentro del período filtrado
+            return date >= startDateCRStr && date <= endDateCRStr;
+        })
+        .map(([key, entry]) => {
         const date = key.split("_")[0];
 
         // Calcular balance según dimensión:
