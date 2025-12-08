@@ -1170,9 +1170,9 @@ export const TicketService = {
       const loteriaName = tickets[0]?.loteria?.name;
       const sorteoDate = tickets[0]?.sorteo?.scheduledAt;
 
-      // Agrupar por número y tipo
-      // Para NUMERO: usar jugada.number
-      // Para REVENTADO: usar jugada.reventadoNumber (o jugada.number si reventadoNumber es null)
+      // Agrupar por número base
+      // ✅ CRÍTICO: Para NUMERO: usar jugada.number
+      // ✅ CRÍTICO: Para REVENTADO: usar jugada.number (número base) - los reventados se agrupan con su número base
       const numbersMap = new Map<string, {
         amountByNumber: number;
         amountByReventado: number;
@@ -1184,14 +1184,18 @@ export const TicketService = {
       // No inicializamos aquí - se crearán bajo demanda en el loop de jugadas
 
       // Procesar jugadas
+      // ✅ CRÍTICO: Los REVENTADOS deben agruparse por el número base (jugada.number), no por reventadoNumber
+      // Un REVENTADO siempre está asociado a un número base (NUMERO) del mismo ticket
       for (const jugada of jugadas) {
         let numberToUse: string;
 
         if (jugada.type === 'NUMERO') {
+          // Para NUMERO, usar el número directamente
           numberToUse = jugada.number.padStart(sorteoDigits, '0');
         } else if (jugada.type === 'REVENTADO') {
-          // Para REVENTADO, usar reventadoNumber si existe, sino usar number
-          numberToUse = (jugada.reventadoNumber || jugada.number).padStart(sorteoDigits, '0');
+          // ✅ CRÍTICO: Para REVENTADO, usar jugada.number (número base) como clave
+          // El reventadoNumber es solo informativo, pero la agrupación debe ser por el número base
+          numberToUse = jugada.number.padStart(sorteoDigits, '0');
         } else {
           // Por defecto, tratar como NUMERO (compatibilidad con datos antiguos)
           numberToUse = jugada.number.padStart(sorteoDigits, '0');
@@ -1219,6 +1223,7 @@ export const TicketService = {
           numData.amountByNumber += jugada.amount || 0;
           numData.ticketIdsByNumber.add(jugada.ticketId);
         } else if (jugada.type === 'REVENTADO') {
+          // ✅ CRÍTICO: Los REVENTADOS se agregan al número base
           numData.amountByReventado += jugada.amount || 0;
           numData.ticketIdsByReventado.add(jugada.ticketId);
         } else {
