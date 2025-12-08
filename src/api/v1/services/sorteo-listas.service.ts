@@ -107,6 +107,7 @@ export const SorteoListasService = {
                     select: {
                         id: true,
                         type: true,  // NUMERO o REVENTADO
+                        number: true,  // ✅ CRÍTICO: Número base (para REVENTADO, apunta al número base)
                         amount: true,
                         listeroCommissionAmount: true,  // Comisión del listero
                         multiplierId: true,
@@ -115,6 +116,7 @@ export const SorteoListasService = {
                                 id: true,
                                 name: true,
                                 valueX: true,
+                                kind: true,  // ✅ CRÍTICO: 'NUMERO' o 'REVENTADO'
                             }
                         },
                         // ✅ NUEVO: Campos de exclusión
@@ -172,24 +174,71 @@ export const SorteoListasService = {
 
             const ventanaEntry = ventanasMap.get(ticket.ventanaId)!;
 
-            // Iterar sobre jugadas para agrupar por multiplicador
+            // ✅ CRÍTICO: Separar jugadas NUMERO y REVENTADO para encontrar el multiplicador base
+            const jugadasNumero = ticket.jugadas.filter(j => j.type === 'NUMERO');
+            const jugadasReventado = ticket.jugadas.filter(j => j.type === 'REVENTADO');
+
+            // Crear mapa de número base -> multiplicador base (NUMERO)
+            const numeroBaseMultiplierMap = new Map<string, {
+                multiplierId: string | null;
+                multiplierName: string | null;
+                multiplierValue: number | null;
+            }>();
+
+            for (const jugadaNumero of jugadasNumero) {
+                if (jugadaNumero.number && jugadaNumero.multiplierId) {
+                    numeroBaseMultiplierMap.set(jugadaNumero.number, {
+                        multiplierId: jugadaNumero.multiplierId,
+                        multiplierName: jugadaNumero.multiplier?.name || null,
+                        multiplierValue: jugadaNumero.multiplier?.valueX || null,
+                    });
+                }
+            }
+
+            // Iterar sobre jugadas para agrupar por multiplicador base
             for (const jugada of ticket.jugadas) {
                 const vendedorId = ticket.vendedorId;
                 const vendedorKey = vendedorId || "null";
-                const multiplierId = jugada.multiplierId;
-                const multiplierKey = multiplierId || "null";
+                
+                // ✅ CRÍTICO: Determinar multiplicador base según tipo de jugada
+                let multiplierId: string | null = null;
+                let multiplierName: string | null = null;
+                let multiplierValue: number | null = null;
 
-                // Clave compuesta para agrupación: vendedor:multiplicador
+                if (jugada.type === 'NUMERO') {
+                    // Para NUMERO, usar su propio multiplicador
+                    multiplierId = jugada.multiplierId;
+                    multiplierName = jugada.multiplier?.name || null;
+                    multiplierValue = jugada.multiplier?.valueX || null;
+                } else if (jugada.type === 'REVENTADO') {
+                    // ✅ CRÍTICO: Para REVENTADO, buscar el multiplicador base (NUMERO) del número base
+                    // El campo jugada.number en REVENTADO apunta al número base
+                    const baseMultiplier = jugada.number ? numeroBaseMultiplierMap.get(jugada.number) : null;
+                    if (baseMultiplier) {
+                        multiplierId = baseMultiplier.multiplierId;
+                        multiplierName = baseMultiplier.multiplierName;
+                        multiplierValue = baseMultiplier.multiplierValue;
+                    } else {
+                        // Fallback: si no se encuentra el multiplicador base, usar null
+                        // Esto puede pasar si el REVENTADO no tiene un NUMERO asociado (caso edge)
+                        multiplierId = null;
+                        multiplierName = null;
+                        multiplierValue = null;
+                    }
+                }
+
+                const multiplierKey = multiplierId || "null";
+                // Clave compuesta para agrupación: vendedor:multiplicador base
                 const groupKey = `${vendedorKey}:${multiplierKey}`;
 
                 if (!ventanaEntry.vendedores.has(groupKey)) {
                     ventanaEntry.vendedores.set(groupKey, {
                         vendedorId: ticket.vendedorId,
-                                vendedorName: ticket.vendedor?.name || null,
+                        vendedorName: ticket.vendedor?.name || null,
                         vendedorCode: ticket.vendedor?.code || null,
-                        multiplierId: jugada.multiplierId,
-                        multiplierName: jugada.multiplier?.name || null,
-                        multiplierValue: jugada.multiplier?.valueX || null,
+                        multiplierId: multiplierId,
+                        multiplierName: multiplierName,
+                        multiplierValue: multiplierValue,
                         totalSales: 0,
                         ticketIds: new Set(),
                         totalCommission: 0,
