@@ -11,6 +11,7 @@ import { AccountsFilters, DayStatement, StatementTotals } from "./accounts.types
 import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
 import { resolveCommission } from "../../../../services/commission.resolver";
 import { getSorteoBreakdownBatch } from "./accounts.queries";
+import { getCachedDayStatement, setCachedDayStatement } from "../../../../utils/accountStatementCache";
 
 /**
  * Calcula y actualiza el estado de cuenta para un día específico
@@ -24,6 +25,22 @@ export async function calculateDayStatement(
     bancaId?: string,
     userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" // ✅ CRÍTICO: Rol del usuario para calcular balance correctamente
 ): Promise<DayStatement> {
+    // ✅ OPTIMIZACIÓN: Intentar obtener del caché primero
+    const dateStr = crDateService.postgresDateToCRString(date);
+    const cacheKey = {
+        date: dateStr,
+        dimension,
+        ventanaId: ventanaId || null,
+        vendedorId: vendedorId || null,
+        bancaId: bancaId || null,
+        userRole: userRole || "ADMIN",
+    };
+    
+    const cached = await getCachedDayStatement<DayStatement>(cacheKey);
+    if (cached) {
+        return cached;
+    }
+
     // Construir WHERE clause
     // FIX: Usar businessDate en lugar de createdAt para agrupar correctamente por día de negocio
     const dateFilter = buildTicketDateFilter(date);
@@ -393,7 +410,7 @@ export async function calculateDayStatement(
     ventanaName = ventana?.name || null;
     vendedorName = vendedor?.name || null;
 
-    return {
+    const result: DayStatement = {
         ...finalStatement,
         totalSales,
         totalPayouts,
@@ -412,6 +429,13 @@ export async function calculateDayStatement(
         ventanaName,
         vendedorName,
     };
+
+    // ✅ OPTIMIZACIÓN: Guardar en caché (no esperar, hacerlo en background)
+    setCachedDayStatement(cacheKey, result).catch(() => {
+        // Ignorar errores de caché
+    });
+
+    return result;
 }
 
 /**

@@ -12,6 +12,7 @@ import logger from "../../../core/logger";
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
 import { ExportFormat } from "../types/accounts-export.types";
+import { StatementResponse } from "../services/accounts/accounts.types";
 
 export const AccountsController = {
   /**
@@ -145,7 +146,7 @@ export const AccountsController = {
         userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
       };
       
-      const result = await AccountsService.getStatement(filters);
+      const result = await AccountsService.getStatement(filters) as StatementResponse;
       
       // Log de auditoría
       await ActivityService.log({

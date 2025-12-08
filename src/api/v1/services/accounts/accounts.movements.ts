@@ -5,6 +5,7 @@ import { AccountPaymentRepository } from "../../../../repositories/accountPaymen
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
 import { calculateDayStatement } from "./accounts.calculations";
 import { calculateIsSettled } from "./accounts.commissions";
+import { invalidateAccountStatementCache } from "../../../../utils/accountStatementCache";
 
 /**
  * Registra un pago o cobro
@@ -129,6 +130,16 @@ export async function registerPayment(data: {
         canEdit: !isSettled,
     });
 
+    // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta para este día
+    const dateStr = data.date; // Ya está en formato YYYY-MM-DD
+    invalidateAccountStatementCache({
+        date: dateStr,
+        ventanaId: data.ventanaId || null,
+        vendedorId: data.vendedorId || null,
+    }).catch(() => {
+        // Ignorar errores de invalidación de caché
+    });
+
     return payment;
 }
 
@@ -233,6 +244,16 @@ export async function reversePayment(
         remainingBalance: newRemainingBalance,
         isSettled,
         canEdit: !isSettled,
+    });
+
+    // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta para este día
+    const dateStr = payment.date.toISOString().split('T')[0]; // Convertir Date a YYYY-MM-DD
+    invalidateAccountStatementCache({
+        date: dateStr,
+        ventanaId: payment.ventanaId || null,
+        vendedorId: payment.vendedorId || null,
+    }).catch(() => {
+        // Ignorar errores de invalidación de caché
     });
 
     return reversed;

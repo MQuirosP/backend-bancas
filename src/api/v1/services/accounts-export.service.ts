@@ -12,7 +12,7 @@ import {
   ExportFormat,
   AccountStatementExportOptions,
 } from '../types/accounts-export.types';
-import { AccountsFilters, DayStatement } from './accounts/accounts.types';
+import { AccountsFilters, DayStatement, StatementResponse } from './accounts/accounts.types';
 import { getSorteoBreakdownBatch } from './accounts/accounts.queries';
 import prisma from '../../../core/prismaClient';
 import logger from '../../../core/logger';
@@ -31,7 +31,7 @@ export class AccountsExportService {
   ): Promise<{ buffer: Buffer; filename: string; mimeType: string }> {
     try {
       // 1. Obtener estado de cuenta principal
-      const statementResponse = await AccountsService.getStatement(filters);
+      const statementResponse = await AccountsService.getStatement(filters) as StatementResponse;
 
       // 2. Extraer metadata
       const { statements, totals, monthlyAccumulated, meta } = statementResponse;
