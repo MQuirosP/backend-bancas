@@ -109,6 +109,8 @@ model User {
   accountPaymentsReversed  AccountPayment[]       @relation("AccountPaymentReversedBy")
   bancas                   UserBanca[]
   sorteosAutoConfigUpdated SorteosAutoConfig[]    @relation("SorteosAutoConfigUpdatedBy")
+  accountStatementsSettled AccountStatement[]     @relation("AccountStatementSettledBy")
+  accountStatementSettlementConfigUpdated AccountStatementSettlementConfig[] @relation("AccountStatementSettlementConfigUpdatedBy")
   exclusionsAsVentana      SorteoListaExclusion[] @relation("ExclusionVentana")
   exclusionsAsVendedor     SorteoListaExclusion[] @relation("ExclusionVendedor")
   exclusionsCreated        SorteoListaExclusion[] @relation("ExclusionExcludedBy")
@@ -657,6 +659,10 @@ model AccountStatement {
   isSettled Boolean @default(false)
   canEdit   Boolean @default(true)
 
+  // ✅ NUEVO: Campos de auditoría para asentamiento
+  settledAt DateTime? // Cuándo se asentó
+  settledBy String?    @db.Uuid // Quién lo asentó (userId o null para automático)
+
   // Metadatos
   ticketCount Int @default(0)
 
@@ -668,6 +674,7 @@ model AccountStatement {
   ventana  Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
   vendedor User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
   payments AccountPayment[]
+  settledByUser User?      @relation("AccountStatementSettledBy", fields: [settledBy], references: [id])
 
   @@unique([date, ventanaId], map: "account_statements_date_ventana_unique")
   @@unique([date, vendedorId], map: "account_statements_date_vendedor_unique")
@@ -676,6 +683,7 @@ model AccountStatement {
   @@index([ventanaId])
   @@index([vendedorId])
   @@index([isSettled])
+  @@index([isSettled, date]) // Para queries del cron job
 }
 
 model AccountPayment {
@@ -851,4 +859,24 @@ model SorteosAutoConfig {
   updatedByUser User? @relation("SorteosAutoConfigUpdatedBy", fields: [updatedBy], references: [id])
 
   @@unique([id]) // Solo una configuración global
+}
+
+model AccountStatementSettlementConfig {
+  id                    String    @id @default(uuid()) @db.Uuid
+  enabled               Boolean   @default(false)
+  settlementAgeDays     Int       @default(7) // Días de antigüedad mínima
+  cronSchedule          String?   @db.VarChar(50) // Ej: "0 3 * * *" (3:00 AM UTC)
+  batchSize             Int       @default(1000) // Máximo de statements por ejecución
+  lastExecution         DateTime?
+  lastSettledCount      Int?
+  lastSkippedCount      Int?
+  lastErrorCount        Int?
+  lastErrorMessage      String?   @db.Text
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  updatedBy             String?   @db.Uuid
+
+  updatedByUser User? @relation("AccountStatementSettlementConfigUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@index([enabled])
 }
