@@ -193,73 +193,48 @@ export class AccountsExportService {
 
   /**
    * Transforma statements de DayStatement[] a AccountStatementExportItem[]
+   * ✅ OPTIMIZADO: Evita queries cuando los nombres ya están disponibles
    */
   private static async transformStatements(
     statements: DayStatement[],
     dimension: 'ventana' | 'vendedor'
   ): Promise<AccountStatementExportItem[]> {
-    // Resolver nombres de entidades en batch
-    const ventanaIds = Array.from(
-      new Set(
-        statements
-          .map((s) => s.ventanaId)
-          .filter((id): id is string => id !== null && id !== undefined)
-      )
-    );
-    const vendedorIds = Array.from(
-      new Set(
-        statements
-          .map((s) => s.vendedorId)
-          .filter((id): id is string => id !== null && id !== undefined)
-      )
-    );
+    // ✅ OPTIMIZACIÓN: Primero recopilar TODOS los IDs únicos (principales + breakdowns)
+    const allVentanaIds = new Set<string>();
+    const allVendedorIds = new Set<string>();
+
+    // IDs de statements principales
+    statements.forEach((s) => {
+      if (s.ventanaId) allVentanaIds.add(s.ventanaId);
+      if (s.vendedorId) allVendedorIds.add(s.vendedorId);
+    });
+
+    // IDs de breakdowns anidados
+    statements.forEach((s) => {
+      s.byVentana?.forEach((bv) => {
+        if (bv.ventanaId) allVentanaIds.add(bv.ventanaId);
+      });
+      s.byVendedor?.forEach((bv) => {
+        if (bv.vendedorId) allVendedorIds.add(bv.vendedorId);
+        if (bv.ventanaId) allVentanaIds.add(bv.ventanaId);
+      });
+    });
 
     const ventanaMap = new Map<string, { name: string; code: string | null }>();
     const vendedorMap = new Map<string, { name: string; code: string | null }>();
 
-    if (ventanaIds.length > 0) {
+    // ✅ OPTIMIZACIÓN: Una sola query batch para todos los IDs
+    if (allVentanaIds.size > 0) {
       const ventanas = await prisma.ventana.findMany({
-        where: { id: { in: ventanaIds } },
+        where: { id: { in: Array.from(allVentanaIds) } },
         select: { id: true, name: true, code: true },
       });
       ventanas.forEach((v) => ventanaMap.set(v.id, { name: v.name, code: v.code }));
     }
 
-    if (vendedorIds.length > 0) {
+    if (allVendedorIds.size > 0) {
       const vendedores = await prisma.user.findMany({
-        where: { id: { in: vendedorIds } },
-        select: { id: true, name: true, code: true },
-      });
-      vendedores.forEach((v) => vendedorMap.set(v.id, { name: v.name, code: v.code }));
-    }
-
-    // ✅ NUEVO: Resolver nombres para byVentana y byVendedor si existen
-    const allVentanaIdsForBreakdown = Array.from(
-      new Set(
-        statements
-          .flatMap((s) => s.byVentana?.map((bv) => bv.ventanaId) || [])
-          .filter((id): id is string => id !== null && id !== undefined)
-      )
-    );
-    const allVendedorIdsForBreakdown = Array.from(
-      new Set(
-        statements
-          .flatMap((s) => s.byVendedor?.map((bv) => bv.vendedorId) || [])
-          .filter((id): id is string => id !== null && id !== undefined)
-      )
-    );
-
-    if (allVentanaIdsForBreakdown.length > 0) {
-      const ventanas = await prisma.ventana.findMany({
-        where: { id: { in: allVentanaIdsForBreakdown } },
-        select: { id: true, name: true, code: true },
-      });
-      ventanas.forEach((v) => ventanaMap.set(v.id, { name: v.name, code: v.code }));
-    }
-
-    if (allVendedorIdsForBreakdown.length > 0) {
-      const vendedores = await prisma.user.findMany({
-        where: { id: { in: allVendedorIdsForBreakdown } },
+        where: { id: { in: Array.from(allVendedorIds) } },
         select: { id: true, name: true, code: true },
       });
       vendedores.forEach((v) => vendedorMap.set(v.id, { name: v.name, code: v.code }));
