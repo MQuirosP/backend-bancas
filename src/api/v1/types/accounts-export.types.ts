@@ -6,6 +6,45 @@
 export type ExportFormat = 'csv' | 'excel' | 'pdf';
 
 /**
+ * Desglose por ventana para exportación (cuando hay agrupación)
+ */
+export interface AccountStatementVentanaBreakdownExport {
+  ventanaId: string;
+  ventanaName: string;
+  ventanaCode?: string | null;
+  totalSales: number;
+  totalPayouts: number;
+  listeroCommission: number;
+  vendedorCommission: number;
+  balance: number;
+  totalPaid: number;
+  totalCollected: number;
+  remainingBalance: number;
+  ticketCount: number;
+}
+
+/**
+ * Desglose por vendedor para exportación (cuando hay agrupación)
+ */
+export interface AccountStatementVendedorBreakdownExport {
+  vendedorId: string;
+  vendedorName: string;
+  vendedorCode?: string | null;
+  ventanaId: string;
+  ventanaName: string;
+  ventanaCode?: string | null;
+  totalSales: number;
+  totalPayouts: number;
+  listeroCommission: number;
+  vendedorCommission: number;
+  balance: number;
+  totalPaid: number;
+  totalCollected: number;
+  remainingBalance: number;
+  ticketCount: number;
+}
+
+/**
  * Item de estado de cuenta para exportación (resumen por día)
  */
 export interface AccountStatementExportItem {
@@ -33,6 +72,10 @@ export interface AccountStatementExportItem {
   isSettled: boolean;
   canEdit: boolean;
   ticketCount: number;
+
+  // ✅ NUEVO: Desglose por entidad (cuando hay agrupación)
+  byVentana?: AccountStatementVentanaBreakdownExport[];
+  byVendedor?: AccountStatementVendedorBreakdownExport[];
 }
 
 /**

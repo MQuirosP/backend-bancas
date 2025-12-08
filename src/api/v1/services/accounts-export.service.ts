@@ -233,12 +233,44 @@ export class AccountsExportService {
       vendedores.forEach((v) => vendedorMap.set(v.id, { name: v.name, code: v.code }));
     }
 
+    // ✅ NUEVO: Resolver nombres para byVentana y byVendedor si existen
+    const allVentanaIdsForBreakdown = Array.from(
+      new Set(
+        statements
+          .flatMap((s) => s.byVentana?.map((bv) => bv.ventanaId) || [])
+          .filter((id): id is string => id !== null && id !== undefined)
+      )
+    );
+    const allVendedorIdsForBreakdown = Array.from(
+      new Set(
+        statements
+          .flatMap((s) => s.byVendedor?.map((bv) => bv.vendedorId) || [])
+          .filter((id): id is string => id !== null && id !== undefined)
+      )
+    );
+
+    if (allVentanaIdsForBreakdown.length > 0) {
+      const ventanas = await prisma.ventana.findMany({
+        where: { id: { in: allVentanaIdsForBreakdown } },
+        select: { id: true, name: true, code: true },
+      });
+      ventanas.forEach((v) => ventanaMap.set(v.id, { name: v.name, code: v.code }));
+    }
+
+    if (allVendedorIdsForBreakdown.length > 0) {
+      const vendedores = await prisma.user.findMany({
+        where: { id: { in: allVendedorIdsForBreakdown } },
+        select: { id: true, name: true, code: true },
+      });
+      vendedores.forEach((v) => vendedorMap.set(v.id, { name: v.name, code: v.code }));
+    }
+
     // Transformar statements
     return statements.map((s) => {
       const ventanaInfo = s.ventanaId ? ventanaMap.get(s.ventanaId) : null;
       const vendedorInfo = s.vendedorId ? vendedorMap.get(s.vendedorId) : null;
 
-      return {
+      const item: any = {
         date: this.formatDate(s.date),
         ventanaId: s.ventanaId,
         ventanaName: ventanaInfo?.name || null,
@@ -258,98 +290,216 @@ export class AccountsExportService {
         canEdit: s.canEdit,
         ticketCount: s.ticketCount,
       };
+
+      // ✅ NUEVO: Transformar byVentana si existe
+      if (s.byVentana && s.byVentana.length > 0) {
+        item.byVentana = s.byVentana.map((bv) => {
+          const ventanaInfo = ventanaMap.get(bv.ventanaId);
+          return {
+            ventanaId: bv.ventanaId,
+            ventanaName: bv.ventanaName,
+            ventanaCode: ventanaInfo?.code || null,
+            totalSales: bv.totalSales,
+            totalPayouts: bv.totalPayouts,
+            listeroCommission: bv.listeroCommission,
+            vendedorCommission: bv.vendedorCommission,
+            balance: bv.balance,
+            totalPaid: bv.totalPaid || 0,
+            totalCollected: bv.totalCollected || 0,
+            remainingBalance: bv.remainingBalance,
+            ticketCount: bv.ticketCount || 0,
+          };
+        });
+      }
+
+      // ✅ NUEVO: Transformar byVendedor si existe
+      if (s.byVendedor && s.byVendedor.length > 0) {
+        item.byVendedor = s.byVendedor.map((bv) => {
+          const vendedorInfo = vendedorMap.get(bv.vendedorId);
+          const ventanaInfo = ventanaMap.get(bv.ventanaId);
+          return {
+            vendedorId: bv.vendedorId,
+            vendedorName: bv.vendedorName,
+            vendedorCode: vendedorInfo?.code || null,
+            ventanaId: bv.ventanaId,
+            ventanaName: bv.ventanaName,
+            ventanaCode: ventanaInfo?.code || null,
+            totalSales: bv.totalSales,
+            totalPayouts: bv.totalPayouts,
+            listeroCommission: bv.listeroCommission,
+            vendedorCommission: bv.vendedorCommission,
+            balance: bv.balance,
+            totalPaid: bv.totalPaid || 0,
+            totalCollected: bv.totalCollected || 0,
+            remainingBalance: bv.remainingBalance,
+            ticketCount: bv.ticketCount || 0,
+          };
+        });
+      }
+
+      return item;
     });
   }
 
   /**
    * Obtiene breakdown detallado por sorteo para todos los días
+   * ✅ OPTIMIZADO: Usa datos de bySorteo cuando están disponibles en statements agrupados
    */
   private static async getBreakdown(
     statements: DayStatement[],
     filters: AccountsFilters
   ): Promise<AccountStatementSorteoItem[]> {
-    // Convertir dates a array de Date objects
-    const dates = statements.map((s) => new Date(s.date));
-
-    // Usar getSorteoBreakdownBatch para obtener breakdown de todos los días
-    const breakdownMap = await getSorteoBreakdownBatch(
-      dates,
-      filters.dimension,
-      filters.ventanaId,
-      filters.vendedorId,
-      filters.bancaId,
-      filters.userRole || 'ADMIN'
-    );
-
-    // Resolver nombres de entidades
-    const ventanaIds = Array.from(
-      new Set(
-        statements
-          .map((s) => s.ventanaId)
-          .filter((id): id is string => id !== null && id !== undefined)
-      )
-    );
-    const vendedorIds = Array.from(
-      new Set(
-        statements
-          .map((s) => s.vendedorId)
-          .filter((id): id is string => id !== null && id !== undefined)
-      )
-    );
-
-    const ventanaMap = new Map<string, string>();
-    const vendedorMap = new Map<string, string>();
-
-    if (ventanaIds.length > 0) {
-      const ventanas = await prisma.ventana.findMany({
-        where: { id: { in: ventanaIds } },
-        select: { id: true, name: true },
-      });
-      ventanas.forEach((v) => ventanaMap.set(v.id, v.name));
-    }
-
-    if (vendedorIds.length > 0) {
-      const vendedores = await prisma.user.findMany({
-        where: { id: { in: vendedorIds } },
-        select: { id: true, name: true },
-      });
-      vendedores.forEach((v) => vendedorMap.set(v.id, v.name));
-    }
-
-    // Transformar a formato de exportación
     const result: AccountStatementSorteoItem[] = [];
+    const isDimensionVentana = filters.dimension === 'ventana';
+    const hasGrouping = statements.some(
+      (s) => (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
+             (!isDimensionVentana && s.byVendedor && s.byVendedor.length > 0)
+    );
 
-    for (const statement of statements) {
-      const dateKey = this.formatDate(statement.date);
-      const dayBreakdown = breakdownMap.get(dateKey);
+    // ✅ OPTIMIZACIÓN: Si hay agrupación, usar bySorteo de los breakdowns anidados
+    if (hasGrouping) {
+      for (const statement of statements) {
+        const dateKey = this.formatDate(statement.date);
 
-      if (dayBreakdown) {
-        for (const item of dayBreakdown) {
-          // Parsear scheduledAt para extraer solo la hora
-          const scheduledDate = new Date(item.scheduledAt);
-          // ✅ CRÍTICO: Convertir a timezone Costa Rica
-          const crTime = new Date(
-            scheduledDate.toLocaleString('en-US', { timeZone: 'America/Costa_Rica' })
-          );
-          const hours = crTime.getHours();
-          const minutes = crTime.getMinutes();
-          const ampm = hours >= 12 ? 'PM' : 'AM';
-          const displayHours = hours % 12 || 12;
-          const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+        if (isDimensionVentana && statement.byVentana) {
+          for (const ventanaBreakdown of statement.byVentana) {
+            if (ventanaBreakdown.bySorteo && ventanaBreakdown.bySorteo.length > 0) {
+              for (const sorteo of ventanaBreakdown.bySorteo) {
+                const scheduledDate = new Date(sorteo.scheduledAt);
+                const crTime = new Date(
+                  scheduledDate.toLocaleString('en-US', { timeZone: 'America/Costa_Rica' })
+                );
+                const hours = crTime.getHours();
+                const minutes = crTime.getMinutes();
+                const ampm = hours >= 12 ? 'PM' : 'AM';
+                const displayHours = hours % 12 || 12;
+                const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
 
-          result.push({
-            date: this.formatDate(statement.date),
-            ventanaName: statement.ventanaId ? ventanaMap.get(statement.ventanaId) || null : null,
-            vendedorName: statement.vendedorId ? vendedorMap.get(statement.vendedorId) || null : null,
-            loteriaName: item.loteriaName,
-            sorteoTime,
-            totalSales: item.sales,
-            totalPayouts: item.payouts,
-            listeroCommission: item.listeroCommission,
-            vendedorCommission: item.vendedorCommission,
-            balance: item.balance,
-            ticketCount: item.ticketCount,
-          });
+                result.push({
+                  date: dateKey,
+                  ventanaName: ventanaBreakdown.ventanaName,
+                  vendedorName: null,
+                  loteriaName: sorteo.loteriaName,
+                  sorteoTime,
+                  totalSales: sorteo.sales,
+                  totalPayouts: sorteo.payouts,
+                  listeroCommission: sorteo.listeroCommission,
+                  vendedorCommission: sorteo.vendedorCommission,
+                  balance: sorteo.balance,
+                  ticketCount: sorteo.ticketCount,
+                });
+              }
+            }
+          }
+        } else if (!isDimensionVentana && statement.byVendedor) {
+          for (const vendedorBreakdown of statement.byVendedor) {
+            if (vendedorBreakdown.bySorteo && vendedorBreakdown.bySorteo.length > 0) {
+              for (const sorteo of vendedorBreakdown.bySorteo) {
+                const scheduledDate = new Date(sorteo.scheduledAt);
+                const crTime = new Date(
+                  scheduledDate.toLocaleString('en-US', { timeZone: 'America/Costa_Rica' })
+                );
+                const hours = crTime.getHours();
+                const minutes = crTime.getMinutes();
+                const ampm = hours >= 12 ? 'PM' : 'AM';
+                const displayHours = hours % 12 || 12;
+                const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+
+                result.push({
+                  date: dateKey,
+                  ventanaName: vendedorBreakdown.ventanaName,
+                  vendedorName: vendedorBreakdown.vendedorName,
+                  loteriaName: sorteo.loteriaName,
+                  sorteoTime,
+                  totalSales: sorteo.sales,
+                  totalPayouts: sorteo.payouts,
+                  listeroCommission: sorteo.listeroCommission,
+                  vendedorCommission: sorteo.vendedorCommission,
+                  balance: sorteo.balance,
+                  ticketCount: sorteo.ticketCount,
+                });
+              }
+            }
+          }
+        }
+      }
+    } else {
+      // ✅ Comportamiento original cuando NO hay agrupación
+      const dates = statements.map((s) => new Date(s.date));
+      const breakdownMap = await getSorteoBreakdownBatch(
+        dates,
+        filters.dimension,
+        filters.ventanaId,
+        filters.vendedorId,
+        filters.bancaId,
+        filters.userRole || 'ADMIN'
+      );
+
+      // Resolver nombres de entidades
+      const ventanaIds = Array.from(
+        new Set(
+          statements
+            .map((s) => s.ventanaId)
+            .filter((id): id is string => id !== null && id !== undefined)
+        )
+      );
+      const vendedorIds = Array.from(
+        new Set(
+          statements
+            .map((s) => s.vendedorId)
+            .filter((id): id is string => id !== null && id !== undefined)
+        )
+      );
+
+      const ventanaMap = new Map<string, string>();
+      const vendedorMap = new Map<string, string>();
+
+      if (ventanaIds.length > 0) {
+        const ventanas = await prisma.ventana.findMany({
+          where: { id: { in: ventanaIds } },
+          select: { id: true, name: true },
+        });
+        ventanas.forEach((v) => ventanaMap.set(v.id, v.name));
+      }
+
+      if (vendedorIds.length > 0) {
+        const vendedores = await prisma.user.findMany({
+          where: { id: { in: vendedorIds } },
+          select: { id: true, name: true },
+        });
+        vendedores.forEach((v) => vendedorMap.set(v.id, v.name));
+      }
+
+      for (const statement of statements) {
+        const dateKey = this.formatDate(statement.date);
+        const dayBreakdown = breakdownMap.get(dateKey);
+
+        if (dayBreakdown) {
+          for (const item of dayBreakdown) {
+            const scheduledDate = new Date(item.scheduledAt);
+            const crTime = new Date(
+              scheduledDate.toLocaleString('en-US', { timeZone: 'America/Costa_Rica' })
+            );
+            const hours = crTime.getHours();
+            const minutes = crTime.getMinutes();
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            const displayHours = hours % 12 || 12;
+            const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+
+            result.push({
+              date: dateKey,
+              ventanaName: statement.ventanaId ? ventanaMap.get(statement.ventanaId) || null : null,
+              vendedorName: statement.vendedorId ? vendedorMap.get(statement.vendedorId) || null : null,
+              loteriaName: item.loteriaName,
+              sorteoTime,
+              totalSales: item.sales,
+              totalPayouts: item.payouts,
+              listeroCommission: item.listeroCommission,
+              vendedorCommission: item.vendedorCommission,
+              balance: item.balance,
+              ticketCount: item.ticketCount,
+            });
+          }
         }
       }
     }
@@ -359,101 +509,158 @@ export class AccountsExportService {
 
   /**
    * Obtiene movimientos (pagos/cobros) para todos los días
+   * ✅ OPTIMIZADO: Usa datos de movements cuando están disponibles en statements agrupados
    */
   private static async getMovements(
     statements: DayStatement[],
     dimension: 'ventana' | 'vendedor'
   ): Promise<AccountMovementItem[]> {
-    // Solo statements que tienen ID (fueron guardados)
-    const statementIds = statements.map((s) => s.id).filter((id) => id);
-
-    if (statementIds.length === 0) {
-      return [];
-    }
-
-    // Query todos los pagos en batch
-    const payments = await prisma.accountPayment.findMany({
-      where: {
-        accountStatementId: { in: statementIds },
-      },
-      select: {
-        id: true,
-        accountStatementId: true,
-        date: true,
-        amount: true,
-        type: true,
-        method: true,
-        notes: true,
-        isReversed: true,
-        createdAt: true,
-        paidBy: {
-          select: {
-            name: true,
-          },
-        },
-        accountStatement: {
-          select: {
-            date: true,
-            ventanaId: true,
-            vendedorId: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-    });
-
-    // Resolver nombres de entidades
-    const ventanaIds = Array.from(
-      new Set(
-        payments
-          .map((p) => p.accountStatement?.ventanaId)
-          .filter((id): id is string => id !== null && id !== undefined)
-      )
-    );
-    const vendedorIds = Array.from(
-      new Set(
-        payments
-          .map((p) => p.accountStatement?.vendedorId)
-          .filter((id): id is string => id !== null && id !== undefined)
-      )
+    const result: AccountMovementItem[] = [];
+    const isDimensionVentana = dimension === 'ventana';
+    const hasGrouping = statements.some(
+      (s) => (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
+             (!isDimensionVentana && s.byVendedor && s.byVendedor.length > 0)
     );
 
-    const ventanaMap = new Map<string, string>();
-    const vendedorMap = new Map<string, string>();
+    // ✅ OPTIMIZACIÓN: Si hay agrupación, usar movements de los breakdowns anidados
+    if (hasGrouping) {
+      for (const statement of statements) {
+        const dateKey = this.formatDate(statement.date);
 
-    if (ventanaIds.length > 0) {
-      const ventanas = await prisma.ventana.findMany({
-        where: { id: { in: ventanaIds } },
-        select: { id: true, name: true },
+        if (isDimensionVentana && statement.byVentana) {
+          for (const ventanaBreakdown of statement.byVentana) {
+            if (ventanaBreakdown.movements && ventanaBreakdown.movements.length > 0) {
+              for (const movement of ventanaBreakdown.movements) {
+                result.push({
+                  movementDate: new Date(movement.createdAt),
+                  statementDate: dateKey,
+                  ventanaName: ventanaBreakdown.ventanaName,
+                  vendedorName: null,
+                  type: movement.type === 'payment' ? 'PAGO' : 'COBRO',
+                  amount: movement.amount,
+                  method: this.translateMethod(movement.method),
+                  notes: movement.notes || '',
+                  registeredBy: movement.registeredBy || 'Desconocido',
+                  status: movement.reversedAt ? 'REVERTIDO' : 'ACTIVO',
+                });
+              }
+            }
+          }
+        } else if (!isDimensionVentana && statement.byVendedor) {
+          for (const vendedorBreakdown of statement.byVendedor) {
+            if (vendedorBreakdown.movements && vendedorBreakdown.movements.length > 0) {
+              for (const movement of vendedorBreakdown.movements) {
+                result.push({
+                  movementDate: new Date(movement.createdAt),
+                  statementDate: dateKey,
+                  ventanaName: vendedorBreakdown.ventanaName,
+                  vendedorName: vendedorBreakdown.vendedorName,
+                  type: movement.type === 'payment' ? 'PAGO' : 'COBRO',
+                  amount: movement.amount,
+                  method: this.translateMethod(movement.method),
+                  notes: movement.notes || '',
+                  registeredBy: movement.registeredBy || 'Desconocido',
+                  status: movement.reversedAt ? 'REVERTIDO' : 'ACTIVO',
+                });
+              }
+            }
+          }
+        }
+      }
+    } else {
+      // ✅ Comportamiento original cuando NO hay agrupación
+      const statementIds = statements.map((s) => s.id).filter((id) => id);
+
+      if (statementIds.length === 0) {
+        return [];
+      }
+
+      const payments = await prisma.accountPayment.findMany({
+        where: {
+          accountStatementId: { in: statementIds },
+        },
+        select: {
+          id: true,
+          accountStatementId: true,
+          date: true,
+          amount: true,
+          type: true,
+          method: true,
+          notes: true,
+          isReversed: true,
+          createdAt: true,
+          paidBy: {
+            select: {
+              name: true,
+            },
+          },
+          accountStatement: {
+            select: {
+              date: true,
+              ventanaId: true,
+              vendedorId: true,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
       });
-      ventanas.forEach((v) => ventanaMap.set(v.id, v.name));
+
+      // Resolver nombres de entidades
+      const ventanaIds = Array.from(
+        new Set(
+          payments
+            .map((p) => p.accountStatement?.ventanaId)
+            .filter((id): id is string => id !== null && id !== undefined)
+        )
+      );
+      const vendedorIds = Array.from(
+        new Set(
+          payments
+            .map((p) => p.accountStatement?.vendedorId)
+            .filter((id): id is string => id !== null && id !== undefined)
+        )
+      );
+
+      const ventanaMap = new Map<string, string>();
+      const vendedorMap = new Map<string, string>();
+
+      if (ventanaIds.length > 0) {
+        const ventanas = await prisma.ventana.findMany({
+          where: { id: { in: ventanaIds } },
+          select: { id: true, name: true },
+        });
+        ventanas.forEach((v) => ventanaMap.set(v.id, v.name));
+      }
+
+      if (vendedorIds.length > 0) {
+        const vendedores = await prisma.user.findMany({
+          where: { id: { in: vendedorIds } },
+          select: { id: true, name: true },
+        });
+        vendedores.forEach((v) => vendedorMap.set(v.id, v.name));
+      }
+
+      for (const p of payments) {
+        result.push({
+          movementDate: p.createdAt,
+          statementDate: this.formatDate(p.accountStatement?.date || p.date),
+          ventanaName:
+            p.accountStatement?.ventanaId ? ventanaMap.get(p.accountStatement.ventanaId) || null : null,
+          vendedorName:
+            p.accountStatement?.vendedorId ? vendedorMap.get(p.accountStatement.vendedorId) || null : null,
+          type: p.type === 'payment' ? 'PAGO' : 'COBRO',
+          amount: p.amount,
+          method: this.translateMethod(p.method),
+          notes: p.notes,
+          registeredBy: p.paidBy?.name || 'Desconocido',
+          status: p.isReversed ? 'REVERTIDO' : 'ACTIVO',
+        });
+      }
     }
 
-    if (vendedorIds.length > 0) {
-      const vendedores = await prisma.user.findMany({
-        where: { id: { in: vendedorIds } },
-        select: { id: true, name: true },
-      });
-      vendedores.forEach((v) => vendedorMap.set(v.id, v.name));
-    }
-
-    // Transformar a formato de exportación
-    return payments.map((p) => ({
-      movementDate: p.createdAt,
-      statementDate: this.formatDate(p.accountStatement?.date || p.date),
-      ventanaName:
-        p.accountStatement?.ventanaId ? ventanaMap.get(p.accountStatement.ventanaId) || null : null,
-      vendedorName:
-        p.accountStatement?.vendedorId ? vendedorMap.get(p.accountStatement.vendedorId) || null : null,
-      type: p.type === 'payment' ? 'PAGO' : 'COBRO',
-      amount: p.amount,
-      method: this.translateMethod(p.method),
-      notes: p.notes,
-      registeredBy: p.paidBy?.name || 'Desconocido',
-      status: p.isReversed ? 'REVERTIDO' : 'ACTIVO',
-    }));
+    return result;
   }
 
   /**

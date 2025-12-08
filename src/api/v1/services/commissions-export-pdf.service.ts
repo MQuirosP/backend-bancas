@@ -133,81 +133,266 @@ export class CommissionsExportPdfService {
     // Datos
     doc.fontSize(8).font('Helvetica');
 
+    let rowIndex = 0;
     for (const item of payload.summary) {
       const date = this.formatDate(item.date);
-      const entity = isDimensionVentana ? item.ventanaName || '-' : item.vendedorName || '-';
+      
+      // ✅ NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
+      const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
+                          (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
-      const values = isDimensionVentana
-        ? [
-          date,
-          entity,
-          this.formatCurrency(item.totalSales),
-          item.totalTickets.toString(),
-          this.formatCurrency(item.commissionListero || 0),
-          this.formatCurrency(item.commissionVendedor || 0),
-          this.formatCurrency((item.commissionListero || 0) - (item.commissionVendedor || 0)),
-        ]
-        : [
-          date,
-          entity,
-          this.formatCurrency(item.totalSales),
-          item.totalTickets.toString(),
-          this.formatCurrency(item.commissionVendedor || 0),
-          this.formatCurrency(item.commissionListero || 0),
-          this.formatCurrency(item.net || 0),
-        ];
+      if (hasGrouping) {
+        // ✅ NUEVO: Fila de total consolidado con "TODOS" y formato destacado
+        const totalEntity = 'TODOS';
+        
+        const totalValues = isDimensionVentana
+          ? [
+            date,
+            totalEntity,
+            this.formatCurrency(item.totalSales),
+            item.totalTickets.toString(),
+            this.formatCurrency(item.commissionListero || 0),
+            this.formatCurrency(item.commissionVendedor || 0),
+            this.formatCurrency((item.commissionListero || 0) - (item.commissionVendedor || 0)),
+          ]
+          : [
+            date,
+            totalEntity,
+            this.formatCurrency(item.totalSales),
+            item.totalTickets.toString(),
+            this.formatCurrency(item.commissionVendedor || 0),
+            this.formatCurrency(item.commissionListero || 0),
+            this.formatCurrency(item.net || 0),
+          ];
 
-      // ✅ CRÍTICO: Calcular altura dinámica basada en TODAS las columnas
-      let maxCellHeight = 0;
-      values.forEach((val, i) => {
-        const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
-        if (h > maxCellHeight) maxCellHeight = h;
-      });
+        // Calcular altura dinámica
+        let maxCellHeight = 0;
+        totalValues.forEach((val, i) => {
+          const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
+          if (h > maxCellHeight) maxCellHeight = h;
+        });
+        const rowHeight = Math.max(18, maxCellHeight + 8);
 
-      const rowHeight = Math.max(18, maxCellHeight + 8);
+        // Verificar si necesitamos nueva página
+        if (y + rowHeight > doc.page.height - 50) {
+          doc.addPage();
+          y = 50;
+          this.redrawHeader(doc, headers, colWidths, startX, y, pageWidth);
+          y += 20;
+          doc.fillColor('black');
+          doc.fontSize(8).font('Helvetica');
+        }
 
-      // Verificar si necesitamos nueva página
-      if (y + rowHeight > doc.page.height - 50) {
-        doc.addPage();
-        y = 50;
-
-        // Redibujar encabezado
-        doc.fontSize(9).font('Helvetica-Bold');
-        doc.fillColor('#4472C4').rect(startX, y, pageWidth, 20).fill();
-        doc.fillColor('white');
+        // ✅ NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
+        doc.fillColor('#D3D3D3').rect(startX, y, pageWidth, rowHeight).fill();
+        doc.fillColor('black');
+        doc.font('Helvetica-Bold');
 
         x = startX;
-        headers.forEach((header, i) => {
+        totalValues.forEach((value, i) => {
           const align = i >= 2 ? 'right' : 'left';
-          doc.text(header, x + 5, y + 5, { width: colWidths[i] - 10, align });
+          const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
+          const topPadding = (rowHeight - cellHeight) / 2;
+
+          if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
+            doc.fillColor('red');
+            doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
+            doc.fillColor('black');
+          } else {
+            doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
+          }
           x += colWidths[i];
         });
 
-        y += 20;
-        doc.fillColor('black');
-        doc.fontSize(8).font('Helvetica');
+        doc.font('Helvetica'); // Volver a fuente normal
+        y += rowHeight;
+        rowIndex++;
+
+        // ✅ NUEVO: Filas de desglose por entidad con indentación visual
+        if (isDimensionVentana && item.byVentana) {
+          for (const breakdown of item.byVentana) {
+            const breakdownEntity = `  - ${breakdown.ventanaName}`;
+            
+            const breakdownValues = [
+              date,
+              breakdownEntity,
+              this.formatCurrency(breakdown.totalSales),
+              breakdown.totalTickets.toString(),
+              this.formatCurrency(breakdown.commissionListero || 0),
+              this.formatCurrency(breakdown.commissionVendedor || 0),
+              this.formatCurrency((breakdown.commissionListero || 0) - (breakdown.commissionVendedor || 0)),
+            ];
+
+            // Calcular altura dinámica
+            maxCellHeight = 0;
+            breakdownValues.forEach((val, i) => {
+              const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
+              if (h > maxCellHeight) maxCellHeight = h;
+            });
+            const breakdownRowHeight = Math.max(18, maxCellHeight + 8);
+
+            // Verificar si necesitamos nueva página
+            if (y + breakdownRowHeight > doc.page.height - 50) {
+              doc.addPage();
+              y = 50;
+              this.redrawHeader(doc, headers, colWidths, startX, y, pageWidth);
+              y += 20;
+              doc.fillColor('black');
+              doc.fontSize(8).font('Helvetica');
+            }
+
+            // Fondo alternado
+            if (rowIndex % 2 === 1) {
+              doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, breakdownRowHeight).fill();
+              doc.fillColor('black');
+            }
+
+            x = startX;
+            breakdownValues.forEach((value, i) => {
+              const align = i >= 2 ? 'right' : 'left';
+              const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
+              const topPadding = (breakdownRowHeight - cellHeight) / 2;
+
+              if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
+                doc.fillColor('red');
+                doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
+                doc.fillColor('black');
+              } else {
+                doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
+              }
+              x += colWidths[i];
+            });
+
+            y += breakdownRowHeight;
+            rowIndex++;
+          }
+        } else if (!isDimensionVentana && item.byVendedor) {
+          for (const breakdown of item.byVendedor) {
+            const breakdownEntity = `  - ${breakdown.vendedorName}`;
+            
+            const breakdownValues = [
+              date,
+              breakdownEntity,
+              this.formatCurrency(breakdown.totalSales),
+              breakdown.totalTickets.toString(),
+              this.formatCurrency(breakdown.commissionVendedor || 0),
+              this.formatCurrency(breakdown.commissionListero || 0),
+              this.formatCurrency(breakdown.net || 0),
+            ];
+
+            // Calcular altura dinámica
+            let maxCellHeight = 0;
+            breakdownValues.forEach((val, i) => {
+              const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
+              if (h > maxCellHeight) maxCellHeight = h;
+            });
+            const breakdownRowHeight = Math.max(18, maxCellHeight + 8);
+
+            // Verificar si necesitamos nueva página
+            if (y + breakdownRowHeight > doc.page.height - 50) {
+              doc.addPage();
+              y = 50;
+              this.redrawHeader(doc, headers, colWidths, startX, y, pageWidth);
+              y += 20;
+              doc.fillColor('black');
+              doc.fontSize(8).font('Helvetica');
+            }
+
+            // Fondo alternado
+            if (rowIndex % 2 === 1) {
+              doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, breakdownRowHeight).fill();
+              doc.fillColor('black');
+            }
+
+            x = startX;
+            breakdownValues.forEach((value, i) => {
+              const align = i >= 2 ? 'right' : 'left';
+              const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
+              const topPadding = (breakdownRowHeight - cellHeight) / 2;
+
+              if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
+                doc.fillColor('red');
+                doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
+                doc.fillColor('black');
+              } else {
+                doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
+              }
+              x += colWidths[i];
+            });
+
+            y += breakdownRowHeight;
+            rowIndex++;
+          }
+        }
+      } else {
+        // ✅ Comportamiento normal cuando NO hay agrupación
+        const entity = isDimensionVentana ? item.ventanaName || '-' : item.vendedorName || '-';
+
+        const values = isDimensionVentana
+          ? [
+            date,
+            entity,
+            this.formatCurrency(item.totalSales),
+            item.totalTickets.toString(),
+            this.formatCurrency(item.commissionListero || 0),
+            this.formatCurrency(item.commissionVendedor || 0),
+            this.formatCurrency((item.commissionListero || 0) - (item.commissionVendedor || 0)),
+          ]
+          : [
+            date,
+            entity,
+            this.formatCurrency(item.totalSales),
+            item.totalTickets.toString(),
+            this.formatCurrency(item.commissionVendedor || 0),
+            this.formatCurrency(item.commissionListero || 0),
+            this.formatCurrency(item.net || 0),
+          ];
+
+        // ✅ CRÍTICO: Calcular altura dinámica basada en TODAS las columnas
+        let maxCellHeight = 0;
+        values.forEach((val, i) => {
+          const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
+          if (h > maxCellHeight) maxCellHeight = h;
+        });
+
+        const rowHeight = Math.max(18, maxCellHeight + 8);
+
+        // Verificar si necesitamos nueva página
+        if (y + rowHeight > doc.page.height - 50) {
+          doc.addPage();
+          y = 50;
+          this.redrawHeader(doc, headers, colWidths, startX, y, pageWidth);
+          y += 20;
+          doc.fillColor('black');
+          doc.fontSize(8).font('Helvetica');
+        }
+
+        // Fondo alternado
+        if (rowIndex % 2 === 1) {
+          doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, rowHeight).fill();
+          doc.fillColor('black');
+        }
+
+        x = startX;
+
+        values.forEach((value, i) => {
+          const align = i >= 2 ? 'right' : 'left';
+          const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
+          const topPadding = (rowHeight - cellHeight) / 2;
+
+          if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
+            doc.fillColor('red');
+            doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
+            doc.fillColor('black');
+          } else {
+            doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
+          }
+          x += colWidths[i];
+        });
+
+        y += rowHeight;
+        rowIndex++;
       }
-
-      // Fondo alternado
-      const rowIndex = payload.summary.indexOf(item);
-      if (rowIndex % 2 === 1) {
-        doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, rowHeight).fill();
-        doc.fillColor('black');
-      }
-
-      x = startX;
-
-      values.forEach((value, i) => {
-        const align = i >= 2 ? 'right' : 'left';
-        // Centrar verticalmente
-        const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
-        const topPadding = (rowHeight - cellHeight) / 2;
-
-        doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
-        x += colWidths[i];
-      });
-
-      y += rowHeight;
     }
 
     // Fila de totales
@@ -539,6 +724,31 @@ export class CommissionsExportPdfService {
   /**
    * Formatea fecha de YYYY-MM-DD a DD/MM/YYYY
    */
+  /**
+   * Redibuja el encabezado de la tabla en una nueva página
+   */
+  private static redrawHeader(
+    doc: PDFKit.PDFDocument,
+    headers: string[],
+    colWidths: number[],
+    startX: number,
+    y: number,
+    pageWidth: number
+  ): void {
+    doc.fontSize(9).font('Helvetica-Bold');
+    doc.fillColor('#4472C4').rect(startX, y, pageWidth, 20).fill();
+    doc.fillColor('white');
+
+    let x = startX;
+    headers.forEach((header, i) => {
+      const align = i >= 2 ? 'right' : 'left';
+      doc.text(header, x + 5, y + 5, { width: colWidths[i] - 10, align });
+      x += colWidths[i];
+    });
+
+    doc.fillColor('black');
+  }
+
   private static formatDate(dateStr: string): string {
     const [year, month, day] = dateStr.split('-');
     return `${day}/${month}/${year}`;

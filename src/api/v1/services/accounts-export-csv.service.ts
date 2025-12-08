@@ -64,36 +64,110 @@ export class AccountsExportCsvService {
     // Datos
     for (const item of payload.statements) {
       const date = this.formatDate(item.date);
-      const entity = isDimensionVentana
-        ? this.escapeCsv(item.ventanaName || '-')
-        : this.escapeCsv(item.vendedorName || '-');
+      
+      // ✅ NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
+      const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
+                          (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
-      if (isDimensionVentana) {
-        lines.push(
-          `${date},${entity},` +
-            `${this.formatCurrency(item.totalSales)},` +
-            `${this.formatCurrency(item.totalPayouts)},` +
-            `${this.formatCurrency(item.listeroCommission)},` +
-            `${this.formatCurrency(item.vendedorCommission)},` +
-            `${this.formatCurrency(item.balance)},` +
-            `${this.formatCurrency(item.totalPaid)},` +
-            `${this.formatCurrency(item.totalCollected)},` +
-            `${this.formatCurrency(item.remainingBalance)},` +
-            `${item.ticketCount}`
-        );
+      if (hasGrouping) {
+        // ✅ NUEVO: Fila de total consolidado con "TODOS"
+        const totalEntity = isDimensionVentana ? 'TODOS' : 'TODOS';
+        
+        if (isDimensionVentana) {
+          lines.push(
+            `${date},${this.escapeCsv(totalEntity)},` +
+              `${this.formatCurrency(item.totalSales)},` +
+              `${this.formatCurrency(item.totalPayouts)},` +
+              `${this.formatCurrency(item.listeroCommission)},` +
+              `${this.formatCurrency(item.vendedorCommission)},` +
+              `${this.formatCurrency(item.balance)},` +
+              `${this.formatCurrency(item.totalPaid)},` +
+              `${this.formatCurrency(item.totalCollected)},` +
+              `${this.formatCurrency(item.remainingBalance)},` +
+              `${item.ticketCount}`
+          );
+        } else {
+          lines.push(
+            `${date},${this.escapeCsv(totalEntity)},` +
+              `${this.formatCurrency(item.totalSales)},` +
+              `${this.formatCurrency(item.totalPayouts)},` +
+              `${this.formatCurrency(item.vendedorCommission)},` +
+              `${this.formatCurrency(item.listeroCommission)},` +
+              `${this.formatCurrency(item.balance)},` +
+              `${this.formatCurrency(item.totalPaid)},` +
+              `${this.formatCurrency(item.totalCollected)},` +
+              `${this.formatCurrency(item.remainingBalance)},` +
+              `${item.ticketCount}`
+          );
+        }
+
+        // ✅ NUEVO: Filas de desglose por entidad con prefijo visual
+        if (isDimensionVentana && item.byVentana) {
+          for (const breakdown of item.byVentana) {
+            const breakdownEntity = `  - ${breakdown.ventanaName}`;
+            lines.push(
+              `${date},${this.escapeCsv(breakdownEntity)},` +
+                `${this.formatCurrency(breakdown.totalSales)},` +
+                `${this.formatCurrency(breakdown.totalPayouts)},` +
+                `${this.formatCurrency(breakdown.listeroCommission)},` +
+                `${this.formatCurrency(breakdown.vendedorCommission)},` +
+                `${this.formatCurrency(breakdown.balance)},` +
+                `${this.formatCurrency(breakdown.totalPaid || 0)},` +
+                `${this.formatCurrency(breakdown.totalCollected || 0)},` +
+                `${this.formatCurrency(breakdown.remainingBalance)},` +
+                `${breakdown.ticketCount || 0}`
+            );
+          }
+        } else if (!isDimensionVentana && item.byVendedor) {
+          for (const breakdown of item.byVendedor) {
+            const breakdownEntity = `  - ${breakdown.vendedorName}`;
+            lines.push(
+              `${date},${this.escapeCsv(breakdownEntity)},` +
+                `${this.formatCurrency(breakdown.totalSales)},` +
+                `${this.formatCurrency(breakdown.totalPayouts)},` +
+                `${this.formatCurrency(breakdown.vendedorCommission)},` +
+                `${this.formatCurrency(breakdown.listeroCommission)},` +
+                `${this.formatCurrency(breakdown.balance)},` +
+                `${this.formatCurrency(breakdown.totalPaid || 0)},` +
+                `${this.formatCurrency(breakdown.totalCollected || 0)},` +
+                `${this.formatCurrency(breakdown.remainingBalance)},` +
+                `${breakdown.ticketCount || 0}`
+            );
+          }
+        }
       } else {
-        lines.push(
-          `${date},${entity},` +
-            `${this.formatCurrency(item.totalSales)},` +
-            `${this.formatCurrency(item.totalPayouts)},` +
-            `${this.formatCurrency(item.vendedorCommission)},` +
-            `${this.formatCurrency(item.listeroCommission)},` +
-            `${this.formatCurrency(item.balance)},` +
-            `${this.formatCurrency(item.totalPaid)},` +
-            `${this.formatCurrency(item.totalCollected)},` +
-            `${this.formatCurrency(item.remainingBalance)},` +
-            `${item.ticketCount}`
-        );
+        // ✅ Comportamiento normal cuando NO hay agrupación
+        const entity = isDimensionVentana
+          ? this.escapeCsv(item.ventanaName || '-')
+          : this.escapeCsv(item.vendedorName || '-');
+
+        if (isDimensionVentana) {
+          lines.push(
+            `${date},${entity},` +
+              `${this.formatCurrency(item.totalSales)},` +
+              `${this.formatCurrency(item.totalPayouts)},` +
+              `${this.formatCurrency(item.listeroCommission)},` +
+              `${this.formatCurrency(item.vendedorCommission)},` +
+              `${this.formatCurrency(item.balance)},` +
+              `${this.formatCurrency(item.totalPaid)},` +
+              `${this.formatCurrency(item.totalCollected)},` +
+              `${this.formatCurrency(item.remainingBalance)},` +
+              `${item.ticketCount}`
+          );
+        } else {
+          lines.push(
+            `${date},${entity},` +
+              `${this.formatCurrency(item.totalSales)},` +
+              `${this.formatCurrency(item.totalPayouts)},` +
+              `${this.formatCurrency(item.vendedorCommission)},` +
+              `${this.formatCurrency(item.listeroCommission)},` +
+              `${this.formatCurrency(item.balance)},` +
+              `${this.formatCurrency(item.totalPaid)},` +
+              `${this.formatCurrency(item.totalCollected)},` +
+              `${this.formatCurrency(item.remainingBalance)},` +
+              `${item.ticketCount}`
+          );
+        }
       }
     }
 

@@ -95,39 +95,120 @@ export class AccountsExportExcelService {
     // Datos
     for (const item of payload.statements) {
       const date = this.formatDate(item.date);
-      const entity = isDimensionVentana
-        ? item.ventanaName || '-'
-        : item.vendedorName || '-';
+      
+      // ✅ NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
+      const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
+                          (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
-      const row = isDimensionVentana
-        ? sheet.addRow([
-            date,
-            entity,
-            item.totalSales,
-            item.totalPayouts,
-            item.listeroCommission,
-            item.vendedorCommission,
-            item.balance,
-            item.totalPaid,
-            item.totalCollected,
-            item.remainingBalance,
-            item.ticketCount,
-          ])
-        : sheet.addRow([
-            date,
-            entity,
-            item.totalSales,
-            item.totalPayouts,
-            item.vendedorCommission,
-            item.listeroCommission,
-            item.balance,
-            item.totalPaid,
-            item.totalCollected,
-            item.remainingBalance,
-            item.ticketCount,
-          ]);
+      if (hasGrouping) {
+        // ✅ NUEVO: Fila de total consolidado con "TODOS" y formato destacado
+        const totalEntity = 'TODOS';
+        
+        const totalRow = isDimensionVentana
+          ? sheet.addRow([
+              date,
+              totalEntity,
+              item.totalSales,
+              item.totalPayouts,
+              item.listeroCommission,
+              item.vendedorCommission,
+              item.balance,
+              item.totalPaid,
+              item.totalCollected,
+              item.remainingBalance,
+              item.ticketCount,
+            ])
+          : sheet.addRow([
+              date,
+              totalEntity,
+              item.totalSales,
+              item.totalPayouts,
+              item.vendedorCommission,
+              item.listeroCommission,
+              item.balance,
+              item.totalPaid,
+              item.totalCollected,
+              item.remainingBalance,
+              item.ticketCount,
+            ]);
 
-      this.styleDataRow(row, [3, 4, 5, 6, 7, 8, 9, 10], [11]);
+        // ✅ NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
+        this.styleTotalRow(totalRow, [3, 4, 5, 6, 7, 8, 9, 10], [11]);
+
+        // ✅ NUEVO: Filas de desglose por entidad con indentación visual
+        if (isDimensionVentana && item.byVentana) {
+          for (const breakdown of item.byVentana) {
+            const breakdownEntity = `  - ${breakdown.ventanaName}`;
+            const breakdownRow = sheet.addRow([
+              date,
+              breakdownEntity,
+              breakdown.totalSales,
+              breakdown.totalPayouts,
+              breakdown.listeroCommission,
+              breakdown.vendedorCommission,
+              breakdown.balance,
+              breakdown.totalPaid || 0,
+              breakdown.totalCollected || 0,
+              breakdown.remainingBalance,
+              breakdown.ticketCount || 0,
+            ]);
+            this.styleDataRow(breakdownRow, [3, 4, 5, 6, 7, 8, 9, 10], [11]);
+          }
+        } else if (!isDimensionVentana && item.byVendedor) {
+          for (const breakdown of item.byVendedor) {
+            const breakdownEntity = `  - ${breakdown.vendedorName}`;
+            const breakdownRow = sheet.addRow([
+              date,
+              breakdownEntity,
+              breakdown.totalSales,
+              breakdown.totalPayouts,
+              breakdown.vendedorCommission,
+              breakdown.listeroCommission,
+              breakdown.balance,
+              breakdown.totalPaid || 0,
+              breakdown.totalCollected || 0,
+              breakdown.remainingBalance,
+              breakdown.ticketCount || 0,
+            ]);
+            this.styleDataRow(breakdownRow, [3, 4, 5, 6, 7, 8, 9, 10], [11]);
+          }
+        }
+      } else {
+        // ✅ Comportamiento normal cuando NO hay agrupación
+        const entity = isDimensionVentana
+          ? item.ventanaName || '-'
+          : item.vendedorName || '-';
+
+        const row = isDimensionVentana
+          ? sheet.addRow([
+              date,
+              entity,
+              item.totalSales,
+              item.totalPayouts,
+              item.listeroCommission,
+              item.vendedorCommission,
+              item.balance,
+              item.totalPaid,
+              item.totalCollected,
+              item.remainingBalance,
+              item.ticketCount,
+            ])
+          : sheet.addRow([
+              date,
+              entity,
+              item.totalSales,
+              item.totalPayouts,
+              item.vendedorCommission,
+              item.listeroCommission,
+              item.balance,
+              item.totalPaid,
+              item.totalCollected,
+              item.remainingBalance,
+              item.ticketCount,
+            ]);
+
+        this.styleDataRow(row, [3, 4, 5, 6, 7, 8, 9, 10], [11]);
+      }
     }
 
     // Fila de totales del período
@@ -421,7 +502,7 @@ export class AccountsExportExcelService {
   /**
    * Aplica estilos a la fila de total
    */
-  private static styleTotalRow(row: ExcelJS.Row, currencyCols: number[]): void {
+  private static styleTotalRow(row: ExcelJS.Row, currencyCols: number[], integerCols?: number[]): void {
     row.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
     row.fill = {
       type: 'pattern',
