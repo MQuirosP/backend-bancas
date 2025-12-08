@@ -19,7 +19,7 @@ import { getCachedDayStatement, setCachedDayStatement } from "../../../../utils/
 export async function calculateDayStatement(
     date: Date,
     month: string,
-    dimension: "ventana" | "vendedor",
+    dimension: "banca" | "ventana" | "vendedor", // ✅ NUEVO: Agregado 'banca'
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string,
@@ -63,8 +63,10 @@ export async function calculateDayStatement(
         };
     }
 
-    // FIX: Validación defensiva - asegurar que ventanaId coincide en dimensión "ventana"
-    if (dimension === "ventana" && ventanaId) {
+    // ✅ NUEVO: Validación defensiva según dimensión
+    if (dimension === "banca" && bancaId) {
+        // Filtrar por banca (ya aplicado arriba con where.ventana.bancaId)
+    } else if (dimension === "ventana" && ventanaId) {
         where.ventanaId = ventanaId;
     } else if (dimension === "vendedor" && vendedorId) {
         where.vendedorId = vendedorId;
@@ -449,7 +451,7 @@ export async function getStatementDirect(
     endDate: Date,
     daysInMonth: number,
     effectiveMonth: string,
-    dimension: "ventana" | "vendedor",
+    dimension: "banca" | "ventana" | "vendedor", // ✅ NUEVO: Agregado 'banca'
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string,
@@ -460,22 +462,30 @@ export async function getStatementDirect(
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
 
     // ✅ NUEVO: Detectar si debemos agrupar por fecha solamente (sin separar por entidad)
-    // Agrupamos cuando dimension=ventana y ventanaId NO está especificado (undefined, null, o cadena vacía)
-    // o cuando dimension=vendedor y vendedorId NO está especificado
+    // Agrupamos cuando:
+    // - dimension=banca y bancaId NO está especificado
+    // - dimension=ventana y ventanaId NO está especificado
+    // - dimension=vendedor y vendedorId NO está especificado
     // ✅ CRÍTICO: Verificar tanto undefined como null y cadena vacía
     const shouldGroupByDate = 
+        (dimension === "banca" && (!bancaId || bancaId === "" || bancaId === null)) ||
         (dimension === "ventana" && (!ventanaId || ventanaId === "" || ventanaId === null)) ||
         (dimension === "vendedor" && (!vendedorId || vendedorId === "" || vendedorId === null));
     
-    // ✅ DEBUG: Log para verificar agrupación
+    // ✅ DEBUG: Log para verificar agrupación y rendimiento
+    const functionStartTime = Date.now();
     logger.info({
         layer: "service",
-        action: "ACCOUNT_STATEMENT_GROUPING_CHECK",
+        action: "GET_STATEMENT_DIRECT_START",
         payload: {
             dimension,
             ventanaId: ventanaId || null,
             vendedorId: vendedorId || null,
+            bancaId: bancaId || null,
             shouldGroupByDate,
+            startDate: startDateCRStr,
+            endDate: endDateCRStr,
+            daysInRange: daysInMonth,
         },
     });
 
@@ -505,17 +515,92 @@ export async function getStatementDirect(
     }
 
     // Aplicar filtros de RBAC según dimension
-    if (dimension === "vendedor") {
+    if (dimension === "banca") {
+        // ✅ NUEVO: Filtros para dimension='banca'
+        if (bancaId) {
+            // Filtrar solo tickets de esta banca específica
+            whereConditions.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM "Ventana" v 
+                WHERE v.id = t."ventanaId" 
+                AND v."bancaId" = ${bancaId}::uuid
+            )`);
+        }
+        if (ventanaId) {
+            // Filtrar solo listeros de esa banca específica
+            whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+            // Validar que ventanaId pertenece a bancaId (si está presente)
+            if (bancaId) {
+                whereConditions.push(Prisma.sql`EXISTS (
+                    SELECT 1 FROM "Ventana" v 
+                    WHERE v.id = ${ventanaId}::uuid
+                    AND v."bancaId" = ${bancaId}::uuid
+                )`);
+            }
+        }
+        if (vendedorId) {
+            // Filtrar solo vendedores de esa banca (y opcionalmente de ese listero)
+            whereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+            if (bancaId) {
+                whereConditions.push(Prisma.sql`EXISTS (
+                    SELECT 1 FROM "Ventana" v 
+                    JOIN "User" u ON u."ventanaId" = v.id
+                    WHERE u.id = ${vendedorId}::uuid
+                    AND v."bancaId" = ${bancaId}::uuid
+                )`);
+            }
+            if (ventanaId) {
+                whereConditions.push(Prisma.sql`EXISTS (
+                    SELECT 1 FROM "User" u
+                    WHERE u.id = ${vendedorId}::uuid
+                    AND u."ventanaId" = ${ventanaId}::uuid
+                )`);
+            }
+        }
+    } else if (dimension === "vendedor") {
         if (vendedorId) {
             whereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
         }
         if (ventanaId) {
             whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
         }
+        // ✅ NUEVO: Si hay bancaId, filtrar solo vendedores de esa banca
+        if (bancaId) {
+            whereConditions.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM "Ventana" v 
+                JOIN "User" u ON u."ventanaId" = v.id
+                WHERE u.id = t."vendedorId"
+                AND v."bancaId" = ${bancaId}::uuid
+            )`);
+        }
     } else if (dimension === "ventana") {
         if (ventanaId) {
             whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
         }
+        // ✅ NUEVO: Si hay bancaId, filtrar solo listeros de esa banca
+        if (bancaId) {
+            whereConditions.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM "Ventana" v 
+                WHERE v.id = t."ventanaId" 
+                AND v."bancaId" = ${bancaId}::uuid
+            )`);
+        }
+        // ✅ NUEVO: Si hay vendedorId, filtrar solo vendedores de ese listero
+        if (vendedorId) {
+            whereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+        }
+    }
+
+    // ✅ CRÍTICO: Optimización para dimension='banca' sin bancaId específica
+    // Si estamos agrupando por todas las bancas, limitar el rango de fechas y usar índices
+    // Agregar límite de fechas más agresivo si no hay filtros específicos
+    if (dimension === "banca" && !bancaId && whereConditions.length <= 2) {
+        // Solo filtros de fecha básicos, agregar límite de tiempo para evitar consultas masivas
+        // Esto previene consultas de años completos cuando solo se necesita un mes
+        const maxDaysBack = 90; // Máximo 90 días hacia atrás
+        const minDate = new Date(startDate);
+        minDate.setUTCDate(minDate.getUTCDate() - maxDaysBack);
+        const minDateCR = crDateService.postgresDateToCRString(minDate);
+        whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${minDateCR}::date`);
     }
 
     const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`;
@@ -523,20 +608,25 @@ export async function getStatementDirect(
     // ✅ OPTIMIZACIÓN: Usar agregaciones SQL directamente en lugar de traer todas las jugadas
     // Esto reduce significativamente la cantidad de datos transferidos y mejora el rendimiento
     // Usar subquery para calcular payouts correctamente (una vez por ticket, solo si tiene jugadas ganadoras)
-    const aggregatedData = await prisma.$queryRaw<
-        Array<{
-            business_date: Date;
-            ventana_id: string;
-            ventana_name: string;
-            vendedor_id: string | null;
-            vendedor_name: string | null;
-            total_sales: number;
-            total_payouts: number;
-            total_tickets: bigint;
-            commission_listero: number;
-            commission_vendedor: number;
-        }>
-    >`
+    const queryStartTime = Date.now();
+    logger.info({
+        layer: "service",
+        action: "ACCOUNT_STATEMENT_SQL_QUERY_START",
+        payload: {
+            dimension,
+            bancaId,
+            ventanaId,
+            vendedorId,
+            startDate: startDateCRStr,
+            endDate: endDateCRStr,
+            shouldGroupByDate,
+        },
+    });
+    
+    // ✅ CRÍTICO: Construir la consulta SQL completa usando Prisma.sql correctamente
+    // No podemos insertar Prisma.sql dentro de otro Prisma.sql porque los parámetros se desalinean
+    // Construir la consulta completa con todos los parámetros en orden
+    const query = Prisma.sql`
     WITH ticket_payouts AS (
       SELECT DISTINCT
         t.id as ticket_id,
@@ -549,7 +639,7 @@ export async function getStatementDirect(
         t."totalPayout" as ticket_payout
       FROM "Ticket" t
       INNER JOIN "Jugada" j ON j."ticketId" = t.id
-      ${whereClause}
+      WHERE ${Prisma.join(whereConditions, " AND ")}
       AND j."deletedAt" IS NULL
       AND j."isWinner" = true
     )
@@ -558,10 +648,15 @@ export async function getStatementDirect(
         t."businessDate",
         DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
       ) as business_date,
+      b.id as banca_id,
+      b.name as banca_name,
+      b.code as banca_code,
       t."ventanaId" as ventana_id,
       v.name as ventana_name,
+      v.code as ventana_code,
       t."vendedorId" as vendedor_id,
       u.name as vendedor_name,
+      u.code as vendedor_code,
       COALESCE(SUM(j.amount), 0) as total_sales,
       COALESCE(SUM(tp.ticket_payout), 0) as total_payouts,
       COUNT(DISTINCT t.id) as total_tickets,
@@ -576,27 +671,72 @@ export async function getStatementDirect(
       AND tp.business_date = COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
       AND tp.ventana_id = t."ventanaId"
       AND (tp.vendedor_id = t."vendedorId" OR (tp.vendedor_id IS NULL AND t."vendedorId" IS NULL))
-    ${whereClause}
+    WHERE ${Prisma.join(whereConditions, " AND ")}
     AND j."deletedAt" IS NULL
     GROUP BY 
       COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
+      b.id,
+      b.name,
+      b.code,
       t."ventanaId",
       v.name,
+      v.code,
       t."vendedorId",
-      u.name
+      u.name,
+      u.code
+    ORDER BY business_date ${sort === "desc" ? Prisma.sql`DESC` : Prisma.sql`ASC`}
+    LIMIT 5000
   `;
+    
+    const aggregatedData = await prisma.$queryRaw<
+        Array<{
+            business_date: Date;
+            banca_id: string | null;
+            banca_name: string | null;
+            banca_code: string | null;
+            ventana_id: string;
+            ventana_name: string;
+            ventana_code: string | null;
+            vendedor_id: string | null;
+            vendedor_name: string | null;
+            vendedor_code: string | null;
+            total_sales: number;
+            total_payouts: number;
+            total_tickets: bigint;
+            commission_listero: number;
+            commission_vendedor: number;
+        }>
+    >(query);
+    
+    const queryEndTime = Date.now();
+    logger.info({
+        layer: "service",
+        action: "ACCOUNT_STATEMENT_SQL_QUERY_END",
+        payload: {
+            dimension,
+            bancaId,
+            ventanaId,
+            vendedorId,
+            rowsReturned: aggregatedData.length,
+            queryTimeMs: queryEndTime - queryStartTime,
+        },
+    });
 
-
-    // ✅ CRÍTICO: Agrupar jugadas por día y ventana/vendedor, calculando comisiones jugada por jugada
+    // ✅ CRÍTICO: Agrupar jugadas por día y banca/ventana/vendedor, calculando comisiones jugada por jugada
     // EXACTAMENTE igual que commissions (líneas 403-492)
     // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
     const byDateAndDimension = new Map<
         string,
         {
+            bancaId: string | null; // ✅ NUEVO: ID de banca
+            bancaName: string | null; // ✅ NUEVO: Nombre de banca
+            bancaCode: string | null; // ✅ NUEVO: Código de banca
             ventanaId: string | null;
             ventanaName: string | null;
+            ventanaCode: string | null; // ✅ NUEVO: Código de ventana
             vendedorId: string | null;
             vendedorName: string | null;
+            vendedorCode: string | null; // ✅ NUEVO: Código de vendedor
             totalSales: number;
             totalPayouts: number;
             totalTickets: Set<string>;
@@ -606,14 +746,19 @@ export async function getStatementDirect(
         }
     >();
 
-    // ✅ NUEVO: Mapa para desglose por entidad (byVentana/byVendedor) cuando hay agrupación
+    // ✅ NUEVO: Mapa para desglose por entidad (byBanca/byVentana/byVendedor) cuando hay agrupación
     const breakdownByEntity = new Map<
-        string, // `${dateKey}_${entityId}`
+        string, // `${dateKey}_${entityId}` o `${dateKey}_${bancaId}` o `${dateKey}_${ventanaId}` o `${dateKey}_${vendedorId}`
         {
-            ventanaId: string;
-            ventanaName: string;
+            bancaId: string | null; // ✅ NUEVO: ID de banca
+            bancaName: string | null; // ✅ NUEVO: Nombre de banca
+            bancaCode: string | null; // ✅ NUEVO: Código de banca
+            ventanaId: string | null;
+            ventanaName: string | null;
+            ventanaCode: string | null; // ✅ NUEVO: Código de ventana
             vendedorId: string | null;
             vendedorName: string | null;
+            vendedorCode: string | null; // ✅ NUEVO: Código de vendedor
             totalSales: number;
             totalPayouts: number;
             totalTickets: Set<string>;
@@ -635,12 +780,16 @@ export async function getStatementDirect(
         // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + entidad
         const groupKey = shouldGroupByDate
             ? dateKey // Solo fecha cuando hay agrupación
-            : (dimension === "ventana"
+            : (dimension === "banca"
+                ? `${dateKey}_${row.banca_id || 'null'}`
+                : dimension === "ventana"
                 ? `${dateKey}_${row.ventana_id}`
                 : `${dateKey}_${row.vendedor_id || 'null'}`);
 
         // Clave para el desglose por entidad (siempre incluye entidad)
-        const breakdownKey = dimension === "ventana"
+        const breakdownKey = dimension === "banca"
+            ? `${dateKey}_${row.banca_id || 'null'}`
+            : dimension === "ventana"
             ? `${dateKey}_${row.ventana_id}`
             : `${dateKey}_${row.vendedor_id || 'null'}`;
 
@@ -648,10 +797,15 @@ export async function getStatementDirect(
         let entry = byDateAndDimension.get(groupKey);
         if (!entry) {
             entry = {
-                ventanaId: shouldGroupByDate ? null : row.ventana_id,
-                ventanaName: shouldGroupByDate ? null : row.ventana_name,
-                vendedorId: shouldGroupByDate ? null : row.vendedor_id,
-                vendedorName: shouldGroupByDate ? null : row.vendedor_name,
+                bancaId: shouldGroupByDate ? null : (dimension === "banca" ? row.banca_id : null),
+                bancaName: shouldGroupByDate ? null : (dimension === "banca" ? row.banca_name : null),
+                bancaCode: shouldGroupByDate ? null : (dimension === "banca" ? row.banca_code : null),
+                ventanaId: shouldGroupByDate ? null : (dimension === "ventana" ? row.ventana_id : null),
+                ventanaName: shouldGroupByDate ? null : (dimension === "ventana" ? row.ventana_name : null),
+                ventanaCode: shouldGroupByDate ? null : (dimension === "ventana" ? row.ventana_code : null),
+                vendedorId: shouldGroupByDate ? null : (dimension === "vendedor" ? row.vendedor_id : null),
+                vendedorName: shouldGroupByDate ? null : (dimension === "vendedor" ? row.vendedor_name : null),
+                vendedorCode: shouldGroupByDate ? null : (dimension === "vendedor" ? row.vendedor_code : null),
                 totalSales: 0,
                 totalPayouts: 0,
                 totalTickets: new Set<string>(),
@@ -667,10 +821,15 @@ export async function getStatementDirect(
             let breakdownEntry = breakdownByEntity.get(breakdownKey);
             if (!breakdownEntry) {
                 breakdownEntry = {
-                    ventanaId: row.ventana_id,
-                    ventanaName: row.ventana_name,
-                    vendedorId: row.vendedor_id,
-                    vendedorName: row.vendedor_name,
+                    bancaId: dimension === "banca" ? row.banca_id : null,
+                    bancaName: dimension === "banca" ? row.banca_name : null,
+                    bancaCode: dimension === "banca" ? row.banca_code : null,
+                    ventanaId: dimension === "ventana" ? row.ventana_id : (dimension === "banca" ? row.ventana_id : null),
+                    ventanaName: dimension === "ventana" ? row.ventana_name : (dimension === "banca" ? row.ventana_name : null),
+                    ventanaCode: dimension === "ventana" ? row.ventana_code : (dimension === "banca" ? row.ventana_code : null),
+                    vendedorId: dimension === "vendedor" ? row.vendedor_id : null,
+                    vendedorName: dimension === "vendedor" ? row.vendedor_name : null,
+                    vendedorCode: dimension === "vendedor" ? row.vendedor_code : null,
                     totalSales: 0,
                     totalPayouts: 0,
                     totalTickets: new Set<string>(),
@@ -723,8 +882,13 @@ export async function getStatementDirect(
         
         for (const movement of movements) {
             // Determinar ID según dimensión
-            const targetId = dimension === "ventana" ? movement.ventanaId : movement.vendedorId;
+            const targetId = dimension === "banca" 
+                ? movement.bancaId 
+                : dimension === "ventana" 
+                ? movement.ventanaId 
+                : movement.vendedorId;
             // Si estamos filtrando por dimensión y el movimiento no coincide, ignorar (aunque el repo ya filtra)
+            if (dimension === "banca" && bancaId && targetId !== bancaId) continue;
             if (dimension === "ventana" && ventanaId && targetId !== ventanaId) continue;
             if (dimension === "vendedor" && vendedorId && targetId !== vendedorId) continue;
 
@@ -736,10 +900,15 @@ export async function getStatementDirect(
             if (!byDateAndDimension.has(groupKey)) {
                 // Crear entrada vacía si no existe (día sin ventas)
                 byDateAndDimension.set(groupKey, {
-                    ventanaId: shouldGroupByDate ? null : movement.ventanaId,
-                    ventanaName: shouldGroupByDate ? null : (movement.ventanaName || "Desconocido"),
-                    vendedorId: shouldGroupByDate ? null : movement.vendedorId,
-                    vendedorName: shouldGroupByDate ? null : (movement.vendedorName || "Desconocido"),
+                    bancaId: shouldGroupByDate ? null : (dimension === "banca" ? movement.bancaId : null),
+                    bancaName: shouldGroupByDate ? null : (dimension === "banca" ? (movement.bancaName || "Desconocido") : null),
+                    bancaCode: shouldGroupByDate ? null : (dimension === "banca" ? movement.bancaCode : null),
+                    ventanaId: shouldGroupByDate ? null : (dimension === "ventana" ? movement.ventanaId : (dimension === "banca" ? movement.ventanaId : null)),
+                    ventanaName: shouldGroupByDate ? null : (dimension === "ventana" ? (movement.ventanaName || "Desconocido") : (dimension === "banca" ? (movement.ventanaName || "Desconocido") : null)),
+                    ventanaCode: shouldGroupByDate ? null : (dimension === "ventana" ? movement.ventanaCode : (dimension === "banca" ? movement.ventanaCode : null)),
+                    vendedorId: shouldGroupByDate ? null : (dimension === "vendedor" ? movement.vendedorId : null),
+                    vendedorName: shouldGroupByDate ? null : (dimension === "vendedor" ? (movement.vendedorName || "Desconocido") : null),
+                    vendedorCode: shouldGroupByDate ? null : (dimension === "vendedor" ? movement.vendedorCode : null),
                     totalSales: 0,
                     totalPayouts: 0,
                     totalTickets: new Set<string>(),
@@ -792,9 +961,10 @@ export async function getStatementDirect(
         const date = shouldGroupByDate ? key : key.split("_")[0];
 
         // Calcular balance según dimensión:
+        // - Dimensión banca: Ventas - Premios - Comisión Listero (suma de todas las ventanas)
         // - Dimensión ventana: Ventas - Premios - Comisión Listero
         // - Dimensión vendedor: Ventas - Premios - Comisión Vendedor
-        const balance = dimension === "ventana"
+        const balance = dimension === "banca" || dimension === "ventana"
             ? entry.totalSales - entry.totalPayouts - entry.commissionListero
             : entry.totalSales - entry.totalPayouts - entry.commissionVendedor;
 
@@ -853,14 +1023,18 @@ export async function getStatementDirect(
         } else {
             // Sin agrupación: comportamiento original (filtrar por entidad)
             movements = allMovementsForDate.filter((m: any) => {
-                if (dimension === "ventana") {
+                if (dimension === "banca") {
+                    return m.bancaId === entry.bancaId;
+                } else if (dimension === "ventana") {
                     return m.ventanaId === entry.ventanaId;
                 } else {
                     return m.vendedorId === entry.vendedorId;
                 }
             });
-            // Obtener desglose por sorteo usando clave `${date}_${ventanaId}` o `${date}_${vendedorId}`
-            const sorteoKey = dimension === "ventana"
+            // Obtener desglose por sorteo usando clave según dimensión
+            const sorteoKey = dimension === "banca"
+                ? `${date}_${entry.bancaId || 'null'}`
+                : dimension === "ventana"
                 ? `${date}_${entry.ventanaId}`
                 : `${date}_${entry.vendedorId || 'null'}`;
             bySorteo = sorteoBreakdownBatch.get(sorteoKey) || [];
@@ -877,6 +1051,15 @@ export async function getStatementDirect(
 
         const statement: any = {
             date,
+            bancaId: entry.bancaId, // ✅ NUEVO: Solo si dimension='banca' o si hay filtro por banca
+            bancaName: entry.bancaName, // ✅ NUEVO
+            bancaCode: entry.bancaCode, // ✅ NUEVO
+            ventanaId: entry.ventanaId,
+            ventanaName: entry.ventanaName,
+            ventanaCode: entry.ventanaCode, // ✅ NUEVO: Código de ventana
+            vendedorId: entry.vendedorId,
+            vendedorName: entry.vendedorName,
+            vendedorCode: entry.vendedorCode, // ✅ NUEVO: Código de vendedor
             totalSales: entry.totalSales,
             totalPayouts: entry.totalPayouts,
             listeroCommission: entry.commissionListero,
@@ -895,7 +1078,208 @@ export async function getStatementDirect(
 
         // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
         if (shouldGroupByDate) {
-            if (dimension === "ventana") {
+            if (dimension === "banca") {
+                // ✅ NUEVO: Construir byBanca desde breakdownByEntity
+                const bancaBreakdown: any[] = [];
+                // Agrupar breakdowns por banca
+                const bancaMap = new Map<string, {
+                    bancaId: string;
+                    bancaName: string;
+                    bancaCode: string | null;
+                    ventanas: Map<string, any>;
+                    vendedores: Map<string, any>;
+                    totalSales: number;
+                    totalPayouts: number;
+                    commissionListero: number;
+                    commissionVendedor: number;
+                    totalTickets: Set<string>;
+                }>();
+
+                for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
+                    const breakdownDate = breakdownKey.split("_")[0];
+                    if (breakdownDate === date && breakdownEntry.bancaId) {
+                        let bancaGroup = bancaMap.get(breakdownEntry.bancaId);
+                        if (!bancaGroup) {
+                            bancaGroup = {
+                                bancaId: breakdownEntry.bancaId,
+                                bancaName: breakdownEntry.bancaName || "Desconocido",
+                                bancaCode: breakdownEntry.bancaCode,
+                                ventanas: new Map(),
+                                vendedores: new Map(),
+                                totalSales: 0,
+                                totalPayouts: 0,
+                                commissionListero: 0,
+                                commissionVendedor: 0,
+                                totalTickets: new Set<string>(),
+                            };
+                            bancaMap.set(breakdownEntry.bancaId, bancaGroup);
+                        }
+
+                        // Agregar a totales de banca
+                        bancaGroup.totalSales += breakdownEntry.totalSales;
+                        bancaGroup.totalPayouts += breakdownEntry.totalPayouts;
+                        bancaGroup.commissionListero += breakdownEntry.commissionListero;
+                        bancaGroup.commissionVendedor += breakdownEntry.commissionVendedor;
+                        breakdownEntry.totalTickets.forEach(id => bancaGroup.totalTickets.add(id));
+
+                        // Agrupar por ventana dentro de esta banca
+                        if (breakdownEntry.ventanaId) {
+                            const ventanaKey = breakdownEntry.ventanaId;
+                            let ventanaGroup = bancaGroup.ventanas.get(ventanaKey);
+                            if (!ventanaGroup) {
+                                ventanaGroup = {
+                                    ventanaId: breakdownEntry.ventanaId,
+                                    ventanaName: breakdownEntry.ventanaName || "Desconocido",
+                                    ventanaCode: breakdownEntry.ventanaCode,
+                                    totalSales: 0,
+                                    totalPayouts: 0,
+                                    commissionListero: 0,
+                                    commissionVendedor: 0,
+                                    totalTickets: new Set<string>(),
+                                };
+                                bancaGroup.ventanas.set(ventanaKey, ventanaGroup);
+                            }
+                            ventanaGroup.totalSales += breakdownEntry.totalSales;
+                            ventanaGroup.totalPayouts += breakdownEntry.totalPayouts;
+                            ventanaGroup.commissionListero += breakdownEntry.commissionListero;
+                            ventanaGroup.commissionVendedor += breakdownEntry.commissionVendedor;
+                            breakdownEntry.totalTickets.forEach(id => ventanaGroup.totalTickets.add(id));
+                        }
+
+                        // Agrupar por vendedor dentro de esta banca
+                        if (breakdownEntry.vendedorId) {
+                            const vendedorKey = breakdownEntry.vendedorId;
+                            let vendedorGroup = bancaGroup.vendedores.get(vendedorKey);
+                            if (!vendedorGroup) {
+                                vendedorGroup = {
+                                    vendedorId: breakdownEntry.vendedorId,
+                                    vendedorName: breakdownEntry.vendedorName || "Desconocido",
+                                    vendedorCode: breakdownEntry.vendedorCode,
+                                    ventanaId: breakdownEntry.ventanaId,
+                                    ventanaName: breakdownEntry.ventanaName || "Desconocido",
+                                    ventanaCode: breakdownEntry.ventanaCode,
+                                    totalSales: 0,
+                                    totalPayouts: 0,
+                                    commissionListero: 0,
+                                    commissionVendedor: 0,
+                                    totalTickets: new Set<string>(),
+                                };
+                                bancaGroup.vendedores.set(vendedorKey, vendedorGroup);
+                            }
+                            vendedorGroup.totalSales += breakdownEntry.totalSales;
+                            vendedorGroup.totalPayouts += breakdownEntry.totalPayouts;
+                            vendedorGroup.commissionListero += breakdownEntry.commissionListero;
+                            vendedorGroup.commissionVendedor += breakdownEntry.commissionVendedor;
+                            breakdownEntry.totalTickets.forEach(id => vendedorGroup.totalTickets.add(id));
+                        }
+                    }
+                }
+
+                // Construir byBanca con byVentana y byVendedor
+                for (const [bancaId, bancaGroup] of bancaMap.entries()) {
+                    const bancaBalance = bancaGroup.totalSales - bancaGroup.totalPayouts - bancaGroup.commissionListero;
+                    const bancaMovements = allMovementsForDate.filter((m: any) => m.bancaId === bancaId);
+                    const bancaTotalPaid = bancaMovements
+                        .filter((m: any) => m.type === "payment" && !m.isReversed)
+                        .reduce((sum: number, m: any) => sum + m.amount, 0);
+                    const bancaTotalCollected = bancaMovements
+                        .filter((m: any) => m.type === "collection" && !m.isReversed)
+                        .reduce((sum: number, m: any) => sum + m.amount, 0);
+                    const bancaRemainingBalance = bancaBalance - bancaTotalCollected + bancaTotalPaid;
+
+                    // Construir byVentana para esta banca
+                    const byVentana: any[] = [];
+                    for (const [ventanaId, ventanaGroup] of bancaGroup.ventanas.entries()) {
+                        const ventanaBalance = ventanaGroup.totalSales - ventanaGroup.totalPayouts - ventanaGroup.commissionListero;
+                        const ventanaMovements = allMovementsForDate.filter((m: any) => m.ventanaId === ventanaId);
+                        const ventanaTotalPaid = ventanaMovements
+                            .filter((m: any) => m.type === "payment" && !m.isReversed)
+                            .reduce((sum: number, m: any) => sum + m.amount, 0);
+                        const ventanaTotalCollected = ventanaMovements
+                            .filter((m: any) => m.type === "collection" && !m.isReversed)
+                            .reduce((sum: number, m: any) => sum + m.amount, 0);
+                        const ventanaRemainingBalance = ventanaBalance - ventanaTotalCollected + ventanaTotalPaid;
+                        const ventanaSorteoKey = `${date}_${ventanaId}`;
+                        const ventanaSorteos = sorteoBreakdownBatch.get(ventanaSorteoKey) || [];
+
+                        byVentana.push({
+                            ventanaId: ventanaGroup.ventanaId,
+                            ventanaName: ventanaGroup.ventanaName,
+                            ventanaCode: ventanaGroup.ventanaCode,
+                            bancaId: bancaGroup.bancaId, // ✅ NUEVO: ID de banca
+                            bancaName: bancaGroup.bancaName, // ✅ NUEVO: Nombre de banca
+                            totalSales: ventanaGroup.totalSales,
+                            totalPayouts: ventanaGroup.totalPayouts,
+                            listeroCommission: ventanaGroup.commissionListero,
+                            vendedorCommission: ventanaGroup.commissionVendedor,
+                            balance: ventanaBalance,
+                            totalPaid: ventanaTotalPaid,
+                            totalCollected: ventanaTotalCollected,
+                            remainingBalance: ventanaRemainingBalance,
+                            ticketCount: ventanaGroup.totalTickets.size,
+                            bySorteo: ventanaSorteos,
+                            movements: ventanaMovements,
+                        });
+                    }
+
+                    // Construir byVendedor para esta banca
+                    const byVendedor: any[] = [];
+                    for (const [vendedorId, vendedorGroup] of bancaGroup.vendedores.entries()) {
+                        const vendedorBalance = vendedorGroup.totalSales - vendedorGroup.totalPayouts - vendedorGroup.commissionVendedor;
+                        const vendedorMovements = allMovementsForDate.filter((m: any) => m.vendedorId === vendedorId);
+                        const vendedorTotalPaid = vendedorMovements
+                            .filter((m: any) => m.type === "payment" && !m.isReversed)
+                            .reduce((sum: number, m: any) => sum + m.amount, 0);
+                        const vendedorTotalCollected = vendedorMovements
+                            .filter((m: any) => m.type === "collection" && !m.isReversed)
+                            .reduce((sum: number, m: any) => sum + m.amount, 0);
+                        const vendedorRemainingBalance = vendedorBalance - vendedorTotalCollected + vendedorTotalPaid;
+                        const vendedorSorteoKey = `${date}_${vendedorId || 'null'}`;
+                        const vendedorSorteos = sorteoBreakdownBatch.get(vendedorSorteoKey) || [];
+
+                        byVendedor.push({
+                            vendedorId: vendedorGroup.vendedorId,
+                            vendedorName: vendedorGroup.vendedorName,
+                            vendedorCode: vendedorGroup.vendedorCode,
+                            ventanaId: vendedorGroup.ventanaId,
+                            ventanaName: vendedorGroup.ventanaName,
+                            ventanaCode: vendedorGroup.ventanaCode,
+                            bancaId: bancaGroup.bancaId, // ✅ NUEVO: ID de banca
+                            bancaName: bancaGroup.bancaName, // ✅ NUEVO: Nombre de banca
+                            totalSales: vendedorGroup.totalSales,
+                            totalPayouts: vendedorGroup.totalPayouts,
+                            listeroCommission: vendedorGroup.commissionListero,
+                            vendedorCommission: vendedorGroup.commissionVendedor,
+                            balance: vendedorBalance,
+                            totalPaid: vendedorTotalPaid,
+                            totalCollected: vendedorTotalCollected,
+                            remainingBalance: vendedorRemainingBalance,
+                            ticketCount: vendedorGroup.totalTickets.size,
+                            bySorteo: vendedorSorteos,
+                            movements: vendedorMovements,
+                        });
+                    }
+
+                    bancaBreakdown.push({
+                        bancaId: bancaGroup.bancaId,
+                        bancaName: bancaGroup.bancaName,
+                        bancaCode: bancaGroup.bancaCode,
+                        totalSales: bancaGroup.totalSales,
+                        totalPayouts: bancaGroup.totalPayouts,
+                        listeroCommission: bancaGroup.commissionListero,
+                        vendedorCommission: bancaGroup.commissionVendedor,
+                        balance: bancaBalance,
+                        totalPaid: bancaTotalPaid,
+                        totalCollected: bancaTotalCollected,
+                        remainingBalance: bancaRemainingBalance,
+                        ticketCount: bancaGroup.totalTickets.size,
+                        byVentana: byVentana.sort((a, b) => a.ventanaName.localeCompare(b.ventanaName)),
+                        byVendedor: byVendedor.sort((a, b) => a.vendedorName.localeCompare(b.vendedorName)),
+                        movements: bancaMovements,
+                    });
+                }
+                statement.byBanca = bancaBreakdown.sort((a, b) => a.bancaName.localeCompare(b.bancaName));
+            } else if (dimension === "ventana") {
                 // Construir byVentana desde breakdownByEntity
                 const ventanaBreakdown: any[] = [];
                 for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
@@ -922,6 +1306,9 @@ export async function getStatementDirect(
                         ventanaBreakdown.push({
                             ventanaId: breakdownEntry.ventanaId,
                             ventanaName: breakdownEntry.ventanaName,
+                            ventanaCode: breakdownEntry.ventanaCode, // ✅ NUEVO: Código de ventana
+                            bancaId: breakdownEntry.bancaId, // ✅ NUEVO: ID de banca (si está disponible)
+                            bancaName: breakdownEntry.bancaName, // ✅ NUEVO: Nombre de banca (si está disponible)
                             totalSales: breakdownEntry.totalSales,
                             totalPayouts: breakdownEntry.totalPayouts,
                             listeroCommission: breakdownEntry.commissionListero,
@@ -986,19 +1373,32 @@ export async function getStatementDirect(
                 }
                 statement.byVendedor = vendedorBreakdown.sort((a, b) => a.vendedorName.localeCompare(b.vendedorName));
             }
-            // Cuando hay agrupación, ventanaId/vendedorId son null
+            // Cuando hay agrupación, bancaId/ventanaId/vendedorId son null según dimensión
+            if (dimension === "banca") {
+                statement.bancaId = null;
+                statement.bancaName = null;
+                statement.bancaCode = null;
+            }
             statement.ventanaId = null;
             statement.ventanaName = null;
+            statement.ventanaCode = null;
             statement.vendedorId = null;
             statement.vendedorName = null;
+            statement.vendedorCode = null;
         } else {
             // Sin agrupación: comportamiento original
-            if (dimension === "ventana") {
+            if (dimension === "banca") {
+                statement.bancaId = entry.bancaId;
+                statement.bancaName = entry.bancaName;
+                statement.bancaCode = entry.bancaCode;
+            } else if (dimension === "ventana") {
                 statement.ventanaId = entry.ventanaId;
                 statement.ventanaName = entry.ventanaName;
+                statement.ventanaCode = entry.ventanaCode;
             } else {
                 statement.vendedorId = entry.vendedorId;
                 statement.vendedorName = entry.vendedorName;
+                statement.vendedorCode = entry.vendedorCode;
             }
         }
 
@@ -1082,6 +1482,20 @@ export async function getStatementDirect(
 
     const monthlyWhereClause = Prisma.sql`WHERE ${Prisma.join(monthlyWhereConditions, " AND ")}`;
 
+    // ✅ OPTIMIZACIÓN: Log de rendimiento para consulta mensual
+    const monthlyQueryStartTime = Date.now();
+    logger.info({
+        layer: "service",
+        action: "ACCOUNT_STATEMENT_MONTHLY_QUERY_START",
+        payload: {
+            dimension,
+            bancaId,
+            ventanaId,
+            vendedorId,
+            month: effectiveMonth,
+        },
+    });
+    
     // Obtener jugadas del mes completo
     const monthlyJugadas = await prisma.$queryRaw<
         Array<{
@@ -1130,7 +1544,23 @@ export async function getStatementDirect(
     LEFT JOIN "User" u ON u.id = t."vendedorId"
     ${monthlyWhereClause}
     AND j."deletedAt" IS NULL
+    LIMIT 50000 -- ✅ CRÍTICO: Limitar resultados para prevenir consultas masivas del mes completo
   `;
+    
+    const monthlyQueryEndTime = Date.now();
+    logger.info({
+        layer: "service",
+        action: "ACCOUNT_STATEMENT_MONTHLY_QUERY_END",
+        payload: {
+            dimension,
+            bancaId,
+            ventanaId,
+            vendedorId,
+            month: effectiveMonth,
+            rowsReturned: monthlyJugadas.length,
+            queryTimeMs: monthlyQueryEndTime - monthlyQueryStartTime,
+        },
+    });
 
     // Agrupar jugadas del mes por día y dimensión
     const monthlyByDateAndDimension = new Map<
@@ -1299,6 +1729,20 @@ export async function getStatementDirect(
         pendingDays: monthlyPendingDays,
     };
 
+    const functionEndTime = Date.now();
+    logger.info({
+        layer: "service",
+        action: "GET_STATEMENT_DIRECT_END",
+        payload: {
+            dimension,
+            bancaId,
+            ventanaId,
+            vendedorId,
+            statementsCount: statements.length,
+            totalTimeMs: functionEndTime - functionStartTime,
+        },
+    });
+    
     return {
         statements,
         totals: {

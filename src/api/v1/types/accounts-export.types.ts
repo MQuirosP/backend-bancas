@@ -199,11 +199,12 @@ export interface AccountStatementExportPayload {
     filters: {
       scope: string;
       dimension: string;
+      bancaId?: string;
+      bancaName?: string;
       ventanaId?: string;
       ventanaName?: string;
       vendedorId?: string;
       vendedorName?: string;
-      bancaId?: string;
     };
     totalDays: number;
   };

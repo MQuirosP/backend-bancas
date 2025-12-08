@@ -199,15 +199,17 @@ export async function applyRbacFilters(
   } else if (context.role === Role.ADMIN) {
     // ADMIN: si tiene banca activa (filtro de vista), filtrar por banca
     // Si no tiene banca activa, ve todas las bancas
-    if (context.bancaId) {
-      effective.bancaId = context.bancaId;
+    // ✅ CRÍTICO: Priorizar bancaId del request sobre bancaId del context
+    const effectiveBancaId = requestFilters.bancaId || context.bancaId;
+    if (effectiveBancaId) {
+      effective.bancaId = effectiveBancaId;
       // Si también hay ventanaId en request, validar que pertenece a la banca activa
       if (requestFilters.ventanaId) {
         const ventana = await prisma.ventana.findUnique({
           where: { id: requestFilters.ventanaId },
           select: { bancaId: true },
         });
-        if (!ventana || ventana.bancaId !== context.bancaId) {
+        if (!ventana || ventana.bancaId !== effectiveBancaId) {
           throw new AppError('Cannot access that ventana', 403, {
             code: 'RBAC_004',
             details: [
@@ -219,8 +221,26 @@ export async function applyRbacFilters(
           });
         }
       }
+      // Si también hay vendedorId en request, validar que pertenece a la banca activa
+      if (requestFilters.vendedorId) {
+        const vendedor = await prisma.user.findUnique({
+          where: { id: requestFilters.vendedorId },
+          select: { ventana: { select: { bancaId: true } } },
+        });
+        if (!vendedor || vendedor.ventana?.bancaId !== effectiveBancaId) {
+          throw new AppError('Cannot access that vendedor', 403, {
+            code: 'RBAC_005',
+            details: [
+              {
+                field: 'vendedorId',
+                reason: 'Vendedor does not belong to the active banca filter'
+              }
+            ]
+          });
+        }
+      }
     }
-    // Si no tiene banca activa, aplica filtros tal cual (ve todas las bancas)
+    // Si no tiene banca activa ni bancaId en request, aplica filtros tal cual (ve todas las bancas)
   }
 
   return effective;

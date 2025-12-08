@@ -23,7 +23,7 @@ export const AccountsController = {
     if (!req.user) throw new AppError("Unauthorized", 401);
     
     // ✅ NUEVO: Agregar filtros de período
-    const { month, date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, sort } = req.query as any;
+    const { month, date, fromDate, toDate, scope, dimension, bancaId, ventanaId, vendedorId, sort } = req.query as any;
     const user = req.user;
 
     // Validar permisos según rol
@@ -130,6 +130,7 @@ export const AccountsController = {
       const effectiveFilters = await applyRbacFilters(context, {
         ventanaId,
         vendedorId,
+        bancaId, // ✅ CRÍTICO: Pasar bancaId del query para que se incluya en los filtros efectivos
       });
       
       const filters: any = {
@@ -141,7 +142,7 @@ export const AccountsController = {
         dimension: dimension || "ventana",
         ventanaId: effectiveFilters.ventanaId,
         vendedorId: effectiveFilters.vendedorId,
-        bancaId: effectiveFilters.bancaId, // Filtro de banca activa (si está presente)
+        bancaId: effectiveFilters.bancaId || bancaId || null, // ✅ CRÍTICO: Usar bancaId del query si no está en effectiveFilters
         sort: sort || "desc",
         userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
       };
