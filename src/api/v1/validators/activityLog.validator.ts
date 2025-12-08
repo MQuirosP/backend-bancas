@@ -31,5 +31,8 @@ export const getByActionParamSchema = z.object({
 });
 
 export const cleanupLogsBodySchema = z.object({
-  days: z.number().int().positive().optional().default(45),
-});
+  days: z.number().int().positive().optional(),
+  daysToKeep: z.number().int().positive().optional(),
+}).transform((data) => ({
+  days: data.daysToKeep ?? data.days ?? 45,
+}));
