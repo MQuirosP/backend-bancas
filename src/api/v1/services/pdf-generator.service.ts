@@ -179,7 +179,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
           
           // Posición Y inicial después del encabezado
           let currentY = doc.y;
-          doc.fontSize(9).font('Courier');
+          doc.fontSize(11).font('Courier-Bold'); // ✅ Aumentado tamaño y negrita
           
           // Calcular cuántas filas caben en una página
           const availableHeight = doc.page.height - doc.page.margins.top - doc.page.margins.bottom - 200; // 200px para encabezado
@@ -265,7 +265,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
 
           // Posición Y inicial después del encabezado
           let currentY = doc.y;
-          doc.fontSize(9).font('Courier');
+          doc.fontSize(11).font('Courier-Bold'); // ✅ Aumentado tamaño y negrita
 
           // Renderizar filas de esta página
           for (let row = 0; row < rowsInPage; row++) {

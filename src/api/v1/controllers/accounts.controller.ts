@@ -88,17 +88,18 @@ export const AccountsController = {
         if (dimension !== "vendedor") {
           throw new AppError("Los usuarios VENTANA con scope='ventana' deben usar dimension='vendedor'", 400, "INVALID_DIMENSION");
         }
-        if (!vendedorId) {
-          throw new AppError("Se requiere vendedorId cuando scope='ventana' y dimension='vendedor'", 400, "VENDEDOR_ID_REQUIRED");
+        // ✅ NUEVO: Permitir vendedorId opcional para agrupamiento por "Todos"
+        if (vendedorId) {
+          // Validar que el vendedor pertenece a la ventana del usuario
+          const vendedor = await prisma.user.findUnique({
+            where: { id: vendedorId },
+            select: { ventanaId: true, role: true },
+          });
+          if (!vendedor || vendedor.ventanaId !== effectiveVentanaId || vendedor.role !== Role.VENDEDOR) {
+            throw new AppError("El vendedor no pertenece a tu ventana", 403, "FORBIDDEN");
+          }
         }
-        // Validar que el vendedor pertenece a la ventana del usuario
-        const vendedor = await prisma.user.findUnique({
-          where: { id: vendedorId },
-          select: { ventanaId: true, role: true },
-        });
-        if (!vendedor || vendedor.ventanaId !== effectiveVentanaId || vendedor.role !== Role.VENDEDOR) {
-          throw new AppError("El vendedor no pertenece a tu ventana", 403, "FORBIDDEN");
-        }
+        // Si no hay vendedorId, se agrupará automáticamente por fecha con byVendedor[]
         const filters = {
           month,
           date, // ✅ NUEVO
@@ -751,17 +752,18 @@ export const AccountsController = {
         if (dimension !== "vendedor") {
           throw new AppError("Los usuarios VENTANA con scope='ventana' deben usar dimension='vendedor'", 400, "INVALID_DIMENSION");
         }
-        if (!vendedorId) {
-          throw new AppError("Se requiere vendedorId cuando scope='ventana' y dimension='vendedor'", 400, "VENDEDOR_ID_REQUIRED");
+        // ✅ NUEVO: Permitir vendedorId opcional para agrupamiento por "Todos"
+        if (vendedorId) {
+          // Validar que el vendedor pertenece a la ventana
+          const vendedor = await prisma.user.findUnique({
+            where: { id: vendedorId },
+            select: { ventanaId: true, role: true },
+          });
+          if (!vendedor || vendedor.ventanaId !== effectiveVentanaId || vendedor.role !== Role.VENDEDOR) {
+            throw new AppError("El vendedor no pertenece a tu ventana", 403, "FORBIDDEN");
+          }
         }
-        // Validar que el vendedor pertenece a la ventana
-        const vendedor = await prisma.user.findUnique({
-          where: { id: vendedorId },
-          select: { ventanaId: true, role: true },
-        });
-        if (!vendedor || vendedor.ventanaId !== effectiveVentanaId || vendedor.role !== Role.VENDEDOR) {
-          throw new AppError("El vendedor no pertenece a tu ventana", 403, "FORBIDDEN");
-        }
+        // Si no hay vendedorId, se agrupará automáticamente por fecha con byVendedor[]
         filters = {
           month,
           date,
