@@ -101,18 +101,47 @@ export async function getCachedStatement<T>(params: {
     const key = getStatementCacheKey(params);
     const result = await CacheService.get<T>(key);
     
-    // Log para debugging (solo si no hay caché)
-    if (!result) {
-        logger.debug({
-            layer: 'cache',
-            action: 'CACHE_MISS',
-            payload: { key, params }
-        });
-    } else {
-        logger.debug({
-            layer: 'cache',
-            action: 'CACHE_HIT',
-            payload: { key }
+    // ✅ CRÍTICO: Validar que el resultado tenga la estructura correcta
+    if (!result || typeof result !== 'object') {
+        return null;
+    }
+    
+    // Validar que tenga statements como array y que tenga datos
+    const resultAny = result as any;
+    if (!resultAny.statements || !Array.isArray(resultAny.statements) || resultAny.statements.length === 0) {
+        // Caché corrupto o vacío, invalidar y retornar null para recalcular
+        await CacheService.del(key);
+        return null;
+    }
+    
+    // ✅ CRÍTICO: Normalizar objetos Date que vienen como strings del caché
+    if (resultAny.statements && Array.isArray(resultAny.statements)) {
+        resultAny.statements = resultAny.statements.map((stmt: any) => {
+            if (stmt.date && typeof stmt.date === 'string') {
+                stmt.date = new Date(stmt.date);
+            }
+            if (stmt.createdAt && typeof stmt.createdAt === 'string') {
+                stmt.createdAt = new Date(stmt.createdAt);
+            }
+            if (stmt.updatedAt && typeof stmt.updatedAt === 'string') {
+                stmt.updatedAt = new Date(stmt.updatedAt);
+            }
+            // Normalizar Date en movements si existen
+            if (stmt.movements && Array.isArray(stmt.movements)) {
+                stmt.movements = stmt.movements.map((mov: any) => {
+                    if (mov.date && typeof mov.date === 'string') {
+                        mov.date = new Date(mov.date);
+                    }
+                    if (mov.createdAt && typeof mov.createdAt === 'string') {
+                        mov.createdAt = new Date(mov.createdAt);
+                    }
+                    if (mov.updatedAt && typeof mov.updatedAt === 'string') {
+                        mov.updatedAt = new Date(mov.updatedAt);
+                    }
+                    return mov;
+                });
+            }
+            return stmt;
         });
     }
     
@@ -139,12 +168,6 @@ export async function setCachedStatement<T>(
 ): Promise<void> {
     const key = getStatementCacheKey(params);
     await CacheService.set(key, value, STATEMENT_TTL);
-    
-    logger.debug({
-        layer: 'cache',
-        action: 'CACHE_SET',
-        payload: { key, ttl: STATEMENT_TTL }
-    });
 }
 
 /**

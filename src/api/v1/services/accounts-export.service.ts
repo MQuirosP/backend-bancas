@@ -33,10 +33,15 @@ export class AccountsExportService {
       // 1. Obtener estado de cuenta principal
       const statementResponse = await AccountsService.getStatement(filters) as StatementResponse;
 
-      // 2. Extraer metadata
+      // 2. Validar estructura de respuesta
+      if (!statementResponse || !statementResponse.statements || !Array.isArray(statementResponse.statements)) {
+        throw new Error('Respuesta inválida del servicio de estados de cuenta: statements no es un array');
+      }
+
+      // 3. Extraer metadata
       const { statements, totals, monthlyAccumulated, meta } = statementResponse;
 
-      // 3. Resolver nombres de entidades para metadata
+      // 4. Resolver nombres de entidades para metadata
       let ventanaName: string | undefined = undefined;
       let vendedorName: string | undefined = undefined;
       let ventanaCode: string | null = null;
@@ -60,25 +65,25 @@ export class AccountsExportService {
         vendedorCode = vendedor?.code || null;
       }
 
-      // 4. Transformar statements a formato de exportación
+      // 5. Transformar statements a formato de exportación
       const exportStatements: AccountStatementExportItem[] = await this.transformStatements(
         statements,
         filters.dimension
       );
 
-      // 5. Obtener breakdown por sorteo (si está habilitado)
+      // 6. Obtener breakdown por sorteo (si está habilitado)
       let breakdown: AccountStatementSorteoItem[] | undefined = undefined;
       if (options.includeBreakdown && statements.length > 0) {
         breakdown = await this.getBreakdown(statements, filters);
       }
 
-      // 6. Obtener movimientos (si está habilitado)
+      // 7. Obtener movimientos (si está habilitado)
       let movements: AccountMovementItem[] | undefined = undefined;
       if (options.includeMovements && statements.length > 0) {
         movements = await this.getMovements(statements, filters.dimension);
       }
 
-      // 7. Transformar totales
+      // 8. Transformar totales
       const exportTotals: AccountStatementTotals = {
         totalSales: totals.totalSales,
         totalPayouts: totals.totalPayouts,
@@ -105,7 +110,7 @@ export class AccountsExportService {
         pendingDays: monthlyAccumulated.pendingDays,
       };
 
-      // 8. Construir payload completo
+      // 9. Construir payload completo
       const payload: AccountStatementExportPayload = {
         statements: exportStatements,
         breakdown,
@@ -133,7 +138,7 @@ export class AccountsExportService {
         },
       };
 
-      // 9. Generar archivo según formato
+      // 10. Generar archivo según formato
       let buffer: Buffer;
       let mimeType: string;
 
@@ -154,7 +159,7 @@ export class AccountsExportService {
           throw new Error(`Formato de exportación no soportado: ${options.format}`);
       }
 
-      // 10. Generar nombre de archivo
+      // 11. Generar nombre de archivo
       const filename = this.generateFilename(
         options.format,
         filters,
@@ -199,6 +204,11 @@ export class AccountsExportService {
     statements: DayStatement[],
     dimension: 'ventana' | 'vendedor'
   ): Promise<AccountStatementExportItem[]> {
+    // Validar que statements sea un array válido
+    if (!statements || !Array.isArray(statements)) {
+      return [];
+    }
+
     // ✅ OPTIMIZACIÓN: Primero recopilar TODOS los IDs únicos (principales + breakdowns)
     const allVentanaIds = new Set<string>();
     const allVendedorIds = new Set<string>();
