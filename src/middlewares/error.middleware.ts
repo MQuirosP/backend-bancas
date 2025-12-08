@@ -9,14 +9,33 @@ export const errorHandler = (err: any, req: Request, res: Response, _next: NextF
 
   // App-specific operational errors
   if (err instanceof AppError) {
-    logger.warn({
-      layer: 'middleware',
-      action: 'OPERATIONAL_ERROR',
-      userId,
-      requestId,
-      payload: { message: err.message },
-      meta: err.meta ?? null,
-    });
+    // Errores esperados (403 Forbidden, 404 Not Found) no generan warnings
+    // Solo se registran como info para auditoría, pero no como warnings
+    const isExpectedError = err.statusCode === 403 || err.statusCode === 404;
+    
+    if (isExpectedError) {
+      // Errores esperados: loguear como info (opcional, para auditoría)
+      // Puedes comentar esto si no quieres loguear estos errores en absoluto
+      logger.info({
+        layer: 'middleware',
+        action: 'OPERATIONAL_ERROR',
+        userId,
+        requestId,
+        payload: { message: err.message, statusCode: err.statusCode },
+        meta: err.meta ?? null,
+      });
+    } else {
+      // Errores inesperados: loguear como warning
+      logger.warn({
+        layer: 'middleware',
+        action: 'OPERATIONAL_ERROR',
+        userId,
+        requestId,
+        payload: { message: err.message, statusCode: err.statusCode },
+        meta: err.meta ?? null,
+      });
+    }
+    
     return errorResponse(res, err.message, err.statusCode, err.meta ?? undefined);
   }
 
