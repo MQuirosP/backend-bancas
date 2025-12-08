@@ -6,6 +6,7 @@ import { getStatementDirect, calculateDayStatement } from "./accounts.calculatio
 import { registerPayment, reversePayment, deleteStatement } from "./accounts.movements";
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
 import prisma from "../../../../core/prismaClient";
+import { getCachedStatement, setCachedStatement } from "../../../../utils/accountStatementCache";
 
 /**
  * Accounts Service
@@ -62,6 +63,25 @@ export const AccountsService = {
             effectiveMonth = currentMonth;
         }
 
+        // ✅ OPTIMIZACIÓN: Intentar obtener del caché primero
+        const cacheKey = {
+            month: month || undefined,
+            date: date || undefined,
+            fromDate: fromDate || undefined,
+            toDate: toDate || undefined,
+            dimension,
+            ventanaId: ventanaId || null,
+            vendedorId: vendedorId || null,
+            bancaId: bancaId || null,
+            userRole: filters.userRole || "ADMIN",
+            sort: sort || "desc",
+        };
+        
+        const cached = await getCachedStatement(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
         // ✅ OPTIMIZACIÓN: Intentar leer de la vista materializada primero (MUY RÁPIDO)
         const materializedSummaries = await getDailySummariesFromMaterializedView(
             startDate,
@@ -73,7 +93,7 @@ export const AccountsService = {
         );
 
         // ✅ CRÍTICO: Calcular TODO directamente desde tickets/jugadas (sin AccountStatement)
-        return await getStatementDirect(
+        const result = await getStatementDirect(
             filters,
             startDate,
             endDate,
@@ -86,6 +106,13 @@ export const AccountsService = {
             filters.userRole || "ADMIN",
             sort as "asc" | "desc"
         );
+
+        // Guardar en caché (no esperar, hacerlo en background)
+        setCachedStatement(cacheKey, result).catch(() => {
+            // Ignorar errores de caché
+        });
+
+        return result;
     },
 
     /**
