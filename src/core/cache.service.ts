@@ -94,28 +94,32 @@ export class CacheService {
     /**
      * Eliminar múltiples claves por patrón
      * @param pattern Patrón de claves (ej: "cutoff:*")
+     * @returns Array de claves eliminadas (para logging)
      */
-    static async delPattern(pattern: string): Promise<void> {
+    static async delPattern(pattern: string): Promise<string[] | null> {
         if (!isRedisAvailable()) {
-            return;
+            return null;
         }
 
         const redis = getRedisClient();
         if (!redis) {
-            return;
+            return null;
         }
 
         try {
             const keys = await redis.keys(pattern);
             if (keys.length > 0) {
                 await redis.del(...keys);
+                return keys;
             }
+            return [];
         } catch (error) {
             logger.warn({
                 layer: 'cache',
                 action: 'DEL_PATTERN_ERROR',
                 payload: { pattern, error: (error as Error).message }
             });
+            return null;
         }
     }
 

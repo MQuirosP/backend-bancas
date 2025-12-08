@@ -99,7 +99,24 @@ export async function getCachedStatement<T>(params: {
     sort?: string;
 }): Promise<T | null> {
     const key = getStatementCacheKey(params);
-    return await CacheService.get<T>(key);
+    const result = await CacheService.get<T>(key);
+    
+    // Log para debugging (solo si no hay caché)
+    if (!result) {
+        logger.debug({
+            layer: 'cache',
+            action: 'CACHE_MISS',
+            payload: { key, params }
+        });
+    } else {
+        logger.debug({
+            layer: 'cache',
+            action: 'CACHE_HIT',
+            payload: { key }
+        });
+    }
+    
+    return result;
 }
 
 /**
@@ -122,6 +139,12 @@ export async function setCachedStatement<T>(
 ): Promise<void> {
     const key = getStatementCacheKey(params);
     await CacheService.set(key, value, STATEMENT_TTL);
+    
+    logger.debug({
+        layer: 'cache',
+        action: 'CACHE_SET',
+        payload: { key, ttl: STATEMENT_TTL }
+    });
 }
 
 /**
@@ -161,6 +184,9 @@ export async function setCachedDayStatement<T>(
 /**
  * Invalidar cachés de estados de cuenta para un día específico
  * Se llama cuando se registra o revierte un pago/cobro
+ * 
+ * ✅ OPTIMIZACIÓN: Invalidación más específica para evitar borrar todo el caché
+ * Solo invalida statements del mes y statements con períodos que incluyan esta fecha
  */
 export async function invalidateAccountStatementCache(params: {
     date: string; // YYYY-MM-DD
@@ -168,26 +194,63 @@ export async function invalidateAccountStatementCache(params: {
     vendedorId?: string | null;
 }): Promise<void> {
     try {
-        // Invalidar estado del día específico (account:day:YYYY-MM-DD:*)
-        const dayPattern = `account:day:${params.date}:*`;
-        await CacheService.delPattern(dayPattern);
+        const month = params.date.substring(0, 7); // YYYY-MM
+        const patterns: string[] = [];
+        let totalKeysDeleted = 0;
 
-        // Invalidar períodos que incluyan este día (account:statement:*)
-        // Como es difícil saber qué períodos incluyen esta fecha, invalidamos todos los statements
-        // Esto es seguro porque los statements tienen TTL corto (5 min)
-        const statementPattern = `account:statement:*`;
-        await CacheService.delPattern(statementPattern);
+        // 1. Invalidar estado del día específico (account:day:YYYY-MM-DD:*)
+        const dayPattern = `account:day:${params.date}:*`;
+        const dayKeys = await CacheService.delPattern(dayPattern);
+        totalKeysDeleted += dayKeys?.length || 0;
+
+        // 2. ✅ OPTIMIZACIÓN: Invalidar solo statements del mes que contiene esta fecha
+        // Esto es más específico que invalidar todos los statements
+        const monthPattern = `account:statement:${month}:*`;
+        const monthKeys = await CacheService.delPattern(monthPattern);
+        totalKeysDeleted += monthKeys?.length || 0;
+
+        // 3. Invalidar statements con períodos (fromDate/toDate) que incluyan esta fecha
+        // Los patrones deben coincidir con la estructura de la clave:
+        // account:statement:month:date:fromDate:toDate:dimension:ventanaId:vendedorId:bancaId:userRole:sort
+        // Solo invalidamos statements con períodos que incluyan esta fecha específica
+        patterns.push(`account:statement:*:null:${params.date}:*`); // fromDate = fecha
+        patterns.push(`account:statement:*:null:*:${params.date}:*`); // toDate = fecha
+
+        // Si hay ventanaId o vendedorId específicos, invalidar solo esos (más específico)
+        if (params.ventanaId) {
+            patterns.push(`account:statement:*:*:*:*:*:${params.ventanaId}:*`);
+        }
+        if (params.vendedorId) {
+            patterns.push(`account:statement:*:*:*:*:*:*:${params.vendedorId}:*`);
+        }
+
+        // Invalidar todos los patrones y contar claves eliminadas
+        for (const pattern of patterns) {
+            const deleted = await CacheService.delPattern(pattern);
+            totalKeysDeleted += deleted?.length || 0;
+        }
 
         logger.info({
             layer: 'cache',
             action: 'INVALIDATE_ACCOUNT_STATEMENT',
-            payload: { date: params.date, ventanaId: params.ventanaId, vendedorId: params.vendedorId }
+            payload: { 
+                date: params.date, 
+                month,
+                ventanaId: params.ventanaId, 
+                vendedorId: params.vendedorId,
+                patternsInvalidated: [dayPattern, monthPattern, ...patterns],
+                keysDeleted: totalKeysDeleted
+            }
         });
     } catch (error) {
         logger.warn({
             layer: 'cache',
             action: 'INVALIDATE_ERROR',
-            payload: { error: (error as Error).message }
+            payload: { 
+                error: (error as Error).message, 
+                stack: (error as Error).stack,
+                date: params.date 
+            }
         });
     }
 }
