@@ -24,6 +24,7 @@ import salesRoutes from "./sales.routes"
 import sorteosAutoRoutes from "./sorteosAuto.routes"
 import reportsRoutes from "./reports.routes"
 import listasExcluidasRoutes from "./listas-excluidas.routes"
+import accountStatementSettlementRoutes from "./accountStatementSettlement.routes"
 
 const router = Router();
 
@@ -54,6 +55,7 @@ router.use("/sales", salesRoutes);
 router.use("/sorteos", sorteoRoutes);
 router.use("/reports", reportsRoutes);
 router.use("/listas-excluidas", listasExcluidasRoutes);
+router.use("/account-statements", accountStatementSettlementRoutes);
 router.use("/", commissionRoutes); // Commission routes include their own path prefixes (políticas de comisión)
 
 export const apiV1Router = router;

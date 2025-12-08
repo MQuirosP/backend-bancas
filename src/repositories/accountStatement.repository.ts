@@ -63,6 +63,8 @@ export const AccountStatementRepository = {
     ticketCount?: number;
     ventanaId?: string | null;
     vendedorId?: string | null;
+    settledAt?: Date | null;
+    settledBy?: string | null;
   }) {
     return await prisma.accountStatement.update({
       where: { id },

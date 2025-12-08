@@ -4,6 +4,7 @@ import logger from '../core/logger'
 import { config } from '../config'
 import prisma from '../core/prismaClient'
 import { startSorteosAutoJobs, stopSorteosAutoJobs } from '../jobs/sorteosAuto.job'
+import { startAccountStatementSettlementJob, stopAccountStatementSettlementJob } from '../jobs/accountStatementSettlement.job'
 import { initRedisClient, closeRedisClient } from '../core/redisClient'
 
 const server = http.createServer(app)
@@ -45,6 +46,24 @@ server.listen(config.port, async () => {
       meta: { error: error instanceof Error ? error.message : String(error) },
     })
   }
+
+  // Iniciar job de asentamiento automático de account statements
+  try {
+    startAccountStatementSettlementJob()
+    logger.info({
+      layer: 'server',
+      action: 'ACCOUNT_STATEMENT_SETTLEMENT_JOB_STARTED',
+      requestId: null,
+      payload: { message: 'Job de asentamiento automático iniciado' },
+    })
+  } catch (error: any) {
+    logger.error({
+      layer: 'server',
+      action: 'ACCOUNT_STATEMENT_SETTLEMENT_JOB_START_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
 })
 
 // Graceful shutdown
@@ -59,6 +78,18 @@ const gracefulShutdown = async (signal: string) => {
     logger.warn({
       layer: 'server',
       action: 'SORTEOS_AUTO_JOBS_STOP_ERROR',
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
+  // Detener job de asentamiento automático
+  try {
+    stopAccountStatementSettlementJob()
+    logger.info({ layer: 'server', action: 'ACCOUNT_STATEMENT_SETTLEMENT_JOB_STOPPED' })
+  } catch (error: any) {
+    logger.warn({
+      layer: 'server',
+      action: 'ACCOUNT_STATEMENT_SETTLEMENT_JOB_STOP_ERROR',
       meta: { error: error instanceof Error ? error.message : String(error) },
     })
   }
