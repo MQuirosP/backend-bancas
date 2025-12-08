@@ -183,8 +183,14 @@ export async function getSorteoBreakdownBatch(
 
     if (dimension === "ventana" && ventanaId) {
         where.ventanaId = ventanaId;
-    } else if (dimension === "vendedor" && vendedorId) {
-        where.vendedorId = vendedorId;
+    } else if (dimension === "vendedor") {
+        if (vendedorId) {
+            where.vendedorId = vendedorId;
+        }
+        // ✅ NUEVO: Filtrar por ventanaId cuando está presente (para agrupamiento por "Todos")
+        if (ventanaId) {
+            where.ventanaId = ventanaId;
+        }
     }
 
     // ✅ OPTIMIZACIÓN: Una sola query para todos los días
@@ -290,8 +296,15 @@ export async function getSorteoBreakdownBatch(
         // Si hay filtro específico, crear solo una entrada
         if (dimension === "ventana" && ventanaId) {
             resultMap.set(`${dateKey}_${ventanaId}`, new Map());
-        } else if (dimension === "vendedor" && vendedorId) {
-            resultMap.set(`${dateKey}_${vendedorId}`, new Map());
+        } else if (dimension === "vendedor") {
+            if (vendedorId) {
+                resultMap.set(`${dateKey}_${vendedorId}`, new Map());
+            } else if (ventanaId) {
+                // ✅ NUEVO: Cuando hay ventanaId pero no vendedorId, crear entradas por vendedor dentro de esa ventana
+                // Se crearán dinámicamente cuando se procesen los tickets
+            } else {
+                // Sin filtros específicos
+            }
         } else {
             // Si scope=all, necesitamos crear entradas para cada ventana/vendedor que tenga tickets
             // Pero no sabemos cuáles son hasta procesar los tickets, así que inicializamos dinámicamente
@@ -450,8 +463,14 @@ export async function getSorteoBreakdown(
 
     if (dimension === "ventana" && ventanaId) {
         where.ventanaId = ventanaId;
-    } else if (dimension === "vendedor" && vendedorId) {
-        where.vendedorId = vendedorId;
+    } else if (dimension === "vendedor") {
+        if (vendedorId) {
+            where.vendedorId = vendedorId;
+        }
+        // ✅ NUEVO: Filtrar por ventanaId cuando está presente (para agrupamiento por "Todos")
+        if (ventanaId) {
+            where.ventanaId = ventanaId;
+        }
     }
 
     // Obtener tickets con sus sorteos, loterías y jugadas
