@@ -1046,6 +1046,16 @@ export const TicketService = {
       let sorteoDigits = 2; // Default
       let sorteoName = '';
       let reventadoEnabled = true; // Default (asumir habilitado si no se puede determinar)
+      let multiplierName = '';
+
+      // ✅ NUEVO: Obtener nombre del multiplicador si está presente
+      if (params.multiplierId) {
+        const multiplier = await prisma.loteriaMultiplier.findUnique({
+          where: { id: params.multiplierId },
+          select: { name: true },
+        });
+        multiplierName = multiplier?.name || '';
+      }
 
       if (params.sorteoId) {
         const sorteo = await prisma.sorteo.findUnique({
@@ -1321,6 +1331,7 @@ export const TicketService = {
           maxNumber,
           reventadoEnabled, // ✅ NUEVO: Indica si reventado está habilitado (para mostrar/ocultar columnas en FE)
           ...(sorteoName ? { sorteoName } : {}),
+          ...(multiplierName ? { multiplierName } : {}),
           // ✅ NUEVO: Metadatos de paginación
           ...(page !== undefined ? {
             pagination: {

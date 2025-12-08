@@ -9,7 +9,9 @@ interface NumbersSummaryData {
     ventanaName?: string;
     vendedorCode?: string;
     loteriaName?: string;
+    sorteoName?: string;
     sorteoDate?: Date;
+    multiplierName?: string;
     totalAmount: number;
     totalAmountByNumber: number;
     totalAmountByReventado: number;
@@ -102,16 +104,17 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
       }
 
       // ✅ Configuración de columnas dinámica
-      const columnWidth = sorteoDigits === 3 ? 140 : 130; // Más ancho para 3 dígitos
+      const columnWidth = sorteoDigits === 3 ? 140 : 180; // Más ancho para 2 dígitos (3 columnas)
       const leftMargin = doc.page.margins.left;
       
-      // Para 2 dígitos: 4 columnas de 25 números cada una (0-24, 25-49, 50-74, 75-99) = 1 página
+      // Para 2 dígitos: 3 columnas de ~33 números cada una (0-32, 33-65, 66-99) = 1 página
       // Para 3 dígitos: 4 columnas de 50 números cada una por página (200 números por página) = 5 páginas
-      const numbersPerColumn = sorteoDigits === 3 ? 50 : 25; // 50 números por columna para monazos, 25 para tiempos
-      const numbersPerPage = numbersPerColumn * 4; // 200 números por página para monazos, 100 para tiempos
+      const numColumns = sorteoDigits === 3 ? 4 : 3; // 3 columnas para 2 dígitos, 4 para 3 dígitos
+      const numbersPerColumn = sorteoDigits === 3 ? 50 : Math.ceil((maxNumber + 1) / numColumns); // ~34 números por columna para 2 dígitos
+      const numbersPerPage = numbersPerColumn * numColumns; // 100 números por página para 2 dígitos, 200 para 3 dígitos
 
       // Altura de línea
-      const lineHeight = 11;
+      const lineHeight = sorteoDigits === 3 ? 11 : 15; // Más alto para 2 dígitos
       
       // ✅ Función helper para renderizar encabezado en cada página
       const renderHeader = () => {
@@ -132,8 +135,15 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
         doc.fontSize(9);
         doc.text(`Fecha y hora de generación: ${generatedAt}`, { align: 'left' });
 
+        // ✅ NUEVO: Mostrar información de lotería, sorteo y multiplicador
         if (data.meta.loteriaName) {
-          doc.text(`Sorteo: ${data.meta.loteriaName}`, { align: 'left' });
+          doc.text(`Lotería: ${data.meta.loteriaName}`, { align: 'left' });
+        }
+        if (data.meta.sorteoName) {
+          doc.text(`Sorteo: ${data.meta.sorteoName}`, { align: 'left' });
+        }
+        if (data.meta.multiplierName) {
+          doc.text(`Multiplicador: ${data.meta.multiplierName}`, { align: 'left' });
         }
         if (data.meta.sorteoDate) {
           const sorteoDateStr = data.meta.sorteoDate.toLocaleString('es-CR', {
@@ -179,13 +189,13 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
           
           // Posición Y inicial después del encabezado
           let currentY = doc.y;
-          doc.fontSize(11).font('Courier-Bold'); // ✅ Aumentado tamaño y negrita
+          doc.fontSize(sorteoDigits === 3 ? 13 : 15).font('Courier-Bold'); // ✅ Más grande para 2 dígitos
           
           // Calcular cuántas filas caben en una página
           const availableHeight = doc.page.height - doc.page.margins.top - doc.page.margins.bottom - 200; // 200px para encabezado
           const maxRowsPerPage = Math.floor(availableHeight / lineHeight);
           
-          // Renderizar números en columnas (4 columnas)
+          // Renderizar números en columnas (3 para 2 dígitos, 4 para 3 dígitos)
           let columnIndex = 0;
           const startX = leftMargin;
           
@@ -195,8 +205,8 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
             const numData = numbersMap.get(num);
             if (!numData) continue;
             
-            const column = columnIndex % 4;
-            const row = Math.floor(columnIndex / 4);
+            const column = columnIndex % numColumns;
+            const row = Math.floor(columnIndex / numColumns);
             
             // Si necesitamos nueva página, crearla
             if (row > 0 && row % maxRowsPerPage === 0) {
@@ -253,19 +263,20 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
           // Calcular rango de números para esta página
           const pageEnd = Math.min(currentPageStart + numbersPerPage - 1, maxNumber);
           const numbersInPage = pageEnd - currentPageStart + 1;
-          const rowsInPage = Math.ceil(numbersInPage / 4);
-
-          // Configurar columnas para esta página
-          const columns = [
-            { start: currentPageStart, x: leftMargin },
-            { start: currentPageStart + numbersPerColumn, x: leftMargin + columnWidth },
-            { start: currentPageStart + numbersPerColumn * 2, x: leftMargin + columnWidth * 2 },
-            { start: currentPageStart + numbersPerColumn * 3, x: leftMargin + columnWidth * 3 },
-          ];
+          const rowsInPage = Math.ceil(numbersInPage / numColumns);
 
           // Posición Y inicial después del encabezado
           let currentY = doc.y;
-          doc.fontSize(11).font('Courier-Bold'); // ✅ Aumentado tamaño y negrita
+          doc.fontSize(sorteoDigits === 3 ? 13 : 15).font('Courier-Bold'); // ✅ Más grande para 2 dígitos
+
+          // Configurar columnas dinámicamente según el número de dígitos
+          const columns = [];
+          for (let col = 0; col < numColumns; col++) {
+            columns.push({
+              start: currentPageStart + numbersPerColumn * col,
+              x: leftMargin + columnWidth * col,
+            });
+          }
 
           // Renderizar filas de esta página
           for (let row = 0; row < rowsInPage; row++) {
