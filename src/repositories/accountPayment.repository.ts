@@ -310,7 +310,7 @@ export const AccountPaymentRepository = {
   async findMovementsByDateRange(
     startDate: Date,
     endDate: Date,
-    dimension: "ventana" | "vendedor",
+    dimension: "banca" | "ventana" | "vendedor", // ✅ NUEVO: Agregado 'banca'
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string
@@ -324,7 +324,20 @@ export const AccountPaymentRepository = {
       // Los cálculos en accounts.calculations.ts filtran !isReversed cuando es necesario
     };
 
-    if (dimension === "ventana") {
+    if (dimension === "banca") {
+      // ✅ NUEVO: Filtros para dimension='banca'
+      if (bancaId) {
+        where.ventana = {
+          bancaId: bancaId,
+        };
+      }
+      if (ventanaId) {
+        where.ventanaId = ventanaId;
+      }
+      if (vendedorId) {
+        where.vendedorId = vendedorId;
+      }
+    } else if (dimension === "ventana") {
       if (ventanaId) {
         where.ventanaId = ventanaId;
       } else {
@@ -339,7 +352,8 @@ export const AccountPaymentRepository = {
       }
     }
 
-    if (bancaId) {
+    if (bancaId && dimension !== "banca") {
+      // Si bancaId está presente pero dimension no es 'banca', filtrar por banca también
       where.ventana = {
         bancaId: bancaId,
       };
@@ -357,11 +371,21 @@ export const AccountPaymentRepository = {
         ventana: {
           select: {
             name: true,
+            code: true, // ✅ NUEVO: Código de ventana
+            bancaId: true, // ✅ NUEVO: ID de banca
+            banca: { // ✅ NUEVO: Información de banca
+              select: {
+                id: true,
+                name: true,
+                code: true,
+              },
+            },
           },
         },
         vendedor: {
           select: {
             name: true,
+            code: true, // ✅ NUEVO: Código de vendedor
           },
         },
       },
@@ -401,10 +425,15 @@ export const AccountPaymentRepository = {
         paidByName: payment.paidBy?.name || payment.paidByName,
         createdAt: payment.createdAt.toISOString(),
         updatedAt: payment.updatedAt.toISOString(),
+        bancaId: (payment as any).ventana?.bancaId || null, // ✅ NUEVO: ID de banca
+        bancaName: (payment as any).ventana?.banca?.name || null, // ✅ NUEVO: Nombre de banca
+        bancaCode: (payment as any).ventana?.banca?.code || null, // ✅ NUEVO: Código de banca
         ventanaId: payment.ventanaId,
-        ventanaName: (payment as any).ventana?.name,
+        ventanaName: (payment as any).ventana?.name || null,
+        ventanaCode: (payment as any).ventana?.code || null, // ✅ NUEVO: Código de ventana
         vendedorId: payment.vendedorId,
-        vendedorName: (payment as any).vendedor?.name,
+        vendedorName: (payment as any).vendedor?.name || null,
+        vendedorCode: (payment as any).vendedor?.code || null, // ✅ NUEVO: Código de vendedor
       });
     }
 

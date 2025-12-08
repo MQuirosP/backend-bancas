@@ -13,7 +13,8 @@ export const GetStatementQuerySchema = z
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
     scope: z.enum(["mine", "ventana", "all"]),
-    dimension: z.enum(["ventana", "vendedor"]),
+    dimension: z.enum(["banca", "ventana", "vendedor"]), // ✅ NUEVO: Agregado 'banca'
+    bancaId: z.string().uuid().optional(), // ✅ NUEVO: Filtro opcional por banca
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
     sort: z.enum(["asc", "desc"]).optional().default("desc"),
@@ -180,9 +181,10 @@ export const AccountStatementExportQuerySchema = z
 
     // Scope y dimension
     scope: z.enum(["mine", "ventana", "all"]),
-    dimension: z.enum(["ventana", "vendedor"]),
+    dimension: z.enum(["banca", "ventana", "vendedor"]), // ✅ NUEVO: Agregado 'banca'
 
     // Filtros opcionales (según rol)
+    bancaId: z.string().uuid().optional(), // ✅ NUEVO: Filtro opcional por banca
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
 

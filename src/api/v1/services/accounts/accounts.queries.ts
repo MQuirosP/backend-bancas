@@ -14,9 +14,10 @@ import { crDateService } from "../../../../utils/crDateService";
 export async function getDailySummariesFromMaterializedView(
     startDate: Date,
     endDate: Date,
-    dimension: "ventana" | "vendedor",
+    dimension: "banca" | "ventana" | "vendedor", // ✅ NUEVO: Agregado 'banca'
     ventanaId: string | undefined,
     vendedorId: string | undefined,
+    bancaId?: string, // ✅ NUEVO: Filtro opcional por banca
     sort: "asc" | "desc" = "desc"
 ): Promise<Map<string, {
     date: Date;
@@ -50,15 +51,29 @@ export async function getDailySummariesFromMaterializedView(
             `date < '${endDateNextDayCR}'::date`, // ⚠️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
         ];
 
-        if (dimension === "ventana" && ventanaId) {
+        // ✅ NUEVO: Filtros para dimension='banca'
+        // Nota: La vista materializada no tiene bancaId directamente, así que filtramos por ventanas de esa banca
+        if (dimension === "banca") {
+            if (bancaId) {
+                // Filtrar por ventanas de esta banca específica
+                conditions.push(`"ventanaId" IN (SELECT id FROM "Ventana" WHERE "bancaId" = '${bancaId}'::uuid)`);
+            }
+            if (ventanaId) {
+                conditions.push(`"ventanaId" = '${ventanaId}'::uuid`);
+            }
+            if (vendedorId) {
+                conditions.push(`"vendedorId" = '${vendedorId}'::uuid`);
+            }
+            // Para dimension='banca', no filtramos por vendedorId IS NULL porque puede haber vendedores
+        } else if (dimension === "ventana" && ventanaId) {
             conditions.push(`"ventanaId" = '${ventanaId}'::uuid`);
+            conditions.push(`"vendedorId" IS NULL`);
+        } else if (dimension === "ventana") {
+            conditions.push(`"ventanaId" IS NOT NULL`);
             conditions.push(`"vendedorId" IS NULL`);
         } else if (dimension === "vendedor" && vendedorId) {
             conditions.push(`"vendedorId" = '${vendedorId}'::uuid`);
             conditions.push(`"ventanaId" IS NULL`);
-        } else if (dimension === "ventana") {
-            conditions.push(`"ventanaId" IS NOT NULL`);
-            conditions.push(`"vendedorId" IS NULL`);
         } else if (dimension === "vendedor") {
             conditions.push(`"vendedorId" IS NOT NULL`);
             conditions.push(`"ventanaId" IS NULL`);
@@ -144,7 +159,7 @@ export async function getDailySummariesFromMaterializedView(
  */
 export async function getSorteoBreakdownBatch(
     dates: Date[],
-    dimension: "ventana" | "vendedor",
+    dimension: "banca" | "ventana" | "vendedor", // ✅ NUEVO: Agregado 'banca'
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string,
@@ -205,6 +220,17 @@ export async function getSorteoBreakdownBatch(
             ventanaId: true,
             vendedorId: true,
             loteriaId: true,
+            ventana: { // ✅ NUEVO: Incluir relación con ventana para obtener bancaId y políticas
+                select: {
+                    bancaId: true,
+                    commissionPolicyJson: true,
+                    banca: {
+                        select: {
+                            commissionPolicyJson: true,
+                        },
+                    },
+                },
+            },
             sorteo: {
                 select: {
                     id: true,
@@ -229,16 +255,6 @@ export async function getSorteoBreakdownBatch(
                     commissionAmount: true,
                     commissionOrigin: true,
                     listeroCommissionAmount: true, // ✅ Snapshot (puede ser 0)
-                },
-            },
-            ventana: {
-                select: {
-                    commissionPolicyJson: true,
-                    banca: {
-                        select: {
-                            commissionPolicyJson: true,
-                        },
-                    },
                 },
             },
         },
@@ -294,7 +310,10 @@ export async function getSorteoBreakdownBatch(
     for (const date of dates) {
         const dateKey = date.toISOString().split("T")[0];
         // Si hay filtro específico, crear solo una entrada
-        if (dimension === "ventana" && ventanaId) {
+        if (dimension === "banca" && bancaId) {
+            // ✅ NUEVO: Crear entrada para banca específica
+            resultMap.set(`${dateKey}_${bancaId}`, new Map());
+        } else if (dimension === "ventana" && ventanaId) {
             resultMap.set(`${dateKey}_${ventanaId}`, new Map());
         } else if (dimension === "vendedor") {
             if (vendedorId) {
@@ -306,7 +325,7 @@ export async function getSorteoBreakdownBatch(
                 // Sin filtros específicos
             }
         } else {
-            // Si scope=all, necesitamos crear entradas para cada ventana/vendedor que tenga tickets
+            // Si scope=all, necesitamos crear entradas para cada banca/ventana/vendedor que tenga tickets
             // Pero no sabemos cuáles son hasta procesar los tickets, así que inicializamos dinámicamente
         }
     }
@@ -324,7 +343,12 @@ export async function getSorteoBreakdownBatch(
 
         // ✅ CRÍTICO: Determinar la clave según dimensión
         let mapKey: string;
-        if (dimension === "ventana") {
+        if (dimension === "banca") {
+            // ✅ NUEVO: Agrupar por banca
+            const targetBancaId = bancaId || (ticket.ventana as any)?.bancaId;
+            if (!targetBancaId) continue;
+            mapKey = `${dateKey}_${targetBancaId}`;
+        } else if (dimension === "ventana") {
             const targetVentanaId = ventanaId || ticket.ventanaId;
             if (!targetVentanaId) continue;
             mapKey = `${dateKey}_${targetVentanaId}`;
@@ -429,7 +453,7 @@ export async function getSorteoBreakdownBatch(
  */
 export async function getSorteoBreakdown(
     date: Date,
-    dimension: "ventana" | "vendedor",
+    dimension: "banca" | "ventana" | "vendedor", // ✅ NUEVO: Agregado 'banca'
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string,

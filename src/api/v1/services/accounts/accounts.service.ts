@@ -7,6 +7,7 @@ import { registerPayment, reversePayment, deleteStatement } from "./accounts.mov
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
 import prisma from "../../../../core/prismaClient";
 import { getCachedStatement, setCachedStatement } from "../../../../utils/accountStatementCache";
+import logger from "../../../../core/logger";
 
 /**
  * Accounts Service
@@ -79,16 +80,29 @@ export const AccountsService = {
         
         const cached = await getCachedStatement(cacheKey);
         if (cached) {
+            logger.info({
+                layer: 'cache',
+                action: 'ACCOUNT_STATEMENT_CACHE_HIT',
+                payload: { cacheKey, dimension, bancaId, ventanaId, vendedorId }
+            });
             return cached;
         }
 
+        logger.info({
+            layer: 'cache',
+            action: 'ACCOUNT_STATEMENT_CACHE_MISS',
+            payload: { cacheKey, dimension, bancaId, ventanaId, vendedorId }
+        });
+
         // ✅ OPTIMIZACIÓN: Intentar leer de la vista materializada primero (MUY RÁPIDO)
+        // ⚠️ NOTA: La vista materializada puede no tener datos para dimension='banca' sin bancaId específica
         const materializedSummaries = await getDailySummariesFromMaterializedView(
             startDate,
             endDate,
             dimension,
             ventanaId,
             vendedorId,
+            bancaId, // ✅ NUEVO: Pasar bancaId
             sort as "asc" | "desc"
         );
 

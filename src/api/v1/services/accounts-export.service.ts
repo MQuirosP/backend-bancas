@@ -42,10 +42,22 @@ export class AccountsExportService {
       const { statements, totals, monthlyAccumulated, meta } = statementResponse;
 
       // 4. Resolver nombres de entidades para metadata
+      let bancaName: string | undefined = undefined; // ✅ NUEVO: Nombre de banca
+      let bancaCode: string | null = null; // ✅ NUEVO: Código de banca
       let ventanaName: string | undefined = undefined;
       let vendedorName: string | undefined = undefined;
       let ventanaCode: string | null = null;
       let vendedorCode: string | null = null;
+
+      if (filters.bancaId) {
+        // ✅ NUEVO: Resolver información de banca
+        const banca = await prisma.banca.findUnique({
+          where: { id: filters.bancaId },
+          select: { name: true, code: true },
+        });
+        bancaName = banca?.name;
+        bancaCode = banca?.code || null;
+      }
 
       if (filters.ventanaId) {
         const ventana = await prisma.ventana.findUnique({
@@ -130,11 +142,12 @@ export class AccountsExportService {
           filters: {
             scope: filters.scope,
             dimension: filters.dimension,
+            bancaId: filters.bancaId,
+            bancaName, // ✅ NUEVO
             ventanaId: filters.ventanaId,
             ventanaName,
             vendedorId: filters.vendedorId,
             vendedorName,
-            bancaId: filters.bancaId,
           },
           totalDays: meta.totalDays,
         },
@@ -167,6 +180,8 @@ export class AccountsExportService {
         filters,
         meta.startDate,
         meta.endDate,
+        bancaName, // ✅ NUEVO: Pasar nombre de banca
+        bancaCode, // ✅ NUEVO: Pasar código de banca
         ventanaName,
         ventanaCode,
         vendedorName,
@@ -205,7 +220,7 @@ export class AccountsExportService {
    */
   private static async transformStatements(
     statements: DayStatement[],
-    dimension: 'ventana' | 'vendedor',
+    dimension: 'banca' | 'ventana' | 'vendedor', // ✅ NUEVO: Agregado 'banca'
     breakdown?: AccountStatementSorteoItem[],
     movements?: AccountMovementItem[]
   ): Promise<AccountStatementExportItem[]> {
@@ -215,17 +230,30 @@ export class AccountsExportService {
     }
 
     // ✅ OPTIMIZACIÓN: Primero recopilar TODOS los IDs únicos (principales + breakdowns)
+    const allBancaIds = new Set<string>(); // ✅ NUEVO: IDs de bancas
     const allVentanaIds = new Set<string>();
     const allVendedorIds = new Set<string>();
 
     // IDs de statements principales
     statements.forEach((s) => {
+      if (s.bancaId) allBancaIds.add(s.bancaId); // ✅ NUEVO
       if (s.ventanaId) allVentanaIds.add(s.ventanaId);
       if (s.vendedorId) allVendedorIds.add(s.vendedorId);
     });
 
     // IDs de breakdowns anidados
     statements.forEach((s) => {
+      // ✅ NUEVO: IDs de byBanca
+      s.byBanca?.forEach((bb) => {
+        if (bb.bancaId) allBancaIds.add(bb.bancaId);
+        bb.byVentana?.forEach((bv) => {
+          if (bv.ventanaId) allVentanaIds.add(bv.ventanaId);
+        });
+        bb.byVendedor?.forEach((bv) => {
+          if (bv.vendedorId) allVendedorIds.add(bv.vendedorId);
+          if (bv.ventanaId) allVentanaIds.add(bv.ventanaId);
+        });
+      });
       s.byVentana?.forEach((bv) => {
         if (bv.ventanaId) allVentanaIds.add(bv.ventanaId);
       });
@@ -235,8 +263,18 @@ export class AccountsExportService {
       });
     });
 
+    const bancaMap = new Map<string, { name: string; code: string | null }>(); // ✅ NUEVO: Mapa de bancas
     const ventanaMap = new Map<string, { name: string; code: string | null }>();
     const vendedorMap = new Map<string, { name: string; code: string | null }>();
+
+    // ✅ OPTIMIZACIÓN: Una sola query batch para todos los IDs de bancas
+    if (allBancaIds.size > 0) {
+      const bancas = await prisma.banca.findMany({
+        where: { id: { in: Array.from(allBancaIds) } },
+        select: { id: true, name: true, code: true },
+      });
+      bancas.forEach((b) => bancaMap.set(b.id, { name: b.name, code: b.code }));
+    }
 
     // ✅ OPTIMIZACIÓN: Una sola query batch para todos los IDs
     if (allVentanaIds.size > 0) {
@@ -257,6 +295,7 @@ export class AccountsExportService {
 
     // Transformar statements
     return statements.map((s) => {
+      const bancaInfo = s.bancaId ? bancaMap.get(s.bancaId) : null; // ✅ NUEVO: Información de banca
       const ventanaInfo = s.ventanaId ? ventanaMap.get(s.ventanaId) : null;
       const vendedorInfo = s.vendedorId ? vendedorMap.get(s.vendedorId) : null;
 
@@ -264,6 +303,9 @@ export class AccountsExportService {
         id: s.id,
         date: this.formatDate(s.date),
         month: s.month,
+        bancaId: s.bancaId || null, // ✅ NUEVO: ID de banca
+        bancaName: bancaInfo?.name || null, // ✅ NUEVO: Nombre de banca
+        bancaCode: bancaInfo?.code || null, // ✅ NUEVO: Código de banca
         ventanaId: s.ventanaId,
         ventanaName: ventanaInfo?.name || null,
         ventanaCode: ventanaInfo?.code || null,
@@ -359,7 +401,8 @@ export class AccountsExportService {
       }
 
       // ✅ NUEVO: Si NO hay agrupación, incluir bySorteo y movements del statement principal
-      const hasGrouping = (dimension === 'ventana' && s.byVentana && s.byVentana.length > 0) ||
+      const hasGrouping = (dimension === 'banca' && s.byBanca && s.byBanca.length > 0) ||
+                          (dimension === 'ventana' && s.byVentana && s.byVentana.length > 0) ||
                           (dimension === 'vendedor' && s.byVendedor && s.byVendedor.length > 0);
       
       if (!hasGrouping) {
@@ -395,10 +438,12 @@ export class AccountsExportService {
     filters: AccountsFilters
   ): Promise<AccountStatementSorteoItem[]> {
     const result: AccountStatementSorteoItem[] = [];
+    const isDimensionBanca = filters.dimension === 'banca';
     const isDimensionVentana = filters.dimension === 'ventana';
     const hasGrouping = statements.some(
-      (s) => (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
-             (!isDimensionVentana && s.byVendedor && s.byVendedor.length > 0)
+      (s) => (isDimensionBanca && s.byBanca && s.byBanca.length > 0) ||
+             (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
+             (!isDimensionVentana && !isDimensionBanca && s.byVendedor && s.byVendedor.length > 0)
     );
 
     // ✅ OPTIMIZACIÓN: Si hay agrupación, usar bySorteo de los breakdowns anidados
@@ -406,7 +451,47 @@ export class AccountsExportService {
       for (const statement of statements) {
         const dateKey = this.formatDate(statement.date);
 
-        if (isDimensionVentana && statement.byVentana) {
+        if (isDimensionBanca && statement.byBanca) {
+          // ✅ NUEVO: Manejar byBanca
+          for (const bancaBreakdown of statement.byBanca) {
+            // Incluir sorteos de byVentana dentro de esta banca
+            if (bancaBreakdown.byVentana) {
+              for (const ventanaBreakdown of bancaBreakdown.byVentana) {
+                if (ventanaBreakdown.bySorteo && ventanaBreakdown.bySorteo.length > 0) {
+                  for (const sorteo of ventanaBreakdown.bySorteo) {
+                    result.push(this.transformSorteoItem(
+                      sorteo,
+                      dateKey,
+                      ventanaBreakdown.ventanaName,
+                      null,
+                      ventanaBreakdown.ventanaCode || null,
+                      null,
+                      null
+                    ));
+                  }
+                }
+              }
+            }
+            // Incluir sorteos de byVendedor dentro de esta banca
+            if (bancaBreakdown.byVendedor) {
+              for (const vendedorBreakdown of bancaBreakdown.byVendedor) {
+                if (vendedorBreakdown.bySorteo && vendedorBreakdown.bySorteo.length > 0) {
+                  for (const sorteo of vendedorBreakdown.bySorteo) {
+                    result.push(this.transformSorteoItem(
+                      sorteo,
+                      dateKey,
+                      vendedorBreakdown.ventanaName,
+                      vendedorBreakdown.vendedorName,
+                      null, // ventanaCode no disponible en breakdown
+                      vendedorBreakdown.vendedorId,
+                      null  // vendedorCode no disponible en breakdown
+                    ));
+                  }
+                }
+              }
+            }
+          }
+        } else if (isDimensionVentana && statement.byVentana) {
           for (const ventanaBreakdown of statement.byVentana) {
             if (ventanaBreakdown.bySorteo && ventanaBreakdown.bySorteo.length > 0) {
               for (const sorteo of ventanaBreakdown.bySorteo) {
@@ -432,7 +517,7 @@ export class AccountsExportService {
               }
             }
           }
-        } else if (!isDimensionVentana && statement.byVendedor) {
+        } else if (!isDimensionVentana && !isDimensionBanca && statement.byVendedor) {
           for (const vendedorBreakdown of statement.byVendedor) {
             if (vendedorBreakdown.bySorteo && vendedorBreakdown.bySorteo.length > 0) {
               for (const sorteo of vendedorBreakdown.bySorteo) {
@@ -451,9 +536,9 @@ export class AccountsExportService {
                   dateKey,
                   vendedorBreakdown.ventanaName,
                   vendedorBreakdown.vendedorName,
-                  null,
+                  null, // ventanaCode no disponible en breakdown
                   vendedorBreakdown.vendedorId,
-                  null
+                  null  // vendedorCode no disponible en breakdown
                 ));
               }
             }
@@ -563,12 +648,14 @@ export class AccountsExportService {
    */
   private static async getMovements(
     statements: DayStatement[],
-    dimension: 'ventana' | 'vendedor'
+    dimension: 'banca' | 'ventana' | 'vendedor' // ✅ NUEVO: Agregado 'banca'
   ): Promise<AccountMovementItem[]> {
     const result: AccountMovementItem[] = [];
+    const isDimensionBanca = dimension === 'banca';
     const isDimensionVentana = dimension === 'ventana';
     const hasGrouping = statements.some(
-      (s) => (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
+      (s) => (isDimensionBanca && s.byBanca && s.byBanca.length > 0) ||
+             (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
              (!isDimensionVentana && s.byVendedor && s.byVendedor.length > 0)
     );
 
@@ -577,7 +664,59 @@ export class AccountsExportService {
       for (const statement of statements) {
         const dateKey = this.formatDate(statement.date);
 
-        if (isDimensionVentana && statement.byVentana) {
+        if (isDimensionBanca && statement.byBanca) {
+          // ✅ NUEVO: Manejar byBanca
+          for (const bancaBreakdown of statement.byBanca) {
+            if (bancaBreakdown.movements && bancaBreakdown.movements.length > 0) {
+              for (const movement of bancaBreakdown.movements) {
+                result.push(this.transformMovementItem(
+                  movement,
+                  dateKey,
+                  null, // ventanaName
+                  null, // vendedorName
+                  bancaBreakdown.bancaCode || null, // ventanaCode
+                  null, // vendedorId
+                  null  // vendedorCode
+                ));
+              }
+            }
+            // También incluir movements de byVentana y byVendedor dentro de esta banca
+            if (bancaBreakdown.byVentana) {
+              for (const ventanaBreakdown of bancaBreakdown.byVentana) {
+                if (ventanaBreakdown.movements && ventanaBreakdown.movements.length > 0) {
+                  for (const movement of ventanaBreakdown.movements) {
+                    result.push(this.transformMovementItem(
+                      movement,
+                      dateKey,
+                      ventanaBreakdown.ventanaName,
+                      null,
+                      ventanaBreakdown.ventanaCode || null,
+                      null,
+                      null
+                    ));
+                  }
+                }
+              }
+            }
+            if (bancaBreakdown.byVendedor) {
+              for (const vendedorBreakdown of bancaBreakdown.byVendedor) {
+                if (vendedorBreakdown.movements && vendedorBreakdown.movements.length > 0) {
+                  for (const movement of vendedorBreakdown.movements) {
+                    result.push(this.transformMovementItem(
+                      movement,
+                      dateKey,
+                      vendedorBreakdown.ventanaName,
+                      vendedorBreakdown.vendedorName,
+                      null, // ventanaCode no disponible en breakdown
+                      vendedorBreakdown.vendedorId,
+                      null  // vendedorCode no disponible en breakdown
+                    ));
+                  }
+                }
+              }
+            }
+          }
+        } else if (isDimensionVentana && statement.byVentana) {
           for (const ventanaBreakdown of statement.byVentana) {
             if (ventanaBreakdown.movements && ventanaBreakdown.movements.length > 0) {
               for (const movement of ventanaBreakdown.movements) {
@@ -586,14 +725,14 @@ export class AccountsExportService {
               dateKey,
               ventanaBreakdown.ventanaName,
               null,
-              null,
+              ventanaBreakdown.ventanaCode || null,
               null,
               null
             ));
               }
             }
           }
-        } else if (!isDimensionVentana && statement.byVendedor) {
+        } else if (!isDimensionVentana && !isDimensionBanca && statement.byVendedor) {
           for (const vendedorBreakdown of statement.byVendedor) {
             if (vendedorBreakdown.movements && vendedorBreakdown.movements.length > 0) {
               for (const movement of vendedorBreakdown.movements) {
@@ -602,9 +741,9 @@ export class AccountsExportService {
               dateKey,
               vendedorBreakdown.ventanaName,
               vendedorBreakdown.vendedorName,
-              null,
+              null, // ventanaCode no disponible en breakdown
               vendedorBreakdown.vendedorId,
-              null
+              null  // vendedorCode no disponible en breakdown
             ));
               }
             }
@@ -752,17 +891,22 @@ export class AccountsExportService {
     filters: AccountsFilters,
     startDate: string,
     endDate: string,
+    bancaName?: string, // ✅ NUEVO: Nombre de banca
+    bancaCode?: string | null, // ✅ NUEVO: Código de banca
     ventanaName?: string,
     ventanaCode?: string | null,
     vendedorName?: string,
     vendedorCode?: string | null
   ): string {
-    const dimension = filters.dimension === 'ventana' ? 'listero' : 'vendedor';
+    const dimension = filters.dimension === 'banca' ? 'banca' : filters.dimension === 'ventana' ? 'listero' : 'vendedor';
     const ext = format === 'csv' ? 'csv' : format === 'excel' ? 'xlsx' : 'pdf';
 
     // Determinar filtro
     let filterPart = 'todos';
-    if (ventanaName) {
+    if (bancaName) {
+      // ✅ NUEVO: Prioridad a banca
+      filterPart = bancaCode ? `${bancaCode}` : this.slugify(bancaName);
+    } else if (ventanaName) {
       filterPart = ventanaCode ? `${ventanaCode}` : this.slugify(ventanaName);
     } else if (vendedorName) {
       filterPart = vendedorCode ? `${vendedorCode}` : this.slugify(vendedorName);
