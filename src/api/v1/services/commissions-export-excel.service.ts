@@ -70,29 +70,94 @@ export class CommissionsExportExcelService {
     // Datos
     for (const item of payload.summary) {
       const date = this.formatDate(item.date);
-      const entity = isDimensionVentana ? item.ventanaName || '-' : item.vendedorName || '-';
+      
+      // ✅ NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
+      const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
+                          (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
-      const row = isDimensionVentana
-        ? sheet.addRow([
-            date,
-            entity,
-            item.totalSales,
-            item.totalTickets,
-            item.commissionListero || 0,
-            item.commissionVendedor || 0,
-            (item.commissionListero || 0) - (item.commissionVendedor || 0),
-          ])
-        : sheet.addRow([
-            date,
-            entity,
-            item.totalSales,
-            item.totalTickets,
-            item.commissionVendedor || 0,
-            item.commissionListero || 0,
-            item.net || 0,
-          ]);
+      if (hasGrouping) {
+        // ✅ NUEVO: Fila de total consolidado con "TODOS" y formato destacado
+        const totalEntity = 'TODOS';
+        
+        const totalRow = isDimensionVentana
+          ? sheet.addRow([
+              date,
+              totalEntity,
+              item.totalSales,
+              item.totalTickets,
+              item.commissionListero || 0,
+              item.commissionVendedor || 0,
+              (item.commissionListero || 0) - (item.commissionVendedor || 0),
+            ])
+          : sheet.addRow([
+              date,
+              totalEntity,
+              item.totalSales,
+              item.totalTickets,
+              item.commissionVendedor || 0,
+              item.commissionListero || 0,
+              item.net || 0,
+            ]);
 
-      this.styleDataRow(row);
+        // ✅ NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
+        this.styleTotalRow(totalRow);
+
+        // ✅ NUEVO: Filas de desglose por entidad con indentación visual
+        if (isDimensionVentana && item.byVentana) {
+          for (const breakdown of item.byVentana) {
+            const breakdownEntity = `  - ${breakdown.ventanaName}`;
+            const breakdownRow = sheet.addRow([
+              date,
+              breakdownEntity,
+              breakdown.totalSales,
+              breakdown.totalTickets,
+              breakdown.commissionListero || 0,
+              breakdown.commissionVendedor || 0,
+              (breakdown.commissionListero || 0) - (breakdown.commissionVendedor || 0),
+            ]);
+            this.styleDataRow(breakdownRow);
+          }
+        } else if (!isDimensionVentana && item.byVendedor) {
+          for (const breakdown of item.byVendedor) {
+            const breakdownEntity = `  - ${breakdown.vendedorName}`;
+            const breakdownRow = sheet.addRow([
+              date,
+              breakdownEntity,
+              breakdown.totalSales,
+              breakdown.totalTickets,
+              breakdown.commissionVendedor || 0,
+              breakdown.commissionListero || 0,
+              breakdown.net || 0,
+            ]);
+            this.styleDataRow(breakdownRow);
+          }
+        }
+      } else {
+        // ✅ Comportamiento normal cuando NO hay agrupación
+        const entity = isDimensionVentana ? item.ventanaName || '-' : item.vendedorName || '-';
+
+        const row = isDimensionVentana
+          ? sheet.addRow([
+              date,
+              entity,
+              item.totalSales,
+              item.totalTickets,
+              item.commissionListero || 0,
+              item.commissionVendedor || 0,
+              (item.commissionListero || 0) - (item.commissionVendedor || 0),
+            ])
+          : sheet.addRow([
+              date,
+              entity,
+              item.totalSales,
+              item.totalTickets,
+              item.commissionVendedor || 0,
+              item.commissionListero || 0,
+              item.net || 0,
+            ]);
+
+        this.styleDataRow(row);
+      }
     }
 
     // Fila de totales

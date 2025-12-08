@@ -74,22 +74,74 @@ export class CommissionsExportCsvService {
     // Datos
     for (const item of payload.summary) {
       const date = this.formatDate(item.date);
-      const entity = isDimensionVentana ? item.ventanaName || '-' : item.vendedorName || '-';
-      const totalSales = this.formatCurrency(item.totalSales);
-      const totalTickets = item.totalTickets.toString();
+      
+      // ✅ NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
+      const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
+                          (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
-      if (isDimensionVentana) {
-        const commissionListero = this.formatCurrency(item.commissionListero || 0);
-        const commissionVendedor = this.formatCurrency(item.commissionVendedor || 0);
-        const gananciaListero = this.formatCurrency((item.commissionListero || 0) - (item.commissionVendedor || 0));
+      if (hasGrouping) {
+        // ✅ NUEVO: Fila de total consolidado con "TODOS"
+        const totalEntity = 'TODOS';
+        const totalSales = this.formatCurrency(item.totalSales);
+        const totalTickets = item.totalTickets.toString();
 
-        lines.push(`${date},${this.escapeCsv(entity)},${totalSales},${totalTickets},${commissionListero},${commissionVendedor},${gananciaListero}`);
+        if (isDimensionVentana) {
+          const commissionListero = this.formatCurrency(item.commissionListero || 0);
+          const commissionVendedor = this.formatCurrency(item.commissionVendedor || 0);
+          const gananciaListero = this.formatCurrency((item.commissionListero || 0) - (item.commissionVendedor || 0));
+
+          lines.push(`${date},${this.escapeCsv(totalEntity)},${totalSales},${totalTickets},${commissionListero},${commissionVendedor},${gananciaListero}`);
+        } else {
+          const commissionVendedor = this.formatCurrency(item.commissionVendedor || 0);
+          const commissionListero = this.formatCurrency(item.commissionListero || 0);
+          const gananciaNeta = this.formatCurrency(item.net || 0);
+
+          lines.push(`${date},${this.escapeCsv(totalEntity)},${totalSales},${totalTickets},${commissionVendedor},${commissionListero},${gananciaNeta}`);
+        }
+
+        // ✅ NUEVO: Filas de desglose por entidad con prefijo visual
+        if (isDimensionVentana && item.byVentana) {
+          for (const breakdown of item.byVentana) {
+            const breakdownEntity = `  - ${breakdown.ventanaName}`;
+            const breakdownSales = this.formatCurrency(breakdown.totalSales);
+            const breakdownTickets = breakdown.totalTickets.toString();
+            const breakdownCommissionListero = this.formatCurrency(breakdown.commissionListero || 0);
+            const breakdownCommissionVendedor = this.formatCurrency(breakdown.commissionVendedor || 0);
+            const breakdownGananciaListero = this.formatCurrency((breakdown.commissionListero || 0) - (breakdown.commissionVendedor || 0));
+
+            lines.push(`${date},${this.escapeCsv(breakdownEntity)},${breakdownSales},${breakdownTickets},${breakdownCommissionListero},${breakdownCommissionVendedor},${breakdownGananciaListero}`);
+          }
+        } else if (!isDimensionVentana && item.byVendedor) {
+          for (const breakdown of item.byVendedor) {
+            const breakdownEntity = `  - ${breakdown.vendedorName}`;
+            const breakdownSales = this.formatCurrency(breakdown.totalSales);
+            const breakdownTickets = breakdown.totalTickets.toString();
+            const breakdownCommissionVendedor = this.formatCurrency(breakdown.commissionVendedor || 0);
+            const breakdownCommissionListero = this.formatCurrency(breakdown.commissionListero || 0);
+            const breakdownGananciaNeta = this.formatCurrency(breakdown.net || 0);
+
+            lines.push(`${date},${this.escapeCsv(breakdownEntity)},${breakdownSales},${breakdownTickets},${breakdownCommissionVendedor},${breakdownCommissionListero},${breakdownGananciaNeta}`);
+          }
+        }
       } else {
-        const commissionVendedor = this.formatCurrency(item.commissionVendedor || 0);
-        const commissionListero = this.formatCurrency(item.commissionListero || 0);
-        const gananciaNeta = this.formatCurrency(item.net || 0);
+        // ✅ Comportamiento normal cuando NO hay agrupación
+        const entity = isDimensionVentana ? item.ventanaName || '-' : item.vendedorName || '-';
+        const totalSales = this.formatCurrency(item.totalSales);
+        const totalTickets = item.totalTickets.toString();
 
-        lines.push(`${date},${this.escapeCsv(entity)},${totalSales},${totalTickets},${commissionVendedor},${commissionListero},${gananciaNeta}`);
+        if (isDimensionVentana) {
+          const commissionListero = this.formatCurrency(item.commissionListero || 0);
+          const commissionVendedor = this.formatCurrency(item.commissionVendedor || 0);
+          const gananciaListero = this.formatCurrency((item.commissionListero || 0) - (item.commissionVendedor || 0));
+
+          lines.push(`${date},${this.escapeCsv(entity)},${totalSales},${totalTickets},${commissionListero},${commissionVendedor},${gananciaListero}`);
+        } else {
+          const commissionVendedor = this.formatCurrency(item.commissionVendedor || 0);
+          const commissionListero = this.formatCurrency(item.commissionListero || 0);
+          const gananciaNeta = this.formatCurrency(item.net || 0);
+
+          lines.push(`${date},${this.escapeCsv(entity)},${totalSales},${totalTickets},${commissionVendedor},${commissionListero},${gananciaNeta}`);
+        }
       }
     }
 
