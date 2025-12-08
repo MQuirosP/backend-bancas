@@ -208,6 +208,7 @@ export const DashboardController = {
 
     // Mapear granularity a interval (frontend compatibility)
     const interval = query.interval || query.granularity || 'day';
+    const compare = query.compare === true || query.compare === 'true';
 
     const result = await DashboardService.getTimeSeries({
       fromDate: dateRange.fromAt,
@@ -217,6 +218,7 @@ export const DashboardController = {
       loteriaId: query.loteriaId,
       betType: query.betType,
       interval,
+      compare,
     });
 
     return success(res, {

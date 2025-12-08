@@ -23,8 +23,9 @@ interface DashboardFilters {
   order?: 'asc' | 'desc'; // Dirección
   page?: number; // Paginación
   pageSize?: number; // Tamaño de página
-  interval?: 'day' | 'hour'; // Para timeseries
+  interval?: 'day' | 'hour' | 'week' | 'month'; // Para timeseries
   aging?: boolean; // Para CxC aging
+  compare?: boolean; // Para comparación con período anterior
 }
 
 interface GananciaResult {
@@ -176,6 +177,57 @@ function formatCostaRicaDate(date: Date): string {
   const month = String(crDate.getUTCMonth() + 1).padStart(2, '0');
   const day = String(crDate.getUTCDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+/**
+ * Formatea label según granularity
+ * hour → "14:00", "15:00", etc.
+ * day → "15 ene", "16 ene", etc.
+ * week → "Sem 1", "Sem 2", etc.
+ * month → "ene", "feb", etc.
+ */
+function formatTimeSeriesLabel(date: Date, granularity: 'hour' | 'day' | 'week' | 'month'): string {
+  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
+  const crDate = new Date(date.getTime() - offsetMs);
+  
+  const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  
+  switch (granularity) {
+    case 'hour': {
+      const hours = crDate.getUTCHours();
+      const minutes = crDate.getUTCMinutes();
+      const displayHours = hours % 12 || 12;
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      return `${displayHours}:${String(minutes).padStart(2, '0')} ${ampm}`;
+    }
+    case 'day': {
+      const day = crDate.getUTCDate();
+      const month = months[crDate.getUTCMonth()];
+      return `${day} ${month}`;
+    }
+    case 'week': {
+      // Calcular semana del año
+      const startOfYear = new Date(Date.UTC(crDate.getUTCFullYear(), 0, 1));
+      const daysSinceStart = Math.floor((crDate.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+      const weekNumber = Math.ceil((daysSinceStart + startOfYear.getUTCDay() + 1) / 7);
+      return `Sem ${weekNumber}`;
+    }
+    case 'month': {
+      return months[crDate.getUTCMonth()];
+    }
+    default:
+      return formatCostaRicaDate(date);
+  }
+}
+
+/**
+ * Calcula el período anterior para comparación
+ */
+function calculatePreviousPeriod(fromDate: Date, toDate: Date): { fromDate: Date; toDate: Date } {
+  const diffMs = toDate.getTime() - fromDate.getTime();
+  const previousToDate = new Date(fromDate.getTime() - 1); // Un día antes del inicio
+  const previousFromDate = new Date(previousToDate.getTime() - diffMs);
+  return { fromDate: previousFromDate, toDate: previousToDate };
 }
 
 function getBusinessDateRangeStrings(filters: DashboardFilters) {
@@ -1894,6 +1946,7 @@ export const DashboardService = {
    */
   async getTimeSeries(filters: DashboardFilters) {
     const interval = filters.interval || 'day';
+    const granularity = interval; // Usar interval como granularity para formateo de labels
 
     // Validación: interval=hour solo si rango <= 7 días
     if (interval === 'hour') {
@@ -1906,8 +1959,9 @@ export const DashboardService = {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
+    // Determinar formato de fecha según interval
     const dateFormat =
-      interval === 'day'
+      interval === 'day' || interval === 'week' || interval === 'month'
         ? Prisma.sql`COALESCE(
             t."businessDate",
             DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
@@ -1916,6 +1970,33 @@ export const DashboardService = {
             'hour',
             (t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
           )`;
+
+    // Si es week o month, necesitamos agrupar diferente
+    let groupByClause = Prisma.sql`date_bucket`;
+    let selectClause = dateFormat;
+    if (interval === 'week') {
+      // Agrupar por semana del año
+      selectClause = Prisma.sql`
+        DATE_TRUNC('week', 
+          COALESCE(
+            t."businessDate",
+            DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+          )
+        )
+      `;
+      groupByClause = selectClause;
+    } else if (interval === 'month') {
+      // Agrupar por mes
+      selectClause = Prisma.sql`
+        DATE_TRUNC('month', 
+          COALESCE(
+            t."businessDate",
+            DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+          )
+        )
+      `;
+      groupByClause = selectClause;
+    }
 
     const result = await prisma.$queryRaw<
       Array<{
@@ -1927,16 +2008,74 @@ export const DashboardService = {
     >(
       Prisma.sql`
         SELECT
-          ${dateFormat} as date_bucket,
+          ${selectClause} as date_bucket,
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
           COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
           COUNT(DISTINCT t.id) as total_tickets
         FROM "Ticket" t
         WHERE ${baseFilters}
-        GROUP BY date_bucket
+        GROUP BY ${groupByClause}
         ORDER BY date_bucket ASC
       `
     );
+
+    // Calcular período anterior si compare=true
+    let comparisonData: Array<{
+      date: string;
+      timestamp: string;
+      label: string;
+      sales: number;
+      commissions: number;
+      tickets: number;
+    }> = [];
+
+    if (filters.compare) {
+      const previousPeriod = calculatePreviousPeriod(filters.fromDate, filters.toDate);
+      const previousFilters = {
+        ...filters,
+        fromDate: previousPeriod.fromDate,
+        toDate: previousPeriod.toDate,
+        compare: false, // Evitar recursión infinita
+      };
+      const { fromDateStr: prevFromDateStr, toDateStr: prevToDateStr } = getBusinessDateRangeStrings(previousFilters);
+      const prevBaseFilters = buildTicketBaseFilters("t", previousFilters, prevFromDateStr, prevToDateStr);
+
+      const prevResult = await prisma.$queryRaw<
+        Array<{
+          date_bucket: Date;
+          total_sales: number;
+          total_commissions: number;
+          total_tickets: number;
+        }>
+      >(
+        Prisma.sql`
+          SELECT
+            ${selectClause} as date_bucket,
+            COALESCE(SUM(t."totalAmount"), 0) as total_sales,
+            COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
+            COUNT(DISTINCT t.id) as total_tickets
+          FROM "Ticket" t
+          WHERE ${prevBaseFilters}
+          GROUP BY ${groupByClause}
+          ORDER BY date_bucket ASC
+        `
+      );
+
+      comparisonData = prevResult.map(row => {
+        const timestamp = formatCostaRicaISO(row.date_bucket);
+        const date = formatCostaRicaDate(row.date_bucket);
+        const label = formatTimeSeriesLabel(row.date_bucket, granularity);
+
+        return {
+          date,
+          timestamp,
+          label,
+          sales: Number(row.total_sales) || 0,
+          commissions: Number(row.total_commissions) || 0,
+          tickets: Number(row.total_tickets) || 0,
+        };
+      });
+    }
 
     return {
       timeSeries: result.map(row => {
@@ -1944,19 +2083,25 @@ export const DashboardService = {
         const timestamp = formatCostaRicaISO(row.date_bucket);
         // Formatear date como YYYY-MM-DD en zona horaria de Costa Rica
         const date = formatCostaRicaDate(row.date_bucket);
+        // Formatear label según granularity
+        const label = formatTimeSeriesLabel(row.date_bucket, granularity);
 
         return {
           date, // YYYY-MM-DD (fecha en CR)
           timestamp, // YYYY-MM-DDTHH:mm:ss-06:00 (timestamp en CR)
+          label, // ✅ NUEVO: Etiqueta formateada según granularity
           sales: Number(row.total_sales) || 0,
           commissions: Number(row.total_commissions) || 0,
           tickets: Number(row.total_tickets) || 0,
         };
       }),
+      comparison: filters.compare ? comparisonData : undefined, // ✅ NUEVO: Datos del período anterior
       meta: {
         interval,
+        granularity, // ✅ NUEVO: Incluir granularity en meta
         timezone: 'America/Costa_Rica', // ✅ Indicar zona horaria usada
         dataPoints: result.length,
+        comparisonDataPoints: filters.compare ? comparisonData.length : 0,
       },
     };
   },
