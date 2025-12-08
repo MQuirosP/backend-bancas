@@ -218,16 +218,16 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
             let text = '';
             if (numData.amountByNumber > 0 && numData.amountByReventado > 0) {
               // Ambos
-              text = `${num} - ¢ ${normalAmount}  R - ¢ ${reventadoAmount}`;
+              text = `${num}-${normalAmount} R-${reventadoAmount}`;
             } else if (numData.amountByNumber > 0) {
               // Solo normal
-              text = `${num} - ¢ ${normalAmount}`;
+              text = `${num}-${normalAmount}`;
             } else if (numData.amountByReventado > 0) {
               // Solo reventado
-              text = `${num} - ¢ 0  R - ¢ ${reventadoAmount}`;
+              text = `${num}-0 R-${reventadoAmount}`;
             } else {
               // Ninguno (no debería pasar en modo filtrado, pero por seguridad)
-              text = `${num} - ¢ 0`;
+              text = `${num}-0`;
             }
             
             doc.text(text, x, y, { width: columnWidth - 5, lineBreak: false });
@@ -283,16 +283,16 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
               let text = '';
               if (numData.amountByNumber > 0 && numData.amountByReventado > 0) {
                 // Ambos
-                text = `${num} - ¢ ${normalAmount}  R - ¢ ${reventadoAmount}`;
+                text = `${num}-${normalAmount} R-${reventadoAmount}`;
               } else if (numData.amountByNumber > 0) {
                 // Solo normal
-                text = `${num} - ¢ ${normalAmount}`;
+                text = `${num}-${normalAmount}`;
               } else if (numData.amountByReventado > 0) {
                 // Solo reventado
-                text = `${num} - ¢ 0  R - ¢ ${reventadoAmount}`;
+                text = `${num}-0 R-${reventadoAmount}`;
               } else {
                 // Ninguno
-                text = `${num} - ¢ 0`;
+                text = `${num}-0`;
               }
 
               doc.text(text, col.x, currentY, { width: columnWidth - 5, lineBreak: false });
