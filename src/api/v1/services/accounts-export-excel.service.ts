@@ -325,7 +325,8 @@ export class AccountsExportExcelService {
 
     this.styleHeaderRow(headerRow);
 
-    // Datos
+    // ✅ OPTIMIZACIÓN: Agregar todas las filas primero, luego aplicar estilos en batch
+    const rows: ExcelJS.Row[] = [];
     for (const item of payload.breakdown || []) {
       const date = this.formatDate(item.date);
       const entity = isDimensionVentana
@@ -358,8 +359,13 @@ export class AccountsExportExcelService {
             item.ticketCount,
           ]);
 
-      this.styleDataRow(row, [5, 6, 7, 8, 9], [10]);
+      rows.push(row);
     }
+
+    // Aplicar estilos en batch (más eficiente)
+    rows.forEach((row) => {
+      this.styleDataRow(row, [5, 6, 7, 8, 9], [10]);
+    });
 
     // Ajustar anchos de columna
     this.autoSizeColumns(sheet);
@@ -409,7 +415,10 @@ export class AccountsExportExcelService {
 
     this.styleHeaderRow(headerRow);
 
-    // Datos
+    // ✅ OPTIMIZACIÓN: Agregar todas las filas primero, luego aplicar estilos en batch
+    const rows: ExcelJS.Row[] = [];
+    const revertidoRows: ExcelJS.Row[] = [];
+    
     for (const item of payload.movements || []) {
       const entity = isDimensionVentana
         ? item.ventanaName || '-'
@@ -427,23 +436,27 @@ export class AccountsExportExcelService {
         item.notes || '',
       ]);
 
-      // Aplicar estilos
-      row.alignment = { horizontal: 'left', vertical: 'middle' };
-
-      // Formato de moneda para monto
-      row.getCell(5).numFmt = '₡#,##0.00';
-
-      // Resaltar movimientos revertidos
+      rows.push(row);
       if (item.status === 'REVERTIDO') {
-        row.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFFFCCCC' }, // Rojo claro
-        };
-        // Italics para indicar revertido (strikethrough no está soportado en ExcelJS Font type)
-        row.font = { italic: true };
+        revertidoRows.push(row);
       }
     }
+
+    // Aplicar estilos en batch (más eficiente)
+    rows.forEach((row) => {
+      row.alignment = { horizontal: 'left', vertical: 'middle' };
+      row.getCell(5).numFmt = '₡#,##0.00';
+    });
+
+    // Aplicar estilos especiales para revertidos
+    revertidoRows.forEach((row) => {
+      row.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFFCCCC' }, // Rojo claro
+      };
+      row.font = { italic: true };
+    });
 
     // Ajustar anchos de columna
     this.autoSizeColumns(sheet);
@@ -557,15 +570,23 @@ export class AccountsExportExcelService {
 
   /**
    * Ajusta automáticamente el ancho de las columnas
+   * ✅ OPTIMIZADO: Limita el número de filas procesadas para mejorar rendimiento
    */
   private static autoSizeColumns(sheet: ExcelJS.Worksheet): void {
-    sheet.columns.forEach((column) => {
+    const MAX_ROWS_TO_CHECK = 1000; // Limitar para mejorar rendimiento
+    const rowCount = sheet.rowCount;
+    const rowsToCheck = Math.min(rowCount, MAX_ROWS_TO_CHECK);
+
+    sheet.columns.forEach((column, index) => {
       let maxLength = 10; // Mínimo
 
       if (column && column.eachCell) {
+        let checked = 0;
         column.eachCell({ includeEmpty: false }, (cell) => {
+          if (checked >= rowsToCheck) return;
           const cellValue = cell.value ? cell.value.toString() : '';
           maxLength = Math.max(maxLength, cellValue.length);
+          checked++;
         });
       }
 
