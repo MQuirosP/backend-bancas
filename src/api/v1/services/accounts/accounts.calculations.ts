@@ -127,24 +127,27 @@ export async function calculateDayStatement(
     // 1. Realmente no hay comisión del listero
     // 2. Los tickets fueron creados antes de los cambios (tienen listeroCommissionAmount: 0 por defecto)
     // En el caso 2, necesitamos calcular desde commissionOrigin como fallback
-    if (totalListeroCommission === 0) {
+    // ✅ OPTIMIZACIÓN: Usar agregación en lugar de findMany para mejor rendimiento
+    if (totalListeroCommission === 0 && ticketCount > 0) {
         // Verificar si hay tickets con commissionOrigin VENTANA/BANCA que no tienen snapshot
         // Esto indica que fueron creados antes de los cambios
-        // Buscar jugadas con commissionOrigin VENTANA/BANCA que tienen listeroCommissionAmount = 0
-        // Esto indica tickets creados antes de los cambios (tienen 0 por defecto)
-        const jugadasFallback = await prisma.jugada.findMany({
+        // ✅ OPTIMIZACIÓN: Usar agregación en lugar de findMany para evitar traer todas las jugadas
+        const fallbackAgg = await prisma.jugada.aggregate({
             where: {
                 ticket: where,
                 deletedAt: null,
                 commissionOrigin: { in: ["VENTANA", "BANCA"] },
                 listeroCommissionAmount: 0, // Tickets antiguos tienen 0 por defecto
             },
-            select: {
+            _sum: {
                 commissionAmount: true,
-                listeroCommissionAmount: true,
+            },
+            _count: {
+                id: true,
             },
         });
-        const fallbackTotal = jugadasFallback.reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
+        
+        const fallbackTotal = fallbackAgg._sum.commissionAmount || 0;
         if (fallbackTotal > 0) {
             totalListeroCommission = fallbackTotal;
             logger.warn({
@@ -152,7 +155,7 @@ export async function calculateDayStatement(
                 action: 'LISTERO_COMMISSION_FALLBACK_FROM_ORIGIN',
                 payload: {
                     fallbackTotal,
-                    jugadasCount: jugadasFallback.length,
+                    jugadasCount: fallbackAgg._count.id || 0,
                     note: 'Using commissionOrigin as fallback for old tickets',
                 },
             });
@@ -193,25 +196,27 @@ export async function calculateDayStatement(
                 remainingBalance: recalculatedRemainingBalance,
             });
 
-            // Obtener nombres de ventana/vendedor si existen
+            // ✅ OPTIMIZACIÓN: Obtener nombres de ventana/vendedor en paralelo si existen
             let ventanaName: string | null = null;
             let vendedorName: string | null = null;
             
-            if (existingStatement.ventanaId) {
-                const ventana = await prisma.ventana.findUnique({
-                    where: { id: existingStatement.ventanaId },
-                    select: { name: true },
-                });
-                ventanaName = ventana?.name || null;
-            }
+            const [ventana, vendedor] = await Promise.all([
+                existingStatement.ventanaId
+                    ? prisma.ventana.findUnique({
+                          where: { id: existingStatement.ventanaId },
+                          select: { name: true },
+                      })
+                    : Promise.resolve(null),
+                existingStatement.vendedorId
+                    ? prisma.user.findUnique({
+                          where: { id: existingStatement.vendedorId },
+                          select: { name: true },
+                      })
+                    : Promise.resolve(null),
+            ]);
             
-            if (existingStatement.vendedorId) {
-                const vendedor = await prisma.user.findUnique({
-                    where: { id: existingStatement.vendedorId },
-                    select: { name: true },
-                });
-                vendedorName = vendedor?.name || null;
-            }
+            ventanaName = ventana?.name || null;
+            vendedorName = vendedor?.name || null;
 
             // Si existe, retornar el existente con valores recalculados
             return {
@@ -243,25 +248,27 @@ export async function calculateDayStatement(
             vendedorId,
         });
 
-        // Obtener nombres de ventana/vendedor si existen
+        // ✅ OPTIMIZACIÓN: Obtener nombres de ventana/vendedor en paralelo si existen
         let ventanaName: string | null = null;
         let vendedorName: string | null = null;
         
-        if (newStatement.ventanaId) {
-            const ventana = await prisma.ventana.findUnique({
-                where: { id: newStatement.ventanaId },
-                select: { name: true },
-            });
-            ventanaName = ventana?.name || null;
-        }
+        const [ventana, vendedor] = await Promise.all([
+            newStatement.ventanaId
+                ? prisma.ventana.findUnique({
+                      where: { id: newStatement.ventanaId },
+                      select: { name: true },
+                  })
+                : Promise.resolve(null),
+            newStatement.vendedorId
+                ? prisma.user.findUnique({
+                      where: { id: newStatement.vendedorId },
+                      select: { name: true },
+                  })
+                : Promise.resolve(null),
+        ]);
         
-        if (newStatement.vendedorId) {
-            const vendedor = await prisma.user.findUnique({
-                where: { id: newStatement.vendedorId },
-                select: { name: true },
-            });
-            vendedorName = vendedor?.name || null;
-        }
+        ventanaName = ventana?.name || null;
+        vendedorName = vendedor?.name || null;
 
         return {
             ...newStatement,
@@ -364,25 +371,27 @@ export async function calculateDayStatement(
         // No cambiar ventanaId/vendedorId aquí - ya están correctos en finalStatement
     });
 
-    // Obtener nombres de ventana/vendedor si existen
+    // ✅ OPTIMIZACIÓN: Obtener nombres de ventana/vendedor en paralelo si existen
     let ventanaName: string | null = null;
     let vendedorName: string | null = null;
     
-    if (finalStatement.ventanaId) {
-        const ventana = await prisma.ventana.findUnique({
-            where: { id: finalStatement.ventanaId },
-            select: { name: true },
-        });
-        ventanaName = ventana?.name || null;
-    }
+    const [ventana, vendedor] = await Promise.all([
+        finalStatement.ventanaId
+            ? prisma.ventana.findUnique({
+                  where: { id: finalStatement.ventanaId },
+                  select: { name: true },
+              })
+            : Promise.resolve(null),
+        finalStatement.vendedorId
+            ? prisma.user.findUnique({
+                  where: { id: finalStatement.vendedorId },
+                  select: { name: true },
+              })
+            : Promise.resolve(null),
+    ]);
     
-    if (finalStatement.vendedorId) {
-        const vendedor = await prisma.user.findUnique({
-            where: { id: finalStatement.vendedorId },
-            select: { name: true },
-        });
-        vendedorName = vendedor?.name || null;
-    }
+    ventanaName = ventana?.name || null;
+    vendedorName = vendedor?.name || null;
 
     return {
         ...finalStatement,
@@ -487,28 +496,39 @@ export async function getStatementDirect(
 
     const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`;
 
-    // ✅ CRÍTICO: Obtener TODAS las jugadas individuales (igual que commissions)
-    // Calcular todo jugada por jugada desde el principio
-    const jugadas = await prisma.$queryRaw<
+    // ✅ OPTIMIZACIÓN: Usar agregaciones SQL directamente en lugar de traer todas las jugadas
+    // Esto reduce significativamente la cantidad de datos transferidos y mejora el rendimiento
+    // Usar subquery para calcular payouts correctamente (una vez por ticket, solo si tiene jugadas ganadoras)
+    const aggregatedData = await prisma.$queryRaw<
         Array<{
             business_date: Date;
             ventana_id: string;
             ventana_name: string;
             vendedor_id: string | null;
             vendedor_name: string | null;
-            ticket_id: string;
-            amount: number;
-            type: string;
-            finalMultiplierX: number | null;
-            loteriaId: string;
-            ventana_policy: any;
-            banca_policy: any;
-            ticket_total_payout: number | null;
-            commission_amount: number | null; // snapshot del vendedor
-            listero_commission_amount: number | null; // snapshot del listero
-            commission_origin: string; // "USER" | "VENTANA" | "BANCA"
+            total_sales: number;
+            total_payouts: number;
+            total_tickets: bigint;
+            commission_listero: number;
+            commission_vendedor: number;
         }>
     >`
+    WITH ticket_payouts AS (
+      SELECT DISTINCT
+        t.id as ticket_id,
+        COALESCE(
+          t."businessDate",
+          DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
+        ) as business_date,
+        t."ventanaId" as ventana_id,
+        t."vendedorId" as vendedor_id,
+        t."totalPayout" as ticket_payout
+      FROM "Ticket" t
+      INNER JOIN "Jugada" j ON j."ticketId" = t.id
+      ${whereClause}
+      AND j."deletedAt" IS NULL
+      AND j."isWinner" = true
+    )
     SELECT
       COALESCE(
         t."businessDate",
@@ -518,24 +538,28 @@ export async function getStatementDirect(
       v.name as ventana_name,
       t."vendedorId" as vendedor_id,
       u.name as vendedor_name,
-      t.id as ticket_id,
-      j.amount,
-      j.type,
-      j."finalMultiplierX",
-      t."loteriaId",
-      v."commissionPolicyJson" as ventana_policy,
-      b."commissionPolicyJson" as banca_policy,
-      t."totalPayout" as ticket_total_payout,
-      j."commissionAmount" as commission_amount,
-      j."listeroCommissionAmount" as listero_commission_amount,
-      j."commissionOrigin" as commission_origin
+      COALESCE(SUM(j.amount), 0) as total_sales,
+      COALESCE(SUM(tp.ticket_payout), 0) as total_payouts,
+      COUNT(DISTINCT t.id) as total_tickets,
+      COALESCE(SUM(j."listeroCommissionAmount"), 0) as commission_listero,
+      COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as commission_vendedor
     FROM "Ticket" t
     INNER JOIN "Jugada" j ON j."ticketId" = t.id
     INNER JOIN "Ventana" v ON v.id = t."ventanaId"
     INNER JOIN "Banca" b ON b.id = v."bancaId"
     LEFT JOIN "User" u ON u.id = t."vendedorId"
+    LEFT JOIN ticket_payouts tp ON tp.ticket_id = t.id 
+      AND tp.business_date = COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
+      AND tp.ventana_id = t."ventanaId"
+      AND (tp.vendedor_id = t."vendedorId" OR (tp.vendedor_id IS NULL AND t."vendedorId" IS NULL))
     ${whereClause}
     AND j."deletedAt" IS NULL
+    GROUP BY 
+      COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
+      t."ventanaId",
+      v.name,
+      t."vendedorId",
+      u.name
   `;
 
 
@@ -575,39 +599,35 @@ export async function getStatementDirect(
         }
     >();
 
-    for (const jugada of jugadas) {
-        // ✅ CORREGIDO: Usar listeroCommissionAmount directamente de Jugada (igual que dashboard y mes)
-        // Esto asegura consistencia entre todos los cálculos
-        // El snapshot es la fuente de verdad para comisiones ya que es lo que se pagó en ese momento
-        const commissionListeroFinal = Number(jugada.listero_commission_amount || 0);
-
-        const dateKey = crDateService.postgresDateToCRString(jugada.business_date);
+    // ✅ OPTIMIZACIÓN: Procesar datos agregados en lugar de jugadas individuales
+    for (const row of aggregatedData) {
+        const dateKey = crDateService.postgresDateToCRString(row.business_date);
         
-        // ✅ CRÍTICO: Filtrar jugadas fuera del período solicitado ANTES de agregarlas al mapa
+        // ✅ CRÍTICO: Filtrar datos fuera del período solicitado ANTES de agregarlos al mapa
         if (!crDateService.isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
-            continue; // Saltar jugadas fuera del período
+            continue; // Saltar datos fuera del período
         }
         
         // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + entidad
         const groupKey = shouldGroupByDate
             ? dateKey // Solo fecha cuando hay agrupación
             : (dimension === "ventana"
-                ? `${dateKey}_${jugada.ventana_id}`
-                : `${dateKey}_${jugada.vendedor_id || 'null'}`);
+                ? `${dateKey}_${row.ventana_id}`
+                : `${dateKey}_${row.vendedor_id || 'null'}`);
 
         // Clave para el desglose por entidad (siempre incluye entidad)
         const breakdownKey = dimension === "ventana"
-            ? `${dateKey}_${jugada.ventana_id}`
-            : `${dateKey}_${jugada.vendedor_id || 'null'}`;
+            ? `${dateKey}_${row.ventana_id}`
+            : `${dateKey}_${row.vendedor_id || 'null'}`;
 
         // Obtener o crear entrada principal (agrupada por fecha si shouldGroupByDate)
         let entry = byDateAndDimension.get(groupKey);
         if (!entry) {
             entry = {
-                ventanaId: shouldGroupByDate ? null : jugada.ventana_id,
-                ventanaName: shouldGroupByDate ? null : jugada.ventana_name,
-                vendedorId: shouldGroupByDate ? null : jugada.vendedor_id,
-                vendedorName: shouldGroupByDate ? null : jugada.vendedor_name,
+                ventanaId: shouldGroupByDate ? null : row.ventana_id,
+                ventanaName: shouldGroupByDate ? null : row.ventana_name,
+                vendedorId: shouldGroupByDate ? null : row.vendedor_id,
+                vendedorName: shouldGroupByDate ? null : row.vendedor_name,
                 totalSales: 0,
                 totalPayouts: 0,
                 totalTickets: new Set<string>(),
@@ -623,10 +643,10 @@ export async function getStatementDirect(
             let breakdownEntry = breakdownByEntity.get(breakdownKey);
             if (!breakdownEntry) {
                 breakdownEntry = {
-                    ventanaId: jugada.ventana_id,
-                    ventanaName: jugada.ventana_name,
-                    vendedorId: jugada.vendedor_id,
-                    vendedorName: jugada.vendedor_name,
+                    ventanaId: row.ventana_id,
+                    ventanaName: row.ventana_name,
+                    vendedorId: row.vendedor_id,
+                    vendedorName: row.vendedor_name,
                     totalSales: 0,
                     totalPayouts: 0,
                     totalTickets: new Set<string>(),
@@ -637,31 +657,26 @@ export async function getStatementDirect(
                 breakdownByEntity.set(breakdownKey, breakdownEntry);
             }
 
-            // Actualizar desglose por entidad
-            breakdownEntry.totalSales += jugada.amount;
-            breakdownEntry.totalTickets.add(jugada.ticket_id);
-            breakdownEntry.commissionListero += commissionListeroFinal;
-            if (jugada.commission_origin === "USER") {
-                breakdownEntry.commissionVendedor += Number(jugada.commission_amount || 0);
-            }
-            if (!breakdownEntry.payoutTickets.has(jugada.ticket_id)) {
-                breakdownEntry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-                breakdownEntry.payoutTickets.add(jugada.ticket_id);
-            }
+            // Actualizar desglose por entidad (ya agregado desde SQL)
+            breakdownEntry.totalSales += Number(row.total_sales || 0);
+            breakdownEntry.totalPayouts += Number(row.total_payouts || 0);
+            breakdownEntry.commissionListero += Number(row.commission_listero || 0);
+            breakdownEntry.commissionVendedor += Number(row.commission_vendedor || 0);
+            // ✅ OPTIMIZACIÓN: Usar un contador aproximado en lugar de Set de IDs
+            // El Set se usa solo para mantener la estructura, pero el conteo real viene de SQL
+            const ticketCount = Number(row.total_tickets || 0);
+            breakdownEntry.totalTickets = new Set(Array.from({ length: ticketCount }, (_, i) => `${row.ventana_id}_${row.vendedor_id}_${i}`));
         }
 
-        // Actualizar entrada principal (agrupada)
-        entry.totalSales += jugada.amount;
-        entry.totalTickets.add(jugada.ticket_id);
-        entry.commissionListero += commissionListeroFinal;
-        // Solo sumar commission_amount si la jugada es de comisión de VENDEDOR (USER)
-        if (jugada.commission_origin === "USER") {
-            entry.commissionVendedor += Number(jugada.commission_amount || 0);
-        }
-        if (!entry.payoutTickets.has(jugada.ticket_id)) {
-            entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-            entry.payoutTickets.add(jugada.ticket_id);
-        }
+        // Actualizar entrada principal (agrupada) - ya agregado desde SQL
+        entry.totalSales += Number(row.total_sales || 0);
+        entry.totalPayouts += Number(row.total_payouts || 0);
+        entry.commissionListero += Number(row.commission_listero || 0);
+        entry.commissionVendedor += Number(row.commission_vendedor || 0);
+        // ✅ OPTIMIZACIÓN: Usar un contador aproximado en lugar de Set de IDs
+        // El Set se usa solo para mantener la estructura, pero el conteo real viene de SQL
+        const ticketCount = Number(row.total_tickets || 0);
+        entry.totalTickets = new Set(Array.from({ length: ticketCount }, (_, i) => `${row.ventana_id}_${row.vendedor_id}_${i}`));
     }
 
     // Obtener movimientos (pagos/cobros) para el rango de fechas

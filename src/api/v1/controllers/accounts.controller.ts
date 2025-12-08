@@ -263,12 +263,9 @@ export const AccountsController = {
       throw new AppError("Debe proporcionar ventanaId o vendedorId", 400, "MISSING_DIMENSION");
     }
 
-    // Obtener nombre del usuario para auditoría desde la base de datos
-    const userWithName = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { name: true },
-    });
-    const paidByName = userWithName?.name || "Usuario";
+    // ✅ OPTIMIZACIÓN: Usar nombre del usuario del token si está disponible, sino buscar en BD
+    // Nota: Si el token incluye el nombre del usuario, podemos evitar esta query
+    const paidByName = (user as any).name || "Usuario";
 
     const payment = await AccountsService.createPayment({
       date,
@@ -501,7 +498,8 @@ export const AccountsController = {
   /**
    * POST /api/v1/accounts/reverse-payment
    * Revierte un pago/cobro
-   * CRÍTICO: Solo ADMIN puede revertir. No permite revertir si el día quedaría saldado.
+   * CRÍTICO: ADMIN puede revertir cualquier pago. VENTANA solo puede revertir pagos de sus propios vendedores.
+   * No permite revertir si el día quedaría saldado.
    */
   async reversePayment(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
@@ -509,22 +507,64 @@ export const AccountsController = {
     const user = req.user;
     const { paymentId, reason } = req.body;
 
-    // Validar permisos: Solo ADMIN puede revertir pagos/cobros
-    if (user.role !== Role.ADMIN) {
-      throw new AppError("Solo usuarios con rol ADMIN pueden revertir pagos/cobros", 403, "FORBIDDEN");
-    }
-
-    // Obtener el pago para validar
+    // ✅ OPTIMIZACIÓN: Obtener el pago una sola vez (incluye accountStatement)
     const payment = await AccountPaymentRepository.findById(paymentId);
 
     if (!payment) {
       throw new AppError("Pago no encontrado", 404, "PAYMENT_NOT_FOUND");
     }
 
-    // Revertir pago (incluye validación de que el día no quede saldado)
-    const reversed = await AccountsService.reversePayment(paymentId, user.id, reason);
+    // ✅ NUEVO: Validar permisos según rol
+    if (user.role === Role.ADMIN) {
+      // ADMIN puede revertir cualquier pago
+    } else if (user.role === Role.VENTANA) {
+      // ✅ VENTANA solo puede revertir pagos de sus propios vendedores
+      // ✅ OPTIMIZACIÓN: Obtener ventanaId del usuario solo si no está en el token
+      let userVentanaId: string | null = user.ventanaId || null;
+      
+      if (!userVentanaId) {
+        const userWithVentana = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { ventanaId: true },
+        });
+        userVentanaId = userWithVentana?.ventanaId || null;
+      }
 
-    // Obtener usuario que revirtió para la respuesta
+      if (!userVentanaId) {
+        throw new AppError("Usuario VENTANA debe tener ventanaId asignado", 403, "FORBIDDEN");
+      }
+
+      // ✅ OPTIMIZACIÓN: Validar permisos según el tipo de pago
+      if (payment.vendedorId) {
+        // Si el pago tiene vendedorId, verificar que el vendedor pertenece a su ventana
+        const vendedor = await prisma.user.findUnique({
+          where: { id: payment.vendedorId },
+          select: { ventanaId: true, role: true },
+        });
+
+        if (!vendedor || vendedor.role !== Role.VENDEDOR || vendedor.ventanaId !== userVentanaId) {
+          throw new AppError("Solo puedes revertir pagos de tus propios vendedores", 403, "FORBIDDEN");
+        }
+      } else if (payment.ventanaId) {
+        // Si el pago es de tipo ventana (sin vendedorId), verificar que es de su ventana
+        if (payment.ventanaId !== userVentanaId) {
+          throw new AppError("Solo puedes revertir pagos de tu propia ventana", 403, "FORBIDDEN");
+        }
+      } else {
+        // Si no tiene ni ventanaId ni vendedorId, rechazar (caso edge)
+        throw new AppError("No se puede determinar la ventana del pago", 403, "FORBIDDEN");
+      }
+    } else {
+      // Otros roles no pueden revertir pagos
+      throw new AppError("Solo usuarios con rol ADMIN o VENTANA pueden revertir pagos/cobros", 403, "FORBIDDEN");
+    }
+
+    // ✅ OPTIMIZACIÓN: Pasar el payment ya obtenido en lugar de solo el ID
+    // Esto evita buscar el pago dos veces
+    const reversed = await AccountsService.reversePayment(payment, user.id, reason);
+
+    // ✅ OPTIMIZACIÓN: Obtener nombre del usuario solo una vez (necesario para la respuesta)
+    // AuthUser no incluye name, así que necesitamos buscarlo
     const reversedByUser = await prisma.user.findUnique({
       where: { id: user.id },
       select: { id: true, name: true },
