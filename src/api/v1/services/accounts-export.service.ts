@@ -65,23 +65,25 @@ export class AccountsExportService {
         vendedorCode = vendedor?.code || null;
       }
 
-      // 5. Transformar statements a formato de exportación
-      const exportStatements: AccountStatementExportItem[] = await this.transformStatements(
-        statements,
-        filters.dimension
-      );
-
-      // 6. Obtener breakdown por sorteo (si está habilitado)
+      // 5. Obtener breakdown por sorteo y movimientos ANTES de transformar (para incluir en statements cuando no hay agrupación)
       let breakdown: AccountStatementSorteoItem[] | undefined = undefined;
+      let movements: AccountMovementItem[] | undefined = undefined;
+      
       if (options.includeBreakdown && statements.length > 0) {
         breakdown = await this.getBreakdown(statements, filters);
       }
-
-      // 7. Obtener movimientos (si está habilitado)
-      let movements: AccountMovementItem[] | undefined = undefined;
+      
       if (options.includeMovements && statements.length > 0) {
         movements = await this.getMovements(statements, filters.dimension);
       }
+
+      // 6. Transformar statements a formato de exportación (con breakdown y movements para incluir cuando no hay agrupación)
+      const exportStatements: AccountStatementExportItem[] = await this.transformStatements(
+        statements,
+        filters.dimension,
+        breakdown,
+        movements
+      );
 
       // 8. Transformar totales
       const exportTotals: AccountStatementTotals = {
@@ -199,10 +201,13 @@ export class AccountsExportService {
   /**
    * Transforma statements de DayStatement[] a AccountStatementExportItem[]
    * ✅ OPTIMIZADO: Evita queries cuando los nombres ya están disponibles
+   * ✅ NUEVO: Incluye bySorteo y movements cuando no hay agrupación
    */
   private static async transformStatements(
     statements: DayStatement[],
-    dimension: 'ventana' | 'vendedor'
+    dimension: 'ventana' | 'vendedor',
+    breakdown?: AccountStatementSorteoItem[],
+    movements?: AccountMovementItem[]
   ): Promise<AccountStatementExportItem[]> {
     // Validar que statements sea un array válido
     if (!statements || !Array.isArray(statements)) {
@@ -256,7 +261,9 @@ export class AccountsExportService {
       const vendedorInfo = s.vendedorId ? vendedorMap.get(s.vendedorId) : null;
 
       const item: any = {
+        id: s.id,
         date: this.formatDate(s.date),
+        month: s.month,
         ventanaId: s.ventanaId,
         ventanaName: ventanaInfo?.name || null,
         ventanaCode: ventanaInfo?.code || null,
@@ -270,17 +277,20 @@ export class AccountsExportService {
         balance: s.balance,
         totalPaid: s.totalPaid,
         totalCollected: s.totalCollected,
+        totalPaymentsCollections: s.totalPaymentsCollections || (s.totalPaid + s.totalCollected),
         remainingBalance: s.remainingBalance,
         isSettled: s.isSettled,
         canEdit: s.canEdit,
         ticketCount: s.ticketCount,
+        createdAt: s.createdAt ? (s.createdAt instanceof Date ? s.createdAt.toISOString() : new Date(s.createdAt).toISOString()) : new Date().toISOString(),
+        updatedAt: s.updatedAt ? (s.updatedAt instanceof Date ? s.updatedAt.toISOString() : new Date(s.updatedAt).toISOString()) : new Date().toISOString(),
       };
 
-      // ✅ NUEVO: Transformar byVentana si existe
+      // ✅ NUEVO: Transformar byVentana si existe (con bySorteo y movements)
       if (s.byVentana && s.byVentana.length > 0) {
         item.byVentana = s.byVentana.map((bv) => {
           const ventanaInfo = ventanaMap.get(bv.ventanaId);
-          return {
+          const breakdown: any = {
             ventanaId: bv.ventanaId,
             ventanaName: bv.ventanaName,
             ventanaCode: ventanaInfo?.code || null,
@@ -291,18 +301,31 @@ export class AccountsExportService {
             balance: bv.balance,
             totalPaid: bv.totalPaid || 0,
             totalCollected: bv.totalCollected || 0,
+            totalPaymentsCollections: (bv.totalPaid || 0) + (bv.totalCollected || 0),
             remainingBalance: bv.remainingBalance,
             ticketCount: bv.ticketCount || 0,
           };
+          
+          // ✅ NUEVO: Incluir bySorteo del breakdown si existe
+          if (bv.bySorteo && bv.bySorteo.length > 0) {
+            breakdown.bySorteo = bv.bySorteo.map((sorteo) => this.transformSorteoItem(sorteo, this.formatDate(s.date), bv.ventanaName, null, ventanaInfo?.code || null, null, null));
+          }
+          
+          // ✅ NUEVO: Incluir movements del breakdown si existen
+          if (bv.movements && bv.movements.length > 0) {
+            breakdown.movements = bv.movements.map((mov) => this.transformMovementItem(mov, this.formatDate(s.date), bv.ventanaName, null, ventanaInfo?.code || null, null, null));
+          }
+          
+          return breakdown;
         });
       }
 
-      // ✅ NUEVO: Transformar byVendedor si existe
+      // ✅ NUEVO: Transformar byVendedor si existe (con bySorteo y movements)
       if (s.byVendedor && s.byVendedor.length > 0) {
         item.byVendedor = s.byVendedor.map((bv) => {
           const vendedorInfo = vendedorMap.get(bv.vendedorId);
           const ventanaInfo = ventanaMap.get(bv.ventanaId);
-          return {
+          const breakdown: any = {
             vendedorId: bv.vendedorId,
             vendedorName: bv.vendedorName,
             vendedorCode: vendedorInfo?.code || null,
@@ -316,10 +339,47 @@ export class AccountsExportService {
             balance: bv.balance,
             totalPaid: bv.totalPaid || 0,
             totalCollected: bv.totalCollected || 0,
+            totalPaymentsCollections: (bv.totalPaid || 0) + (bv.totalCollected || 0),
             remainingBalance: bv.remainingBalance,
             ticketCount: bv.ticketCount || 0,
           };
+          
+          // ✅ NUEVO: Incluir bySorteo del breakdown si existe
+          if (bv.bySorteo && bv.bySorteo.length > 0) {
+            breakdown.bySorteo = bv.bySorteo.map((sorteo) => this.transformSorteoItem(sorteo, this.formatDate(s.date), bv.ventanaName, bv.vendedorName, ventanaInfo?.code || null, bv.vendedorId, vendedorInfo?.code || null));
+          }
+          
+          // ✅ NUEVO: Incluir movements del breakdown si existen
+          if (bv.movements && bv.movements.length > 0) {
+            breakdown.movements = bv.movements.map((mov) => this.transformMovementItem(mov, this.formatDate(s.date), bv.ventanaName, bv.vendedorName, ventanaInfo?.code || null, bv.vendedorId, vendedorInfo?.code || null));
+          }
+          
+          return breakdown;
         });
+      }
+
+      // ✅ NUEVO: Si NO hay agrupación, incluir bySorteo y movements del statement principal
+      const hasGrouping = (dimension === 'ventana' && s.byVentana && s.byVentana.length > 0) ||
+                          (dimension === 'vendedor' && s.byVendedor && s.byVendedor.length > 0);
+      
+      if (!hasGrouping) {
+        const dateKey = this.formatDate(s.date);
+        
+        // Incluir bySorteo del statement principal si está disponible
+        if (breakdown && breakdown.length > 0) {
+          const statementBreakdown = breakdown.filter((b) => b.date === dateKey);
+          if (statementBreakdown.length > 0) {
+            item.bySorteo = statementBreakdown;
+          }
+        }
+        
+        // Incluir movements del statement principal si están disponibles
+        if (movements && movements.length > 0) {
+          const statementMovements = movements.filter((m) => m.statementDate === dateKey);
+          if (statementMovements.length > 0) {
+            item.movements = statementMovements;
+          }
+        }
       }
 
       return item;
@@ -360,19 +420,15 @@ export class AccountsExportService {
                 const displayHours = hours % 12 || 12;
                 const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
 
-                result.push({
-                  date: dateKey,
-                  ventanaName: ventanaBreakdown.ventanaName,
-                  vendedorName: null,
-                  loteriaName: sorteo.loteriaName,
-                  sorteoTime,
-                  totalSales: sorteo.sales,
-                  totalPayouts: sorteo.payouts,
-                  listeroCommission: sorteo.listeroCommission,
-                  vendedorCommission: sorteo.vendedorCommission,
-                  balance: sorteo.balance,
-                  ticketCount: sorteo.ticketCount,
-                });
+                result.push(this.transformSorteoItem(
+                  sorteo,
+                  dateKey,
+                  ventanaBreakdown.ventanaName,
+                  null,
+                  null,
+                  null,
+                  null
+                ));
               }
             }
           }
@@ -390,19 +446,15 @@ export class AccountsExportService {
                 const displayHours = hours % 12 || 12;
                 const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
 
-                result.push({
-                  date: dateKey,
-                  ventanaName: vendedorBreakdown.ventanaName,
-                  vendedorName: vendedorBreakdown.vendedorName,
-                  loteriaName: sorteo.loteriaName,
-                  sorteoTime,
-                  totalSales: sorteo.sales,
-                  totalPayouts: sorteo.payouts,
-                  listeroCommission: sorteo.listeroCommission,
-                  vendedorCommission: sorteo.vendedorCommission,
-                  balance: sorteo.balance,
-                  ticketCount: sorteo.ticketCount,
-                });
+                result.push(this.transformSorteoItem(
+                  sorteo,
+                  dateKey,
+                  vendedorBreakdown.ventanaName,
+                  vendedorBreakdown.vendedorName,
+                  null,
+                  vendedorBreakdown.vendedorId,
+                  null
+                ));
               }
             }
           }
@@ -455,35 +507,48 @@ export class AccountsExportService {
         vendedores.forEach((v) => vendedorMap.set(v.id, v.name));
       }
 
+      // ✅ OPTIMIZACIÓN: Obtener códigos en batch antes del loop
+      const ventanaCodesMap = new Map<string, string | null>();
+      const vendedorCodesMap = new Map<string, string | null>();
+      
+      if (ventanaIds.length > 0) {
+        const ventanasWithCodes = await prisma.ventana.findMany({
+          where: { id: { in: ventanaIds } },
+          select: { id: true, code: true },
+        });
+        ventanasWithCodes.forEach((v) => ventanaCodesMap.set(v.id, v.code));
+      }
+      
+      if (vendedorIds.length > 0) {
+        const vendedoresWithCodes = await prisma.user.findMany({
+          where: { id: { in: vendedorIds } },
+          select: { id: true, code: true },
+        });
+        vendedoresWithCodes.forEach((v) => vendedorCodesMap.set(v.id, v.code));
+      }
+
       for (const statement of statements) {
         const dateKey = this.formatDate(statement.date);
         const dayBreakdown = breakdownMap.get(dateKey);
 
         if (dayBreakdown) {
           for (const item of dayBreakdown) {
-            const scheduledDate = new Date(item.scheduledAt);
-            const crTime = new Date(
-              scheduledDate.toLocaleString('en-US', { timeZone: 'America/Costa_Rica' })
-            );
-            const hours = crTime.getHours();
-            const minutes = crTime.getMinutes();
-            const ampm = hours >= 12 ? 'PM' : 'AM';
-            const displayHours = hours % 12 || 12;
-            const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
-
-            result.push({
-              date: dateKey,
-              ventanaName: statement.ventanaId ? ventanaMap.get(statement.ventanaId) || null : null,
-              vendedorName: statement.vendedorId ? vendedorMap.get(statement.vendedorId) || null : null,
-              loteriaName: item.loteriaName,
-              sorteoTime,
-              totalSales: item.sales,
-              totalPayouts: item.payouts,
-              listeroCommission: item.listeroCommission,
-              vendedorCommission: item.vendedorCommission,
-              balance: item.balance,
-              ticketCount: item.ticketCount,
-            });
+            const ventanaId = statement.ventanaId;
+            const vendedorId = statement.vendedorId;
+            const ventanaName = ventanaId ? ventanaMap.get(ventanaId) || null : null;
+            const vendedorName = vendedorId ? vendedorMap.get(vendedorId) || null : null;
+            const ventanaCode = ventanaId ? (ventanaCodesMap.get(ventanaId) || null) : null;
+            const vendedorCode = vendedorId ? (vendedorCodesMap.get(vendedorId) || null) : null;
+            
+            result.push(this.transformSorteoItem(
+              item,
+              dateKey,
+              ventanaName,
+              vendedorName,
+              ventanaCode,
+              vendedorId,
+              vendedorCode
+            ));
           }
         }
       }
@@ -516,18 +581,15 @@ export class AccountsExportService {
           for (const ventanaBreakdown of statement.byVentana) {
             if (ventanaBreakdown.movements && ventanaBreakdown.movements.length > 0) {
               for (const movement of ventanaBreakdown.movements) {
-                result.push({
-                  movementDate: new Date(movement.createdAt),
-                  statementDate: dateKey,
-                  ventanaName: ventanaBreakdown.ventanaName,
-                  vendedorName: null,
-                  type: movement.type === 'payment' ? 'PAGO' : 'COBRO',
-                  amount: movement.amount,
-                  method: this.translateMethod(movement.method),
-                  notes: movement.notes || '',
-                  registeredBy: movement.registeredBy || 'Desconocido',
-                  status: movement.reversedAt ? 'REVERTIDO' : 'ACTIVO',
-                });
+            result.push(this.transformMovementItem(
+              movement,
+              dateKey,
+              ventanaBreakdown.ventanaName,
+              null,
+              null,
+              null,
+              null
+            ));
               }
             }
           }
@@ -535,18 +597,15 @@ export class AccountsExportService {
           for (const vendedorBreakdown of statement.byVendedor) {
             if (vendedorBreakdown.movements && vendedorBreakdown.movements.length > 0) {
               for (const movement of vendedorBreakdown.movements) {
-                result.push({
-                  movementDate: new Date(movement.createdAt),
-                  statementDate: dateKey,
-                  ventanaName: vendedorBreakdown.ventanaName,
-                  vendedorName: vendedorBreakdown.vendedorName,
-                  type: movement.type === 'payment' ? 'PAGO' : 'COBRO',
-                  amount: movement.amount,
-                  method: this.translateMethod(movement.method),
-                  notes: movement.notes || '',
-                  registeredBy: movement.registeredBy || 'Desconocido',
-                  status: movement.reversedAt ? 'REVERTIDO' : 'ACTIVO',
-                });
+            result.push(this.transformMovementItem(
+              movement,
+              dateKey,
+              vendedorBreakdown.ventanaName,
+              vendedorBreakdown.vendedorName,
+              null,
+              vendedorBreakdown.vendedorId,
+              null
+            ));
               }
             }
           }
@@ -573,9 +632,19 @@ export class AccountsExportService {
           method: true,
           notes: true,
           isReversed: true,
+          isFinal: true,
           createdAt: true,
+          updatedAt: true,
+          reversedAt: true,
           paidBy: {
             select: {
+              id: true,
+              name: true,
+            },
+          },
+          reversedByUser: {
+            select: {
+              id: true,
               name: true,
             },
           },
@@ -592,7 +661,7 @@ export class AccountsExportService {
         },
       });
 
-      // Resolver nombres de entidades
+      // Resolver nombres y códigos de entidades
       const ventanaIds = Array.from(
         new Set(
           payments
@@ -609,39 +678,66 @@ export class AccountsExportService {
       );
 
       const ventanaMap = new Map<string, string>();
+      const ventanaCodesMap = new Map<string, string | null>();
       const vendedorMap = new Map<string, string>();
+      const vendedorCodesMap = new Map<string, string | null>();
 
       if (ventanaIds.length > 0) {
         const ventanas = await prisma.ventana.findMany({
           where: { id: { in: ventanaIds } },
-          select: { id: true, name: true },
+          select: { id: true, name: true, code: true },
         });
-        ventanas.forEach((v) => ventanaMap.set(v.id, v.name));
+        ventanas.forEach((v) => {
+          ventanaMap.set(v.id, v.name);
+          ventanaCodesMap.set(v.id, v.code);
+        });
       }
 
       if (vendedorIds.length > 0) {
         const vendedores = await prisma.user.findMany({
           where: { id: { in: vendedorIds } },
-          select: { id: true, name: true },
+          select: { id: true, name: true, code: true },
         });
-        vendedores.forEach((v) => vendedorMap.set(v.id, v.name));
+        vendedores.forEach((v) => {
+          vendedorMap.set(v.id, v.name);
+          vendedorCodesMap.set(v.id, v.code);
+        });
       }
 
       for (const p of payments) {
-        result.push({
-          movementDate: p.createdAt,
-          statementDate: this.formatDate(p.accountStatement?.date || p.date),
-          ventanaName:
-            p.accountStatement?.ventanaId ? ventanaMap.get(p.accountStatement.ventanaId) || null : null,
-          vendedorName:
-            p.accountStatement?.vendedorId ? vendedorMap.get(p.accountStatement.vendedorId) || null : null,
-          type: p.type === 'payment' ? 'PAGO' : 'COBRO',
-          amount: p.amount,
-          method: this.translateMethod(p.method),
-          notes: p.notes,
-          registeredBy: p.paidBy?.name || 'Desconocido',
-          status: p.isReversed ? 'REVERTIDO' : 'ACTIVO',
-        });
+        const ventanaId = p.accountStatement?.ventanaId;
+        const vendedorId = p.accountStatement?.vendedorId;
+        const ventanaName = ventanaId ? ventanaMap.get(ventanaId) || null : null;
+        const vendedorName = vendedorId ? vendedorMap.get(vendedorId) || null : null;
+        const ventanaCode = ventanaId ? (ventanaCodesMap.get(ventanaId) || null) : null;
+        const vendedorCode = vendedorId ? (vendedorCodesMap.get(vendedorId) || null) : null;
+        
+        result.push(this.transformMovementItem(
+          {
+            id: p.id,
+            createdAt: p.createdAt,
+            updatedAt: p.updatedAt,
+            accountStatementId: p.accountStatementId,
+            ventanaId,
+            type: p.type,
+            amount: p.amount,
+            method: p.method,
+            notes: p.notes,
+            registeredBy: p.paidBy?.name || 'Desconocido',
+            registeredById: p.paidBy?.id || null,
+            isReversed: p.isReversed,
+            isFinal: p.isFinal || false,
+            reversedAt: p.reversedAt,
+            reversedBy: p.reversedByUser?.name || null,
+            reversedById: p.reversedByUser?.id || null,
+          },
+          this.formatDate(p.accountStatement?.date || p.date),
+          ventanaName,
+          vendedorName,
+          ventanaCode,
+          vendedorId,
+          vendedorCode
+        ));
       }
     }
 
@@ -717,5 +813,90 @@ export class AccountsExportService {
     const month = String(d.getUTCMonth() + 1).padStart(2, '0');
     const day = String(d.getUTCDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * Transforma un item de sorteo a formato de exportación con toda la información
+   */
+  private static transformSorteoItem(
+    sorteo: any,
+    date: string,
+    ventanaName: string | null,
+    vendedorName: string | null,
+    ventanaCode: string | null,
+    vendedorId: string | null,
+    vendedorCode: string | null
+  ): AccountStatementSorteoItem {
+    const scheduledDate = new Date(sorteo.scheduledAt);
+    const crTime = new Date(
+      scheduledDate.toLocaleString('en-US', { timeZone: 'America/Costa_Rica' })
+    );
+    const hours = crTime.getHours();
+    const minutes = crTime.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12;
+    const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+
+    return {
+      date,
+      sorteoId: sorteo.sorteoId,
+      sorteoName: sorteo.sorteoName,
+      loteriaId: sorteo.loteriaId,
+      loteriaName: sorteo.loteriaName,
+      scheduledAt: sorteo.scheduledAt,
+      sorteoTime,
+      ventanaId: sorteo.ventanaId || null,
+      ventanaName,
+      ventanaCode,
+      vendedorId,
+      vendedorName,
+      vendedorCode,
+      totalSales: sorteo.sales,
+      totalPayouts: sorteo.payouts,
+      listeroCommission: sorteo.listeroCommission,
+      vendedorCommission: sorteo.vendedorCommission,
+      balance: sorteo.balance,
+      ticketCount: sorteo.ticketCount,
+    };
+  }
+
+  /**
+   * Transforma un movimiento a formato de exportación con toda la información
+   */
+  private static transformMovementItem(
+    movement: any,
+    statementDate: string,
+    ventanaName: string | null,
+    vendedorName: string | null,
+    ventanaCode: string | null,
+    vendedorId: string | null,
+    vendedorCode: string | null
+  ): AccountMovementItem {
+    return {
+      id: movement.id,
+      movementDate: new Date(movement.createdAt),
+      statementDate,
+      accountStatementId: movement.accountStatementId || '',
+      ventanaId: movement.ventanaId || null,
+      ventanaName,
+      ventanaCode,
+      vendedorId,
+      vendedorName,
+      vendedorCode,
+      type: movement.type === 'payment' ? 'PAGO' : 'COBRO',
+      amount: movement.amount,
+      method: this.translateMethod(movement.method),
+      notes: movement.notes || null,
+      registeredBy: movement.registeredBy || 'Desconocido',
+      registeredById: movement.registeredById || null,
+      status: movement.reversedAt || movement.isReversed ? 'REVERTIDO' : 'ACTIVO',
+      isFinal: movement.isFinal || false,
+      isReversed: movement.reversedAt ? true : (movement.isReversed || false),
+      reversedAt: movement.reversedAt ? new Date(movement.reversedAt) : null,
+      reversedBy: movement.reversedBy || null,
+      reversedById: movement.reversedById || null,
+      createdAt: new Date(movement.createdAt),
+      updatedAt: movement.updatedAt ? new Date(movement.updatedAt) : new Date(movement.createdAt),
+    };
   }
 }

@@ -19,8 +19,13 @@ export interface AccountStatementVentanaBreakdownExport {
   balance: number;
   totalPaid: number;
   totalCollected: number;
+  totalPaymentsCollections: number;
   remainingBalance: number;
   ticketCount: number;
+  // ✅ NUEVO: Desglose por sorteo de esta ventana
+  bySorteo?: AccountStatementSorteoItem[];
+  // ✅ NUEVO: Movimientos de esta ventana
+  movements?: AccountMovementItem[];
 }
 
 /**
@@ -40,15 +45,22 @@ export interface AccountStatementVendedorBreakdownExport {
   balance: number;
   totalPaid: number;
   totalCollected: number;
+  totalPaymentsCollections: number;
   remainingBalance: number;
   ticketCount: number;
+  // ✅ NUEVO: Desglose por sorteo de este vendedor
+  bySorteo?: AccountStatementSorteoItem[];
+  // ✅ NUEVO: Movimientos de este vendedor
+  movements?: AccountMovementItem[];
 }
 
 /**
  * Item de estado de cuenta para exportación (resumen por día)
  */
 export interface AccountStatementExportItem {
+  id: string;
   date: string; // YYYY-MM-DD
+  month: string; // YYYY-MM
   ventanaId?: string | null;
   ventanaName?: string | null;
   ventanaCode?: string | null;
@@ -66,16 +78,25 @@ export interface AccountStatementExportItem {
   balance: number; // Puede ser negativo
   totalPaid: number;
   totalCollected: number;
+  totalPaymentsCollections: number; // ✅ NUEVO: totalPaid + totalCollected
   remainingBalance: number; // Puede ser negativo
 
   // Estado y metadata
   isSettled: boolean;
   canEdit: boolean;
   ticketCount: number;
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
 
   // ✅ NUEVO: Desglose por entidad (cuando hay agrupación)
   byVentana?: AccountStatementVentanaBreakdownExport[];
   byVendedor?: AccountStatementVendedorBreakdownExport[];
+  
+  // ✅ NUEVO: Desglose por sorteo del statement principal (cuando NO hay agrupación)
+  bySorteo?: AccountStatementSorteoItem[];
+  
+  // ✅ NUEVO: Movimientos del statement principal (cuando NO hay agrupación)
+  movements?: AccountMovementItem[];
 }
 
 /**
@@ -83,10 +104,18 @@ export interface AccountStatementExportItem {
  */
 export interface AccountStatementSorteoItem {
   date: string; // YYYY-MM-DD
-  ventanaName?: string | null;
-  vendedorName?: string | null;
+  sorteoId: string; // ✅ NUEVO
+  sorteoName: string; // ✅ NUEVO
+  loteriaId: string; // ✅ NUEVO
   loteriaName: string;
+  scheduledAt: string; // ✅ NUEVO: ISO 8601 completo
   sorteoTime: string; // HH:MM AM/PM
+  ventanaId?: string | null; // ✅ NUEVO
+  ventanaName?: string | null;
+  ventanaCode?: string | null; // ✅ NUEVO
+  vendedorId?: string | null; // ✅ NUEVO
+  vendedorName?: string | null;
+  vendedorCode?: string | null; // ✅ NUEVO
   totalSales: number;
   totalPayouts: number;
   listeroCommission: number;
@@ -99,16 +128,30 @@ export interface AccountStatementSorteoItem {
  * Item de movimiento de pago/cobro
  */
 export interface AccountMovementItem {
+  id: string; // ✅ NUEVO
   movementDate: Date; // Fecha del movimiento
   statementDate: string; // YYYY-MM-DD - Fecha a la que se aplicó
+  accountStatementId: string; // ✅ NUEVO
+  ventanaId?: string | null; // ✅ NUEVO
   ventanaName?: string | null;
+  ventanaCode?: string | null; // ✅ NUEVO
+  vendedorId?: string | null; // ✅ NUEVO
   vendedorName?: string | null;
+  vendedorCode?: string | null; // ✅ NUEVO
   type: 'PAGO' | 'COBRO';
   amount: number;
   method: string; // "Efectivo", "Transferencia", etc.
   notes?: string | null;
   registeredBy: string; // Nombre del usuario
+  registeredById?: string | null; // ✅ NUEVO
   status: 'ACTIVO' | 'REVERTIDO';
+  isFinal: boolean; // ✅ NUEVO
+  isReversed: boolean; // ✅ NUEVO
+  reversedAt?: Date | null; // ✅ NUEVO
+  reversedBy?: string | null; // ✅ NUEVO: Nombre del usuario que revirtió
+  reversedById?: string | null; // ✅ NUEVO
+  createdAt: Date; // ✅ NUEVO
+  updatedAt: Date; // ✅ NUEVO
 }
 
 /**
