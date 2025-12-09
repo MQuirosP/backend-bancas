@@ -74,8 +74,8 @@ export async function calculateDayStatement(
 
     // Usar agregaciones de Prisma para calcular totales directamente en la base de datos
     // Esto es mucho más eficiente que traer todos los tickets y jugadas a memoria
-    const [ticketAgg, jugadaAggVendor, jugadaAggListero, jugadaAggWinners] = await Promise.all([
-        // Agregaciones de tickets
+    const [ticketAgg, ticketAggWinners, jugadaAggVendor, jugadaAggListero] = await Promise.all([
+        // Agregaciones de tickets (TODOS los tickets para ventas)
         prisma.ticket.aggregate({
             where,
             _sum: {
@@ -83,6 +83,22 @@ export async function calculateDayStatement(
             },
             _count: {
                 id: true,
+            },
+        }),
+        // ✅ CORRECCIÓN: Agregaciones de tickets SOLO con jugadas ganadoras para payouts
+        // Esto asegura que solo contamos totalPayout de tickets que realmente tienen jugadas ganadoras
+        prisma.ticket.aggregate({
+            where: {
+                ...where,
+                jugadas: {
+                    some: {
+                        isWinner: true,
+                        deletedAt: null,
+                    },
+                },
+            },
+            _sum: {
+                totalPayout: true, // ✅ CORRECCIÓN: Usar totalPayout del ticket (una vez por ticket, solo si tiene jugadas ganadoras)
             },
         }),
         // Agregaciones de jugadas - TODAS las jugadas para comisiones
@@ -115,24 +131,15 @@ export async function calculateDayStatement(
             }
             throw error;
         }),
-        // Agregaciones de jugadas - Solo jugadas ganadoras para payouts
-        prisma.jugada.aggregate({
-            where: {
-                ticket: where,
-                deletedAt: null,
-                isWinner: true, // Solo jugadas ganadoras para payouts
-            },
-            _sum: {
-                payout: true, // Total de premios (payout de jugadas ganadoras)
-            },
-        }),
     ]);
 
     // Calcular totales básicos desde agregaciones
     const totalSales = ticketAgg._sum.totalAmount || 0;
-    // CRÍTICO: totalPayouts debe ser la suma de payout de jugadas ganadoras, no totalPaid de tickets
-    // totalPaid de tickets es lo que se ha pagado, pero totalPayouts debe ser el total de premios ganados
-    const totalPayouts = jugadaAggWinners._sum.payout || 0;
+    // ✅ CORRECCIÓN: totalPayouts debe ser la suma de totalPayout de tickets que tienen jugadas ganadoras
+    // NO debe sumar el payout de cada jugada individualmente porque un ticket puede tener múltiples jugadas ganadoras
+    // El campo totalPayout del ticket ya contiene la suma correcta de todos los payouts de las jugadas ganadoras de ese ticket
+    // IMPORTANTE: Solo sumar totalPayout de tickets que tienen al menos una jugada ganadora
+    const totalPayouts = ticketAggWinners._sum.totalPayout || 0;
     const ticketCount = ticketAgg._count.id || 0;
     // FIX: Solo sumar comisiones del vendedor (commissionOrigin === "USER")
     const totalVendedorCommission = jugadaAggVendor._sum.commissionAmount || 0;
@@ -657,7 +664,7 @@ export async function getStatementDirect(
       u.name as vendedor_name,
       u.code as vendedor_code,
       COALESCE(SUM(j.amount), 0) as total_sales,
-      COALESCE(SUM(tp.ticket_payout), 0) as total_payouts,
+      COALESCE(SUM(DISTINCT tp.ticket_payout), 0) as total_payouts,
       COUNT(DISTINCT t.id) as total_tickets,
       COALESCE(SUM(j."listeroCommissionAmount"), 0) as commission_listero,
       COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as commission_vendedor
