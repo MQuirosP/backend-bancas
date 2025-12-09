@@ -16,6 +16,8 @@ import logger from "../../../core/logger";
 import { getExcludedTicketIds } from "./sorteo-listas.helpers";
 import { resolveDigits } from "../../../utils/loteriaRules";
 import { parseCommissionPolicy, CommissionPolicy, CommissionRule } from "../../../services/commission.resolver";
+import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
+import { crDateService } from "../../../utils/crDateService";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
@@ -1827,6 +1829,29 @@ gs."hour24" ASC
         };
       });
 
+      // ✅ NUEVO: Obtener movimientos de pago/cobro del vendedor por fecha
+      const movementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
+        dateRange.fromAt,
+        dateRange.toAt,
+        "vendedor",
+        undefined,
+        vendedorId
+      );
+
+      // ✅ NUEVO: Calcular rango de fechas para monthlyAccumulated (desde inicio del mes hasta hoy)
+      const today = new Date();
+      const monthlyStartDate = new Date(today.getFullYear(), today.getMonth(), 1);
+      const monthlyEndDate = today;
+      
+      // ✅ NUEVO: Obtener movimientos del mes completo para monthlyAccumulated
+      const monthlyMovementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
+        monthlyStartDate,
+        monthlyEndDate,
+        "vendedor",
+        undefined,
+        vendedorId
+      );
+
       // Agrupar sorteos por día
       type SorteoWithMultiplier = typeof dataWithAccumulated[0];
       const sorteosByDate = new Map<string, SorteoWithMultiplier[]>();
@@ -1859,14 +1884,38 @@ gs."hour24" ASC
       const daysArray = Array.from(sorteosByDate.entries())
         .map(([date, sorteosDelDia]) => {
           // Calcular dayTotals (suma de todos los sorteos del día)
+          const totalSales = sorteosDelDia.reduce((sum, s) => sum + s.totalSales, 0);
+          const totalCommission = sorteosDelDia.reduce((sum, s) => sum + s.totalCommission, 0);
+          const commissionByNumber = sorteosDelDia.reduce((sum, s) => sum + (s.commissionByNumber || 0), 0);
+          const commissionByReventado = sorteosDelDia.reduce((sum, s) => sum + (s.commissionByReventado || 0), 0);
+          const totalPrizes = sorteosDelDia.reduce((sum, s) => sum + s.totalPrizes, 0);
+          const totalTickets = sorteosDelDia.reduce((sum, s) => sum + s.ticketCount, 0);
+
+          // ✅ NUEVO: Calcular totalPaid y totalCollected desde movimientos del día
+          const movements = movementsByDate.get(date) || [];
+          const totalPaid = movements
+            .filter((m: any) => m.type === "payment" && !m.isReversed)
+            .reduce((sum: number, m: any) => sum + m.amount, 0);
+          const totalCollected = movements
+            .filter((m: any) => m.type === "collection" && !m.isReversed)
+            .reduce((sum: number, m: any) => sum + m.amount, 0);
+
+          // ✅ NUEVO: Calcular totalBalance y totalRemainingBalance
+          const totalBalance = totalSales - totalPrizes - totalCommission;
+          const totalRemainingBalance = totalBalance - totalCollected + totalPaid;
+
           const dayTotals = {
-            totalSales: sorteosDelDia.reduce((sum, s) => sum + s.totalSales, 0),
-            totalCommission: sorteosDelDia.reduce((sum, s) => sum + s.totalCommission, 0),
-            commissionByNumber: sorteosDelDia.reduce((sum, s) => sum + (s.commissionByNumber || 0), 0), // ✅ NUEVO
-            commissionByReventado: sorteosDelDia.reduce((sum, s) => sum + (s.commissionByReventado || 0), 0), // ✅ NUEVO
-            totalPrizes: sorteosDelDia.reduce((sum, s) => sum + s.totalPrizes, 0),
-            totalSubtotal: sorteosDelDia.reduce((sum, s) => sum + s.subtotal, 0),
-            totalTickets: sorteosDelDia.reduce((sum, s) => sum + s.ticketCount, 0),
+            totalSales,
+            totalCommission,
+            commissionByNumber,
+            commissionByReventado,
+            totalPrizes,
+            totalTickets,
+            totalPaid,
+            totalCollected,
+            totalBalance,
+            totalRemainingBalance,
+            totalSubtotal: totalRemainingBalance, // ✅ DEPRECATED: igual a totalRemainingBalance para compatibilidad
           };
 
           // Formatear sorteos (convertir scheduledAt a ISO string)
@@ -1890,22 +1939,149 @@ gs."hour24" ASC
       const totals = {
         totalSales: daysArray.reduce((sum, d) => sum + d.dayTotals.totalSales, 0),
         totalCommission: daysArray.reduce((sum, d) => sum + d.dayTotals.totalCommission, 0),
-        commissionByNumber: daysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByNumber || 0), 0), // ✅ NUEVO
-        commissionByReventado: daysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByReventado || 0), 0), // ✅ NUEVO
+        commissionByNumber: daysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByNumber || 0), 0),
+        commissionByReventado: daysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByReventado || 0), 0),
         totalPrizes: daysArray.reduce((sum, d) => sum + d.dayTotals.totalPrizes, 0),
-        totalSubtotal: daysArray.reduce((sum, d) => sum + d.dayTotals.totalSubtotal, 0),
         totalTickets: daysArray.reduce((sum, d) => sum + d.dayTotals.totalTickets, 0),
+        totalPaid: daysArray.reduce((sum, d) => sum + d.dayTotals.totalPaid, 0),
+        totalCollected: daysArray.reduce((sum, d) => sum + d.dayTotals.totalCollected, 0),
+        totalBalance: daysArray.reduce((sum, d) => sum + d.dayTotals.totalBalance, 0),
+        totalRemainingBalance: daysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
+        totalSubtotal: daysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0), // ✅ DEPRECATED: igual a totalRemainingBalance
+      };
+
+      // ✅ NUEVO: Calcular monthlyAccumulated (acumulado del mes completo hasta hoy)
+      // Obtener todos los sorteos evaluados del mes completo
+      const monthlySorteoWhere: Prisma.SorteoWhereInput = {
+        status: {
+          in: allowedStatuses,
+        },
+        scheduledAt: {
+          gte: monthlyStartDate,
+          lte: monthlyEndDate,
+        },
+        ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+        tickets: {
+          some: {
+            vendedorId,
+            deletedAt: null,
+            isActive: ticketIsActive,
+          },
+        },
+      };
+
+      const monthlySorteos = await prisma.sorteo.findMany({
+        where: monthlySorteoWhere,
+        select: {
+          id: true,
+        },
+      });
+
+      const monthlySorteoIds = monthlySorteos.map((s) => s.id);
+
+      // Obtener datos financieros del mes completo
+      const monthlyFinancialData = await prisma.ticket.groupBy({
+        by: ["sorteoId"],
+        where: {
+          sorteoId: { in: monthlySorteoIds },
+          vendedorId,
+          deletedAt: null,
+          isActive: ticketIsActive,
+        },
+        _sum: {
+          totalAmount: true,
+          totalCommission: true,
+          totalPayout: true,
+        },
+        _count: {
+          id: true,
+        },
+      });
+
+      const monthlyPrizesData = await prisma.ticket.groupBy({
+        by: ["sorteoId"],
+        where: {
+          sorteoId: { in: monthlySorteoIds },
+          vendedorId,
+          isWinner: true,
+          deletedAt: null,
+          isActive: ticketIsActive,
+        },
+        _sum: {
+          totalPayout: true,
+        },
+      });
+
+      // Calcular totales del mes completo
+      const monthlyTotalSales = monthlyFinancialData.reduce((sum, f) => sum + (f._sum.totalAmount || 0), 0);
+      const monthlyTotalCommission = monthlyFinancialData.reduce((sum, f) => sum + (f._sum.totalCommission || 0), 0);
+      const monthlyTotalPrizes = monthlyPrizesData.reduce((sum, p) => sum + (p._sum.totalPayout || 0), 0);
+      const monthlyTotalTickets = monthlyFinancialData.reduce((sum, f) => sum + f._count.id, 0);
+
+      // ✅ NUEVO: Calcular totalPaid y totalCollected del mes completo desde movimientos
+      let monthlyTotalPaid = 0;
+      let monthlyTotalCollected = 0;
+      for (const movements of monthlyMovementsByDate.values()) {
+        monthlyTotalPaid += movements
+          .filter((m: any) => m.type === "payment" && !m.isReversed)
+          .reduce((sum: number, m: any) => sum + m.amount, 0);
+        monthlyTotalCollected += movements
+          .filter((m: any) => m.type === "collection" && !m.isReversed)
+          .reduce((sum: number, m: any) => sum + m.amount, 0);
+      }
+
+      // ✅ NUEVO: Calcular comisiones por tipo del mes completo
+      const monthlyJugadas = await prisma.jugada.findMany({
+        where: {
+          ticket: {
+            sorteoId: { in: monthlySorteoIds },
+            vendedorId,
+            deletedAt: null,
+            isActive: ticketIsActive,
+          },
+          deletedAt: null,
+        },
+        select: {
+          commissionAmount: true,
+          type: true,
+        },
+      });
+
+      const monthlyCommissionByNumber = monthlyJugadas
+        .filter((j) => j.type === "NUMERO")
+        .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
+      const monthlyCommissionByReventado = monthlyJugadas
+        .filter((j) => j.type === "REVENTADO")
+        .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
+
+      // Calcular balance y remainingBalance del mes completo
+      const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPrizes - monthlyTotalCommission;
+      const monthlyTotalRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
+
+      const monthlyAccumulated = {
+        totalSales: monthlyTotalSales,
+        totalCommission: monthlyTotalCommission,
+        commissionByNumber: monthlyCommissionByNumber,
+        commissionByReventado: monthlyCommissionByReventado,
+        totalPrizes: monthlyTotalPrizes,
+        totalTickets: monthlyTotalTickets,
+        totalPaid: monthlyTotalPaid,
+        totalCollected: monthlyTotalCollected,
+        totalBalance: monthlyTotalBalance,
+        totalRemainingBalance: monthlyTotalRemainingBalance,
+        totalSubtotal: monthlyTotalRemainingBalance, // ✅ DEPRECATED: igual a totalRemainingBalance
       };
 
       const result = {
         data: daysArray,
         meta: {
           totals,
+          monthlyAccumulated, // ✅ NUEVO: Acumulado del mes completo
           dateFilter: params.date || "today",
           ...(params.fromDate ? { fromDate: params.fromDate } : {}),
           ...(params.toDate ? { toDate: params.toDate } : {}),
           totalSorteos: sorteos.length,
-          totalDays: daysArray.length, // ✅ NUEVO: Cantidad de días
+          totalDays: daysArray.length,
         },
       };
 
