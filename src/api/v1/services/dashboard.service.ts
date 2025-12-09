@@ -26,6 +26,7 @@ interface DashboardFilters {
   interval?: 'day' | 'hour' | 'week' | 'month'; // Para timeseries
   aging?: boolean; // Para CxC aging
   compare?: boolean; // Para comparación con período anterior
+  cxcDimension?: 'ventana' | 'vendedor'; // ✅ NUEVO: Dimensión para CxC/CxP (default: 'ventana')
 }
 
 interface GananciaResult {
@@ -71,9 +72,30 @@ interface GananciaResult {
 
 interface CxCResult {
   totalAmount: number;
-  byVentana: Array<{
+  byVentana?: Array<{
     ventanaId: string;
     ventanaName: string;
+    totalSales: number;
+    totalPayouts: number;
+    totalListeroCommission: number;
+    totalVendedorCommission: number;
+    totalPaid: number;
+    totalPaidOut: number;
+    totalCollected: number;
+    totalPaidToCustomer: number;
+    amount: number; // compatibilidad: saldo positivo (CxC)
+    remainingBalance: number; // Período filtrado
+    monthlyAccumulated: {
+      remainingBalance: number; // ✅ NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
+    };
+    isActive: boolean;
+  }>;
+  byVendedor?: Array<{
+    vendedorId: string;
+    vendedorName: string;
+    vendedorCode?: string;
+    ventanaId?: string;
+    ventanaName?: string;
     totalSales: number;
     totalPayouts: number;
     totalListeroCommission: number;
@@ -93,9 +115,31 @@ interface CxCResult {
 
 interface CxPResult {
   totalAmount: number;
-  byVentana: Array<{
+  byVentana?: Array<{
     ventanaId: string;
     ventanaName: string;
+    totalSales: number;
+    totalPayouts: number;
+    totalListeroCommission: number;
+    totalVendedorCommission: number;
+    totalPaid: number;
+    totalPaidOut: number;
+    totalCollected: number;
+    totalPaidToCustomer: number;
+    totalPaidToVentana: number; // Para CxP según documento
+    amount: number; // compatibilidad: saldo positivo (CxP)
+    remainingBalance: number; // Período filtrado
+    monthlyAccumulated: {
+      remainingBalance: number; // ✅ NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
+    };
+    isActive: boolean;
+  }>;
+  byVendedor?: Array<{
+    vendedorId: string;
+    vendedorName: string;
+    vendedorCode?: string;
+    ventanaId?: string;
+    ventanaName?: string;
     totalSales: number;
     totalPayouts: number;
     totalListeroCommission: number;
@@ -804,6 +848,13 @@ export const DashboardService = {
    * CxC = Total de ventas - Total de premios pagados
    */
   async calculateCxC(filters: DashboardFilters, role?: Role): Promise<CxCResult> {
+    const dimension = filters.cxcDimension || 'ventana';
+    
+    // ✅ NUEVO: Si dimension='vendedor', ejecutar lógica específica para vendedores
+    if (dimension === 'vendedor') {
+      return this.calculateCxCByVendedor(filters, role);
+    }
+
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
@@ -1344,10 +1395,471 @@ export const DashboardService = {
   },
 
   /**
+   * Calcula CxC agrupado por vendedor
+   * Similar a calculateCxC pero agrupa por vendedorId en lugar de ventanaId
+   */
+  async calculateCxCByVendedor(filters: DashboardFilters, role?: Role): Promise<CxCResult> {
+    const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
+    const rangeStart = parseDateStart(fromDateStr);
+    const rangeEnd = parseDateEnd(toDateStr);
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+
+    // ✅ CRÍTICO: Obtener datos directamente desde tickets/jugadas agrupados por vendedor
+    const vendedorData = await prisma.$queryRaw<
+      Array<{
+        vendedor_id: string;
+        vendedor_name: string;
+        vendedor_code: string | null;
+        ventana_id: string | null;
+        ventana_name: string | null;
+        is_active: boolean;
+        total_sales: number;
+        total_payouts: number;
+        commission_user: number;
+        commission_ventana_raw: number;
+        listero_commission_snapshot: number;
+      }>
+    >(
+      Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT
+            t.id,
+            t."vendedorId",
+            t."ventanaId",
+            t."sorteoId",
+            t."totalAmount",
+            t."totalPayout"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+            AND t."vendedorId" IS NOT NULL
+        ),
+        sales_per_vendedor AS (
+          SELECT
+            t."vendedorId" AS vendedor_id,
+            COALESCE(SUM(j.amount), 0) AS total_sales,
+            COALESCE(SUM(j.payout), 0) AS total_payouts
+          FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
+          GROUP BY t."vendedorId"
+        ),
+        commissions_per_vendedor AS (
+          SELECT
+            t."vendedorId" AS vendedor_id,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
+            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
+          FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
+          GROUP BY t."vendedorId"
+        )
+        SELECT
+          u.id AS vendedor_id,
+          u.name AS vendedor_name,
+          u.code AS vendedor_code,
+          u."ventanaId" AS ventana_id,
+          v.name AS ventana_name,
+          u."isActive" AS is_active,
+          COALESCE(sp.total_sales, 0) AS total_sales,
+          COALESCE(sp.total_payouts, 0) AS total_payouts,
+          COALESCE(cp.commission_user, 0) AS commission_user,
+          COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw,
+          COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot
+        FROM "User" u
+        LEFT JOIN sales_per_vendedor sp ON sp.vendedor_id = u.id
+        LEFT JOIN commissions_per_vendedor cp ON cp.vendedor_id = u.id
+        LEFT JOIN "Ventana" v ON v.id = u."ventanaId"
+        WHERE u."isActive" = true
+          AND u.role = 'VENDEDOR'
+          ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+        ORDER BY total_sales DESC
+      `
+    );
+
+    const where: Prisma.AccountStatementWhereInput = {
+      date: {
+        gte: rangeStart,
+        lte: rangeEnd,
+      },
+      vendedorId: { not: null },
+    };
+
+    if (filters.ventanaId) {
+      where.ventanaId = filters.ventanaId;
+    }
+
+    if (filters.bancaId) {
+      where.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
+
+    const statements = await prisma.accountStatement.findMany({
+      where,
+      include: {
+        vendedor: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            isActive: true,
+            ventanaId: true,
+          },
+        },
+        ventana: {
+          select: {
+            id: true,
+            name: true,
+            isActive: true,
+          },
+        },
+      },
+    });
+
+    const vendedorInfoMap = new Map(
+      vendedorData.map((v) => [v.vendedor_id, { name: v.vendedor_name, code: v.vendedor_code, ventanaId: v.ventana_id, ventanaName: v.ventana_name, isActive: v.is_active }])
+    );
+
+    const aggregated = new Map<
+      string,
+      {
+        vendedorId: string;
+        vendedorName: string;
+        vendedorCode?: string;
+        ventanaId?: string;
+        ventanaName?: string;
+        isActive: boolean;
+        totalSales: number;
+        totalPayouts: number;
+        totalListeroCommission: number;
+        totalVendedorCommission: number;
+        totalPaid: number;
+        totalCollected: number;
+        totalPaidToCustomer: number;
+        remainingBalance: number;
+      }
+    >();
+
+    const ensureEntry = (
+      vendedorId: string,
+      fallbackName?: string,
+      fallbackCode?: string | null,
+      fallbackVentanaId?: string | null,
+      fallbackVentanaName?: string | null,
+      fallbackIsActive?: boolean
+    ) => {
+      let entry = aggregated.get(vendedorId);
+      if (!entry) {
+        const info = vendedorInfoMap.get(vendedorId);
+        entry = {
+          vendedorId,
+          vendedorName: fallbackName ?? info?.name ?? "Sin nombre",
+          vendedorCode: fallbackCode ?? info?.code ?? undefined,
+          ventanaId: fallbackVentanaId ?? info?.ventanaId ?? undefined,
+          ventanaName: fallbackVentanaName ?? info?.ventanaName ?? undefined,
+          isActive: fallbackIsActive ?? info?.isActive ?? true,
+          totalSales: 0,
+          totalPayouts: 0,
+          totalListeroCommission: 0,
+          totalVendedorCommission: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+          totalPaidToCustomer: 0,
+          remainingBalance: 0,
+        };
+        aggregated.set(vendedorId, entry);
+      } else {
+        if (fallbackName && entry.vendedorName !== fallbackName) {
+          entry.vendedorName = fallbackName;
+        }
+        if (typeof fallbackIsActive === "boolean") {
+          entry.isActive = fallbackIsActive;
+        }
+      }
+      return entry;
+    };
+
+    // ✅ CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
+    for (const vendedorRow of vendedorData) {
+      const vendedorId = vendedorRow.vendedor_id;
+      const entry = ensureEntry(
+        vendedorId,
+        vendedorRow.vendedor_name,
+        vendedorRow.vendedor_code,
+        vendedorRow.ventana_id,
+        vendedorRow.ventana_name,
+        vendedorRow.is_active
+      );
+
+      entry.totalSales = Number(vendedorRow.total_sales) || 0;
+      entry.totalPayouts = Number(vendedorRow.total_payouts) || 0;
+      entry.totalListeroCommission = Number(vendedorRow.listero_commission_snapshot) || Number(vendedorRow.commission_ventana_raw) || 0;
+      entry.totalVendedorCommission = Number(vendedorRow.commission_user) || 0;
+    }
+
+    // Obtener totalPaid desde AccountStatement
+    for (const statement of statements) {
+      if (!statement.vendedorId) continue;
+      const key = statement.vendedorId;
+      const existing = ensureEntry(
+        key,
+        statement.vendedor?.name,
+        statement.vendedor?.code ?? null,
+        statement.vendedor?.ventanaId ?? null,
+        statement.ventana?.name ?? null,
+        statement.vendedor?.isActive ?? undefined
+      );
+
+      existing.totalPaid += statement.totalPaid ?? 0;
+    }
+
+    const accountPaymentWhere: Prisma.AccountPaymentWhereInput = {
+      date: {
+        gte: rangeStart,
+        lte: rangeEnd,
+      },
+      vendedorId: { not: null },
+      isReversed: false,
+      type: "collection",
+    };
+    if (filters.ventanaId) {
+      accountPaymentWhere.ventanaId = filters.ventanaId;
+    }
+    if (filters.bancaId) {
+      accountPaymentWhere.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
+
+    const collections = await prisma.accountPayment.findMany({
+      where: accountPaymentWhere,
+      select: {
+        vendedorId: true,
+        amount: true,
+      },
+    });
+
+    for (const collection of collections) {
+      if (!collection.vendedorId) continue;
+      const entry = ensureEntry(collection.vendedorId);
+      entry.totalCollected += collection.amount ?? 0;
+    }
+
+    const ticketRelationFilter: Prisma.TicketWhereInput = {
+      deletedAt: null,
+      // ✅ FIX: vendedorId es requerido en schema, no necesitamos filtrar por "not null"
+    };
+    if (filters.ventanaId) {
+      ticketRelationFilter.ventanaId = filters.ventanaId;
+    }
+    if (filters.bancaId) {
+      ticketRelationFilter.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
+
+    const ticketPayments = await prisma.ticketPayment.findMany({
+      where: {
+        isReversed: false,
+        paymentDate: {
+          gte: rangeStart,
+          lte: rangeEnd,
+        },
+        ticket: {
+          is: ticketRelationFilter,
+        },
+      },
+      select: {
+        amountPaid: true,
+        ticket: {
+          select: {
+            vendedorId: true,
+          },
+        },
+      },
+    });
+
+    for (const payment of ticketPayments) {
+      const vendedorId = payment.ticket?.vendedorId;
+      if (!vendedorId) continue;
+      const entry = ensureEntry(vendedorId);
+      entry.totalPaidToCustomer += payment.amountPaid ?? 0;
+    }
+
+    // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada vendedor
+    const monthSaldoByVendedor = new Map<string, number>();
+    {
+      const utcNow = new Date();
+      const COSTA_RICA_UTC_OFFSET_MS = -6 * 60 * 60 * 1000;
+      const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
+      const crYear = crNow.getUTCFullYear();
+      const crMonth = crNow.getUTCMonth();
+      const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
+      const monthEnd = new Date(Date.UTC(crYear, crMonth + 1, 0));
+      const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
+      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(new Date(Date.UTC(crYear, crMonth + 1, 0)).getUTCDate()).padStart(2, '0')}`;
+
+      const monthBaseFilters = buildTicketBaseFilters(
+        "t",
+        { ...filters, fromDate: monthStart, toDate: monthEnd },
+        monthStartStr,
+        monthEndStr
+      );
+
+      const monthVendedorData = await prisma.$queryRaw<Array<{ vendedor_id: string; total_sales: number; total_payouts: number; commission_user: number; commission_ventana_raw: number; listero_commission_snapshot: number }>>(
+        Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(j.payout), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
+      );
+
+      const monthStatements = await prisma.accountStatement.findMany({
+        where: {
+          date: { gte: monthStart, lte: monthEnd },
+          vendedorId: { not: null },
+          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
+          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+        },
+      });
+
+      const monthCollections = await prisma.accountPayment.findMany({
+        where: {
+          date: { gte: monthStart, lte: monthEnd },
+          vendedorId: { not: null },
+          isReversed: false,
+          type: "collection",
+          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
+          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+        },
+        select: {
+          vendedorId: true,
+          amount: true,
+        },
+      });
+
+      const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
+
+      for (const vendedorRow of monthVendedorData) {
+        const vendedorId = vendedorRow.vendedor_id;
+        monthAggregated.set(vendedorId, {
+          totalSales: Number(vendedorRow.total_sales) || 0,
+          totalPayouts: Number(vendedorRow.total_payouts) || 0,
+          totalListeroCommission: Number(vendedorRow.listero_commission_snapshot) || Number(vendedorRow.commission_ventana_raw) || 0,
+          totalVendedorCommission: Number(vendedorRow.commission_user) || 0,
+          totalPaid: 0,
+          totalCollected: 0,
+        });
+      }
+
+      for (const statement of monthStatements) {
+        if (!statement.vendedorId) continue;
+        const entry = monthAggregated.get(statement.vendedorId) || {
+          totalSales: 0,
+          totalPayouts: 0,
+          totalListeroCommission: 0,
+          totalVendedorCommission: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+        };
+        entry.totalPaid += statement.totalPaid ?? 0;
+        monthAggregated.set(statement.vendedorId, entry);
+      }
+
+      for (const collection of monthCollections) {
+        if (!collection.vendedorId) continue;
+        const entry = monthAggregated.get(collection.vendedorId) || {
+          totalSales: 0,
+          totalPayouts: 0,
+          totalListeroCommission: 0,
+          totalVendedorCommission: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+        };
+        entry.totalCollected += collection.amount ?? 0;
+        monthAggregated.set(collection.vendedorId, entry);
+      }
+
+      // Balance: Ventas - Premios - Comisión Listero
+      for (const [vendedorId, monthEntry] of monthAggregated.entries()) {
+        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
+        const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        monthSaldoByVendedor.set(vendedorId, saldoAHoy);
+      }
+    }
+
+    const byVendedor = Array.from(aggregated.values())
+      .map((entry) => {
+        const totalPaid = entry.totalPaid;
+        const totalCollected = entry.totalCollected;
+        const totalPaidToCustomer = entry.totalPaidToCustomer;
+        // Balance: Ventas - Premios - Comisión Listero
+        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
+        const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
+        const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
+
+        return {
+          vendedorId: entry.vendedorId,
+          vendedorName: entry.vendedorName,
+          vendedorCode: entry.vendedorCode,
+          ventanaId: entry.ventanaId,
+          ventanaName: entry.ventanaName,
+          totalSales: entry.totalSales,
+          totalPayouts: entry.totalPayouts,
+          listeroCommission: entry.totalListeroCommission,
+          vendedorCommission: entry.totalVendedorCommission,
+          totalListeroCommission: entry.totalListeroCommission,
+          totalVendedorCommission: entry.totalVendedorCommission,
+          totalPaid,
+          totalPaidOut: totalPaid,
+          totalCollected,
+          totalPaidToCustomer,
+          amount,
+          remainingBalance: recalculatedRemainingBalance,
+          monthlyAccumulated: {
+            remainingBalance: monthSaldoByVendedor.get(entry.vendedorId) ?? 0,
+          },
+          isActive: entry.isActive,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
+
+    const totalAmount = byVendedor.reduce((sum, v) => sum + v.amount, 0);
+
+    return {
+      totalAmount,
+      byVendedor,
+    };
+  },
+
+  /**
    * Calcula CxP: Monto que banco debe a ventana por overpayment
    * CxP ocurre cuando ventana paga más de lo que vendió
    */
   async calculateCxP(filters: DashboardFilters, role?: Role): Promise<CxPResult> {
+    const dimension = filters.cxcDimension || 'ventana';
+    
+    // ✅ NUEVO: Si dimension='vendedor', ejecutar lógica específica para vendedores
+    if (dimension === 'vendedor') {
+      return this.calculateCxPByVendedor(filters, role);
+    }
+
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
@@ -1758,6 +2270,465 @@ export const DashboardService = {
     return {
       totalAmount,
       byVentana,
+    };
+  },
+
+  /**
+   * Calcula CxP agrupado por vendedor
+   * Similar a calculateCxP pero agrupa por vendedorId en lugar de ventanaId
+   */
+  async calculateCxPByVendedor(filters: DashboardFilters, role?: Role): Promise<CxPResult> {
+    const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
+    const rangeStart = parseDateStart(fromDateStr);
+    const rangeEnd = parseDateEnd(toDateStr);
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+
+    // ✅ CRÍTICO: Obtener datos directamente desde tickets/jugadas agrupados por vendedor
+    const vendedorData = await prisma.$queryRaw<
+      Array<{
+        vendedor_id: string;
+        vendedor_name: string;
+        vendedor_code: string | null;
+        ventana_id: string | null;
+        ventana_name: string | null;
+        is_active: boolean;
+        total_sales: number;
+        total_payouts: number;
+        commission_user: number;
+        commission_ventana_raw: number;
+        listero_commission_snapshot: number;
+      }>
+    >(
+      Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT
+            t.id,
+            t."vendedorId",
+            t."ventanaId",
+            t."sorteoId",
+            t."totalAmount",
+            t."totalPayout"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+            AND t."vendedorId" IS NOT NULL
+        ),
+        sales_per_vendedor AS (
+          SELECT
+            t."vendedorId" AS vendedor_id,
+            COALESCE(SUM(j.amount), 0) AS total_sales,
+            COALESCE(SUM(j.payout), 0) AS total_payouts
+          FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
+          GROUP BY t."vendedorId"
+        ),
+        commissions_per_vendedor AS (
+          SELECT
+            t."vendedorId" AS vendedor_id,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
+            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
+          FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
+          GROUP BY t."vendedorId"
+        )
+        SELECT
+          u.id AS vendedor_id,
+          u.name AS vendedor_name,
+          u.code AS vendedor_code,
+          u."ventanaId" AS ventana_id,
+          v.name AS ventana_name,
+          u."isActive" AS is_active,
+          COALESCE(sp.total_sales, 0) AS total_sales,
+          COALESCE(sp.total_payouts, 0) AS total_payouts,
+          COALESCE(cp.commission_user, 0) AS commission_user,
+          COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw,
+          COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot
+        FROM "User" u
+        LEFT JOIN sales_per_vendedor sp ON sp.vendedor_id = u.id
+        LEFT JOIN commissions_per_vendedor cp ON cp.vendedor_id = u.id
+        LEFT JOIN "Ventana" v ON v.id = u."ventanaId"
+        WHERE u."isActive" = true
+          AND u.role = 'VENDEDOR'
+          ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+        ORDER BY total_sales DESC
+      `
+    );
+
+    const where: Prisma.AccountStatementWhereInput = {
+      date: {
+        gte: rangeStart,
+        lte: rangeEnd,
+      },
+      vendedorId: { not: null },
+    };
+
+    if (filters.ventanaId) {
+      where.ventanaId = filters.ventanaId;
+    }
+
+    if (filters.bancaId) {
+      where.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
+
+    const statements = await prisma.accountStatement.findMany({
+      where,
+      include: {
+        vendedor: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            isActive: true,
+            ventanaId: true,
+          },
+        },
+        ventana: {
+          select: {
+            id: true,
+            name: true,
+            isActive: true,
+          },
+        },
+      },
+    });
+
+    const vendedorInfoMap = new Map(
+      vendedorData.map((v) => [v.vendedor_id, { name: v.vendedor_name, code: v.vendedor_code, ventanaId: v.ventana_id, ventanaName: v.ventana_name, isActive: v.is_active }])
+    );
+
+    const aggregated = new Map<
+      string,
+      {
+        vendedorId: string;
+        vendedorName: string;
+        vendedorCode?: string;
+        ventanaId?: string;
+        ventanaName?: string;
+        isActive: boolean;
+        totalSales: number;
+        totalPayouts: number;
+        totalListeroCommission: number;
+        totalVendedorCommission: number;
+        totalPaid: number;
+        totalCollected: number;
+        totalPaidToCustomer: number;
+        totalPaidToVentana: number;
+        remainingBalance: number;
+      }
+    >();
+
+    const ensureEntry = (
+      vendedorId: string,
+      fallbackName?: string,
+      fallbackCode?: string | null,
+      fallbackVentanaId?: string | null,
+      fallbackVentanaName?: string | null,
+      fallbackIsActive?: boolean
+    ) => {
+      let entry = aggregated.get(vendedorId);
+      if (!entry) {
+        const info = vendedorInfoMap.get(vendedorId);
+        entry = {
+          vendedorId,
+          vendedorName: fallbackName ?? info?.name ?? "Sin nombre",
+          vendedorCode: fallbackCode ?? info?.code ?? undefined,
+          ventanaId: fallbackVentanaId ?? info?.ventanaId ?? undefined,
+          ventanaName: fallbackVentanaName ?? info?.ventanaName ?? undefined,
+          isActive: fallbackIsActive ?? info?.isActive ?? true,
+          totalSales: 0,
+          totalPayouts: 0,
+          totalListeroCommission: 0,
+          totalVendedorCommission: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+          totalPaidToCustomer: 0,
+          totalPaidToVentana: 0,
+          remainingBalance: 0,
+        };
+        aggregated.set(vendedorId, entry);
+      } else {
+        if (fallbackName && entry.vendedorName !== fallbackName) {
+          entry.vendedorName = fallbackName;
+        }
+        if (typeof fallbackIsActive === "boolean") {
+          entry.isActive = fallbackIsActive;
+        }
+      }
+      return entry;
+    };
+
+    // ✅ CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
+    for (const vendedorRow of vendedorData) {
+      const vendedorId = vendedorRow.vendedor_id;
+      const entry = ensureEntry(
+        vendedorId,
+        vendedorRow.vendedor_name,
+        vendedorRow.vendedor_code,
+        vendedorRow.ventana_id,
+        vendedorRow.ventana_name,
+        vendedorRow.is_active
+      );
+
+      entry.totalSales = Number(vendedorRow.total_sales) || 0;
+      entry.totalPayouts = Number(vendedorRow.total_payouts) || 0;
+      entry.totalListeroCommission = Number(vendedorRow.listero_commission_snapshot) || Number(vendedorRow.commission_ventana_raw) || 0;
+      entry.totalVendedorCommission = Number(vendedorRow.commission_user) || 0;
+    }
+
+    // Obtener totalPaid desde AccountStatement
+    for (const statement of statements) {
+      if (!statement.vendedorId) continue;
+      const key = statement.vendedorId;
+      const existing = ensureEntry(
+        key,
+        statement.vendedor?.name,
+        statement.vendedor?.code ?? null,
+        statement.vendedor?.ventanaId ?? null,
+        statement.ventana?.name ?? null,
+        statement.vendedor?.isActive ?? undefined
+      );
+
+      existing.totalPaid += statement.totalPaid ?? 0;
+    }
+
+    const accountPaymentWhere: Prisma.AccountPaymentWhereInput = {
+      date: {
+        gte: rangeStart,
+        lte: rangeEnd,
+      },
+      vendedorId: { not: null },
+      isReversed: false,
+      type: "collection",
+    };
+    if (filters.ventanaId) {
+      accountPaymentWhere.ventanaId = filters.ventanaId;
+    }
+    if (filters.bancaId) {
+      accountPaymentWhere.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
+
+    const collections = await prisma.accountPayment.findMany({
+      where: accountPaymentWhere,
+      select: {
+        vendedorId: true,
+        amount: true,
+      },
+    });
+
+    for (const collection of collections) {
+      if (!collection.vendedorId) continue;
+      const entry = ensureEntry(collection.vendedorId);
+      entry.totalCollected += collection.amount ?? 0;
+    }
+
+    const ticketRelationFilter: Prisma.TicketWhereInput = {
+      deletedAt: null,
+      // ✅ FIX: vendedorId es requerido en schema, no necesitamos filtrar por "not null"
+    };
+    if (filters.ventanaId) {
+      ticketRelationFilter.ventanaId = filters.ventanaId;
+    }
+    if (filters.bancaId) {
+      ticketRelationFilter.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
+
+    const ticketPayments = await prisma.ticketPayment.findMany({
+      where: {
+        isReversed: false,
+        paymentDate: {
+          gte: rangeStart,
+          lte: rangeEnd,
+        },
+        ticket: {
+          is: ticketRelationFilter,
+        },
+      },
+      select: {
+        amountPaid: true,
+        ticket: {
+          select: {
+            vendedorId: true,
+          },
+        },
+      },
+    });
+
+    for (const payment of ticketPayments) {
+      const vendedorId = payment.ticket?.vendedorId;
+      if (!vendedorId) continue;
+      const entry = ensureEntry(vendedorId);
+      entry.totalPaidToCustomer += payment.amountPaid ?? 0;
+    }
+
+    // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada vendedor
+    const monthSaldoByVendedor = new Map<string, number>();
+    {
+      const utcNow = new Date();
+      const COSTA_RICA_UTC_OFFSET_MS = -6 * 60 * 60 * 1000;
+      const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
+      const crYear = crNow.getUTCFullYear();
+      const crMonth = crNow.getUTCMonth();
+      const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
+      const monthEnd = new Date(Date.UTC(crYear, crMonth + 1, 0));
+      const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
+      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(new Date(Date.UTC(crYear, crMonth + 1, 0)).getUTCDate()).padStart(2, '0')}`;
+
+      const monthBaseFilters = buildTicketBaseFilters(
+        "t",
+        { ...filters, fromDate: monthStart, toDate: monthEnd },
+        monthStartStr,
+        monthEndStr
+      );
+
+      const monthVendedorData = await prisma.$queryRaw<Array<{ vendedor_id: string; total_sales: number; total_payouts: number; commission_user: number; commission_ventana_raw: number; listero_commission_snapshot: number }>>(
+        Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(j.payout), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
+      );
+
+      const monthStatements = await prisma.accountStatement.findMany({
+        where: {
+          date: { gte: monthStart, lte: monthEnd },
+          vendedorId: { not: null },
+          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
+          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+        },
+      });
+
+      const monthCollections = await prisma.accountPayment.findMany({
+        where: {
+          date: { gte: monthStart, lte: monthEnd },
+          vendedorId: { not: null },
+          isReversed: false,
+          type: "collection",
+          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
+          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+        },
+        select: {
+          vendedorId: true,
+          amount: true,
+        },
+      });
+
+      const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
+
+      for (const vendedorRow of monthVendedorData) {
+        const vendedorId = vendedorRow.vendedor_id;
+        monthAggregated.set(vendedorId, {
+          totalSales: Number(vendedorRow.total_sales) || 0,
+          totalPayouts: Number(vendedorRow.total_payouts) || 0,
+          totalListeroCommission: Number(vendedorRow.listero_commission_snapshot) || Number(vendedorRow.commission_ventana_raw) || 0,
+          totalVendedorCommission: Number(vendedorRow.commission_user) || 0,
+          totalPaid: 0,
+          totalCollected: 0,
+        });
+      }
+
+      for (const statement of monthStatements) {
+        if (!statement.vendedorId) continue;
+        const entry = monthAggregated.get(statement.vendedorId) || {
+          totalSales: 0,
+          totalPayouts: 0,
+          totalListeroCommission: 0,
+          totalVendedorCommission: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+        };
+        entry.totalPaid += statement.totalPaid ?? 0;
+        monthAggregated.set(statement.vendedorId, entry);
+      }
+
+      for (const collection of monthCollections) {
+        if (!collection.vendedorId) continue;
+        const entry = monthAggregated.get(collection.vendedorId) || {
+          totalSales: 0,
+          totalPayouts: 0,
+          totalListeroCommission: 0,
+          totalVendedorCommission: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+        };
+        entry.totalCollected += collection.amount ?? 0;
+        monthAggregated.set(collection.vendedorId, entry);
+      }
+
+      // Balance: Ventas - Premios - Comisión Listero
+      for (const [vendedorId, monthEntry] of monthAggregated.entries()) {
+        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
+        const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        monthSaldoByVendedor.set(vendedorId, saldoAHoy);
+      }
+    }
+
+    const byVendedor = Array.from(aggregated.values())
+      .map((entry) => {
+        const totalPaid = entry.totalPaid;
+        const totalCollected = entry.totalCollected;
+        const totalPaidToCustomer = entry.totalPaidToCustomer;
+        const totalPaidToVentana = entry.totalPaidToVentana || 0;
+        // Balance: Ventas - Premios - Comisión Listero
+        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
+        const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
+        // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
+        const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
+
+        return {
+          vendedorId: entry.vendedorId,
+          vendedorName: entry.vendedorName,
+          vendedorCode: entry.vendedorCode,
+          ventanaId: entry.ventanaId,
+          ventanaName: entry.ventanaName,
+          totalSales: entry.totalSales,
+          totalPayouts: entry.totalPayouts,
+          listeroCommission: entry.totalListeroCommission,
+          vendedorCommission: entry.totalVendedorCommission,
+          totalListeroCommission: entry.totalListeroCommission,
+          totalVendedorCommission: entry.totalVendedorCommission,
+          totalPaid,
+          totalPaidOut: totalPaid,
+          totalCollected,
+          totalPaidToCustomer,
+          totalPaidToVentana,
+          amount,
+          remainingBalance: recalculatedRemainingBalance,
+          monthlyAccumulated: {
+            remainingBalance: monthSaldoByVendedor.get(entry.vendedorId) ?? 0,
+          },
+          isActive: entry.isActive,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
+
+    const totalAmount = byVendedor.reduce((sum, v) => sum + v.amount, 0);
+
+    return {
+      totalAmount,
+      byVendedor,
     };
   },
 
@@ -2274,6 +3245,9 @@ export const DashboardService = {
       tickets: Prisma.sql`total_tickets`,
       winners: Prisma.sql`winning_tickets`,
       avgTicket: Prisma.sql`avg_ticket`,
+      payout: Prisma.sql`total_payout`,
+      net: Prisma.sql`net`,
+      margin: Prisma.sql`margin`,
     }[orderBy] || Prisma.sql`total_sales`;
 
     const orderDirection = order === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
@@ -2285,9 +3259,14 @@ export const DashboardService = {
       Array<{
         vendedor_id: string;
         vendedor_name: string;
+        vendedor_code: string | null;
+        ventana_id: string | null;
+        ventana_name: string | null;
         is_active: boolean;
         total_sales: number;
-        total_commissions: number;
+        total_payout: number;
+        commission_user: number;
+        commission_ventana: number;
         total_tickets: number;
         winning_tickets: number;
         avg_ticket: number;
@@ -2298,18 +3277,55 @@ export const DashboardService = {
           SELECT
             t.id,
             t."vendedorId",
+            t."ventanaId",
             t."totalAmount",
-            t."totalCommission",
-            t."isWinner"
+            t."isWinner",
+            t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
             AND t."vendedorId" IS NOT NULL
         ),
+        sales_per_vendedor AS (
+          SELECT
+            t."vendedorId" AS vendedor_id,
+            COALESCE(SUM(j.amount), 0) AS total_sales,
+            COALESCE(SUM(j.payout), 0) AS total_payout
+          FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
+          GROUP BY t."vendedorId"
+        ),
+        commissions_per_vendedor AS (
+          SELECT
+            t."vendedorId" AS vendedor_id,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS commission_ventana
+          FROM tickets_in_range t
+          JOIN "Jugada" j ON j."ticketId" = t.id
+          WHERE j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            JOIN "User" u ON u.id = sle.ventana_id
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND u."ventanaId" = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )
+          GROUP BY t."vendedorId"
+        ),
         vendedor_summary AS (
           SELECT
             t."vendedorId" AS vendedor_id,
-            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
-            COALESCE(SUM(t."totalCommission"), 0) AS total_commissions,
             COUNT(DISTINCT t.id) AS total_tickets,
             COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) AS winning_tickets
           FROM tickets_in_range t
@@ -2318,18 +3334,27 @@ export const DashboardService = {
         SELECT
           u.id as vendedor_id,
           u.name as vendedor_name,
+          u.code as vendedor_code,
+          u."ventanaId" as ventana_id,
+          v.name as ventana_name,
           u."isActive" as is_active,
-          COALESCE(vs.total_sales, 0) as total_sales,
-          COALESCE(vs.total_commissions, 0) as total_commissions,
+          COALESCE(sp.total_sales, 0) as total_sales,
+          COALESCE(sp.total_payout, 0) as total_payout,
+          COALESCE(cp.commission_user, 0) as commission_user,
+          COALESCE(cp.commission_ventana, 0) as commission_ventana,
           COALESCE(vs.total_tickets, 0) as total_tickets,
           COALESCE(vs.winning_tickets, 0) as winning_tickets,
           CASE
-            WHEN COALESCE(vs.total_tickets, 0) > 0 THEN COALESCE(vs.total_sales, 0) / COALESCE(vs.total_tickets, 0)
+            WHEN COALESCE(vs.total_tickets, 0) > 0 THEN COALESCE(sp.total_sales, 0) / COALESCE(vs.total_tickets, 0)
             ELSE 0
           END as avg_ticket
         FROM "User" u
         JOIN vendedor_summary vs ON vs.vendedor_id = u.id
+        LEFT JOIN sales_per_vendedor sp ON sp.vendedor_id = u.id
+        LEFT JOIN commissions_per_vendedor cp ON cp.vendedor_id = u.id
+        LEFT JOIN "Ventana" v ON v.id = u."ventanaId"
         WHERE u."isActive" = true
+          AND u.role = 'VENDEDOR'
         ORDER BY ${orderClause} ${orderDirection}
         LIMIT ${pageSize}
         OFFSET ${offset}
@@ -2353,6 +3378,7 @@ export const DashboardService = {
           FROM tickets_in_range t
           JOIN "User" u ON u.id = t."vendedorId"
           WHERE u."isActive" = true
+            AND u.role = 'VENDEDOR'
         ) active_vendedores
       `
     );
@@ -2360,16 +3386,38 @@ export const DashboardService = {
     const total = Number(totalCount[0]?.count) || 0;
 
     return {
-      byVendedor: result.map(row => ({
-        vendedorId: row.vendedor_id,
-        vendedorName: row.vendedor_name,
-        sales: Number(row.total_sales) || 0,
-        commissions: Number(row.total_commissions) || 0,
-        tickets: Number(row.total_tickets) || 0,
-        winners: Number(row.winning_tickets) || 0,
-        avgTicket: Number(row.avg_ticket) || 0,
-        isActive: row.is_active,
-      })),
+      byVendedor: result.map(row => {
+        const sales = Number(row.total_sales) || 0;
+        const payout = Number(row.total_payout) || 0;
+        const commissionUser = Number(row.commission_user) || 0;
+        const commissionVentana = Number(row.commission_ventana) || 0;
+        // net = sales - payout - commissionVentana (NO restar commissionUser)
+        const net = sales - payout - commissionVentana;
+        // margin = (net / sales) * 100 si sales > 0
+        const margin = sales > 0 ? (net / sales) * 100 : 0;
+        const tickets = Number(row.total_tickets) || 0;
+        const winners = Number(row.winning_tickets) || 0;
+        const winRate = tickets > 0 ? (winners / tickets) * 100 : 0;
+
+        return {
+          vendedorId: row.vendedor_id,
+          vendedorName: row.vendedor_name,
+          vendedorCode: row.vendedor_code || undefined,
+          ventanaId: row.ventana_id || undefined,
+          ventanaName: row.ventana_name || undefined,
+          sales,
+          payout,
+          commissionUser,
+          commissionVentana,
+          net,
+          margin: parseFloat(margin.toFixed(2)),
+          tickets,
+          winners,
+          avgTicket: Number(row.avg_ticket) || 0,
+          winRate: parseFloat(winRate.toFixed(2)),
+          isActive: row.is_active,
+        };
+      }),
       pagination: {
         page,
         pageSize,
