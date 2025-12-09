@@ -188,11 +188,12 @@ export async function calculateDayStatement(
         }
     }
 
-    // ✅ CORRECCIÓN: Calcular balance siempre usando listeroCommission
-    // El balance siempre debe calcularse restando las comisiones del listero,
-    // independientemente del nivel de agrupación o filtrado
-    // balance = totalSales - totalPayouts - listeroCommission
-    const balance = totalSales - totalPayouts - totalListeroCommission;
+    // ✅ CORRECCIÓN: Calcular balance según dimensión
+    // - Vendedor: balance = totalSales - totalPayouts - vendedorCommission
+    // - Ventana/Banca: balance = totalSales - totalPayouts - listeroCommission
+    const balance = dimension === "vendedor"
+        ? totalSales - totalPayouts - totalVendedorCommission
+        : totalSales - totalPayouts - totalListeroCommission;
 
     // Si no hay tickets, retornar valores por defecto sin crear statement
     // FIX: No crear fechas nuevas cada vez para mantener consistencia
@@ -420,15 +421,15 @@ export async function calculateDayStatement(
 
     const result: DayStatement = {
         ...finalStatement,
-        totalSales,
-        totalPayouts,
-        listeroCommission: totalListeroCommission,
-        vendedorCommission: totalVendedorCommission,
-        balance,
-        totalPaid,
-        totalCollected, // Agregar totalCollected al objeto retornado
-        totalPaymentsCollections, // ✅ NUEVO: Total de pagos y cobros combinados (no revertidos)
-        remainingBalance,
+        totalSales: parseFloat(totalSales.toFixed(2)),
+        totalPayouts: parseFloat(totalPayouts.toFixed(2)),
+        listeroCommission: parseFloat(totalListeroCommission.toFixed(2)),
+        vendedorCommission: parseFloat(totalVendedorCommission.toFixed(2)),
+        balance: parseFloat(balance.toFixed(2)),
+        totalPaid: parseFloat(totalPaid.toFixed(2)),
+        totalCollected: parseFloat(totalCollected.toFixed(2)), // Agregar totalCollected al objeto retornado
+        totalPaymentsCollections: parseFloat(totalPaymentsCollections.toFixed(2)), // ✅ NUEVO: Total de pagos y cobros combinados (no revertidos)
+        remainingBalance: parseFloat(remainingBalance.toFixed(2)),
         isSettled,
         canEdit,
         ticketCount,
@@ -966,11 +967,12 @@ export async function getStatementDirect(
         // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_entidad
         const date = shouldGroupByDate ? key : key.split("_")[0];
 
-        // ✅ CORRECCIÓN: Calcular balance siempre usando listeroCommission
-        // El balance siempre debe calcularse restando las comisiones del listero,
-        // independientemente del nivel de agrupación o filtrado
-        // balance = totalSales - totalPayouts - listeroCommission
-        const balance = entry.totalSales - entry.totalPayouts - entry.commissionListero;
+        // ✅ CORRECCIÓN: Calcular balance según dimensión
+        // - Vendedor: balance = totalSales - totalPayouts - vendedorCommission
+        // - Ventana/Banca: balance = totalSales - totalPayouts - listeroCommission
+        const balance = dimension === "vendedor"
+            ? entry.totalSales - entry.totalPayouts - entry.commissionVendedor
+            : entry.totalSales - entry.totalPayouts - entry.commissionListero;
 
         // ✅ NUEVO: Obtener movimientos y desglose por sorteo según si hay agrupación
         const allMovementsForDate = movementsByDate.get(date) || [];
@@ -1064,15 +1066,15 @@ export async function getStatementDirect(
             vendedorId: entry.vendedorId,
             vendedorName: entry.vendedorName,
             vendedorCode: entry.vendedorCode, // ✅ NUEVO: Código de vendedor
-            totalSales: entry.totalSales,
-            totalPayouts: entry.totalPayouts,
-            listeroCommission: entry.commissionListero,
-            vendedorCommission: entry.commissionVendedor,
-            balance,
-            totalPaid,
-            totalCollected,
-            totalPaymentsCollections: totalPaid + totalCollected,
-            remainingBalance,
+            totalSales: parseFloat(entry.totalSales.toFixed(2)),
+            totalPayouts: parseFloat(entry.totalPayouts.toFixed(2)),
+            listeroCommission: parseFloat(entry.commissionListero.toFixed(2)),
+            vendedorCommission: parseFloat(entry.commissionVendedor.toFixed(2)),
+            balance: parseFloat(balance.toFixed(2)),
+            totalPaid: parseFloat(totalPaid.toFixed(2)),
+            totalCollected: parseFloat(totalCollected.toFixed(2)),
+            totalPaymentsCollections: parseFloat((totalPaid + totalCollected).toFixed(2)),
+            remainingBalance: parseFloat(remainingBalance.toFixed(2)),
             isSettled: calculateIsSettled(entry.totalTickets.size, remainingBalance, totalPaid, totalCollected),
             canEdit: !calculateIsSettled(entry.totalTickets.size, remainingBalance, totalPaid, totalCollected),
             ticketCount: entry.totalTickets.size,
@@ -1229,8 +1231,8 @@ export async function getStatementDirect(
                     // Construir byVendedor para esta banca
                     const byVendedor: any[] = [];
                     for (const [vendedorId, vendedorGroup] of bancaGroup.vendedores.entries()) {
-                        // ✅ CORRECCIÓN: Balance siempre usando listeroCommission
-                        const vendedorBalance = vendedorGroup.totalSales - vendedorGroup.totalPayouts - vendedorGroup.commissionListero;
+                        // ✅ CORRECCIÓN: Balance de vendedor usando vendedorCommission
+                        const vendedorBalance = vendedorGroup.totalSales - vendedorGroup.totalPayouts - vendedorGroup.commissionVendedor;
                         const vendedorMovements = allMovementsForDate.filter((m: any) => m.vendedorId === vendedorId);
                         const vendedorTotalPaid = vendedorMovements
                             .filter((m: any) => m.type === "payment" && !m.isReversed)
@@ -1337,8 +1339,8 @@ export async function getStatementDirect(
                 for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
                     const breakdownDate = breakdownKey.split("_")[0];
                     if (breakdownDate === date) {
-                        // ✅ CORRECCIÓN: Balance siempre usando listeroCommission
-                        const breakdownBalance = breakdownEntry.totalSales - breakdownEntry.totalPayouts - breakdownEntry.commissionListero;
+                        // ✅ CORRECCIÓN: Balance de vendedor usando vendedorCommission
+                        const breakdownBalance = breakdownEntry.totalSales - breakdownEntry.totalPayouts - breakdownEntry.commissionVendedor;
                         // Calcular totalPaid y totalCollected para este vendedor en esta fecha
                         const vendedorMovements = allMovementsForDate.filter((m: any) => m.vendedorId === breakdownEntry.vendedorId);
                         const vendedorTotalPaid = vendedorMovements
@@ -1420,11 +1422,12 @@ export async function getStatementDirect(
     const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
     const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
     const totalVendedorCommission = statements.reduce((sum, s) => sum + s.vendedorCommission, 0);
-    // ✅ CORRECCIÓN: Balance total siempre usando listeroCommission
-    // El balance siempre debe calcularse restando las comisiones del listero,
-    // independientemente del nivel de agrupación o filtrado
-    // totalBalance = totalSales - totalPayouts - totalListeroCommission
-    const totalBalance = totalSales - totalPayouts - totalListeroCommission;
+    // ✅ CORRECCIÓN: Balance total según dimensión
+    // - Vendedor: totalBalance = totalSales - totalPayouts - totalVendedorCommission
+    // - Ventana/Banca: totalBalance = totalSales - totalPayouts - totalListeroCommission
+    const totalBalance = dimension === "vendedor"
+        ? totalSales - totalPayouts - totalVendedorCommission
+        : totalSales - totalPayouts - totalListeroCommission;
     const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
     const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
     // ✅ CRÍTICO: Calcular totalRemainingBalance desde los totales agregados, NO sumando remainingBalance individuales
@@ -1712,8 +1715,8 @@ export async function getStatementDirect(
                 .filter((m: any) => m.type === "collection" && !m.isReversed)
                 .reduce((sum: number, m: any) => sum + m.amount, 0);
 
-            // ✅ CORRECCIÓN: Balance siempre usando listeroCommission
-            const commission = entry.commissionListero;
+            // ✅ CORRECCIÓN: Balance según dimensión
+            const commission = dimension === "vendedor" ? entry.commissionVendedor : entry.commissionListero;
             const remainingBalance = entry.totalSales - entry.totalPayouts - commission - totalCollected + totalPaid;
             return calculateIsSettled(entry.totalTickets.size, remainingBalance, totalPaid, totalCollected);
         }).length;
@@ -1724,12 +1727,12 @@ export async function getStatementDirect(
     const monthlyRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
 
     const monthlyAccumulated: StatementTotals = {
-        totalSales: monthlyTotalSales,
-        totalPayouts: monthlyTotalPayouts,
-        totalBalance: monthlyTotalBalance,
-        totalPaid: monthlyTotalPaid,
-        totalCollected: monthlyTotalCollected,
-        totalRemainingBalance: monthlyRemainingBalance,
+        totalSales: parseFloat(monthlyTotalSales.toFixed(2)),
+        totalPayouts: parseFloat(monthlyTotalPayouts.toFixed(2)),
+        totalBalance: parseFloat(monthlyTotalBalance.toFixed(2)),
+        totalPaid: parseFloat(monthlyTotalPaid.toFixed(2)),
+        totalCollected: parseFloat(monthlyTotalCollected.toFixed(2)),
+        totalRemainingBalance: parseFloat(monthlyRemainingBalance.toFixed(2)),
         settledDays: monthlySettledDays,
         pendingDays: monthlyPendingDays,
     };
@@ -1751,14 +1754,14 @@ export async function getStatementDirect(
     return {
         statements,
         totals: {
-            totalSales,
-            totalPayouts,
-            totalListeroCommission,
-            totalVendedorCommission,
-            totalBalance,
-            totalPaid,
-            totalCollected,
-            totalRemainingBalance,
+            totalSales: parseFloat(totalSales.toFixed(2)),
+            totalPayouts: parseFloat(totalPayouts.toFixed(2)),
+            totalListeroCommission: parseFloat(totalListeroCommission.toFixed(2)),
+            totalVendedorCommission: parseFloat(totalVendedorCommission.toFixed(2)),
+            totalBalance: parseFloat(totalBalance.toFixed(2)),
+            totalPaid: parseFloat(totalPaid.toFixed(2)),
+            totalCollected: parseFloat(totalCollected.toFixed(2)),
+            totalRemainingBalance: parseFloat(totalRemainingBalance.toFixed(2)),
             settledDays: statements.filter(s => s.isSettled).length,
             pendingDays: statements.filter(s => !s.isSettled).length,
         },
