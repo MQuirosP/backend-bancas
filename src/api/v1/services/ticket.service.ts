@@ -1000,6 +1000,20 @@ export const TicketService = {
         Object.assign(ticketWhere, exclusionCondition);
       }
 
+      // ✅ FIX: Si hay multiplierId, filtrar tickets que tengan al menos una jugada NUMERO con ese multiplierId
+      // Esto asegura que los REVENTADO incluidos estén en los mismos tickets que los NUMERO filtrados
+      if (params.multiplierId) {
+        ticketWhere.jugadas = {
+          some: {
+            multiplierId: params.multiplierId,
+            type: 'NUMERO',
+            deletedAt: null,
+            isActive: true,
+            isExcluded: false,
+          },
+        };
+      }
+
       // Aplicar filtros según dimension y scope
       // Prioridad: dimension > filtros directos > scope
       if (params.dimension === "listero") {
@@ -1096,16 +1110,13 @@ export const TicketService = {
 
       // ✅ OPTIMIZED: Fetch tickets with jugadas and metadata in a single query
       // Build jugada filter for nested query
+      // ✅ CRÍTICO: NO filtrar por multiplierId aquí, ya que el filtro se aplica a nivel de ticket
+      // Esto permite incluir TANTO las jugadas NUMERO con el multiplierId especificado
+      // COMO las jugadas REVENTADO que van automáticamente con ellas en el mismo ticket
       const jugadaFilter: any = {
         deletedAt: null,
         isActive: true,
-        ...(params.multiplierId
-          ? {
-            // Filter by multiplier (only NUMERO jugadas have multiplierId)
-            multiplierId: params.multiplierId,
-            type: 'NUMERO',
-          }
-          : {}),
+        isExcluded: false, // ✅ FIX: Excluir jugadas marcadas como excluidas
       };
 
       const tickets = await prisma.ticket.findMany({
