@@ -1796,9 +1796,9 @@ export const DashboardService = {
         monthAggregated.set(collection.vendedorId, entry);
       }
 
-      // Balance: Ventas - Premios - Comisión Listero
+      // Balance: Ventas - Premios - Comisión Vendedor
       for (const [vendedorId, monthEntry] of monthAggregated.entries()) {
-        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
+        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
         const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
         monthSaldoByVendedor.set(vendedorId, saldoAHoy);
       }
@@ -1809,8 +1809,8 @@ export const DashboardService = {
         const totalPaid = entry.totalPaid;
         const totalCollected = entry.totalCollected;
         const totalPaidToCustomer = entry.totalPaidToCustomer;
-        // Balance: Ventas - Premios - Comisión Listero
-        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
+        // Balance: Ventas - Premios - Comisión Vendedor
+        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
         const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
         const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
 
@@ -2677,9 +2677,9 @@ export const DashboardService = {
         monthAggregated.set(collection.vendedorId, entry);
       }
 
-      // Balance: Ventas - Premios - Comisión Listero
+      // Balance: Ventas - Premios - Comisión Vendedor
       for (const [vendedorId, monthEntry] of monthAggregated.entries()) {
-        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
+        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
         const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
         monthSaldoByVendedor.set(vendedorId, saldoAHoy);
       }
@@ -2691,8 +2691,8 @@ export const DashboardService = {
         const totalCollected = entry.totalCollected;
         const totalPaidToCustomer = entry.totalPaidToCustomer;
         const totalPaidToVentana = entry.totalPaidToVentana || 0;
-        // Balance: Ventas - Premios - Comisión Listero
-        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
+        // Balance: Ventas - Premios - Comisión Vendedor
+        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
         const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
         const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
@@ -3391,8 +3391,8 @@ export const DashboardService = {
         const payout = Number(row.total_payout) || 0;
         const commissionUser = Number(row.commission_user) || 0;
         const commissionVentana = Number(row.commission_ventana) || 0;
-        // net = sales - payout - commissionVentana (NO restar commissionUser)
-        const net = sales - payout - commissionVentana;
+        // net = sales - payout - commissionUser (comisión del vendedor)
+        const net = sales - payout - commissionUser;
         // margin = (net / sales) * 100 si sales > 0
         const margin = sales > 0 ? (net / sales) * 100 : 0;
         const tickets = Number(row.total_tickets) || 0;
