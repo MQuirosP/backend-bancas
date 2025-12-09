@@ -113,6 +113,77 @@ export const DashboardController = {
   },
 
   /**
+   * GET /api/v1/admin/dashboard/ganancia/month-to-date
+   * Ganancia global acumulada del mes actual (desde día 1 hasta hoy)
+   * ⚠️ IMPORTANTE: Calcula automáticamente el periodo del mes actual en hora de Costa Rica
+   */
+  async getGananciaMonthToDate(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    if (req.user.role === Role.VENDEDOR) {
+      throw new AppError("No autorizado", 403);
+    }
+
+    const query = req.query as any;
+
+    // ✅ Validar que dimension sea 'ventana'
+    if (query.dimension !== 'ventana') {
+      throw new AppError("El parámetro 'dimension' debe ser 'ventana'", 400);
+    }
+
+    // ✅ Calcular rango del mes actual en zona horaria de Costa Rica (UTC-6)
+    const COSTA_RICA_TZ = 'America/Costa_Rica';
+    const now = new Date();
+
+    // Obtener fecha actual en Costa Rica
+    const nowCR = new Date(now.toLocaleString('en-US', { timeZone: COSTA_RICA_TZ }));
+
+    // Primer día del mes actual en Costa Rica (00:00:00)
+    const firstDayOfMonth = new Date(nowCR.getFullYear(), nowCR.getMonth(), 1, 0, 0, 0, 0);
+
+    // Fecha actual en Costa Rica (hora actual)
+    const toDate = nowCR;
+
+    // ✅ Aplicar RBAC para obtener ventanaId y bancaId según el usuario
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+
+    // ✅ Llamar al servicio existente con el rango calculado
+    const result = await DashboardService.calculateGanancia({
+      fromDate: firstDayOfMonth,
+      toDate: toDate,
+      ventanaId,
+      bancaId,
+      dimension: 'ventana',
+    }, req.user!.role);
+
+    // ✅ Obtener nombre del mes en español
+    const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                        'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const monthName = monthNames[nowCR.getMonth()];
+
+    // ✅ Mapear resultado a estructura esperada por el frontend
+    return success(res, {
+      dimension: 'ventana',
+      items: [],
+      global: {
+        sales: parseFloat(result.totalSales.toFixed(2)),
+        payout: parseFloat(result.totalPayouts.toFixed(2)),
+        commissions: parseFloat(result.totalAmount.toFixed(2)),
+        commissionUser: parseFloat(result.commissionUserTotal.toFixed(2)),
+        commissionVentana: parseFloat(result.commissionVentanaTotal.toFixed(2)),
+        netProfit: parseFloat(result.totalNet.toFixed(2)),
+        margin: parseFloat(result.margin.toFixed(2)),
+      },
+      meta: {
+        fromDate: firstDayOfMonth.toISOString(),
+        toDate: toDate.toISOString(),
+        timezone: COSTA_RICA_TZ,
+        monthName: monthName,
+      },
+    });
+  },
+
+  /**
    * GET /api/v1/admin/dashboard/cxc
    * Desglose detallado de Cuentas por Cobrar
    */

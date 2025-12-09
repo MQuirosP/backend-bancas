@@ -20,6 +20,7 @@ router.use(bancaContextMiddleware);
 router.get("/", validateDashboardQuery, DashboardController.getMainDashboard);
 
 // Desgloses específicos
+router.get("/ganancia/month-to-date", DashboardController.getGananciaMonthToDate); // ✅ NUEVO: Sin validateDashboardQuery (no usa fechas del query)
 router.get("/ganancia", validateDashboardQuery, DashboardController.getGanancia);
 router.get("/cxc", validateDashboardQuery, DashboardController.getCxC);
 router.get("/cxp", validateDashboardQuery, DashboardController.getCxP);
