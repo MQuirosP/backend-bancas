@@ -136,6 +136,7 @@ export const DashboardController = {
       toDate: dateRange.toAt,
       ventanaId,
       bancaId,
+      cxcDimension: query.dimension === 'vendedor' ? 'vendedor' : 'ventana', // ✅ NUEVO: Soporte para dimension=vendedor
     }, req.user!.role); // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
     return success(res, {
       data: result,
@@ -173,6 +174,7 @@ export const DashboardController = {
       toDate: dateRange.toAt,
       ventanaId,
       bancaId,
+      cxcDimension: query.dimension === 'vendedor' ? 'vendedor' : 'ventana', // ✅ NUEVO: Soporte para dimension=vendedor
     }, req.user!.role); // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
 
     return success(res, {
@@ -308,7 +310,8 @@ export const DashboardController = {
     });
 
     return success(res, {
-      data: result,
+      data: result.byVendedor,
+      pagination: result.pagination,
       meta: {
         range: {
           fromAt: dateRange.fromAt.toISOString(),
