@@ -81,9 +81,9 @@ export const TicketsReportService = {
         gte: dateRange.from,
         lte: dateRange.to,
       },
-      ...(filters.ventanaId && { ventanaId: filters.ventanaId }),
-      ...(filters.vendedorId && { vendedorId: filters.vendedorId }),
-      ...(filters.loteriaId && { loteriaId: filters.loteriaId }),
+      ...(filters.ventanaId && filters.ventanaId.trim() !== '' && { ventanaId: filters.ventanaId }),
+      ...(filters.vendedorId && filters.vendedorId.trim() !== '' && { vendedorId: filters.vendedorId }),
+      ...(filters.loteriaId && filters.loteriaId.trim() !== '' && { loteriaId: filters.loteriaId }),
     };
 
     // Filtro por estado de pago
@@ -312,7 +312,7 @@ export const TicketsReportService = {
         AND t.status = 'ACTIVE'
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
-        ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
         ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
       GROUP BY j.number
       ORDER BY total_amount DESC
@@ -339,7 +339,7 @@ export const TicketsReportService = {
         AND t.status = 'ACTIVE'
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
-        ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
         ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
     `;
 
@@ -420,9 +420,9 @@ export const TicketsReportService = {
         gte: dateRange.from,
         lte: dateRange.to,
       },
-      ...(filters.ventanaId && { ventanaId: filters.ventanaId }),
-      ...(filters.vendedorId && { vendedorId: filters.vendedorId }),
-      ...(filters.loteriaId && { loteriaId: filters.loteriaId }),
+      ...(filters.ventanaId && filters.ventanaId.trim() !== '' && { ventanaId: filters.ventanaId }),
+      ...(filters.vendedorId && filters.vendedorId.trim() !== '' && { vendedorId: filters.vendedorId }),
+      ...(filters.loteriaId && filters.loteriaId.trim() !== '' && { loteriaId: filters.loteriaId }),
     };
 
     const total = await prisma.ticket.count({ where });
@@ -497,9 +497,9 @@ export const TicketsReportService = {
       INNER JOIN "Ventana" v ON t."ventanaId" = v.id
       WHERE t.status = 'CANCELLED'
         AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-        ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+        ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
       GROUP BY t."ventanaId", v.name
     `;
 

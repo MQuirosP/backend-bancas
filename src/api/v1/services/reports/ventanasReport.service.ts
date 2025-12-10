@@ -239,7 +239,7 @@ export const VentanasReportService = {
           AND (
             COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
           ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
       ),
       ventana_stats AS (
         SELECT 

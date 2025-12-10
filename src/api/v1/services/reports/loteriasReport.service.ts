@@ -215,7 +215,7 @@ export const LoteriasReportService = {
           AND (
             COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
           ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+          ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
       ),
       jugadas_count_per_loteria AS (
         SELECT 
