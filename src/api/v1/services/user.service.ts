@@ -223,7 +223,8 @@ export const UserService = {
       if (!editingSelf && current.ventanaId !== actorVentanaId) {
         throw new AppError('No puedes modificar usuarios de otra ventana', 403);
       }
-      const forbiddenForVentana: Array<keyof UpdateUserDTO> = ['role', 'ventanaId', 'settings', 'code'];
+      // ✅ VENTANA puede actualizar settings (para configurar impresora, tema, etc.)
+      const forbiddenForVentana: Array<keyof UpdateUserDTO> = ['role', 'ventanaId', 'code'];
       for (const field of forbiddenForVentana) {
         if ((dto as any)[field] !== undefined) {
           throw new AppError(`Campo no permitido para VENTANA: ${field}`, 403);
@@ -305,11 +306,9 @@ export const UserService = {
       }
     }
 
-    // settings: merge parcial con los settings existentes
+    // ✅ settings: merge parcial con los settings existentes
+    // VENTANA puede modificar settings de usuarios de su ventana (validación de ventana ya aplicada arriba)
     if (dto.settings !== undefined) {
-      if (actingRole === Role.VENTANA) {
-        throw new AppError('No puedes modificar settings', 403);
-      }
       // Obtener settings actuales (pueden ser null)
       const currentUser = await prisma.user.findUnique({
         where: { id },
