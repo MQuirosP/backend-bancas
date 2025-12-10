@@ -967,12 +967,10 @@ export async function getStatementDirect(
         // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_entidad
         const date = shouldGroupByDate ? key : key.split("_")[0];
 
-        // ✅ CORRECCIÓN: Calcular balance según dimensión
-        // - Vendedor: balance = totalSales - totalPayouts - vendedorCommission
-        // - Ventana/Banca: balance = totalSales - totalPayouts - listeroCommission
-        const balance = dimension === "vendedor"
-            ? entry.totalSales - entry.totalPayouts - entry.commissionVendedor
-            : entry.totalSales - entry.totalPayouts - entry.commissionListero;
+        // ✅ CORRECCIÓN: Balance SIEMPRE usando listeroCommission
+        // El balance siempre debe calcularse restando las comisiones del listero,
+        // independientemente del nivel de agrupación o filtrado (dimensión)
+        const balance = entry.totalSales - entry.totalPayouts - entry.commissionListero;
 
         // ✅ NUEVO: Obtener movimientos y desglose por sorteo según si hay agrupación
         const allMovementsForDate = movementsByDate.get(date) || [];
@@ -1422,12 +1420,12 @@ export async function getStatementDirect(
     const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
     const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
     const totalVendedorCommission = statements.reduce((sum, s) => sum + s.vendedorCommission, 0);
-    // ✅ CORRECCIÓN: Balance total según dimensión
-    // - Vendedor: totalBalance = totalSales - totalPayouts - totalVendedorCommission
-    // - Ventana/Banca: totalBalance = totalSales - totalPayouts - totalListeroCommission
-    const totalBalance = dimension === "vendedor"
-        ? totalSales - totalPayouts - totalVendedorCommission
-        : totalSales - totalPayouts - totalListeroCommission;
+    // ✅ CORRECCIÓN: Balance total SIEMPRE usando listeroCommission
+    // El balance siempre debe calcularse restando las comisiones del listero,
+    // independientemente del nivel de agrupación o filtrado (dimensión)
+    // Esto asegura consistencia con monthlyTotalBalance y refleja que el listero
+    // es quien asume la responsabilidad financiera de los tickets
+    const totalBalance = totalSales - totalPayouts - totalListeroCommission;
     const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
     const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
     // ✅ CRÍTICO: Calcular totalRemainingBalance desde los totales agregados, NO sumando remainingBalance individuales
