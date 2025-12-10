@@ -1026,7 +1026,7 @@ export async function getStatementDirect(
         // ✅ CORRECCIÓN: Balance SIEMPRE usando listeroCommission
         // El balance siempre debe calcularse restando las comisiones del listero,
         // independientemente del nivel de agrupación o filtrado (dimensión)
-        const balance = entry.totalSales - totalPayouts - entry.commissionListero;
+        const balance = entry.totalSales - totalPayouts - entry.commissionVendedor;
 
         // Calcular totales de pagos y cobros
         const totalPaid = movements
@@ -1423,7 +1423,7 @@ export async function getStatementDirect(
     // independientemente del nivel de agrupación o filtrado (dimensión)
     // Esto asegura consistencia con monthlyTotalBalance y refleja que el listero
     // es quien asume la responsabilidad financiera de los tickets
-    const totalBalance = totalSales - totalPayouts - totalListeroCommission;
+    const totalBalance = totalSales - totalPayouts - totalVendedorCommission;
     const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
     const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
     // ✅ CRÍTICO: Calcular totalRemainingBalance desde los totales agregados, NO sumando remainingBalance individuales
@@ -1679,7 +1679,7 @@ export async function getStatementDirect(
     // El balance siempre debe calcularse restando las comisiones del listero,
     // independientemente del nivel de agrupación o filtrado
     // monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalListeroCommission
-    const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalListeroCommission;
+    const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalVendedorCommission;
 
     // Calcular totales de pagos/cobros del mes
     let monthlyTotalPaid = 0;
