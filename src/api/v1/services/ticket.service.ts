@@ -1071,11 +1071,28 @@ export const TicketService = {
         multiplierName = multiplier?.name || '';
       }
 
+      // ✅ NUEVO: Variable para almacenar información de números ganadores
+      let winningNumbersInfo: {
+        sorteoId: string;
+        sorteoName: string;
+        sorteoStatus: string;
+        isEvaluated: boolean;
+        digits: number;
+        winners: Array<{
+          number: string;
+          position: number;
+          prizeType: string;
+        }>;
+      } | undefined = undefined;
+
       if (params.sorteoId) {
         const sorteo = await prisma.sorteo.findUnique({
           where: { id: params.sorteoId },
           select: {
+            id: true,
             name: true,
+            status: true,
+            winningNumber: true, // ✅ NUEVO: Obtener número ganador
             loteria: {
               select: { rulesJson: true }
             }
@@ -1086,10 +1103,39 @@ export const TicketService = {
         // Extraer reventadoEnabled y digits de loteriaRules
         const loteriaRules = sorteo?.loteria?.rulesJson as any;
         reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
-        
+
         // ✅ Usar resolveDigits para obtener digits desde rulesJson
         const { resolveDigits } = await import('../../../utils/loteriaRules');
         sorteoDigits = resolveDigits(loteriaRules, 2);
+
+        // ✅ NUEVO: Si el sorteo está evaluado y tiene número ganador, preparar info
+        if (sorteo && sorteo.status === 'EVALUATED' && sorteo.winningNumber) {
+          winningNumbersInfo = {
+            sorteoId: sorteo.id,
+            sorteoName: sorteo.name,
+            sorteoStatus: sorteo.status,
+            isEvaluated: true,
+            digits: sorteoDigits,
+            winners: [
+              {
+                number: sorteo.winningNumber.padStart(sorteoDigits, '0'),
+                position: 1,
+                prizeType: 'PRIMERO',
+              }
+            ]
+          };
+
+          logger.info({
+            layer: "service",
+            action: "TICKET_NUMBERS_SUMMARY_WINNING_NUMBER",
+            payload: {
+              sorteoId: sorteo.id,
+              sorteoName: sorteo.name,
+              winningNumber: sorteo.winningNumber,
+              digits: sorteoDigits,
+            },
+          });
+        }
       } else if (params.loteriaId) {
         // Si solo hay loteriaId (sin sorteoId), consultar la lotería
         const loteria = await prisma.loteria.findUnique({
@@ -1133,6 +1179,7 @@ export const TicketService = {
               reventadoNumber: true,
               type: true,
               amount: true,
+              multiplierId: true, // ✅ CRÍTICO: Necesario para filtrar por multiplierId
               commissionAmount: true,
               listeroCommissionAmount: true,
             },
@@ -1172,7 +1219,44 @@ export const TicketService = {
       }
 
       // Flatten jugadas from all tickets
-      const jugadas = tickets.flatMap(t => t.jugadas);
+      let jugadas = tickets.flatMap(t => t.jugadas);
+
+      // ✅ CRÍTICO: Si hay filtro por multiplierId, filtrar jugadas en memoria
+      // Los tickets ya están filtrados (solo tickets con al menos una jugada con ese multiplierId)
+      // PERO necesitamos filtrar las jugadas para incluir solo:
+      // - Jugadas NUMERO con ese multiplierId
+      // - Jugadas REVENTADO asociadas a esos números base
+      if (params.multiplierId) {
+        // Primero, obtener números base de jugadas NUMERO con ese multiplierId
+        const numerosBaseIncluidos = new Set<string>();
+        jugadas.forEach((jugada) => {
+          if (jugada.type === 'NUMERO' && jugada.multiplierId === params.multiplierId) {
+            numerosBaseIncluidos.add(jugada.number);
+          }
+        });
+
+        // Filtrar: incluir solo NUMERO con ese multiplierId O REVENTADO del mismo número base
+        jugadas = jugadas.filter((jugada) => {
+          if (jugada.type === 'NUMERO') {
+            return jugada.multiplierId === params.multiplierId;
+          } else if (jugada.type === 'REVENTADO') {
+            // Incluir REVENTADO solo si su número base está en el filtro
+            return numerosBaseIncluidos.has(jugada.number);
+          }
+          return false;
+        });
+
+        logger.info({
+          layer: "service",
+          action: "TICKET_NUMBERS_SUMMARY_MULTIPLIER_FILTER",
+          payload: {
+            multiplierId: params.multiplierId,
+            totalJugadasBeforeFilter: tickets.flatMap(t => t.jugadas).length,
+            totalJugadasAfterFilter: jugadas.length,
+            numerosBaseIncluidos: numerosBaseIncluidos.size,
+          },
+        });
+      }
 
       // Extract metadata from first ticket (all tickets share same filters)
       const ventanaName = tickets[0]?.ventana?.name;
@@ -1369,6 +1453,8 @@ export const TicketService = {
           totalCommission,
           // ✅ NUEVO: Números que tienen apuestas
           numbersWithBets,
+          // ✅ NUEVO: Información de números ganadores (si el sorteo está evaluado)
+          ...(winningNumbersInfo ? { winningNumbers: winningNumbersInfo } : {}),
           ...(params.dimension ? { dimension: params.dimension } : {}),
           ...(params.ventanaId ? { ventanaId: params.ventanaId } : {}),
           ...(params.vendedorId ? { vendedorId: params.vendedorId } : {}),
