@@ -634,22 +634,6 @@ export async function getStatementDirect(
     // No podemos insertar Prisma.sql dentro de otro Prisma.sql porque los parámetros se desalinean
     // Construir la consulta completa con todos los parámetros en orden
     const query = Prisma.sql`
-    WITH ticket_payouts AS (
-      SELECT DISTINCT
-        t.id as ticket_id,
-        COALESCE(
-          t."businessDate",
-          DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
-        ) as business_date,
-        t."ventanaId" as ventana_id,
-        t."vendedorId" as vendedor_id,
-        t."totalPayout" as ticket_payout
-      FROM "Ticket" t
-      INNER JOIN "Jugada" j ON j."ticketId" = t.id
-      WHERE ${Prisma.join(whereConditions, " AND ")}
-      AND j."deletedAt" IS NULL
-      AND j."isWinner" = true
-    )
     SELECT
       COALESCE(
         t."businessDate",
@@ -665,7 +649,7 @@ export async function getStatementDirect(
       u.name as vendedor_name,
       u.code as vendedor_code,
       COALESCE(SUM(j.amount), 0) as total_sales,
-      COALESCE(SUM(DISTINCT tp.ticket_payout), 0) as total_payouts,
+      0 as total_payouts,
       COUNT(DISTINCT t.id) as total_tickets,
       COALESCE(SUM(j."listeroCommissionAmount"), 0) as commission_listero,
       COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as commission_vendedor
@@ -674,10 +658,6 @@ export async function getStatementDirect(
     INNER JOIN "Ventana" v ON v.id = t."ventanaId"
     INNER JOIN "Banca" b ON b.id = v."bancaId"
     LEFT JOIN "User" u ON u.id = t."vendedorId"
-    LEFT JOIN ticket_payouts tp ON tp.ticket_id = t.id 
-      AND tp.business_date = COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
-      AND tp.ventana_id = t."ventanaId"
-      AND (tp.vendedor_id = t."vendedorId" OR (tp.vendedor_id IS NULL AND t."vendedorId" IS NULL))
     WHERE ${Prisma.join(whereConditions, " AND ")}
     AND j."deletedAt" IS NULL
     GROUP BY 
@@ -849,7 +829,7 @@ export async function getStatementDirect(
 
             // Actualizar desglose por entidad (ya agregado desde SQL)
             breakdownEntry.totalSales += Number(row.total_sales || 0);
-            breakdownEntry.totalPayouts += Number(row.total_payouts || 0);
+            // ✅ NOTA: totalPayouts se calcula desde bySorteo, NO desde SQL
             breakdownEntry.commissionListero += Number(row.commission_listero || 0);
             breakdownEntry.commissionVendedor += Number(row.commission_vendedor || 0);
             // ✅ OPTIMIZACIÓN: Usar un contador aproximado en lugar de Set de IDs
@@ -967,11 +947,6 @@ export async function getStatementDirect(
         // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_entidad
         const date = shouldGroupByDate ? key : key.split("_")[0];
 
-        // ✅ CORRECCIÓN: Balance SIEMPRE usando listeroCommission
-        // El balance siempre debe calcularse restando las comisiones del listero,
-        // independientemente del nivel de agrupación o filtrado (dimensión)
-        const balance = entry.totalSales - entry.totalPayouts - entry.commissionListero;
-
         // ✅ NUEVO: Obtener movimientos y desglose por sorteo según si hay agrupación
         const allMovementsForDate = movementsByDate.get(date) || [];
         let movements: any[];
@@ -1044,6 +1019,15 @@ export async function getStatementDirect(
             bySorteo = sorteoBreakdownBatch.get(sorteoKey) || [];
         }
 
+        // ✅ CRÍTICO: Calcular totalPayouts sumando desde bySorteo en lugar de la query SQL
+        // Esto evita la multiplicación por número de jugadas que ocurría en el JOIN
+        const totalPayouts = bySorteo.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
+
+        // ✅ CORRECCIÓN: Balance SIEMPRE usando listeroCommission
+        // El balance siempre debe calcularse restando las comisiones del listero,
+        // independientemente del nivel de agrupación o filtrado (dimensión)
+        const balance = entry.totalSales - totalPayouts - entry.commissionListero;
+
         // Calcular totales de pagos y cobros
         const totalPaid = movements
             .filter((m: any) => m.type === "payment" && !m.isReversed)
@@ -1065,7 +1049,7 @@ export async function getStatementDirect(
             vendedorName: entry.vendedorName,
             vendedorCode: entry.vendedorCode, // ✅ NUEVO: Código de vendedor
             totalSales: parseFloat(entry.totalSales.toFixed(2)),
-            totalPayouts: parseFloat(entry.totalPayouts.toFixed(2)),
+            totalPayouts: parseFloat(totalPayouts.toFixed(2)),
             listeroCommission: parseFloat(entry.commissionListero.toFixed(2)),
             vendedorCommission: parseFloat(entry.commissionVendedor.toFixed(2)),
             balance: parseFloat(balance.toFixed(2)),
@@ -1102,6 +1086,14 @@ export async function getStatementDirect(
                 for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
                     const breakdownDate = breakdownKey.split("_")[0];
                     if (breakdownDate === date && breakdownEntry.bancaId) {
+                        // ✅ CRÍTICO: Calcular totalPayouts desde sorteos para este breakdown
+                        // Dentro de dimension="banca", los breakdowns pueden ser por ventana o vendedor
+                        const breakdownSorteoKey = breakdownEntry.vendedorId
+                            ? `${date}_${breakdownEntry.vendedorId}`
+                            : `${date}_${breakdownEntry.ventanaId}`;
+                        const breakdownSorteos = sorteoBreakdownBatch.get(breakdownSorteoKey) || [];
+                        const breakdownTotalPayouts = breakdownSorteos.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
+
                         let bancaGroup = bancaMap.get(breakdownEntry.bancaId);
                         if (!bancaGroup) {
                             bancaGroup = {
@@ -1121,7 +1113,7 @@ export async function getStatementDirect(
 
                         // Agregar a totales de banca
                         bancaGroup.totalSales += breakdownEntry.totalSales;
-                        bancaGroup.totalPayouts += breakdownEntry.totalPayouts;
+                        bancaGroup.totalPayouts += breakdownTotalPayouts;
                         bancaGroup.commissionListero += breakdownEntry.commissionListero;
                         bancaGroup.commissionVendedor += breakdownEntry.commissionVendedor;
                         breakdownEntry.totalTickets.forEach(id => bancaGroup.totalTickets.add(id));
@@ -1144,7 +1136,7 @@ export async function getStatementDirect(
                                 bancaGroup.ventanas.set(ventanaKey, ventanaGroup);
                             }
                             ventanaGroup.totalSales += breakdownEntry.totalSales;
-                            ventanaGroup.totalPayouts += breakdownEntry.totalPayouts;
+                            ventanaGroup.totalPayouts += breakdownTotalPayouts;
                             ventanaGroup.commissionListero += breakdownEntry.commissionListero;
                             ventanaGroup.commissionVendedor += breakdownEntry.commissionVendedor;
                             breakdownEntry.totalTickets.forEach(id => ventanaGroup.totalTickets.add(id));
@@ -1171,7 +1163,7 @@ export async function getStatementDirect(
                                 bancaGroup.vendedores.set(vendedorKey, vendedorGroup);
                             }
                             vendedorGroup.totalSales += breakdownEntry.totalSales;
-                            vendedorGroup.totalPayouts += breakdownEntry.totalPayouts;
+                            vendedorGroup.totalPayouts += breakdownTotalPayouts;
                             vendedorGroup.commissionListero += breakdownEntry.commissionListero;
                             vendedorGroup.commissionVendedor += breakdownEntry.commissionVendedor;
                             breakdownEntry.totalTickets.forEach(id => vendedorGroup.totalTickets.add(id));
@@ -1290,7 +1282,14 @@ export async function getStatementDirect(
                 for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
                     const breakdownDate = breakdownKey.split("_")[0];
                     if (breakdownDate === date) {
-                        const breakdownBalance = breakdownEntry.totalSales - breakdownEntry.totalPayouts - breakdownEntry.commissionListero;
+                        // ✅ CRÍTICO: Obtener sorteos específicos de esta ventana
+                        const ventanaSorteoKey = `${date}_${breakdownEntry.ventanaId}`;
+                        const ventanaSorteos = sorteoBreakdownBatch.get(ventanaSorteoKey) || [];
+
+                        // ✅ CRÍTICO: Calcular totalPayouts sumando desde sorteos
+                        const ventanaTotalPayouts = ventanaSorteos.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
+
+                        const breakdownBalance = breakdownEntry.totalSales - ventanaTotalPayouts - breakdownEntry.commissionListero;
                         // Calcular totalPaid y totalCollected para esta ventana en esta fecha
                         const ventanaMovements = allMovementsForDate.filter((m: any) => m.ventanaId === breakdownEntry.ventanaId);
                         const ventanaTotalPaid = ventanaMovements
@@ -1300,10 +1299,6 @@ export async function getStatementDirect(
                             .filter((m: any) => m.type === "collection" && !m.isReversed)
                             .reduce((sum: number, m: any) => sum + m.amount, 0);
                         const ventanaRemainingBalance = breakdownBalance - ventanaTotalCollected + ventanaTotalPaid;
-
-                        // ✅ CRÍTICO: Obtener sorteos específicos de esta ventana
-                        const ventanaSorteoKey = `${date}_${breakdownEntry.ventanaId}`;
-                        const ventanaSorteos = sorteoBreakdownBatch.get(ventanaSorteoKey) || [];
 
                         // ✅ CRÍTICO: Obtener movimientos específicos de esta ventana
                         const ventanaMovementsFiltered = allMovementsForDate.filter((m: any) => m.ventanaId === breakdownEntry.ventanaId);
@@ -1315,7 +1310,7 @@ export async function getStatementDirect(
                             bancaId: breakdownEntry.bancaId, // ✅ NUEVO: ID de banca (si está disponible)
                             bancaName: breakdownEntry.bancaName, // ✅ NUEVO: Nombre de banca (si está disponible)
                             totalSales: breakdownEntry.totalSales,
-                            totalPayouts: breakdownEntry.totalPayouts,
+                            totalPayouts: ventanaTotalPayouts,
                             listeroCommission: breakdownEntry.commissionListero,
                             vendedorCommission: breakdownEntry.commissionVendedor,
                             balance: breakdownBalance,
@@ -1337,8 +1332,15 @@ export async function getStatementDirect(
                 for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
                     const breakdownDate = breakdownKey.split("_")[0];
                     if (breakdownDate === date) {
+                        // ✅ CRÍTICO: Obtener sorteos específicos de este vendedor
+                        const vendedorSorteoKey = `${date}_${breakdownEntry.vendedorId || 'null'}`;
+                        const vendedorSorteos = sorteoBreakdownBatch.get(vendedorSorteoKey) || [];
+
+                        // ✅ CRÍTICO: Calcular totalPayouts sumando desde sorteos
+                        const vendedorTotalPayouts = vendedorSorteos.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
+
                         // ✅ CORRECCIÓN: Balance de vendedor usando vendedorCommission
-                        const breakdownBalance = breakdownEntry.totalSales - breakdownEntry.totalPayouts - breakdownEntry.commissionVendedor;
+                        const breakdownBalance = breakdownEntry.totalSales - vendedorTotalPayouts - breakdownEntry.commissionVendedor;
                         // Calcular totalPaid y totalCollected para este vendedor en esta fecha
                         const vendedorMovements = allMovementsForDate.filter((m: any) => m.vendedorId === breakdownEntry.vendedorId);
                         const vendedorTotalPaid = vendedorMovements
@@ -1349,10 +1351,6 @@ export async function getStatementDirect(
                             .reduce((sum: number, m: any) => sum + m.amount, 0);
                         const vendedorRemainingBalance = breakdownBalance - vendedorTotalCollected + vendedorTotalPaid;
 
-                        // ✅ CRÍTICO: Obtener sorteos específicos de este vendedor
-                        const vendedorSorteoKey = `${date}_${breakdownEntry.vendedorId || 'null'}`;
-                        const vendedorSorteos = sorteoBreakdownBatch.get(vendedorSorteoKey) || [];
-
                         // ✅ CRÍTICO: Obtener movimientos específicos de este vendedor
                         const vendedorMovementsFiltered = allMovementsForDate.filter((m: any) => m.vendedorId === breakdownEntry.vendedorId);
 
@@ -1362,7 +1360,7 @@ export async function getStatementDirect(
                             ventanaId: breakdownEntry.ventanaId,
                             ventanaName: breakdownEntry.ventanaName,
                             totalSales: breakdownEntry.totalSales,
-                            totalPayouts: breakdownEntry.totalPayouts,
+                            totalPayouts: vendedorTotalPayouts,
                             listeroCommission: breakdownEntry.commissionListero,
                             vendedorCommission: breakdownEntry.commissionVendedor,
                             balance: breakdownBalance,
