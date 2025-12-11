@@ -197,14 +197,20 @@ export const VentanasReportService = {
     const top = Math.min(50, Math.max(1, filters.top || 10));
     const sortBy = filters.sortBy || 'ventas';
 
-    // Construir ORDER BY dinámico
+    // ✅ FIX: Para 'margin', no podemos ordenar en SQL porque margin se calcula después
+    // con las comisiones. Ordenaremos en JavaScript después de calcular comisiones.
+    const shouldSortInJS = sortBy === 'margin';
+
+    // Construir ORDER BY dinámico (solo para campos disponibles en SQL)
     let orderByClause: Prisma.Sql;
     switch (sortBy) {
       case 'neto':
         orderByClause = Prisma.sql`(vs.ventas_total - vs.payout_total) DESC`;
         break;
       case 'margin':
-        orderByClause = Prisma.sql`margin DESC`;
+        // ✅ FIX: Usar margin_sin_comision como orden preliminar
+        // El orden final se hará en JavaScript con el margin real
+        orderByClause = Prisma.sql`margin_sin_comision DESC`;
         break;
       case 'tickets':
         orderByClause = Prisma.sql`vs.tickets_count DESC`;
@@ -328,7 +334,17 @@ export const VentanasReportService = {
       vendedoresCount.map(v => [v.ventanaId, v._count.id])
     );
 
-    const ventanasData = ventanasWithCommission.map((v, index) => ({
+    // ✅ FIX: Si se ordenó por margin, re-ordenar en JavaScript con el margin real (incluyendo comisiones)
+    let ventanasToMap = ventanasWithCommission;
+    if (shouldSortInJS) {
+      ventanasToMap = [...ventanasWithCommission].sort((a, b) => {
+        const marginA = parseFloat(a.margin.toString());
+        const marginB = parseFloat(b.margin.toString());
+        return marginB - marginA; // DESC
+      }).slice(0, top); // Aplicar límite después de ordenar
+    }
+
+    const ventanasData = ventanasToMap.map((v, index) => ({
       ventanaId: v.ventanaId,
       ventanaName: v.ventana_name,
       ventanaCode: v.ventana_code || '',
