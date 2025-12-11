@@ -1434,11 +1434,20 @@ export async function getStatementDirect(
 
 
 
-    // ✅ NUEVO: Calcular monthlyAccumulated (acumulado del mes COMPLETO)
-    // Esto es INMUTABLE respecto al período filtrado (siempre es el mes completo)
+    // ✅ NUEVO: Calcular monthlyAccumulated (Saldo a Hoy - acumulado desde inicio del mes hasta hoy)
+    // Esto es INMUTABLE respecto al período filtrado (siempre desde el día 1 del mes hasta hoy)
     const [year, month] = effectiveMonth.split("-").map(Number);
     const monthStartDate = new Date(Date.UTC(year, month - 1, 1)); // Primer día del mes
-    const monthEndDate = new Date(Date.UTC(year, month, 0)); // Último día del mes
+
+    // ✅ FIX: monthEndDate debe ser el FINAL del día de hoy (23:59:59.999)
+    // para incluir tickets programados más tarde en el día actual
+    const today = new Date();
+    const monthEndDate = new Date(Date.UTC(
+        today.getUTCFullYear(),
+        today.getUTCMonth(),
+        today.getUTCDate(),
+        23, 59, 59, 999
+    )); // Fin del día de hoy
     const monthStartDateCRStr = crDateService.dateUTCToCRString(monthStartDate);
     const monthEndDateCRStr = crDateService.dateUTCToCRString(monthEndDate);
 

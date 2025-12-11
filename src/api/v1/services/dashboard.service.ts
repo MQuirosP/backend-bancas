@@ -1153,7 +1153,7 @@ export const DashboardService = {
       ensureEntry(ventana.id, ventana.name, ventana.isActive);
     }
 
-    // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana
+    // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada ventana
     const monthSaldoByVentana = new Map<string, number>();
     {
       // ✅ CORREGIDO: Convertir fecha actual a zona horaria de Costa Rica (UTC-6)
@@ -1163,19 +1163,22 @@ export const DashboardService = {
       const COSTA_RICA_UTC_OFFSET_MS = -6 * 60 * 60 * 1000; // UTC-6
       const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
 
-      // Extraer año y mes en zona horaria de Costa Rica
+      // Extraer año, mes y día en zona horaria de Costa Rica
       const crYear = crNow.getUTCFullYear();
       const crMonth = crNow.getUTCMonth(); // 0-based
+      const crDay = crNow.getUTCDate();
 
-      // Calcular primer y último día del mes en Costa Rica
+      // Calcular primer día del mes y fin del día de hoy en Costa Rica
       const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
-      const monthEnd = new Date(Date.UTC(crYear, crMonth + 1, 0));
+      // ✅ FIX: monthEnd debe ser el FINAL del día de hoy (23:59:59.999)
+      // para incluir tickets programados más tarde en el día actual
+      const monthEnd = new Date(Date.UTC(crYear, crMonth, crDay, 23, 59, 59, 999));
 
       // Convertir a strings de fecha para filtros
       const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
-      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(new Date(Date.UTC(crYear, crMonth + 1, 0)).getUTCDate()).padStart(2, '0')}`;
+      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(crDay).padStart(2, '0')}`; // ✅ FIX: usar día actual
 
-      // Construir filtros WHERE para el mes completo (misma lógica que calculateCxC pero con fechas del mes)
+      // Construir filtros WHERE desde inicio del mes hasta hoy (Saldo a Hoy)
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
         { ...filters, fromDate: monthStart, toDate: monthEnd },
@@ -1706,7 +1709,7 @@ export const DashboardService = {
       entry.totalPaidToCustomer += payment.amountPaid ?? 0;
     }
 
-    // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada vendedor
+    // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
     const monthSaldoByVendedor = new Map<string, number>();
     {
       const utcNow = new Date();
@@ -1714,10 +1717,12 @@ export const DashboardService = {
       const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
       const crYear = crNow.getUTCFullYear();
       const crMonth = crNow.getUTCMonth();
+      const crDay = crNow.getUTCDate(); // ✅ FIX: Obtener día actual
       const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
-      const monthEnd = new Date(Date.UTC(crYear, crMonth + 1, 0));
+      // ✅ FIX: monthEnd debe ser el FINAL del día de hoy (23:59:59.999)
+      const monthEnd = new Date(Date.UTC(crYear, crMonth, crDay, 23, 59, 59, 999));
       const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
-      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(new Date(Date.UTC(crYear, crMonth + 1, 0)).getUTCDate()).padStart(2, '0')}`;
+      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(crDay).padStart(2, '0')}`; // ✅ FIX: usar día actual
 
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
@@ -2587,7 +2592,7 @@ export const DashboardService = {
       entry.totalPaidToCustomer += payment.amountPaid ?? 0;
     }
 
-    // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada vendedor
+    // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
     const monthSaldoByVendedor = new Map<string, number>();
     {
       const utcNow = new Date();
@@ -2595,10 +2600,12 @@ export const DashboardService = {
       const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
       const crYear = crNow.getUTCFullYear();
       const crMonth = crNow.getUTCMonth();
+      const crDay = crNow.getUTCDate(); // ✅ FIX: Obtener día actual
       const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
-      const monthEnd = new Date(Date.UTC(crYear, crMonth + 1, 0));
+      // ✅ FIX: monthEnd debe ser el FINAL del día de hoy (23:59:59.999)
+      const monthEnd = new Date(Date.UTC(crYear, crMonth, crDay, 23, 59, 59, 999));
       const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
-      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(new Date(Date.UTC(crYear, crMonth + 1, 0)).getUTCDate()).padStart(2, '0')}`;
+      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(crDay).padStart(2, '0')}`; // ✅ FIX: usar día actual
 
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
