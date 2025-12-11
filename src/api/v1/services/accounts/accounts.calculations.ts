@@ -468,6 +468,12 @@ export async function getStatementDirect(
     // ✅ CORRECCIÓN: Usar servicio centralizado para conversión de fechas
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
 
+    // ✅ CRÍTICO: Calcular inicio del mes para siempre consultar desde ahí
+    // Esto permite calcular el acumulado correcto incluso cuando se filtra por un día específico
+    const [yearForMonth, monthForMonth] = effectiveMonth.split("-").map(Number);
+    const monthStartDateForQuery = new Date(Date.UTC(yearForMonth, monthForMonth - 1, 1));
+    const monthStartDateCRStrForQuery = crDateService.dateUTCToCRString(monthStartDateForQuery);
+
     // ✅ NUEVO: Detectar si debemos agrupar por fecha solamente (sin separar por entidad)
     // Agrupamos cuando:
     // - dimension=banca y bancaId NO está especificado
@@ -501,7 +507,8 @@ export async function getStatementDirect(
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
         Prisma.sql`t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
-        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`,
+        // ✅ CRÍTICO: Siempre consultar desde el inicio del mes para calcular acumulados correctos
+        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${monthStartDateCRStrForQuery}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`,
         // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
         Prisma.sql`NOT EXISTS (
@@ -630,9 +637,19 @@ export async function getStatementDirect(
         },
     });
     
-    // ✅ CRÍTICO: Construir la consulta SQL completa usando Prisma.sql correctamente
-    // No podemos insertar Prisma.sql dentro de otro Prisma.sql porque los parámetros se desalinean
-    // Construir la consulta completa con todos los parámetros en orden
+    // ✅ CRÍTICO: GROUP BY dinámico según shouldGroupByDate
+    // Si shouldGroupByDate=true: agrupar solo por (date, banca) para evitar filas duplicadas
+    // Si shouldGroupByDate=false: agrupar por (date, banca, ventana, vendedor) para separar por entidad
+    const groupByClause = shouldGroupByDate
+        ? Prisma.sql`
+      COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
+      b.id`
+        : Prisma.sql`
+      COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
+      b.id,
+      t."ventanaId",
+      t."vendedorId"`;
+
     const query = Prisma.sql`
     SELECT
       COALESCE(
@@ -640,14 +657,14 @@ export async function getStatementDirect(
         DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
       ) as business_date,
       b.id as banca_id,
-      b.name as banca_name,
-      b.code as banca_code,
-      t."ventanaId" as ventana_id,
-      v.name as ventana_name,
-      v.code as ventana_code,
-      t."vendedorId" as vendedor_id,
-      u.name as vendedor_name,
-      u.code as vendedor_code,
+      MAX(b.name) as banca_name,
+      MAX(b.code) as banca_code,
+      ${shouldGroupByDate ? Prisma.sql`NULL::uuid` : Prisma.sql`t."ventanaId"`} as ventana_id,
+      MAX(v.name) as ventana_name,
+      MAX(v.code) as ventana_code,
+      ${shouldGroupByDate ? Prisma.sql`NULL::uuid` : Prisma.sql`t."vendedorId"`} as vendedor_id,
+      MAX(u.name) as vendedor_name,
+      MAX(u.code) as vendedor_code,
       COALESCE(SUM(j.amount), 0) as total_sales,
       0 as total_payouts,
       COUNT(DISTINCT t.id) as total_tickets,
@@ -660,21 +677,11 @@ export async function getStatementDirect(
     LEFT JOIN "User" u ON u.id = t."vendedorId"
     WHERE ${Prisma.join(whereConditions, " AND ")}
     AND j."deletedAt" IS NULL
-    GROUP BY 
-      COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
-      b.id,
-      b.name,
-      b.code,
-      t."ventanaId",
-      v.name,
-      v.code,
-      t."vendedorId",
-      u.name,
-      u.code
+    GROUP BY ${groupByClause}
     ORDER BY business_date ${sort === "desc" ? Prisma.sql`DESC` : Prisma.sql`ASC`}
     LIMIT 5000
   `;
-    
+
     const aggregatedData = await prisma.$queryRaw<
         Array<{
             business_date: Date;
@@ -755,15 +762,19 @@ export async function getStatementDirect(
         }
     >();
 
+    // 🔍 DEBUG: Contador para ver cuántas filas SQL por fecha
+    const rowsPerDate = new Map<string, number>();
+
     // ✅ OPTIMIZACIÓN: Procesar datos agregados en lugar de jugadas individuales
     for (const row of aggregatedData) {
         const dateKey = crDateService.postgresDateToCRString(row.business_date);
-        
-        // ✅ CRÍTICO: Filtrar datos fuera del período solicitado ANTES de agregarlos al mapa
-        if (!crDateService.isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
-            continue; // Saltar datos fuera del período
-        }
-        
+
+        // ✅ NOTA: NO filtrar aquí - necesitamos todos los días del mes para calcular acumulados correctos
+        // El filtro se aplicará al final después de calcular la acumulación
+
+        // 🔍 DEBUG: Contar filas por fecha
+        rowsPerDate.set(dateKey, (rowsPerDate.get(dateKey) || 0) + 1);
+
         // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + entidad
         const groupKey = shouldGroupByDate
             ? dateKey // Solo fecha cuando hay agrupación
@@ -849,9 +860,21 @@ export async function getStatementDirect(
         entry.totalTickets = new Set(Array.from({ length: ticketCount }, (_, i) => `${row.ventana_id}_${row.vendedor_id}_${i}`));
     }
 
-    // Obtener movimientos (pagos/cobros) para el rango de fechas
+    // 🔍 DEBUG: Log de filas por fecha
+    logger.info({
+        layer: "service",
+        action: "DEBUG_SQL_ROWS_PER_DATE",
+        payload: {
+            dimension,
+            shouldGroupByDate,
+            rowsPerDate: Object.fromEntries(rowsPerDate),
+            totalRowsProcessed: aggregatedData.length,
+        }
+    });
+
+    // ✅ CRÍTICO: Obtener movimientos desde el inicio del mes para calcular acumulados correctos
     const movementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
-        startDate,
+        monthStartDateForQuery,
         endDate,
         dimension,
         ventanaId,
@@ -860,12 +883,9 @@ export async function getStatementDirect(
     );
 
     // ✅ NUEVO: Incorporar días que solo tienen movimientos (sin ventas)
-    // ✅ CRÍTICO: Filtrar movimientos fuera del período solicitado ANTES de agregarlos al mapa
+    // ✅ NOTA: NO filtrar aquí - necesitamos todos los movimientos del mes para calcular acumulados correctos
     for (const [dateKey, movements] of movementsByDate.entries()) {
-        // Filtrar fechas fuera del período
-        if (dateKey < startDateCRStr || dateKey > endDateCRStr) {
-            continue; // Saltar movimientos fuera del período
-        }
+        // El filtro se aplicará al final después de calcular la acumulación
         
         for (const movement of movements) {
             // Determinar ID según dimensión
@@ -934,15 +954,9 @@ export async function getStatementDirect(
     });
 
     // Construir statements desde el mapa agrupado
-    // ✅ CRÍTICO: Filtrar solo fechas dentro del período solicitado
-    // Nota: startDateCRStr y endDateCRStr ya están declaradas arriba (línea 359-360)
-    const statements = Array.from(byDateAndDimension.entries())
-        .filter(([key]) => {
-            // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_entidad
-            const date = shouldGroupByDate ? key : key.split("_")[0];
-            // Solo incluir fechas dentro del período filtrado
-            return date >= startDateCRStr && date <= endDateCRStr;
-        })
+    // ✅ NOTA: NO filtrar aquí - necesitamos todos los días del mes para calcular acumulados correctos
+    // El filtro se aplicará al final después de calcular la acumulación
+    const allStatementsFromMonth = Array.from(byDateAndDimension.entries())
         .map(([key, entry]) => {
         // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_entidad
         const date = shouldGroupByDate ? key : key.split("_")[0];
@@ -996,9 +1010,16 @@ export async function getStatementDirect(
                     }
                 }
             }
-            bySorteo = Array.from(sorteoMap.values()).sort((a, b) => 
+            bySorteo = Array.from(sorteoMap.values()).sort((a, b) =>
                 new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
             );
+
+            // ✅ NUEVO: Agregar sorteoAccumulated (acumulado progresivo de sorteos)
+            let accumulated = 0;
+            for (const sorteo of bySorteo) {
+                accumulated += sorteo.balance;
+                sorteo.sorteoAccumulated = accumulated;
+            }
         } else {
             // Sin agrupación: comportamiento original (filtrar por entidad)
             movements = allMovementsForDate.filter((m: any) => {
@@ -1017,6 +1038,13 @@ export async function getStatementDirect(
                 ? `${date}_${entry.ventanaId}`
                 : `${date}_${entry.vendedorId || 'null'}`;
             bySorteo = sorteoBreakdownBatch.get(sorteoKey) || [];
+
+            // ✅ NUEVO: Agregar sorteoAccumulated (acumulado progresivo de sorteos)
+            let accumulated = 0;
+            for (const sorteo of bySorteo) {
+                accumulated += sorteo.balance;
+                sorteo.sorteoAccumulated = accumulated;
+            }
         }
 
         // ✅ CRÍTICO: Calcular totalPayouts sumando desde bySorteo en lugar de la query SQL
@@ -1029,14 +1057,18 @@ export async function getStatementDirect(
         const commissionToUse = vendedorId ? entry.commissionVendedor : entry.commissionListero;
         const balance = entry.totalSales - totalPayouts - commissionToUse;
 
-        // Calcular totales de pagos y cobros
+        // Calcular totales de pagos y cobros del DÍA (para el statement diario)
         const totalPaid = movements
             .filter((m: any) => m.type === "payment" && !m.isReversed)
             .reduce((sum: number, m: any) => sum + m.amount, 0);
         const totalCollected = movements
             .filter((m: any) => m.type === "collection" && !m.isReversed)
             .reduce((sum: number, m: any) => sum + m.amount, 0);
-        const remainingBalance = balance - totalCollected + totalPaid;
+
+        // ✅ CRÍTICO: remainingBalance debe ser ACUMULADO REAL hasta esta fecha
+        // NO debe depender del filtro de periodo aplicado
+        // Se calculará más adelante usando monthlyByDateAndDimension (línea ~1420)
+        const remainingBalance = 0; // Temporal, se calcula después
 
         const statement: any = {
             date,
@@ -1414,24 +1446,6 @@ export async function getStatementDirect(
         return sort === "desc" ? dateB - dateA : dateA - dateB;
     });
 
-    // Calcular totales
-    const totalSales = statements.reduce((sum, s) => sum + s.totalSales, 0);
-    const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
-    const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
-    const totalVendedorCommission = statements.reduce((sum, s) => sum + s.vendedorCommission, 0);
-    // ✅ CRÍTICO: Usar comisión correcta según filtros del cliente
-    // - Si hay vendedorId específico → usar totalVendedorCommission
-    // - Si NO hay vendedorId → usar totalListeroCommission (por defecto)
-    const totalCommissionToUse = vendedorId ? totalVendedorCommission : totalListeroCommission;
-    const totalBalance = totalSales - totalPayouts - totalCommissionToUse;
-    const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
-    const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
-    // ✅ CRÍTICO: Calcular totalRemainingBalance desde los totales agregados, NO sumando remainingBalance individuales
-    // Esto asegura consistencia matemática: remainingBalance = balance - totalCollected + totalPaid
-    const totalRemainingBalance = totalBalance - totalCollected + totalPaid;
-
-
-
     // ✅ NUEVO: Calcular monthlyAccumulated (Saldo a Hoy - acumulado desde inicio del mes hasta hoy)
     // Esto es INMUTABLE respecto al período filtrado (siempre desde el día 1 del mes hasta hoy)
     const [year, month] = effectiveMonth.split("-").map(Number);
@@ -1598,7 +1612,9 @@ export async function getStatementDirect(
         // Esto asegura consistencia entre ambos endpoints
         const commissionListeroFinal = Number(jugada.listero_commission_amount || 0);
         const dateKey = crDateService.postgresDateToCRString(jugada.business_date);
-        const key = dimension === "ventana"
+        const key = dimension === "banca"
+            ? `${dateKey}_null` // Cuando dimension=banca sin bancaId, todos comparten bancaId=null
+            : dimension === "ventana"
             ? `${dateKey}_${jugada.ventana_id}`
             : `${dateKey}_${jugada.vendedor_id || 'null'}`;
 
@@ -1742,6 +1758,134 @@ export async function getStatementDirect(
         pendingDays: monthlyPendingDays,
     };
 
+    // ✅ CRÍTICO: Recalcular remainingBalance acumulado progresivamente
+    // El acumulado se calcula SOLO sobre los días mostrados en el resultado
+    // El cálculo es TOTALMENTE INDEPENDIENTE de los sorteos - usa solo los balances de los días
+
+    // 🔍 DEBUG: Ver todos los statements del mes ANTES de procesar
+    logger.info({
+        layer: "service",
+        action: "DEBUG_ALL_STATEMENTS_FROM_MONTH",
+        payload: {
+            dimension,
+            totalStatementsFromMonth: allStatementsFromMonth.length,
+            statements: allStatementsFromMonth.map((s, idx) => ({
+                idx,
+                date: crDateService.dateUTCToCRString(new Date(s.date)),
+                bancaId: s.bancaId,
+                ventanaId: s.ventanaId,
+                vendedorId: s.vendedorId,
+                balance: s.balance,
+                totalPaid: s.totalPaid,
+                totalCollected: s.totalCollected,
+            }))
+        }
+    });
+
+    // ✅ CRÍTICO: Paso 1 - Calcular remainingBalance diario para TODOS los días del mes
+    // Esto es necesario para que el acumulado sea correcto incluso cuando se filtra por un día específico
+    const dailyRemainingBalance = new Map<any, number>();
+
+    for (const statement of allStatementsFromMonth) {
+        // remainingBalance del día = balance - collected + paid
+        const dailyValue = parseFloat(
+            (statement.balance - statement.totalCollected + statement.totalPaid).toFixed(2)
+        );
+        dailyRemainingBalance.set(statement, dailyValue);
+
+        // 🔍 DEBUG: Log detallado de cada statement
+        logger.info({
+            layer: "service",
+            action: "DEBUG_DAILY_BALANCE_CALCULATION",
+            payload: {
+                date: crDateService.dateUTCToCRString(new Date(statement.date)),
+                balance: statement.balance,
+                totalCollected: statement.totalCollected,
+                totalPaid: statement.totalPaid,
+                calculatedRemainingBalance: dailyValue,
+                formula: `${statement.balance} - ${statement.totalCollected} + ${statement.totalPaid} = ${dailyValue}`
+            }
+        });
+    }
+
+    // ✅ CRÍTICO: Paso 2 - Ordenar TODOS los statements del mes por fecha (de menor a mayor)
+    allStatementsFromMonth.sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return dateA - dateB;
+    });
+
+    // ✅ CRÍTICO: Paso 3 - Acumular remainingBalance progresivamente para TODOS los días del mes
+    const accumulatedByEntity = new Map<string, number>();
+
+    for (const statement of allStatementsFromMonth) {
+        // Obtener el ID correcto según la dimensión
+        let entityId: string;
+        if (dimension === "banca") {
+            entityId = statement.bancaId || 'null';
+        } else if (dimension === "ventana") {
+            entityId = statement.ventanaId || 'null';
+        } else {
+            entityId = statement.vendedorId || 'null';
+        }
+
+        // Obtener el acumulado previo de esta entidad (empieza en 0)
+        const prevAccumulated = accumulatedByEntity.get(entityId) || 0;
+
+        // ✅ CRÍTICO: Usar el valor diario guardado, NO el que está en statement.remainingBalance
+        // porque ese ya puede haber sido sobreescrito en una iteración anterior
+        const dailyValue = dailyRemainingBalance.get(statement)!;
+        const newAccumulated = prevAccumulated + dailyValue;
+
+        // Actualizar el mapa de acumulados
+        accumulatedByEntity.set(entityId, newAccumulated);
+
+        // Asignar el valor acumulado al statement
+        statement.remainingBalance = parseFloat(newAccumulated.toFixed(2));
+
+        // 🔍 DEBUG: Log del proceso de acumulación
+        logger.info({
+            layer: "service",
+            action: "DEBUG_ACCUMULATION_STEP",
+            payload: {
+                date: crDateService.dateUTCToCRString(new Date(statement.date)),
+                entityId,
+                dailyValue,
+                prevAccumulated,
+                newAccumulated,
+                finalRemainingBalance: statement.remainingBalance
+            }
+        });
+
+        // Recalcular isSettled y canEdit con el nuevo remainingBalance
+        statement.isSettled = calculateIsSettled(
+            statement.ticketCount,
+            statement.remainingBalance,
+            statement.totalPaid,
+            statement.totalCollected
+        );
+        statement.canEdit = !statement.isSettled;
+    }
+
+    // ✅ CRÍTICO: Paso 4 - Filtrar para retornar solo los días dentro del período solicitado
+    // La acumulación ya se calculó correctamente para todos los días del mes
+    // Ahora solo devolvemos los días que el usuario pidió ver
+    const statements = allStatementsFromMonth.filter(statement => {
+        const date = crDateService.dateUTCToCRString(new Date(statement.date));
+        return date >= startDateCRStr && date <= endDateCRStr;
+    });
+
+    // ✅ CRÍTICO: Paso 5 - Calcular totales SOLO para los días filtrados
+    const totalSales = statements.reduce((sum, s) => sum + s.totalSales, 0);
+    const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
+    const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
+    const totalVendedorCommission = statements.reduce((sum, s) => sum + s.vendedorCommission, 0);
+    const totalCommissionToUse = vendedorId ? totalVendedorCommission : totalListeroCommission;
+    const totalBalance = totalSales - totalPayouts - totalCommissionToUse;
+    const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
+    const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
+    const totalRemainingBalance = totalBalance - totalCollected + totalPaid;
+
     const functionEndTime = Date.now();
     logger.info({
         layer: "service",
@@ -1755,7 +1899,21 @@ export async function getStatementDirect(
             totalTimeMs: functionEndTime - functionStartTime,
         },
     });
-    
+
+    // 🔍 DEBUG: Ver remainingBalance de cada statement ANTES de devolver
+    logger.info({
+        layer: "service",
+        action: "DEBUG_FINAL_STATEMENTS_BEFORE_RETURN",
+        payload: {
+            dimension,
+            statements: statements.map(s => ({
+                date: crDateService.dateUTCToCRString(new Date(s.date)),
+                balance: s.balance,
+                remainingBalance: s.remainingBalance,
+            }))
+        }
+    });
+
     return {
         statements,
         totals: {
