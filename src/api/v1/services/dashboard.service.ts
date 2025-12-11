@@ -758,7 +758,7 @@ export const DashboardService = {
     let totalNet: number;
     if (role === Role.ADMIN && (filters.dimension === 'ventana' || filters.dimension === 'loteria')) {
       // Banca viendo ventanas o loterías: resta solo comisión de ventana
-      totalNet = totalSales - totalPayouts - commissionVentanaTotal;
+      totalNet = totalSales - totalPayouts - commissionUserTotal;
     } else {
       // Ventana, vendedor, o admin viendo vendedores: resta solo comisión de usuario
       totalNet = totalSales - totalPayouts - commissionUserTotal;
