@@ -33,6 +33,7 @@ export interface SorteoBreakdownItem {
     vendedorCommission: number;
     balance: number;
     ticketCount: number;
+    sorteoAccumulated?: number;   // ✅ NUEVO: Acumulado progresivo de sorteos dentro del día
 }
 
 /**
