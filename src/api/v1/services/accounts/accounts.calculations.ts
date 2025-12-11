@@ -1023,9 +1023,10 @@ export async function getStatementDirect(
         // Esto evita la multiplicación por número de jugadas que ocurría en el JOIN
         const totalPayouts = bySorteo.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
 
-        // ✅ CORRECCIÓN: Balance SIEMPRE usando listeroCommission
+        // (DEPRECADO) CORRECCIÓN: Balance SIEMPRE usando listeroCommission
         // El balance siempre debe calcularse restando las comisiones del listero,
         // independientemente del nivel de agrupación o filtrado (dimensión)
+        // ✅ SE CORRIGE: balance = entry.totalSales - totalPayouts - entry.commissionVendedor
         const balance = entry.totalSales - totalPayouts - entry.commissionVendedor;
 
         // Calcular totales de pagos y cobros
@@ -1418,11 +1419,12 @@ export async function getStatementDirect(
     const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
     const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
     const totalVendedorCommission = statements.reduce((sum, s) => sum + s.vendedorCommission, 0);
-    // ✅ CORRECCIÓN: Balance total SIEMPRE usando listeroCommission
+    // (DEPRECADO) CORRECCIÓN: Balance total SIEMPRE usando listeroCommission
     // El balance siempre debe calcularse restando las comisiones del listero,
     // independientemente del nivel de agrupación o filtrado (dimensión)
     // Esto asegura consistencia con monthlyTotalBalance y refleja que el listero
     // es quien asume la responsabilidad financiera de los tickets
+    // ✅ CRÍTICO: Balance total usando vendedorCommission
     const totalBalance = totalSales - totalPayouts - totalVendedorCommission;
     const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
     const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
@@ -1675,10 +1677,11 @@ export async function getStatementDirect(
         (sum, entry) => sum + entry.commissionVendedor,
         0
     );
-    // ✅ CORRECCIÓN: Balance total mensual siempre usando listeroCommission
+    //  (DEPRECADO) CORRECCIÓN: Balance total mensual siempre usando listeroCommission
     // El balance siempre debe calcularse restando las comisiones del listero,
     // independientemente del nivel de agrupación o filtrado
     // monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalListeroCommission
+    // ✅ SE CORRIGE: monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalVendedorCommission
     const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalVendedorCommission;
 
     // Calcular totales de pagos/cobros del mes
