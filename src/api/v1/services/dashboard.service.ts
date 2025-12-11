@@ -52,6 +52,7 @@ interface GananciaResult {
     winners: number;
     winRate: number;
     isActive: boolean;
+    periodBalance: number; // ✅ NUEVO: Saldo del periodo filtrado
   }>;
   byLoteria: Array<{
     loteriaId: string;
@@ -744,6 +745,51 @@ export const DashboardService = {
       `
     );
 
+    // ✅ NUEVO: Obtener pagos y cobros del periodo para calcular periodBalance
+    const rangeStart = parseDateStart(fromDateStr);
+    const rangeEnd = parseDateEnd(toDateStr);
+
+    const paymentsWhere: Prisma.AccountPaymentWhereInput = {
+      date: {
+        gte: rangeStart,
+        lte: rangeEnd,
+      },
+      isReversed: false,
+      ventanaId: { not: null },
+    };
+
+    if (filters.ventanaId) {
+      paymentsWhere.ventanaId = filters.ventanaId;
+    }
+    if (filters.bancaId) {
+      paymentsWhere.ventana = {
+        bancaId: filters.bancaId,
+      };
+    }
+
+    const payments = await prisma.accountPayment.findMany({
+      where: paymentsWhere,
+      select: {
+        ventanaId: true,
+        type: true,
+        amount: true,
+      },
+    });
+
+    // Agrupar pagos y cobros por ventana
+    const paymentsByVentana = new Map<string, { paid: number; collected: number }>();
+    for (const payment of payments) {
+      if (!payment.ventanaId) continue;
+
+      const existing = paymentsByVentana.get(payment.ventanaId) || { paid: 0, collected: 0 };
+      if (payment.type === 'payment') {
+        existing.paid += payment.amount;
+      } else if (payment.type === 'collection') {
+        existing.collected += payment.amount;
+      }
+      paymentsByVentana.set(payment.ventanaId, existing);
+    }
+
     const totalSales = byVentanaResult.reduce((sum, v) => sum + Number(v.total_sales || 0), 0);
     const totalPayouts = byVentanaResult.reduce((sum, v) => sum + Number(v.total_payouts || 0), 0);
     const commissionUserTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_user || 0), 0);
@@ -751,18 +797,10 @@ export const DashboardService = {
     const commissionVentanaTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
     const totalAmount = commissionUserTotal + commissionVentanaTotal;
 
-    // Calcular ganancia neta según rol y dimensión
-    // Banca (ADMIN) con dimension=ventana/loteria: resta solo commissionVentana
-    // Ventana o dimension=vendedor: resta solo commissionUser
-    // Vendedor: resta solo commissionUser
-    let totalNet: number;
-    if (role === Role.ADMIN && (filters.dimension === 'ventana' || filters.dimension === 'loteria')) {
-      // Banca viendo ventanas o loterías: resta solo comisión de ventana
-      totalNet = totalSales - totalPayouts - commissionUserTotal;
-    } else {
-      // Ventana, vendedor, o admin viendo vendedores: resta solo comisión de usuario
-      totalNet = totalSales - totalPayouts - commissionUserTotal;
-    }
+    // ✅ CRÍTICO: Ganancia Global SIEMPRE usa commissionVentanaTotal (comisión del listero)
+    // Según especificaciones del cliente: la Ganancia Global de la Banca se calcula
+    // restando las comisiones de los listeros (ventanas), NO las comisiones de usuarios
+    const totalNet = totalSales - totalPayouts - commissionVentanaTotal;
     const margin = totalSales > 0 ? (totalNet / totalSales) * 100 : 0;
 
     return {
@@ -782,17 +820,17 @@ export const DashboardService = {
         // ✅ CAMBIO: Usar SOLO snapshot del SQL (row.commission_ventana = SUM(listeroCommissionAmount))
         const commissionVentana = Number(row.commission_ventana) || 0;
         const commissions = commissionUser + commissionVentana;
-        // Calcular ganancia neta según rol y dimensión
-        // Banca (ADMIN) con dimension=ventana: resta solo commissionVentana
-        // Ventana: resta solo commissionUser
-        let net: number;
-        if (role === Role.ADMIN && filters.dimension === 'ventana') {
-          net = sales - payout - commissionVentana;
-        } else {
-          net = sales - payout - commissionUser;
-        }
+        // ✅ CRÍTICO: byVentana[].net SIEMPRE usa commissionVentana (comisión del listero)
+        // Según especificaciones del cliente: el desglose por ventanas debe usar
+        // las comisiones de los listeros, NO las comisiones de usuarios
+        const net = sales - payout - commissionVentana;
         const ventanaMargin = sales > 0 ? (net / sales) * 100 : 0;
         const winRate = tickets > 0 ? (winners / tickets) * 100 : 0;
+
+        // ✅ NUEVO: Calcular periodBalance (saldo del periodo filtrado)
+        // periodBalance = sales - payout - commissionVentana - paid + collected
+        const paymentsInfo = paymentsByVentana.get(row.ventana_id) || { paid: 0, collected: 0 };
+        const periodBalance = sales - payout - commissionVentana - paymentsInfo.collected + paymentsInfo.paid;
 
         return {
           ventanaId: row.ventana_id,
@@ -809,6 +847,7 @@ export const DashboardService = {
           winners,
           winRate: parseFloat(winRate.toFixed(2)),
           isActive: row.is_active,
+          periodBalance: parseFloat(periodBalance.toFixed(2)), // ✅ NUEVO: Saldo del periodo
         };
       }),
       byLoteria: byLoteriaResult.map((row) => {

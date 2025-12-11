@@ -1023,11 +1023,11 @@ export async function getStatementDirect(
         // Esto evita la multiplicación por número de jugadas que ocurría en el JOIN
         const totalPayouts = bySorteo.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
 
-        // (DEPRECADO) CORRECCIÓN: Balance SIEMPRE usando listeroCommission
-        // El balance siempre debe calcularse restando las comisiones del listero,
-        // independientemente del nivel de agrupación o filtrado (dimensión)
-        // ✅ SE CORRIGE: balance = entry.totalSales - totalPayouts - entry.commissionVendedor
-        const balance = entry.totalSales - totalPayouts - entry.commissionVendedor;
+        // ✅ CRÍTICO: Usar comisión correcta según filtros del cliente
+        // - Si hay vendedorId específico → usar commissionVendedor
+        // - Si NO hay vendedorId → usar commissionListero (por defecto)
+        const commissionToUse = vendedorId ? entry.commissionVendedor : entry.commissionListero;
+        const balance = entry.totalSales - totalPayouts - commissionToUse;
 
         // Calcular totales de pagos y cobros
         const totalPaid = movements
@@ -1419,13 +1419,11 @@ export async function getStatementDirect(
     const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
     const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
     const totalVendedorCommission = statements.reduce((sum, s) => sum + s.vendedorCommission, 0);
-    // (DEPRECADO) CORRECCIÓN: Balance total SIEMPRE usando listeroCommission
-    // El balance siempre debe calcularse restando las comisiones del listero,
-    // independientemente del nivel de agrupación o filtrado (dimensión)
-    // Esto asegura consistencia con monthlyTotalBalance y refleja que el listero
-    // es quien asume la responsabilidad financiera de los tickets
-    // ✅ CRÍTICO: Balance total usando vendedorCommission
-    const totalBalance = totalSales - totalPayouts - totalVendedorCommission;
+    // ✅ CRÍTICO: Usar comisión correcta según filtros del cliente
+    // - Si hay vendedorId específico → usar totalVendedorCommission
+    // - Si NO hay vendedorId → usar totalListeroCommission (por defecto)
+    const totalCommissionToUse = vendedorId ? totalVendedorCommission : totalListeroCommission;
+    const totalBalance = totalSales - totalPayouts - totalCommissionToUse;
     const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
     const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
     // ✅ CRÍTICO: Calcular totalRemainingBalance desde los totales agregados, NO sumando remainingBalance individuales
@@ -1686,12 +1684,11 @@ export async function getStatementDirect(
         (sum, entry) => sum + entry.commissionVendedor,
         0
     );
-    //  (DEPRECADO) CORRECCIÓN: Balance total mensual siempre usando listeroCommission
-    // El balance siempre debe calcularse restando las comisiones del listero,
-    // independientemente del nivel de agrupación o filtrado
-    // monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalListeroCommission
-    // ✅ SE CORRIGE: monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalVendedorCommission
-    const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalVendedorCommission;
+    // ✅ CRÍTICO: Usar comisión correcta según filtros del cliente
+    // - Si hay vendedorId específico → usar monthlyTotalVendedorCommission
+    // - Si NO hay vendedorId → usar monthlyTotalListeroCommission (por defecto)
+    const monthlyTotalCommissionToUse = vendedorId ? monthlyTotalVendedorCommission : monthlyTotalListeroCommission;
+    const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalCommissionToUse;
 
     // Calcular totales de pagos/cobros del mes
     let monthlyTotalPaid = 0;
