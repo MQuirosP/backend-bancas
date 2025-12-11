@@ -1841,7 +1841,9 @@ gs."hour24" ASC
       // ✅ NUEVO: Calcular rango de fechas para monthlyAccumulated (desde inicio del mes hasta hoy)
       const today = new Date();
       const monthlyStartDate = new Date(today.getFullYear(), today.getMonth(), 1);
-      const monthlyEndDate = today;
+      // ✅ FIX: monthlyEndDate debe ser el FINAL del día de hoy (23:59:59.999)
+      // para incluir sorteos programados más tarde en el día actual
+      const monthlyEndDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
       
       // ✅ NUEVO: Obtener movimientos del mes completo para monthlyAccumulated
       const monthlyMovementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
