@@ -68,32 +68,55 @@ export const VendedoresReportService = {
     const fromDateStr = dateRange.fromString; // YYYY-MM-DD
     const toDateStr = dateRange.toString; // YYYY-MM-DD
 
-    // Query optimizada para comisiones por vendedor
-    // Usa businessDate (o createdAt convertido a CR) para filtrar por fecha de negocio
+    // ✅ FIX: Query optimizada con CTEs para evitar multiplicación de filas
+    // Problema anterior: LEFT JOIN con Jugada multiplicaba t."totalAmount" por número de jugadas
+    // Solución: Separar agregación de tickets y jugadas en CTEs independientes
     const chartQuery = Prisma.sql`
-      SELECT 
+      WITH tickets_in_range AS (
+        SELECT
+          t.id,
+          t."vendedorId",
+          t."totalAmount"
+        FROM "Ticket" t
+        WHERE (
+            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
+          ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          AND t."deletedAt" IS NULL
+          AND t."isActive" = true
+          ${ticketStatusFilter}
+      ),
+      ventas_por_vendedor AS (
+        SELECT
+          t."vendedorId",
+          COUNT(DISTINCT t.id) as tickets_count,
+          COALESCE(SUM(t."totalAmount"), 0) as ventas_total
+        FROM tickets_in_range t
+        GROUP BY t."vendedorId"
+      ),
+      comisiones_por_vendedor AS (
+        SELECT
+          t."vendedorId",
+          COALESCE(SUM(j."commissionAmount"), 0) as commissions_total
+        FROM tickets_in_range t
+        INNER JOIN "Jugada" j ON j."ticketId" = t.id
+          AND j."deletedAt" IS NULL
+          AND j."isActive" = true
+          AND j."commissionOrigin" = 'USER'
+        GROUP BY t."vendedorId"
+      )
+      SELECT
         u.id as vendedor_id,
         u.name as vendedor_name,
         u.code as vendedor_code,
-        COALESCE(SUM(j."commissionAmount"), 0) as commissions_total,
-        COUNT(DISTINCT t.id) as tickets_count,
-        COALESCE(SUM(t."totalAmount"), 0) as ventas_total
+        COALESCE(c.commissions_total, 0) as commissions_total,
+        COALESCE(v.tickets_count, 0) as tickets_count,
+        COALESCE(v.ventas_total, 0) as ventas_total
       FROM "User" u
-      LEFT JOIN "Ticket" t ON t."vendedorId" = u.id 
-        AND (
-          COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
-        ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-        AND t."deletedAt" IS NULL
-        AND t."isActive" = true
-        ${ticketStatusFilter}
-      LEFT JOIN "Jugada" j ON j."ticketId" = t.id 
-        AND j."deletedAt" IS NULL
-        AND j."isActive" = true
-        AND j."commissionOrigin" = 'USER'
+      LEFT JOIN ventas_por_vendedor v ON v."vendedorId" = u.id
+      LEFT JOIN comisiones_por_vendedor c ON c."vendedorId" = u.id
       WHERE u.role = 'VENDEDOR'
         AND u."ventanaId" = ${filters.ventanaId}::uuid
         AND u."isActive" = true
-      GROUP BY u.id, u.name, u.code
       ORDER BY u.name ASC
     `;
 
