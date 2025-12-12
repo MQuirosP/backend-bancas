@@ -55,15 +55,6 @@ export async function registerPayment(data: {
         AccountPaymentRepository.getTotalCollected(statement.id),
     ]);
 
-    // Validar que el statement no esté saldado usando valores guardados
-    if (statement.isSettled) {
-        throw new AppError("El estado de cuenta ya está saldado", 400, "STATEMENT_SETTLED");
-    }
-
-    if (!statement.canEdit) {
-        throw new AppError("El estado de cuenta ya está saldado", 400, "STATEMENT_SETTLED");
-    }
-
     // Usar balance guardado en el statement (ya calculado previamente)
     const baseBalance = statement.balance || 0;
     // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
