@@ -25,6 +25,7 @@ import sorteosAutoRoutes from "./sorteosAuto.routes"
 import reportsRoutes from "./reports.routes"
 import listasExcluidasRoutes from "./listas-excluidas.routes"
 import accountStatementSettlementRoutes from "./accountStatementSettlement.routes"
+import appRoutes from "./app.routes"
 
 const router = Router();
 
@@ -32,6 +33,7 @@ const router = Router();
 // para asegurar que req.user esté disponible
 
 router.use('/auth', authRoutes);
+router.use('/app', appRoutes); // Public routes for APK auto-update
 router.use('/users', userRoutes);
 router.use('/tickets', ticketRoutes);
 router.use('/loterias', loteriaRoutes);
