@@ -58,6 +58,8 @@ export async function registerPayment(data: {
     // Usar balance guardado en el statement (ya calculado previamente)
     const baseBalance = statement.balance || 0;
     // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
+    // COBRO (banca cobra al listero): RESTA del saldo del listero
+    // PAGO (banca paga al listero): SUMA al saldo del listero
     const currentRemainingBalance = baseBalance - currentTotalCollected + currentTotalPaid;
 
     // Validar monto según el tipo de movimiento
