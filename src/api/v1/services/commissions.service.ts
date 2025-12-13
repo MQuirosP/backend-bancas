@@ -114,27 +114,33 @@ export const CommissionsService = {
       // Agrupamos cuando dimension=ventana y ventanaId NO está especificado
       // o cuando dimension=vendedor y vendedorId NO está especificado
       // ✅ CRÍTICO: Verificar tanto undefined como null y cadena vacía
-      const shouldGroupByDate = 
-          (filters.dimension === "ventana" && (!filters.ventanaId || filters.ventanaId === "" || filters.ventanaId === null)) ||
-          (filters.dimension === "vendedor" && (!filters.vendedorId || filters.vendedorId === "" || filters.vendedorId === null));
-      
+      const shouldGroupByDate =
+        (filters.dimension === "ventana" && (!filters.ventanaId || filters.ventanaId === "" || filters.ventanaId === null)) ||
+        (filters.dimension === "vendedor" && (!filters.vendedorId || filters.vendedorId === "" || filters.vendedorId === null));
+
       // ✅ DEBUG: Log para verificar agrupación
       logger.info({
-          layer: "service",
-          action: "COMMISSIONS_GROUPING_CHECK",
-          payload: {
-              dimension: filters.dimension,
-              ventanaId: filters.ventanaId || null,
-              vendedorId: filters.vendedorId || null,
-              shouldGroupByDate,
-          },
+        layer: "service",
+        action: "COMMISSIONS_GROUPING_CHECK",
+        payload: {
+          dimension: filters.dimension,
+          ventanaId: filters.ventanaId || null,
+          vendedorId: filters.vendedorId || null,
+          shouldGroupByDate,
+        },
       });
 
       // Construir filtros WHERE dinámicos según RBAC
       const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
+        // ✅ CAMBIO: Filtrar EXCLUSIVAMENTE sorteos EVALUATED para comisiones
+        Prisma.sql`t."status" != 'CANCELLED'`,
+        Prisma.sql`EXISTS (
+          SELECT 1 FROM "Sorteo" s
+          WHERE s.id = t."sorteoId" 
+          AND s.status = 'EVALUATED'
+        )`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
         // ✅ NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
@@ -226,7 +232,7 @@ export const CommissionsService = {
         const filteredResult = result.filter((r) => {
           const dateKey = postgresDateToCRString(r.business_date);
           const isInRange = isDateInCRRange(dateKey, startDateCRStr, endDateCRStr);
-          
+
           // ✅ DEBUG: Log detallado para identificar problemas
           if (!isInRange) {
             logger.debug({
@@ -234,8 +240,8 @@ export const CommissionsService = {
               action: "COMMISSIONS_FILTER_OUT_OF_RANGE",
               payload: {
                 business_date_iso: r.business_date.toISOString(),
-                business_date_utc: r.business_date.getUTCFullYear() + '-' + 
-                  String(r.business_date.getUTCMonth() + 1).padStart(2, '0') + '-' + 
+                business_date_utc: r.business_date.getUTCFullYear() + '-' +
+                  String(r.business_date.getUTCMonth() + 1).padStart(2, '0') + '-' +
                   String(r.business_date.getUTCDate()).padStart(2, '0'),
                 dateKey,
                 startDateCRStr,
@@ -244,7 +250,7 @@ export const CommissionsService = {
               },
             });
           }
-          
+
           return isInRange;
         });
 
@@ -398,11 +404,11 @@ export const CommissionsService = {
               continue; // Saltar jugadas fuera del período
             }
             jugadasProcessed++;
-            
+
             // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + ventana
             const groupKey = shouldGroupByDate
-                ? dateKey // Solo fecha cuando hay agrupación
-                : `${dateKey}_${jugada.ventana_id}`;
+              ? dateKey // Solo fecha cuando hay agrupación
+              : `${dateKey}_${jugada.ventana_id}`;
 
             // Clave para el desglose por entidad (siempre incluye entidad)
             const breakdownKey = `${dateKey}_${jugada.ventana_id}`;
@@ -488,7 +494,7 @@ export const CommissionsService = {
               // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
               // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
               const totalCommission = entry.commissionListero;
-              
+
               const item: any = {
                 date, // YYYY-MM-DD
                 ventanaId: entry.ventanaId,
@@ -663,11 +669,11 @@ export const CommissionsService = {
               continue; // Saltar jugadas fuera del período
             }
             jugadasProcessed++;
-            
+
             // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + ventana
             const groupKey = shouldGroupByDate
-                ? dateKey // Solo fecha cuando hay agrupación
-                : `${dateKey}_${jugada.ventana_id}`;
+              ? dateKey // Solo fecha cuando hay agrupación
+              : `${dateKey}_${jugada.ventana_id}`;
 
             // Clave para el desglose por entidad (siempre incluye entidad)
             const breakdownKey = `${dateKey}_${jugada.ventana_id}`;
@@ -753,7 +759,7 @@ export const CommissionsService = {
               // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
               // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
               const totalCommission = entry.commissionListero;
-              
+
               const item: any = {
                 date, // YYYY-MM-DD
                 ventanaId: entry.ventanaId,
@@ -917,28 +923,47 @@ export const CommissionsService = {
         >();
 
         for (const jugada of jugadas) {
-            const dateKey = postgresDateToCRString(jugada.business_date);
-            // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
-            if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
-              continue; // Saltar jugadas fuera del período
-            }
+          const dateKey = postgresDateToCRString(jugada.business_date);
+          // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+          if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
+            continue; // Saltar jugadas fuera del período
+          }
 
-            // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + vendedor
-            const groupKey = shouldGroupByDate
-                ? dateKey // Solo fecha cuando hay agrupación
-                : `${dateKey}_${jugada.vendedor_id}`;
+          // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + vendedor
+          const groupKey = shouldGroupByDate
+            ? dateKey // Solo fecha cuando hay agrupación
+            : `${dateKey}_${jugada.vendedor_id}`;
 
-            // Clave para el desglose por entidad (siempre incluye entidad)
-            const breakdownKey = `${dateKey}_${jugada.vendedor_id}`;
+          // Clave para el desglose por entidad (siempre incluye entidad)
+          const breakdownKey = `${dateKey}_${jugada.vendedor_id}`;
 
-            // Obtener o crear entrada principal (agrupada por fecha si shouldGroupByDate)
-            let entry = byDateAndVendedor.get(groupKey);
-            if (!entry) {
-              entry = {
-                vendedorId: shouldGroupByDate ? null : jugada.vendedor_id,
-                vendedorName: shouldGroupByDate ? null : jugada.vendedor_name,
-                ventanaId: shouldGroupByDate ? null : jugada.ventana_id,
-                ventanaName: shouldGroupByDate ? null : jugada.ventana_name,
+          // Obtener o crear entrada principal (agrupada por fecha si shouldGroupByDate)
+          let entry = byDateAndVendedor.get(groupKey);
+          if (!entry) {
+            entry = {
+              vendedorId: shouldGroupByDate ? null : jugada.vendedor_id,
+              vendedorName: shouldGroupByDate ? null : jugada.vendedor_name,
+              ventanaId: shouldGroupByDate ? null : jugada.ventana_id,
+              ventanaName: shouldGroupByDate ? null : jugada.ventana_name,
+              totalSales: 0,
+              totalPayouts: 0,
+              totalTickets: new Set<string>(),
+              commissionListero: 0,
+              commissionVendedor: 0,
+              payoutTickets: new Set<string>(),
+            };
+            byDateAndVendedor.set(groupKey, entry);
+          }
+
+          // ✅ NUEVO: Mantener desglose por entidad cuando hay agrupación
+          if (shouldGroupByDate) {
+            let breakdownEntry = breakdownByEntity.get(breakdownKey);
+            if (!breakdownEntry) {
+              breakdownEntry = {
+                vendedorId: jugada.vendedor_id,
+                vendedorName: jugada.vendedor_name,
+                ventanaId: jugada.ventana_id,
+                ventanaName: jugada.ventana_name,
                 totalSales: 0,
                 totalPayouts: 0,
                 totalTickets: new Set<string>(),
@@ -946,49 +971,30 @@ export const CommissionsService = {
                 commissionVendedor: 0,
                 payoutTickets: new Set<string>(),
               };
-              byDateAndVendedor.set(groupKey, entry);
+              breakdownByEntity.set(breakdownKey, breakdownEntry);
             }
 
-            // ✅ NUEVO: Mantener desglose por entidad cuando hay agrupación
-            if (shouldGroupByDate) {
-              let breakdownEntry = breakdownByEntity.get(breakdownKey);
-              if (!breakdownEntry) {
-                breakdownEntry = {
-                  vendedorId: jugada.vendedor_id,
-                  vendedorName: jugada.vendedor_name,
-                  ventanaId: jugada.ventana_id,
-                  ventanaName: jugada.ventana_name,
-                  totalSales: 0,
-                  totalPayouts: 0,
-                  totalTickets: new Set<string>(),
-                  commissionListero: 0,
-                  commissionVendedor: 0,
-                  payoutTickets: new Set<string>(),
-                };
-                breakdownByEntity.set(breakdownKey, breakdownEntry);
-              }
-
-              // Actualizar desglose por entidad
-              breakdownEntry.totalSales += jugada.amount;
-              breakdownEntry.totalTickets.add(jugada.ticket_id);
-              breakdownEntry.commissionListero += Number(jugada.listero_commission_amount || 0);
-              breakdownEntry.commissionVendedor += Number(jugada.commission_amount || 0);
-              if (!breakdownEntry.payoutTickets.has(jugada.ticket_id)) {
-                breakdownEntry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-                breakdownEntry.payoutTickets.add(jugada.ticket_id);
-              }
+            // Actualizar desglose por entidad
+            breakdownEntry.totalSales += jugada.amount;
+            breakdownEntry.totalTickets.add(jugada.ticket_id);
+            breakdownEntry.commissionListero += Number(jugada.listero_commission_amount || 0);
+            breakdownEntry.commissionVendedor += Number(jugada.commission_amount || 0);
+            if (!breakdownEntry.payoutTickets.has(jugada.ticket_id)) {
+              breakdownEntry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+              breakdownEntry.payoutTickets.add(jugada.ticket_id);
             }
+          }
 
-            // Actualizar entrada principal (agrupada)
-            entry.totalSales += jugada.amount;
-            entry.totalTickets.add(jugada.ticket_id);
-            // Usar snapshot de comisión del listero guardado en BD
-            entry.commissionListero += Number(jugada.listero_commission_amount || 0);
-            entry.commissionVendedor += Number(jugada.commission_amount || 0);
-            if (!entry.payoutTickets.has(jugada.ticket_id)) {
-              entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-              entry.payoutTickets.add(jugada.ticket_id);
-            }
+          // Actualizar entrada principal (agrupada)
+          entry.totalSales += jugada.amount;
+          entry.totalTickets.add(jugada.ticket_id);
+          // Usar snapshot de comisión del listero guardado en BD
+          entry.commissionListero += Number(jugada.listero_commission_amount || 0);
+          entry.commissionVendedor += Number(jugada.commission_amount || 0);
+          if (!entry.payoutTickets.has(jugada.ticket_id)) {
+            entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+            entry.payoutTickets.add(jugada.ticket_id);
+          }
         }
 
         logger.info({
@@ -1008,7 +1014,7 @@ export const CommissionsService = {
         const items = Array.from(byDateAndVendedor.entries()).map(([key, entry]) => {
           // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_vendedor
           const date = shouldGroupByDate ? key : key.split("_")[0];
-          
+
           const item: any = {
             date, // YYYY-MM-DD
             vendedorId: entry.vendedorId,
@@ -1178,7 +1184,12 @@ export const CommissionsService = {
       const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
+        Prisma.sql`t."status" != 'CANCELLED'`,
+        Prisma.sql`EXISTS (
+          SELECT 1 FROM "Sorteo" s
+          WHERE s.id = t."sorteoId"
+          AND s.status = 'EVALUATED'
+        )`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
         // ✅ NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
@@ -1792,7 +1803,12 @@ export const CommissionsService = {
       const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
+        Prisma.sql`t."status" != 'CANCELLED'`,
+        Prisma.sql`EXISTS (
+          SELECT 1 FROM "Sorteo" s
+          WHERE s.id = t."sorteoId"
+          AND s.status = 'EVALUATED'
+        )`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
         Prisma.sql`t."loteriaId" = ${loteriaId}::uuid`,

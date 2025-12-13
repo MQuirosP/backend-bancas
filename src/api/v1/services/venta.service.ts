@@ -56,10 +56,10 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
     status: filters.status
       ? (filters.status as any)
       : { not: "CANCELLED" }, // Excluir CANCELLED si no se especifica status
-    // ✅ NUEVO: Excluir sorteos CLOSED para no incluir datos de sorteos finalizados
+    // ✅ NUEVO: Solo incluir datos de sorteos EVALUATED (Global Filter)
     sorteo: {
-      status: { not: "CLOSED" },
-      deletedAt: null,  // También excluir sorteos eliminados
+      status: "EVALUATED",
+      deletedAt: null,
     },
   };
 
@@ -1201,7 +1201,12 @@ export const VentasService = {
       const whereSqlParts: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`
+        Prisma.sql`t."status" != 'CANCELLED'`,
+        Prisma.sql`EXISTS (
+          SELECT 1 FROM "Sorteo" s
+          WHERE s.id = t."sorteoId"
+          AND s.status = 'EVALUATED'
+        )`
       ];
 
       if (dateCondition) {

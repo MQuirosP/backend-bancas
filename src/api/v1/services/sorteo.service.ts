@@ -823,9 +823,9 @@ export const SorteoService = {
           return false; // Solo considerar reglas con rango explícito
         }
 
-        const inRange = multiplierValue >= rule.multiplierRange.min && 
-                        multiplierValue <= rule.multiplierRange.max;
-        
+        const inRange = multiplierValue >= rule.multiplierRange.min &&
+          multiplierValue <= rule.multiplierRange.max;
+
         if (!inRange) return false;
 
         // Si tiene loteriaId específica, debe coincidir (null = aplica a todas)
@@ -861,11 +861,11 @@ export const SorteoService = {
   ): Promise<{ filteredSorteos: Array<{ id: string; loteriaId: string }>; filteredTotal: number }> {
     // Obtener política de comisiones
     const commissionPolicy = await this.getCommissionPolicy(userId, ventanaId);
-    
+
     // Si no hay política, ocultar todos los sorteos con multiplicadores activos
     if (!commissionPolicy) {
       const sorteosWithoutMultipliers: Array<{ id: string; loteriaId: string }> = [];
-      
+
       for (const sorteo of sorteos) {
         const multipliers = await this.getActiveMultipliers(sorteo.loteriaId);
         // Solo mostrar si no tiene multiplicadores activos
@@ -884,7 +884,7 @@ export const SorteoService = {
           });
         }
       }
-      
+
       return {
         filteredSorteos: sorteosWithoutMultipliers,
         filteredTotal: sorteosWithoutMultipliers.length,
@@ -893,11 +893,11 @@ export const SorteoService = {
 
     // Filtrar sorteos según política
     const filteredSorteos: Array<{ id: string; loteriaId: string }> = [];
-    
+
     // ✅ OPTIMIZACIÓN: Agrupar sorteos por loteriaId para evitar queries duplicadas
     const loteriaIds = [...new Set(sorteos.map(s => s.loteriaId))];
     const multipliersByLoteria = new Map<string, Array<{ id: string; valueX: number }>>();
-    
+
     // Obtener multiplicadores para todas las loterías en paralelo
     await Promise.all(
       loteriaIds.map(async (loteriaId) => {
@@ -910,7 +910,7 @@ export const SorteoService = {
     for (const sorteo of sorteos) {
       const multipliers = multipliersByLoteria.get(sorteo.loteriaId) || [];
       const shouldShow = await this.shouldShowSorteo(sorteo, multipliers, commissionPolicy);
-      
+
       if (shouldShow) {
         filteredSorteos.push(sorteo);
       } else {
@@ -957,7 +957,7 @@ export const SorteoService = {
       // ✅ Para VENDEDOR, no usar caché (cada vendedor tiene políticas diferentes)
       // Para otros roles, usar caché normalmente
       const isVendedor = params.role === Role.VENDEDOR;
-      
+
       if (!isVendedor) {
         // Intentar obtener del cache solo para ADMIN/VENTANA
         const { getCachedSorteoList, setCachedSorteoList } = require('../../../utils/sorteoCache');
@@ -998,12 +998,12 @@ export const SorteoService = {
           params.userId,
           params.ventanaId
         );
-        
+
         // Crear Set de IDs filtrados para mantener el orden y estructura completa
         const filteredIds = new Set(filterResult.filteredSorteos.map(s => s.id));
         filteredData = data.filter(s => filteredIds.has(s.id));
         filteredTotal = filterResult.filteredTotal;
-        
+
         logger.info({
           layer: "service",
           action: "SORTEO_LIST_FILTERED_BY_COMMISSION_POLICY",
@@ -1404,21 +1404,20 @@ gs."hour24" ASC
         params.toDate
       );
 
-      // Parsear estados permitidos desde el parámetro status
-      // Por defecto: EVALUATED y OPEN
-      let allowedStatuses: SorteoStatus[] = [SorteoStatus.EVALUATED, SorteoStatus.OPEN];
+      // ✅ CAMBIO: Forzar status EVALUATED (Global Filter)
+      // Ya no permitimos que el cliente solicite otros estados para este reporte
+      const allowedStatuses: SorteoStatus[] = [SorteoStatus.EVALUATED];
 
+      // Ignorar params.status para garantizar integridad financiera
       if (params.status) {
-        // Parsear string como "EVALUATED,OPEN" o "EVALUATED" o "OPEN"
-        const statusStrings = params.status.split(',').map(s => s.trim().toUpperCase());
-        allowedStatuses = statusStrings
-          .filter(s => Object.values(SorteoStatus).includes(s as SorteoStatus))
-          .map(s => s as SorteoStatus);
-
-        // Si no hay estados válidos después del parseo, usar el default
-        if (allowedStatuses.length === 0) {
-          allowedStatuses = [SorteoStatus.EVALUATED, SorteoStatus.OPEN];
-        }
+        logger.warn({
+          layer: "service",
+          action: "SORTEO_EVALUATED_SUMMARY_FILTER_IGNORED",
+          payload: {
+            message: "Client requested specific status but was ignored due to Global Evaluated Rule",
+            requestedStatus: params.status
+          }
+        });
       }
 
       // Construir filtro de status de tickets
@@ -1844,7 +1843,7 @@ gs."hour24" ASC
       // ✅ FIX: monthlyEndDate debe ser el FINAL del día de hoy (23:59:59.999)
       // para incluir sorteos programados más tarde en el día actual
       const monthlyEndDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-      
+
       // ✅ NUEVO: Obtener movimientos del mes completo para monthlyAccumulated
       const monthlyMovementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
         monthlyStartDate,

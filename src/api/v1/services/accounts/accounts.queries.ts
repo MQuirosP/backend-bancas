@@ -187,6 +187,10 @@ export async function getSorteoBreakdownBatch(
         OR: dateFilters,
         deletedAt: null,
         status: { not: "CANCELLED" },
+        // ✅ CORRECCIÓN: Filtrar estrictamente solo sorteos EVALUADOS (no CERRADOS)
+        sorteo: {
+            status: "EVALUATED"
+        },
     };
 
     // Filtrar por banca activa (para ADMIN multibanca)
@@ -330,9 +334,38 @@ export async function getSorteoBreakdownBatch(
         }
     }
 
+    // ✅ OPTIMIZACIÓN: Fetch exclusions for the relevant sorteos to prevent "choque" with logic
+    const uniqueSorteoIds = Array.from(new Set(tickets.map(t => t.sorteoId)));
+    const exclusions = uniqueSorteoIds.length > 0
+        ? await prisma.sorteoListaExclusion.findMany({
+            where: {
+                sorteoId: { in: uniqueSorteoIds },
+            },
+        })
+        : [];
+
+    // Helper to check exclusion
+    const isExcluded = (t: typeof tickets[0]) => {
+        return exclusions.some(e =>
+            e.sorteoId === t.sorteoId &&
+            e.ventanaId === t.ventanaId &&
+            (e.vendedorId === null || e.vendedorId === t.vendedorId) &&
+            (e.multiplierId === null) // Lists are usually excluded entirely, but handle multiplier if needed? 
+            // The prompt implies "Listas Excluidas" (entire list), so multiplierId is usually null or handled at jugada level.
+            // But SorteoListaExclusion can have multiplierId.
+            // If the exclusion has a multiplierId, it only excludes specific jugadas, NOT the whole ticket/list from the view?
+            // "Listas Excluidas" usually refers to the whole list for a vendor.
+            // If e.multiplierId is null, it excludes the whole list.
+            && e.multiplierId === null
+        );
+    };
+
     // Agrupar tickets por fecha, dimensión y sorteo
     for (const ticket of tickets) {
         if (!ticket.sorteoId || !ticket.sorteo) continue;
+
+        // ✅ NUEVO: Verificar exclusión
+        if (isExcluded(ticket)) continue;
 
         // Determinar la fecha del ticket
         const ticketDate = ticket.businessDate !== null
@@ -476,6 +509,10 @@ export async function getSorteoBreakdown(
         ...dateFilter,
         deletedAt: null,
         status: { not: "CANCELLED" },
+        // ✅ CORRECCIÓN: Filtrar estrictamente solo sorteos EVALUADOS (no CERRADOS)
+        sorteo: {
+            status: "EVALUATED"
+        },
     };
 
     // Filtrar por banca activa (para ADMIN multibanca)
@@ -504,6 +541,8 @@ export async function getSorteoBreakdown(
             id: true,
             totalAmount: true,
             sorteoId: true,
+            // ✅ FIX: Agregar vendedorId para la verificación de exclusiones
+            vendedorId: true,
             ventanaId: true,
             loteriaId: true,
             sorteo: {
@@ -590,8 +629,31 @@ export async function getSorteoBreakdown(
         ticketCount: number;
     }>();
 
+    // ✅ OPTIMIZACIÓN: Fetch exclusions for the relevant sorteos
+    const uniqueSorteoIds = Array.from(new Set(tickets.map(t => t.sorteoId)));
+    const exclusions = uniqueSorteoIds.length > 0
+        ? await prisma.sorteoListaExclusion.findMany({
+            where: {
+                sorteoId: { in: uniqueSorteoIds },
+            },
+        })
+        : [];
+
+    // Helper to check exclusion
+    const isExcluded = (t: typeof tickets[0]) => {
+        return exclusions.some(e =>
+            e.sorteoId === t.sorteoId &&
+            e.ventanaId === t.ventanaId &&
+            (e.vendedorId === null || e.vendedorId === t.vendedorId) &&
+            (e.multiplierId === null)
+        );
+    };
+
     for (const ticket of tickets) {
         if (!ticket.sorteoId || !ticket.sorteo) continue;
+
+        // ✅ NUEVO: Verificar exclusión
+        if (isExcluded(ticket)) continue;
 
         const sorteoId = ticket.sorteo.id;
         let entry = sorteoMap.get(sorteoId);
