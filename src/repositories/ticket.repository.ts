@@ -45,6 +45,8 @@ async function calculateDynamicLimit(
     // Usar solo createdAt para mejor performance con índice
     const where: Prisma.TicketWhereInput = {
       deletedAt: null,
+      isActive: true, // ✅ Excluir tickets inactivos
+      status: { notIn: [TicketStatus.CANCELLED, TicketStatus.EXCLUDED] }, // ✅ Excluir tickets cancelados/excluidos
       createdAt: {
         gte: crRange.fromAt,
         lt: crRange.toAtExclusive,

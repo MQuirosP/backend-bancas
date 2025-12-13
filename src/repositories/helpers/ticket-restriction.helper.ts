@@ -27,16 +27,16 @@ export async function calculateAccumulatedByNumbersAndScope(
   }
 ): Promise<Map<string, number>> {
   const { numbers, scopeType, scopeId, sorteoId } = params;
-  
+
   // Si no hay números, retornar map vacío
   if (numbers.length === 0) {
     return new Map();
   }
-  
+
   try {
     // Construir WHERE según alcance usando SQL directo para mejor rendimiento y seguridad
     let scopeCondition: Prisma.Sql;
-    
+
     if (scopeType === 'USER') {
       scopeCondition = Prisma.sql`t."vendedorId" = ${scopeId}::uuid`;
     } else if (scopeType === 'VENTANA') {
@@ -46,7 +46,7 @@ export async function calculateAccumulatedByNumbersAndScope(
     } else {
       throw new Error(`Invalid scopeType: ${scopeType}`);
     }
-    
+
     // ⚡ OPTIMIZACIÓN: Query SQL que calcula todos los acumulados en una sola consulta
     // ✅ SEGURIDAD: Validar números antes de usar (ya validados por resolveNumbersToValidate)
     // Construir condiciones OR para cada número (más seguro que ANY con raw)
@@ -61,7 +61,7 @@ export async function calculateAccumulatedByNumbersAndScope(
         });
         continue; // Saltar números inválidos
       }
-      
+
       numberConditions.push(
         Prisma.sql`(j."number" = ${num} AND j."type" = 'NUMERO')`
       );
@@ -69,12 +69,12 @@ export async function calculateAccumulatedByNumbersAndScope(
         Prisma.sql`(j."reventadoNumber" = ${num} AND j."type" = 'REVENTADO')`
       );
     }
-    
+
     // Si no hay condiciones válidas, retornar map vacío
     if (numberConditions.length === 0) {
       return new Map();
     }
-    
+
     const result = await tx.$queryRaw<Array<{ number: string; total: number }>>(
       Prisma.sql`
         SELECT 
@@ -82,34 +82,36 @@ export async function calculateAccumulatedByNumbersAndScope(
           COALESCE(SUM(j.amount), 0)::numeric as total
         FROM "Ticket" t
         INNER JOIN "Jugada" j ON j."ticketId" = t.id
-        ${scopeType === 'BANCA' 
-          ? Prisma.sql`INNER JOIN "Ventana" v ON v.id = t."ventanaId"` 
+        ${scopeType === 'BANCA'
+          ? Prisma.sql`INNER JOIN "Ventana" v ON v.id = t."ventanaId"`
           : Prisma.sql``
         }
         WHERE 
           ${scopeCondition}
           AND t."sorteoId" = ${sorteoId}::uuid
           AND t."status" != 'CANCELLED'
+          AND t."isActive" = true  -- ✅ Exclusivo activos
           AND t."deletedAt" IS NULL
+          AND j."isActive" = true  -- ✅ Exclusivo activas
           AND j."deletedAt" IS NULL
           AND (${Prisma.join(numberConditions, ' OR ')})
         GROUP BY COALESCE(j."number", j."reventadoNumber")
       `
     );
-    
+
     // Convertir resultado a Map
     const accumulatedMap = new Map<string, number>();
     for (const row of result) {
       accumulatedMap.set(row.number, Number(row.total ?? 0));
     }
-    
+
     // Asegurar que todos los números tengan entrada (aunque sea 0)
     for (const num of numbers) {
       if (!accumulatedMap.has(num)) {
         accumulatedMap.set(num, 0);
       }
     }
-    
+
     logger.debug({
       layer: 'repository',
       action: 'ACCUMULATED_BY_NUMBERS_SCOPE_CALCULATED',
@@ -121,7 +123,7 @@ export async function calculateAccumulatedByNumbersAndScope(
         accumulatedMap: Object.fromEntries(accumulatedMap),
       },
     });
-    
+
     return accumulatedMap;
   } catch (error: any) {
     logger.error({
@@ -170,7 +172,7 @@ export async function calculateAccumulatedByNumberAndScope(
     scopeId: params.scopeId,
     sorteoId: params.sorteoId,
   });
-  
+
   return accumulatedMap.get(params.number) ?? 0;
 }
 
@@ -190,13 +192,13 @@ export function resolveNumbersToValidate(
   at: Date = new Date()
 ): string[] {
   const numbers: string[] = [];
-  
+
   // Si isAutoDate = true, calcular número automático según día del mes (CR timezone)
   if (rule.isAutoDate === true) {
     const crComponents = getCRLocalComponents(at);
     const autoNumber = String(crComponents.day).padStart(2, '0');
     numbers.push(autoNumber);
-    
+
     logger.debug({
       layer: 'repository',
       action: 'AUTO_DATE_NUMBER_RESOLVED',
@@ -206,21 +208,21 @@ export function resolveNumbersToValidate(
         at: at.toISOString(),
       },
     });
-    
+
     return numbers;
   }
-  
+
   // Si no hay número específico, retornar array vacío (se validarán todos los números del ticket)
   if (!rule.number) {
     return [];
   }
-  
+
   // Si es array, agregar todos los números
   if (Array.isArray(rule.number)) {
     // Filtrar valores válidos y eliminar duplicados
     const uniqueNumbers = [...new Set(rule.number.filter(n => n && typeof n === 'string' && n.trim()))];
     numbers.push(...uniqueNumbers);
-    
+
     logger.debug({
       layer: 'repository',
       action: 'ARRAY_NUMBERS_RESOLVED',
@@ -229,16 +231,16 @@ export function resolveNumbersToValidate(
         originalLength: rule.number.length,
       },
     });
-    
+
     return numbers;
   }
-  
+
   // Si es string único
   if (typeof rule.number === 'string' && rule.number.trim()) {
     numbers.push(rule.number.trim());
     return numbers;
   }
-  
+
   // Caso por defecto: sin números específicos
   return [];
 }
@@ -267,18 +269,18 @@ export async function validateMaxTotalForNumbers(
   }
 ): Promise<void> {
   const { numbers, rule, sorteoId, dynamicLimit } = params;
-  
+
   // Si no hay números, no validar
   if (numbers.length === 0) {
     return;
   }
-  
+
   // Determinar alcance
-  const scopeType = rule.userId ? 'USER' 
-    : rule.ventanaId ? 'VENTANA' 
-    : rule.bancaId ? 'BANCA' 
-    : null;
-  
+  const scopeType = rule.userId ? 'USER'
+    : rule.ventanaId ? 'VENTANA'
+      : rule.bancaId ? 'BANCA'
+        : null;
+
   if (!scopeType) {
     // Sin alcance específico: no validar (fallback a comportamiento legacy)
     logger.debug({
@@ -288,15 +290,15 @@ export async function validateMaxTotalForNumbers(
     });
     return;
   }
-  
+
   const scopeId = rule.userId || rule.ventanaId || rule.bancaId!;
-  
+
   // Calcular límite efectivo (considerar límite dinámico si existe)
   const staticMaxTotal = rule.maxTotal;
   const effectiveMaxTotal = dynamicLimit != null
     ? Math.min(staticMaxTotal, dynamicLimit)
     : staticMaxTotal;
-  
+
   // ⚡ OPTIMIZACIÓN: Calcular todos los acumulados en una sola query
   const numberStrings = numbers.map(n => n.number);
   const accumulatedMap = await calculateAccumulatedByNumbersAndScope(tx, {
@@ -305,21 +307,21 @@ export async function validateMaxTotalForNumbers(
     scopeId,
     sorteoId,
   });
-  
+
   // Validar cada número
   for (const { number, amountForNumber } of numbers) {
     const accumulatedInSorteo = accumulatedMap.get(number) ?? 0;
     const newAccumulated = accumulatedInSorteo + amountForNumber;
-    
+
     if (newAccumulated > effectiveMaxTotal) {
       const available = Math.max(0, effectiveMaxTotal - accumulatedInSorteo);
       const scopeLabel = rule.userId ? "personal"
         : rule.ventanaId ? "de ventana"
-        : rule.bancaId ? "de banca"
-        : "global";
-      
+          : rule.bancaId ? "de banca"
+            : "global";
+
       const isAutoDateLabel = rule.isAutoDate ? " (restricción automática por fecha)" : "";
-      
+
       logger.warn({
         layer: 'repository',
         action: 'MAXTOTAL_EXCEEDED',
@@ -339,12 +341,12 @@ export async function validateMaxTotalForNumbers(
           isAutoDate: rule.isAutoDate,
         },
       });
-      
+
       throw new Error(
         `El número ${number} excede el límite ${scopeLabel} en este sorteo${isAutoDateLabel}: ₡${newAccumulated.toFixed(2)} supera ₡${effectiveMaxTotal.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`
       );
     }
-    
+
     logger.debug({
       layer: 'repository',
       action: 'MAXTOTAL_VALIDATION_PASSED',
