@@ -234,9 +234,9 @@ function formatCostaRicaDate(date: Date): string {
 function formatTimeSeriesLabel(date: Date, granularity: 'hour' | 'day' | 'week' | 'month'): string {
   const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
   const crDate = new Date(date.getTime() - offsetMs);
-  
+
   const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-  
+
   switch (granularity) {
     case 'hour': {
       const hours = crDate.getUTCHours();
@@ -301,11 +301,11 @@ function buildTicketBaseFilters(
     Prisma.sql`${Prisma.raw(`${alias}."isActive"`)} = true`,
     Prisma.sql`${Prisma.raw(`${alias}."status"`)} IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
     ticketBusinessDateCondition(alias, fromDateStr, toDateStr),
-    // ✅ NUEVO: Excluir sorteos CLOSED para no incluir datos de sorteos finalizados
-    Prisma.sql`NOT EXISTS (
+    // ✅ CAMBIO STRICT: Solo incluir sorteos EVALUATED (Global Filter)
+    Prisma.sql`EXISTS (
       SELECT 1 FROM "Sorteo" s
       WHERE s.id = ${Prisma.raw(`${alias}."sorteoId"`)}
-      AND s.status = 'CLOSED'
+      AND s.status = 'EVALUATED'
     )`,
     // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
     // NOTA: Debido al workaround del esquema, sle.ventana_id contiene el ID del USUARIO listero.
@@ -367,9 +367,9 @@ function buildTicketWhereInput(
     deletedAt: null,
     isActive: true,
     status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
-    // ✅ NUEVO: Excluir tickets de sorteos CLOSED
+    // ✅ CAMBIO STRICT: Solo incluir tickets de sorteos EVALUATED
     sorteo: {
-      status: { not: "CLOSED" },
+      status: "EVALUATED",
     },
     AND: [
       {
@@ -888,7 +888,7 @@ export const DashboardService = {
    */
   async calculateCxC(filters: DashboardFilters, role?: Role): Promise<CxCResult> {
     const dimension = filters.cxcDimension || 'ventana';
-    
+
     // ✅ NUEVO: Si dimension='vendedor', ejecutar lógica específica para vendedores
     if (dimension === 'vendedor') {
       return this.calculateCxCByVendedor(filters, role);
@@ -1898,7 +1898,7 @@ export const DashboardService = {
    */
   async calculateCxP(filters: DashboardFilters, role?: Role): Promise<CxPResult> {
     const dimension = filters.cxcDimension || 'ventana';
-    
+
     // ✅ NUEVO: Si dimension='vendedor', ejecutar lógica específica para vendedores
     if (dimension === 'vendedor') {
       return this.calculateCxPByVendedor(filters, role);

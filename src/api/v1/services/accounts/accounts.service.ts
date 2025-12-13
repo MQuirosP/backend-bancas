@@ -77,7 +77,7 @@ export const AccountsService = {
             userRole: filters.userRole || "ADMIN",
             sort: sort || "desc",
         };
-        
+
         const cached = await getCachedStatement(cacheKey);
         if (cached) {
             logger.info({
@@ -230,7 +230,12 @@ export const AccountsService = {
             WHERE t."ventanaId" = ${ventanaId}::uuid
             AND t."deletedAt" IS NULL
             AND t."isActive" = true
-            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+            AND t."status" != 'CANCELLED'
+            AND EXISTS (
+                SELECT 1 FROM "Sorteo" s
+                WHERE s.id = t."sorteoId"
+                AND s.status = 'EVALUATED'
+            )
             AND j."deletedAt" IS NULL
             AND COALESCE(
                 t."businessDate",
@@ -248,7 +253,12 @@ export const AccountsService = {
             WHERE t."ventanaId" = ${ventanaId}::uuid
             AND t."deletedAt" IS NULL
             AND t."isActive" = true
-            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+            AND t."status" != 'CANCELLED'
+            AND EXISTS (
+                SELECT 1 FROM "Sorteo" s
+                WHERE s.id = t."sorteoId"
+                AND s.status = 'EVALUATED'
+            )
             AND COALESCE(
                 t."businessDate",
                 DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
