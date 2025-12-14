@@ -83,7 +83,7 @@ function formatDateOnly(date: Date): string {
   const { year, month, day } = getCRLocalComponents(date); // ✅ Usar utilidad CR
   const mm = String(month).padStart(2, '0');
   const dd = String(day).padStart(2, '0');
-  return `${year} -${mm} -${dd} `;
+  return `${year}-${mm}-${dd}`;
 }
 
 export const SorteoService = {
@@ -1463,23 +1463,6 @@ gs."hour24" ASC
         ],
       });
 
-      // Log de depuración
-      logger.info({
-        layer: "service",
-        action: "SORTEO_EVALUATED_SUMMARY_DEBUG",
-        payload: {
-          vendedorId,
-          allowedStatuses: allowedStatuses,
-          dateRange: {
-            fromAt: dateRange.fromAt.toISOString(),
-            toAt: dateRange.toAt.toISOString(),
-          },
-          sorteosFound: sorteos.length,
-          sorteoIds: sorteos.map(s => s.id),
-          message: "Sorteos encontrados después de filtrar",
-        },
-      });
-
       // Obtener datos financieros agregados por sorteo
       const sorteoIds = sorteos.map((s) => s.id);
 
@@ -1661,11 +1644,17 @@ gs."hour24" ASC
         ticketsBySorteo.get(sorteoId)!.add(ticketId);
       }
 
-      // Construir respuesta con cálculos
-      // IMPORTANTE: El acumulado se calcula del más antiguo hacia el más reciente
-      // Los sorteos están ordenados por scheduledAt ASC (más antiguo primero) para el cálculo
-      let accumulated = 0;
-      const dataWithAccumulated = sorteos.map((sorteo, index) => {
+      // ✅ PASO 1: Obtener movimientos de pago/cobro del vendedor ANTES de calcular accumulated
+      const movementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
+        dateRange.fromAt,
+        dateRange.toAt,
+        "vendedor",
+        undefined,
+        vendedorId
+      );
+
+      // ✅ PASO 2: Construir datos de sorteos SIN calcular accumulated aún
+      const sorteoData = sorteos.map((sorteo, index) => {
         const financial = financialMap.get(sorteo.id) || {
           totalSales: 0,
           totalCommission: 0,
@@ -1686,11 +1675,6 @@ gs."hour24" ASC
           financial.totalSales -
           financial.totalCommission -
           financial.totalPrizes;
-
-        // Calcular accumulated: suma desde el más antiguo hacia el más reciente
-        // accumulated[n] = subtotal[n] + accumulated[n-1], donde accumulated[0] = subtotal[0]
-        // Esto representa el saldo acumulado desde el inicio hasta ese sorteo
-        accumulated = accumulated + subtotal;
 
         const winningCount = winningMap.get(sorteo.id) || 0;
         const paidCount = paidMap.get(sorteo.id) || 0;
@@ -1818,7 +1802,7 @@ gs."hour24" ASC
           totalPrizes: financial.totalPrizes,
           ticketCount: financial.ticketCount,
           subtotal,
-          accumulated,
+          accumulated: 0, // Se calculará después junto con movimientos
           chronologicalIndex: index + 1, // Índice cronológico: 1 = más antiguo, n = más reciente
           totalChronological: sorteos.length, // Total de sorteos para referencia del FE
           winningTicketsCount: winningCount,
@@ -1828,14 +1812,66 @@ gs."hour24" ASC
         };
       });
 
-      // ✅ NUEVO: Obtener movimientos de pago/cobro del vendedor por fecha
-      const movementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
-        dateRange.fromAt,
-        dateRange.toAt,
-        "vendedor",
-        undefined,
-        vendedorId
-      );
+      // ✅ PASO 3: Convertir movimientos a items con la misma estructura que sorteos
+      const movementItems: any[] = [];
+      for (const [dateStr, movements] of movementsByDate.entries()) {
+        for (const movement of movements) {
+          if (!movement.isReversed) {
+            // Crear Date desde la fecha del usuario (YYYY-MM-DD) en zona horaria CR
+            const [year, month, day] = movement.date.split('-').map(Number);
+            const movementDate = new Date(year, month - 1, day, 0, 0, 0);
+
+            movementItems.push({
+              sorteoId: `mov-${movement.id}`,
+              sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
+              scheduledAt: movementDate, // ✅ Usar fecha que el usuario indicó, no createdAt
+              date: movement.date, // ✅ Ya viene formateado como YYYY-MM-DD del repository
+              time: formatTime12h(movementDate),
+              loteriaId: null,
+              loteriaName: null,
+              winningNumber: null,
+              isReventado: false,
+              totalSales: 0,
+              totalCommission: 0,
+              commissionByNumber: 0,
+              commissionByReventado: 0,
+              totalPrizes: 0,
+              ticketCount: 0,
+              subtotal: movement.type === 'payment' ? (movement.amount || 0) : -(movement.amount || 0),
+              accumulated: 0, // Se recalculará después
+              chronologicalIndex: 0,
+              totalChronological: 0,
+              winningTicketsCount: 0,
+              paidTicketsCount: 0,
+              unpaidTicketsCount: 0,
+              byMultiplier: [],
+              // Campos específicos de movimiento
+              type: movement.type,
+              amount: movement.amount,
+              method: movement.method,
+              notes: movement.notes,
+            });
+          }
+        }
+      }
+
+      // ✅ PASO 4: Combinar sorteos y movimientos y ordenar cronológicamente
+      const allEvents = [...sorteoData, ...movementItems];
+      allEvents.sort((a, b) => {
+        const timeA = new Date(a.scheduledAt).getTime();
+        const timeB = new Date(b.scheduledAt).getTime();
+        return timeA - timeB;
+      });
+
+      // ✅ PASO 5: Calcular acumulado por evento (sorteo/movimiento)
+      let eventAccumulated = 0;
+      const dataWithAccumulated = allEvents.map((event) => {
+        eventAccumulated += event.subtotal;
+        return {
+          ...event,
+          accumulated: eventAccumulated,
+        };
+      });
 
       // ✅ NUEVO: Calcular rango de fechas para monthlyAccumulated (desde inicio del mes hasta hoy)
       const today = new Date();
@@ -1853,55 +1889,69 @@ gs."hour24" ASC
         vendedorId
       );
 
-      // Agrupar sorteos por día
-      type SorteoWithMultiplier = typeof dataWithAccumulated[0];
-      const sorteosByDate = new Map<string, SorteoWithMultiplier[]>();
+      // ✅ ACTUALIZADO: Agrupar todos los eventos (sorteos + movimientos) por día
+      // ✅ CRÍTICO: Usar dataWithAccumulated (no allEvents) para que tengan el accumulated calculado
+      const eventsByDate = new Map<string, any[]>();
 
-      for (const sorteo of dataWithAccumulated) {
-        const date = sorteo.date;
-        if (!sorteosByDate.has(date)) {
-          sorteosByDate.set(date, []);
+      for (const event of dataWithAccumulated) {
+        const date = event.date;
+        if (!eventsByDate.has(date)) {
+          eventsByDate.set(date, []);
         }
-        sorteosByDate.get(date)!.push(sorteo);
+        eventsByDate.get(date)!.push(event);
       }
 
-      // Ordenar sorteos dentro de cada día por scheduledAt DESC (más reciente primero)
-      for (const [date, sorteosDelDia] of sorteosByDate.entries()) {
-        sorteosDelDia.sort((a, b) => {
+      // ✅ ACTUALIZADO: Ordenar eventos dentro de cada día por scheduledAt DESC (más reciente primero)
+      for (const [date, eventsDelDia] of eventsByDate.entries()) {
+        eventsDelDia.sort((a, b) => {
           const dateA = new Date(a.scheduledAt).getTime();
           const dateB = new Date(b.scheduledAt).getTime();
           if (dateA !== dateB) {
             return dateB - dateA; // DESC por fecha (más reciente primero)
           }
-          // Si tienen la misma fecha/hora, usar mismo orden que en SQL
-          if (a.loteriaId !== b.loteriaId) {
-            return a.loteriaId.localeCompare(b.loteriaId);
+          // Si tienen la misma fecha/hora, sorteos primero, luego movimientos
+          const aIsMovement = a.sorteoId?.startsWith('mov-');
+          const bIsMovement = b.sorteoId?.startsWith('mov-');
+          if (aIsMovement !== bIsMovement) {
+            return aIsMovement ? 1 : -1;
           }
-          return a.sorteoId.localeCompare(b.sorteoId);
+          // Si ambos son sorteos, usar mismo orden que en SQL
+          if (!aIsMovement && !bIsMovement) {
+            if (a.loteriaId && b.loteriaId && a.loteriaId !== b.loteriaId) {
+              return a.loteriaId.localeCompare(b.loteriaId);
+            }
+            if (a.sorteoId && b.sorteoId) {
+              return a.sorteoId.localeCompare(b.sorteoId);
+            }
+          }
+          return 0;
         });
       }
 
-      // Construir respuesta agrupada por día
-      const daysArray = Array.from(sorteosByDate.entries())
-        .map(([date, sorteosDelDia]) => {
+      // ✅ ACTUALIZADO: Construir respuesta agrupada por día (incluye sorteos + movimientos)
+      const daysArray = Array.from(eventsByDate.entries())
+        .map(([date, eventsDelDia]) => {
+          // Separar sorteos y movimientos para calcular totales
+          const sorteosDelDia = eventsDelDia.filter(e => !e.sorteoId?.startsWith('mov-'));
+          const movimientosDelDia = eventsDelDia.filter(e => e.sorteoId?.startsWith('mov-'));
+
           // Calcular dayTotals (suma de todos los sorteos del día)
-          const totalSales = sorteosDelDia.reduce((sum, s) => sum + s.totalSales, 0);
-          const totalCommission = sorteosDelDia.reduce((sum, s) => sum + s.totalCommission, 0);
+          const totalSales = sorteosDelDia.reduce((sum, s) => sum + (s.totalSales || 0), 0);
+          const totalCommission = sorteosDelDia.reduce((sum, s) => sum + (s.totalCommission || 0), 0);
           const commissionByNumber = sorteosDelDia.reduce((sum, s) => sum + (s.commissionByNumber || 0), 0);
           const commissionByReventado = sorteosDelDia.reduce((sum, s) => sum + (s.commissionByReventado || 0), 0);
-          const totalPrizes = sorteosDelDia.reduce((sum, s) => sum + s.totalPrizes, 0);
-          const totalTickets = sorteosDelDia.reduce((sum, s) => sum + s.ticketCount, 0);
+          const totalPrizes = sorteosDelDia.reduce((sum, s) => sum + (s.totalPrizes || 0), 0);
+          const totalTickets = sorteosDelDia.reduce((sum, s) => sum + (s.ticketCount || 0), 0);
 
-          // ✅ NUEVO: Calcular totalPaid y totalCollected desde movimientos del día
-          const movements = movementsByDate.get(date) || [];
-          const totalPaid = movements
-            .filter((m: any) => m.type === "payment" && !m.isReversed)
-            .reduce((sum: number, m: any) => sum + m.amount, 0);
-          const totalCollected = movements
-            .filter((m: any) => m.type === "collection" && !m.isReversed)
-            .reduce((sum: number, m: any) => sum + m.amount, 0);
+          // Calcular totalPaid y totalCollected desde movimientos del día
+          const totalPaid = movimientosDelDia
+            .filter((m: any) => m.type === "payment")
+            .reduce((sum: number, m: any) => sum + (m.amount || 0), 0);
+          const totalCollected = movimientosDelDia
+            .filter((m: any) => m.type === "collection")
+            .reduce((sum: number, m: any) => sum + (m.amount || 0), 0);
 
-          // ✅ NUEVO: Calcular totalBalance y totalRemainingBalance
+          // Calcular totalBalance y totalRemainingBalance
           const totalBalance = totalSales - totalPrizes - totalCommission;
           const totalRemainingBalance = totalBalance - totalCollected + totalPaid;
 
@@ -1916,18 +1966,19 @@ gs."hour24" ASC
             totalCollected,
             totalBalance,
             totalRemainingBalance,
-            totalSubtotal: totalRemainingBalance, // ✅ DEPRECATED: igual a totalRemainingBalance para compatibilidad
+            totalSubtotal: totalRemainingBalance,
+            accumulated: 0, // Se calculará después basado en totalRemainingBalance histórico
           };
 
-          // Formatear sorteos (convertir scheduledAt a ISO string)
-          const sorteosFormatted = sorteosDelDia.map((s) => ({
-            ...s,
-            scheduledAt: formatIsoLocal(s.scheduledAt),
+          // ✅ ACTUALIZADO: Formatear todos los eventos (sorteos + movimientos)
+          const eventsFormatted = eventsDelDia.map((e) => ({
+            ...e,
+            scheduledAt: formatIsoLocal(e.scheduledAt),
           }));
 
           return {
             date,
-            sorteos: sorteosFormatted,
+            sorteos: eventsFormatted, // Incluye sorteos Y movimientos
             dayTotals,
           };
         })
@@ -1935,6 +1986,22 @@ gs."hour24" ASC
           // Ordenar días descendente (más reciente primero)
           return b.date.localeCompare(a.date);
         });
+
+      // ✅ CRÍTICO: Calcular acumulado histórico por día basado en totalRemainingBalance
+      // Ordenar días ASC para calcular acumulado progresivo
+      const daysSortedAsc = [...daysArray].sort((a, b) => a.date.localeCompare(b.date));
+
+      let dailyAccumulated = 0;
+      for (const day of daysSortedAsc) {
+        // Sumar el subtotal del día (que incluye sorteos + movimientos)
+        dailyAccumulated += (day.dayTotals.totalRemainingBalance || 0);
+
+        // Actualizar el accumulated en el día original
+        const originalDay = daysArray.find(d => d.date === day.date);
+        if (originalDay) {
+          originalDay.dayTotals.accumulated = dailyAccumulated;
+        }
+      }
 
       // Calcular totales agregados (suma de todos los días)
       const totals = {
@@ -2072,7 +2139,6 @@ gs."hour24" ASC
         totalRemainingBalance: monthlyTotalRemainingBalance,
         totalSubtotal: monthlyTotalRemainingBalance, // ✅ DEPRECATED: igual a totalRemainingBalance
       };
-
       const result = {
         data: daysArray,
         meta: {
