@@ -1866,13 +1866,16 @@ gs."hour24" ASC
         return timeA - timeB;
       });
 
-      // ✅ PASO 5: Calcular acumulado por evento (sorteo/movimiento)
+      // ✅ PASO 5: Calcular acumulado y chronologicalIndex por evento (sorteo/movimiento)
       let eventAccumulated = 0;
-      const dataWithAccumulated = allEvents.map((event) => {
+      const totalEvents = allEvents.length;
+      const dataWithAccumulated = allEvents.map((event, index) => {
         eventAccumulated += event.subtotal;
         return {
           ...event,
           accumulated: eventAccumulated,
+          chronologicalIndex: index + 1, // 1 = más antiguo, n = más reciente
+          totalChronological: totalEvents,
         };
       });
 
