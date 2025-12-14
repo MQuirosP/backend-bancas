@@ -5,7 +5,7 @@ import {
   CierreView,
   LoteriaMetrics,
   CeldaMetrics,
-  TurnoMetrics,
+  TurnoAgrupado,
   VendedorMetrics,
   LoteriaType,
 } from '../types/cierre.types';
@@ -167,22 +167,39 @@ export class CierreExportService {
         const loteriaData = diaData.loterias[loteria];
         const turnos = Object.keys(loteriaData.turnos).sort();
 
-        // Iterar por cada turno
-        for (const turno of turnos) {
-          const turnoData = loteriaData.turnos[turno];
+        // Iterar por cada turno (ahora agrupado)
+        for (const turnoKey of turnos) {
+          const turnoAgrupado = loteriaData.turnos[turnoKey];
 
-          const row = sheet.addRow([
-            fecha,
-            loteria,
-            turno,
-            turnoData.tipo,
-            turnoData.totalVendida,
-            turnoData.ganado,
-            turnoData.comisionTotal,
-            turnoData.netoDespuesComision,
-          ]);
+          // Agregar fila para NUMERO si existe
+          if (turnoAgrupado.NUMERO) {
+            const row = sheet.addRow([
+              fecha,
+              loteria,
+              turnoAgrupado.turno,
+              'NUMERO',
+              turnoAgrupado.NUMERO.totalVendida,
+              turnoAgrupado.NUMERO.ganado,
+              turnoAgrupado.NUMERO.comisionTotal,
+              turnoAgrupado.NUMERO.netoDespuesComision,
+            ]);
+            this.styleDataRow(row);
+          }
 
-          this.styleDataRow(row);
+          // Agregar fila para REVENTADO si existe
+          if (turnoAgrupado.REVENTADO) {
+            const row = sheet.addRow([
+              fecha,
+              loteria,
+              turnoAgrupado.turno,
+              'REVENTADO',
+              turnoAgrupado.REVENTADO.totalVendida,
+              turnoAgrupado.REVENTADO.ganado,
+              turnoAgrupado.REVENTADO.comisionTotal,
+              turnoAgrupado.REVENTADO.netoDespuesComision,
+            ]);
+            this.styleDataRow(row);
+          }
         }
 
         // Subtotal por lotería
