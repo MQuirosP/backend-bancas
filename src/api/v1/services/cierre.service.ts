@@ -168,8 +168,8 @@ export class CierreService {
           t."deletedAt" IS NULL
           AND j."deletedAt" IS NULL
           AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
-          AND NOT (t."isActive" = false AND t."status" = 'EXCLUDED')
-          AND j."isActive" = true
+          AND t."isActive" = true  -- SOLO tickets activos
+          AND j."isActive" = true  -- SOLO jugadas activas
           ${whereConditions}
       )
       SELECT
@@ -500,6 +500,10 @@ export class CierreService {
       return 'PANAMA';
     if (normalized.includes('HONDURAS')) return 'HONDURAS';
     if (normalized.includes('PRIMERA')) return 'PRIMERA';
+    if (normalized.includes('MULTI') && normalized.includes('NICA'))
+      return 'MULTI_X_NICA';
+    if (normalized === 'NICA') return 'NICA';
+    if (normalized.includes('MONAZOS')) return 'MONAZOS';
 
     // Fallback: retornar como-is (asumiendo que coincide)
     return normalized as LoteriaType;
