@@ -1817,16 +1817,19 @@ gs."hour24" ASC
       for (const [dateStr, movements] of movementsByDate.entries()) {
         for (const movement of movements) {
           if (!movement.isReversed) {
-            // Crear Date desde la fecha del usuario (YYYY-MM-DD) en zona horaria CR
+            // Combinar: fecha del usuario + hora de createdAt
+            const createdAtDate = new Date(movement.createdAt);
+            const { hour, minute } = getCRLocalComponents(createdAtDate);
+            const seconds = createdAtDate.getSeconds();
             const [year, month, day] = movement.date.split('-').map(Number);
-            const movementDate = new Date(year, month - 1, day, 0, 0, 0);
+            const scheduledAt = new Date(year, month - 1, day, hour, minute, seconds);
 
             movementItems.push({
               sorteoId: `mov-${movement.id}`,
               sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
-              scheduledAt: movementDate, // ✅ Usar fecha que el usuario indicó, no createdAt
-              date: movement.date, // ✅ Ya viene formateado como YYYY-MM-DD del repository
-              time: formatTime12h(movementDate),
+              scheduledAt, // ✅ Fecha del usuario + hora de creación
+              date: movement.date, // ✅ Fecha que el usuario indicó
+              time: formatTime12h(scheduledAt),
               loteriaId: null,
               loteriaName: null,
               winningNumber: null,
