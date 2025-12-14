@@ -921,9 +921,8 @@ export const TicketRepository = {
           }
 
           if (rule.number) {
-            const sumForNumber = preparedJugadas
-              .filter((j) => j.number === rule.number)
-              .reduce((acc, j) => acc + j.amount, 0);
+            // Resolver números a validar (maneja isAutoDate, arrays, strings únicos)
+            const numbersToValidate = resolveNumbersToValidate(rule, now);
 
             // Calcular límite efectivo para maxAmount
             let effectiveMaxAmount: number | null = null;
@@ -934,11 +933,34 @@ export const TicketRepository = {
                 : staticMaxAmount;
             }
 
-            if (effectiveMaxAmount != null && sumForNumber > effectiveMaxAmount) {
-              throw new AppError(
-                `Number ${rule.number} exceeded maxAmount (${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ${dynamicLimit.toFixed(2)}` : ''})`,
-                400
-              );
+            // Validar maxAmount por cada número
+            if (effectiveMaxAmount != null) {
+              for (const num of numbersToValidate) {
+                // Sumar NUMERO y REVENTADO del mismo número en el ticket
+                const sumForNumber = preparedJugadas
+                  .filter((j) => {
+                    if (j.type === 'NUMERO') {
+                      return j.number === num;
+                    } else if (j.type === 'REVENTADO') {
+                      return j.reventadoNumber === num;
+                    }
+                    return false;
+                  })
+                  .reduce((acc, j) => acc + j.amount, 0);
+
+                if (sumForNumber > effectiveMaxAmount) {
+                  throw new AppError(
+                    `El número ${num} excede el límite por ticket de ₡${effectiveMaxAmount.toFixed(2)} (monto en ticket: ₡${sumForNumber.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ₡${dynamicLimit.toFixed(2)}` : ''})`,
+                    400,
+                    {
+                      code: "NUMBER_MAXAMOUNT_EXCEEDED",
+                      number: num,
+                      amountInTicket: sumForNumber,
+                      maxAmount: effectiveMaxAmount,
+                    }
+                  );
+                }
+              }
             }
 
             // ✅ NUEVO: Validar maxTotal por número específico contra acumulado del sorteo
