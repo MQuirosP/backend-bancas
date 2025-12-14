@@ -2,7 +2,7 @@
  * Tipos para el módulo de Cierre Operativo
  */
 
-export type LoteriaType = 'TICA' | 'PANAMA' | 'HONDURAS' | 'PRIMERA';
+export type LoteriaType = 'TICA' | 'PANAMA' | 'HONDURAS' | 'PRIMERA' | 'NICA' | 'MULTI_X_NICA' | 'MONAZOS';
 export type CierreScope = 'mine' | 'all';
 // Vista del export: total, seller o un valor numérico de banda dinámico
 export type CierreView = 'total' | 'seller' | string;
