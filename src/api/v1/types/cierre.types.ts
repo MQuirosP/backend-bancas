@@ -34,7 +34,19 @@ export interface CeldaMetrics {
 }
 
 /**
- * Métricas por turno/hora (ej: "19:30")
+ * Métricas por turno/hora agrupadas por tipo
+ * Agrupa NUMERO y REVENTADO bajo el mismo horario para facilitar visualización
+ */
+export interface TurnoAgrupado {
+  turno: string; // "19:30"
+  NUMERO?: CeldaMetrics; // Métricas de jugadas NUMERO (puede no existir)
+  REVENTADO?: CeldaMetrics; // Métricas de jugadas REVENTADO (puede no existir)
+  total: CeldaMetrics; // Suma de NUMERO + REVENTADO
+}
+
+/**
+ * Métricas por turno individual (usado internamente en transformación)
+ * @deprecated Usar TurnoAgrupado en la respuesta del API
  */
 export interface TurnoMetrics extends CeldaMetrics {
   turno: string; // formato "HH:MM" o "HH:MMAM/PM"
@@ -45,7 +57,7 @@ export interface TurnoMetrics extends CeldaMetrics {
  * Métricas por lotería (agrega todos los turnos)
  */
 export interface LoteriaMetrics {
-  turnos: Record<string, TurnoMetrics>; // key: "19:30", "20:30", etc.
+  turnos: Record<string, TurnoAgrupado>; // key: "19:30" (sin sufijo de tipo)
   subtotal: CeldaMetrics;
 }
 

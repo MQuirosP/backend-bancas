@@ -394,31 +394,42 @@ export class CierreService {
         };
       }
 
-      // Crear turno con tipo (NUMERO o REVENTADO)
-      const turnoMetrics: TurnoMetrics = {
-        turno: row.turno,
-        tipo: row.tipo,
-        ...this.rowToMetrics(row),
-      };
+      // Crear o actualizar turno agrupado
+      const turnoKey = row.turno; // Solo el horario, sin tipo
+      if (!bands[bandaKey].dias[fechaKey].loterias[loteriaNombre].turnos[turnoKey]) {
+        bands[bandaKey].dias[fechaKey].loterias[loteriaNombre].turnos[turnoKey] = {
+          turno: row.turno,
+          total: this.createEmptyMetrics(),
+        };
+      }
 
-      // Usar clave compuesta para evitar que NUMERO y REVENTADO se sobrescriban
-      const turnoKey = `${row.turno}_${row.tipo}`;
-      bands[bandaKey].dias[fechaKey].loterias[loteriaNombre].turnos[turnoKey] = turnoMetrics;
+      const turnoAgrupado = bands[bandaKey].dias[fechaKey].loterias[loteriaNombre].turnos[turnoKey];
+      const metrics = this.rowToMetrics(row);
+
+      // Asignar métricas según el tipo
+      if (row.tipo === 'NUMERO') {
+        turnoAgrupado.NUMERO = metrics;
+      } else if (row.tipo === 'REVENTADO') {
+        turnoAgrupado.REVENTADO = metrics;
+      }
+
+      // Acumular en total del turno
+      this.accumulateMetrics(turnoAgrupado.total, metrics);
 
       // Acumular métricas en subtotal de lotería
       this.accumulateMetrics(
         bands[bandaKey].dias[fechaKey].loterias[loteriaNombre].subtotal,
-        turnoMetrics
+        metrics
       );
 
       // Acumular métricas en total del día
-      this.accumulateMetrics(bands[bandaKey].dias[fechaKey].totalDia, turnoMetrics);
+      this.accumulateMetrics(bands[bandaKey].dias[fechaKey].totalDia, metrics);
 
       // Acumular métricas en total de banda
-      this.accumulateMetrics(bands[bandaKey].total, turnoMetrics);
+      this.accumulateMetrics(bands[bandaKey].total, metrics);
 
       // Acumular métricas en totales globales
-      this.accumulateMetrics(totals, turnoMetrics);
+      this.accumulateMetrics(totals, metrics);
     }
 
     return { totals, bands };
