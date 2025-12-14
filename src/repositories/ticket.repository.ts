@@ -13,8 +13,8 @@ import { resolveNumbersToValidate, validateMaxTotalForNumbers } from "./helpers/
 
 /**
  * Calcula el límite dinámico basado en baseAmount y salesPercentage
- * Obtiene las ventas del día dentro de la transacción
- * ✅ OPTIMIZADO: Query simplificada para reducir latencia
+ * Obtiene las ventas del SORTEO dentro de la transacción
+ * ✅ CORREGIDO: Ahora calcula sobre ventas del sorteo específico, no del día completo
  */
 async function calculateDynamicLimit(
   tx: Prisma.TransactionClient,
@@ -27,6 +27,7 @@ async function calculateDynamicLimit(
     userId: string;
     ventanaId: string;
     bancaId: string;
+    sorteoId: string;  // ✅ NUEVO: sorteoId requerido para calcular sobre el sorteo
     at: Date;
   }
 ): Promise<number> {
@@ -39,18 +40,12 @@ async function calculateDynamicLimit(
 
   // Porcentaje de ventas
   if (rule.salesPercentage != null && rule.salesPercentage > 0) {
-    const crRange = getCRDayRangeUTC(context.at);
-
-    // ✅ OPTIMIZACIÓN: Query simplificada sin OR complejo
-    // Usar solo createdAt para mejor performance con índice
+    // ✅ CRÍTICO: Calcular sobre ventas DEL SORTEO, no del día completo
     const where: Prisma.TicketWhereInput = {
       deletedAt: null,
-      isActive: true, // ✅ Excluir tickets inactivos
-      status: { notIn: [TicketStatus.CANCELLED, TicketStatus.EXCLUDED] }, // ✅ Excluir tickets cancelados/excluidos
-      createdAt: {
-        gte: crRange.fromAt,
-        lt: crRange.toAtExclusive,
-      },
+      isActive: true,
+      status: { notIn: [TicketStatus.CANCELLED, TicketStatus.EXCLUDED] },
+      sorteoId: context.sorteoId,  // ✅ CRÍTICO: Filtrar por sorteo específico
     };
 
     if (rule.appliesToVendedor) {
@@ -61,15 +56,29 @@ async function calculateDynamicLimit(
       where.ventanaId = context.ventanaId;
     }
 
-    // ✅ OPTIMIZACIÓN: Usar _sum en lugar de aggregate para mejor performance
+    // Calcular ventas del sorteo
     const result = await tx.ticket.aggregate({
       _sum: { totalAmount: true },
       where,
     });
 
-    const dailySales = Number(result._sum.totalAmount) || 0;
-    const percentageAmount = (dailySales * rule.salesPercentage) / 100;
+    const sorteoSales = Number(result._sum.totalAmount) || 0;
+    const percentageAmount = (sorteoSales * rule.salesPercentage) / 100;
     dynamicLimit += percentageAmount;
+
+    logger.debug({
+      layer: 'repository',
+      action: 'DYNAMIC_LIMIT_CALCULATED',
+      payload: {
+        sorteoId: context.sorteoId,
+        sorteoSales,
+        salesPercentage: rule.salesPercentage,
+        baseAmount: rule.baseAmount,
+        percentageAmount,
+        dynamicLimit,
+        appliesToVendedor: rule.appliesToVendedor,
+      },
+    });
   }
 
   return dynamicLimit;
@@ -906,6 +915,7 @@ export const TicketRepository = {
               userId,
               ventanaId,
               bancaId,
+              sorteoId,  // ✅ CRÍTICO: Pasar sorteoId para calcular sobre el sorteo
               at: now,
             });
           }
@@ -1826,6 +1836,7 @@ export const TicketRepository = {
               userId,
               ventanaId,
               bancaId,
+              sorteoId,  // ✅ CRÍTICO: Pasar sorteoId para calcular sobre el sorteo
               at: now,
             });
           }
