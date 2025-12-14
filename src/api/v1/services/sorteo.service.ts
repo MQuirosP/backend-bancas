@@ -1817,10 +1817,13 @@ gs."hour24" ASC
       for (const [dateStr, movements] of movementsByDate.entries()) {
         for (const movement of movements) {
           if (!movement.isReversed) {
-            // Combinar: fecha del usuario + hora de createdAt
+            // Combinar: fecha del usuario + hora de createdAt (en hora CR)
             const createdAtDate = new Date(movement.createdAt);
-            const { hour, minute } = getCRLocalComponents(createdAtDate);
-            const seconds = createdAtDate.getSeconds();
+            // Convertir UTC a CR (UTC-6)
+            const crTime = new Date(createdAtDate.getTime() - (6 * 60 * 60 * 1000));
+            const hour = crTime.getUTCHours();
+            const minute = crTime.getUTCMinutes();
+            const seconds = crTime.getUTCSeconds();
             const [year, month, day] = movement.date.split('-').map(Number);
             const scheduledAt = new Date(year, month - 1, day, hour, minute, seconds);
 
