@@ -3,7 +3,6 @@ import {
   CierreWeeklyData,
   CierreBySellerData,
   CierreView,
-  BandaMetrics,
   LoteriaMetrics,
   CeldaMetrics,
   TurnoMetrics,
@@ -13,11 +12,14 @@ import {
 
 /**
  * Servicio para exportar cierres a Excel (.xlsx)
- * Genera hojas que replican el formato del Excel de referencia
+ * Genera automáticamente todas las pestañas necesarias
  */
 export class CierreExportService {
   /**
-   * Genera un workbook de Excel basado en la vista especificada
+   * Genera un workbook de Excel con todas las pestañas
+   * - Una pestaña por cada banda presente
+   * - Una pestaña "Cierre Total" consolidada
+   * - Si es vista por vendedor, genera solo esa pestaña
    */
   static async generateWorkbook(
     data: CierreWeeklyData | CierreBySellerData,
@@ -29,26 +31,35 @@ export class CierreExportService {
     workbook.created = new Date();
     workbook.modified = new Date();
 
+    // Si es vista por vendedor, solo generar esa pestaña
     if (view === 'seller') {
-      // Vista por vendedor
       const sellerData = data as CierreBySellerData;
       this.addSellerSheet(workbook, sellerData);
-    } else if (view === 'total') {
-      // Vista total: todas las bandas en una hoja
-      const weeklyData = data as CierreWeeklyData;
-      this.addTotalSheet(workbook, weeklyData);
-    } else {
-      // Vista por banda específica (80, 85, 90, 92, 200)
-      const weeklyData = data as CierreWeeklyData;
-      const banda = parseInt(view as string, 10);
+      return workbook;
+    }
+
+    // Para vistas weekly: generar todas las pestañas automáticamente
+    const weeklyData = data as CierreWeeklyData;
+
+    // Detectar bandas presentes en los datos
+    const bandasPresentes = Object.keys(weeklyData.bands)
+      .map((k) => Number(k))
+      .sort((a, b) => a - b);
+
+    // Crear una pestaña por cada banda presente
+    for (const banda of bandasPresentes) {
       this.addBandSheet(workbook, weeklyData, banda);
     }
+
+    // Crear pestaña "Cierre Total" al final
+    this.addTotalSheet(workbook, weeklyData);
 
     return workbook;
   }
 
   /**
-   * Agrega hoja con resumen total de todas las bandas
+   * Agrega hoja con resumen total consolidado de todas las bandas
+   * Muestra solo totales por banda y total general (sin detalle operativo)
    */
   private static addTotalSheet(
     workbook: ExcelJS.Workbook,
@@ -58,63 +69,46 @@ export class CierreExportService {
 
     this.styleSheetHeader(sheet);
 
-    // Encabezado
+    // Encabezado simplificado (solo totales, sin detalle de turnos)
     const headerRow = sheet.addRow([
       'Banda',
-      'Lotería',
-      'Turno',
-      'Total Vendida',
-      'Ganado',
+      'Total Vendido',
+      'Premios',
       'Comisión',
       'Neto Después Comisión',
-      'Refuerzos',
-      'Tickets',
-      'Jugadas',
     ]);
 
     this.styleHeaderRow(headerRow);
 
-    // Datos por banda
+    // Ordenar bandas
     const bandaKeys = Object.keys(data.bands)
       .map((k) => Number(k))
       .sort((a, b) => a - b);
 
+    // Agregar fila por cada banda con sus totales
     for (const banda of bandaKeys) {
       const bandaData = data.bands[String(banda)];
 
       if (bandaData) {
-        this.addBandDataRows(sheet, banda, bandaData);
-
-        // Fila de total por banda
-        const totalRow = sheet.addRow([
-          `TOTAL BANDA ${banda}`,
-          '',
-          '',
+        const row = sheet.addRow([
+          `Banda ${banda}`,
           bandaData.total.totalVendida,
           bandaData.total.ganado,
           bandaData.total.comisionTotal,
           bandaData.total.netoDespuesComision,
-          bandaData.total.refuerzos,
-          bandaData.total.ticketsCount,
-          bandaData.total.jugadasCount,
         ]);
 
-        this.styleTotalRow(totalRow);
+        this.styleTotalRow(row);
       }
     }
 
     // Fila final: totales globales
     const finalRow = sheet.addRow([
       'TOTAL GLOBAL',
-      '',
-      '',
       data.totals.totalVendida,
       data.totals.ganado,
       data.totals.comisionTotal,
       data.totals.netoDespuesComision,
-      data.totals.refuerzos,
-      data.totals.ticketsCount,
-      data.totals.jugadasCount,
     ]);
 
     this.styleGrandTotalRow(finalRow);
@@ -125,6 +119,7 @@ export class CierreExportService {
 
   /**
    * Agrega hoja para una banda específica
+   * Jerarquía: Día → Lotería → Turno
    */
   private static addBandSheet(
     workbook: ExcelJS.Workbook,
@@ -134,48 +129,107 @@ export class CierreExportService {
     const bandaData = data.bands[String(banda)];
 
     if (!bandaData) {
-      // Banda sin datos
+      // Banda sin datos (no debería ocurrir porque solo creamos pestañas para bandas presentes)
       const sheet = workbook.addWorksheet(`Banda ${banda}`);
       sheet.addRow([`No hay datos para banda ${banda}`]);
       return;
     }
 
     const sheet = workbook.addWorksheet(`Banda ${banda}`);
-
     this.styleSheetHeader(sheet);
 
     // Encabezado
     const headerRow = sheet.addRow([
+      'Fecha',
       'Lotería',
       'Turno',
-      'Total Vendida',
-      'Ganado',
+      'Tipo',
+      'Total Vendido',
+      'Premios',
       'Comisión',
       'Neto Después Comisión',
-      'Refuerzos',
-      'Tickets',
-      'Jugadas',
     ]);
 
     this.styleHeaderRow(headerRow);
 
-    // Datos por lotería
-    this.addBandDataRows(sheet, banda, bandaData);
+    // Ordenar días cronológicamente
+    const fechas = Object.keys(bandaData.dias).sort();
+    const esMultiDia = fechas.length > 1;
 
-    // Fila de total
-    const totalRow = sheet.addRow([
-      'TOTAL',
+    // Iterar por cada día
+    for (const fecha of fechas) {
+      const diaData = bandaData.dias[fecha];
+
+      // Iterar por cada lotería del día
+      const loterias = Object.keys(diaData.loterias) as LoteriaType[];
+
+      for (const loteria of loterias) {
+        const loteriaData = diaData.loterias[loteria];
+        const turnos = Object.keys(loteriaData.turnos).sort();
+
+        // Iterar por cada turno
+        for (const turno of turnos) {
+          const turnoData = loteriaData.turnos[turno];
+
+          const row = sheet.addRow([
+            fecha,
+            loteria,
+            turno,
+            turnoData.tipo,
+            turnoData.totalVendida,
+            turnoData.ganado,
+            turnoData.comisionTotal,
+            turnoData.netoDespuesComision,
+          ]);
+
+          this.styleDataRow(row);
+        }
+
+        // Subtotal por lotería
+        const subtotalRow = sheet.addRow([
+          fecha,
+          `SUBTOTAL ${loteria}`,
+          '',
+          '',
+          loteriaData.subtotal.totalVendida,
+          loteriaData.subtotal.ganado,
+          loteriaData.subtotal.comisionTotal,
+          loteriaData.subtotal.netoDespuesComision,
+        ]);
+
+        this.styleSubtotalRow(subtotalRow);
+      }
+
+      // Total por día (solo si es multi-día)
+      if (esMultiDia) {
+        const totalDiaRow = sheet.addRow([
+          `TOTAL ${fecha}`,
+          '',
+          '',
+          '',
+          diaData.totalDia.totalVendida,
+          diaData.totalDia.ganado,
+          diaData.totalDia.comisionTotal,
+          diaData.totalDia.netoDespuesComision,
+        ]);
+
+        this.styleTotalRow(totalDiaRow);
+      }
+    }
+
+    // Total final de la banda
+    const totalBandaRow = sheet.addRow([
+      'TOTAL BANDA',
+      '',
+      '',
       '',
       bandaData.total.totalVendida,
       bandaData.total.ganado,
       bandaData.total.comisionTotal,
       bandaData.total.netoDespuesComision,
-      bandaData.total.refuerzos,
-      bandaData.total.ticketsCount,
-      bandaData.total.jugadasCount,
     ]);
 
-    this.styleGrandTotalRow(totalRow);
+    this.styleGrandTotalRow(totalBandaRow);
 
     this.autoSizeColumns(sheet);
   }
@@ -195,13 +249,10 @@ export class CierreExportService {
     const headerRow = sheet.addRow([
       'Vendedor',
       'Ventana',
-      'Total Vendida',
-      'Ganado',
+      'Total Vendido',
+      'Premios',
       'Comisión',
       'Neto Después Comisión',
-      'Refuerzos',
-      'Tickets',
-      'Jugadas',
     ]);
 
     this.styleHeaderRow(headerRow);
@@ -215,9 +266,6 @@ export class CierreExportService {
         vendedor.ganado,
         vendedor.comisionTotal,
         vendedor.netoDespuesComision,
-        vendedor.refuerzos,
-        vendedor.ticketsCount,
-        vendedor.jugadasCount,
       ]);
 
       this.styleDataRow(row);
@@ -231,66 +279,11 @@ export class CierreExportService {
       data.totals.ganado,
       data.totals.comisionTotal,
       data.totals.netoDespuesComision,
-      data.totals.refuerzos,
-      data.totals.ticketsCount,
-      data.totals.jugadasCount,
     ]);
 
     this.styleGrandTotalRow(totalRow);
 
     this.autoSizeColumns(sheet);
-  }
-
-  /**
-   * Agrega filas de datos para una banda (por lotería y turno)
-   */
-  private static addBandDataRows(
-    sheet: ExcelJS.Worksheet,
-    banda: number,
-    bandaData: BandaMetrics
-  ): void {
-    const loteriaNames = Object.keys(bandaData.loterias);
-
-    for (const loteriaName of loteriaNames) {
-      const loteriaData = bandaData.loterias[loteriaName as LoteriaType];
-
-      const turnos = Object.keys(loteriaData.turnos).sort();
-
-      for (const turno of turnos) {
-        const turnoData = loteriaData.turnos[turno];
-
-        const row = sheet.addRow([
-          banda,
-          loteriaName,
-          turno,
-          turnoData.totalVendida,
-          turnoData.ganado,
-          turnoData.comisionTotal,
-          turnoData.netoDespuesComision,
-          turnoData.refuerzos,
-          turnoData.ticketsCount,
-          turnoData.jugadasCount,
-        ]);
-
-        this.styleDataRow(row);
-      }
-
-      // Subtotal por lotería
-      const subtotalRow = sheet.addRow([
-        banda,
-        `SUBTOTAL ${loteriaName}`,
-        '',
-        loteriaData.subtotal.totalVendida,
-        loteriaData.subtotal.ganado,
-        loteriaData.subtotal.comisionTotal,
-        loteriaData.subtotal.netoDespuesComision,
-        loteriaData.subtotal.refuerzos,
-        loteriaData.subtotal.ticketsCount,
-        loteriaData.subtotal.jugadasCount,
-      ]);
-
-      this.styleSubtotalRow(subtotalRow);
-    }
   }
 
   /**
@@ -320,17 +313,13 @@ export class CierreExportService {
   private static styleDataRow(row: ExcelJS.Row): void {
     row.alignment = { horizontal: 'left', vertical: 'middle' };
 
-    // Formato de moneda para columnas numéricas (columnas 3-9)
-    for (let i = 4; i <= 10; i++) {
+    // Formato de moneda para columnas numéricas (columnas 5-8)
+    // Columnas: Fecha, Lotería, Turno, Tipo, [Total Vendido, Premios, Comisión, Neto]
+    for (let i = 5; i <= 8; i++) {
       const cell = row.getCell(i);
       if (typeof cell.value === 'number') {
-        if (i <= 7) {
-          // Columnas monetarias
-          cell.numFmt = '₡#,##0.00';
-        } else {
-          // Contadores
-          cell.numFmt = '#,##0';
-        }
+        // Todas las columnas numéricas son monetarias
+        cell.numFmt = '₡#,##0.00';
       }
     }
   }
@@ -347,21 +336,12 @@ export class CierreExportService {
     };
     row.alignment = { horizontal: 'left', vertical: 'middle' };
 
-    // Formato de moneda
-    for (let i = 4; i <= 10; i++) {
-      const cell = row.getCell(i);
-      if (typeof cell.value === 'number') {
-        if (i <= 7) {
-          cell.numFmt = '₡#,##0.00';
-        } else {
-          cell.numFmt = '#,##0';
-        }
-      }
-    }
+    // Aplicar formato a todas las celdas numéricas
+    this.applyNumericFormats(row);
   }
 
   /**
-   * Aplica estilos a filas de total por banda
+   * Aplica estilos a filas de total por día o total por banda
    */
   private static styleTotalRow(row: ExcelJS.Row): void {
     row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -372,16 +352,8 @@ export class CierreExportService {
     };
     row.alignment = { horizontal: 'left', vertical: 'middle' };
 
-    for (let i = 4; i <= 10; i++) {
-      const cell = row.getCell(i);
-      if (typeof cell.value === 'number') {
-        if (i <= 7) {
-          cell.numFmt = '₡#,##0.00';
-        } else {
-          cell.numFmt = '#,##0';
-        }
-      }
-    }
+    // Aplicar formato a todas las celdas numéricas
+    this.applyNumericFormats(row);
   }
 
   /**
@@ -397,16 +369,21 @@ export class CierreExportService {
     row.alignment = { horizontal: 'left', vertical: 'middle' };
     row.height = 22;
 
-    for (let i = 4; i <= 10; i++) {
-      const cell = row.getCell(i);
+    // Aplicar formato a todas las celdas numéricas
+    this.applyNumericFormats(row);
+  }
+
+  /**
+   * Aplica formatos numéricos a una fila
+   * Todas las columnas numéricas son monetarias
+   */
+  private static applyNumericFormats(row: ExcelJS.Row): void {
+    row.eachCell({ includeEmpty: false }, (cell) => {
       if (typeof cell.value === 'number') {
-        if (i <= 7) {
-          cell.numFmt = '₡#,##0.00';
-        } else {
-          cell.numFmt = '#,##0';
-        }
+        // Todas las columnas numéricas son monetarias
+        cell.numFmt = '₡#,##0.00';
       }
-    }
+    });
   }
 
   /**

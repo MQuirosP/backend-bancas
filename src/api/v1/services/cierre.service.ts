@@ -135,7 +135,7 @@ export class CierreService {
           t."createdAt"       AS "ticketCreatedAt",
           s."scheduledAt"     AS "scheduledAt",
           CASE
-            WHEN j.type = 'REVENTADO' THEN 200
+            -- Jugadas NUMERO: usar su multiplicador como banda
             WHEN j.type = 'NUMERO' AND EXISTS (
               SELECT 1 FROM "LoteriaMultiplier" lm
               WHERE lm."loteriaId" = t."loteriaId"
@@ -145,6 +145,19 @@ export class CierreService {
                 AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
                 AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
             ) THEN j."finalMultiplierX"
+
+            -- Jugadas REVENTADO: heredar banda de la jugada NUMERO del mismo ticket+número
+            WHEN j.type = 'REVENTADO' THEN (
+              SELECT jnum."finalMultiplierX"
+              FROM "Jugada" jnum
+              WHERE jnum."ticketId" = j."ticketId"
+                AND jnum.number = j.number
+                AND jnum.type = 'NUMERO'
+                AND jnum."isActive" = true
+                AND jnum."deletedAt" IS NULL
+              LIMIT 1
+            )
+
             ELSE NULL
           END AS banda
         FROM "Jugada" j
@@ -161,6 +174,8 @@ export class CierreService {
       )
       SELECT
         CAST(base.banda AS INT) AS banda,
+        base.type AS tipo,
+        TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'YYYY-MM-DD') as fecha,
         l.id as "loteriaId",
         l.name as "loteriaNombre",
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') as turno,
@@ -175,13 +190,17 @@ export class CierreService {
       WHERE base.banda IS NOT NULL
       GROUP BY
         CAST(base.banda AS INT),
+        base.type,
+        TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'YYYY-MM-DD'),
         l.id,
         l.name,
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI')
       ORDER BY
         CAST(base.banda AS INT) ASC,
+        fecha ASC,
         l.name ASC,
-        turno ASC
+        turno ASC,
+        base.type ASC
     `;
 
     const result = await prisma.$queryRaw<CierreAggregateRow[]>(query);
@@ -336,6 +355,7 @@ export class CierreService {
 
   /**
    * Transforma datos raw en estructura jerárquica weekly
+   * Organiza por: Banda → Día → Lotería → Turno
    */
   private static transformWeeklyData(rawData: CierreAggregateRow[]): {
     totals: CeldaMetrics;
@@ -346,36 +366,58 @@ export class CierreService {
 
     for (const row of rawData) {
       const bandaKey = String(Number(row.banda));
+      const fechaKey = row.fecha; // YYYY-MM-DD
       const loteriaNombre = this.normalizeLoteriaName(row.loteriaNombre);
 
+      // Crear banda si no existe
       if (!bands[bandaKey]) {
         bands[bandaKey] = {
-          loterias: {} as any,
+          dias: {},
           total: this.createEmptyMetrics(),
         };
       }
 
-      if (!bands[bandaKey].loterias[loteriaNombre]) {
-        bands[bandaKey].loterias[loteriaNombre] = {
+      // Crear día si no existe
+      if (!bands[bandaKey].dias[fechaKey]) {
+        bands[bandaKey].dias[fechaKey] = {
+          fecha: fechaKey,
+          loterias: {} as any,
+          totalDia: this.createEmptyMetrics(),
+        };
+      }
+
+      // Crear lotería si no existe
+      if (!bands[bandaKey].dias[fechaKey].loterias[loteriaNombre]) {
+        bands[bandaKey].dias[fechaKey].loterias[loteriaNombre] = {
           turnos: {},
           subtotal: this.createEmptyMetrics(),
         };
       }
 
+      // Crear turno con tipo (NUMERO o REVENTADO)
       const turnoMetrics: TurnoMetrics = {
         turno: row.turno,
+        tipo: row.tipo,
         ...this.rowToMetrics(row),
       };
 
-      bands[bandaKey].loterias[loteriaNombre].turnos[row.turno] = turnoMetrics;
+      // Usar clave compuesta para evitar que NUMERO y REVENTADO se sobrescriban
+      const turnoKey = `${row.turno}_${row.tipo}`;
+      bands[bandaKey].dias[fechaKey].loterias[loteriaNombre].turnos[turnoKey] = turnoMetrics;
 
+      // Acumular métricas en subtotal de lotería
       this.accumulateMetrics(
-        bands[bandaKey].loterias[loteriaNombre].subtotal,
+        bands[bandaKey].dias[fechaKey].loterias[loteriaNombre].subtotal,
         turnoMetrics
       );
 
+      // Acumular métricas en total del día
+      this.accumulateMetrics(bands[bandaKey].dias[fechaKey].totalDia, turnoMetrics);
+
+      // Acumular métricas en total de banda
       this.accumulateMetrics(bands[bandaKey].total, turnoMetrics);
 
+      // Acumular métricas en totales globales
       this.accumulateMetrics(totals, turnoMetrics);
     }
 

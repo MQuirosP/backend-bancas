@@ -38,6 +38,7 @@ export interface CeldaMetrics {
  */
 export interface TurnoMetrics extends CeldaMetrics {
   turno: string; // formato "HH:MM" o "HH:MMAM/PM"
+  tipo: JugadaTipo; // NUMERO o REVENTADO
 }
 
 /**
@@ -49,10 +50,21 @@ export interface LoteriaMetrics {
 }
 
 /**
- * Métricas por banda (agrega todas las loterías)
+ * Métricas por día (agrega todas las loterías de un día específico)
+ */
+export interface DiaMetrics {
+  fecha: string; // YYYY-MM-DD
+  loterias: Record<LoteriaType, LoteriaMetrics>; // key: "TICA", "PANAMA", etc.
+  totalDia: CeldaMetrics;
+}
+
+/**
+ * Métricas por banda (agrega todos los días)
+ * Siempre organizado por días para consistencia,
+ * incluso si es un solo día
  */
 export interface BandaMetrics {
-  loterias: Record<LoteriaType, LoteriaMetrics>; // key: "TICA", "PANAMA", etc.
+  dias: Record<string, DiaMetrics>; // key: "YYYY-MM-DD"
   total: CeldaMetrics;
 }
 
@@ -160,10 +172,17 @@ export interface CierreExportQuery extends CierreWeeklyQuery {
 }
 
 /**
- * Datos agregados por banda, lotería y turno (query raw)
+ * Tipo de jugada
+ */
+export type JugadaTipo = 'NUMERO' | 'REVENTADO';
+
+/**
+ * Datos agregados por banda, lotería, fecha, turno y tipo (query raw)
  */
 export interface CierreAggregateRow {
-  banda: number; // Banda dinámica (exacta) o 200 para REVENTADO
+  banda: number; // Banda heredada (80, 85, 90, 92) - reventados heredan banda del número asociado
+  tipo: JugadaTipo; // NUMERO o REVENTADO
+  fecha: string; // YYYY-MM-DD
   loteriaId: string;
   loteriaNombre: string;
   turno: string; // "19:30"
