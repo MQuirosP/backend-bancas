@@ -1458,15 +1458,14 @@ export async function getStatementDirect(
     const [year, month] = effectiveMonth.split("-").map(Number);
     const monthStartDate = new Date(Date.UTC(year, month - 1, 1)); // Primer día del mes
 
-    // ✅ FIX: monthEndDate debe ser el FINAL del día de hoy (23:59:59.999)
-    // para incluir tickets programados más tarde en el día actual
-    const today = new Date();
-    const monthEndDate = new Date(Date.UTC(
-        today.getUTCFullYear(),
-        today.getUTCMonth(),
-        today.getUTCDate(),
-        23, 59, 59, 999
-    )); // Fin del día de hoy
+    // ✅ FIX: Para monthlyAccumulated, usar la MISMA lógica que getMonthDateRange()
+    // pero aplicarla aquí para asegurar consistencia temporal dentro del mismo request
+    // Esto previene problemas cuando new Date() se llama en momentos diferentes
+    const now = new Date();
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+    const lastDayOfMonth = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+    const isCurrentMonth = year === now.getUTCFullYear() && month === now.getUTCMonth() + 1;
+    const monthEndDate = isCurrentMonth ? (today < monthStartDate ? monthStartDate : today) : lastDayOfMonth;
     const monthStartDateCRStr = crDateService.dateUTCToCRString(monthStartDate);
     const monthEndDateCRStr = crDateService.dateUTCToCRString(monthEndDate);
 
@@ -1474,14 +1473,15 @@ export async function getStatementDirect(
     const monthlyWhereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
+        Prisma.sql`t."status" != 'CANCELLED'`, // Mantener seguridad extra
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${monthStartDateCRStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${monthEndDateCRStr}::date`,
-        // ✅ NUEVO: Excluir sorteos CLOSED para no incluir datos de sorteos finalizados (mismo filtro que dashboard)
-        Prisma.sql`NOT EXISTS (
+        // ✅ CRÍTICO: Usar EL MISMO filtro de sorteos que la query principal (SOLO EVALUATED)
+        // Esto asegura que totals y monthlyAccumulated usen exactamente los mismos datos
+        Prisma.sql`EXISTS (
             SELECT 1 FROM "Sorteo" s
             WHERE s.id = t."sorteoId"
-            AND s.status = 'CLOSED'
+            AND s.status = 'EVALUATED'
         )`,
         // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
         Prisma.sql`NOT EXISTS (
