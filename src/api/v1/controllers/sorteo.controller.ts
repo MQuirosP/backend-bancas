@@ -208,7 +208,6 @@ export const SorteoController = {
       },
       vendedorId
     );
-
     res.json({ success: true, ...result });
   },
 
