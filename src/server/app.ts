@@ -3,6 +3,7 @@ import express from 'express'
 import 'express-async-errors'
 import helmet from 'helmet'
 import morgan from 'morgan'
+import path from 'path'
 
 import { config } from '../config'
 import logger from '../core/logger'
@@ -43,6 +44,8 @@ if (config.nodeEnv !== 'production') {
 
 // health check (public, before auth)
 app.get('/api/v1/healthz', (_req, res) => res.status(200).json({ status: 'ok' }))
+
+app.use('/public', express.static(path.join(__dirname, '../../public')));
 
 // routes
 app.use('/api/v1', apiV1Router)
