@@ -14,72 +14,49 @@ import logger from '../../../core/logger';
  */
 export const getVersionInfo = async (req: Request, res: Response): Promise<void> => {
   try {
-    logger.info({
-      layer: 'controller',
-      action: 'GET_APP_VERSION',
-      payload: { ip: req.ip }
-    });
+    const latestPath = path.join(process.cwd(), 'public/latest.json');
 
-    // Leer configuración de versión desde variables de entorno
-    const version = process.env.APP_VERSION || '2.0.0';
-    const versionCode = parseInt(process.env.APP_VERSION_CODE || '3', 10);
-    const buildNumber = process.env.APP_BUILD_NUMBER || new Date().toISOString().replace(/[-:]/g, '').slice(0, 14);
-    const apiBaseUrl = process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}`;
-
-    // Obtener tamaño del archivo APK si existe
-    const apkPath = path.join(process.cwd(), 'public/apk/app-release-latest.apk');
-    let fileSize = 0;
-
-    try {
-      const stats = fs.statSync(apkPath);
-      fileSize = stats.size;
-    } catch (error) {
-      logger.warn({
-        layer: 'controller',
-        action: 'APK_FILE_NOT_FOUND',
-        payload: { path: apkPath }
+    if (!fs.existsSync(latestPath)) {
+      res.status(500).json({
+        success: false,
+        message: 'latest.json no encontrado'
       });
+      return;
     }
 
-    const versionInfo = {
-      version,
-      versionCode,
-      buildNumber,
-      downloadUrl: `${apiBaseUrl}/api/v1/app/download`,
-      fileSize,
-      changelog: process.env.APP_CHANGELOG || 'Correcciones visuales y mejoras de rendimiento',
-      releasedAt: process.env.APP_RELEASED_AT || new Date().toISOString(),
-      minSupportedVersion: process.env.APP_MIN_SUPPORTED_VERSION || '2.0.0',
-      forceUpdate: process.env.APP_FORCE_UPDATE === 'true'
-    };
+    const latest = JSON.parse(fs.readFileSync(latestPath, 'utf-8'));
 
     res.json({
       success: true,
-      data: versionInfo
+      data: {
+        version: latest.versionName,
+        versionCode: latest.versionCode,
+        buildNumber: latest.buildNumber,
+        downloadUrl: latest.apkUrl,
+        changelog: latest.changelog,
+        releasedAt: latest.releasedAt,
+        minSupportedVersion: latest.minSupportedVersion,
+        forceUpdate: latest.forceUpdate
+      }
     });
 
     logger.info({
       layer: 'controller',
       action: 'VERSION_INFO_SENT',
-      payload: { version, versionCode, buildNumber }
-    });
-
-  } catch (error) {
-    logger.error({
-      layer: 'controller',
-      action: 'GET_VERSION_ERROR',
       payload: {
-        error: (error as Error).message,
-        stack: (error as Error).stack
+        version: latest.versionName,
+        versionCode: latest.versionCode
       }
     });
 
+  } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error al obtener información de versión'
+      message: 'Error al obtener versión'
     });
   }
 };
+
 
 /**
  * GET /api/v1/app/download
