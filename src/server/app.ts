@@ -45,7 +45,8 @@ if (config.nodeEnv !== 'production') {
 // health check (public, before auth)
 app.get('/api/v1/healthz', (_req, res) => res.status(200).json({ status: 'ok' }))
 
-app.use('/public', express.static(path.join(__dirname, '../../public')));
+app.use('/public', express.static(path.join(process.cwd(), 'public')));
+
 
 // routes
 app.use('/api/v1', apiV1Router)
