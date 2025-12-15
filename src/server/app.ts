@@ -31,6 +31,7 @@ app.use(helmet())
 
 // ⚠️ CORS antes de parsers / rateLimit / requireJson
 app.use(corsMiddleware)
+app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
 app.use(express.json({ limit: '200kb' }))
 app.use(requireJson) // asegurarte que ignora OPTIONS
@@ -45,7 +46,6 @@ if (config.nodeEnv !== 'production') {
 // health check (public, before auth)
 app.get('/api/v1/healthz', (_req, res) => res.status(200).json({ status: 'ok' }))
 
-app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
 
 // routes
