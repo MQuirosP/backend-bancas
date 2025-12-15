@@ -27,7 +27,7 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
     const apiBaseUrl = process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}`;
 
     // Obtener tamaño del archivo APK si existe
-    const apkPath = path.join(__dirname, '../../../../public/apk/bancas-admin-latest.apk');
+    const apkPath = path.join(__dirname, '../../../../public/apk/app-release-latest.apk');
     let fileSize = 0;
 
     try {
@@ -93,7 +93,7 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       payload: { ip: req.ip, userAgent: req.get('user-agent') }
     });
 
-    const apkPath = path.join(__dirname, '../../../../public/apk/bancas-admin-latest.apk');
+    const apkPath = path.join(__dirname, '../../../../public/apk/app-release-latest.apk');
 
     // Verificar que el archivo existe
     if (!fs.existsSync(apkPath)) {
