@@ -14,7 +14,8 @@ import logger from '../../../core/logger';
  */
 export const getVersionInfo = async (req: Request, res: Response): Promise<void> => {
   try {
-    const latestPath = path.join(process.cwd(), 'public/latest.json');
+    const latestPath = path.join(__dirname, '../../../public/latest.json');
+
 
     if (!fs.existsSync(latestPath)) {
       res.status(500).json({
