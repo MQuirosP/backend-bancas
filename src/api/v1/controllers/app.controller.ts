@@ -16,8 +16,13 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
   try {
     const latestPath = path.join(__dirname, '../../../public/latest.json');
 
-
     if (!fs.existsSync(latestPath)) {
+      logger.error({
+        layer: 'controller',
+        action: 'LATEST_JSON_NOT_FOUND',
+        payload: { path: latestPath }
+      });
+
       res.status(500).json({
         success: false,
         message: 'latest.json no encontrado'
@@ -51,13 +56,18 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
     });
 
   } catch (error) {
+    logger.error({
+      layer: 'controller',
+      action: 'GET_VERSION_ERROR',
+      payload: { error: (error as Error).message, stack: (error as Error).stack }
+    });
+
     res.status(500).json({
       success: false,
       message: 'Error al obtener versión'
     });
   }
 };
-
 
 /**
  * GET /api/v1/app/download
@@ -71,8 +81,7 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       payload: { ip: req.ip, userAgent: req.get('user-agent') }
     });
 
-    const apkPath = path.join(process.cwd(), 'public/apk/app-release-latest.apk');
-
+    const apkPath = path.join(__dirname, '../../../public/apk/app-release-latest.apk');
 
     // Verificar que el archivo existe
     if (!fs.existsSync(apkPath)) {
@@ -102,13 +111,9 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
         logger.error({
           layer: 'controller',
           action: 'DOWNLOAD_ERROR',
-          payload: {
-            error: err.message,
-            stack: err.stack
-          }
+          payload: { error: err.message, stack: err.stack }
         });
 
-        // Solo enviar respuesta si no se han enviado headers
         if (!res.headersSent) {
           res.status(500).json({
             success: false,
@@ -128,10 +133,7 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
     logger.error({
       layer: 'controller',
       action: 'DOWNLOAD_APK_ERROR',
-      payload: {
-        error: (error as Error).message,
-        stack: (error as Error).stack
-      }
+      payload: { error: (error as Error).message, stack: (error as Error).stack }
     });
 
     if (!res.headersSent) {
