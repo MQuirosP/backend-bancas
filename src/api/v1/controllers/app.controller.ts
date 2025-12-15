@@ -14,7 +14,8 @@ import logger from '../../../core/logger';
  */
 export const getVersionInfo = async (req: Request, res: Response): Promise<void> => {
   try {
-    const latestPath = path.join(__dirname, '../../../public/latest.json');
+    // Usar process.cwd() para apuntar siempre al root del proyecto
+    const latestPath = path.join(process.cwd(), 'public', 'latest.json');
 
     if (!fs.existsSync(latestPath)) {
       logger.error({
@@ -81,7 +82,7 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       payload: { ip: req.ip, userAgent: req.get('user-agent') }
     });
 
-    const apkPath = path.join(__dirname, '../../../public/apk/app-release-latest.apk');
+    const apkPath = path.join(process.cwd(), 'public', 'apk', 'app-release-latest.apk');
 
     // Verificar que el archivo existe
     if (!fs.existsSync(apkPath)) {
