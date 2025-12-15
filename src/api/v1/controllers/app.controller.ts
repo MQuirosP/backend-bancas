@@ -93,7 +93,8 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       payload: { ip: req.ip, userAgent: req.get('user-agent') }
     });
 
-    const apkPath = path.join(__dirname, '../../../../public/apk/app-release-latest.apk');
+    const apkPath = path.join(process.cwd(), 'public/apk/app-release-latest.apk');
+
 
     // Verificar que el archivo existe
     if (!fs.existsSync(apkPath)) {
