@@ -12,6 +12,7 @@ import { resolveCommissionFromPolicy } from "../../../../services/commission/com
 import { resolveCommission } from "../../../../services/commission.resolver";
 import { getSorteoBreakdownBatch } from "./accounts.queries";
 import { getCachedDayStatement, setCachedDayStatement } from "../../../../utils/accountStatementCache";
+import { intercalateSorteosAndMovements } from "./accounts.intercalate";
 
 /**
  * Calcula y actualiza el estado de cuenta para un día específico
@@ -1062,7 +1063,6 @@ export async function getStatementDirect(
             // - Si hay vendedorId específico → usar commissionVendedor
             // - Si NO hay vendedorId → usar commissionListero (por defecto)
             const commissionToUse = vendedorId ? entry.commissionVendedor : entry.commissionListero;
-            const balance = entry.totalSales - totalPayouts - commissionToUse;
 
             // Calcular totales de pagos y cobros del DÍA (para el statement diario)
             const totalPaid = movements
@@ -1072,10 +1072,17 @@ export async function getStatementDirect(
                 .filter((m: any) => m.type === "collection" && !m.isReversed)
                 .reduce((sum: number, m: any) => sum + m.amount, 0);
 
+            // ✅ CRÍTICO: Balance del día = ventas - premios - comisiones (SIN movimientos)
+            // Los movimientos están en bySorteo y se suman en el accumulated allí
+            const balance = entry.totalSales - totalPayouts - commissionToUse;
+
             // ✅ CRÍTICO: remainingBalance debe ser ACUMULADO REAL hasta esta fecha
             // NO debe depender del filtro de periodo aplicado
             // Se calculará más adelante usando monthlyByDateAndDimension (línea ~1420)
             const remainingBalance = 0; // Temporal, se calcula después
+
+            // ✅ NUEVO: Intercalar sorteos y movimientos en una lista unificada
+            const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date);
 
             const statement: any = {
                 date,
@@ -1100,8 +1107,7 @@ export async function getStatementDirect(
                 isSettled: calculateIsSettled(entry.totalTickets.size, remainingBalance, totalPaid, totalCollected),
                 canEdit: !calculateIsSettled(entry.totalTickets.size, remainingBalance, totalPaid, totalCollected),
                 ticketCount: entry.totalTickets.size,
-                bySorteo,
-                movements,
+                bySorteo: sorteosAndMovements, // ✅ NUEVO: Sorteos + Movimientos intercalados (incluye accumulated)
             };
 
             // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
