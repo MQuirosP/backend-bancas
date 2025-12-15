@@ -6,12 +6,19 @@
 import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import logger from '../../../core/logger';
 
+/**
+ * GET /api/v1/app/version
+ * Retorna información de la versión más reciente de la APK
+ */
 export const getVersionInfo = async (req: Request, res: Response): Promise<void> => {
   try {
     const latestPath = path.join(process.cwd(), 'public', 'latest.json');
+    const apkPath = path.join(process.cwd(), 'public', 'apk', 'app-release-latest.apk');
 
+    // Verificar latest.json
     if (!fs.existsSync(latestPath)) {
       logger.error({
         layer: 'controller',
@@ -28,12 +35,16 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
 
     const latest = JSON.parse(fs.readFileSync(latestPath, 'utf-8'));
 
-    // Calcula tamaño dinámico del APK
-    const apkPath = path.join(process.cwd(), 'public', 'apk', 'app-release-latest.apk');
+    // Tamaño dinámico del APK
     let apkSizeMB: number | null = null;
+    let sha256: string | null = null;
     if (fs.existsSync(apkPath)) {
       const stats = fs.statSync(apkPath);
-      apkSizeMB = +(stats.size / (1024 * 1024)).toFixed(2); // MB con 2 decimales
+      apkSizeMB = +(stats.size / (1024 * 1024)).toFixed(2);
+
+      // Calcular hash SHA256
+      const fileBuffer = fs.readFileSync(apkPath);
+      sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
     }
 
     res.json({
@@ -42,13 +53,13 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
         version: latest.versionName,
         versionCode: latest.versionCode,
         buildNumber: latest.buildNumber,
-        downloadUrl: '/api/v1/app/download', // siempre el endpoint de descarga
-        apkSizeMB, // dinámico, evita NaN
+        downloadUrl: '/api/v1/app/download',
+        apkSizeMB,
         changelog: latest.changelog,
         releasedAt: latest.releasedAt,
         minSupportedVersion: latest.minSupportedVersion,
         forceUpdate: latest.forceUpdate,
-        sha256: latest.sha256 || null
+        sha256
       }
     });
 
@@ -58,7 +69,8 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
       payload: {
         version: latest.versionName,
         versionCode: latest.versionCode,
-        apkSizeMB
+        apkSizeMB,
+        sha256
       }
     });
 
@@ -76,6 +88,10 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
   }
 };
 
+/**
+ * GET /api/v1/app/download
+ * Descarga directa del archivo APK más reciente
+ */
 export const downloadApk = async (req: Request, res: Response): Promise<void> => {
   try {
     const apkPath = path.join(process.cwd(), 'public', 'apk', 'app-release-latest.apk');
