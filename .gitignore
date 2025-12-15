@@ -37,7 +37,9 @@ dist/
 # APK files (Android auto-update)
 # Mantener la estructura de carpeta pero no versionar los archivos APK
 public/apk/*.apk
+!public/apk/app-release-latest.apk
 !public/apk/.gitkeep
+
 
 # Prisma migrations backup
 src/prisma/migrations_archive/
