@@ -8,13 +8,8 @@ import path from 'path';
 import fs from 'fs';
 import logger from '../../../core/logger';
 
-/**
- * GET /api/v1/app/version
- * Retorna información de la versión más reciente de la APK
- */
 export const getVersionInfo = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Usar process.cwd() para apuntar siempre al root del proyecto
     const latestPath = path.join(process.cwd(), 'public', 'latest.json');
 
     if (!fs.existsSync(latestPath)) {
@@ -33,17 +28,27 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
 
     const latest = JSON.parse(fs.readFileSync(latestPath, 'utf-8'));
 
+    // Calcula tamaño dinámico del APK
+    const apkPath = path.join(process.cwd(), 'public', 'apk', 'app-release-latest.apk');
+    let apkSizeMB: number | null = null;
+    if (fs.existsSync(apkPath)) {
+      const stats = fs.statSync(apkPath);
+      apkSizeMB = +(stats.size / (1024 * 1024)).toFixed(2); // MB con 2 decimales
+    }
+
     res.json({
       success: true,
       data: {
         version: latest.versionName,
         versionCode: latest.versionCode,
         buildNumber: latest.buildNumber,
-        downloadUrl: latest.apkUrl,
+        downloadUrl: '/api/v1/app/download', // siempre el endpoint de descarga
+        apkSizeMB, // dinámico, evita NaN
         changelog: latest.changelog,
         releasedAt: latest.releasedAt,
         minSupportedVersion: latest.minSupportedVersion,
-        forceUpdate: latest.forceUpdate
+        forceUpdate: latest.forceUpdate,
+        sha256: latest.sha256 || null
       }
     });
 
@@ -52,7 +57,8 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
       action: 'VERSION_INFO_SENT',
       payload: {
         version: latest.versionName,
-        versionCode: latest.versionCode
+        versionCode: latest.versionCode,
+        apkSizeMB
       }
     });
 
@@ -70,21 +76,10 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
   }
 };
 
-/**
- * GET /api/v1/app/download
- * Descarga directa del archivo APK más reciente
- */
 export const downloadApk = async (req: Request, res: Response): Promise<void> => {
   try {
-    logger.info({
-      layer: 'controller',
-      action: 'DOWNLOAD_APK_REQUESTED',
-      payload: { ip: req.ip, userAgent: req.get('user-agent') }
-    });
-
     const apkPath = path.join(process.cwd(), 'public', 'apk', 'app-release-latest.apk');
 
-    // Verificar que el archivo existe
     if (!fs.existsSync(apkPath)) {
       logger.error({
         layer: 'controller',
@@ -99,14 +94,12 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    // Configurar headers para descarga
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
     res.setHeader('Content-Disposition', 'attachment; filename="bancas-admin.apk"');
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
 
-    // Enviar archivo
     res.download(apkPath, 'bancas-admin.apk', (err) => {
       if (err) {
         logger.error({
@@ -114,12 +107,8 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
           action: 'DOWNLOAD_ERROR',
           payload: { error: err.message, stack: err.stack }
         });
-
         if (!res.headersSent) {
-          res.status(500).json({
-            success: false,
-            message: 'Error al descargar APK'
-          });
+          res.status(500).json({ success: false, message: 'Error al descargar APK' });
         }
       } else {
         logger.info({
@@ -136,12 +125,8 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       action: 'DOWNLOAD_APK_ERROR',
       payload: { error: (error as Error).message, stack: (error as Error).stack }
     });
-
     if (!res.headersSent) {
-      res.status(500).json({
-        success: false,
-        message: 'Error al procesar descarga'
-      });
+      res.status(500).json({ success: false, message: 'Error al procesar descarga' });
     }
   }
 };
