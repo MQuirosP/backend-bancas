@@ -6,6 +6,6 @@
   "forceUpdate": false,
   "changelog": "Correcciones visuales y mejoras de rendimiento",
   "releasedAt": "2025-12-11T20:00:00Z",
-  "apkUrl": "https://backend-bancas-yk1i.onrender.com/api/v1/app/download",
+  "apkUrl": "https://backend-bancas-yk1i.onrender.com/public/apk/app-release-latest.apk",
   "sha256": "38b55b99ba018fae3db7748834519a9ec853da61014aa20d8f1c599e8f3a7ea3"
 }
