@@ -473,7 +473,7 @@ export async function getSorteoBreakdownBatch(
                     : entry.sales - entry.payouts - entry.vendedorCommission,
                 ticketCount: entry.ticketCount,
             }))
-            .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+            .sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt)); // ✅ DESC para consistencia con sorteo module
 
         finalMap.set(mapKey, result);
     }
@@ -714,7 +714,7 @@ export async function getSorteoBreakdown(
                 : entry.sales - entry.payouts - entry.vendedorCommission,
             ticketCount: entry.ticketCount,
         }))
-        .sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()); // Ordenar por scheduledAt ascendente
+        .sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime()); // ✅ DESC para consistencia con sorteo module
 
     return result;
 }
