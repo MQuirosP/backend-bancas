@@ -13,7 +13,7 @@ import { resolveDateRange } from "../../../utils/dateRange";
 import { UserService } from "./user.service";
 import { nowCR, validateDate, formatDateCRWithTZ } from "../../../utils/datetime";
 
-const CUTOFF_GRACE_MS = 5000;
+const CUTOFF_GRACE_MS = 1000;
 // Updated: Added clienteNombre field support
 
 /**
@@ -169,7 +169,7 @@ export const TicketService = {
         bancaId: ventana.bancaId,
         ventanaId,
         userId: effectiveVendedorId, // ✅ CORRECCIÓN: Usar el vendedor efectivo para respetar sus reglas
-        defaultCutoff: 5,
+        defaultCutoff: 1,
       });
 
       const now = nowCR(); // ✅ Usar nowCR() en lugar de new Date()
@@ -177,7 +177,7 @@ export const TicketService = {
       // ✅ VALIDACIÓN DEFENSIVA: Asegurar que minutes sea un número válido
       const safeMinutes = (typeof cutoff.minutes === 'number' && !isNaN(cutoff.minutes))
         ? cutoff.minutes
-        : 5; // Fallback seguro a 5 min si viene corrupto
+        : 1; // Fallback seguro a 5 min si viene corrupto
 
       const cutoffMs = safeMinutes * 60_000;
       const limitTime = new Date(sorteo.scheduledAt.getTime() - cutoffMs);
