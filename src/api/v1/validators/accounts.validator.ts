@@ -95,8 +95,7 @@ export const CreatePaymentBodySchema = z
       message: "No se pueden proporcionar ventanaId y vendedorId al mismo tiempo",
       path: ["ventanaId", "vendedorId"],
     }
-  )
-  .strict();
+  );
 
 /**
  * Schema para query parameters de GET /accounts/payment-history
