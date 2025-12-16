@@ -121,6 +121,7 @@ export const NumbersSummaryQuerySchema = z
     dimension: z.enum(["listero", "vendedor", "ventana"]).optional(), // Filtro por dimensión (ventana/listero = ventana, vendedor = vendedor)
     ventanaId: z.uuid().optional(), // Filtro por ventana (cuando dimension='listero'/'ventana' o scope='all')
     vendedorId: z.uuid().optional(), // Filtro por vendedor (cuando dimension='vendedor' o scope='all')
+    bancaId: z.uuid().optional(), // ✅ Agregado: Permitir bancaId opcional
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
@@ -133,6 +134,7 @@ export const NumbersSummaryQuerySchema = z
     pageSize: z.coerce.number().int().min(1).max(1000).optional().default(100), // Tamaño de página (default: 100)
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
+  .strict()
   .transform((val) => {
     // Normalizar 'ventana' a 'listero' para consistencia interna
     if (val.dimension === "ventana") {
