@@ -76,6 +76,8 @@ export const TicketsReportService = {
     // Construir filtros WHERE
     const where: Prisma.TicketWhereInput = {
       isWinner: true,
+      isActive: true,
+      deletedAt: null,
       status: { in: [TicketStatus.EVALUATED, TicketStatus.ACTIVE] },
       createdAt: {
         gte: dateRange.from,
@@ -310,6 +312,7 @@ export const TicketsReportService = {
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
       WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
         AND t.status = 'ACTIVE'
+        AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
         ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
@@ -337,6 +340,7 @@ export const TicketsReportService = {
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
       WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
         AND t.status = 'ACTIVE'
+        AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
         ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
@@ -416,6 +420,7 @@ export const TicketsReportService = {
 
     const where: Prisma.TicketWhereInput = {
       status: TicketStatus.CANCELLED,
+      deletedAt: null,
       createdAt: {
         gte: dateRange.from,
         lte: dateRange.to,
