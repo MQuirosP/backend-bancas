@@ -93,46 +93,54 @@ export function intercalateSorteosAndMovements(
   const movementItems: SorteoOrMovement[] = [];
 
   for (const movement of movements) {
-    if (!movement.isReversed) {
-      // Combinar: fecha del usuario + hora de createdAt (en hora CR)
-      const createdAtDate = new Date(movement.createdAt);
-      // Convertir UTC a CR (UTC-6)
-      const crTime = new Date(createdAtDate.getTime() - (6 * 60 * 60 * 1000));
-      const hour = crTime.getUTCHours();
-      const minute = crTime.getUTCMinutes();
-      const seconds = crTime.getUTCSeconds();
-      const [year, month, day] = movement.date.split('-').map(Number);
-      const scheduledAt = new Date(year, month - 1, day, hour, minute, seconds);
+    // ✅ INCLUIR TODOS los movimientos (activos y reversados)
+    // Los movimientos reversados se muestran en el frontend con estilo diferente
+    // pero NO afectan el balance acumulado (balance: 0 si isReversed)
+    
+    // Combinar: fecha del usuario + hora de createdAt (en hora CR)
+    const createdAtDate = new Date(movement.createdAt);
+    // Convertir UTC a CR (UTC-6)
+    const crTime = new Date(createdAtDate.getTime() - (6 * 60 * 60 * 1000));
+    const hour = crTime.getUTCHours();
+    const minute = crTime.getUTCMinutes();
+    const seconds = crTime.getUTCSeconds();
+    const [year, month, day] = movement.date.split('-').map(Number);
+    const scheduledAt = new Date(year, month - 1, day, hour, minute, seconds);
 
-      movementItems.push({
-        sorteoId: `mov-${movement.id}`,
-        sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
-        scheduledAt: scheduledAt.toISOString(),
-        date: movement.date,
-        time: formatTime12h(scheduledAt),
-        balance: movement.type === 'payment' ? movement.amount : -movement.amount,
-        accumulated: 0,
-        chronologicalIndex: 0,
-        totalChronological: 0,
+    // ✅ CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
+    // Si no está reversado, usar el monto normal
+    const effectiveBalance = movement.isReversed 
+      ? 0 
+      : (movement.type === 'payment' ? movement.amount : -movement.amount);
 
-        // Campos null para compatibilidad con sorteos
-        loteriaId: null,
-        loteriaName: null,
-        sales: 0,
-        payouts: 0,
-        listeroCommission: 0,
-        vendedorCommission: 0,
-        ticketCount: 0,
+    movementItems.push({
+      sorteoId: `mov-${movement.id}`,
+      sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
+      scheduledAt: scheduledAt.toISOString(),
+      date: movement.date,
+      time: formatTime12h(scheduledAt),
+      balance: effectiveBalance, // ✅ 0 si reversado, monto normal si activo
+      accumulated: 0,
+      chronologicalIndex: 0,
+      totalChronological: 0,
 
-        // Campos específicos de movimiento
-        type: movement.type,
-        amount: movement.amount,
-        method: movement.method,
-        notes: movement.notes,
-        isReversed: movement.isReversed,
-        createdAt: movement.createdAt,
-      });
-    }
+      // Campos null para compatibilidad con sorteos
+      loteriaId: null,
+      loteriaName: null,
+      sales: 0,
+      payouts: 0,
+      listeroCommission: 0,
+      vendedorCommission: 0,
+      ticketCount: 0,
+
+      // Campos específicos de movimiento
+      type: movement.type,
+      amount: movement.amount, // ✅ Mantener monto original para mostrar en frontend
+      method: movement.method,
+      notes: movement.notes,
+      isReversed: movement.isReversed, // ✅ Frontend usa esto para aplicar estilo diferente
+      createdAt: movement.createdAt,
+    });
   }
 
   // PASO 2: Convertir sorteos a formato unificado
