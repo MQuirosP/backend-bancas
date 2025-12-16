@@ -173,6 +173,7 @@ export function intercalateSorteosAndMovements(
     return {
       ...event,
       accumulated: eventAccumulated,
+      sorteoAccumulated: eventAccumulated, // ✅ NUEVO: También asignar a sorteoAccumulated para movimientos
       chronologicalIndex: index + 1,
       totalChronological: totalEvents,
     };
