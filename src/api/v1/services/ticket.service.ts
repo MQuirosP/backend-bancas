@@ -190,13 +190,34 @@ export const TicketService = {
         requestId,
         payload: {
           cutOff: { minutes: safeMinutes, source: cutoff.source },
+          bancaId: ventana.bancaId,
+          ventanaId,
+          effectiveVendedorId,
           nowISO: now.toISOString(),
           scheduledAtISO: formatDateCRWithTZ(sorteo.scheduledAt),
           limitTimeISO: limitTime.toISOString(),
           effectiveLimitTimeISO: effectiveLimitTime.toISOString(),
           sorteoStatus: sorteo.status,
+          timeUntilSorteoMinutes: Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000),
         },
       });
+
+      // ⚠️ ALERTA: Si se usa DEFAULT fallback, loggear warning
+      if (cutoff.source === "DEFAULT") {
+        logger.warn({
+          layer: "service",
+          action: "TICKET_CUTOFF_USING_DEFAULT",
+          userId,
+          requestId,
+          payload: {
+            bancaId: ventana.bancaId,
+            ventanaId,
+            effectiveVendedorId,
+            defaultCutoffUsed: safeMinutes,
+            message: "Cutoff is using DEFAULT fallback - no RestrictionRule or Banca.salesCutoffMinutes found",
+          },
+        });
+      }
 
       if (now >= effectiveLimitTime) {
         const minsLeft = Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000));

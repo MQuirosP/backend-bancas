@@ -395,17 +395,39 @@ export const RestrictionRuleRepository = {
   },
 
   /**
-   * Cutoff efectivo con FUENTE (USER > VENTANA > BANCA) y ventana temporal.
-   * Solo considera reglas activas.
+   * LÓGICA DE CUTOFF CONSOLIDADA
+   *
+   * Concepto: El cutoff más ALTO (más restrictivo) siempre gana
+   * - DEFAULT = 1 minuto (más permisivo: venta permitida hasta 1 min antes)
+   * - RESTRICCIÓN = 5 minutos (más restrictivo: venta bloqueada a 5 min antes)
+   *
+   * Prioridad (se usa el MÁS ALTO de todos):
+   * 1. RestrictionRule.USER
+   * 2. RestrictionRule.VENTANA
+   * 3. RestrictionRule.BANCA
+   * 4. Banca.salesCutoffMinutes (tabla directa)
+   * 5. DEFAULT = 1 minuto (fallback si nada configurado)
+   *
+   * Ejemplo:
+   * - USER: 2 min, VENTANA: 5 min, BANCA: 3 min → Usa 5 min (VENTANA)
+   * - Sin restricciones, Banca tiene 3 min → Usa 3 min (BANCA)
+   * - Sin nada → Usa 1 min (DEFAULT)
    */
-  async getEffectiveSalesCutoffWithSource(params: {
+  async resolveSalesCutoff(params: {
     bancaId: string;
     ventanaId?: string | null;
     userId?: string | null;
-    at?: Date;
-  }): Promise<{ minutes: number | null; source: "USER" | "VENTANA" | "BANCA" | null }> {
-    const { bancaId, ventanaId, userId } = params;
-    const at = params.at ?? new Date();
+    defaultCutoff?: number;
+  }): Promise<EffectiveSalesCutoffDetailed> {
+    const { bancaId, ventanaId, userId, defaultCutoff = 1 } = params;
+
+    // Intentar obtener de caché
+    const cached = await getCachedCutoff({ bancaId, ventanaId, userId });
+    if (cached && typeof cached.minutes === 'number' && !isNaN(cached.minutes) && cached.minutes >= 0) {
+      return cached;
+    }
+
+    const at = new Date();
     const hour = at.getHours();
     const dateOnly = new Date(at.getFullYear(), at.getMonth(), at.getDate());
 
@@ -416,7 +438,6 @@ export const RestrictionRuleRepository = {
       ],
     };
 
-    // Base para cutoff: debe ser activa, sin number, con minutos
     const baseWhere = (extra: any) => ({
       ...extra,
       isActive: true,
@@ -425,95 +446,88 @@ export const RestrictionRuleRepository = {
       ...whereTime,
     });
 
-    const [userRule, ventanaRule, bancaRule] = await Promise.all([
+    // Buscar TODAS las restricciones en paralelo (RestrictionRule + Banca tabla)
+    const [userRule, ventanaRule, bancaRule, bancaTable] = await Promise.all([
       userId
         ? prisma.restrictionRule.findFirst({
           where: baseWhere({ userId }),
           orderBy: { updatedAt: "desc" },
           select: { salesCutoffMinutes: true },
         })
-        : Promise.resolve(null),
+        : null,
       ventanaId
         ? prisma.restrictionRule.findFirst({
           where: baseWhere({ ventanaId }),
           orderBy: { updatedAt: "desc" },
           select: { salesCutoffMinutes: true },
         })
-        : Promise.resolve(null),
+        : null,
       prisma.restrictionRule.findFirst({
         where: baseWhere({ bancaId }),
         orderBy: { updatedAt: "desc" },
         select: { salesCutoffMinutes: true },
       }),
+      prisma.banca.findUnique({
+        where: { id: bancaId, isActive: true },
+        select: { salesCutoffMinutes: true },
+      }),
     ]);
 
+    // Recolectar todos los candidatos válidos
+    const candidates: Array<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" }> = [];
+
     if (userRule?.salesCutoffMinutes != null) {
-      return { minutes: userRule.salesCutoffMinutes, source: "USER" };
+      candidates.push({ minutes: userRule.salesCutoffMinutes, source: "USER" });
     }
     if (ventanaRule?.salesCutoffMinutes != null) {
-      return { minutes: ventanaRule.salesCutoffMinutes, source: "VENTANA" };
+      candidates.push({ minutes: ventanaRule.salesCutoffMinutes, source: "VENTANA" });
     }
     if (bancaRule?.salesCutoffMinutes != null) {
-      return { minutes: bancaRule.salesCutoffMinutes, source: "BANCA" };
+      candidates.push({ minutes: bancaRule.salesCutoffMinutes, source: "BANCA" });
     }
-    return { minutes: null, source: null };
-  },
+    if (bancaTable?.salesCutoffMinutes != null) {
+      candidates.push({ minutes: bancaTable.salesCutoffMinutes, source: "BANCA" });
+    }
 
-  /**
-   * API ÚNICA para el resto del sistema:
-   * - si hay regla → respeta minutos y fuente
-   * - si no hay → fallback a `defaultCutoff` y source="DEFAULT"
-   * ✅ OPTIMIZACIÓN: Usa caché Redis para reducir queries a DB
-   */
-  async resolveSalesCutoff(params: {
-    bancaId: string;
-    ventanaId?: string | null;
-    userId?: string | null;
-    defaultCutoff?: number;
-  }): Promise<EffectiveSalesCutoffDetailed> {
-    const { bancaId, ventanaId, userId, defaultCutoff = 5 } = params;
+    // Si no hay restricciones, usar DEFAULT
+    if (candidates.length === 0) {
+      const safeDefault = (typeof defaultCutoff === 'number' && !isNaN(defaultCutoff)) ? defaultCutoff : 1;
+      const result = { minutes: Math.max(0, safeDefault), source: "DEFAULT" as const };
 
-    // ✅ OPTIMIZACIÓN: Intentar obtener de caché primero
-    const cached = await getCachedCutoff({ bancaId, ventanaId, userId });
-    if (cached) {
-      // ✅ VALIDACIÓN DEFENSIVA: Verificar que el valor cacheado sea válido
-      if (typeof cached.minutes === 'number' && !isNaN(cached.minutes) && cached.minutes >= 0) {
-        return cached;
-      }
-      // Si el valor cacheado está corrupto, continuar con consulta a BD
-      logger.warn({
+      logger.info({
         layer: 'repository',
-        action: 'CORRUPTED_CACHE_CUTOFF',
-        payload: { bancaId, ventanaId, userId, cached }
+        action: 'CUTOFF_USING_DEFAULT',
+        payload: { bancaId, ventanaId, userId, minutes: result.minutes, source: result.source }
       });
+
+      await setCachedCutoff({ bancaId, ventanaId, userId }, result);
+      return result;
     }
 
-    // Si no está en caché, consultar DB
-    const eff = await this.getEffectiveSalesCutoffWithSource({
-      bancaId,
-      ventanaId: ventanaId ?? null,
-      userId: userId ?? null,
+    // Encontrar el MÁS RESTRICTIVO (el que tiene más minutos)
+    const mostRestrictive = candidates.reduce((max, current) =>
+      current.minutes > max.minutes ? current : max
+    );
+
+    const result = {
+      minutes: Math.max(0, mostRestrictive.minutes),
+      source: mostRestrictive.source
+    };
+
+    logger.info({
+      layer: 'repository',
+      action: 'CUTOFF_RESOLVED',
+      payload: {
+        bancaId,
+        ventanaId,
+        userId,
+        result,
+        allCandidates: candidates,
+        message: `Using most restrictive cutoff: ${result.minutes} min from ${result.source}`
+      }
     });
 
-    // ✅ VALIDACIÓN DEFENSIVA: Asegurar que minutes sea un número válido antes de cachear
-    let minutes: number;
-    let source: "USER" | "VENTANA" | "BANCA" | "DEFAULT";
-
-    if (eff.minutes != null && typeof eff.minutes === 'number' && !isNaN(eff.minutes)) {
-      minutes = Math.max(0, eff.minutes);
-      source = eff.source!;
-    } else {
-      // Fallback a defaultCutoff
-      const safeDefault = (typeof defaultCutoff === 'number' && !isNaN(defaultCutoff)) ? defaultCutoff : 5;
-      minutes = Math.max(0, safeDefault);
-      source = "DEFAULT";
-    }
-
-    const result = { minutes, source };
-
-    // ✅ OPTIMIZACIÓN: Guardar en caché para futuras requests
     await setCachedCutoff({ bancaId, ventanaId, userId }, result);
-
     return result;
   },
 };
