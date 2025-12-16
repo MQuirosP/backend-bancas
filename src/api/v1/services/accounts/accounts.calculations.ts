@@ -189,13 +189,6 @@ export async function calculateDayStatement(
         }
     }
 
-    // ✅ CORRECCIÓN: Calcular balance según dimensión
-    // - Vendedor: balance = totalSales - totalPayouts - vendedorCommission
-    // - Ventana/Banca: balance = totalSales - totalPayouts - listeroCommission
-    const balance = dimension === "vendedor"
-        ? totalSales - totalPayouts - totalVendedorCommission
-        : totalSales - totalPayouts - totalListeroCommission;
-
     // Si no hay tickets, retornar valores por defecto sin crear statement
     // FIX: No crear fechas nuevas cada vez para mantener consistencia
     if (ticketCount === 0) {
@@ -212,12 +205,16 @@ export async function calculateDayStatement(
             const recalculatedTotalCollected = await AccountPaymentRepository.getTotalCollected(existingStatement.id);
             // ✅ NUEVO: Recalcular totalPaymentsCollections
             const recalculatedTotalPaymentsCollections = await AccountPaymentRepository.getTotalPaymentsCollections(existingStatement.id);
-            // remainingBalance = balance - totalCollected + totalPaid
-            // Como balance = 0 (no hay tickets), remainingBalance = 0 - totalCollected + totalPaid
-            const recalculatedRemainingBalance = 0 - recalculatedTotalCollected + recalculatedTotalPaid;
+            // ✅ NUEVO: Balance incluye movimientos
+            // Como no hay tickets (totalSales = 0, totalPayouts = 0, comisiones = 0)
+            // balance = 0 - 0 - 0 + totalPaid - totalCollected = totalPaid - totalCollected
+            const recalculatedBalance = recalculatedTotalPaid - recalculatedTotalCollected;
+            // ✅ NUEVO: remainingBalance = balance (ya incluye movimientos)
+            const recalculatedRemainingBalance = recalculatedBalance;
 
             // ✅ FIX: Actualizar el statement con los valores recalculados
             await AccountStatementRepository.update(existingStatement.id, {
+                balance: recalculatedBalance,
                 totalPaid: recalculatedTotalPaid,
                 totalCollected: recalculatedTotalCollected,
                 remainingBalance: recalculatedRemainingBalance,
@@ -252,7 +249,7 @@ export async function calculateDayStatement(
                 totalPayouts: 0,
                 listeroCommission: 0,
                 vendedorCommission: 0,
-                balance: 0,
+                balance: recalculatedBalance,
                 totalPaid: recalculatedTotalPaid,
                 totalCollected: recalculatedTotalCollected,
                 totalPaymentsCollections: recalculatedTotalPaymentsCollections, // ✅ NUEVO
@@ -371,12 +368,15 @@ export async function calculateDayStatement(
     // ✅ NUEVO: Obtener total de pagos y cobros combinados (no revertidos)
     const totalPaymentsCollections = await AccountPaymentRepository.getTotalPaymentsCollections(finalStatement.id);
 
-    // Calcular saldo restante: remainingBalance = balance - totalCollected + totalPaid
-    // Lógica:
-    // - Collection (cobro): reduce remainingBalance cuando es positivo (resta totalCollected)
-    // - Payment (pago): reduce remainingBalance cuando es negativo (suma totalPaid)
-    // Fórmula: remainingBalance = balance - totalCollected + totalPaid
-    const remainingBalance = balance - totalCollected + totalPaid;
+    // ✅ CORRECCIÓN: Calcular balance según dimensión + movimientos
+    // - Vendedor: balance = totalSales - totalPayouts - vendedorCommission + totalPaid - totalCollected
+    // - Ventana/Banca: balance = totalSales - totalPayouts - listeroCommission + totalPaid - totalCollected
+    const balance = dimension === "vendedor"
+        ? totalSales - totalPayouts - totalVendedorCommission + totalPaid - totalCollected
+        : totalSales - totalPayouts - totalListeroCommission + totalPaid - totalCollected;
+
+    // ✅ NUEVO: remainingBalance = balance (ya incluye movimientos, no volver a aplicarlos)
+    const remainingBalance = balance;
 
     // FIX: Usar helper para cálculo consistente de isSettled
     const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
@@ -1072,9 +1072,10 @@ export async function getStatementDirect(
                 .filter((m: any) => m.type === "collection" && !m.isReversed)
                 .reduce((sum: number, m: any) => sum + m.amount, 0);
 
-            // ✅ CRÍTICO: Balance del día = ventas - premios - comisiones (SIN movimientos)
-            // Los movimientos están en bySorteo y se suman en el accumulated allí
-            const balance = entry.totalSales - totalPayouts - commissionToUse;
+            // ✅ CRÍTICO: Balance del día = ventas - premios - comisiones + movimientos
+            // Los movimientos (pagos/cobros) deben participar en el balance diario
+            // payment = positivo (aumenta balance), collection = negativo (disminuye balance)
+            const balance = entry.totalSales - totalPayouts - commissionToUse + totalPaid - totalCollected;
 
             // ✅ CRÍTICO: remainingBalance debe ser ACUMULADO REAL hasta esta fecha
             // NO debe depender del filtro de periodo aplicado
@@ -1800,10 +1801,8 @@ export async function getStatementDirect(
     const dailyRemainingBalance = new Map<any, number>();
 
     for (const statement of allStatementsFromMonth) {
-        // remainingBalance del día = balance - collected + paid
-        const dailyValue = parseFloat(
-            (statement.balance - statement.totalCollected + statement.totalPaid).toFixed(2)
-        );
+        // ✅ NUEVO: remainingBalance del día = balance (ya incluye movimientos, no volver a aplicarlos)
+        const dailyValue = parseFloat(statement.balance.toFixed(2));
         dailyRemainingBalance.set(statement, dailyValue);
 
         // 🔍 DEBUG: Log detallado de cada statement
@@ -1816,7 +1815,7 @@ export async function getStatementDirect(
                 totalCollected: statement.totalCollected,
                 totalPaid: statement.totalPaid,
                 calculatedRemainingBalance: dailyValue,
-                formula: `${statement.balance} - ${statement.totalCollected} + ${statement.totalPaid} = ${dailyValue}`
+                note: "Balance ya incluye movimientos, no se vuelven a aplicar"
             }
         });
     }
