@@ -822,79 +822,9 @@ export const TicketRepository = {
           0
         );
 
-        // 7) Límite diario por vendedor (solo reglas globales + fallback env)
-        const globalLimitRule = applicable.find(
-          (rule) => !rule.number && typeof rule.maxTotal === "number" && rule.maxTotal !== null
-        );
-
-        const ruleDailyLimit =
-          globalLimitRule && typeof globalLimitRule.maxTotal === "number"
-            ? Number(globalLimitRule.maxTotal)
-            : null;
-
-        const envDailyLimitRaw = Number(process.env.SALES_DAILY_MAX ?? 0);
-        const envDailyLimit =
-          Number.isFinite(envDailyLimitRaw) && envDailyLimitRaw > 0
-            ? envDailyLimitRaw
-            : null;
-
-        let effectiveDailyLimit: number | null = null;
-        let dailyLimitSource: {
-          tipo: "REGLA_GLOBAL" | "ENTORNO";
-          reglaId?: string;
-          alcance?: "USUARIO" | "VENTANA" | "BANCA" | "GLOBAL";
-        } | null = null;
-
-        if (ruleDailyLimit != null && ruleDailyLimit > 0) {
-          effectiveDailyLimit =
-            envDailyLimit != null ? Math.min(ruleDailyLimit, envDailyLimit) : ruleDailyLimit;
-
-          let alcance: "USUARIO" | "VENTANA" | "BANCA" | "GLOBAL" = "GLOBAL";
-          if (globalLimitRule?.userId) {
-            alcance = "USUARIO";
-          } else if (globalLimitRule?.ventanaId) {
-            alcance = "VENTANA";
-          } else if (globalLimitRule?.bancaId) {
-            alcance = "BANCA";
-          }
-
-          dailyLimitSource = {
-            tipo: "REGLA_GLOBAL",
-            reglaId: globalLimitRule?.id,
-            alcance,
-          };
-        } else if (envDailyLimit != null) {
-          effectiveDailyLimit = envDailyLimit;
-          dailyLimitSource = { tipo: "ENTORNO" };
-        }
-
-        if (effectiveDailyLimit != null) {
-          const crRange = getCRDayRangeUTC(now);
-          const { _sum } = await tx.ticket.aggregate({
-            _sum: { totalAmount: true },
-            where: {
-              vendedorId: userId,
-              createdAt: { gte: crRange.fromAt, lt: crRange.toAtExclusive },
-            },
-          });
-          const dailyTotal = _sum.totalAmount ?? 0;
-          if (dailyTotal + totalAmountTx > effectiveDailyLimit) {
-            throw new AppError(
-              "Límite diario de ventas excedido",
-              400,
-              {
-                code: "LIMIT_VIOLATION",
-                limiteAplicado: effectiveDailyLimit,
-                limiteRegla: ruleDailyLimit ?? null,
-                limiteEntorno: envDailyLimit ?? null,
-                totalAcumulado: dailyTotal,
-                montoTicket: totalAmountTx,
-                totalProyectado: dailyTotal + totalAmountTx,
-                fuente: dailyLimitSource,
-              }
-            );
-          }
-        }
+        // 7) ❌ ELIMINADO: Validación de límite diario TOTAL del vendedor
+        // Los límites deben aplicarse POR NÚMERO, no por total diario del vendedor.
+        // La validación correcta está más abajo (validateMaxTotalForNumbers)
 
         // 8) Aplicar primera regla aplicable (si hay) con soporte para límites dinámicos
         if (applicable.length > 0) {
@@ -1440,8 +1370,8 @@ export const TicketRepository = {
     const scheduledAt = options?.scheduledAt;
 
     // Calcular timeout dinámico basado en número de jugadas
-    const baseTimeout = 10_000; // 10s base
-    const perJugadaTimeout = 200; // 200ms por jugada
+    const baseTimeout = 20_000; // 20s base (aumentado para manejar concurrencia)
+    const perJugadaTimeout = 300; // 300ms por jugada
     const maxTimeout = 60_000; // Máximo 60s
     const dynamicTimeout = Math.min(
       baseTimeout + (jugadas.length * perJugadaTimeout),
@@ -1856,56 +1786,9 @@ export const TicketRepository = {
 
         const totalAmountTx = preparedJugadas.reduce((acc, j) => acc + j.amount, 0);
 
-        // 9) Validar límite diario
-        const globalLimitRule = applicable.find(
-          (rule) => !rule.number && typeof rule.maxTotal === "number" && rule.maxTotal !== null
-        );
-
-        const ruleDailyLimit =
-          globalLimitRule && typeof globalLimitRule.maxTotal === "number"
-            ? Number(globalLimitRule.maxTotal)
-            : null;
-
-        const envDailyLimitRaw = Number(process.env.SALES_DAILY_MAX ?? 0);
-        const envDailyLimit =
-          Number.isFinite(envDailyLimitRaw) && envDailyLimitRaw > 0 ? envDailyLimitRaw : null;
-
-        let effectiveDailyLimit: number | null = null;
-        if (ruleDailyLimit != null && ruleDailyLimit > 0) {
-          effectiveDailyLimit = envDailyLimit != null ? Math.min(ruleDailyLimit, envDailyLimit) : ruleDailyLimit;
-        } else if (envDailyLimit != null) {
-          effectiveDailyLimit = envDailyLimit;
-        }
-
-        if (effectiveDailyLimit != null) {
-          const crRange = getCRDayRangeUTC(now);
-          const { _sum } = await tx.ticket.aggregate({
-            _sum: { totalAmount: true },
-            where: {
-              vendedorId: userId,
-              createdAt: { gte: crRange.fromAt, lt: crRange.toAtExclusive },
-            },
-          });
-          const dailyTotal = _sum.totalAmount ?? 0;
-          if (dailyTotal + totalAmountTx > effectiveDailyLimit) {
-            const ruleScope = globalLimitRule?.userId ? "personal"
-              : globalLimitRule?.ventanaId ? "de ventana"
-                : globalLimitRule?.bancaId ? "de banca"
-                  : "global";
-
-            throw new AppError(
-              `Límite diario ${ruleScope} excedido: ${dailyTotal.toFixed(2)} + ${totalAmountTx.toFixed(2)} = ${(dailyTotal + totalAmountTx).toFixed(2)} supera el límite de ${effectiveDailyLimit.toFixed(2)}`,
-              400,
-              {
-                code: "LIMIT_VIOLATION",
-                limiteAplicado: effectiveDailyLimit,
-                totalAcumulado: dailyTotal,
-                montoTicket: totalAmountTx,
-                scope: ruleScope,
-              }
-            );
-          }
-        }
+        // 9) ❌ ELIMINADO: Validación de límite diario TOTAL del vendedor
+        // Los límites deben aplicarse POR NÚMERO, no por total diario del vendedor.
+        // La validación correcta está en las líneas 1966-2034 (validateMaxTotalForNumbers)
 
         // 10) Aplicar primera regla aplicable con soporte para límites dinámicos
         if (applicable.length > 0) {
