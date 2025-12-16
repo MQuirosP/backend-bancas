@@ -69,6 +69,7 @@ export const CreatePaymentBodySchema = z
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD"),
     ventanaId: z.string().uuid().optional().nullable(),
     vendedorId: z.string().uuid().optional().nullable(),
+    bancaId: z.string().uuid().optional(), // ✅ Agregado: Permitir bancaId opcional
     amount: z.number().positive("El monto debe ser positivo"),
     type: z.enum(["payment", "collection"]),
     method: z.enum(["cash", "transfer", "check", "other"]),
@@ -76,6 +77,7 @@ export const CreatePaymentBodySchema = z
     isFinal: z.boolean().optional().default(false),
     idempotencyKey: z.string().min(8, "idempotencyKey debe tener al menos 8 caracteres").max(100, "idempotencyKey máximo 100 caracteres").optional().nullable(),
   })
+  .strict()
   .refine(
     (data) => {
       // Permitir que ambos sean null/undefined (el controller manejará según el rol)
