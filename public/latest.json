@@ -1,7 +1,7 @@
 {
-  "versionName": "2.0.0",
+  "versionName": "2.0.1",
   "versionCode": 20251211,
-  "buildNumber": "20251211",
+  "buildNumber": "20251212",
   "minSupportedVersion": "2.0.0",
   "forceUpdate": false,
   "changelog": "Correcciones visuales y mejoras de rendimiento",
