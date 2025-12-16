@@ -1022,12 +1022,8 @@ export async function getStatementDirect(
                     new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
                 );
 
-                // ✅ NUEVO: Agregar sorteoAccumulated (acumulado progresivo de sorteos)
-                let accumulated = 0;
-                for (const sorteo of bySorteo) {
-                    accumulated += sorteo.balance;
-                    sorteo.sorteoAccumulated = accumulated;
-                }
+                // ✅ NOTA: sorteoAccumulated se calculará después en intercalateSorteosAndMovements
+                // para incluir movimientos en el acumulado progresivo
             } else {
                 // Sin agrupación: comportamiento original (filtrar por entidad)
                 movements = allMovementsForDate.filter((m: any) => {
@@ -1047,12 +1043,8 @@ export async function getStatementDirect(
                         : `${date}_${entry.vendedorId || 'null'}`;
                 bySorteo = sorteoBreakdownBatch.get(sorteoKey) || [];
 
-                // ✅ NUEVO: Agregar sorteoAccumulated (acumulado progresivo de sorteos)
-                let accumulated = 0;
-                for (const sorteo of bySorteo) {
-                    accumulated += sorteo.balance;
-                    sorteo.sorteoAccumulated = accumulated;
-                }
+                // ✅ NOTA: sorteoAccumulated se calculará después en intercalateSorteosAndMovements
+                // para incluir movimientos en el acumulado progresivo
             }
 
             // ✅ CRÍTICO: Calcular totalPayouts sumando desde bySorteo en lugar de la query SQL
