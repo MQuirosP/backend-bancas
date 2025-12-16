@@ -51,6 +51,7 @@ export interface VentasFilters {
 function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
   const where: Prisma.TicketWhereInput = {
     deletedAt: null, // Soft-delete: solo tickets no eliminados
+    isActive: true, // Solo tickets activos
     // Excluir tickets CANCELLED por defecto
     // Si se especifica filters.status, usar ese valor; si no, excluir CANCELLED
     status: filters.status

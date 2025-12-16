@@ -194,6 +194,14 @@ export class CommissionsExportService {
       Prisma.sql`t."deletedAt" IS NULL`,
       Prisma.sql`t."isActive" = true`,
       Prisma.sql`t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
+      Prisma.sql`j."deletedAt" IS NULL`,
+      Prisma.sql`j."isActive" = true`,
+      // Filtrar SOLO sorteos evaluados
+      Prisma.sql`EXISTS (
+        SELECT 1 FROM "Sorteo" s
+        WHERE s.id = t."sorteoId"
+        AND s.status = 'EVALUATED'
+      )`,
       Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
       Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
       Prisma.sql`j."isExcluded" IS FALSE`,

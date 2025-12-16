@@ -23,8 +23,10 @@ async function computeListeroCommissionByLoteria(
   const jugadas = await prisma.jugada.findMany({
     where: {
       deletedAt: null,
+      isActive: true,
       ticket: {
         deletedAt: null,
+        isActive: true,
         status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] },
         ...(loteriaId ? { loteriaId } : {}),
       },
@@ -353,6 +355,7 @@ export const LoteriasReportService = {
       const sorteos = await prisma.sorteo.findMany({
         where: {
           loteriaId: filters.loteriaId,
+          status: SorteoStatus.EVALUATED,
           scheduledAt: {
             gte: dateRange.from,
             lte: dateRange.to,

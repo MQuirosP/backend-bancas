@@ -23,8 +23,10 @@ async function computeListeroCommissionByVentana(
   const jugadas = await prisma.jugada.findMany({
     where: {
       deletedAt: null,
+      isActive: true,
       ticket: {
         deletedAt: null,
+        isActive: true,
         status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] },
         ...(ventanaId ? { ventanaId } : {}),
       },

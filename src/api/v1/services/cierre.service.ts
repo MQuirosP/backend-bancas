@@ -170,6 +170,7 @@ export class CierreService {
           AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
           AND t."isActive" = true  -- SOLO tickets activos
           AND j."isActive" = true  -- SOLO jugadas activas
+          AND s."status" = 'EVALUATED'  -- SOLO sorteos evaluados
           ${whereConditions}
       )
       SELECT
@@ -251,6 +252,7 @@ export class CierreService {
 
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
+      INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
       INNER JOIN "User" u ON t."vendedorId" = u.id
       INNER JOIN "Ventana" v ON t."ventanaId" = v.id
 
@@ -258,8 +260,9 @@ export class CierreService {
         t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
         AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
-        AND NOT (t."isActive" = false AND t."status" = 'EXCLUDED')
-        AND j."isActive" = true
+        AND t."isActive" = true  -- SOLO tickets activos
+        AND j."isActive" = true  -- SOLO jugadas activas
+        AND s."status" = 'EVALUATED'  -- SOLO sorteos evaluados
         ${whereConditions}
         AND (
           j.type = 'REVENTADO' OR (
@@ -687,12 +690,14 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
     SELECT COUNT(*)::INT as cnt
     FROM "Jugada" j
     INNER JOIN "Ticket" t ON j."ticketId" = t.id
+    INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
     WHERE
       t."deletedAt" IS NULL
       AND j."deletedAt" IS NULL
       AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
-      AND NOT (t."isActive" = false AND t."status" = 'EXCLUDED')
-      AND j."isActive" = true
+      AND t."isActive" = true  -- SOLO tickets activos
+      AND j."isActive" = true  -- SOLO jugadas activas
+      AND s."status" = 'EVALUATED'  -- SOLO sorteos evaluados
       ${whereConditions}
       AND j.type = 'NUMERO'
       AND NOT EXISTS (
@@ -721,12 +726,15 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
         j.amount as amount
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
+      INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
       INNER JOIN "Loteria" l ON t."loteriaId" = l.id
       WHERE
         t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
-        AND NOT (t."isActive" = false AND t."status" = 'EXCLUDED')
-        AND j."isActive" = true
+        AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
+        AND t."isActive" = true  -- SOLO tickets activos
+        AND j."isActive" = true  -- SOLO jugadas activas
+        AND s."status" = 'EVALUATED'  -- SOLO sorteos evaluados
         ${whereConditions}
         AND j.type = 'NUMERO'
         AND NOT EXISTS (
