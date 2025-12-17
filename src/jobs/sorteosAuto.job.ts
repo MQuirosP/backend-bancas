@@ -22,6 +22,7 @@ import logger from '../core/logger';
 
 let openTimer: NodeJS.Timeout | null = null;
 let createTimer: NodeJS.Timeout | null = null;
+let closeTimer: NodeJS.Timeout | null = null;
 
 /**
  * Calcula milisegundos hasta la próxima hora específica en UTC
@@ -205,6 +206,7 @@ export function startSorteosAutoJobs(): void {
 
   scheduleAutoOpen();
   scheduleAutoCreate();
+  startAutoCloseJob();
 }
 
 /**
@@ -222,6 +224,8 @@ export function stopSorteosAutoJobs(): void {
     clearInterval(createTimer);
     createTimer = null;
   }
+
+  stopAutoCloseJob();
 
   logger.info({
     layer: 'job',
@@ -252,5 +256,103 @@ export async function triggerAutoCreate(daysAhead: number = 7): Promise<void> {
     payload: { message: 'Ejecución manual de creación automática', daysAhead },
   });
   await executeAutoCreate();
+}
+
+/**
+ * Ejecuta el cierre automático de sorteos sin ventas
+ */
+async function executeAutoClose(): Promise<void> {
+  try {
+    logger.info({
+      layer: 'job',
+      action: 'SORTEOS_AUTO_CLOSE_START',
+      payload: { timestamp: new Date().toISOString() },
+    });
+
+    // ✅ Pasar null para jobs cron (sin usuario autenticado)
+    const result = await SorteosAutoService.executeAutoClose(null as any);
+
+    logger.info({
+      layer: 'job',
+      action: 'SORTEOS_AUTO_CLOSE_COMPLETE',
+      payload: {
+        success: result.success,
+        closedCount: result.closedCount,
+        errorsCount: result.errors.length,
+        executedAt: result.executedAt.toISOString(),
+      },
+    });
+
+    if (result.errors.length > 0) {
+      logger.warn({
+        layer: 'job',
+        action: 'SORTEOS_AUTO_CLOSE_ERRORS',
+        payload: {
+          errors: result.errors,
+        },
+      });
+    }
+  } catch (error: any) {
+    logger.error({
+      layer: 'job',
+      action: 'SORTEOS_AUTO_CLOSE_FAIL',
+      payload: {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
+    });
+  }
+}
+
+/**
+ * Inicia el job de cierre automático (cada 10 minutos)
+ */
+function startAutoCloseJob(): void {
+  if (closeTimer) {
+    clearInterval(closeTimer);
+  }
+
+  logger.info({
+    layer: 'job',
+    action: 'SORTEOS_AUTO_CLOSE_SCHEDULED',
+    payload: {
+      interval: '10 minutes',
+      message: 'Iniciando job de cierre automático',
+    },
+  });
+
+  // Ejecutar inmediatamente al iniciar
+  executeAutoClose();
+
+  // Programar para repetir cada 10 minutos
+  closeTimer = setInterval(executeAutoClose, 10 * 60 * 1000);
+}
+
+/**
+ * Detiene el job de cierre automático
+ */
+function stopAutoCloseJob(): void {
+  if (closeTimer) {
+    clearInterval(closeTimer);
+    closeTimer = null;
+  }
+
+  logger.info({
+    layer: 'job',
+    action: 'SORTEOS_AUTO_CLOSE_STOPPED',
+    payload: { message: 'Job de cierre automático detenido' },
+  });
+}
+
+/**
+ * Ejecuta cierre manualmente (para testing)
+ */
+export async function triggerAutoClose(): Promise<void> {
+  logger.info({
+    layer: 'job',
+    action: 'SORTEOS_AUTO_CLOSE_MANUAL_TRIGGER',
+    payload: { message: 'Ejecución manual de cierre automático' },
+  });
+  await executeAutoClose();
 }
 

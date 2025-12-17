@@ -30,6 +30,12 @@ export const SorteosAutoController = {
     return success(res, result);
   },
 
+  async executeAutoClose(req: AuthenticatedRequest, res: Response) {
+    // ✅ Pasar userId del JWT autenticado al servicio
+    const result = await SorteosAutoService.executeAutoClose(req.user!.id);
+    return success(res, result);
+  },
+
   async getHealthStatus(req: AuthenticatedRequest, res: Response) {
     const status = await SorteosAutoService.getHealthStatus();
     return success(res, status);

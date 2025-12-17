@@ -846,12 +846,16 @@ model SorteosAutoConfig {
   id                  String    @id @default(uuid()) @db.Uuid
   autoOpenEnabled     Boolean   @default(false)
   autoCreateEnabled   Boolean   @default(false)
+  autoCloseEnabled    Boolean   @default(false) // ✅ NUEVO: Auto-close de sorteos sin ventas
   openCronSchedule    String? // Ej: "0 7 * * *" (1 AM CR = 7 AM UTC)
   createCronSchedule  String? // Ej: "30 7 * * *" (1:30 AM CR = 7:30 AM UTC)
+  closeCronSchedule   String? // ✅ NUEVO: Ej: "*/10 * * * *" (cada 10 minutos)
   lastOpenExecution   DateTime?
   lastCreateExecution DateTime?
+  lastCloseExecution  DateTime? // ✅ NUEVO: Última ejecución del cierre automático
   lastOpenCount       Int?
   lastCreateCount     Int?
+  lastCloseCount      Int? // ✅ NUEVO: Cantidad de sorteos cerrados en la última ejecución
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   updatedBy           String?   @db.Uuid
