@@ -162,7 +162,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
         doc.moveDown(0.5);
         doc.fontSize(12).font('Courier-Bold');
         doc.text(`TOTAL GENERAL: ¢ ${formatCurrency(data.meta.totalAmount)}`, { align: 'center' });
-        doc.fontSize(10).font('Courier');
+        doc.fontSize(12).font('Courier-Bold');
         doc.text(`Normal: ¢ ${formatCurrency(data.meta.totalAmountByNumber)}`, { align: 'center' });
         doc.text(`Reventados: ¢ ${formatCurrency(data.meta.totalAmountByReventado)}`, { align: 'center' });
         doc.moveDown(0.5);
