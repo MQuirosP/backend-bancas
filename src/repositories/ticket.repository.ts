@@ -2614,12 +2614,14 @@ export const TicketRepository = {
 
         // 3) Actualizar ticket (soft delete + inactivar)
         // IMPORTANTE: También inactivar todas las jugadas del ticket
+        const now = new Date();
         const cancelled = await tx.ticket.update({
           where: { id },
           data: {
             isActive: false,
             status: TicketStatus.CANCELLED,
-            updatedAt: new Date(),
+            deletedAt: now, // Registrar fecha de cancelación/eliminación
+            updatedAt: now,
           },
           include: { jugadas: true },
         });
