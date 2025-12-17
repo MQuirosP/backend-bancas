@@ -38,6 +38,7 @@ router.patch(
 router.get('/auto-status', SorteosAutoController.getHealthStatus);
 router.post('/auto-open/execute', requireAdmin, SorteosAutoController.executeAutoOpen);
 router.post('/auto-create/execute', requireAdmin, SorteosAutoController.executeAutoCreate);
+router.post('/auto-close/execute', requireAdmin, SorteosAutoController.executeAutoClose);
 
 // Admin - Rutas de sorteos
 router.post("/", requireAdmin, validateCreateSorteo, SorteoController.create);

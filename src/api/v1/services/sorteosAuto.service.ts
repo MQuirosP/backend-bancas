@@ -593,20 +593,46 @@ export const SorteosAutoService = {
 
     for (const sorteo of sorteosToClose) {
       try {
-        // ✅ Usar userId del admin autenticado (o null para cron job)
-        await SorteoService.close(sorteo.id, userId);
-        closedCount++;
+        // ✅ Para sorteos SCHEDULED, cambiar directamente a CLOSED sin usar SorteoService.close()
+        // (que solo acepta OPEN/EVALUATED)
+        if (sorteo.status === SorteoStatus.SCHEDULED) {
+          await prisma.sorteo.update({
+            where: { id: sorteo.id },
+            data: {
+              status: SorteoStatus.CLOSED,
+              updatedAt: new Date(),
+            },
+          });
+          closedCount++;
 
-        logger.info({
-          layer: 'service',
-          action: 'SORTEO_AUTO_CLOSED',
-          payload: {
-            sorteoId: sorteo.id,
-            name: sorteo.name,
-            scheduledAt: sorteo.scheduledAt.toISOString(),
-            previousStatus: sorteo.status,
-          },
-        });
+          logger.info({
+            layer: 'service',
+            action: 'SORTEO_AUTO_CLOSED',
+            payload: {
+              sorteoId: sorteo.id,
+              name: sorteo.name,
+              scheduledAt: sorteo.scheduledAt.toISOString(),
+              previousStatus: 'SCHEDULED',
+              method: 'direct_update',
+            },
+          });
+        } else {
+          // Para sorteos OPEN, usar el servicio normal
+          await SorteoService.close(sorteo.id, userId);
+          closedCount++;
+
+          logger.info({
+            layer: 'service',
+            action: 'SORTEO_AUTO_CLOSED',
+            payload: {
+              sorteoId: sorteo.id,
+              name: sorteo.name,
+              scheduledAt: sorteo.scheduledAt.toISOString(),
+              previousStatus: 'OPEN',
+              method: 'service',
+            },
+          });
+        }
       } catch (error: any) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         errors.push({
