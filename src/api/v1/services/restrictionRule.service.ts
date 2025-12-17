@@ -466,9 +466,27 @@ export const RestrictionRuleService = {
       userId: vendorId,
     });
 
+    // Agregar campo 'scope' con el nombre específico en lugar de "Ventana", "Banca", etc.
+    const mapScope = (rule: any) => {
+      let scope = 'Global';
+
+      if (rule.ventana?.name) {
+        scope = rule.ventana.name; // "JJ Listero" en lugar de "Ventana"
+      } else if (rule.banca?.name) {
+        scope = rule.banca.name; // "Grupo JJ" en lugar de "Banca"
+      } else if (rule.user?.name) {
+        scope = rule.user.name; // "Mario Quirós" en lugar de "Usuario"
+      }
+
+      return {
+        ...rule,
+        scope  // Campo nuevo con el nombre específico
+      };
+    };
+
     return {
-      general,
-      vendorSpecific: vendorSpecific.data,
+      general: general.map(mapScope),
+      vendorSpecific: vendorSpecific.data.map(mapScope),
     };
   },
 };
