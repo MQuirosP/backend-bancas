@@ -54,7 +54,7 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
         version: latest.versionName,
         versionCode: latest.versionCode,
         buildNumber: latest.buildNumber.toString(),
-        downloadUrl: `${req.protocol}://${req.get('host')}/public/apk/app-release-latest.apk`,
+        downloadUrl: latest.apkUrl || `${req.protocol}://${req.get('host')}/public/apk/app-release-latest.apk`,
         fileSize, // en bytes
         changelog: latest.changelog,
         releasedAt: latest.releasedAt,
