@@ -6,8 +6,17 @@
 import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
-import crypto from 'crypto';
 import logger from '../../../core/logger';
+
+/**
+ * Caché en memoria para metadatos del APK
+ * Se invalida automáticamente cuando el archivo cambia (por mtime)
+ */
+let cachedApkMetadata: {
+  size: number;
+  sha256: string;
+  mtime: number;
+} | null = null;
 
 /**
  * GET /api/v1/app/version
@@ -35,16 +44,31 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
 
     const latest = JSON.parse(fs.readFileSync(latestPath, 'utf-8'));
 
-    // Tamaño dinámico del APK
+    // Obtener metadatos del APK de forma optimizada
     let fileSize: number | null = null;
     let sha256: string | null = null;
 
     if (fs.existsSync(apkPath)) {
       const stats = fs.statSync(apkPath);
-      fileSize = stats.size; // en bytes
 
-      const fileBuffer = fs.readFileSync(apkPath);
-      sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+      // Si el archivo no ha cambiado desde la última consulta, usar caché
+      if (cachedApkMetadata && cachedApkMetadata.mtime === stats.mtimeMs) {
+        fileSize = cachedApkMetadata.size;
+        sha256 = cachedApkMetadata.sha256;
+      } else {
+        // Archivo cambió o primera vez: usar datos de latest.json (ya tiene SHA256 pre-calculado)
+        fileSize = stats.size;
+        sha256 = latest.sha256 || null; // Usar SHA256 pre-calculado del JSON
+
+        // Actualizar caché en memoria
+        if (sha256) {
+          cachedApkMetadata = {
+            size: fileSize,
+            sha256: sha256,
+            mtime: stats.mtimeMs
+          };
+        }
+      }
     }
 
 
@@ -114,9 +138,18 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
 
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
     res.setHeader('Content-Disposition', 'attachment; filename="bancas-admin.apk"');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
+
+    // Optimizaciones de descarga:
+    // - X-No-Compression: evita que middlewares compriman el APK (ya está comprimido)
+    // - Cache-Control: permite cache del cliente por 24h para evitar re-descargas innecesarias
+    // - ETag: permite validación de cache usando el SHA256
+    res.setHeader('X-No-Compression', '1');
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // 24 horas
+
+    // Usar SHA256 del caché si está disponible para ETag
+    if (cachedApkMetadata?.sha256) {
+      res.setHeader('ETag', `"${cachedApkMetadata.sha256}"`);
+    }
 
     res.download(apkPath, 'bancas-admin.apk', (err) => {
       if (err) {
