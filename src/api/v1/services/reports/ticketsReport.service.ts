@@ -420,7 +420,7 @@ export const TicketsReportService = {
 
     const where: Prisma.TicketWhereInput = {
       status: TicketStatus.CANCELLED,
-      deletedAt: null,
+      // NO filtrar por deletedAt: los tickets cancelados DEBEN tener deletedAt
       createdAt: {
         gte: dateRange.from,
         lte: dateRange.to,
