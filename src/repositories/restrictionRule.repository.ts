@@ -237,7 +237,7 @@ export const RestrictionRuleRepository = {
    * Retorna:
    * 1. Reglas Globales (bancaId=null, ventanaId=null)
    * 2. Reglas de la Banca (bancaId=X, ventanaId=null)
-   * 3. Reglas de la Ventana (bancaId=X, ventanaId=Y)
+   * 3. Reglas de la Ventana (ventanaId=Y, bancaId se infiere desde la relación Ventana->Banca)
    */
   async findGeneralRules(bancaId: string, ventanaId: string | null) {
     const orConditions: any[] = [
@@ -248,9 +248,9 @@ export const RestrictionRuleRepository = {
     ];
 
     if (ventanaId) {
-      // 3. De la Ventana (debe coincidir banca también para consistencia, 
-      // aunque ventanaId debería ser único, mejor ser explícito)
-      orConditions.push({ bancaId, ventanaId });
+      // 3. De la Ventana (solo por ventanaId, el bancaId se infiere automáticamente desde la relación)
+      // No requerimos bancaId aquí porque las restricciones de ventana tienen bancaId=null
+      orConditions.push({ ventanaId });
     }
 
     return prisma.restrictionRule.findMany({
