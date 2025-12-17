@@ -34,6 +34,7 @@
     "test:concurrent-setup": "npx dotenv-cli -e .env.local -- ts-node scripts/setup-and-run-tests.ts",
     "test:find-ids": "npx dotenv-cli -e .env.local -- ts-node scripts/find-test-ids.ts",
     "test:concurrent-now": "npx dotenv-cli -e .env.local -- ts-node scripts/run-concurrent-test-now.ts",
+    "test:simple-ticket": "npx dotenv-cli -e .env.local -- ts-node scripts/simple-ticket-test.ts",
     "maintenance": "npx dotenv-cli -e .env.local -- ts-node src/tools/maintenance/index.ts",
     "test": "npx dotenv-cli -e .env.test -- jest --runInBand --detectOpenHandles",
     "test:watch": "npx dotenv-cli -e .env.test -- jest --watch",

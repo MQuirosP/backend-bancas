@@ -26,6 +26,7 @@ router.get('/auto-status', SorteosAutoController.getHealthStatus);
 // Ejecución manual (solo ADMIN, para testing)
 router.post('/auto-open/execute', requireAdmin, SorteosAutoController.executeAutoOpen);
 router.post('/auto-create/execute', requireAdmin, SorteosAutoController.executeAutoCreate);
+router.post('/auto-close/execute', requireAdmin, SorteosAutoController.executeAutoClose);
 
 export default router;
 

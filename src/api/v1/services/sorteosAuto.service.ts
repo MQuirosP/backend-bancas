@@ -55,12 +55,16 @@ export const SorteosAutoService = {
     return {
       autoOpenEnabled: config.autoOpenEnabled,
       autoCreateEnabled: config.autoCreateEnabled,
+      autoCloseEnabled: config.autoCloseEnabled,
       openCronSchedule: config.openCronSchedule,
       createCronSchedule: config.createCronSchedule,
+      closeCronSchedule: config.closeCronSchedule,
       lastOpenExecution: config.lastOpenExecution,
       lastCreateExecution: config.lastCreateExecution,
+      lastCloseExecution: config.lastCloseExecution,
       lastOpenCount: config.lastOpenCount,
       lastCreateCount: config.lastCreateCount,
+      lastCloseCount: config.lastCloseCount,
       updatedAt: config.updatedAt,
     };
   },
@@ -71,18 +75,22 @@ export const SorteosAutoService = {
   async updateConfig(data: {
     autoOpenEnabled?: boolean;
     autoCreateEnabled?: boolean;
+    autoCloseEnabled?: boolean;
     openCronSchedule?: string | null;
     createCronSchedule?: string | null;
+    closeCronSchedule?: string | null;
   }, userId: string) {
     const config = await getOrCreateConfig();
-    
+
     const updated = await prisma.sorteosAutoConfig.update({
       where: { id: config.id },
       data: {
         ...(data.autoOpenEnabled !== undefined && { autoOpenEnabled: data.autoOpenEnabled }),
         ...(data.autoCreateEnabled !== undefined && { autoCreateEnabled: data.autoCreateEnabled }),
+        ...(data.autoCloseEnabled !== undefined && { autoCloseEnabled: data.autoCloseEnabled }),
         ...(data.openCronSchedule !== undefined && { openCronSchedule: data.openCronSchedule }),
         ...(data.createCronSchedule !== undefined && { createCronSchedule: data.createCronSchedule }),
+        ...(data.closeCronSchedule !== undefined && { closeCronSchedule: data.closeCronSchedule }),
         updatedBy: userId,
       },
     });
@@ -97,8 +105,10 @@ export const SorteosAutoService = {
     return {
       autoOpenEnabled: updated.autoOpenEnabled,
       autoCreateEnabled: updated.autoCreateEnabled,
+      autoCloseEnabled: updated.autoCloseEnabled,
       openCronSchedule: updated.openCronSchedule,
       createCronSchedule: updated.createCronSchedule,
+      closeCronSchedule: updated.closeCronSchedule,
       updatedAt: updated.updatedAt,
     };
   },
@@ -497,6 +507,178 @@ export const SorteosAutoService = {
   },
 
   /**
+   * Ejecuta el cierre automático de sorteos sin ventas
+   *
+   * Cierra automáticamente sorteos que cumplen TODAS estas condiciones:
+   * - Estado: SCHEDULED u OPEN
+   * - scheduledAt hace más de 5 minutos
+   * - 0 tickets vendidos (incluyendo anulados)
+   * - isActive = true
+   * - deletedAt IS NULL
+   */
+  async executeAutoClose(userId: string): Promise<{
+    success: boolean;
+    closedCount: number;
+    errors: Array<{ sorteoId: string; sorteoName: string; error: string }>;
+    executedAt: Date;
+  }> {
+    const config = await getOrCreateConfig();
+
+    if (!config.autoCloseEnabled) {
+      logger.info({
+        layer: 'service',
+        action: 'SORTEOS_AUTO_CLOSE_SKIPPED',
+        payload: { reason: 'autoCloseEnabled is false' },
+      });
+      return {
+        success: true,
+        closedCount: 0,
+        errors: [],
+        executedAt: new Date(),
+      };
+    }
+
+    const now = new Date();
+    const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+
+    // Buscar sorteos candidatos: SCHEDULED u OPEN hace más de 5 minutos
+    const candidates = await prisma.sorteo.findMany({
+      where: {
+        status: {
+          in: [SorteoStatus.SCHEDULED, SorteoStatus.OPEN],
+        },
+        isActive: true,
+        deletedAt: null,
+        scheduledAt: {
+          lte: fiveMinutesAgo,
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        scheduledAt: true,
+        status: true,
+        _count: {
+          select: {
+            tickets: true, // Cuenta todos los tickets (activos + anulados)
+          },
+        },
+      },
+    });
+
+    logger.info({
+      layer: 'service',
+      action: 'SORTEOS_AUTO_CLOSE_START',
+      payload: {
+        candidatesFound: candidates.length,
+        cutoffTime: fiveMinutesAgo.toISOString(),
+      },
+    });
+
+    // Filtrar solo los que tienen 0 tickets
+    const sorteosToClose = candidates.filter(s => s._count.tickets === 0);
+
+    logger.info({
+      layer: 'service',
+      action: 'SORTEOS_AUTO_CLOSE_FILTERED',
+      payload: {
+        totalCandidates: candidates.length,
+        sorteosWithoutSales: sorteosToClose.length,
+        sorteosWithSales: candidates.length - sorteosToClose.length,
+      },
+    });
+
+    const errors: Array<{ sorteoId: string; sorteoName: string; error: string }> = [];
+    let closedCount = 0;
+
+    for (const sorteo of sorteosToClose) {
+      try {
+        // ✅ Usar userId del admin autenticado (o null para cron job)
+        await SorteoService.close(sorteo.id, userId);
+        closedCount++;
+
+        logger.info({
+          layer: 'service',
+          action: 'SORTEO_AUTO_CLOSED',
+          payload: {
+            sorteoId: sorteo.id,
+            name: sorteo.name,
+            scheduledAt: sorteo.scheduledAt.toISOString(),
+            previousStatus: sorteo.status,
+          },
+        });
+      } catch (error: any) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        errors.push({
+          sorteoId: sorteo.id,
+          sorteoName: sorteo.name,
+          error: errorMessage,
+        });
+
+        logger.warn({
+          layer: 'service',
+          action: 'SORTEO_AUTO_CLOSE_ERROR',
+          payload: {
+            sorteoId: sorteo.id,
+            sorteoName: sorteo.name,
+            error: errorMessage,
+          },
+        });
+      }
+    }
+
+    // Actualizar configuración con última ejecución
+    await prisma.sorteosAutoConfig.update({
+      where: { id: config.id },
+      data: {
+        lastCloseExecution: new Date(),
+        lastCloseCount: closedCount,
+      },
+    });
+
+    // Registrar en cron_execution_logs (si existe la tabla)
+    try {
+      await prisma.$executeRawUnsafe(`
+        INSERT INTO cron_execution_logs (id, job_name, status, executed_at, affected_rows, error_message)
+        VALUES (
+          gen_random_uuid(),
+          'sorteos_auto_close',
+          ${errors.length === 0 ? "'success'" : (closedCount > 0 ? "'partial'" : "'error'")},
+          NOW(),
+          ${closedCount},
+          ${errors.length > 0 ? `'${errors.length} errores'` : 'NULL'}
+        )
+      `);
+    } catch (err) {
+      // Si la tabla no existe, solo loggear
+      logger.debug({
+        layer: 'service',
+        action: 'SORTEOS_AUTO_CLOSE_LOG_SKIPPED',
+        payload: { reason: 'cron_execution_logs table may not exist' },
+      });
+    }
+
+    const executedAt = new Date();
+
+    logger.info({
+      layer: 'service',
+      action: 'SORTEOS_AUTO_CLOSE_COMPLETE',
+      payload: {
+        closedCount,
+        errorsCount: errors.length,
+        executedAt: executedAt.toISOString(),
+      },
+    });
+
+    return {
+      success: errors.length === 0 && closedCount === sorteosToClose.length,
+      closedCount,
+      errors,
+      executedAt,
+    };
+  },
+
+  /**
    * Obtiene el estado de salud de los cron jobs
    */
   async getHealthStatus() {
@@ -585,6 +767,49 @@ export const SorteosAutoService = {
       };
     }
 
+    // ✅ NUEVO: Obtener status de auto-close
+    let closeStatus: any = null;
+
+    try {
+      const closeLogs = await prisma.$queryRawUnsafe<Array<{
+        executed_at: Date;
+        status: string;
+        affected_rows: number | null;
+      }>>(`
+        SELECT executed_at, status, affected_rows
+        FROM cron_execution_logs
+        WHERE job_name = 'sorteos_auto_close'
+        ORDER BY executed_at DESC
+        LIMIT 1
+      `);
+
+      if (closeLogs && closeLogs.length > 0) {
+        const log = closeLogs[0];
+        const hoursSince = (Date.now() - new Date(log.executed_at).getTime()) / (1000 * 60 * 60);
+        closeStatus = {
+          isHealthy: hoursSince < 2, // Debe ejecutarse cada 10 minutos (threshold: 2 horas)
+          lastExecution: log.executed_at,
+          hoursSinceLastRun: Math.round(hoursSince * 100) / 100,
+          lastExecutionCount: log.affected_rows,
+          status: log.status,
+        };
+      }
+    } catch (err) {
+      // Tabla puede no existir
+    }
+
+    // Si no hay logs, usar configuración
+    if (!closeStatus && config.lastCloseExecution) {
+      const hoursSince = (Date.now() - config.lastCloseExecution.getTime()) / (1000 * 60 * 60);
+      closeStatus = {
+        isHealthy: hoursSince < 2,
+        lastExecution: config.lastCloseExecution,
+        hoursSinceLastRun: Math.round(hoursSince * 100) / 100,
+        lastExecutionCount: config.lastCloseCount,
+        status: 'unknown',
+      };
+    }
+
     return {
       open: openStatus || {
         isHealthy: false,
@@ -600,9 +825,17 @@ export const SorteosAutoService = {
         lastExecutionCount: null,
         status: 'never_run',
       },
+      close: closeStatus || {
+        isHealthy: false,
+        lastExecution: null,
+        hoursSinceLastRun: null,
+        lastExecutionCount: null,
+        status: 'never_run',
+      },
       config: {
         autoOpenEnabled: config.autoOpenEnabled,
         autoCreateEnabled: config.autoCreateEnabled,
+        autoCloseEnabled: config.autoCloseEnabled,
       },
     };
   },

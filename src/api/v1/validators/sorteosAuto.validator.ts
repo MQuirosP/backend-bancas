@@ -4,8 +4,10 @@ import { z } from 'zod';
 export const UpdateSorteosAutoConfigSchema = z.object({
   autoOpenEnabled: z.boolean().optional(),
   autoCreateEnabled: z.boolean().optional(),
+  autoCloseEnabled: z.boolean().optional(),
   openCronSchedule: z.string().nullable().optional(),
   createCronSchedule: z.string().nullable().optional(),
+  closeCronSchedule: z.string().nullable().optional(),
 }).strict();
 
 export const ExecuteAutoOpenQuerySchema = z.object({
