@@ -6,6 +6,6 @@
   "forceUpdate": false,
   "changelog": "Correcciones visuales y mejoras de rendimiento",
   "releasedAt": "2025-12-17T20:00:00Z",
-  "apkUrl": "https://backend-bancas-yk1i.onrender.com/api/v1/app/download",
+  "apkUrl": "https://github.com/MQuirosP/bancas-admin-app/releases/latest/download/app-release-latest.apk",
   "sha256": "9d8cb6e51cff76a8843ff70f5945c2de40404e193ee75c0e04c421ed049362a1"
 }
