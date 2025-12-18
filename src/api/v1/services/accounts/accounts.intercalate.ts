@@ -96,16 +96,13 @@ export function intercalateSorteosAndMovements(
     // ✅ INCLUIR TODOS los movimientos (activos y reversados)
     // Los movimientos reversados se muestran en el frontend con estilo diferente
     // pero NO afectan el balance acumulado (balance: 0 si isReversed)
-    
-    // Combinar: fecha del usuario + hora de createdAt (en hora CR)
+
+    // ✅ CORRECCIÓN: Usar createdAt directamente como scheduledAt
+    // movement.createdAt viene como ISO string en UTC desde el repositorio
+    // Este timestamp UTC representa el momento exacto del registro del movimiento
+    // Cuando se compara con sorteo.scheduledAt (también en UTC), el orden cronológico será correcto
     const createdAtDate = new Date(movement.createdAt);
-    // Convertir UTC a CR (UTC-6)
-    const crTime = new Date(createdAtDate.getTime() - (6 * 60 * 60 * 1000));
-    const hour = crTime.getUTCHours();
-    const minute = crTime.getUTCMinutes();
-    const seconds = crTime.getUTCSeconds();
-    const [year, month, day] = movement.date.split('-').map(Number);
-    const scheduledAt = new Date(year, month - 1, day, hour, minute, seconds);
+    const scheduledAt = createdAtDate;
 
     // ✅ CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
     // Si no está reversado, usar el monto normal
