@@ -116,7 +116,8 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
 
 /**
  * GET /api/v1/app/download
- * Descarga directa del archivo APK más reciente
+ * Descarga directa del archivo APK más reciente usando streaming
+ * ✅ OPTIMIZADO: Usa streams para evitar cargar 77MB en memoria
  */
 export const downloadApk = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -136,10 +137,13 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
+    // Obtener tamaño del archivo para Content-Length
+    const stats = fs.statSync(apkPath);
+
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
     res.setHeader('Content-Disposition', 'attachment; filename="bancas-admin.apk"');
-
-     res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Length', stats.size.toString());
+    res.setHeader('Accept-Ranges', 'bytes');
 
     // Optimizaciones de descarga:
     // - X-No-Compression: evita que middlewares compriman el APK (ya está comprimido)
@@ -153,24 +157,61 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       res.setHeader('ETag', `"${cachedApkMetadata.sha256}"`);
     }
 
-    res.download(apkPath, 'bancas-admin.apk', (err) => {
-      if (err) {
-        logger.error({
-          layer: 'controller',
-          action: 'DOWNLOAD_ERROR',
-          payload: { error: err.message, stack: err.stack }
-        });
-        if (!res.headersSent) {
-          res.status(500).json({ success: false, message: 'Error al descargar APK' });
+    // ✅ STREAMING: Solo usa ~64KB de RAM por descarga (vs 77MB con res.download)
+    const stream = fs.createReadStream(apkPath, {
+      highWaterMark: 64 * 1024 // 64KB chunks (óptimo para red)
+    });
+
+    // Manejar errores del stream
+    stream.on('error', (err) => {
+      logger.error({
+        layer: 'controller',
+        action: 'STREAM_ERROR',
+        payload: {
+          error: err.message,
+          stack: err.stack,
+          path: apkPath
         }
-      } else {
-        logger.info({
-          layer: 'controller',
-          action: 'APK_DOWNLOADED_SUCCESS',
-          payload: { ip: req.ip }
+      });
+
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: 'Error al descargar APK'
         });
       }
     });
+
+    // Log cuando termine exitosamente
+    stream.on('end', () => {
+      logger.info({
+        layer: 'controller',
+        action: 'APK_DOWNLOADED_SUCCESS',
+        payload: {
+          ip: req.ip,
+          fileSize: stats.size,
+          fileSizeMB: (stats.size / (1024 * 1024)).toFixed(2)
+        }
+      });
+    });
+
+    // Manejar cancelación de descarga por parte del cliente
+    req.on('close', () => {
+      if (!stream.destroyed) {
+        stream.destroy();
+        logger.warn({
+          layer: 'controller',
+          action: 'DOWNLOAD_CANCELLED',
+          payload: {
+            ip: req.ip,
+            reason: 'Client disconnected'
+          }
+        });
+      }
+    });
+
+    // Pipe el stream a la response
+    stream.pipe(res);
 
   } catch (error) {
     logger.error({
