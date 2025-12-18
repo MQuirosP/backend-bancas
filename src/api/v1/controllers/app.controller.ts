@@ -19,6 +19,14 @@ let cachedApkMetadata: {
 } | null = null;
 
 /**
+ * Caché en memoria para latest.json
+ * ✅ FIX CRÍTICO: Evita fs.readFileSync en cada request → reduce GC pressure
+ * Se invalida automáticamente cuando el archivo cambia (por mtime)
+ */
+let cachedLatest: any | null = null;
+let cachedLatestMtime = 0;
+
+/**
  * GET /api/v1/app/version
  * Retorna información de la versión más reciente de la APK
  */
@@ -27,7 +35,8 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
     const latestPath = path.join(process.cwd(), 'public', 'latest.json');
     const apkPath = path.join(process.cwd(), 'public', 'apk', 'app-release-latest.apk');
 
-    // Verificar latest.json
+    // ✅ FIX: Cachear latest.json en memoria - solo recargar si cambió
+    // Evita fs.readFileSync + JSON.parse en cada request → reduce GC pressure
     if (!fs.existsSync(latestPath)) {
       logger.error({
         layer: 'controller',
@@ -42,7 +51,21 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const latest = JSON.parse(fs.readFileSync(latestPath, 'utf-8'));
+    const statsJson = fs.statSync(latestPath);
+
+    // Solo recargar si el archivo cambió (o primera vez)
+    if (!cachedLatest || cachedLatestMtime !== statsJson.mtimeMs) {
+      cachedLatest = JSON.parse(fs.readFileSync(latestPath, 'utf-8'));
+      cachedLatestMtime = statsJson.mtimeMs;
+
+      logger.debug({
+        layer: 'controller',
+        action: 'LATEST_JSON_CACHED',
+        payload: { version: cachedLatest.versionName }
+      });
+    }
+
+    const latest = cachedLatest;
 
     // Obtener metadatos del APK de forma optimizada
     let fileSize: number | null = null;
@@ -182,17 +205,21 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       }
     });
 
-    // Log cuando termine exitosamente
+    // ✅ FIX: NO loguear cada descarga en producción → reduce memory pressure
+    // En producción cada log = objeto en memoria → con múltiples descargas = OOM
+    // Solo loguear en development o usar sampling (1 de cada 100)
     stream.on('end', () => {
-      logger.info({
-        layer: 'controller',
-        action: 'APK_DOWNLOADED_SUCCESS',
-        payload: {
-          ip: req.ip,
-          fileSize: stats.size,
-          fileSizeMB: (stats.size / (1024 * 1024)).toFixed(2)
-        }
-      });
+      if (process.env.NODE_ENV !== 'production') {
+        logger.info({
+          layer: 'controller',
+          action: 'APK_DOWNLOADED_SUCCESS',
+          payload: {
+            ip: req.ip,
+            fileSize: stats.size,
+            fileSizeMB: (stats.size / (1024 * 1024)).toFixed(2)
+          }
+        });
+      }
     });
 
     // Manejar cancelación de descarga por parte del cliente
