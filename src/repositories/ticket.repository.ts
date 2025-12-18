@@ -793,8 +793,54 @@ export const TicketRepository = {
                   message,
                 });
                 warningRuleIds.add(matchingRule.id);
+
+                logger.warn({
+                  layer: 'repository',
+                  action: 'RESTRICTION_MULTIPLIER_ALLOWED_ADMIN',
+                  payload: {
+                    restrictionType: 'LOTTERY_MULTIPLIER',
+                    ruleId: matchingRule.id,
+                    scope: ruleScope,
+                    userId,
+                    ventanaId,
+                    bancaId,
+                    sorteoId,
+                    loteriaId,
+                    loteriaName: loteriaNameForWarning,
+                    multiplierId: j.multiplierId,
+                    multiplierName: multiplierNameForWarning,
+                    jugadaNumber: j.number,
+                    jugadaAmount: j.amount,
+                    actorRole: 'ADMIN',
+                    message,
+                    reason: 'Admin bypass - multiplier restriction waived',
+                  },
+                });
               }
             } else {
+              logger.warn({
+                layer: 'repository',
+                action: 'RESTRICTION_MULTIPLIER_REJECTED',
+                payload: {
+                  restrictionType: 'LOTTERY_MULTIPLIER',
+                  ruleId: matchingRule.id,
+                  scope: ruleScope,
+                  userId,
+                  ventanaId,
+                  bancaId,
+                  sorteoId,
+                  loteriaId,
+                  loteriaName: loteriaNameForWarning,
+                  multiplierId: j.multiplierId,
+                  multiplierName: multiplierNameForWarning,
+                  jugadaNumber: j.number,
+                  jugadaAmount: j.amount,
+                  actorRole,
+                  message,
+                  reason: 'Multiplier restricted for this lottery',
+                },
+              });
+
               throw new AppError(message, 400, {
                 code: "LOTTERY_MULTIPLIER_RESTRICTED",
                 ruleId: matchingRule.id,
@@ -879,6 +925,33 @@ export const TicketRepository = {
                   .reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
+                  const ruleScope: "USER" | "VENTANA" | "BANCA" =
+                    rule.userId ? "USER" : rule.ventanaId ? "VENTANA" : "BANCA";
+
+                  logger.warn({
+                    layer: 'repository',
+                    action: 'RESTRICTION_MAXAMOUNT_REJECTED',
+                    payload: {
+                      restrictionType: 'MAX_AMOUNT_PER_TICKET',
+                      ruleId: rule.id,
+                      scope: ruleScope,
+                      userId,
+                      ventanaId,
+                      bancaId,
+                      sorteoId,
+                      number: num,
+                      numbersInRule: numbersToValidate,
+                      amountInTicket: sumForNumber,
+                      effectiveMaxAmount,
+                      staticMaxAmount: rule.maxAmount,
+                      dynamicLimit,
+                      exceeded: sumForNumber - effectiveMaxAmount,
+                      isAutoDate: rule.isAutoDate,
+                      message: rule.message,
+                      reason: 'Amount for this number in ticket exceeds maxAmount limit',
+                    },
+                  });
+
                   throw new AppError(
                     `El número ${num} excede el límite por ticket de ₡${effectiveMaxAmount.toFixed(2)} (monto en ticket: ₡${sumForNumber.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ₡${dynamicLimit.toFixed(2)}` : ''})`,
                     400,
@@ -962,6 +1035,33 @@ export const TicketRepository = {
                     dynamicLimit,
                   });
                 } catch (error: any) {
+                  // El logging detallado ya se hizo en validateMaxTotalForNumbers (helper)
+                  // Aquí solo agregamos contexto de la regla específica
+                  const ruleScope: "USER" | "VENTANA" | "BANCA" =
+                    rule.userId ? "USER" : rule.ventanaId ? "VENTANA" : "BANCA";
+
+                  logger.warn({
+                    layer: 'repository',
+                    action: 'RESTRICTION_MAXTOTAL_REJECTED',
+                    payload: {
+                      restrictionType: 'MAX_TOTAL_IN_SORTEO',
+                      ruleId: rule.id,
+                      scope: ruleScope,
+                      userId,
+                      ventanaId,
+                      bancaId,
+                      sorteoId,
+                      numbersValidated: numbersToCheck.map(n => n.number),
+                      numbersInRule: numbersToValidate,
+                      staticMaxTotal: rule.maxTotal,
+                      dynamicLimit,
+                      isAutoDate: rule.isAutoDate,
+                      message: rule.message,
+                      errorMessage: error.message,
+                      reason: 'Accumulated amount for number in sorteo exceeds maxTotal limit',
+                    },
+                  });
+
                   // Convertir error a AppError con código apropiado
                   // El error ya contiene el número específico que falló
                   throw new AppError(
@@ -1007,6 +1107,32 @@ export const TicketRepository = {
                     : rule.ventanaId ? "de ventana"
                       : rule.bancaId ? "de banca"
                         : "global";
+
+                  const ruleScope: "USER" | "VENTANA" | "BANCA" =
+                    rule.userId ? "USER" : rule.ventanaId ? "VENTANA" : "BANCA";
+
+                  logger.warn({
+                    layer: 'repository',
+                    action: 'RESTRICTION_MAXAMOUNT_GLOBAL_REJECTED',
+                    payload: {
+                      restrictionType: 'MAX_AMOUNT_PER_TICKET_GLOBAL',
+                      ruleId: rule.id,
+                      scope: ruleScope,
+                      scopeLabel,
+                      userId,
+                      ventanaId,
+                      bancaId,
+                      sorteoId,
+                      number,
+                      amountInTicket: totalForNumber,
+                      effectiveMaxAmount,
+                      staticMaxAmount: rule.maxAmount,
+                      dynamicLimit,
+                      exceeded: totalForNumber - effectiveMaxAmount,
+                      message: rule.message,
+                      reason: 'Amount for this number in ticket exceeds maxAmount limit (global rule)',
+                    },
+                  });
 
                   throw new AppError(
                     `El número ${number} excede el límite ${scopeLabel} por ticket de ₡${effectiveMaxAmount.toFixed(2)} (monto en ticket: ₡${totalForNumber.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ₡${dynamicLimit.toFixed(2)}` : ''})`,
@@ -1067,6 +1193,31 @@ export const TicketRepository = {
                     dynamicLimit,
                   });
                 } catch (err: any) {
+                  // El logging detallado ya se hizo en validateMaxTotalForNumbers (helper)
+                  // Aquí solo agregamos contexto de la regla global
+                  const ruleScope: "USER" | "VENTANA" | "BANCA" =
+                    rule.userId ? "USER" : rule.ventanaId ? "VENTANA" : "BANCA";
+
+                  logger.warn({
+                    layer: 'repository',
+                    action: 'RESTRICTION_MAXTOTAL_GLOBAL_REJECTED',
+                    payload: {
+                      restrictionType: 'MAX_TOTAL_IN_SORTEO_GLOBAL',
+                      ruleId: rule.id,
+                      scope: ruleScope,
+                      userId,
+                      ventanaId,
+                      bancaId,
+                      sorteoId,
+                      numbersValidated: numbersToCheck.map(n => n.number),
+                      staticMaxTotal: rule.maxTotal,
+                      dynamicLimit,
+                      message: rule.message,
+                      errorMessage: err.message,
+                      reason: 'Accumulated amount for number in sorteo exceeds maxTotal limit (global rule)',
+                    },
+                  });
+
                   // Re-lanzar error con contexto adicional
                   throw new AppError(
                     err.message,
