@@ -139,6 +139,8 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
     res.setHeader('Content-Disposition', 'attachment; filename="bancas-admin.apk"');
 
+     res.setHeader('Accept-Ranges', 'bytes');
+
     // Optimizaciones de descarga:
     // - X-No-Compression: evita que middlewares compriman el APK (ya está comprimido)
     // - Cache-Control: permite cache del cliente por 24h para evitar re-descargas innecesarias
