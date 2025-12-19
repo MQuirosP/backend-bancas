@@ -6,7 +6,7 @@ import { SalesService } from "../api/v1/services/sales.service";
 import { getCachedCutoff, setCachedCutoff, invalidateRestrictionCaches } from "../utils/restrictionCache";
 
 export type EffectiveRestriction = {
-  source: "USER" | "VENTANA" | "BANCA" | null;
+  source: "USER" | "VENTANA" | "BANCA" | "GLOBAL" | null;
   maxAmount: number | null;
   maxTotal: number | null;
   baseAmount?: number | null;
@@ -268,130 +268,129 @@ export const RestrictionRuleRepository = {
    * Límites de montos efectivos (USER > VENTANA > BANCA), con soporte de number y ventana temporal.
    * Solo considera reglas activas.
    * Ahora incluye soporte para isAutoDate y límites dinámicos (baseAmount + salesPercentage).
+   * ✅ ACTUALIZADO: Soporte para restricciones de lotería y multiplicador usando sistema de puntaje.
    */
   async getEffectiveLimits(params: {
     bancaId: string;
     ventanaId: string | null;
     userId: string | null;
     number?: string | null;
+    loteriaId?: string | null;
+    multiplierId?: string | null;
     at?: Date;
   }): Promise<EffectiveRestriction> {
-    const { bancaId, ventanaId, userId } = params;
+    const { bancaId, ventanaId, userId, loteriaId, multiplierId } = params;
     let number = params.number?.trim() || null;
     const at = params.at ?? new Date();
     const hour = at.getHours();
+
+    // Normalizar fecha para comparación (sin hora)
     const dateOnly = new Date(at.getFullYear(), at.getMonth(), at.getDate());
 
-    // Si hay un número, también buscar restricciones automáticas por fecha
-    let autoDateNumber: string | null = null;
-    if (number) {
-      // Obtener día del mes actual en CR
-      const crComponents = getCRLocalComponents(at);
-      autoDateNumber = String(crComponents.day).padStart(2, "0");
-    }
+    // 1. Obtener candidatos (Global, Banca, Ventana, Usuario)
+    const candidateRules = await prisma.restrictionRule.findMany({
+      where: {
+        isActive: true,
+        OR: [
+          { userId },
+          { ventanaId },
+          { bancaId },
+          // Reglas globales (incluyendo específicas de lotería sin scope de usuario)
+          { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] }
+        ],
+      },
+      include: {
+        loteria: true,
+        multiplier: true,
+      }
+    });
 
-    const whereTime = {
-      AND: [
-        { OR: [{ appliesToDate: null }, { appliesToDate: dateOnly }] },
-        { OR: [{ appliesToHour: null }, { appliesToHour: hour }] },
-      ],
-    };
-
-    // Construir condiciones para buscar reglas específicas
-    // Incluye número directo Y restricciones automáticas por fecha
-    const numberConditions: any[] = [];
-    if (number) {
-      numberConditions.push({ number });
-    }
-    if (autoDateNumber) {
-      numberConditions.push({
-        isAutoDate: true,
-        number: autoDateNumber
-      });
-    }
-
-    const numberWhere = numberConditions.length > 0
-      ? { OR: numberConditions }
-      : { number: null };
-
-    // 🔎 reglas específicas (con number o isAutoDate)
-    const [userSpecific, ventanaSpecific, bancaSpecific] = await Promise.all([
-      userId
-        ? prisma.restrictionRule.findFirst({
-          where: {
-            userId,
-            isActive: true,
-            ...whereTime,
-            ...(number ? numberWhere : { number: null }),
-          },
-          orderBy: { updatedAt: "desc" },
-        })
-        : Promise.resolve(null),
-      ventanaId
-        ? prisma.restrictionRule.findFirst({
-          where: {
-            ventanaId,
-            isActive: true,
-            ...whereTime,
-            ...(number ? numberWhere : { number: null }),
-          },
-          orderBy: { updatedAt: "desc" },
-        })
-        : Promise.resolve(null),
-      prisma.restrictionRule.findFirst({
-        where: {
-          bancaId,
-          isActive: true,
-          ...whereTime,
-          ...(number ? numberWhere : { number: null }),
-        },
-        orderBy: { updatedAt: "desc" },
-      }),
-    ]);
-
-    // 🔎 reglas genéricas (sin number) si no hubo específica
-    const [userGeneric, ventanaGeneric, bancaGeneric] = await Promise.all([
-      userSpecific || !userId
-        ? Promise.resolve(null)
-        : prisma.restrictionRule.findFirst({
-          where: { userId, number: null, isActive: true, ...whereTime },
-          orderBy: { updatedAt: "desc" },
-        }),
-      ventanaSpecific || !ventanaId
-        ? Promise.resolve(null)
-        : prisma.restrictionRule.findFirst({
-          where: { ventanaId, number: null, isActive: true, ...whereTime },
-          orderBy: { updatedAt: "desc" },
-        }),
-      bancaSpecific
-        ? Promise.resolve(null)
-        : prisma.restrictionRule.findFirst({
-          where: { bancaId, number: null, isActive: true, ...whereTime },
-          orderBy: { updatedAt: "desc" },
-        }),
-    ]);
-
-    const pick = (r: any, scope: EffectiveRestriction["source"]) =>
-      r
-        ? {
-          source: scope,
-          maxAmount: r.maxAmount ?? null,
-          maxTotal: r.maxTotal ?? null,
-          baseAmount: r.baseAmount ?? null,
-          salesPercentage: r.salesPercentage ?? null,
-          appliesToVendedor: r.appliesToVendedor ?? null,
+    // 2. Filtrar y Puntuar reglas
+    const applicable = candidateRules
+      .filter((r) => {
+        // Filtro de Tiempo (Fecha y Hora)
+        if (r.appliesToDate) {
+          const ruleDate = new Date(r.appliesToDate);
+          if (ruleDate.getTime() !== dateOnly.getTime()) return false;
         }
-        : null;
+        if (typeof r.appliesToHour === "number" && r.appliesToHour !== hour) {
+          return false;
+        }
 
-    const chosen =
-      pick(userSpecific, "USER") ||
-      pick(ventanaSpecific, "VENTANA") ||
-      pick(bancaSpecific, "BANCA") ||
-      pick(userGeneric, "USER") ||
-      pick(ventanaGeneric, "VENTANA") ||
-      pick(bancaGeneric, "BANCA");
+        // Filtro de Lotería/Multiplicador (si se solicita para una lotería específica)
+        if (loteriaId) {
+          // Si la regla tiene lotería, debe coincidir. Si es null (global), aplica.
+          if (r.loteriaId && r.loteriaId !== loteriaId) return false;
+        }
+        if (multiplierId) {
+          if (r.multiplierId && r.multiplierId !== multiplierId) return false;
+        }
 
-    return chosen || { source: null, maxAmount: null, maxTotal: null };
+        // Filtro de Número
+        if (number) {
+          // Si la regla es isAutoDate, resolver el número automático
+          if (r.isAutoDate) {
+            const crComponents = getCRLocalComponents(at);
+            const autoNumber = String(crComponents.day).padStart(2, "0");
+            if (autoNumber !== number) return false;
+          } else if (r.number) {
+            // Si la regla tiene números explícitos (string o lista separada por comas en DB legacy, aunque schema dice String?)
+            // El schema define 'number' como String?. Asumimos string exacto o manejo array en lógica superior.
+            // Para validación simple de igualdad:
+            if (r.number !== number) return false;
+            // NOTA: Si 'number' en DB soporta listas (ej "15,20"), esta validación simple fallaría.
+            // Pero `ticket.repository` usa `resolveNumbersToValidate`.
+            // Para `getEffectiveLimits` (consulta UI), asumimos coincidencia exacta o global (null).
+            // Si hay necesidad de listas complejas, la UI debería iterar.
+          }
+        } else {
+          // Si NO pedimos un número específico (consulta general),
+          // ¿deberíamos incluir reglas que SON para números específicos?
+          // Generalmente `getEffectiveLimits` sin número pide el "Límite General".
+          // Reglas con número específico no aplican al "Límite General".
+          if (r.number || r.isAutoDate) return false;
+        }
+
+        return true;
+      })
+      .map((r) => {
+        let score = 0;
+        // Sistema de puntaje similar a ticket.repository.ts
+        if (r.loteriaId && r.multiplierId) score += 10000;
+        else if (r.loteriaId) score += 5000;
+
+        if (r.number || r.isAutoDate) score += 1000;
+
+        if (r.userId) score += 100;
+        else if (r.ventanaId) score += 10;
+        else if (r.bancaId) score += 1;
+
+        return { r, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    const bestRule = applicable[0]?.r;
+
+    if (!bestRule) {
+      return { source: null, maxAmount: null, maxTotal: null };
+    }
+
+    // Determinar fuente para respuesta
+    let source: EffectiveRestriction["source"] = "GLOBAL";
+    if (bestRule.userId) source = "USER";
+    else if (bestRule.ventanaId) source = "VENTANA";
+    else if (bestRule.bancaId) source = "BANCA";
+
+    // Si es regla de lotería global, source sigue siendo GLOBAL (o podría ser LOTTERY si existiera en el tipo)
+
+    return {
+      source,
+      maxAmount: bestRule.maxAmount ?? null,
+      maxTotal: bestRule.maxTotal ?? null,
+      baseAmount: bestRule.baseAmount ?? null,
+      salesPercentage: bestRule.salesPercentage ?? null,
+      appliesToVendedor: bestRule.appliesToVendedor ?? null,
+    };
   },
 
   /**

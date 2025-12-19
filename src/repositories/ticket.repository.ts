@@ -362,10 +362,10 @@ export const TicketRepository = {
           let seq: number = 0;
           let attempts = 0;
           const maxAttempts = 5;
-          
+
           while (attempts < maxAttempts) {
             attempts++;
-            
+
             // Incrementar contador atómicamente
             const seqRows = await tx.$queryRaw<{ last: number }[]>(
               Prisma.sql`
@@ -376,7 +376,7 @@ export const TicketRepository = {
                 RETURNING "last";
               `
             );
-            
+
             seq = (seqRows?.[0]?.last ?? 1) as number;
             const seqPadded = String(seq).padStart(5, '0');
             const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
@@ -393,7 +393,7 @@ export const TicketRepository = {
               seqForLog = seq;
               break;
             }
-            
+
             // Colisión detectada - registrar y reintentar
             logger.warn({
               layer: 'repository',
@@ -407,7 +407,7 @@ export const TicketRepository = {
                 attempt: attempts,
               },
             });
-            
+
             // Si es el último intento, lanzar error
             if (attempts >= maxAttempts) {
               throw new AppError(
@@ -492,7 +492,13 @@ export const TicketRepository = {
         const candidateRules = await tx.restrictionRule.findMany({
           where: {
             isActive: true,
-            OR: [{ userId }, { ventanaId }, { bancaId }],
+            OR: [
+              { userId },
+              { ventanaId },
+              { bancaId },
+              // ✅ Incluir reglas globales (sin scope específico) que aplican a lotería/multiplicador
+              { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] }
+            ],
           },
           include: {
             loteria: true,
@@ -520,6 +526,8 @@ export const TicketRepository = {
             if (r.ventanaId) score += 10;
             if (r.userId) score += 100;
             if (r.number) score += 1000;
+            // ✅ Prioridad máxima a reglas específicas de lotería/multiplicador
+            if (r.loteriaId && r.multiplierId) score += 10000;
             return { r, score };
           })
           .sort((a, b) => b.score - a.score)
@@ -761,42 +769,71 @@ export const TicketRepository = {
           );
 
           if (matchingRule) {
-            const ruleScope: "USER" | "VENTANA" | "BANCA" =
-              matchingRule.userId
-                ? "USER"
-                : matchingRule.ventanaId
-                  ? "VENTANA"
-                  : "BANCA";
+            // ✅ NUEVO LÓGICA: Solo bloquear si NO tiene límites configurados
+            // Si tiene maxAmount O maxTotal, se permite la venta (validación de límites posterior)
+            const isBlockingRule = matchingRule.maxAmount == null && matchingRule.maxTotal == null;
 
-            const loteriaNameForWarning =
-              matchingRule.loteria?.name ?? loteriaName;
-            const multiplierNameForWarning =
-              multiplier.name ?? matchingRule.multiplier?.name ?? null;
+            if (isBlockingRule) {
+              const ruleScope: "USER" | "VENTANA" | "BANCA" =
+                matchingRule.userId
+                  ? "USER"
+                  : matchingRule.ventanaId
+                    ? "VENTANA"
+                    : "BANCA";
 
-            const defaultMessage = multiplier.name
-              ? `El multiplicador '${multiplier.name}' está restringido para esta lotería.`
-              : "El multiplicador seleccionado está restringido para esta lotería.";
-            const message =
-              (matchingRule.message && matchingRule.message.trim()) || defaultMessage;
+              const loteriaNameForWarning =
+                matchingRule.loteria?.name ?? loteriaName;
+              const multiplierNameForWarning =
+                multiplier.name ?? matchingRule.multiplier?.name ?? null;
 
-            if (actorRole === Role.ADMIN) {
-              if (!warningRuleIds.has(matchingRule.id)) {
-                warnings.push({
-                  code: "LOTTERY_MULTIPLIER_RESTRICTED",
-                  restrictedButAllowed: true,
-                  ruleId: matchingRule.id,
-                  scope: ruleScope,
-                  loteriaId,
-                  loteriaName: loteriaNameForWarning,
-                  multiplierId: j.multiplierId,
-                  multiplierName: multiplierNameForWarning,
-                  message,
-                });
-                warningRuleIds.add(matchingRule.id);
+              const defaultMessage = multiplier.name
+                ? `El multiplicador '${multiplier.name}' está restringido para esta lotería.`
+                : "El multiplicador seleccionado está restringido para esta lotería.";
+              const message =
+                (matchingRule.message && matchingRule.message.trim()) || defaultMessage;
 
+              if (actorRole === Role.ADMIN) {
+                if (!warningRuleIds.has(matchingRule.id)) {
+                  warnings.push({
+                    code: "LOTTERY_MULTIPLIER_RESTRICTED",
+                    restrictedButAllowed: true,
+                    ruleId: matchingRule.id,
+                    scope: ruleScope,
+                    loteriaId,
+                    loteriaName: loteriaNameForWarning,
+                    multiplierId: j.multiplierId,
+                    multiplierName: multiplierNameForWarning,
+                    message,
+                  });
+                  warningRuleIds.add(matchingRule.id);
+
+                  logger.warn({
+                    layer: 'repository',
+                    action: 'RESTRICTION_MULTIPLIER_ALLOWED_ADMIN',
+                    payload: {
+                      restrictionType: 'LOTTERY_MULTIPLIER',
+                      ruleId: matchingRule.id,
+                      scope: ruleScope,
+                      userId,
+                      ventanaId,
+                      bancaId,
+                      sorteoId,
+                      loteriaId,
+                      loteriaName: loteriaNameForWarning,
+                      multiplierId: j.multiplierId,
+                      multiplierName: multiplierNameForWarning,
+                      jugadaNumber: j.number,
+                      jugadaAmount: j.amount,
+                      actorRole: 'ADMIN',
+                      message,
+                      reason: 'Admin bypass - multiplier restriction waived',
+                    },
+                  });
+                }
+              } else {
                 logger.warn({
                   layer: 'repository',
-                  action: 'RESTRICTION_MULTIPLIER_ALLOWED_ADMIN',
+                  action: 'RESTRICTION_MULTIPLIER_REJECTED',
                   payload: {
                     restrictionType: 'LOTTERY_MULTIPLIER',
                     ruleId: matchingRule.id,
@@ -811,45 +848,22 @@ export const TicketRepository = {
                     multiplierName: multiplierNameForWarning,
                     jugadaNumber: j.number,
                     jugadaAmount: j.amount,
-                    actorRole: 'ADMIN',
+                    actorRole,
                     message,
-                    reason: 'Admin bypass - multiplier restriction waived',
+                    reason: 'Multiplier restricted for this lottery',
                   },
                 });
-              }
-            } else {
-              logger.warn({
-                layer: 'repository',
-                action: 'RESTRICTION_MULTIPLIER_REJECTED',
-                payload: {
-                  restrictionType: 'LOTTERY_MULTIPLIER',
+
+                throw new AppError(message, 400, {
+                  code: "LOTTERY_MULTIPLIER_RESTRICTED",
                   ruleId: matchingRule.id,
                   scope: ruleScope,
-                  userId,
-                  ventanaId,
-                  bancaId,
-                  sorteoId,
                   loteriaId,
                   loteriaName: loteriaNameForWarning,
                   multiplierId: j.multiplierId,
                   multiplierName: multiplierNameForWarning,
-                  jugadaNumber: j.number,
-                  jugadaAmount: j.amount,
-                  actorRole,
-                  message,
-                  reason: 'Multiplier restricted for this lottery',
-                },
-              });
-
-              throw new AppError(message, 400, {
-                code: "LOTTERY_MULTIPLIER_RESTRICTED",
-                ruleId: matchingRule.id,
-                scope: ruleScope,
-                loteriaId,
-                loteriaName: loteriaNameForWarning,
-                multiplierId: j.multiplierId,
-                multiplierName: multiplierNameForWarning,
-              });
+                });
+              }
             }
           }
 
@@ -874,9 +888,8 @@ export const TicketRepository = {
 
         // 8) Aplicar primera regla aplicable (si hay) con soporte para límites dinámicos
         if (applicable.length > 0) {
-          const rule = applicable[0] as any; // Cast para incluir nuevos campos
+          const rule = applicable[0] as any;
 
-          // Calcular límite dinámico si hay baseAmount o salesPercentage
           let dynamicLimit: number | null = null;
           const hasDynamicFields =
             (rule.baseAmount != null && rule.baseAmount > 0) ||
@@ -891,33 +904,30 @@ export const TicketRepository = {
               userId,
               ventanaId,
               bancaId,
-              sorteoId,  // ✅ CRÍTICO: Pasar sorteoId para calcular sobre el sorteo
+              sorteoId,
               at: now,
             });
           }
 
-          if (rule.number) {
-            // Resolver números a validar (maneja isAutoDate, arrays, strings únicos)
-            const numbersToValidate = resolveNumbersToValidate(rule, now);
+          const numbersInRule = resolveNumbersToValidate(rule, now);
 
-            // Calcular límite efectivo para maxAmount
+          if (numbersInRule.length > 0) {
+            // Case 1: Specific numbers in rule
             let effectiveMaxAmount: number | null = null;
             if (rule.maxAmount != null || dynamicLimit != null) {
               const staticMaxAmount = rule.maxAmount ?? Infinity;
-              effectiveMaxAmount = dynamicLimit != null
-                ? Math.min(staticMaxAmount, dynamicLimit)
-                : staticMaxAmount;
+              effectiveMaxAmount = dynamicLimit != null ? Math.min(staticMaxAmount, dynamicLimit) : staticMaxAmount;
             }
 
-            // Validar maxAmount por cada número
             if (effectiveMaxAmount != null) {
-              for (const num of numbersToValidate) {
-                // Sumar NUMERO y REVENTADO del mismo número en el ticket
+              for (const num of numbersInRule) {
                 const sumForNumber = preparedJugadas
                   .filter((j) => {
                     if (j.type === 'NUMERO') {
+                      if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
                       return j.number === num;
                     } else if (j.type === 'REVENTADO') {
+                      if (rule.multiplierId) return false;
                       return j.reventadoNumber === num;
                     }
                     return false;
@@ -925,399 +935,134 @@ export const TicketRepository = {
                   .reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
-                  const ruleScope: "USER" | "VENTANA" | "BANCA" =
-                    rule.userId ? "USER" : rule.ventanaId ? "VENTANA" : "BANCA";
-
-                  logger.warn({
-                    layer: 'repository',
-                    action: 'RESTRICTION_MAXAMOUNT_REJECTED',
-                    payload: {
-                      restrictionType: 'MAX_AMOUNT_PER_TICKET',
-                      ruleId: rule.id,
-                      scope: ruleScope,
-                      userId,
-                      ventanaId,
-                      bancaId,
-                      sorteoId,
-                      number: num,
-                      numbersInRule: numbersToValidate,
-                      amountInTicket: sumForNumber,
-                      effectiveMaxAmount,
-                      staticMaxAmount: rule.maxAmount,
-                      dynamicLimit,
-                      exceeded: sumForNumber - effectiveMaxAmount,
-                      isAutoDate: rule.isAutoDate,
-                      message: rule.message,
-                      reason: 'Amount for this number in ticket exceeds maxAmount limit',
-                    },
-                  });
-
+                  const multiplierContext = rule.multiplierId ? ` (multiplicador: ${rule.multiplier?.name || '...'})` : '';
                   throw new AppError(
-                    `El número ${num} excede el límite por ticket de ₡${effectiveMaxAmount.toFixed(2)} (monto en ticket: ₡${sumForNumber.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ₡${dynamicLimit.toFixed(2)}` : ''})`,
+                    `El número ${num}${multiplierContext} excede el límite por ticket de ₡${effectiveMaxAmount.toFixed(2)}`,
                     400,
-                    {
-                      code: "NUMBER_MAXAMOUNT_EXCEEDED",
-                      number: num,
-                      amountInTicket: sumForNumber,
-                      maxAmount: effectiveMaxAmount,
-                    }
+                    { code: "NUMBER_MAXAMOUNT_EXCEEDED", number: num, maxAmount: effectiveMaxAmount }
                   );
                 }
               }
             }
 
-            // ✅ NUEVO: Validar maxTotal por número específico contra acumulado del sorteo
-            // ⚡ OPTIMIZACIÓN: Calcula todos los acumulados en una sola query
-            if (rule.maxTotal != null) {
-              // Resolver números a validar (maneja isAutoDate, arrays, strings únicos)
-              const numbersToValidate = resolveNumbersToValidate(rule, now);
-              
-              // Preparar array de números y montos para validación optimizada
-              const numbersToCheck: Array<{ number: string; amountForNumber: number }> = [];
-              
-              if (numbersToValidate.length > 0) {
-                // Validar números específicos de la regla
-                for (const num of numbersToValidate) {
-                  // Sumar solo las jugadas de este número en el ticket actual
-                  // Incluye NUMERO y REVENTADO (con reventadoNumber = num)
-                  const sumForNumber = preparedJugadas
-                    .filter((j) => {
-                      if (j.type === 'NUMERO') {
-                        return j.number === num;
-                      } else if (j.type === 'REVENTADO') {
-                        return j.reventadoNumber === num;
-                      }
-                      return false;
-                    })
-                    .reduce((acc, j) => acc + j.amount, 0);
-                  
-                  // Solo agregar si hay jugadas de este número en el ticket
-                  if (sumForNumber > 0) {
-                    numbersToCheck.push({ number: num, amountForNumber: sumForNumber });
-                  }
-                }
-              } else {
-                // Sin números específicos: validar todos los números únicos del ticket
-                const uniqueNumbers = [...new Set(preparedJugadas.map(j => j.number))];
-                
-                for (const num of uniqueNumbers) {
-                  // Sumar solo las jugadas de este número (incluye NUMERO y REVENTADO)
-                  const sumForNumber = preparedJugadas
-                    .filter((j) => {
-                      if (j.type === 'NUMERO') {
-                        return j.number === num;
-                      } else if (j.type === 'REVENTADO') {
-                        return j.reventadoNumber === num;
-                      }
-                      return false;
-                    })
-                    .reduce((acc, j) => acc + j.amount, 0);
-                  
-                  if (sumForNumber > 0) {
-                    numbersToCheck.push({ number: num, amountForNumber: sumForNumber });
-                  }
-                }
-              }
-              
-              // ⚡ OPTIMIZACIÓN: Validar todos los números en una sola llamada (una sola query SQL)
+            if (rule.maxTotal != null || dynamicLimit != null) {
+              const staticMaxTotal = rule.maxTotal ?? Infinity;
+              const effectiveMaxTotal = dynamicLimit != null ? Math.min(staticMaxTotal, dynamicLimit) : staticMaxTotal;
+
+              const numbersToCheck = numbersInRule.map(num => {
+                const amount = preparedJugadas
+                  .filter(j => (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId))
+                  .reduce((acc, j) => acc + j.amount, 0);
+                return { number: num, amountForNumber: amount };
+              }).filter(n => n.amountForNumber > 0);
+
               if (numbersToCheck.length > 0) {
-                try {
-                  await validateMaxTotalForNumbers(tx, {
-                    numbers: numbersToCheck,
-                    rule: {
-                      maxTotal: rule.maxTotal,
-                      userId: rule.userId,
-                      ventanaId: rule.ventanaId,
-                      bancaId: rule.bancaId,
-                      isAutoDate: rule.isAutoDate,
-                    },
-                    sorteoId: sorteoId,
-                    dynamicLimit,
-                  });
-                } catch (error: any) {
-                  // El logging detallado ya se hizo en validateMaxTotalForNumbers (helper)
-                  // Aquí solo agregamos contexto de la regla específica
-                  const ruleScope: "USER" | "VENTANA" | "BANCA" =
-                    rule.userId ? "USER" : rule.ventanaId ? "VENTANA" : "BANCA";
-
-                  logger.warn({
-                    layer: 'repository',
-                    action: 'RESTRICTION_MAXTOTAL_REJECTED',
-                    payload: {
-                      restrictionType: 'MAX_TOTAL_IN_SORTEO',
-                      ruleId: rule.id,
-                      scope: ruleScope,
-                      userId,
-                      ventanaId,
-                      bancaId,
-                      sorteoId,
-                      numbersValidated: numbersToCheck.map(n => n.number),
-                      numbersInRule: numbersToValidate,
-                      staticMaxTotal: rule.maxTotal,
-                      dynamicLimit,
-                      isAutoDate: rule.isAutoDate,
-                      message: rule.message,
-                      errorMessage: error.message,
-                      reason: 'Accumulated amount for number in sorteo exceeds maxTotal limit',
-                    },
-                  });
-
-                  // Convertir error a AppError con código apropiado
-                  // El error ya contiene el número específico que falló
-                  throw new AppError(
-                    error.message,
-                    400,
-                    {
-                      code: "NUMBER_MAXTOTAL_EXCEEDED",
-                      sorteoId,
-                      isAutoDate: rule.isAutoDate,
-                    }
-                  );
-                }
+                const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
+                await validateMaxTotalForNumbers(tx, {
+                  numbers: numbersToCheck,
+                  rule: { ...rule, maxTotal: effectiveMaxTotal },
+                  sorteoId,
+                  dynamicLimit,
+                  multiplierFilter
+                });
               }
             }
           } else {
-            // ✅ CORRECCIÓN: Regla global (sin number) - DEBE validar por número individual
-            // Calcular límite efectivo para maxAmount
+            // Case 2: Global rule (no numbers)
+            const uniqueNumbers = [...new Set(preparedJugadas.map(j => j.type === 'NUMERO' ? j.number : j.reventadoNumber))].filter((n): n is string => !!n);
+
             let effectiveMaxAmount: number | null = null;
             if (rule.maxAmount != null || dynamicLimit != null) {
               const staticMaxAmount = rule.maxAmount ?? Infinity;
-              effectiveMaxAmount = dynamicLimit != null
-                ? Math.min(staticMaxAmount, dynamicLimit)
-                : staticMaxAmount;
+              effectiveMaxAmount = dynamicLimit != null ? Math.min(staticMaxAmount, dynamicLimit) : staticMaxAmount;
             }
 
-            // ✅ FIX BUG #1: Validar maxAmount POR NÚMERO INDIVIDUAL (no solo la jugada más alta)
             if (effectiveMaxAmount != null) {
-              // Agrupar jugadas por número (NUMERO usa .number, REVENTADO usa .reventadoNumber)
-              const amountsByNumber = new Map<string, number>();
-
-              for (const j of preparedJugadas) {
-                const numberKey = j.type === 'NUMERO' ? j.number : j.reventadoNumber;
-                if (numberKey) {
-                  const current = amountsByNumber.get(numberKey) ?? 0;
-                  amountsByNumber.set(numberKey, current + j.amount);
-                }
-              }
-
-              // Validar cada número individualmente
-              for (const [number, totalForNumber] of amountsByNumber.entries()) {
-                if (totalForNumber > effectiveMaxAmount) {
-                  const scopeLabel = rule.userId ? "personal"
-                    : rule.ventanaId ? "de ventana"
-                      : rule.bancaId ? "de banca"
-                        : "global";
-
-                  const ruleScope: "USER" | "VENTANA" | "BANCA" =
-                    rule.userId ? "USER" : rule.ventanaId ? "VENTANA" : "BANCA";
-
-                  logger.warn({
-                    layer: 'repository',
-                    action: 'RESTRICTION_MAXAMOUNT_GLOBAL_REJECTED',
-                    payload: {
-                      restrictionType: 'MAX_AMOUNT_PER_TICKET_GLOBAL',
-                      ruleId: rule.id,
-                      scope: ruleScope,
-                      scopeLabel,
-                      userId,
-                      ventanaId,
-                      bancaId,
-                      sorteoId,
-                      number,
-                      amountInTicket: totalForNumber,
-                      effectiveMaxAmount,
-                      staticMaxAmount: rule.maxAmount,
-                      dynamicLimit,
-                      exceeded: totalForNumber - effectiveMaxAmount,
-                      message: rule.message,
-                      reason: 'Amount for this number in ticket exceeds maxAmount limit (global rule)',
-                    },
-                  });
-
-                  throw new AppError(
-                    `El número ${number} excede el límite ${scopeLabel} por ticket de ₡${effectiveMaxAmount.toFixed(2)} (monto en ticket: ₡${totalForNumber.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ₡${dynamicLimit.toFixed(2)}` : ''})`,
-                    400,
-                    {
-                      code: "NUMBER_MAXAMOUNT_EXCEEDED_GLOBAL",
-                      number,
-                      amountInTicket: totalForNumber,
-                      maxAmount: effectiveMaxAmount,
+              for (const num of uniqueNumbers) {
+                const sumForNumber = preparedJugadas
+                  .filter((j) => {
+                    if (j.type === 'NUMERO') {
+                      if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
+                      return j.number === num;
+                    } else if (j.type === 'REVENTADO') {
+                      if (rule.multiplierId) return false;
+                      return j.reventadoNumber === num;
                     }
-                  );
+                    return false;
+                  })
+                  .reduce((acc, j) => acc + j.amount, 0);
+
+                if (sumForNumber > effectiveMaxAmount) {
+                  throw new AppError(`El número ${num} excede el límite global por ticket de ₡${effectiveMaxAmount.toFixed(2)}`, 400, { code: "NUMBER_MAXAMOUNT_EXCEEDED_GLOBAL", number: num, maxAmount: effectiveMaxAmount });
                 }
               }
             }
 
-            // ✅ FIX BUG #2: Validar maxTotal POR NÚMERO INDIVIDUAL contra acumulado del sorteo
-            let effectiveMaxTotal: number | null = null;
             if (rule.maxTotal != null || dynamicLimit != null) {
               const staticMaxTotal = rule.maxTotal ?? Infinity;
-              effectiveMaxTotal = dynamicLimit != null
-                ? Math.min(staticMaxTotal, dynamicLimit)
-                : staticMaxTotal;
-            }
+              const effectiveMaxTotal = dynamicLimit != null ? Math.min(staticMaxTotal, dynamicLimit) : staticMaxTotal;
 
-            if (effectiveMaxTotal != null) {
-              // Agrupar jugadas por número para validar acumulado en sorteo
-              const amountsByNumber = new Map<string, number>();
+              const numbersToCheck = uniqueNumbers.map(num => {
+                const amount = preparedJugadas
+                  .filter(j => (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId))
+                  .reduce((acc, j) => acc + j.amount, 0);
+                return { number: num, amountForNumber: amount };
+              }).filter(n => n.amountForNumber > 0);
 
-              for (const j of preparedJugadas) {
-                const numberKey = j.type === 'NUMERO' ? j.number : j.reventadoNumber;
-                if (numberKey) {
-                  const current = amountsByNumber.get(numberKey) ?? 0;
-                  amountsByNumber.set(numberKey, current + j.amount);
-                }
-              }
-
-              // Preparar array de números y montos para validación optimizada
-              const numbersToCheck: Array<{ number: string; amountForNumber: number }> = [];
-              for (const [number, totalForNumber] of amountsByNumber.entries()) {
-                if (totalForNumber > 0) {
-                  numbersToCheck.push({ number, amountForNumber: totalForNumber });
-                }
-              }
-
-              // ⚡ OPTIMIZACIÓN: Validar todos los números en una sola llamada (una sola query SQL)
               if (numbersToCheck.length > 0) {
-                try {
-                  await validateMaxTotalForNumbers(tx, {
-                    numbers: numbersToCheck,
-                    rule: {
-                      maxTotal: rule.maxTotal,
-                      userId: rule.userId,
-                      ventanaId: rule.ventanaId,
-                      bancaId: rule.bancaId,
-                      isAutoDate: rule.isAutoDate,
-                    },
-                    sorteoId: sorteoId,
-                    dynamicLimit,
-                  });
-                } catch (err: any) {
-                  // El logging detallado ya se hizo en validateMaxTotalForNumbers (helper)
-                  // Aquí solo agregamos contexto de la regla global
-                  const ruleScope: "USER" | "VENTANA" | "BANCA" =
-                    rule.userId ? "USER" : rule.ventanaId ? "VENTANA" : "BANCA";
-
-                  logger.warn({
-                    layer: 'repository',
-                    action: 'RESTRICTION_MAXTOTAL_GLOBAL_REJECTED',
-                    payload: {
-                      restrictionType: 'MAX_TOTAL_IN_SORTEO_GLOBAL',
-                      ruleId: rule.id,
-                      scope: ruleScope,
-                      userId,
-                      ventanaId,
-                      bancaId,
-                      sorteoId,
-                      numbersValidated: numbersToCheck.map(n => n.number),
-                      staticMaxTotal: rule.maxTotal,
-                      dynamicLimit,
-                      message: rule.message,
-                      errorMessage: err.message,
-                      reason: 'Accumulated amount for number in sorteo exceeds maxTotal limit (global rule)',
-                    },
-                  });
-
-                  // Re-lanzar error con contexto adicional
-                  throw new AppError(
-                    err.message,
-                    400,
-                    {
-                      code: "NUMBER_MAXTOTAL_EXCEEDED_GLOBAL",
-                      ruleId: rule.id,
-                      sorteoId,
-                    }
-                  );
-                }
+                const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
+                await validateMaxTotalForNumbers(tx, {
+                  numbers: numbersToCheck,
+                  rule: { ...rule, maxTotal: effectiveMaxTotal },
+                  sorteoId,
+                  dynamicLimit,
+                  multiplierFilter
+                });
               }
             }
           }
         }
 
         // 9) Crear ticket y jugadas con comisiones
-        // Acumular datos para ActivityLog
         const commissionsDetails: any[] = [];
-
-        // Normalizar clienteNombre: trim y default "CLIENTE CONTADO"
         const normalizedClienteNombre = (clienteNombre?.trim() || "CLIENTE CONTADO");
 
-        // Obtener políticas de comisión jerárquica (USER → VENTANA → BANCA)
         const userPolicy = (user?.commissionPolicyJson ?? null) as any;
         const ventanaPolicy = (ventana?.commissionPolicyJson ?? null) as any;
         const bancaPolicy = (ventana?.banca?.commissionPolicyJson ?? null) as any;
-
-        // ✅ OPTIMIZACIÓN: Usar usuario VENTANA (listero) ya cargado en consulta inicial
-        // Elimina consulta separada (50-100ms ahorrados)
         const ventanaUser = ventana?.users?.[0] ?? null;
         const ventanaUserPolicy = (ventanaUser?.commissionPolicyJson ?? null) as any;
         const ventanaUserId = ventanaUser?.id ?? null;
 
-        // Calcular comisiones para cada jugada y acumular totalCommission
-        // ✅ CRÍTICO: Calcular comisión del vendedor (USER) y comisión del listero (VENTANA/BANCA) por separado
-        // Usar CommissionService para cálculo centralizado
         const jugadasWithCommissions = preparedJugadas.map((j) => {
-          // Resolver comisión del vendedor con prioridad jerárquica: USER → VENTANA → BANCA
           const res = commissionService.calculateVendedorCommission(
-            {
-              loteriaId,
-              betType: j.type,
-              finalMultiplierX: j.finalMultiplierX,
-              amount: j.amount,
-            },
-            userPolicy,
-            ventanaPolicy,
-            bancaPolicy
+            { loteriaId, betType: j.type, finalMultiplierX: j.finalMultiplierX, amount: j.amount },
+            userPolicy, ventanaPolicy, bancaPolicy
           );
 
-          // ✅ CRÍTICO: Calcular comisión del listero usando la MISMA lógica que el dashboard
-          // Prioridad: USER (ventana user) → VENTANA → BANCA
           let listeroRes: CommissionSnapshot;
-
           if (ventanaUserPolicy && ventanaUserId) {
             try {
-              // Intentar usar resolveFromPolicy primero (como en dashboard)
               const parsedPolicy = commissionResolver.parsePolicy(ventanaUserPolicy, "USER");
               const resolution = commissionResolver.resolveFromPolicy(parsedPolicy, {
                 userId: ventanaUserId,
                 loteriaId,
                 betType: j.type as "NUMERO" | "REVENTADO",
                 finalMultiplierX: j.finalMultiplierX ?? null,
-              }, true); // enforceReventado = true
-              const commissionAmount = parseFloat(((j.amount * resolution.percent) / 100).toFixed(2));
+              }, true);
               listeroRes = {
                 commissionPercent: resolution.percent,
-                commissionAmount,
-                commissionOrigin: "USER", // Del usuario VENTANA
+                commissionAmount: parseFloat(((j.amount * resolution.percent) / 100).toFixed(2)),
+                commissionOrigin: "USER",
                 commissionRuleId: resolution.ruleId ?? null,
               };
             } catch (err) {
-              // Fallback: usar resolveListeroCommission (busca en VENTANA/BANCA)
-              listeroRes = commissionService.calculateListeroCommission(
-                {
-                  loteriaId,
-                  betType: j.type,
-                  finalMultiplierX: j.finalMultiplierX || 0,
-                  amount: j.amount,
-                },
-                ventanaPolicy,
-                bancaPolicy
-              );
+              listeroRes = commissionService.calculateListeroCommission({ loteriaId, betType: j.type, finalMultiplierX: j.finalMultiplierX || 0, amount: j.amount }, ventanaPolicy, bancaPolicy);
             }
           } else {
-            // Si no hay usuario VENTANA, usar resolveListeroCommission (busca en VENTANA/BANCA)
-            listeroRes = commissionService.calculateListeroCommission(
-              {
-                loteriaId,
-                betType: j.type,
-                finalMultiplierX: j.finalMultiplierX || 0,
-                amount: j.amount,
-              },
-              ventanaPolicy,
-              bancaPolicy
-            );
+            listeroRes = commissionService.calculateListeroCommission({ loteriaId, betType: j.type, finalMultiplierX: j.finalMultiplierX || 0, amount: j.amount }, ventanaPolicy, bancaPolicy);
           }
 
-          // Guardar para ActivityLog
           commissionsDetails.push({
             origin: res.commissionOrigin,
             ruleId: res.commissionRuleId ?? null,
@@ -1327,23 +1072,6 @@ export const TicketRepository = {
             betType: j.type,
             multiplierX: j.finalMultiplierX,
             jugadaAmount: j.amount,
-          });
-
-          // Log CRÍTICO para verificar que se está guardando correctamente
-          logger.info({
-            layer: 'repository',
-            action: 'JUGADA_COMMISSION_SNAPSHOT',
-            payload: {
-              jugadaType: j.type,
-              jugadaAmount: j.amount,
-              vendedorCommission: res.commissionAmount,
-              vendedorCommissionOrigin: res.commissionOrigin,
-              listeroCommissionAmount: listeroRes.commissionAmount,
-              listeroCommissionOrigin: listeroRes.commissionOrigin,
-              listeroCommissionPercent: listeroRes.commissionPercent,
-              ventanaId,
-              loteriaId,
-            },
           });
 
           return {
@@ -1356,18 +1084,12 @@ export const TicketRepository = {
             commissionAmount: res.commissionAmount,
             commissionOrigin: res.commissionOrigin,
             commissionRuleId: res.commissionRuleId ?? null,
-            listeroCommissionAmount: listeroRes.commissionAmount, // ✅ Snapshot de comisión del listero
-            ...(j.multiplierId
-              ? { multiplier: { connect: { id: j.multiplierId } } }
-              : {}),
+            listeroCommissionAmount: listeroRes.commissionAmount,
+            ...(j.multiplierId ? { multiplier: { connect: { id: j.multiplierId } } } : {}),
           };
         });
 
-        // Calcular totalCommission sumando todas las comisiones de las jugadas
-        const totalCommission = jugadasWithCommissions.reduce(
-          (sum, j) => sum + (j.commissionAmount || 0),
-          0
-        );
+        const totalCommission = jugadasWithCommissions.reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
 
         const createdTicket = await tx.ticket.create({
           data: {
@@ -1383,40 +1105,18 @@ export const TicketRepository = {
             clienteNombre: normalizedClienteNombre,
             createdBy: options?.createdBy ?? null,
             createdByRole: options?.createdByRole ?? null,
-            jugadas: {
-              create: jugadasWithCommissions,
-            },
+            jugadas: { create: jugadasWithCommissions },
           },
           include: { jugadas: true },
         });
 
-        // Adjuntar businessDate info para persistirla fuera de la TX (evita abortos si falta la columna)
         (createdTicket as any).__businessDateInfo = bd;
-
-        // Diagnóstico de folio
-        logger.info({
-          layer: 'repository',
-          action: 'TICKET_FOLIO_DIAG',
-          payload: {
-            createdAtUTC: new Date().toISOString(),
-            scheduledAt: sorteo.scheduledAt?.toISOString() ?? null,
-            businessDateISO: bd.businessDateISO,
-            prefixYYMMDD: bd.prefixYYMMDD,
-            counter: seqForLog,
-            ticketNumber: nextNumber,
-          },
-        });
-
-        // Almacenar commissionsDetails en el ticket para usarlo fuera de TX
         (createdTicket as any).__commissionsDetails = commissionsDetails;
-
-        // Almacenar jugadasWithCommissions para usarlo fuera de TX
         (createdTicket as any).__jugadasCount = jugadasWithCommissions.length;
 
         return { ticket: createdTicket, warnings };
       },
       {
-        // ✔️ opciones explícitas para robustez bajo carga
         isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
         maxRetries: 3,
         backoffMinMs: 150,
@@ -1605,10 +1305,10 @@ export const TicketRepository = {
           let seq: number = 0;
           let attempts = 0;
           const maxAttempts = 5;
-          
+
           while (attempts < maxAttempts) {
             attempts++;
-            
+
             // Incrementar contador atómicamente
             const seqRows = await tx.$queryRaw<{ last: number }[]>(
               Prisma.sql`
@@ -1619,7 +1319,7 @@ export const TicketRepository = {
                 RETURNING "last";
               `
             );
-            
+
             seq = (seqRows?.[0]?.last ?? 1) as number;
             const seqPadded = String(seq).padStart(5, '0');
             const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
@@ -1635,7 +1335,7 @@ export const TicketRepository = {
               seqForLog = seq;
               break;
             }
-            
+
             // Colisión detectada - registrar y reintentar
             logger.warn({
               layer: 'repository',
@@ -1649,7 +1349,7 @@ export const TicketRepository = {
                 attempt: attempts,
               },
             });
-            
+
             // Si es el último intento, lanzar error
             if (attempts >= maxAttempts) {
               throw new AppError(
@@ -2006,10 +1706,10 @@ export const TicketRepository = {
             if (rule.maxTotal != null) {
               // Resolver números a validar (maneja isAutoDate, arrays, strings únicos)
               const numbersToValidate = resolveNumbersToValidate(rule, now);
-              
+
               // Preparar array de números y montos para validación optimizada
               const numbersToCheck: Array<{ number: string; amountForNumber: number }> = [];
-              
+
               if (numbersToValidate.length > 0) {
                 // Validar números específicos de la regla
                 for (const num of numbersToValidate) {
@@ -2025,7 +1725,7 @@ export const TicketRepository = {
                       return false;
                     })
                     .reduce((acc, j) => acc + j.amount, 0);
-                  
+
                   // Solo agregar si hay jugadas de este número en el ticket
                   if (sumForNumber > 0) {
                     numbersToCheck.push({ number: num, amountForNumber: sumForNumber });
@@ -2034,7 +1734,7 @@ export const TicketRepository = {
               } else {
                 // Sin números específicos: validar todos los números únicos del ticket
                 const uniqueNumbers = [...new Set(preparedJugadas.map(j => j.number))];
-                
+
                 for (const num of uniqueNumbers) {
                   // Sumar solo las jugadas de este número (incluye NUMERO y REVENTADO)
                   const sumForNumber = preparedJugadas
@@ -2047,13 +1747,13 @@ export const TicketRepository = {
                       return false;
                     })
                     .reduce((acc, j) => acc + j.amount, 0);
-                  
+
                   if (sumForNumber > 0) {
                     numbersToCheck.push({ number: num, amountForNumber: sumForNumber });
                   }
                 }
               }
-              
+
               // ⚡ OPTIMIZACIÓN: Validar todos los números en una sola llamada (una sola query SQL)
               if (numbersToCheck.length > 0) {
                 try {
@@ -2076,7 +1776,7 @@ export const TicketRepository = {
                     : rule.ventanaId ? "de ventana"
                       : rule.bancaId ? "de banca"
                         : "global";
-                  
+
                   throw new AppError(
                     error.message,
                     400,
@@ -2404,9 +2104,9 @@ export const TicketRepository = {
               commissionPercent: j.commissionPercent,
               commissionAmount: j.commissionAmount,
               commissionOrigin: j.commissionOrigin,
-              commissionRuleId: j.commissionRuleId,
-              listeroCommissionAmount: j.listeroCommissionAmount, // ✅ PERSISTIR en DB
-              multiplierId: j.multiplierId,
+              commissionRuleId: (j as any).commissionRuleId,
+              listeroCommissionAmount: (j as any).listeroCommissionAmount, // ✅ PERSISTIR en DB
+              multiplierId: (j as any).multiplierId,
             })),
           });
         }
