@@ -61,7 +61,9 @@ function normalizeAndValidateNumbers(
 export const RestrictionRuleService = {
   async create(actorId: string, data: CreateRestrictionRuleInput) {
     const isLotteryRule = Boolean(data.loteriaId || data.multiplierId);
+    let multiplierName = "";
 
+    // 1. Validaciones previas para reglas de Lotería/Multiplicador
     if (isLotteryRule) {
       if (!data.loteriaId || !data.multiplierId) {
         throw new AppError(
@@ -97,146 +99,79 @@ export const RestrictionRuleService = {
           400
         );
       }
+      multiplierName = multiplier.name || "";
+    }
 
-      const message =
+    // 2. Determinar números a procesar (Normalización)
+    // Si isAutoDate es true, no procesamos números individuales
+    const numbers = data.isAutoDate ? [] : normalizeAndValidateNumbers(data.number);
+
+    // 3. Preparar el Payload Base
+    const basePayload: any = {
+      bancaId: data.bancaId ?? null,
+      ventanaId: data.ventanaId ?? null,
+      userId: data.userId ?? null,
+      isActive: data.isActive ?? true,
+      isAutoDate: data.isAutoDate ?? false,
+      maxAmount: data.maxAmount ?? null,
+      maxTotal: data.maxTotal ?? null,
+      baseAmount: data.baseAmount ?? null,
+      salesPercentage: data.salesPercentage ?? null,
+      appliesToVendedor: data.appliesToVendedor ?? false,
+      appliesToDate: data.appliesToDate ?? null,
+      appliesToHour: data.appliesToHour ?? null,
+      salesCutoffMinutes: data.salesCutoffMinutes ?? null,
+      loteriaId: data.loteriaId ?? null,
+      multiplierId: data.multiplierId ?? null,
+    };
+
+    // Mensaje por defecto para reglas de multiplicador
+    if (isLotteryRule) {
+      basePayload.message =
         (data.message && data.message.trim()) ||
-        `El multiplicador '${multiplier.name ?? ""}' está restringido para esta lotería.`;
+        `El multiplicador '${multiplierName}' está restringido para esta lotería.`;
+    } else {
+      basePayload.message = data.message?.trim() ?? null;
+    }
 
-      const created = await RestrictionRuleRepository.create({
-        bancaId: data.bancaId ?? null,
-        ventanaId: data.ventanaId ?? null,
-        userId: data.userId ?? null,
+    // 4. Creación de Reglas
+    let createdRules: any[] = [];
+
+    if (data.isAutoDate || numbers.length === 0) {
+      // Caso A: Una sola regla (isAutoDate o Global para todos los números)
+      const rule = await RestrictionRuleRepository.create({
+        ...basePayload,
         number: null,
-        maxAmount: null,
-        maxTotal: null,
-        salesCutoffMinutes: null,
-        appliesToDate: data.appliesToDate ?? null,
-        appliesToHour: data.appliesToHour ?? null,
-        loteriaId: data.loteriaId,
-        multiplierId: data.multiplierId,
-        message,
       });
-
-      await ActivityService.log({
-        userId: actorId,
-        action: ActivityType.SYSTEM_ACTION,
-        targetType: "RESTRICTION_RULE",
-        targetId: created.id,
-        details: { created },
-        layer: "service",
-      });
-
-      return created;
+      createdRules.push(rule);
+    } else {
+      // Caso B: Una regla por cada número
+      createdRules = await Promise.all(
+        numbers.map((num) =>
+          RestrictionRuleRepository.create({
+            ...basePayload,
+            number: num,
+          })
+        )
+      );
     }
 
-    // Si isAutoDate es true, crear una sola restricción sin number (se actualiza automáticamente)
-    if (data.isAutoDate) {
-      const created = await RestrictionRuleRepository.create({
-        bancaId: data.bancaId ?? null,
-        ventanaId: data.ventanaId ?? null,
-        userId: data.userId ?? null,
-        isActive: data.isActive ?? true,
-        isAutoDate: true,
-        number: null, // Se actualizará automáticamente por el cron job
-        maxAmount: data.maxAmount ?? null,
-        maxTotal: data.maxTotal ?? null,
-        baseAmount: data.baseAmount ?? null,
-        salesPercentage: data.salesPercentage ?? null,
-        appliesToVendedor: data.appliesToVendedor ?? false,
-        appliesToDate: data.appliesToDate ?? null,
-        appliesToHour: data.appliesToHour ?? null,
-        salesCutoffMinutes: null,
-        message: data.message?.trim() ?? null,
-        loteriaId: null,
-        multiplierId: null,
-      });
-      await ActivityService.log({
-        userId: actorId,
-        action: ActivityType.SYSTEM_ACTION,
-        targetType: "RESTRICTION_RULE",
-        targetId: created.id,
-        details: { created, isAutoDate: true },
-        layer: "service",
-      });
-      return created;
-    }
-
-    // Normalizar number a array
-    const numbers = normalizeAndValidateNumbers(data.number);
-
-    // Si no hay números, crear una sola restricción sin number
-    if (numbers.length === 0) {
-      const created = await RestrictionRuleRepository.create({
-        bancaId: data.bancaId ?? null,
-        ventanaId: data.ventanaId ?? null,
-        userId: data.userId ?? null,
-        isActive: data.isActive ?? true,
-        isAutoDate: data.isAutoDate ?? false,
-        number: null,
-        maxAmount: data.maxAmount ?? null,
-        maxTotal: data.maxTotal ?? null,
-        baseAmount: data.baseAmount ?? null,
-        salesPercentage: data.salesPercentage ?? null,
-        appliesToVendedor: data.appliesToVendedor ?? false,
-        appliesToDate: data.appliesToDate ?? null,
-        appliesToHour: data.appliesToHour ?? null,
-        salesCutoffMinutes: data.salesCutoffMinutes ?? null,
-        message: data.message?.trim() ?? null,
-        loteriaId: null,
-        multiplierId: null,
-      });
-      await ActivityService.log({
-        userId: actorId,
-        action: ActivityType.SYSTEM_ACTION,
-        targetType: "RESTRICTION_RULE",
-        targetId: created.id,
-        details: { created },
-        layer: "service",
-      });
-      return created;
-    }
-
-    // Si hay números, crear una restricción por cada número
-    const restrictions = await Promise.all(
-      numbers.map((num) =>
-        RestrictionRuleRepository.create({
-          bancaId: data.bancaId ?? null,
-          ventanaId: data.ventanaId ?? null,
-          userId: data.userId ?? null,
-          isActive: data.isActive ?? true,
-          isAutoDate: data.isAutoDate ?? false,
-          number: num, // Cada registro tiene un solo número
-          maxAmount: data.maxAmount ?? null,
-          maxTotal: data.maxTotal ?? null,
-          baseAmount: data.baseAmount ?? null,
-          salesPercentage: data.salesPercentage ?? null,
-          appliesToVendedor: data.appliesToVendedor ?? false,
-          appliesToDate: data.appliesToDate ?? null,
-          appliesToHour: data.appliesToHour ?? null,
-          salesCutoffMinutes: data.salesCutoffMinutes ?? null,
-          message: data.message?.trim() ?? null,
-          loteriaId: null,
-          multiplierId: null,
-        })
-      )
-    );
-
-    // Log para todas las restricciones creadas
+    // 5. Registro de Actividad
     await Promise.all(
-      restrictions.map((restriction) =>
+      createdRules.map((rule) =>
         ActivityService.log({
           userId: actorId,
           action: ActivityType.SYSTEM_ACTION,
           targetType: "RESTRICTION_RULE",
-          targetId: restriction.id,
-          details: { created: restriction, batchCount: restrictions.length },
+          targetId: rule.id,
+          details: { created: rule, batchCount: createdRules.length },
           layer: "service",
         })
       )
     );
 
-    // Retornar el primer registro (Opción A según el documento)
-    return restrictions[0];
+    // Retornar todas las reglas creadas (soporte para batch de números)
+    return createdRules;
   },
 
   async update(actorId: string, id: string, data: UpdateRestrictionRuleInput) {

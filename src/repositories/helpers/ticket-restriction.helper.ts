@@ -24,9 +24,13 @@ export async function calculateAccumulatedByNumbersAndScope(
     scopeType: 'USER' | 'VENTANA' | 'BANCA';
     scopeId: string;            // userId, ventanaId, o bancaId
     sorteoId: string;           // ⚠️ CRÍTICO: Acumulado es por sorteo
+    multiplierFilter?: {        // ✅ NUEVO: Filtro por multiplicador
+      id: string;
+      kind: 'NUMERO' | 'REVENTADO';
+    } | null;
   }
 ): Promise<Map<string, number>> {
-  const { numbers, scopeType, scopeId, sorteoId } = params;
+  const { numbers, scopeType, scopeId, sorteoId, multiplierFilter } = params;
 
   // Si no hay números, retornar map vacío
   if (numbers.length === 0) {
@@ -45,6 +49,18 @@ export async function calculateAccumulatedByNumbersAndScope(
       scopeCondition = Prisma.sql`v."bancaId" = ${scopeId}::uuid`;
     } else {
       throw new Error(`Invalid scopeType: ${scopeType}`);
+    }
+
+    // ✅ Construir condición de multiplicador
+    let multiplierCondition = Prisma.sql``;
+    if (multiplierFilter) {
+      if (multiplierFilter.kind === 'REVENTADO') {
+        // Para REVENTADO, filtramos por tipo de jugada (jugadas reventadas no tienen multiplierId)
+        multiplierCondition = Prisma.sql`AND j."type" = 'REVENTADO'`;
+      } else {
+        // Para NUMERO, filtramos por el ID del multiplicador específico
+        multiplierCondition = Prisma.sql`AND j."multiplierId" = ${multiplierFilter.id}::uuid`;
+      }
     }
 
     // ⚡ OPTIMIZACIÓN: Query SQL que calcula todos los acumulados en una sola consulta
@@ -94,6 +110,7 @@ export async function calculateAccumulatedByNumbersAndScope(
           AND t."deletedAt" IS NULL
           AND j."isActive" = true  -- ✅ Exclusivo activas
           AND j."deletedAt" IS NULL
+          ${multiplierCondition}   -- ✅ Inyectar filtro de multiplicador
           AND (${Prisma.join(numberConditions, ' OR ')})
         GROUP BY COALESCE(j."number", j."reventadoNumber")
       `
@@ -120,6 +137,7 @@ export async function calculateAccumulatedByNumbersAndScope(
         scopeType,
         scopeId,
         sorteoId,
+        multiplierFilter,
         accumulatedMap: Object.fromEntries(accumulatedMap),
       },
     });
@@ -134,6 +152,7 @@ export async function calculateAccumulatedByNumbersAndScope(
         scopeType,
         scopeId,
         sorteoId,
+        multiplierFilter,
         error: error.message,
         stack: error.stack,
       },
@@ -163,6 +182,10 @@ export async function calculateAccumulatedByNumberAndScope(
     scopeType: 'USER' | 'VENTANA' | 'BANCA';
     scopeId: string;            // userId, ventanaId, o bancaId
     sorteoId: string;           // ⚠️ CRÍTICO: Acumulado es por sorteo
+    multiplierFilter?: {        // ✅ NUEVO: Filtro por multiplicador
+      id: string;
+      kind: 'NUMERO' | 'REVENTADO';
+    } | null;
   }
 ): Promise<number> {
   // ⚡ OPTIMIZACIÓN: Usar función optimizada que calcula múltiples números en una query
@@ -171,6 +194,7 @@ export async function calculateAccumulatedByNumberAndScope(
     scopeType: params.scopeType,
     scopeId: params.scopeId,
     sorteoId: params.sorteoId,
+    multiplierFilter: params.multiplierFilter,
   });
 
   return accumulatedMap.get(params.number) ?? 0;
@@ -266,9 +290,13 @@ export async function validateMaxTotalForNumbers(
     };
     sorteoId: string;
     dynamicLimit?: number | null; // Límite dinámico calculado (opcional)
+    multiplierFilter?: {          // ✅ NUEVO: Filtro por multiplicador
+      id: string;
+      kind: 'NUMERO' | 'REVENTADO';
+    } | null;
   }
 ): Promise<void> {
-  const { numbers, rule, sorteoId, dynamicLimit } = params;
+  const { numbers, rule, sorteoId, dynamicLimit, multiplierFilter } = params;
 
   // Si no hay números, no validar
   if (numbers.length === 0) {
@@ -306,6 +334,7 @@ export async function validateMaxTotalForNumbers(
     scopeType,
     scopeId,
     sorteoId,
+    multiplierFilter, // ✅ Pasar filtro al cálculo
   });
 
   // Validar cada número
@@ -331,6 +360,7 @@ export async function validateMaxTotalForNumbers(
           scopeId,
           scopeLabel,
           sorteoId,
+          multiplierFilter,
           accumulatedInSorteo,
           amountForNumber,
           newAccumulated,
@@ -355,6 +385,7 @@ export async function validateMaxTotalForNumbers(
         scopeType,
         scopeId,
         sorteoId,
+        multiplierFilter,
         accumulatedInSorteo,
         amountForNumber,
         newAccumulated,
@@ -386,6 +417,10 @@ export async function validateMaxTotalForNumber(
     };
     sorteoId: string;
     dynamicLimit?: number | null; // Límite dinámico calculado (opcional)
+    multiplierFilter?: {          // ✅ NUEVO: Filtro por multiplicador
+      id: string;
+      kind: 'NUMERO' | 'REVENTADO';
+    } | null;
   }
 ): Promise<void> {
   return validateMaxTotalForNumbers(tx, {
@@ -393,6 +428,7 @@ export async function validateMaxTotalForNumber(
     rule: params.rule,
     sorteoId: params.sorteoId,
     dynamicLimit: params.dynamicLimit,
+    multiplierFilter: params.multiplierFilter,
   });
 }
 

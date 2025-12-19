@@ -70,7 +70,12 @@ export const CreateRestrictionRuleSchema = z
   })
   .strict()
   .superRefine((data, ctx) => {
-    if (!hasScope(data)) {
+    const amount = isAmountRule(data);
+    const cutoff = isCutoffRule(data);
+    const lotteryMult = isLotteryMultiplierRule(data);
+
+    // 1. Validar Scope: Requerido solo si NO es una regla de lotería/multiplicador (las de lotería pueden ser globales)
+    if (!lotteryMult && !hasScope(data)) {
       ctx.addIssue({
         code: "custom",
         path: ["(root)"],
@@ -78,27 +83,33 @@ export const CreateRestrictionRuleSchema = z
       });
     }
 
-    const amount = isAmountRule(data);
-    const cutoff = isCutoffRule(data);
-    const lotteryMult = isLotteryMultiplierRule(data);
-
-    const totalKinds = (amount ? 1 : 0) + (cutoff ? 1 : 0) + (lotteryMult ? 1 : 0);
-    if (totalKinds !== 1) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["(root)"],
-        message: "Debe definir exactamente un tipo de restricción: montos, cutoff o lotería/multiplicador.",
-      });
+    // 2. Validar Cutoff: Exclusivo (no puede mezclarse con montos ni lotería por ahora)
+    if (cutoff) {
+      if (amount) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["salesCutoffMinutes"],
+          message: "No puede combinar salesCutoffMinutes con restricciones de montos.",
+        });
+      }
+      if (lotteryMult) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["salesCutoffMinutes"],
+          message: "No puede combinar salesCutoffMinutes con restricciones de lotería/multiplicador.",
+        });
+      }
+      if (data.number != null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["number"],
+          message: "Para salesCutoffMinutes, number debe omitirse.",
+        });
+      }
+      return; // Si es cutoff, ya terminó la validación principal
     }
 
-    if (cutoff && data.number != null) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["number"],
-        message: "Para salesCutoffMinutes, number debe omitirse.",
-      });
-    }
-
+    // 3. Validar Lottery/Multiplier
     if (lotteryMult) {
       if (!data.loteriaId || !data.multiplierId) {
         ctx.addIssue({
@@ -107,20 +118,7 @@ export const CreateRestrictionRuleSchema = z
           message: "Para restringir por lotería/multiplicador debe indicar loteriaId y multiplierId.",
         });
       }
-      if (amount || cutoff) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["(root)"],
-          message: "No puede combinar lotería/multiplicador con montos o cutoff en la misma regla.",
-        });
-      }
-      if (data.number != null) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["number"],
-          message: "Las reglas de lotería/multiplicador no aceptan el campo number.",
-        });
-      }
+
       if (data.isAutoDate) {
         ctx.addIssue({
           code: "custom",
@@ -128,9 +126,20 @@ export const CreateRestrictionRuleSchema = z
           message: "Las reglas de lotería/multiplicador no pueden usar isAutoDate.",
         });
       }
+
+      // NOTA: Se PERMITE tener amount (maxAmount/maxTotal) -> Límite específico
+      // NOTA: Se PERMITE tener number -> Límite para número específico en esa lotería
+      // Si no tiene amount y no tiene number -> RESTRICCIÓN TOTAL (Bloqueo)
     }
 
-    // Validación: isAutoDate solo puede usarse con restricciones de montos (amount)
+    // 4. Validar reglas de montos "Estándar" (sin Lotería)
+    if (amount && !lotteryMult) {
+      // Reglas estándar de montos
+    }
+
+    // 5. Validaciones Generales de consistencia
+
+    // isAutoDate solo con montos (ya cubierto arriba parcialmente, reforzamos)
     if (data.isAutoDate && !amount) {
       ctx.addIssue({
         code: "custom",
@@ -139,16 +148,16 @@ export const CreateRestrictionRuleSchema = z
       });
     }
 
-    // Validación: si isAutoDate es true, number debe ser null o no especificarse
+    // si isAutoDate es true, number debe ser null
     if (data.isAutoDate && data.number != null) {
       ctx.addIssue({
         code: "custom",
         path: ["number"],
-        message: "Si isAutoDate es true, number debe omitirse (se actualiza automáticamente al día del mes).",
+        message: "Si isAutoDate es true, number debe omitirse.",
       });
     }
 
-    // Validaciones para porcentaje de ventas
+    // Porcentaje de ventas
     const hasPercentageFields = data.baseAmount != null || data.salesPercentage != null;
 
     if (hasPercentageFields && !amount) {
@@ -216,13 +225,16 @@ export const UpdateRestrictionRuleSchema = z.object({
     const cutoff = isCutoffRule(data);
     const lotteryMult = isLotteryMultiplierRule(data);
 
-    if ([amount, cutoff, lotteryMult].filter(Boolean).length > 1) {
+    // 1. Validar combinaciones prohibidas
+    if (cutoff && (amount || lotteryMult)) {
       ctx.addIssue({
         code: "custom",
         path: ["(root)"],
-        message: "No puede combinar distintos tipos de restricción en la misma regla.",
+        message: "No puede combinar cutoff con otros tipos de restricción en la misma regla.",
       });
     }
+
+    // 2. Validar Cutoff
     if (cutoff && data.number != null) {
       ctx.addIssue({
         code: "custom",
@@ -230,44 +242,32 @@ export const UpdateRestrictionRuleSchema = z.object({
         message: "Para salesCutoffMinutes, number debe omitirse.",
       });
     }
-    if (lotteryMult && data.number != null) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["number"],
-        message: "Las reglas de lotería/multiplicador no aceptan el campo number.",
-      });
-    }
-    if (lotteryMult && (data.loteriaId == null || data.multiplierId == null)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["(root)"],
-        message: "Debe indicar loteriaId y multiplierId cuando actualiza una restricción de lotería/multiplicador.",
-      });
-    }
-    if (lotteryMult && data.isAutoDate) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["isAutoDate"],
-        message: "Las reglas de lotería/multiplicador no pueden usar isAutoDate.",
-      });
+
+    // 3. Validar Lottery/Multiplier
+    if (lotteryMult) {
+      // En UPDATE permitimos que uno de los dos sea null si ya estaba en la DB, 
+      // pero el validador estricto arriba pide opcionales.
+      // Si se están enviando, validamos consistencia.
+
+      if (data.isAutoDate) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["isAutoDate"],
+          message: "Las reglas de lotería/multiplicador no pueden usar isAutoDate.",
+        });
+      }
     }
 
-    // Validación: isAutoDate solo puede usarse con restricciones de montos (amount)
-    if (data.isAutoDate && !amount && !cutoff) {
-      // Permitir si es una actualización parcial y no se está cambiando el tipo
-      // Esta validación es más permisiva en UPDATE
-    }
-
-    // Validación: si isAutoDate es true, number debe ser null o no especificarse
+    // 4. Validar isAutoDate
     if (data.isAutoDate && data.number != null) {
       ctx.addIssue({
         code: "custom",
         path: ["number"],
-        message: "Si isAutoDate es true, number debe omitirse (se actualiza automáticamente al día del mes).",
+        message: "Si isAutoDate es true, number debe omitirse.",
       });
     }
 
-    // Validaciones para porcentaje de ventas en UPDATE
+    // 5. Validaciones de montos dinámicos
     if (data.salesPercentage != null && (data.salesPercentage < 0 || data.salesPercentage > 100)) {
       ctx.addIssue({
         code: "custom",
@@ -292,6 +292,7 @@ export const UpdateRestrictionRuleSchema = z.object({
       });
     }
   });
+
 
 // LIST (query)  ✅ acepta hasAmount / hasCutoff / hasAutoDate y usa isActive
 export const ListRestrictionRuleQuerySchema = z.object({
