@@ -373,9 +373,9 @@ export async function validateMaxTotalForNumbers(
         },
       });
 
-      // ✅ CORRECCIÓN: Mensaje claro indicando que es límite por sorteo (no por día)
+      // ✅ CORRECCIÓN: Mensaje claro indicando que es límite por sorteo y por número específico (no por día ni por total del ticket)
       throw new AppError(
-        `El número ${number} excede el límite ${scopeLabel} máximo acumulado en este sorteo${isAutoDateLabel}. Total acumulado en el sorteo: ₡${accumulatedInSorteo.toFixed(2)}, intentando agregar: ₡${amountForNumber.toFixed(2)}, total sería: ₡${newAccumulated.toFixed(2)}, límite máximo: ₡${effectiveMaxTotal.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
+        `El número ${number} excede el límite ${scopeLabel} máximo acumulado en este sorteo${isAutoDateLabel}. Para este número: acumulado previo en el sorteo: ₡${accumulatedInSorteo.toFixed(2)}, monto de este número en el ticket actual: ₡${amountForNumber.toFixed(2)}, nuevo acumulado sería: ₡${newAccumulated.toFixed(2)}, límite máximo para este número: ₡${effectiveMaxTotal.toFixed(2)}. Disponible para este número: ₡${available.toFixed(2)}`,
         400,
         {
           code: "NUMBER_MAXTOTAL_EXCEEDED_IN_SORTEO",
