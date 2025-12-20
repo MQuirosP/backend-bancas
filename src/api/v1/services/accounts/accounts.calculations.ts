@@ -12,7 +12,7 @@ import { resolveCommissionFromPolicy } from "../../../../services/commission/com
 import { resolveCommission } from "../../../../services/commission.resolver";
 import { getSorteoBreakdownBatch } from "./accounts.queries";
 import { getCachedDayStatement, setCachedDayStatement } from "../../../../utils/accountStatementCache";
-import { intercalateSorteosAndMovements } from "./accounts.intercalate";
+import { intercalateSorteosAndMovements, SorteoOrMovement } from "./accounts.intercalate";
 
 /**
  * Calcula y actualiza el estado de cuenta para un día específico
@@ -1871,6 +1871,48 @@ export async function getStatementDirect(
             statement.totalCollected
         );
         statement.canEdit = !statement.isSettled;
+    }
+
+    // ✅ CRÍTICO: Paso 3.5 - Acumular balance por sorteo progresivamente a través de todos los días
+    // El accumulated dentro del día ya está calculado correctamente por intercalateSorteosAndMovements
+    // Solo necesitamos arrastrar el último accumulated del día anterior
+    let lastDayAccumulated = 0; // Último accumulated del día anterior (acumulado general del día)
+    
+    for (const statement of allStatementsFromMonth) {
+        if (!statement.bySorteo || statement.bySorteo.length === 0) {
+            // Si no hay bySorteo, el acumulado se mantiene igual al día anterior
+            continue;
+        }
+
+        // Ordenar bySorteo por scheduledAt ASC para encontrar el último accumulated del día
+        const bySorteoSorted = [...statement.bySorteo].sort((a, b) => {
+            const timeA = new Date(a.scheduledAt).getTime();
+            const timeB = new Date(b.scheduledAt).getTime();
+            return timeA - timeB; // ASC
+        });
+
+        // El último accumulated del día (el más reciente en orden cronológico)
+        // Este es el acumulado total dentro del día (desde 0)
+        const lastAccumulatedOfDay = bySorteoSorted.length > 0 
+            ? (bySorteoSorted[bySorteoSorted.length - 1].accumulated || 0)
+            : 0;
+
+        // Sumar el accumulated del día anterior a todos los items del día actual
+        const adjustedBySorteo = statement.bySorteo.map((item: SorteoOrMovement) => {
+            const newAccumulated = lastDayAccumulated + (item.accumulated || 0);
+            return {
+                ...item,
+                accumulated: newAccumulated,
+                sorteoAccumulated: newAccumulated,
+            };
+        });
+
+        // Actualizar el último accumulated para el siguiente día
+        // Es el último accumulated ajustado del día actual (que ya incluye lastDayAccumulated)
+        lastDayAccumulated = lastDayAccumulated + lastAccumulatedOfDay;
+        
+        // Actualizar statement.bySorteo (ya está ordenado DESC por intercalateSorteosAndMovements)
+        statement.bySorteo = adjustedBySorteo;
     }
 
     // ✅ CRÍTICO: Paso 4 - Filtrar para retornar solo los días dentro del período solicitado
