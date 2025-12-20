@@ -311,7 +311,7 @@ export const TicketsReportService = {
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
       WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        AND t.status = 'ACTIVE'
+        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
@@ -339,7 +339,7 @@ export const TicketsReportService = {
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
       WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        AND t.status = 'ACTIVE'
+        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
