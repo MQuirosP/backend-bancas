@@ -933,12 +933,21 @@ export const TicketRepository = {
                   .reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
-                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "global";
+                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
+                  const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
                   const multiplierContext = rule.multiplierId ? ` (multiplicador: ${rule.multiplier?.name || '...'})` : '';
                   throw new AppError(
-                    `El número ${num}${multiplierContext} excede el límite ${ruleScope} por ticket de ₡${effectiveMaxAmount.toFixed(2)}`,
+                    `El número ${num}${multiplierContext}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto en el ticket: ₡${sumForNumber.toFixed(2)}, límite máximo por ticket: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
                     400,
-                    { code: "NUMBER_MAXAMOUNT_EXCEEDED", number: num, maxAmount: effectiveMaxAmount }
+                    { 
+                      code: "NUMBER_MAXAMOUNT_EXCEEDED", 
+                      number: num, 
+                      maxAmount: effectiveMaxAmount,
+                      amountAttempted: sumForNumber,
+                      scope: ruleScope,
+                      isAutoDate: rule.isAutoDate,
+                      isDynamic: dynamicLimit != null,
+                    }
                   );
                 }
               }
@@ -992,8 +1001,21 @@ export const TicketRepository = {
                   .reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
-                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "global";
-                  throw new AppError(`El número ${num} excede el límite ${ruleScope} global por ticket de ₡${effectiveMaxAmount.toFixed(2)}`, 400, { code: "NUMBER_MAXAMOUNT_EXCEEDED_GLOBAL", number: num, maxAmount: effectiveMaxAmount });
+                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
+                  const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
+                  throw new AppError(
+                    `El número ${num}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto en el ticket: ₡${sumForNumber.toFixed(2)}, límite máximo por ticket: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
+                    400,
+                    { 
+                      code: "NUMBER_MAXAMOUNT_EXCEEDED", 
+                      number: num, 
+                      maxAmount: effectiveMaxAmount,
+                      amountAttempted: sumForNumber,
+                      scope: ruleScope,
+                      isAutoDate: rule.isAutoDate,
+                      isDynamic: dynamicLimit != null,
+                    }
+                  );
                 }
               }
             }
@@ -1691,12 +1713,12 @@ export const TicketRepository = {
                   .reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
-                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "global";
+                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
                   const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
                   const multiplierContext = rule.multiplierId ? ` (multiplicador: ${rule.multiplier?.name || '...'})` : '';
 
                   throw new AppError(
-                    `El número ${num}${multiplierContext}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket: ${sumForNumber.toFixed(2)} supera ${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
+                    `El número ${num}${multiplierContext}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto en el ticket: ₡${sumForNumber.toFixed(2)}, límite máximo por ticket: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
                     400,
                     {
                       code: "NUMBER_LIMIT_EXCEEDED",
@@ -1760,8 +1782,21 @@ export const TicketRepository = {
                   .reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
-                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "global";
-                  throw new AppError(`El número ${num} excede el límite ${ruleScope} global por ticket de ₡${effectiveMaxAmount.toFixed(2)}`, 400, { code: "NUMBER_MAXAMOUNT_EXCEEDED_GLOBAL", number: num, maxAmount: effectiveMaxAmount });
+                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
+                  const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
+                  throw new AppError(
+                    `El número ${num}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto en el ticket: ₡${sumForNumber.toFixed(2)}, límite máximo por ticket: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
+                    400,
+                    { 
+                      code: "NUMBER_MAXAMOUNT_EXCEEDED", 
+                      number: num, 
+                      maxAmount: effectiveMaxAmount,
+                      amountAttempted: sumForNumber,
+                      scope: ruleScope,
+                      isAutoDate: rule.isAutoDate,
+                      isDynamic: dynamicLimit != null,
+                    }
+                  );
                 }
               }
             }
