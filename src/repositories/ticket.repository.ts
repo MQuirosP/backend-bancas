@@ -886,10 +886,8 @@ export const TicketRepository = {
         // Los límites deben aplicarse POR NÚMERO, no por total diario del vendedor.
         // La validación correcta está más abajo (validateMaxTotalForNumbers)
 
-        // 8) Aplicar primera regla aplicable (si hay) con soporte para límites dinámicos
-        if (applicable.length > 0) {
-          const rule = applicable[0] as any;
-
+        // 8) Aplicar TODAS las reglas aplicables de forma acumulativa (USER > VENTANA > BANCA)
+        for (const rule of (applicable as any[])) {
           let dynamicLimit: number | null = null;
           const hasDynamicFields =
             (rule.baseAmount != null && rule.baseAmount > 0) ||
@@ -935,9 +933,10 @@ export const TicketRepository = {
                   .reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
+                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "global";
                   const multiplierContext = rule.multiplierId ? ` (multiplicador: ${rule.multiplier?.name || '...'})` : '';
                   throw new AppError(
-                    `El número ${num}${multiplierContext} excede el límite por ticket de ₡${effectiveMaxAmount.toFixed(2)}`,
+                    `El número ${num}${multiplierContext} excede el límite ${ruleScope} por ticket de ₡${effectiveMaxAmount.toFixed(2)}`,
                     400,
                     { code: "NUMBER_MAXAMOUNT_EXCEEDED", number: num, maxAmount: effectiveMaxAmount }
                   );
@@ -993,7 +992,8 @@ export const TicketRepository = {
                   .reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
-                  throw new AppError(`El número ${num} excede el límite global por ticket de ₡${effectiveMaxAmount.toFixed(2)}`, 400, { code: "NUMBER_MAXAMOUNT_EXCEEDED_GLOBAL", number: num, maxAmount: effectiveMaxAmount });
+                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "global";
+                  throw new AppError(`El número ${num} excede el límite ${ruleScope} global por ticket de ₡${effectiveMaxAmount.toFixed(2)}`, 400, { code: "NUMBER_MAXAMOUNT_EXCEEDED_GLOBAL", number: num, maxAmount: effectiveMaxAmount });
                 }
               }
             }
@@ -1641,10 +1641,8 @@ export const TicketRepository = {
         // Los límites deben aplicarse POR NÚMERO, no por total diario del vendedor.
         // La validación correcta está en las líneas 1966-2034 (validateMaxTotalForNumbers)
 
-        // 10) Aplicar primera regla aplicable con soporte para límites dinámicos
-        if (applicable.length > 0) {
-          const rule = applicable[0] as any; // Cast para incluir nuevos campos
-
+        // 10) Aplicar TODAS las reglas aplicables de forma acumulativa (USER > VENTANA > BANCA)
+        for (const rule of (applicable as any[])) {
           // Calcular límite dinámico si hay baseAmount o salesPercentage
           let dynamicLimit: number | null = null;
           const hasDynamicFields =
@@ -1665,12 +1663,10 @@ export const TicketRepository = {
             });
           }
 
-          if (rule.number) {
-            const sumForNumber = preparedJugadas
-              .filter((j) => j.number === rule.number)
-              .reduce((acc, j) => acc + j.amount, 0);
+          const numbersToValidate = resolveNumbersToValidate(rule, now);
 
-            // Calcular límite efectivo para maxAmount
+          if (numbersToValidate.length > 0) {
+            // Case 1: Specific numbers in rule
             let effectiveMaxAmount: number | null = null;
             if (rule.maxAmount != null || dynamicLimit != null) {
               const staticMaxAmount = rule.maxAmount ?? Infinity;
@@ -1679,222 +1675,117 @@ export const TicketRepository = {
                 : staticMaxAmount;
             }
 
-            if (effectiveMaxAmount != null && sumForNumber > effectiveMaxAmount) {
-              const ruleScope = rule.userId ? "personal"
-                : rule.ventanaId ? "de ventana"
-                  : rule.bancaId ? "de banca"
-                    : "global";
-              const isAutoDate = rule.isAutoDate ? " (restricción automática por fecha)" : "";
+            if (effectiveMaxAmount != null) {
+              for (const num of numbersToValidate) {
+                const sumForNumber = preparedJugadas
+                  .filter((j) => {
+                    if (j.type === 'NUMERO') {
+                      if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
+                      return j.number === num;
+                    } else if (j.type === 'REVENTADO') {
+                      if (rule.multiplierId) return false;
+                      return j.reventadoNumber === num;
+                    }
+                    return false;
+                  })
+                  .reduce((acc, j) => acc + j.amount, 0);
 
-              throw new AppError(
-                `El número ${rule.number} excede el límite ${ruleScope}${isAutoDate}: ${sumForNumber.toFixed(2)} supera ${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico calculado)` : ''}`,
-                400,
-                {
-                  code: "NUMBER_LIMIT_EXCEEDED",
-                  number: rule.number,
-                  scope: ruleScope,
-                  isAutoDate: rule.isAutoDate,
-                  amountAttempted: sumForNumber,
-                  limitApplied: effectiveMaxAmount,
-                  isDynamic: dynamicLimit != null,
-                }
-              );
-            }
-
-            // ✅ NUEVO: Validar maxTotal por número específico contra acumulado del sorteo
-            // ⚡ OPTIMIZACIÓN: Calcula todos los acumulados en una sola query
-            if (rule.maxTotal != null) {
-              // Resolver números a validar (maneja isAutoDate, arrays, strings únicos)
-              const numbersToValidate = resolveNumbersToValidate(rule, now);
-
-              // Preparar array de números y montos para validación optimizada
-              const numbersToCheck: Array<{ number: string; amountForNumber: number }> = [];
-
-              if (numbersToValidate.length > 0) {
-                // Validar números específicos de la regla
-                for (const num of numbersToValidate) {
-                  // Sumar solo las jugadas de este número en el ticket actual
-                  // Incluye NUMERO y REVENTADO (con reventadoNumber = num)
-                  const sumForNumber = preparedJugadas
-                    .filter((j) => {
-                      if (j.type === 'NUMERO') {
-                        return j.number === num;
-                      } else if (j.type === 'REVENTADO') {
-                        return j.reventadoNumber === num;
-                      }
-                      return false;
-                    })
-                    .reduce((acc, j) => acc + j.amount, 0);
-
-                  // Solo agregar si hay jugadas de este número en el ticket
-                  if (sumForNumber > 0) {
-                    numbersToCheck.push({ number: num, amountForNumber: sumForNumber });
-                  }
-                }
-              } else {
-                // Sin números específicos: validar todos los números únicos del ticket
-                const uniqueNumbers = [...new Set(preparedJugadas.map(j => j.number))];
-
-                for (const num of uniqueNumbers) {
-                  // Sumar solo las jugadas de este número (incluye NUMERO y REVENTADO)
-                  const sumForNumber = preparedJugadas
-                    .filter((j) => {
-                      if (j.type === 'NUMERO') {
-                        return j.number === num;
-                      } else if (j.type === 'REVENTADO') {
-                        return j.reventadoNumber === num;
-                      }
-                      return false;
-                    })
-                    .reduce((acc, j) => acc + j.amount, 0);
-
-                  if (sumForNumber > 0) {
-                    numbersToCheck.push({ number: num, amountForNumber: sumForNumber });
-                  }
-                }
-              }
-
-              // ⚡ OPTIMIZACIÓN: Validar todos los números en una sola llamada (una sola query SQL)
-              if (numbersToCheck.length > 0) {
-                try {
-                  await validateMaxTotalForNumbers(tx, {
-                    numbers: numbersToCheck,
-                    rule: {
-                      maxTotal: rule.maxTotal,
-                      userId: rule.userId,
-                      ventanaId: rule.ventanaId,
-                      bancaId: rule.bancaId,
-                      isAutoDate: rule.isAutoDate,
-                    },
-                    sorteoId: sorteoId,
-                    dynamicLimit,
-                  });
-                } catch (error: any) {
-                  // Convertir error a AppError con código apropiado
-                  // El error ya contiene el número específico que falló
-                  const ruleScope = rule.userId ? "personal"
-                    : rule.ventanaId ? "de ventana"
-                      : rule.bancaId ? "de banca"
-                        : "global";
+                if (sumForNumber > effectiveMaxAmount) {
+                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "global";
+                  const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
+                  const multiplierContext = rule.multiplierId ? ` (multiplicador: ${rule.multiplier?.name || '...'})` : '';
 
                   throw new AppError(
-                    error.message,
+                    `El número ${num}${multiplierContext}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket: ${sumForNumber.toFixed(2)} supera ${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
                     400,
                     {
-                      code: "NUMBER_MAXTOTAL_EXCEEDED",
-                      sorteoId,
-                      isAutoDate: rule.isAutoDate,
+                      code: "NUMBER_LIMIT_EXCEEDED",
+                      number: num,
                       scope: ruleScope,
+                      isAutoDate: rule.isAutoDate,
+                      amountAttempted: sumForNumber,
+                      limitApplied: effectiveMaxAmount,
                       isDynamic: dynamicLimit != null,
                     }
                   );
                 }
+              }
+            }
+
+            if (rule.maxTotal != null || dynamicLimit != null) {
+              const staticMaxTotal = rule.maxTotal ?? Infinity;
+              const effectiveMaxTotal = dynamicLimit != null ? Math.min(staticMaxTotal, dynamicLimit) : staticMaxTotal;
+
+              const numbersToCheck = numbersToValidate.map(num => {
+                const amount = preparedJugadas
+                  .filter(j => (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId))
+                  .reduce((acc, j) => acc + j.amount, 0);
+                return { number: num, amountForNumber: amount };
+              }).filter(n => n.amountForNumber > 0);
+
+              if (numbersToCheck.length > 0) {
+                const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
+                await validateMaxTotalForNumbers(tx, {
+                  numbers: numbersToCheck,
+                  rule: { ...rule, maxTotal: effectiveMaxTotal },
+                  sorteoId,
+                  dynamicLimit,
+                  multiplierFilter
+                });
               }
             }
           } else {
-            // ✅ CORRECCIÓN: Regla global (sin number) - DEBE validar por número individual
-            // Calcular límite efectivo para maxAmount
+            // Case 2: Global rule (no numbers)
+            const uniqueNumbers = [...new Set(preparedJugadas.map(j => j.type === 'NUMERO' ? j.number : j.reventadoNumber))].filter((n): n is string => !!n);
+
             let effectiveMaxAmount: number | null = null;
             if (rule.maxAmount != null || dynamicLimit != null) {
               const staticMaxAmount = rule.maxAmount ?? Infinity;
-              effectiveMaxAmount = dynamicLimit != null
-                ? Math.min(staticMaxAmount, dynamicLimit)
-                : staticMaxAmount;
+              effectiveMaxAmount = dynamicLimit != null ? Math.min(staticMaxAmount, dynamicLimit) : staticMaxAmount;
             }
 
-            // ✅ FIX BUG #1: Validar maxAmount POR NÚMERO INDIVIDUAL (no solo la jugada más alta)
             if (effectiveMaxAmount != null) {
-              // Agrupar jugadas por número (NUMERO usa .number, REVENTADO usa .reventadoNumber)
-              const amountsByNumber = new Map<string, number>();
-
-              for (const j of preparedJugadas) {
-                const numberKey = j.type === 'NUMERO' ? j.number : j.reventadoNumber;
-                if (numberKey) {
-                  const current = amountsByNumber.get(numberKey) ?? 0;
-                  amountsByNumber.set(numberKey, current + j.amount);
-                }
-              }
-
-              // Validar cada número individualmente
-              for (const [number, totalForNumber] of amountsByNumber.entries()) {
-                if (totalForNumber > effectiveMaxAmount) {
-                  const ruleScope = rule.userId ? "personal"
-                    : rule.ventanaId ? "de ventana"
-                      : rule.bancaId ? "de banca"
-                        : "global";
-
-                  throw new AppError(
-                    `El número ${number} excede el límite ${ruleScope} por ticket de ₡${effectiveMaxAmount.toFixed(2)} (monto en ticket: ₡${totalForNumber.toFixed(2)}${dynamicLimit != null ? `, límite dinámico: ₡${dynamicLimit.toFixed(2)}` : ''})`,
-                    400,
-                    {
-                      code: "NUMBER_MAXAMOUNT_EXCEEDED_GLOBAL",
-                      number,
-                      amountInTicket: totalForNumber,
-                      maxAmount: effectiveMaxAmount,
-                      isDynamic: dynamicLimit != null,
+              for (const num of uniqueNumbers) {
+                const sumForNumber = preparedJugadas
+                  .filter((j) => {
+                    if (j.type === 'NUMERO') {
+                      if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
+                      return j.number === num;
+                    } else if (j.type === 'REVENTADO') {
+                      if (rule.multiplierId) return false;
+                      return j.reventadoNumber === num;
                     }
-                  );
+                    return false;
+                  })
+                  .reduce((acc, j) => acc + j.amount, 0);
+
+                if (sumForNumber > effectiveMaxAmount) {
+                  const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "global";
+                  throw new AppError(`El número ${num} excede el límite ${ruleScope} global por ticket de ₡${effectiveMaxAmount.toFixed(2)}`, 400, { code: "NUMBER_MAXAMOUNT_EXCEEDED_GLOBAL", number: num, maxAmount: effectiveMaxAmount });
                 }
               }
             }
 
-            // ✅ FIX BUG #2: Validar maxTotal POR NÚMERO INDIVIDUAL contra acumulado del sorteo
-            let effectiveMaxTotal: number | null = null;
             if (rule.maxTotal != null || dynamicLimit != null) {
               const staticMaxTotal = rule.maxTotal ?? Infinity;
-              effectiveMaxTotal = dynamicLimit != null
-                ? Math.min(staticMaxTotal, dynamicLimit)
-                : staticMaxTotal;
-            }
+              const effectiveMaxTotal = dynamicLimit != null ? Math.min(staticMaxTotal, dynamicLimit) : staticMaxTotal;
 
-            if (effectiveMaxTotal != null) {
-              // Agrupar jugadas por número para validar acumulado en sorteo
-              const amountsByNumber = new Map<string, number>();
+              const numbersToCheck = uniqueNumbers.map(num => {
+                const amount = preparedJugadas
+                  .filter(j => (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId))
+                  .reduce((acc, j) => acc + j.amount, 0);
+                return { number: num, amountForNumber: amount };
+              }).filter(n => n.amountForNumber > 0);
 
-              for (const j of preparedJugadas) {
-                const numberKey = j.type === 'NUMERO' ? j.number : j.reventadoNumber;
-                if (numberKey) {
-                  const current = amountsByNumber.get(numberKey) ?? 0;
-                  amountsByNumber.set(numberKey, current + j.amount);
-                }
-              }
-
-              // Preparar array de números y montos para validación optimizada
-              const numbersToCheck: Array<{ number: string; amountForNumber: number }> = [];
-              for (const [number, totalForNumber] of amountsByNumber.entries()) {
-                if (totalForNumber > 0) {
-                  numbersToCheck.push({ number, amountForNumber: totalForNumber });
-                }
-              }
-
-              // ⚡ OPTIMIZACIÓN: Validar todos los números en una sola llamada (una sola query SQL)
               if (numbersToCheck.length > 0) {
-                try {
-                  await validateMaxTotalForNumbers(tx, {
-                    numbers: numbersToCheck,
-                    rule: {
-                      maxTotal: rule.maxTotal,
-                      userId: rule.userId,
-                      ventanaId: rule.ventanaId,
-                      bancaId: rule.bancaId,
-                      isAutoDate: rule.isAutoDate,
-                    },
-                    sorteoId: sorteoId,
-                    dynamicLimit,
-                  });
-                } catch (err: any) {
-                  // Re-lanzar error con contexto adicional
-                  throw new AppError(
-                    err.message,
-                    400,
-                    {
-                      code: "NUMBER_MAXTOTAL_EXCEEDED_GLOBAL",
-                      ruleId: rule.id,
-                      sorteoId,
-                      isDynamic: dynamicLimit != null,
-                    }
-                  );
-                }
+                const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
+                await validateMaxTotalForNumbers(tx, {
+                  numbers: numbersToCheck,
+                  rule: { ...rule, maxTotal: effectiveMaxTotal },
+                  sorteoId,
+                  dynamicLimit,
+                  multiplierFilter
+                });
               }
             }
           }

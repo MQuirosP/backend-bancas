@@ -3,7 +3,7 @@ import prisma from "../core/prismaClient";
 import logger from "../core/logger";
 import { getCRLocalComponents } from "../utils/businessDate";
 import { SalesService } from "../api/v1/services/sales.service";
-import { getCachedCutoff, setCachedCutoff, invalidateRestrictionCaches } from "../utils/restrictionCache";
+import { getCachedCutoff, setCachedCutoff, invalidateRestrictionCaches, getCachedRestrictions, setCachedRestrictions } from "../utils/restrictionCache";
 
 export type EffectiveRestriction = {
   source: "USER" | "VENTANA" | "BANCA" | "GLOBAL" | null;
@@ -104,19 +104,37 @@ export const RestrictionRuleRepository = {
 
   async softDelete(id: string, _actorId: string, _reason?: string) {
     // baja lógica: isActive = false
-    return prisma.restrictionRule.update({
+    const rule = await prisma.restrictionRule.update({
       where: { id },
       data: { isActive: false, updatedAt: new Date() },
       include: includeLabels,
     });
+
+    // ✅ OPTIMIZACIÓN: Invalidar caché cuando se elimina (inactiva) una restricción
+    await invalidateRestrictionCaches({
+      bancaId: rule.bancaId || undefined,
+      ventanaId: rule.ventanaId || undefined,
+      userId: rule.userId || undefined,
+    });
+
+    return rule;
   },
 
   async restore(id: string) {
-    return prisma.restrictionRule.update({
+    const rule = await prisma.restrictionRule.update({
       where: { id },
       data: { isActive: true },
       include: includeLabels,
     });
+
+    // ✅ OPTIMIZACIÓN: Invalidar caché cuando se restaura una restricción
+    await invalidateRestrictionCaches({
+      bancaId: rule.bancaId || undefined,
+      ventanaId: rule.ventanaId || undefined,
+      userId: rule.userId || undefined,
+    });
+
+    return rule;
   },
 
   async findById(id: string) {
@@ -281,6 +299,16 @@ export const RestrictionRuleRepository = {
   }): Promise<EffectiveRestriction> {
     const { bancaId, ventanaId, userId, loteriaId, multiplierId } = params;
     let number = params.number?.trim() || null;
+
+    // Intentar obtener de caché si no hay filtros específicos (loteria/multiplier) que no estén contemplados en la key
+    // Por ahora, la key de caché solo contempla banca/ventana/user/number.
+    // Si hay loteriaId o multiplierId, evitamos el caché por ahora o extendemos la key.
+    const isCacheable = !loteriaId && !multiplierId;
+    if (isCacheable) {
+      const cached = await getCachedRestrictions({ bancaId, ventanaId, userId, number });
+      if (cached) return cached;
+    }
+
     const at = params.at ?? new Date();
     const hour = at.getHours();
 
@@ -369,28 +397,49 @@ export const RestrictionRuleRepository = {
       })
       .sort((a, b) => b.score - a.score);
 
-    const bestRule = applicable[0]?.r;
-
-    if (!bestRule) {
+    if (applicable.length === 0) {
       return { source: null, maxAmount: null, maxTotal: null };
     }
 
-    // Determinar fuente para respuesta
-    let source: EffectiveRestriction["source"] = "GLOBAL";
-    if (bestRule.userId) source = "USER";
-    else if (bestRule.ventanaId) source = "VENTANA";
-    else if (bestRule.bancaId) source = "BANCA";
+    // Consolidar límites de forma acumulativa (más restrictivo gana)
+    let minMaxAmount = Infinity;
+    let minMaxTotal = Infinity;
+    let sourceMaxAmount: EffectiveRestriction["source"] = null;
+    let sourceMaxTotal: EffectiveRestriction["source"] = null;
 
-    // Si es regla de lotería global, source sigue siendo GLOBAL (o podría ser LOTTERY si existiera en el tipo)
+    // Para campos adicionales, usamos la regla más específica (la primera por puntuación)
+    const primaryRule = applicable[0].r;
 
-    return {
-      source,
-      maxAmount: bestRule.maxAmount ?? null,
-      maxTotal: bestRule.maxTotal ?? null,
-      baseAmount: bestRule.baseAmount ?? null,
-      salesPercentage: bestRule.salesPercentage ?? null,
-      appliesToVendedor: bestRule.appliesToVendedor ?? null,
+    for (const { r } of applicable) {
+      if (r.maxAmount != null && r.maxAmount < minMaxAmount) {
+        minMaxAmount = r.maxAmount;
+        sourceMaxAmount = r.userId ? "USER" : r.ventanaId ? "VENTANA" : r.bancaId ? "BANCA" : "GLOBAL";
+      }
+      if (r.maxTotal != null && r.maxTotal < minMaxTotal) {
+        minMaxTotal = r.maxTotal;
+        sourceMaxTotal = r.userId ? "USER" : r.ventanaId ? "VENTANA" : r.bancaId ? "BANCA" : "GLOBAL";
+      }
+    }
+
+    // El source general será el de la regla más específica de las que impusieron los límites mínimos.
+    // Priorizamos el source del maxTotal que suele ser el límite más dinámico/crítico.
+    let finalSource: EffectiveRestriction["source"] =
+      sourceMaxTotal || sourceMaxAmount || (primaryRule.userId ? "USER" : primaryRule.ventanaId ? "VENTANA" : primaryRule.bancaId ? "BANCA" : "GLOBAL");
+
+    const result = {
+      source: finalSource,
+      maxAmount: minMaxAmount === Infinity ? null : minMaxAmount,
+      maxTotal: minMaxTotal === Infinity ? null : minMaxTotal,
+      baseAmount: primaryRule.baseAmount ?? null,
+      salesPercentage: primaryRule.salesPercentage ?? null,
+      appliesToVendedor: primaryRule.appliesToVendedor ?? null,
     };
+
+    if (isCacheable) {
+      await setCachedRestrictions({ bancaId, ventanaId, userId, number }, result);
+    }
+
+    return result;
   },
 
   /**
