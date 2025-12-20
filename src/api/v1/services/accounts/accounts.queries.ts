@@ -465,12 +465,12 @@ export async function getSorteoBreakdownBatch(
                 payouts: entry.payouts,
                 listeroCommission: entry.listeroCommission,
                 vendedorCommission: entry.vendedorCommission,
-                // ✅ CRÍTICO: Calcular balance según ROL del usuario, NO según dimensión
-                // ADMIN siempre resta listeroCommission (independiente de dimensión)
-                // VENTANA siempre resta vendedorCommission
-                balance: userRole === "ADMIN"
-                    ? entry.sales - entry.payouts - entry.listeroCommission
-                    : entry.sales - entry.payouts - entry.vendedorCommission,
+                // ✅ CORRECCIÓN: Calcular balance según vendedorId en query params, NO según userRole
+                // Si vendedorId está presente → usar vendedorCommission
+                // Si vendedorId NO está presente → usar listeroCommission
+                balance: vendedorId
+                    ? entry.sales - entry.payouts - entry.vendedorCommission
+                    : entry.sales - entry.payouts - entry.listeroCommission,
                 ticketCount: entry.ticketCount,
             }))
             .sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt)); // ✅ DESC para consistencia con sorteo module
@@ -706,12 +706,12 @@ export async function getSorteoBreakdown(
             payouts: entry.payouts,
             listeroCommission: entry.listeroCommission,
             vendedorCommission: entry.vendedorCommission,
-            // ✅ CRÍTICO: Calcular balance según ROL del usuario, NO según dimensión
-            // ADMIN siempre resta listeroCommission (independiente de dimensión)
-            // VENTANA siempre resta vendedorCommission
-            balance: userRole === "ADMIN"
-                ? entry.sales - entry.payouts - entry.listeroCommission
-                : entry.sales - entry.payouts - entry.vendedorCommission,
+            // ✅ CORRECCIÓN: Calcular balance según vendedorId en query params, NO según userRole
+            // Si vendedorId está presente → usar vendedorCommission
+            // Si vendedorId NO está presente → usar listeroCommission
+            balance: vendedorId
+                ? entry.sales - entry.payouts - entry.vendedorCommission
+                : entry.sales - entry.payouts - entry.listeroCommission,
             ticketCount: entry.ticketCount,
         }))
         .sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime()); // ✅ DESC para consistencia con sorteo module

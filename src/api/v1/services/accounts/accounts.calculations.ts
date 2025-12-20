@@ -995,8 +995,9 @@ export async function getStatementDirect(
                                     existing.payouts += sorteoData.payouts;
                                     existing.listeroCommission += sorteoData.listeroCommission;
                                     existing.vendedorCommission += sorteoData.vendedorCommission;
-                                    // ✅ CORRECCIÓN: Balance siempre usando listeroCommission
-                                    existing.balance = existing.sales - existing.payouts - existing.listeroCommission;
+                                    // ✅ CORRECCIÓN: Balance usando vendedorCommission si vendedorId está presente, sino listeroCommission
+                                    const commissionToUse = vendedorId ? existing.vendedorCommission : existing.listeroCommission;
+                                    existing.balance = existing.sales - existing.payouts - commissionToUse;
                                     existing.ticketCount += sorteoData.ticketCount;
                                 } else {
                                     sorteoMap.set(sorteoId, {
@@ -1009,8 +1010,8 @@ export async function getStatementDirect(
                                         payouts: sorteoData.payouts,
                                         listeroCommission: sorteoData.listeroCommission,
                                         vendedorCommission: sorteoData.vendedorCommission,
-                                        // ✅ CORRECCIÓN: Balance siempre usando listeroCommission
-                                        balance: sorteoData.sales - sorteoData.payouts - sorteoData.listeroCommission,
+                                        // ✅ CORRECCIÓN: Balance usando vendedorCommission si vendedorId está presente, sino listeroCommission
+                                        balance: sorteoData.sales - sorteoData.payouts - (vendedorId ? sorteoData.vendedorCommission : sorteoData.listeroCommission),
                                         ticketCount: sorteoData.ticketCount,
                                     });
                                 }
@@ -1150,17 +1151,18 @@ export async function getStatementDirect(
                                 bancaMap.set(breakdownEntry.bancaId, bancaGroup);
                             }
 
-                            // Agregar a totales de banca
-                            bancaGroup.totalSales += breakdownEntry.totalSales;
-                            bancaGroup.totalPayouts += breakdownTotalPayouts;
-                            bancaGroup.commissionListero += breakdownEntry.commissionListero;
-                            bancaGroup.commissionVendedor += breakdownEntry.commissionVendedor;
-                            breakdownEntry.totalTickets.forEach(id => bancaGroup.totalTickets.add(id));
+                            // Agregar a totales de banca (bancaGroup está garantizado que no es undefined aquí)
+                            const group = bancaGroup;
+                            group.totalSales += breakdownEntry.totalSales;
+                            group.totalPayouts += breakdownTotalPayouts;
+                            group.commissionListero += breakdownEntry.commissionListero;
+                            group.commissionVendedor += breakdownEntry.commissionVendedor;
+                            breakdownEntry.totalTickets.forEach(id => group.totalTickets.add(id));
 
                             // Agrupar por ventana dentro de esta banca
                             if (breakdownEntry.ventanaId) {
                                 const ventanaKey = breakdownEntry.ventanaId;
-                                let ventanaGroup = bancaGroup.ventanas.get(ventanaKey);
+                                let ventanaGroup = group.ventanas.get(ventanaKey);
                                 if (!ventanaGroup) {
                                     ventanaGroup = {
                                         ventanaId: breakdownEntry.ventanaId,
@@ -1172,7 +1174,7 @@ export async function getStatementDirect(
                                         commissionVendedor: 0,
                                         totalTickets: new Set<string>(),
                                     };
-                                    bancaGroup.ventanas.set(ventanaKey, ventanaGroup);
+                                    group.ventanas.set(ventanaKey, ventanaGroup);
                                 }
                                 ventanaGroup.totalSales += breakdownEntry.totalSales;
                                 ventanaGroup.totalPayouts += breakdownTotalPayouts;
@@ -1184,7 +1186,7 @@ export async function getStatementDirect(
                             // Agrupar por vendedor dentro de esta banca
                             if (breakdownEntry.vendedorId) {
                                 const vendedorKey = breakdownEntry.vendedorId;
-                                let vendedorGroup = bancaGroup.vendedores.get(vendedorKey);
+                                let vendedorGroup = group.vendedores.get(vendedorKey);
                                 if (!vendedorGroup) {
                                     vendedorGroup = {
                                         vendedorId: breakdownEntry.vendedorId,
@@ -1199,7 +1201,7 @@ export async function getStatementDirect(
                                         commissionVendedor: 0,
                                         totalTickets: new Set<string>(),
                                     };
-                                    bancaGroup.vendedores.set(vendedorKey, vendedorGroup);
+                                    group.vendedores.set(vendedorKey, vendedorGroup);
                                 }
                                 vendedorGroup.totalSales += breakdownEntry.totalSales;
                                 vendedorGroup.totalPayouts += breakdownTotalPayouts;
