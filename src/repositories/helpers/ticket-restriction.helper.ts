@@ -1,6 +1,7 @@
 // src/repositories/helpers/ticket-restriction.helper.ts
 import { Prisma } from "@prisma/client";
 import logger from "../../core/logger";
+import { AppError } from "../../core/errors";
 import { getCRLocalComponents } from "../../utils/businessDate";
 
 /**
@@ -372,8 +373,23 @@ export async function validateMaxTotalForNumbers(
         },
       });
 
-      throw new Error(
-        `El número ${number} excede el límite ${scopeLabel} en este sorteo${isAutoDateLabel}: ₡${newAccumulated.toFixed(2)} supera ₡${effectiveMaxTotal.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`
+      // ✅ CORRECCIÓN: Mensaje claro indicando que es límite por sorteo (no por día)
+      throw new AppError(
+        `El número ${number} excede el límite ${scopeLabel} máximo acumulado en este sorteo${isAutoDateLabel}. Total acumulado en el sorteo: ₡${accumulatedInSorteo.toFixed(2)}, intentando agregar: ₡${amountForNumber.toFixed(2)}, total sería: ₡${newAccumulated.toFixed(2)}, límite máximo: ₡${effectiveMaxTotal.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
+        400,
+        {
+          code: "NUMBER_MAXTOTAL_EXCEEDED_IN_SORTEO",
+          number,
+          scopeType,
+          scopeLabel,
+          sorteoId,
+          accumulatedInSorteo,
+          amountForNumber,
+          newAccumulated,
+          effectiveMaxTotal,
+          available,
+          isAutoDate: rule.isAutoDate,
+        }
       );
     }
 
