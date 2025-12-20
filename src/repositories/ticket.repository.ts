@@ -714,6 +714,7 @@ export const TicketRepository = {
               amount: j.amount,
               finalMultiplierX: 0,
               multiplierId: null,
+              isActive: (j as any).isActive !== false, // ✅ Preservar isActive (default true)
             };
           }
           // NUMERO
@@ -921,6 +922,8 @@ export const TicketRepository = {
               for (const num of numbersInRule) {
                 const sumForNumber = preparedJugadas
                   .filter((j) => {
+                    // ✅ Excluir jugadas inactivas
+                    if (j.isActive === false) return false;
                     if (j.type === 'NUMERO') {
                       if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
                       return j.number === num;
@@ -947,6 +950,7 @@ export const TicketRepository = {
                       scope: ruleScope,
                       isAutoDate: rule.isAutoDate,
                       isDynamic: dynamicLimit != null,
+                      multiplierName: rule.multiplier?.name || undefined, // ✅ Frontend espera multiplierName
                     }
                   );
                 }
@@ -959,7 +963,11 @@ export const TicketRepository = {
 
               const numbersToCheck = numbersInRule.map(num => {
                 const amount = preparedJugadas
-                  .filter(j => (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId))
+                  .filter(j => {
+                    // ✅ Excluir jugadas inactivas
+                    if (j.isActive === false) return false;
+                    return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
+                  })
                   .reduce((acc, j) => acc + j.amount, 0);
                 return { number: num, amountForNumber: amount };
               }).filter(n => n.amountForNumber > 0);
@@ -989,6 +997,8 @@ export const TicketRepository = {
               for (const num of uniqueNumbers) {
                 const sumForNumber = preparedJugadas
                   .filter((j) => {
+                    // ✅ Excluir jugadas inactivas
+                    if (j.isActive === false) return false;
                     if (j.type === 'NUMERO') {
                       if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
                       return j.number === num;
@@ -1014,6 +1024,7 @@ export const TicketRepository = {
                       scope: ruleScope,
                       isAutoDate: rule.isAutoDate,
                       isDynamic: dynamicLimit != null,
+                      multiplierName: rule.multiplier?.name || undefined, // ✅ Frontend espera multiplierName
                     }
                   );
                 }
@@ -1026,7 +1037,11 @@ export const TicketRepository = {
 
               const numbersToCheck = uniqueNumbers.map(num => {
                 const amount = preparedJugadas
-                  .filter(j => (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId))
+                  .filter(j => {
+                    // ✅ Excluir jugadas inactivas
+                    if (j.isActive === false) return false;
+                    return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
+                  })
                   .reduce((acc, j) => acc + j.amount, 0);
                 return { number: num, amountForNumber: amount };
               }).filter(n => n.amountForNumber > 0);
@@ -1654,6 +1669,7 @@ export const TicketRepository = {
             amount: j.amount,
             finalMultiplierX: multiplierX,
             multiplierId: j.multiplierId,
+            isActive: (j as any).isActive !== false, // ✅ Preservar isActive (default true)
           };
         });
 
@@ -1721,13 +1737,14 @@ export const TicketRepository = {
                     `El número ${num}${multiplierContext}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto en el ticket: ₡${sumForNumber.toFixed(2)}, límite máximo por ticket: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
                     400,
                     {
-                      code: "NUMBER_LIMIT_EXCEEDED",
+                      code: "NUMBER_MAXAMOUNT_EXCEEDED",
                       number: num,
+                      maxAmount: effectiveMaxAmount,
                       scope: ruleScope,
                       isAutoDate: rule.isAutoDate,
                       amountAttempted: sumForNumber,
-                      limitApplied: effectiveMaxAmount,
                       isDynamic: dynamicLimit != null,
+                      multiplierName: rule.multiplier?.name || undefined, // ✅ Frontend espera multiplierName
                     }
                   );
                 }
@@ -1740,7 +1757,11 @@ export const TicketRepository = {
 
               const numbersToCheck = numbersToValidate.map(num => {
                 const amount = preparedJugadas
-                  .filter(j => (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId))
+                  .filter(j => {
+                    // ✅ Excluir jugadas inactivas
+                    if (j.isActive === false) return false;
+                    return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
+                  })
                   .reduce((acc, j) => acc + j.amount, 0);
                 return { number: num, amountForNumber: amount };
               }).filter(n => n.amountForNumber > 0);
@@ -1770,6 +1791,8 @@ export const TicketRepository = {
               for (const num of uniqueNumbers) {
                 const sumForNumber = preparedJugadas
                   .filter((j) => {
+                    // ✅ Excluir jugadas inactivas
+                    if (j.isActive === false) return false;
                     if (j.type === 'NUMERO') {
                       if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
                       return j.number === num;
@@ -1795,6 +1818,7 @@ export const TicketRepository = {
                       scope: ruleScope,
                       isAutoDate: rule.isAutoDate,
                       isDynamic: dynamicLimit != null,
+                      multiplierName: rule.multiplier?.name || undefined, // ✅ Frontend espera multiplierName
                     }
                   );
                 }
@@ -1807,7 +1831,11 @@ export const TicketRepository = {
 
               const numbersToCheck = uniqueNumbers.map(num => {
                 const amount = preparedJugadas
-                  .filter(j => (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId))
+                  .filter(j => {
+                    // ✅ Excluir jugadas inactivas
+                    if (j.isActive === false) return false;
+                    return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
+                  })
                   .reduce((acc, j) => acc + j.amount, 0);
                 return { number: num, amountForNumber: amount };
               }).filter(n => n.amountForNumber > 0);
