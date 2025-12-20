@@ -32,8 +32,12 @@ let cachedLatestMtime = 0;
  */
 export const getVersionInfo = async (req: Request, res: Response): Promise<void> => {
   try {
-    const latestPath = path.join(process.cwd(), 'public', 'latest.json');
-    const apkPath = path.join(process.cwd(), 'public', 'apk', 'app-release-latest.apk');
+    // ✅ MEJORADO: Calcular ruta desde __dirname para ser más robusto
+    // __dirname apunta a dist/api/v1/controllers/ en producción
+    // Necesitamos subir 4 niveles para llegar a la raíz del proyecto
+    const projectRoot = path.join(__dirname, '../../../../');
+    const latestPath = path.join(projectRoot, 'public', 'latest.json');
+    const apkPath = path.join(projectRoot, 'public', 'apk', 'app-release-latest.apk');
 
     // ✅ FIX: Cachear latest.json en memoria - solo recargar si cambió
     // Evita fs.readFileSync + JSON.parse en cada request → reduce GC pressure
@@ -95,12 +99,16 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
     }
 
 
+    // ✅ MEJORADO: buildNumber como número con fallback a versionCode
+    // Previene errores si buildNumber es null/undefined y mantiene consistencia
+    const buildNumber = latest.buildNumber ?? latest.versionCode ?? 0
+
     res.json({
       success: true,
       data: {
         version: latest.versionName,
         versionCode: latest.versionCode,
-        buildNumber: latest.buildNumber.toString(),
+        buildNumber: buildNumber, // ← Número, no string (más consistente con versionCode)
         downloadUrl: latest.apkUrl || `${req.protocol}://${req.get('host')}/public/apk/app-release-latest.apk`,
         fileSize, // en bytes
         changelog: latest.changelog,
@@ -144,7 +152,9 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
  */
 export const downloadApk = async (req: Request, res: Response): Promise<void> => {
   try {
-    const apkPath = path.join(process.cwd(), 'public', 'apk', 'app-release-latest.apk');
+    // ✅ MEJORADO: Calcular ruta desde __dirname para ser más robusto
+    const projectRoot = path.join(__dirname, '../../../../');
+    const apkPath = path.join(projectRoot, 'public', 'apk', 'app-release-latest.apk');
 
     if (!fs.existsSync(apkPath)) {
       logger.error({
