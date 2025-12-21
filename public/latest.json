@@ -1,11 +1,11 @@
 {
-  "versionName": "2.0.3",
-  "versionCode": 4,
-  "buildNumber": 4,
+  "versionName": "2.0.4",
+  "versionCode": 5,
+  "buildNumber": 5,
   "minSupportedVersion": "2.0.0",
   "forceUpdate": false,
   "changelog": "Correcciones visuales y mejoras de rendimiento",
-  "releasedAt": "2025-12-17T20:00:00Z",
+  "releasedAt": "2025-12-21T20:00:00Z",
   "apkUrl": "https://backend-bancas-yk1i.onrender.com/api/v1/app/download",
-  "sha256": "6e3e4af47f49a3d585081126938f7675d8d1df877fbc348fd183330a6ab07033"
+  "sha256": "a2395cdde8ea305e62d7474ff4186634c6eeb62082ae8869a6f14fb350885a5e"
 }
