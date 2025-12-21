@@ -29,10 +29,10 @@ async function getOrCreateConfig() {
     config = await withConnectionRetry(
       () =>
         prisma.sorteosAutoConfig.create({
-          data: {
-            autoOpenEnabled: false,
-            autoCreateEnabled: false,
-          },
+      data: {
+        autoOpenEnabled: false,
+        autoCreateEnabled: false,
+      },
         }),
       {
         maxRetries: 3,
@@ -567,27 +567,27 @@ export const SorteosAutoService = {
     const candidates = await withConnectionRetry(
       () =>
         prisma.sorteo.findMany({
-          where: {
-            status: {
-              in: [SorteoStatus.SCHEDULED, SorteoStatus.OPEN],
-            },
-            isActive: true,
-            deletedAt: null,
-            scheduledAt: {
-              lte: fiveMinutesAgo,
-            },
-          },
+      where: {
+        status: {
+          in: [SorteoStatus.SCHEDULED, SorteoStatus.OPEN],
+        },
+        isActive: true,
+        deletedAt: null,
+        scheduledAt: {
+          lte: fiveMinutesAgo,
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        scheduledAt: true,
+        status: true,
+        _count: {
           select: {
-            id: true,
-            name: true,
-            scheduledAt: true,
-            status: true,
-            _count: {
-              select: {
-                tickets: true, // Cuenta todos los tickets (activos + anulados)
-              },
-            },
+            tickets: true, // Cuenta todos los tickets (activos + anulados)
           },
+        },
+      },
         }),
       {
         maxRetries: 3,
@@ -631,11 +631,11 @@ export const SorteosAutoService = {
           await withConnectionRetry(
             () =>
               prisma.sorteo.update({
-                where: { id: sorteo.id },
-                data: {
-                  status: SorteoStatus.CLOSED,
-                  updatedAt: new Date(),
-                },
+            where: { id: sorteo.id },
+            data: {
+              status: SorteoStatus.CLOSED,
+              updatedAt: new Date(),
+            },
               }),
             {
               maxRetries: 2, // Menos reintentos para operaciones individuales
@@ -698,11 +698,11 @@ export const SorteosAutoService = {
     await withConnectionRetry(
       () =>
         prisma.sorteosAutoConfig.update({
-          where: { id: config.id },
-          data: {
-            lastCloseExecution: new Date(),
-            lastCloseCount: closedCount,
-          },
+      where: { id: config.id },
+      data: {
+        lastCloseExecution: new Date(),
+        lastCloseCount: closedCount,
+      },
         }),
       {
         maxRetries: 3,

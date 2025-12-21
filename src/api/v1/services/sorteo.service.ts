@@ -703,12 +703,12 @@ export const SorteoService = {
         scheduledAt: evaluated?.scheduledAt || null,
       },
       affectedTickets
-    ).catch((err) => {
+    ).catch((err: Error) => {
       // Ignorar errores de invalidación de caché (no crítico)
       logger.warn({
         layer: 'service',
         action: 'CACHE_INVALIDATION_FAILED',
-        payload: { error: (err as Error).message, sorteoId: id }
+        payload: { error: err.message, sorteoId: id }
       });
     });
 

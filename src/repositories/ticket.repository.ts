@@ -1234,17 +1234,17 @@ export const TicketRepository = {
 
     // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se crea un ticket
     // El ticket afecta el balance (totalSales) del statement del día
-    const { invalidateCacheForTicket } = await import('../../utils/accountStatementCache');
+    const { invalidateCacheForTicket } = await import('../utils/accountStatementCache');
     invalidateCacheForTicket({
       businessDate: bdInfo?.businessDate || ticket.businessDate,
       ventanaId: ticket.ventanaId,
       vendedorId: ticket.vendedorId,
-    }).catch((err) => {
+    }).catch((err: Error) => {
       // Ignorar errores de invalidación de caché (no crítico)
       logger.warn({
         layer: 'repository',
         action: 'CACHE_INVALIDATION_FAILED',
-        payload: { error: (err as Error).message, ticketId: ticket.id }
+        payload: { error: err.message, ticketId: ticket.id }
       });
     });
 
@@ -2504,17 +2504,17 @@ export const TicketRepository = {
 
     // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se cancela un ticket
     // El ticket cancelado afecta el balance (totalSales) del statement del día
-    const { invalidateCacheForTicket } = await import('../../utils/accountStatementCache');
+    const { invalidateCacheForTicket } = await import('../utils/accountStatementCache');
     invalidateCacheForTicket({
       businessDate: ticket.businessDate,
       ventanaId: ticket.ventanaId,
       vendedorId: ticket.vendedorId,
-    }).catch((err) => {
+    }).catch((err: Error) => {
       // Ignorar errores de invalidación de caché (no crítico)
       logger.warn({
         layer: 'repository',
         action: 'CACHE_INVALIDATION_FAILED',
-        payload: { error: (err as Error).message, ticketId: id }
+        payload: { error: err.message, ticketId: id }
       });
     });
 
@@ -2631,17 +2631,17 @@ export const TicketRepository = {
 
     // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se restaura un ticket
     // El ticket restaurado afecta el balance (totalSales) del statement del día
-    const { invalidateCacheForTicket } = await import('../../utils/accountStatementCache');
+    const { invalidateCacheForTicket } = await import('../utils/accountStatementCache');
     invalidateCacheForTicket({
       businessDate: ticket.businessDate,
       ventanaId: ticket.ventanaId,
       vendedorId: ticket.vendedorId,
-    }).catch((err) => {
+    }).catch((err: Error) => {
       // Ignorar errores de invalidación de caché (no crítico)
       logger.warn({
         layer: 'repository',
         action: 'CACHE_INVALIDATION_FAILED',
-        payload: { error: (err as Error).message, ticketId: id }
+        payload: { error: err.message, ticketId: id }
       });
     });
 
