@@ -6,20 +6,41 @@ import logger from '../../../core/logger';
 import SorteoService from './sorteo.service';
 import LoteriaService from './loteria.service';
 import { startOfLocalDay, addLocalDays } from '../../../utils/datetime';
+import { withConnectionRetry } from '../../../core/withConnectionRetry';
 
 /**
  * Obtiene o crea la configuración de automatización (singleton)
+ * ✅ MEJORADO: Con reintentos automáticos ante errores de conexión con Supabase
  */
 async function getOrCreateConfig() {
-  let config = await prisma.sorteosAutoConfig.findFirst();
+  // ✅ NUEVO: Reintentos automáticos para errores de conexión (P1001, P1017, etc.)
+  // El pooler de Supabase puede tener problemas intermitentes de conectividad
+  let config = await withConnectionRetry(
+    () => prisma.sorteosAutoConfig.findFirst(),
+    {
+      maxRetries: 3,
+      backoffMinMs: 1000, // 1 segundo inicial
+      backoffMaxMs: 5000, // máximo 5 segundos
+      context: 'getOrCreateConfig',
+    }
+  );
   
   if (!config) {
-    config = await prisma.sorteosAutoConfig.create({
-      data: {
-        autoOpenEnabled: false,
-        autoCreateEnabled: false,
-      },
-    });
+    config = await withConnectionRetry(
+      () =>
+        prisma.sorteosAutoConfig.create({
+          data: {
+            autoOpenEnabled: false,
+            autoCreateEnabled: false,
+          },
+        }),
+      {
+        maxRetries: 3,
+        backoffMinMs: 1000,
+        backoffMaxMs: 5000,
+        context: 'createAutoConfig',
+      }
+    );
     logger.info({
       layer: 'service',
       action: 'SORTEOS_AUTO_CONFIG_CREATED',
@@ -541,30 +562,40 @@ export const SorteosAutoService = {
     const now = new Date();
     const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
 
+    // ✅ MEJORADO: Buscar sorteos candidatos con reintentos ante errores de conexión
     // Buscar sorteos candidatos: SCHEDULED u OPEN hace más de 5 minutos
-    const candidates = await prisma.sorteo.findMany({
-      where: {
-        status: {
-          in: [SorteoStatus.SCHEDULED, SorteoStatus.OPEN],
-        },
-        isActive: true,
-        deletedAt: null,
-        scheduledAt: {
-          lte: fiveMinutesAgo,
-        },
-      },
-      select: {
-        id: true,
-        name: true,
-        scheduledAt: true,
-        status: true,
-        _count: {
-          select: {
-            tickets: true, // Cuenta todos los tickets (activos + anulados)
+    const candidates = await withConnectionRetry(
+      () =>
+        prisma.sorteo.findMany({
+          where: {
+            status: {
+              in: [SorteoStatus.SCHEDULED, SorteoStatus.OPEN],
+            },
+            isActive: true,
+            deletedAt: null,
+            scheduledAt: {
+              lte: fiveMinutesAgo,
+            },
           },
-        },
-      },
-    });
+          select: {
+            id: true,
+            name: true,
+            scheduledAt: true,
+            status: true,
+            _count: {
+              select: {
+                tickets: true, // Cuenta todos los tickets (activos + anulados)
+              },
+            },
+          },
+        }),
+      {
+        maxRetries: 3,
+        backoffMinMs: 1000,
+        backoffMaxMs: 5000,
+        context: 'findSorteosToClose',
+      }
+    );
 
     logger.info({
       layer: 'service',
@@ -596,13 +627,23 @@ export const SorteosAutoService = {
         // ✅ Para sorteos SCHEDULED, cambiar directamente a CLOSED sin usar SorteoService.close()
         // (que solo acepta OPEN/EVALUATED)
         if (sorteo.status === SorteoStatus.SCHEDULED) {
-          await prisma.sorteo.update({
-            where: { id: sorteo.id },
-            data: {
-              status: SorteoStatus.CLOSED,
-              updatedAt: new Date(),
-            },
-          });
+          // ✅ MEJORADO: Reintentos ante errores de conexión
+          await withConnectionRetry(
+            () =>
+              prisma.sorteo.update({
+                where: { id: sorteo.id },
+                data: {
+                  status: SorteoStatus.CLOSED,
+                  updatedAt: new Date(),
+                },
+              }),
+            {
+              maxRetries: 2, // Menos reintentos para operaciones individuales
+              backoffMinMs: 500,
+              backoffMaxMs: 2000,
+              context: `closeSorteo-${sorteo.id}`,
+            }
+          );
           closedCount++;
 
           logger.info({
@@ -653,14 +694,23 @@ export const SorteosAutoService = {
       }
     }
 
-    // Actualizar configuración con última ejecución
-    await prisma.sorteosAutoConfig.update({
-      where: { id: config.id },
-      data: {
-        lastCloseExecution: new Date(),
-        lastCloseCount: closedCount,
-      },
-    });
+    // ✅ MEJORADO: Actualizar configuración con última ejecución (con reintentos)
+    await withConnectionRetry(
+      () =>
+        prisma.sorteosAutoConfig.update({
+          where: { id: config.id },
+          data: {
+            lastCloseExecution: new Date(),
+            lastCloseCount: closedCount,
+          },
+        }),
+      {
+        maxRetries: 3,
+        backoffMinMs: 1000,
+        backoffMaxMs: 5000,
+        context: 'updateAutoCloseConfig',
+      }
+    );
 
     // Registrar en cron_execution_logs (si existe la tabla)
     try {
