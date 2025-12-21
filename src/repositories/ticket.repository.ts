@@ -1232,6 +1232,22 @@ export const TicketRepository = {
     delete (ticket as any).__jugadasCount;
     delete (ticket as any).__businessDateInfo;
 
+    // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se crea un ticket
+    // El ticket afecta el balance (totalSales) del statement del día
+    const { invalidateCacheForTicket } = await import('../../utils/accountStatementCache');
+    invalidateCacheForTicket({
+      businessDate: bdInfo?.businessDate || ticket.businessDate,
+      ventanaId: ticket.ventanaId,
+      vendedorId: ticket.vendedorId,
+    }).catch((err) => {
+      // Ignorar errores de invalidación de caché (no crítico)
+      logger.warn({
+        layer: 'repository',
+        action: 'CACHE_INVALIDATION_FAILED',
+        payload: { error: (err as Error).message, ticketId: ticket.id }
+      });
+    });
+
     return { ticket, warnings };
   },
 
@@ -2486,6 +2502,22 @@ export const TicketRepository = {
       },
     });
 
+    // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se cancela un ticket
+    // El ticket cancelado afecta el balance (totalSales) del statement del día
+    const { invalidateCacheForTicket } = await import('../../utils/accountStatementCache');
+    invalidateCacheForTicket({
+      businessDate: ticket.businessDate,
+      ventanaId: ticket.ventanaId,
+      vendedorId: ticket.vendedorId,
+    }).catch((err) => {
+      // Ignorar errores de invalidación de caché (no crítico)
+      logger.warn({
+        layer: 'repository',
+        action: 'CACHE_INVALIDATION_FAILED',
+        payload: { error: (err as Error).message, ticketId: id }
+      });
+    });
+
     return ticket;
   },
 
@@ -2595,6 +2627,22 @@ export const TicketRepository = {
         ticketId: id,
         userId,
       },
+    });
+
+    // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se restaura un ticket
+    // El ticket restaurado afecta el balance (totalSales) del statement del día
+    const { invalidateCacheForTicket } = await import('../../utils/accountStatementCache');
+    invalidateCacheForTicket({
+      businessDate: ticket.businessDate,
+      ventanaId: ticket.ventanaId,
+      vendedorId: ticket.vendedorId,
+    }).catch((err) => {
+      // Ignorar errores de invalidación de caché (no crítico)
+      logger.warn({
+        layer: 'repository',
+        action: 'CACHE_INVALIDATION_FAILED',
+        payload: { error: (err as Error).message, ticketId: id }
+      });
     });
 
     return ticket;

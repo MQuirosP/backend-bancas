@@ -298,3 +298,120 @@ export async function invalidateAllAccountStatementCache(): Promise<void> {
     }
 }
 
+/**
+ * ✅ NUEVO: Invalidar caché basándose en un ticket
+ * Útil para invalidar caché cuando se crea, cancela o restaura un ticket
+ * 
+ * @param ticket - Ticket con businessDate, ventanaId, vendedorId
+ */
+export async function invalidateCacheForTicket(ticket: {
+    businessDate?: Date | string | null;
+    ventanaId?: string | null;
+    vendedorId?: string | null;
+}): Promise<void> {
+    try {
+        // Obtener fecha del ticket (businessDate o usar fecha actual como fallback)
+        let dateStr: string;
+        
+        if (ticket.businessDate) {
+            // Si es string, usarlo directamente
+            if (typeof ticket.businessDate === 'string') {
+                dateStr = ticket.businessDate.split('T')[0]; // YYYY-MM-DD
+            } else {
+                // Si es Date, convertir a YYYY-MM-DD en CR
+                const { crDateService } = await import('./crDateService');
+                dateStr = crDateService.postgresDateToCRString(ticket.businessDate);
+            }
+        } else {
+            // Fallback: usar fecha actual en CR
+            const { crDateService } = await import('./crDateService');
+            dateStr = crDateService.postgresDateToCRString(new Date());
+        }
+
+        await invalidateAccountStatementCache({
+            date: dateStr,
+            ventanaId: ticket.ventanaId || null,
+            vendedorId: ticket.vendedorId || null,
+        });
+    } catch (error) {
+        logger.warn({
+            layer: 'cache',
+            action: 'INVALIDATE_TICKET_ERROR',
+            payload: { 
+                error: (error as Error).message,
+                ticketId: (ticket as any).id 
+            }
+        });
+    }
+}
+
+/**
+ * ✅ NUEVO: Invalidar caché basándose en un sorteo
+ * Útil para invalidar caché cuando se evalúa un sorteo (marca jugadas como ganadoras)
+ * 
+ * @param sorteo - Sorteo con scheduledAt
+ * @param tickets - Array opcional de tickets afectados para obtener ventanaId/vendedorId
+ */
+export async function invalidateCacheForSorteo(
+    sorteo: {
+        scheduledAt?: Date | string | null;
+    },
+    tickets?: Array<{
+        businessDate?: Date | string | null;
+        ventanaId?: string | null;
+        vendedorId?: string | null;
+    }>
+): Promise<void> {
+    try {
+        // Obtener fecha del sorteo (scheduledAt)
+        let dateStr: string;
+        
+        if (sorteo.scheduledAt) {
+            // Si es string, usarlo directamente
+            if (typeof sorteo.scheduledAt === 'string') {
+                dateStr = sorteo.scheduledAt.split('T')[0]; // YYYY-MM-DD
+            } else {
+                // Si es Date, convertir a YYYY-MM-DD en CR
+                const { crDateService } = await import('./crDateService');
+                dateStr = crDateService.postgresDateToCRString(sorteo.scheduledAt);
+            }
+        } else {
+            // Fallback: usar fecha actual en CR
+            const { crDateService } = await import('./crDateService');
+            dateStr = crDateService.postgresDateToCRString(new Date());
+        }
+
+        // Si hay tickets, invalidar para cada ventanaId/vendedorId único
+        if (tickets && tickets.length > 0) {
+            const uniqueKeys = new Set<string>();
+            for (const ticket of tickets) {
+                const key = `${ticket.ventanaId || 'null'}:${ticket.vendedorId || 'null'}`;
+                if (!uniqueKeys.has(key)) {
+                    uniqueKeys.add(key);
+                    await invalidateAccountStatementCache({
+                        date: dateStr,
+                        ventanaId: ticket.ventanaId || null,
+                        vendedorId: ticket.vendedorId || null,
+                    });
+                }
+            }
+        } else {
+            // Si no hay tickets, invalidar todo el día (sin filtros específicos)
+            await invalidateAccountStatementCache({
+                date: dateStr,
+                ventanaId: null,
+                vendedorId: null,
+            });
+        }
+    } catch (error) {
+        logger.warn({
+            layer: 'cache',
+            action: 'INVALIDATE_SORTEO_ERROR',
+            payload: { 
+                error: (error as Error).message,
+                sorteoId: (sorteo as any).id 
+            }
+        });
+    }
+}
+

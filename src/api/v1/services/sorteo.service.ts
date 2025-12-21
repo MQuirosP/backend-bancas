@@ -677,8 +677,42 @@ export const SorteoService = {
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
 
-    // 5) Devolver sorteo evaluado (con include para mantener reventadoEnabled)
+    // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se evalúa un sorteo
+    // La evaluación marca jugadas como ganadoras, afectando totalPayouts del statement
     const evaluated = await SorteoRepository.findById(id);
+    
+    // Obtener tickets afectados para invalidar caché específico por ventana/vendedor
+    const affectedTickets = await prisma.ticket.findMany({
+      where: {
+        sorteoId: id,
+        status: { not: "CANCELLED" },
+        isActive: true,
+        deletedAt: null,
+      },
+      select: {
+        businessDate: true,
+        ventanaId: true,
+        vendedorId: true,
+      },
+      take: 1000, // Limitar para no sobrecargar
+    });
+
+    const { invalidateCacheForSorteo } = await import('../../../utils/accountStatementCache');
+    invalidateCacheForSorteo(
+      {
+        scheduledAt: evaluated?.scheduledAt || null,
+      },
+      affectedTickets
+    ).catch((err) => {
+      // Ignorar errores de invalidación de caché (no crítico)
+      logger.warn({
+        layer: 'service',
+        action: 'CACHE_INVALIDATION_FAILED',
+        payload: { error: (err as Error).message, sorteoId: id }
+      });
+    });
+
+    // 5) Devolver sorteo evaluado (con include para mantener reventadoEnabled)
     return evaluated ? serializeSorteo(evaluated) : evaluated;
   },
 
