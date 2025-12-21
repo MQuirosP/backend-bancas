@@ -146,9 +146,28 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
 };
 
 /**
+ * Parsea el header Range de HTTP
+ * Ejemplo: "bytes=0-1023" -> { start: 0, end: 1023 }
+ */
+const parseRange = (range: string, fileSize: number): { start: number; end: number } | null => {
+  const match = range.match(/bytes=(\d+)-(\d*)/);
+  if (!match) return null;
+
+  const start = parseInt(match[1], 10);
+  const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+
+  if (start < 0 || start >= fileSize || end < start || end >= fileSize) {
+    return null;
+  }
+
+  return { start, end };
+};
+
+/**
  * GET /api/v1/app/download
  * Descarga directa del archivo APK más reciente usando streaming
  * ✅ OPTIMIZADO: Usa streams para evitar cargar 77MB en memoria
+ * ✅ MEJORADO: Soporte para Range requests (HTTP 206) para descargas resumibles y más rápidas
  */
 export const downloadApk = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -172,27 +191,97 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
 
     // Obtener tamaño del archivo para Content-Length
     const stats = fs.statSync(apkPath);
+    const fileSize = stats.size;
+    const etag = cachedApkMetadata?.sha256 ? `"${cachedApkMetadata.sha256}"` : null;
 
+    // Headers base
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
     res.setHeader('Content-Disposition', 'attachment; filename="bancas-admin.apk"');
-    res.setHeader('Content-Length', stats.size.toString());
     res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('X-No-Compression', '1'); // Evita compresión adicional (APK ya está comprimido)
+    
+    // Optimizaciones de caché mejoradas
+    res.setHeader('Cache-Control', 'public, max-age=86400, immutable'); // 24 horas, immutable para versiones específicas
+    res.setHeader('X-Content-Type-Options', 'nosniff');
 
-    // Optimizaciones de descarga:
-    // - X-No-Compression: evita que middlewares compriman el APK (ya está comprimido)
-    // - Cache-Control: permite cache del cliente por 24h para evitar re-descargas innecesarias
-    // - ETag: permite validación de cache usando el SHA256
-    res.setHeader('X-No-Compression', '1');
-    res.setHeader('Cache-Control', 'public, max-age=86400'); // 24 horas
-
-    // Usar SHA256 del caché si está disponible para ETag
-    if (cachedApkMetadata?.sha256) {
-      res.setHeader('ETag', `"${cachedApkMetadata.sha256}"`);
+    // ETag para validación de caché
+    if (etag) {
+      res.setHeader('ETag', etag);
+      
+      // Si el cliente tiene el mismo ETag, retornar 304 Not Modified
+      const ifNoneMatch = req.headers['if-none-match'];
+      if (ifNoneMatch === etag) {
+        res.status(304).end();
+        return;
+      }
     }
 
-    // ✅ STREAMING: Solo usa ~64KB de RAM por descarga (vs 77MB con res.download)
+    // ✅ NUEVO: Soporte para Range requests (HTTP 206 Partial Content)
+    // Permite descargas resumibles y mejor rendimiento en conexiones lentas
+    const rangeHeader = req.headers.range;
+    
+    if (rangeHeader) {
+      const range = parseRange(rangeHeader, fileSize);
+      
+      if (range) {
+        const { start, end } = range;
+        const chunkSize = end - start + 1;
+
+        res.status(206); // Partial Content
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+        res.setHeader('Content-Length', chunkSize.toString());
+
+        // ✅ STREAMING OPTIMIZADO: Buffer más grande para mejor rendimiento
+        const stream = fs.createReadStream(apkPath, {
+          start,
+          end,
+          highWaterMark: 256 * 1024 // 256KB chunks (mejor para conexiones rápidas)
+        });
+
+        stream.on('error', (err) => {
+          logger.error({
+            layer: 'controller',
+            action: 'STREAM_ERROR',
+            payload: {
+              error: err.message,
+              stack: err.stack,
+              path: apkPath,
+              range: `${start}-${end}`
+            }
+          });
+
+          if (!res.headersSent) {
+            res.status(500).json({
+              success: false,
+              message: 'Error al descargar APK'
+            });
+          }
+        });
+
+        req.on('close', () => {
+          if (!stream.destroyed) {
+            stream.destroy();
+          }
+        });
+
+        stream.pipe(res);
+        return;
+      } else {
+        // Range inválido, retornar 416 Range Not Satisfiable
+        res.status(416);
+        res.setHeader('Content-Range', `bytes */${fileSize}`);
+        res.end();
+        return;
+      }
+    }
+
+    // Descarga completa (sin Range request)
+    res.setHeader('Content-Length', fileSize.toString());
+
+    // ✅ STREAMING OPTIMIZADO: Buffer más grande (256KB vs 64KB) para mejor rendimiento
+    // En conexiones rápidas, chunks más grandes reducen overhead de red
     const stream = fs.createReadStream(apkPath, {
-      highWaterMark: 64 * 1024 // 64KB chunks (óptimo para red)
+      highWaterMark: 256 * 1024 // 256KB chunks (4x más grande que antes)
     });
 
     // Manejar errores del stream
@@ -225,8 +314,9 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
           action: 'APK_DOWNLOADED_SUCCESS',
           payload: {
             ip: req.ip,
-            fileSize: stats.size,
-            fileSizeMB: (stats.size / (1024 * 1024)).toFixed(2)
+            fileSize: fileSize,
+            fileSizeMB: (fileSize / (1024 * 1024)).toFixed(2),
+            hasRange: !!rangeHeader
           }
         });
       }
