@@ -9,6 +9,7 @@ const IdParamSchema = z.object({
 export const ExcludeListaSchema = z.object({
     ventanaId: z.uuid("ventanaId inválido"),
     vendedorId: z.uuid("vendedorId inválido").nullable().optional(),
+    multiplierId: z.uuid("multiplierId inválido").nullable().optional(),
     reason: z.string().trim().min(3, "reason debe tener al menos 3 caracteres").max(500, "reason no puede exceder 500 caracteres").optional(),
 }).strict();
 

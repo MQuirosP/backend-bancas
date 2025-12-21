@@ -611,56 +611,173 @@ export const SorteoListasService = {
             ticketWhere.vendedorId = data.vendedorId;
         }
 
-        // Si hay filtro de multiplicador, solo excluir tickets que tengan ese multiplicador
-        if (data.multiplierId) {
-            ticketWhere.jugadas = {
-                some: {
-                    multiplierId: data.multiplierId,
-                    deletedAt: null,
-                }
-            };
+        // ✅ CRÍTICO: Si hay filtro de multiplicador, NO marcamos tickets como EXCLUDED automáticamente
+        // porque solo algunas jugadas se excluyen. Los tickets se actualizarán después si todas sus jugadas quedan excluidas.
+        // Si NO hay filtro de multiplicador, excluimos todos los tickets del scope.
+        let ticketResult = { count: 0 };
+        
+        if (!data.multiplierId) {
+            // Sin filtro de multiplicador: excluir todos los tickets del scope
+            ticketResult = await prisma.ticket.updateMany({
+                where: {
+                    ...ticketWhere,
+                    status: { not: 'EXCLUDED' },
+                },
+                data: {
+                    status: 'EXCLUDED',
+                    isActive: false,
+                },
+            });
         }
-
-        // 1. Primero actualizar los tickets
-        const ticketResult = await prisma.ticket.updateMany({
-            where: {
-                ...ticketWhere,
-                status: { not: 'EXCLUDED' },
-            },
-            data: {
-                status: 'EXCLUDED',
-                isActive: false,
-            },
-        });
+        // Si hay multiplierId, no actualizamos tickets aquí, se hará después si todas las jugadas quedan excluidas
 
         // 2. Luego actualizar las jugadas
-        const jugadaWhere: any = {
-            deletedAt: null,
-            isActive: true,
-        };
+        // ✅ CRÍTICO: Si se especifica multiplierId, debemos excluir:
+        // - Jugadas NUMERO con ese multiplierId directamente
+        // - Jugadas REVENTADO con ese multiplierId directamente (si el sorteo ya fue evaluado)
+        // - Jugadas REVENTADO que heredan el multiplicador base (número base con jugada NUMERO del mismo ticket con ese multiplierId)
+        let jugadaResult = { count: 0 };
 
         if (data.multiplierId) {
-            jugadaWhere.multiplierId = data.multiplierId;
-        }
-
-        const jugadaResult = await prisma.jugada.updateMany({
-            where: {
-                ticket: {
+            // Buscar tickets afectados primero
+            const affectedTickets = await prisma.ticket.findMany({
+                where: {
                     sorteoId,
                     ventanaId: data.ventanaId,
                     vendedorId: data.vendedorId || undefined,
                     deletedAt: null,
                 },
-                ...jugadaWhere,
-            },
-            data: {
-                isExcluded: true,
-                isActive: false,
-                excludedAt: new Date(),
-                excludedBy: userId,
-                excludedReason: data.reason || null,
-            },
-        });
+                select: {
+                    id: true,
+                    jugadas: {
+                        where: {
+                            deletedAt: null,
+                            isActive: true,
+                        },
+                        select: {
+                            id: true,
+                            type: true,
+                            number: true,
+                            multiplierId: true,
+                        },
+                    },
+                },
+            });
+
+            // Identificar jugadas a excluir:
+            // 1. Jugadas NUMERO con multiplierId
+            // 2. Jugadas REVENTADO con multiplierId directo
+            // 3. Jugadas REVENTADO cuyo número base tiene una jugada NUMERO con ese multiplierId en el mismo ticket
+            const jugadaIdsToExclude = new Set<string>();
+
+            for (const ticket of affectedTickets) {
+                // Crear mapa de número base -> multiplierId para jugadas NUMERO
+                const numeroBaseMultiplierMap = new Map<string, string>();
+                for (const jugada of ticket.jugadas) {
+                    if (jugada.type === 'NUMERO' && jugada.number && jugada.multiplierId === data.multiplierId) {
+                        numeroBaseMultiplierMap.set(jugada.number, jugada.multiplierId!);
+                        jugadaIdsToExclude.add(jugada.id);
+                    }
+                }
+
+                // Buscar jugadas REVENTADO que deben excluirse
+                for (const jugada of ticket.jugadas) {
+                    if (jugada.type === 'REVENTADO') {
+                        // Caso 1: REVENTADO con multiplierId directo
+                        if (jugada.multiplierId === data.multiplierId) {
+                            jugadaIdsToExclude.add(jugada.id);
+                        }
+                        // Caso 2: REVENTADO que hereda el multiplicador base
+                        else if (jugada.number && numeroBaseMultiplierMap.has(jugada.number)) {
+                            jugadaIdsToExclude.add(jugada.id);
+                        }
+                    }
+                }
+            }
+
+            // Actualizar todas las jugadas identificadas
+            if (jugadaIdsToExclude.size > 0) {
+                jugadaResult = await prisma.jugada.updateMany({
+                    where: {
+                        id: { in: Array.from(jugadaIdsToExclude) },
+                    },
+                    data: {
+                        isExcluded: true,
+                        isActive: false,
+                        excludedAt: new Date(),
+                        excludedBy: userId,
+                        excludedReason: data.reason || null,
+                    },
+                });
+
+                // ✅ CRÍTICO: Si hay filtro de multiplicador, verificar tickets que quedaron con todas sus jugadas excluidas
+                // y marcarlos como EXCLUDED
+                const ticketIdsToCheck = new Set(affectedTickets.map(t => t.id));
+                if (ticketIdsToCheck.size > 0) {
+                    // Buscar tickets que tienen todas sus jugadas excluidas
+                    const ticketsWithAllExcluded = await prisma.ticket.findMany({
+                        where: {
+                            id: { in: Array.from(ticketIdsToCheck) },
+                            deletedAt: null,
+                        },
+                        select: {
+                            id: true,
+                            jugadas: {
+                                where: {
+                                    deletedAt: null,
+                                    isActive: true,
+                                    isExcluded: false,
+                                },
+                                select: { id: true },
+                            },
+                        },
+                    });
+
+                    // Tickets sin jugadas activas no excluidas = todas excluidas
+                    const ticketIdsToExclude = ticketsWithAllExcluded
+                        .filter(t => t.jugadas.length === 0)
+                        .map(t => t.id);
+
+                    if (ticketIdsToExclude.length > 0) {
+                        await prisma.ticket.updateMany({
+                            where: {
+                                id: { in: ticketIdsToExclude },
+                            },
+                            data: {
+                                status: 'EXCLUDED',
+                                isActive: false,
+                            },
+                        });
+                        ticketResult = { count: ticketIdsToExclude.length };
+                    }
+                }
+            }
+        } else {
+            // Sin filtro de multiplicador: excluir todas las jugadas del scope
+            const jugadaWhere: any = {
+                deletedAt: null,
+                isActive: true,
+            };
+
+            jugadaResult = await prisma.jugada.updateMany({
+                where: {
+                    ticket: {
+                        sorteoId,
+                        ventanaId: data.ventanaId,
+                        vendedorId: data.vendedorId || undefined,
+                        deletedAt: null,
+                    },
+                    ...jugadaWhere,
+                },
+                data: {
+                    isExcluded: true,
+                    isActive: false,
+                    excludedAt: new Date(),
+                    excludedBy: userId,
+                    excludedReason: data.reason || null,
+                },
+            });
+        }
 
         logger.info({
             layer: "service",
@@ -727,29 +844,100 @@ export const SorteoListasService = {
             ticketWhere.vendedorId = data.vendedorId;
         }
 
-        const jugadaWhere: any = {
-            deletedAt: null,
-            isExcluded: true, // Solo actualizar las que están excluidas
-        };
+        // ✅ CRÍTICO: Si se especifica multiplierId, debemos incluir (revertir exclusión):
+        // - Jugadas NUMERO con ese multiplierId directamente
+        // - Jugadas REVENTADO con ese multiplierId directamente (si el sorteo ya fue evaluado)
+        // - Jugadas REVENTADO que heredan el multiplicador base (número base con jugada NUMERO del mismo ticket con ese multiplierId)
+        let jugadaResult = { count: 0 };
 
         if (data.multiplierId) {
-            jugadaWhere.multiplierId = data.multiplierId;
-        }
+            // Buscar tickets afectados primero
+            const affectedTickets = await prisma.ticket.findMany({
+                where: ticketWhere,
+                select: {
+                    id: true,
+                    jugadas: {
+                        where: {
+                            deletedAt: null,
+                            isExcluded: true, // Solo las excluidas
+                        },
+                        select: {
+                            id: true,
+                            type: true,
+                            number: true,
+                            multiplierId: true,
+                        },
+                    },
+                },
+            });
 
-        // 1. Actualizar jugadas
-        const jugadaResult = await prisma.jugada.updateMany({
-            where: {
-                ticket: ticketWhere,
-                ...jugadaWhere,
-            },
-            data: {
-                isExcluded: false,
-                isActive: true,
-                excludedAt: null,
-                excludedBy: null,
-                excludedReason: null,
-            },
-        });
+            // Identificar jugadas a incluir (revertir exclusión):
+            // 1. Jugadas NUMERO con multiplierId
+            // 2. Jugadas REVENTADO con multiplierId directo
+            // 3. Jugadas REVENTADO cuyo número base tiene una jugada NUMERO con ese multiplierId en el mismo ticket
+            const jugadaIdsToInclude = new Set<string>();
+
+            for (const ticket of affectedTickets) {
+                // Crear mapa de número base -> multiplierId para jugadas NUMERO
+                const numeroBaseMultiplierMap = new Map<string, string>();
+                for (const jugada of ticket.jugadas) {
+                    if (jugada.type === 'NUMERO' && jugada.number && jugada.multiplierId === data.multiplierId) {
+                        numeroBaseMultiplierMap.set(jugada.number, jugada.multiplierId!);
+                        jugadaIdsToInclude.add(jugada.id);
+                    }
+                }
+
+                // Buscar jugadas REVENTADO que deben incluirse
+                for (const jugada of ticket.jugadas) {
+                    if (jugada.type === 'REVENTADO') {
+                        // Caso 1: REVENTADO con multiplierId directo
+                        if (jugada.multiplierId === data.multiplierId) {
+                            jugadaIdsToInclude.add(jugada.id);
+                        }
+                        // Caso 2: REVENTADO que hereda el multiplicador base
+                        else if (jugada.number && numeroBaseMultiplierMap.has(jugada.number)) {
+                            jugadaIdsToInclude.add(jugada.id);
+                        }
+                    }
+                }
+            }
+
+            // Actualizar todas las jugadas identificadas
+            if (jugadaIdsToInclude.size > 0) {
+                jugadaResult = await prisma.jugada.updateMany({
+                    where: {
+                        id: { in: Array.from(jugadaIdsToInclude) },
+                    },
+                    data: {
+                        isExcluded: false,
+                        isActive: true,
+                        excludedAt: null,
+                        excludedBy: null,
+                        excludedReason: null,
+                    },
+                });
+            }
+        } else {
+            // Sin filtro de multiplicador: incluir todas las jugadas excluidas del scope
+            const jugadaWhere: any = {
+                deletedAt: null,
+                isExcluded: true, // Solo actualizar las que están excluidas
+            };
+
+            jugadaResult = await prisma.jugada.updateMany({
+                where: {
+                    ticket: ticketWhere,
+                    ...jugadaWhere,
+                },
+                data: {
+                    isExcluded: false,
+                    isActive: true,
+                    excludedAt: null,
+                    excludedBy: null,
+                    excludedReason: null,
+                },
+            });
+        }
 
         if (jugadaResult.count === 0) {
             throw new AppError("No se encontraron jugadas excluidas que coincidan con los criterios", 404);
