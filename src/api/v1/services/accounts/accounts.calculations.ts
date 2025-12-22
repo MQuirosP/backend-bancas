@@ -1800,7 +1800,7 @@ export async function getStatementDirect(
         dailyRemainingBalance.set(statement, dailyValue);
 
         // 🔍 DEBUG: Log detallado de cada statement
-        logger.info({
+        /*logger.info({
             layer: "service",
             action: "DEBUG_DAILY_BALANCE_CALCULATION",
             payload: {
@@ -1811,7 +1811,7 @@ export async function getStatementDirect(
                 calculatedRemainingBalance: dailyValue,
                 note: "Balance ya incluye movimientos, no se vuelven a aplicar"
             }
-        });
+        });*/
     }
 
     // ✅ CRÍTICO: Paso 2 - Ordenar TODOS los statements del mes por fecha (de menor a mayor)
