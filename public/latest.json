@@ -1,7 +1,7 @@
 {
-  "versionName": "2.0.7",
-  "versionCode": 8,
-  "buildNumber": 8,
+  "versionName": "2.0.6",
+  "versionCode": 7,
+  "buildNumber": 7,
   "minSupportedVersion": "2.0.0",
   "forceUpdate": false,
   "changelog": "Correcciones visuales y mejoras de rendimiento",
