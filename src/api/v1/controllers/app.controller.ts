@@ -6,6 +6,7 @@
 import { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import logger from '../../../core/logger';
 
 /**
@@ -196,21 +197,68 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
 
     // Headers base
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-    res.setHeader('Content-Disposition', 'attachment; filename="bancas-admin.apk"');
+    
+    // ✅ CRÍTICO: Establecer Content-Disposition ANTES de otros headers para evitar sobrescritura
+    // ✅ FIX: Nombre del archivo debe ser exactamente 'app-release-latest.apk'
+    const filename = 'app-release-latest.apk';
+    const contentDisposition = `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+    
+    // ✅ CRÍTICO: Usar writeHead o setHeader múltiples veces para asegurar que se establece
+    res.setHeader('Content-Disposition', contentDisposition);
+    
+    // ✅ FORZAR: Establecer de nuevo después de otros headers para asegurar que no se sobrescribe
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('X-No-Compression', '1'); // Evita compresión adicional (APK ya está comprimido)
     
-    // Optimizaciones de caché mejoradas
-    res.setHeader('Cache-Control', 'public, max-age=86400, immutable'); // 24 horas, immutable para versiones específicas
+    // ✅ MEJORADO: Cache-Control con no-cache para forzar validación cuando cambia el nombre
+    // Usar no-cache en lugar de immutable para permitir validación del nuevo nombre
+    res.setHeader('Cache-Control', 'public, max-age=86400, must-revalidate'); // 24 horas, pero validar cambios
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    
+    // ✅ FORZAR: Establecer Content-Disposition de nuevo después de todos los headers
+    res.setHeader('Content-Disposition', contentDisposition);
+    
+    // ✅ VERIFICACIÓN: Confirmar que el header se estableció correctamente
+    const actualHeader = res.getHeader('Content-Disposition');
+    
+    // ✅ DEBUG: Log del header que se está enviando (siempre, no solo en debug)
+    logger.info({
+      layer: 'controller',
+      action: 'APK_DOWNLOAD_HEADERS',
+      payload: {
+        filename,
+        contentDisposition,
+        actualHeader,
+        headersMatch: actualHeader === contentDisposition,
+        headersSent: res.headersSent,
+        ip: req.ip,
+      },
+    });
+    
+    // ✅ WARNING: Si el header no coincide, loguear advertencia
+    if (actualHeader !== contentDisposition) {
+      logger.warn({
+        layer: 'controller',
+        action: 'APK_DOWNLOAD_HEADER_MISMATCH',
+        payload: {
+          expected: contentDisposition,
+          actual: actualHeader,
+          message: 'Content-Disposition header no coincide con el esperado',
+        },
+      });
+    }
 
     // ETag para validación de caché
+    // ✅ MEJORADO: Incluir nombre del archivo en el ETag para invalidar caché cuando cambia el nombre
     if (etag) {
-      res.setHeader('ETag', etag);
+      // Agregar hash del nombre del archivo al ETag para forzar actualización cuando cambia
+      const filenameHash = crypto.createHash('md5').update('app-release-latest.apk').digest('hex').substring(0, 8);
+      const enhancedEtag = `${etag}-${filenameHash}`;
+      res.setHeader('ETag', enhancedEtag);
       
       // Si el cliente tiene el mismo ETag, retornar 304 Not Modified
       const ifNoneMatch = req.headers['if-none-match'];
-      if (ifNoneMatch === etag) {
+      if (ifNoneMatch === enhancedEtag || ifNoneMatch === etag) {
         res.status(304).end();
         return;
       }
