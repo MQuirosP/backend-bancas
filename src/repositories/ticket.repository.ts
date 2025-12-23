@@ -920,37 +920,44 @@ export const TicketRepository = {
 
             if (effectiveMaxAmount != null) {
               for (const num of numbersInRule) {
-                const sumForNumber = preparedJugadas
-                  .filter((j) => {
-                    // ✅ Excluir jugadas inactivas
-                    if (j.isActive === false) return false;
-                    if (j.type === 'NUMERO') {
-                      if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
-                      return j.number === num;
-                    } else if (j.type === 'REVENTADO') {
-                      if (rule.multiplierId) return false;
-                      return j.reventadoNumber === num;
-                    }
-                    return false;
-                  })
-                  .reduce((acc, j) => acc + j.amount, 0);
+                // ✅ CRÍTICO: Calcular sumForNumber SOLO para este número específico en este ticket
+                // NO debe incluir otros números ni el total del ticket
+                const jugadasDelNumero = preparedJugadas.filter((j) => {
+                  // ✅ Excluir jugadas inactivas
+                  if (j.isActive === false) return false;
+                  if (j.type === 'NUMERO') {
+                    if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
+                    return j.number === num;
+                  } else if (j.type === 'REVENTADO') {
+                    if (rule.multiplierId) return false;
+                    return j.reventadoNumber === num;
+                  }
+                  return false;
+                });
+                
+                const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
                   const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
                   const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
                   const multiplierContext = rule.multiplierId ? ` (multiplicador: ${rule.multiplier?.name || '...'})` : '';
+                  // ✅ CRÍTICO: maxAmount es por número por ticket, NO acumulado. El mensaje debe ser claro.
                   throw new AppError(
-                    `El número ${num}${multiplierContext}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto en el ticket: ₡${sumForNumber.toFixed(2)}, límite máximo por ticket: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
+                    `El número ${num}${multiplierContext}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto del número en este ticket: ₡${sumForNumber.toFixed(2)}, límite máximo permitido: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico)` : ''}`,
                     400,
                     { 
                       code: "NUMBER_MAXAMOUNT_EXCEEDED", 
                       number: num, 
-                      maxAmount: effectiveMaxAmount,
-                      amountAttempted: sumForNumber,
+                      maxAmount: effectiveMaxAmount, // ✅ Límite por número por ticket
+                      amountAttempted: sumForNumber, // ✅ Monto del número en este ticket
                       scope: ruleScope,
                       isAutoDate: rule.isAutoDate,
                       isDynamic: dynamicLimit != null,
                       multiplierName: rule.multiplier?.name || undefined, // ✅ Frontend espera multiplierName
+                      // ✅ CRÍTICO: Aclarar que es por número por ticket, no acumulado
+                      isPerNumber: true,
+                      isPerTicket: true,
+                      clarification: 'Límite calculado por número individual en este ticket, no acumulado ni por total del ticket',
                     }
                   );
                 }
@@ -961,14 +968,18 @@ export const TicketRepository = {
               const staticMaxTotal = rule.maxTotal ?? Infinity;
               const effectiveMaxTotal = dynamicLimit != null ? Math.min(staticMaxTotal, dynamicLimit) : staticMaxTotal;
 
+              // ✅ CRÍTICO: maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
+              // ✅ CRÍTICO: Calcular amountForNumber por número INDIVIDUAL, no por total del ticket
               const numbersToCheck = numbersInRule.map(num => {
-                const amount = preparedJugadas
-                  .filter(j => {
-                    // ✅ Excluir jugadas inactivas
-                    if (j.isActive === false) return false;
-                    return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
-                  })
-                  .reduce((acc, j) => acc + j.amount, 0);
+                // ✅ CRÍTICO: Filtrar SOLO las jugadas de este número específico
+                const jugadasDelNumero = preparedJugadas.filter(j => {
+                  // ✅ Excluir jugadas inactivas
+                  if (j.isActive === false) return false;
+                  // ✅ CRÍTICO: Solo contar jugadas de este número específico
+                  return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
+                });
+                
+                const amount = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
                 return { number: num, amountForNumber: amount };
               }).filter(n => n.amountForNumber > 0);
 
@@ -995,36 +1006,43 @@ export const TicketRepository = {
 
             if (effectiveMaxAmount != null) {
               for (const num of uniqueNumbers) {
-                const sumForNumber = preparedJugadas
-                  .filter((j) => {
-                    // ✅ Excluir jugadas inactivas
-                    if (j.isActive === false) return false;
-                    if (j.type === 'NUMERO') {
-                      if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
-                      return j.number === num;
-                    } else if (j.type === 'REVENTADO') {
-                      if (rule.multiplierId) return false;
-                      return j.reventadoNumber === num;
-                    }
-                    return false;
-                  })
-                  .reduce((acc, j) => acc + j.amount, 0);
+                // ✅ CRÍTICO: Calcular sumForNumber SOLO para este número específico en este ticket
+                // NO debe incluir otros números ni el total del ticket
+                const jugadasDelNumero = preparedJugadas.filter((j) => {
+                  // ✅ Excluir jugadas inactivas
+                  if (j.isActive === false) return false;
+                  if (j.type === 'NUMERO') {
+                    if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
+                    return j.number === num;
+                  } else if (j.type === 'REVENTADO') {
+                    if (rule.multiplierId) return false;
+                    return j.reventadoNumber === num;
+                  }
+                  return false;
+                });
+                
+                const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
                   const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
                   const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
+                  // ✅ CRÍTICO: maxAmount es por número por ticket, NO acumulado. El mensaje debe ser claro.
                   throw new AppError(
-                    `El número ${num}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto en el ticket: ₡${sumForNumber.toFixed(2)}, límite máximo por ticket: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
+                    `El número ${num}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto del número en este ticket: ₡${sumForNumber.toFixed(2)}, límite máximo permitido: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico)` : ''}`,
                     400,
                     { 
                       code: "NUMBER_MAXAMOUNT_EXCEEDED", 
                       number: num, 
-                      maxAmount: effectiveMaxAmount,
-                      amountAttempted: sumForNumber,
+                      maxAmount: effectiveMaxAmount, // ✅ Límite por número por ticket
+                      amountAttempted: sumForNumber, // ✅ Monto del número en este ticket
                       scope: ruleScope,
                       isAutoDate: rule.isAutoDate,
                       isDynamic: dynamicLimit != null,
                       multiplierName: rule.multiplier?.name || undefined, // ✅ Frontend espera multiplierName
+                      // ✅ CRÍTICO: Aclarar que es por número por ticket, no acumulado
+                      isPerNumber: true,
+                      isPerTicket: true,
+                      clarification: 'Límite calculado por número individual en este ticket, no acumulado ni por total del ticket',
                     }
                   );
                 }
@@ -1035,14 +1053,18 @@ export const TicketRepository = {
               const staticMaxTotal = rule.maxTotal ?? Infinity;
               const effectiveMaxTotal = dynamicLimit != null ? Math.min(staticMaxTotal, dynamicLimit) : staticMaxTotal;
 
+              // ✅ CRÍTICO: maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
+              // ✅ CRÍTICO: Calcular amountForNumber por número INDIVIDUAL, no por total del ticket
               const numbersToCheck = uniqueNumbers.map(num => {
-                const amount = preparedJugadas
-                  .filter(j => {
-                    // ✅ Excluir jugadas inactivas
-                    if (j.isActive === false) return false;
-                    return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
-                  })
-                  .reduce((acc, j) => acc + j.amount, 0);
+                // ✅ CRÍTICO: Filtrar SOLO las jugadas de este número específico
+                const jugadasDelNumero = preparedJugadas.filter(j => {
+                  // ✅ Excluir jugadas inactivas
+                  if (j.isActive === false) return false;
+                  // ✅ CRÍTICO: Solo contar jugadas de este número específico
+                  return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
+                });
+                
+                const amount = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
                 return { number: num, amountForNumber: amount };
               }).filter(n => n.amountForNumber > 0);
 
@@ -1805,36 +1827,43 @@ export const TicketRepository = {
 
             if (effectiveMaxAmount != null) {
               for (const num of uniqueNumbers) {
-                const sumForNumber = preparedJugadas
-                  .filter((j) => {
-                    // ✅ Excluir jugadas inactivas
-                    if (j.isActive === false) return false;
-                    if (j.type === 'NUMERO') {
-                      if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
-                      return j.number === num;
-                    } else if (j.type === 'REVENTADO') {
-                      if (rule.multiplierId) return false;
-                      return j.reventadoNumber === num;
-                    }
-                    return false;
-                  })
-                  .reduce((acc, j) => acc + j.amount, 0);
+                // ✅ CRÍTICO: Calcular sumForNumber SOLO para este número específico en este ticket
+                // NO debe incluir otros números ni el total del ticket
+                const jugadasDelNumero = preparedJugadas.filter((j) => {
+                  // ✅ Excluir jugadas inactivas
+                  if (j.isActive === false) return false;
+                  if (j.type === 'NUMERO') {
+                    if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
+                    return j.number === num;
+                  } else if (j.type === 'REVENTADO') {
+                    if (rule.multiplierId) return false;
+                    return j.reventadoNumber === num;
+                  }
+                  return false;
+                });
+                
+                const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
 
                 if (sumForNumber > effectiveMaxAmount) {
                   const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
                   const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
+                  // ✅ CRÍTICO: maxAmount es por número por ticket, NO acumulado. El mensaje debe ser claro.
                   throw new AppError(
-                    `El número ${num}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto en el ticket: ₡${sumForNumber.toFixed(2)}, límite máximo por ticket: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
+                    `El número ${num}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto del número en este ticket: ₡${sumForNumber.toFixed(2)}, límite máximo permitido: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico)` : ''}`,
                     400,
                     { 
                       code: "NUMBER_MAXAMOUNT_EXCEEDED", 
                       number: num, 
-                      maxAmount: effectiveMaxAmount,
-                      amountAttempted: sumForNumber,
+                      maxAmount: effectiveMaxAmount, // ✅ Límite por número por ticket
+                      amountAttempted: sumForNumber, // ✅ Monto del número en este ticket
                       scope: ruleScope,
                       isAutoDate: rule.isAutoDate,
                       isDynamic: dynamicLimit != null,
                       multiplierName: rule.multiplier?.name || undefined, // ✅ Frontend espera multiplierName
+                      // ✅ CRÍTICO: Aclarar que es por número por ticket, no acumulado
+                      isPerNumber: true,
+                      isPerTicket: true,
+                      clarification: 'Límite calculado por número individual en este ticket, no acumulado ni por total del ticket',
                     }
                   );
                 }
@@ -1845,14 +1874,18 @@ export const TicketRepository = {
               const staticMaxTotal = rule.maxTotal ?? Infinity;
               const effectiveMaxTotal = dynamicLimit != null ? Math.min(staticMaxTotal, dynamicLimit) : staticMaxTotal;
 
+              // ✅ CRÍTICO: maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
+              // ✅ CRÍTICO: Calcular amountForNumber por número INDIVIDUAL, no por total del ticket
               const numbersToCheck = uniqueNumbers.map(num => {
-                const amount = preparedJugadas
-                  .filter(j => {
-                    // ✅ Excluir jugadas inactivas
-                    if (j.isActive === false) return false;
-                    return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
-                  })
-                  .reduce((acc, j) => acc + j.amount, 0);
+                // ✅ CRÍTICO: Filtrar SOLO las jugadas de este número específico
+                const jugadasDelNumero = preparedJugadas.filter(j => {
+                  // ✅ Excluir jugadas inactivas
+                  if (j.isActive === false) return false;
+                  // ✅ CRÍTICO: Solo contar jugadas de este número específico
+                  return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
+                });
+                
+                const amount = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
                 return { number: num, amountForNumber: amount };
               }).filter(n => n.amountForNumber > 0);
 
