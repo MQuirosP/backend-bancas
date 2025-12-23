@@ -338,8 +338,9 @@ export async function validateMaxTotalForNumbers(
     multiplierFilter, // ✅ Pasar filtro al cálculo
   });
 
-  // Validar cada número
+  // ✅ CRÍTICO: Validar cada número INDIVIDUALMENTE (no por total del ticket)
   for (const { number, amountForNumber } of numbers) {
+    // ✅ CRÍTICO: accumulatedInSorteo es el acumulado SOLO de este número específico en el sorteo
     const accumulatedInSorteo = accumulatedMap.get(number) ?? 0;
     const newAccumulated = accumulatedInSorteo + amountForNumber;
 
@@ -362,20 +363,22 @@ export async function validateMaxTotalForNumbers(
           scopeLabel,
           sorteoId,
           multiplierFilter,
-          accumulatedInSorteo,
-          amountForNumber,
-          newAccumulated,
-          effectiveMaxTotal,
+          accumulatedInSorteo, // ✅ Acumulado SOLO de este número
+          amountForNumber, // ✅ Monto SOLO de este número en el ticket
+          newAccumulated, // ✅ Nuevo acumulado SOLO de este número
+          effectiveMaxTotal, // ✅ Límite SOLO para este número
           staticMaxTotal,
           dynamicLimit,
           available,
           isAutoDate: rule.isAutoDate,
+          // ✅ CRÍTICO: Aclarar que estos valores son por número individual, no por total del ticket
+          clarification: 'Todos los valores son por número individual, no por total del ticket',
         },
       });
 
-      // ✅ Mensaje claro indicando que es límite acumulado por número específico en este sorteo (no por día ni por total del ticket)
+      // ✅ CRÍTICO: Mensaje claro - maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
       throw new AppError(
-        `El número ${number} excede el límite ${scopeLabel} máximo acumulado en este sorteo${isAutoDateLabel}. Para este número: acumulado previo en el sorteo: ₡${accumulatedInSorteo.toFixed(2)}, monto de este número en el ticket actual: ₡${amountForNumber.toFixed(2)}, nuevo acumulado sería: ₡${newAccumulated.toFixed(2)}, límite máximo para este número: ₡${effectiveMaxTotal.toFixed(2)}. Disponible para este número: ₡${available.toFixed(2)}`,
+        `El número ${number}${isAutoDateLabel} excede el límite ${scopeLabel} acumulado en este sorteo. Acumulado previo del número: ₡${accumulatedInSorteo.toFixed(2)}, monto del número en este ticket: ₡${amountForNumber.toFixed(2)}, nuevo acumulado sería: ₡${newAccumulated.toFixed(2)}, límite máximo para este número: ₡${effectiveMaxTotal.toFixed(2)}. Disponible para este número: ₡${available.toFixed(2)}`,
         400,
         {
           code: "NUMBER_MAXTOTAL_EXCEEDED",
@@ -384,12 +387,16 @@ export async function validateMaxTotalForNumbers(
           scope: scopeLabel, // ✅ Frontend espera 'scope' además de 'scopeLabel'
           scopeLabel,
           sorteoId,
-          accumulatedInSorteo,
-          amountForNumber,
-          newAccumulated,
-          effectiveMaxTotal,
+          accumulatedInSorteo, // ✅ "usado" = acumulado previo SOLO de este número en el sorteo
+          amountForNumber, // ✅ "intento" = monto SOLO de este número en el ticket actual
+          newAccumulated, // ✅ Nuevo acumulado SOLO de este número
+          effectiveMaxTotal, // ✅ "tope" = límite máximo SOLO para este número
           available,
           isAutoDate: rule.isAutoDate,
+          // ✅ CRÍTICO: Aclarar en el meta que es por número individual, NO por total del ticket
+          isPerNumber: true,
+          isAccumulated: true, // ✅ Aclarar que es acumulado (maxTotal), no por ticket (maxAmount)
+          clarification: 'Límite acumulado calculado por número individual en el sorteo, NO por total del ticket',
         }
       );
     }
