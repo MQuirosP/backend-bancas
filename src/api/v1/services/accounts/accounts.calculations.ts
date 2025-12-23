@@ -868,18 +868,6 @@ export async function getStatementDirect(
         entry.totalTickets = new Set(Array.from({ length: ticketCount }, (_, i) => `${row.ventana_id}_${row.vendedor_id}_${i}`));
     }
 
-    // 🔍 DEBUG: Log de filas por fecha
-    logger.info({
-        layer: "service",
-        action: "DEBUG_SQL_ROWS_PER_DATE",
-        payload: {
-            dimension,
-            shouldGroupByDate,
-            rowsPerDate: Object.fromEntries(rowsPerDate),
-            totalRowsProcessed: aggregatedData.length,
-        }
-    });
-
     // ✅ CRÍTICO: Obtener movimientos desde el inicio del mes para calcular acumulados correctos
     const movementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
         monthStartDateForQuery,
@@ -949,17 +937,6 @@ export async function getStatementDirect(
     });
 
     const sorteoBreakdownBatch = await getSorteoBreakdownBatch(statementDates, dimension, ventanaId, vendedorId, bancaId, userRole);
-
-    // ✅ DEBUG: Log para verificar el mapa antes de construir statements
-    logger.info({
-        layer: "service",
-        action: "ACCOUNT_STATEMENT_MAP_BEFORE_CONSTRUCTION",
-        payload: {
-            shouldGroupByDate,
-            mapKeys: Array.from(byDateAndDimension.keys()),
-            mapSize: byDateAndDimension.size,
-        },
-    });
 
     // Construir statements desde el mapa agrupado
     // ✅ NOTA: NO filtrar aquí - necesitamos todos los días del mes para calcular acumulados correctos
@@ -1770,26 +1747,6 @@ export async function getStatementDirect(
     // El acumulado se calcula SOLO sobre los días mostrados en el resultado
     // El cálculo es TOTALMENTE INDEPENDIENTE de los sorteos - usa solo los balances de los días
 
-    // 🔍 DEBUG: Ver todos los statements del mes ANTES de procesar
-    logger.info({
-        layer: "service",
-        action: "DEBUG_ALL_STATEMENTS_FROM_MONTH",
-        payload: {
-            dimension,
-            totalStatementsFromMonth: allStatementsFromMonth.length,
-            statements: allStatementsFromMonth.map((s, idx) => ({
-                idx,
-                date: crDateService.dateUTCToCRString(new Date(s.date)),
-                bancaId: s.bancaId,
-                ventanaId: s.ventanaId,
-                vendedorId: s.vendedorId,
-                balance: s.balance,
-                totalPaid: s.totalPaid,
-                totalCollected: s.totalCollected,
-            }))
-        }
-    });
-
     // ✅ CRÍTICO: Paso 1 - Calcular remainingBalance diario para TODOS los días del mes
     // Esto es necesario para que el acumulado sea correcto incluso cuando se filtra por un día específico
     const dailyRemainingBalance = new Map<any, number>();
@@ -1798,20 +1755,6 @@ export async function getStatementDirect(
         // ✅ NUEVO: remainingBalance del día = balance (ya incluye movimientos, no volver a aplicarlos)
         const dailyValue = parseFloat(statement.balance.toFixed(2));
         dailyRemainingBalance.set(statement, dailyValue);
-
-        // 🔍 DEBUG: Log detallado de cada statement
-        /*logger.info({
-            layer: "service",
-            action: "DEBUG_DAILY_BALANCE_CALCULATION",
-            payload: {
-                date: crDateService.dateUTCToCRString(new Date(statement.date)),
-                balance: statement.balance,
-                totalCollected: statement.totalCollected,
-                totalPaid: statement.totalPaid,
-                calculatedRemainingBalance: dailyValue,
-                note: "Balance ya incluye movimientos, no se vuelven a aplicar"
-            }
-        });*/
     }
 
     // ✅ CRÍTICO: Paso 2 - Ordenar TODOS los statements del mes por fecha (de menor a mayor)
@@ -1848,20 +1791,6 @@ export async function getStatementDirect(
 
         // Asignar el valor acumulado al statement
         statement.remainingBalance = parseFloat(newAccumulated.toFixed(2));
-
-        // 🔍 DEBUG: Log del proceso de acumulación
-        logger.info({
-            layer: "service",
-            action: "DEBUG_ACCUMULATION_STEP",
-            payload: {
-                date: crDateService.dateUTCToCRString(new Date(statement.date)),
-                entityId,
-                dailyValue,
-                prevAccumulated,
-                newAccumulated,
-                finalRemainingBalance: statement.remainingBalance
-            }
-        });
 
         // Recalcular isSettled y canEdit con el nuevo remainingBalance
         statement.isSettled = calculateIsSettled(
@@ -1948,19 +1877,7 @@ export async function getStatementDirect(
         },
     });
 
-    // 🔍 DEBUG: Ver remainingBalance de cada statement ANTES de devolver
-    logger.info({
-        layer: "service",
-        action: "DEBUG_FINAL_STATEMENTS_BEFORE_RETURN",
-        payload: {
-            dimension,
-            statements: statements.map(s => ({
-                date: crDateService.dateUTCToCRString(new Date(s.date)),
-                balance: s.balance,
-                remainingBalance: s.remainingBalance,
-            }))
-        }
-    });
+   
 
     return {
         statements,
