@@ -62,11 +62,7 @@ export function getCachedSorteoList(params: {
 
   // Si hay cache válido, retornarlo
   if (cached && cached.expiresAt > Date.now()) {
-    logger.debug({
-      layer: 'cache',
-      action: 'SORTEO_LIST_CACHE_HIT',
-      payload: { cacheKey },
-    });
+    
     return { data: cached.data, meta: cached.meta };
   }
 
@@ -75,11 +71,7 @@ export function getCachedSorteoList(params: {
     sorteoListCache.delete(cacheKey);
   }
 
-  logger.debug({
-    layer: 'cache',
-    action: 'SORTEO_LIST_CACHE_MISS',
-    payload: { cacheKey },
-  });
+ 
 
   return null;
 }
@@ -109,11 +101,7 @@ export function setCachedSorteoList(
     expiresAt: Date.now() + CACHE_TTL_MS,
   });
 
-  logger.debug({
-    layer: 'cache',
-    action: 'SORTEO_LIST_CACHE_SET',
-    payload: { cacheKey },
-  });
+  
 }
 
 /**
