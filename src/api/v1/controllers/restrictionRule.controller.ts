@@ -1,6 +1,9 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../../../core/types";
 import { RestrictionRuleService } from "../services/restrictionRule.service";
+import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
+import prisma from "../../../core/prismaClient";
+import logger from "../../../core/logger";
 
 export const RestrictionRuleController = {
   async create(req: AuthenticatedRequest, res: Response) {
@@ -77,13 +80,121 @@ export const RestrictionRuleController = {
     res.json({ success: true, data: result });
   },
 
+  /**
+   * GET /api/v1/restrictions/me
+   * Obtiene restricciones del usuario autenticado o del vendedor especificado (impersonalización)
+   * 
+   * ✅ NUEVO: Soporte para impersonalización con parámetro vendedorId
+   * - Solo ADMIN y VENTANA pueden usar vendedorId
+   * - VENDEDOR ignora vendedorId (comportamiento actual se mantiene)
+   * - Validaciones de permisos mediante applyRbacFilters()
+   */
   async myRestrictions(req: AuthenticatedRequest, res: Response) {
-    const userId = req.user!.id;
-    const ventanaId = req.user!.ventanaId || null;
-    const bancaId = req.bancaContext?.bancaId || null;
+    const me = req.user!;
+    const { vendedorId } = req.query as any;
+
+    // Log para debugging
+    req.logger?.info({
+      layer: "controller",
+      action: "RESTRICTIONS_ME_REQUEST",
+      payload: {
+        userId: me.id,
+        role: me.role,
+        requestedVendedorId: vendedorId,
+      },
+    });
+
+    // Build auth context
+    const context: AuthContext = {
+      userId: me.id,
+      role: me.role,
+      ventanaId: me.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null,
+    };
+
+    // ✅ NUEVO: Aplicar RBAC filters para validar permisos de vendedorId
+    const requestFilters: RequestFilters = {
+      ...(vendedorId ? { vendedorId } : {}),
+    };
+
+    const effectiveFilters = await applyRbacFilters(context, requestFilters);
+
+    // ✅ NUEVO: Determinar el vendedorId efectivo
+    // Si hay vendedorId en effectiveFilters (y tiene permisos), usarlo
+    // Si no, usar el userId del usuario autenticado (comportamiento actual)
+    const effectiveVendorId = effectiveFilters.vendedorId || me.id;
+
+    // ✅ NUEVO: Obtener ventanaId y bancaId del vendedor seleccionado
+    // Si estamos usando un vendedorId diferente, necesitamos su contexto
+    let effectiveBancaId = req.bancaContext?.bancaId || null;
+    let effectiveVentanaId = me.ventanaId || null;
+
+    if (effectiveVendorId !== me.id) {
+      // Estamos impersonalizando - obtener contexto del vendedor seleccionado
+      try {
+        const vendor = await prisma.user.findUnique({
+          where: { id: effectiveVendorId },
+          select: {
+            ventanaId: true,
+            ventana: {
+              select: {
+                bancaId: true,
+              },
+            },
+          },
+        });
+
+        if (vendor) {
+          effectiveVentanaId = vendor.ventanaId;
+          effectiveBancaId = vendor.ventana?.bancaId || null;
+
+          req.logger?.info({
+            layer: "controller",
+            action: "RESTRICTIONS_ME_IMPERSONATION",
+            payload: {
+              authenticatedUserId: me.id,
+              effectiveVendorId,
+              effectiveVentanaId,
+              effectiveBancaId,
+            },
+          });
+        } else {
+          // Vendedor no encontrado (no debería pasar si applyRbacFilters funcionó correctamente)
+          logger.warn({
+            layer: "controller",
+            action: "RESTRICTIONS_ME_VENDOR_NOT_FOUND",
+            payload: {
+              effectiveVendorId,
+              authenticatedUserId: me.id,
+            },
+          });
+        }
+      } catch (error) {
+        logger.error({
+          layer: "controller",
+          action: "RESTRICTIONS_ME_FETCH_VENDOR_ERROR",
+          payload: {
+            error: (error as Error).message,
+            effectiveVendorId,
+            authenticatedUserId: me.id,
+          },
+        });
+        // Continuar con el contexto del usuario autenticado como fallback
+      }
+    }
 
     // If no bancaId is available, return empty restrictions
-    if (!bancaId) {
+    if (!effectiveBancaId) {
+      req.logger?.warn({
+        layer: "controller",
+        action: "RESTRICTIONS_ME_NO_BANCA_ID",
+        payload: {
+          effectiveVendorId,
+          effectiveBancaId,
+          effectiveVentanaId,
+        },
+      });
+
       return res.json({
         success: true,
         data: {
@@ -93,7 +204,24 @@ export const RestrictionRuleController = {
       });
     }
 
-    const result = await RestrictionRuleService.forVendor(userId, bancaId, ventanaId);
+    // ✅ MODIFICADO: Usar effectiveVendorId, effectiveBancaId, effectiveVentanaId
+    const result = await RestrictionRuleService.forVendor(
+      effectiveVendorId,
+      effectiveBancaId,
+      effectiveVentanaId
+    );
+
+    req.logger?.info({
+      layer: "controller",
+      action: "RESTRICTIONS_ME_RESULT",
+      payload: {
+        effectiveVendorId,
+        generalCount: result.general.length,
+        vendorSpecificCount: result.vendorSpecific.length,
+        isImpersonating: effectiveVendorId !== me.id,
+      },
+    });
+
     res.json({ success: true, data: result });
   },
 };
