@@ -1,11 +1,11 @@
 {
-  "versionName": "2.0.7",
-  "versionCode": 8,
-  "buildNumber": 8,
+  "versionName": "2.0.8",
+  "versionCode": 9,
+  "buildNumber": 0,
   "minSupportedVersion": "2.0.0",
   "forceUpdate": false,
   "changelog": "Correcciones y mejoras de rendimiento en las actualizaciones de la aplicación",
   "releasedAt": "2025-12-21T20:00:00Z",
   "apkUrl": "https://backend-bancas-yk1i.onrender.com/api/v1/app/download",
-  "sha256": "c84fc4dc99951c8da3f89892785035cc361ef7208757cd9c66b256c8a3b16f1a"
+  "sha256": "1667796cd5f9114dfa70d4c32be03c4463801e654a0ad0ef3ad578be804aacc0"
 }
