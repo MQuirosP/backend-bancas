@@ -364,7 +364,8 @@ export class CommissionsExportExcelService {
         // Detectar si es moneda o contador
         if (i === 3 || i === 5 || i === 6 || i === 7) {
           // Columnas monetarias
-          cell.numFmt = '₡#,##0.00';
+          // Formato: positivos con ₡, negativos con -₡
+          cell.numFmt = '₡#,##0.00;-₡#,##0.00';
         } else if (i === 4) {
           // Total Tickets (entero)
           cell.numFmt = '#,##0';
@@ -391,7 +392,8 @@ export class CommissionsExportExcelService {
       const cell = row.getCell(i);
       if (typeof cell.value === 'number') {
         if (i === 3 || i === 5 || i === 6 || i === 7) {
-          cell.numFmt = '₡#,##0.00';
+          // Formato: positivos con ₡, negativos con -₡
+          cell.numFmt = '₡#,##0.00;-₡#,##0.00';
         } else if (i === 4) {
           cell.numFmt = '#,##0';
         }

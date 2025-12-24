@@ -772,7 +772,7 @@ export class CommissionsExportPdfService {
    */
   private static formatCurrency(value: number): string {
     if (value < 0) {
-      return `-(${Math.abs(value).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')})`;
+      return `-${Math.abs(value).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
     }
     return value.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   }
