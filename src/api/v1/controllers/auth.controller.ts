@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
+import UserService from '../services/user.service';
 import { logger } from '../../../core/logger';
 import prisma from '../../../core/prismaClient';
 import { ActivityType, Role } from '@prisma/client';
@@ -208,5 +209,66 @@ export const AuthController = {
     }, {
       message: 'Banca activa establecida correctamente. Usa el header X-Active-Banca-Id en las siguientes peticiones.',
     });
+  },
+
+  /**
+   * Actualiza el perfil del usuario autenticado
+   * Permite actualizar: name, email, phone, username, password, settings
+   * NO permite actualizar: role, ventanaId, code, isActive (solo ADMIN puede hacerlo vía /users/:id)
+   */
+  async updateMe(req: Request, res: Response) {
+    const actor = (req as any)?.user;
+    const actorId = actor?.id;
+    const requestId = (req as any)?.requestId ?? null;
+
+    if (!actorId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Usuario no autenticado',
+      });
+    }
+
+    // Restricciones: el usuario no puede cambiar su propio role, ventanaId, code, isActive
+    const restrictedFields = ['role', 'ventanaId', 'code', 'isActive'];
+    const body = { ...req.body };
+    
+    for (const field of restrictedFields) {
+      if (body[field] !== undefined) {
+        return res.status(403).json({
+          success: false,
+          message: `No puedes modificar el campo ${field}. Contacta a un administrador.`,
+        });
+      }
+    }
+
+    // Actualizar usando el servicio de usuarios con el ID del usuario autenticado
+    const user = await UserService.update(actorId, body, actor);
+
+    logger.info({
+      layer: 'controller',
+      action: 'USER_UPDATE_SELF',
+      userId: actorId,
+      payload: { changes: Object.keys(body) },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId: actorId,
+        action: ActivityType.USER_UPDATE,
+        targetType: 'USER',
+        targetId: actorId,
+        details: { fields: Object.keys(body), selfUpdate: true },
+      },
+    }).catch(err => {
+      logger.error({
+        layer: 'controller',
+        action: 'ACTIVITY_LOG_FAIL',
+        userId: actorId,
+        requestId,
+        payload: { error: err.message },
+      });
+    });
+
+    return success(res, user);
   },
 };
