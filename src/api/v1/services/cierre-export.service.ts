@@ -336,7 +336,8 @@ export class CierreExportService {
       const cell = row.getCell(i);
       if (typeof cell.value === 'number') {
         // Todas las columnas numéricas son monetarias
-        cell.numFmt = '₡#,##0.00';
+        // Formato: positivos con ₡, negativos con -₡
+        cell.numFmt = '₡#,##0.00;-₡#,##0.00';
       }
     }
   }
@@ -398,7 +399,8 @@ export class CierreExportService {
     row.eachCell({ includeEmpty: false }, (cell) => {
       if (typeof cell.value === 'number') {
         // Todas las columnas numéricas son monetarias
-        cell.numFmt = '₡#,##0.00';
+        // Formato: positivos con ₡, negativos con -₡
+        cell.numFmt = '₡#,##0.00;-₡#,##0.00';
       }
     });
   }

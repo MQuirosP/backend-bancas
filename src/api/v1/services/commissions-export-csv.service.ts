@@ -286,6 +286,10 @@ export class CommissionsExportCsvService {
    * Formatea número como moneda (sin símbolo)
    */
   private static formatCurrency(value: number): string {
+    // Asegurar que los números negativos muestren el símbolo -
+    if (value < 0) {
+      return `-${Math.abs(value).toFixed(2)}`;
+    }
     return value.toFixed(2);
   }
 

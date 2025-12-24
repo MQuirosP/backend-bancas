@@ -529,7 +529,8 @@ export class CierreService {
   private static rowToMetrics(
     row: CierreAggregateRow | VendedorAggregateRow
   ): CeldaMetrics {
-    const netoDespuesComision = row.totalVendida - row.comisionTotal;
+    // Neto después de comisión = Ventas - Premios - Comisiones
+    const netoDespuesComision = row.totalVendida - row.ganado - row.comisionTotal;
 
     return {
       totalVendida: row.totalVendida,
