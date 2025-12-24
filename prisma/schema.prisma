@@ -32,6 +32,8 @@ model Banca {
   restrictionRules     RestrictionRule[]
   ventanas             Ventana[]
   users                UserBanca[]
+  accountPayments      AccountPayment[]
+  accountStatements    AccountStatement[]
 }
 
 model Ventana {
@@ -90,31 +92,31 @@ model User {
   commissionPolicyJson Json? // Política de comisiones jerárquica
   settings             Json? // Configuraciones del usuario (print, theme, etc.)
 
-  activities               ActivityLog[]
-  refreshTokens            RefreshToken[]
-  restrictionRules         RestrictionRule[]
-  tickets                  Ticket[]               @relation("TicketVendedor")
-  ticketsCreated           Ticket[]               @relation("TicketCreatedBy")
-  ticketsPaid              Ticket[]               @relation("TicketPaidBy")
-  TicketPayment            TicketPayment[]
-  ventana                  Ventana?               @relation(fields: [ventanaId], references: [id])
-  multiplierOverrides      MultiplierOverride[]
-  savedReports             SavedReport[]
-  exportJobs               ExportJob[]
-  alerts                   Alert[]
-  apiKeys                  ApiKey[]
-  accountStatements        AccountStatement[]
-  accountPayments          AccountPayment[]
-  accountPaymentsPaid      AccountPayment[]       @relation("AccountPaymentPaidBy")
-  accountPaymentsReversed  AccountPayment[]       @relation("AccountPaymentReversedBy")
-  bancas                   UserBanca[]
-  sorteosAutoConfigUpdated SorteosAutoConfig[]    @relation("SorteosAutoConfigUpdatedBy")
-  accountStatementsSettled AccountStatement[]     @relation("AccountStatementSettledBy")
+  activities                              ActivityLog[]
+  refreshTokens                           RefreshToken[]
+  restrictionRules                        RestrictionRule[]
+  tickets                                 Ticket[]                           @relation("TicketVendedor")
+  ticketsCreated                          Ticket[]                           @relation("TicketCreatedBy")
+  ticketsPaid                             Ticket[]                           @relation("TicketPaidBy")
+  TicketPayment                           TicketPayment[]
+  ventana                                 Ventana?                           @relation(fields: [ventanaId], references: [id])
+  multiplierOverrides                     MultiplierOverride[]
+  savedReports                            SavedReport[]
+  exportJobs                              ExportJob[]
+  alerts                                  Alert[]
+  apiKeys                                 ApiKey[]
+  accountStatements                       AccountStatement[]
+  accountPayments                         AccountPayment[]
+  accountPaymentsPaid                     AccountPayment[]                   @relation("AccountPaymentPaidBy")
+  accountPaymentsReversed                 AccountPayment[]                   @relation("AccountPaymentReversedBy")
+  bancas                                  UserBanca[]
+  sorteosAutoConfigUpdated                SorteosAutoConfig[]                @relation("SorteosAutoConfigUpdatedBy")
+  accountStatementsSettled                AccountStatement[]                 @relation("AccountStatementSettledBy")
   accountStatementSettlementConfigUpdated AccountStatementSettlementConfig[] @relation("AccountStatementSettlementConfigUpdatedBy")
-  exclusionsAsVentana      SorteoListaExclusion[] @relation("ExclusionVentana")
-  exclusionsAsVendedor     SorteoListaExclusion[] @relation("ExclusionVendedor")
-  exclusionsCreated        SorteoListaExclusion[] @relation("ExclusionExcludedBy")
-  jugadasExcluded          Jugada[]               @relation("JugadaExcludedBy")
+  exclusionsAsVentana                     SorteoListaExclusion[]             @relation("ExclusionVentana")
+  exclusionsAsVendedor                    SorteoListaExclusion[]             @relation("ExclusionVendedor")
+  exclusionsCreated                       SorteoListaExclusion[]             @relation("ExclusionExcludedBy")
+  jugadasExcluded                         Jugada[]                           @relation("JugadaExcludedBy")
 
   @@index([code])
   @@index([email])
@@ -638,6 +640,9 @@ model AccountStatement {
   id         String   @id @default(uuid()) @db.Uuid
   date       DateTime @db.Date
   month      String   @db.VarChar(7) // YYYY-MM
+  // ✅ CRÍTICO: bancaId, ventanaId y vendedorId deben persistirse directamente (no inferirse)
+  // para evitar problemas cuando un vendedor cambia de ventana o una ventana cambia de banca
+  bancaId    String?  @db.Uuid
   ventanaId  String?  @db.Uuid
   vendedorId String?  @db.Uuid
 
@@ -661,7 +666,7 @@ model AccountStatement {
 
   // ✅ NUEVO: Campos de auditoría para asentamiento
   settledAt DateTime? // Cuándo se asentó
-  settledBy String?    @db.Uuid // Quién lo asentó (userId o null para automático)
+  settledBy String?   @db.Uuid // Quién lo asentó (userId o null para automático)
 
   // Metadatos
   ticketCount Int @default(0)
@@ -671,15 +676,17 @@ model AccountStatement {
   updatedAt DateTime @updatedAt
 
   // Relaciones
-  ventana  Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
-  vendedor User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
-  payments AccountPayment[]
-  settledByUser User?      @relation("AccountStatementSettledBy", fields: [settledBy], references: [id])
+  banca          Banca?          @relation(fields: [bancaId], references: [id], onDelete: Cascade)
+  ventana        Ventana?        @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
+  vendedor       User?           @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
+  payments       AccountPayment[]
+  settledByUser  User?           @relation("AccountStatementSettledBy", fields: [settledBy], references: [id])
 
   @@unique([date, ventanaId], map: "account_statements_date_ventana_unique")
   @@unique([date, vendedorId], map: "account_statements_date_vendedor_unique")
   @@index([month])
   @@index([date])
+  @@index([bancaId])
   @@index([ventanaId])
   @@index([vendedorId])
   @@index([isSettled])
@@ -697,6 +704,9 @@ model AccountPayment {
   month String   @db.VarChar(7) // YYYY-MM
 
   // Relaciones
+  // ✅ CRÍTICO: bancaId y ventanaId deben persistirse directamente (no inferirse)
+  // para evitar problemas cuando un vendedor cambia de ventana o una ventana cambia de banca
+  bancaId    String? @db.Uuid
   ventanaId  String? @db.Uuid
   vendedorId String? @db.Uuid
 
@@ -725,6 +735,7 @@ model AccountPayment {
 
   // Relaciones
   accountStatement AccountStatement @relation(fields: [accountStatementId], references: [id], onDelete: Cascade)
+  banca            Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
   ventana          Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
   vendedor         User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
   paidBy           User             @relation("AccountPaymentPaidBy", fields: [paidById], references: [id])
@@ -733,6 +744,7 @@ model AccountPayment {
   @@index([accountStatementId])
   @@index([date])
   @@index([month])
+  @@index([bancaId])
   @@index([ventanaId])
   @@index([vendedorId])
   @@index([isReversed])
@@ -866,19 +878,19 @@ model SorteosAutoConfig {
 }
 
 model AccountStatementSettlementConfig {
-  id                    String    @id @default(uuid()) @db.Uuid
-  enabled               Boolean   @default(false)
-  settlementAgeDays     Int       @default(7) // Días de antigüedad mínima
-  cronSchedule          String?   @db.VarChar(50) // Ej: "0 3 * * *" (3:00 AM UTC)
-  batchSize             Int       @default(1000) // Máximo de statements por ejecución
-  lastExecution         DateTime?
-  lastSettledCount      Int?
-  lastSkippedCount      Int?
-  lastErrorCount        Int?
-  lastErrorMessage      String?   @db.Text
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  updatedBy             String?   @db.Uuid
+  id                String    @id @default(uuid()) @db.Uuid
+  enabled           Boolean   @default(false)
+  settlementAgeDays Int       @default(7) // Días de antigüedad mínima
+  cronSchedule      String?   @db.VarChar(50) // Ej: "0 3 * * *" (3:00 AM UTC)
+  batchSize         Int       @default(1000) // Máximo de statements por ejecución
+  lastExecution     DateTime?
+  lastSettledCount  Int?
+  lastSkippedCount  Int?
+  lastErrorCount    Int?
+  lastErrorMessage  String?   @db.Text
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  updatedBy         String?   @db.Uuid
 
   updatedByUser User? @relation("AccountStatementSettlementConfigUpdatedBy", fields: [updatedBy], references: [id])
 

@@ -12,6 +12,7 @@ export const AccountPaymentRepository = {
     month: string;
     ventanaId?: string;
     vendedorId?: string;
+    bancaId?: string; // ✅ NUEVO: bancaId para persistir directamente
     amount: number;
     type: "payment" | "collection";
     method: "cash" | "transfer" | "check" | "other";
@@ -21,8 +22,40 @@ export const AccountPaymentRepository = {
     paidById: string;
     paidByName: string;
   }) {
+    // ✅ CRÍTICO: Inferir ventanaId y bancaId si no están presentes
+    // Esto garantiza que siempre se persistan estos campos para evitar problemas
+    // cuando un vendedor cambia de ventana o una ventana cambia de banca
+    let finalVentanaId = data.ventanaId;
+    let finalBancaId = data.bancaId;
+
+    // Si falta ventanaId pero hay vendedorId, inferir desde el vendedor
+    if (!finalVentanaId && data.vendedorId) {
+      const vendedor = await prisma.user.findUnique({
+        where: { id: data.vendedorId },
+        select: { ventanaId: true },
+      });
+      if (vendedor?.ventanaId) {
+        finalVentanaId = vendedor.ventanaId;
+      }
+    }
+
+    // Si falta bancaId pero hay ventanaId, inferir desde la ventana
+    if (!finalBancaId && finalVentanaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: finalVentanaId },
+        select: { bancaId: true },
+      });
+      if (ventana?.bancaId) {
+        finalBancaId = ventana.bancaId;
+      }
+    }
+
     return await prisma.accountPayment.create({
-      data,
+      data: {
+        ...data,
+        ventanaId: finalVentanaId,
+        bancaId: finalBancaId,
+      },
       include: {
         accountStatement: true,
         paidBy: {
@@ -325,11 +358,10 @@ export const AccountPaymentRepository = {
     };
 
     if (dimension === "banca") {
-      // ✅ NUEVO: Filtros para dimension='banca'
+      // ✅ CRÍTICO: Usar bancaId directamente (persistido) en lugar de JOIN con ventana
+      // Esto es mucho más eficiente y funciona correctamente con datos históricos
       if (bancaId) {
-        where.ventana = {
-          bancaId: bancaId,
-        };
+        where.bancaId = bancaId;
       }
       if (ventanaId) {
         where.ventanaId = ventanaId;
@@ -353,10 +385,9 @@ export const AccountPaymentRepository = {
     }
 
     if (bancaId && dimension !== "banca") {
+      // ✅ CRÍTICO: Usar bancaId directamente (persistido) en lugar de JOIN con ventana
       // Si bancaId está presente pero dimension no es 'banca', filtrar por banca también
-      where.ventana = {
-        bancaId: bancaId,
-      };
+      where.bancaId = bancaId;
     }
 
     const payments = await prisma.accountPayment.findMany({
@@ -368,12 +399,20 @@ export const AccountPaymentRepository = {
             name: true,
           },
         },
+        banca: {
+          // ✅ CRÍTICO: Incluir relación directa con Banca (persistida)
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
         ventana: {
           select: {
             name: true,
-            code: true, // ✅ NUEVO: Código de ventana
-            bancaId: true, // ✅ NUEVO: ID de banca
-            banca: { // ✅ NUEVO: Información de banca
+            code: true,
+            bancaId: true, // Mantener para compatibilidad
+            banca: { // Mantener para compatibilidad (fallback si bancaId no está persistido)
               select: {
                 id: true,
                 name: true,
@@ -425,9 +464,9 @@ export const AccountPaymentRepository = {
         paidByName: payment.paidBy?.name || payment.paidByName,
         createdAt: payment.createdAt.toISOString(),
         updatedAt: payment.updatedAt.toISOString(),
-        bancaId: (payment as any).ventana?.bancaId || null, // ✅ NUEVO: ID de banca
-        bancaName: (payment as any).ventana?.banca?.name || null, // ✅ NUEVO: Nombre de banca
-        bancaCode: (payment as any).ventana?.banca?.code || null, // ✅ NUEVO: Código de banca
+        bancaId: payment.bancaId || null, // ✅ CRÍTICO: Usar bancaId persistido directamente
+        bancaName: (payment as any).banca?.name || (payment as any).ventana?.banca?.name || null, // ✅ Priorizar banca directa, fallback a ventana.banca
+        bancaCode: (payment as any).banca?.code || (payment as any).ventana?.banca?.code || null, // ✅ Priorizar banca directa, fallback a ventana.banca
         ventanaId: payment.ventanaId,
         ventanaName: (payment as any).ventana?.name || null,
         ventanaCode: (payment as any).ventana?.code || null, // ✅ NUEVO: Código de ventana

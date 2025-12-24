@@ -313,54 +313,28 @@ export async function calculateDayStatement(
         };
     }
 
-    // CRITICAL: Determinar el tipo de statement que necesitamos antes de buscar/crear
-    // El constraint requiere que solo uno de ventanaId o vendedorId sea no-null
-    // Además, hay constraints únicos: (date, ventanaId) y (date, vendedorId)
-    // Convertir null a undefined para compatibilidad con TypeScript
-    const targetVentanaId = vendedorId ? undefined : (ventanaId ?? undefined);
-    const targetVendedorId = vendedorId ?? undefined;
+    // ✅ ACTUALIZADO: Permitir ambos campos cuando hay vendedorId
+    // El constraint _one_relation_check ha sido eliminado
+    // findOrCreate ahora maneja la inferencia de ventanaId y bancaId automáticamente
+    let targetBancaId = bancaId ?? undefined;
+    let targetVentanaId = ventanaId ?? undefined;
+    let targetVendedorId = vendedorId ?? undefined;
 
     // Crear o actualizar estado de cuenta primero con los valores correctos
-    // findOrCreate ya maneja correctamente la búsqueda según ventanaId o vendedorId
     // ✅ Calcular month desde la fecha si no está disponible
+    // ✅ findOrCreate ahora infiere automáticamente ventanaId y bancaId cuando es necesario
     const monthForStatement = month || `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
     const statement = await AccountStatementRepository.findOrCreate({
         date,
         month: monthForStatement,
+        bancaId: targetBancaId,
         ventanaId: targetVentanaId,
         vendedorId: targetVendedorId,
     });
 
-    // CRITICAL: Verificar que el statement encontrado tiene el tipo correcto
-    // No podemos cambiar el tipo de un statement existente porque violaría los constraints únicos
-    const statementIsVentana = statement.ventanaId !== null && statement.vendedorId === null;
-    const statementIsVendedor = statement.vendedorId !== null && statement.ventanaId === null;
-    const needsVentana = targetVentanaId !== undefined;
-    const needsVendedor = targetVendedorId !== undefined;
-
-    // Si el tipo no coincide (caso edge: statement corrupto), buscar el correcto
-    let finalStatement = statement;
-    if ((needsVentana && !statementIsVentana) || (needsVendedor && !statementIsVendedor)) {
-        // Buscar específicamente el statement correcto usando findByDate
-        const correctStatement = await AccountStatementRepository.findByDate(date, {
-            ventanaId: targetVentanaId,
-            vendedorId: targetVendedorId,
-        });
-
-        if (correctStatement) {
-            finalStatement = correctStatement;
-        } else {
-            // Si no existe, crear uno nuevo (findOrCreate debería haberlo hecho, pero por seguridad)
-            // ✅ Calcular month desde la fecha si no está disponible
-            const monthForStatement = month || `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
-            finalStatement = await AccountStatementRepository.findOrCreate({
-                date,
-                month: monthForStatement,
-                ventanaId: targetVentanaId,
-                vendedorId: targetVendedorId,
-            });
-        }
-    }
+    // ✅ ACTUALIZADO: Ya no necesitamos verificar el tipo porque ambos campos pueden estar presentes
+    // findOrCreate ya maneja correctamente la búsqueda y creación
+    const finalStatement = statement;
 
     // Obtener total pagado y cobrado después de crear el statement
     const totalPaid = await AccountPaymentRepository.getTotalPaid(finalStatement.id);
@@ -1014,11 +988,12 @@ export async function getStatementDirect(
                     }
                 });
                 // Obtener desglose por sorteo usando clave según dimensión
+                // ✅ CRÍTICO: Cuando hay bancaId en el query, usar directamente ese bancaId
                 const sorteoKey = dimension === "banca"
-                    ? `${date}_${entry.bancaId || 'null'}`
+                    ? `${date}_${bancaId || entry.bancaId || 'null'}`
                     : dimension === "ventana"
-                        ? `${date}_${entry.ventanaId}`
-                        : `${date}_${entry.vendedorId || 'null'}`;
+                        ? `${date}_${ventanaId || entry.ventanaId}`
+                        : `${date}_${vendedorId || entry.vendedorId || 'null'}`;
                 bySorteo = sorteoBreakdownBatch.get(sorteoKey) || [];
 
                 // ✅ NOTA: sorteoAccumulated se calculará después en intercalateSorteosAndMovements
@@ -1029,10 +1004,10 @@ export async function getStatementDirect(
             // Esto evita la multiplicación por número de jugadas que ocurría en el JOIN
             const totalPayouts = bySorteo.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
 
-            // ✅ CRÍTICO: Usar comisión correcta según filtros del cliente
-            // - Si hay vendedorId específico → usar commissionVendedor
-            // - Si NO hay vendedorId → usar commissionListero (por defecto)
-            const commissionToUse = vendedorId ? entry.commissionVendedor : entry.commissionListero;
+            // ✅ CRÍTICO: Usar comisión correcta según dimensión
+            // - Si dimension='vendedor' → usar commissionVendedor
+            // - Si dimension='banca' o 'ventana' → usar commissionListero (siempre)
+            const commissionToUse = dimension === "vendedor" ? entry.commissionVendedor : entry.commissionListero;
 
             // Calcular totales de pagos y cobros del DÍA (para el statement diario)
             const totalPaid = movements
