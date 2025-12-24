@@ -93,10 +93,50 @@ export interface VendedorMetrics extends CeldaMetrics {
 
 /**
  * Datos retornados por el servicio weekly (solo datos, sin meta)
+ * ✅ NUEVA ESTRUCTURA: Agrupado por Lotería → Sorteo → Tipo → Banda
  */
 export interface CierreWeeklyData {
+  loterias: CierreLoteriaGroup[];
   totals: CeldaMetrics;
-  bands: Record<string, BandaMetrics>; // Dinámico: key = banda (80, 85, 90, 92, 200, etc.)
+}
+
+/**
+ * Grupo de datos por Lotería (Nivel 1)
+ */
+export interface CierreLoteriaGroup {
+  loteria: {
+    id: string;
+    name: string;
+  };
+  sorteos: CierreSorteoGroup[];
+  subtotal: CeldaMetrics;
+}
+
+/**
+ * Grupo de datos por Sorteo (Nivel 2)
+ * ✅ ACTUALIZADO: Bandas directamente (suma de NUMERO + REVENTADO)
+ */
+export interface CierreSorteoGroup {
+  sorteo: {
+    id: string;
+    turno: string; // Ej: "19:30"
+    scheduledAt?: string; // ISO date string (opcional)
+  };
+  bands: Record<string, CierreBandData>; // Claves: "80", "85", "90", "92", "200", etc. (suma de NUMERO + REVENTADO)
+  subtotal: CeldaMetrics;
+}
+
+/**
+ * Datos por banda (Nivel 4)
+ */
+export interface CierreBandData {
+  band: number; // 80, 85, 90, 92, 200, etc.
+  totalVendida: number;
+  ganado: number;
+  comisionTotal: number;
+  netoDespuesComision: number;
+  ticketsCount: number;
+  refuerzos?: number;
 }
 
 /**
@@ -134,6 +174,7 @@ export interface AnomalyExample {
 export interface CierreAnomalies {
   outOfBandCount: number;
   examples: AnomalyExample[];
+  orphanedDataCount?: number; // ✅ NUEVO: Datos huérfanos (discrepancia entre totals y Σ(loterias[].subtotal))
 }
 
 /**
@@ -189,7 +230,8 @@ export interface CierreExportQuery extends CierreWeeklyQuery {
 export type JugadaTipo = 'NUMERO' | 'REVENTADO';
 
 /**
- * Datos agregados por banda, lotería, fecha, turno y tipo (query raw)
+ * Datos agregados por banda, lotería, sorteo, tipo (query raw)
+ * ✅ NUEVO: Incluye sorteoId y scheduledAt para agrupar por sorteo
  */
 export interface CierreAggregateRow {
   banda: number; // Banda heredada (80, 85, 90, 92) - reventados heredan banda del número asociado
@@ -197,7 +239,9 @@ export interface CierreAggregateRow {
   fecha: string; // YYYY-MM-DD
   loteriaId: string;
   loteriaNombre: string;
+  sorteoId: string; // ✅ NUEVO: ID del sorteo
   turno: string; // "19:30"
+  scheduledAt: Date; // ✅ NUEVO: Fecha/hora programada del sorteo
   totalVendida: number;
   ganado: number;
   comisionTotal: number;

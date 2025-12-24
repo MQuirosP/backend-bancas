@@ -8,6 +8,9 @@ import {
   TurnoAgrupado,
   VendedorMetrics,
   LoteriaType,
+  CierreLoteriaGroup,
+  CierreSorteoGroup,
+  CierreBandData,
 } from '../types/cierre.types';
 
 /**
@@ -41,9 +44,8 @@ export class CierreExportService {
     // Para vistas weekly: generar todas las pestañas automáticamente
     const weeklyData = data as CierreWeeklyData;
 
-    // Detectar bandas presentes en los datos
-    const bandasPresentes = Object.keys(weeklyData.bands)
-      .map((k) => Number(k))
+    // ✅ NUEVO: Detectar bandas presentes en los datos (extraer de la nueva estructura)
+    const bandasPresentes = this.extractBandsFromLoterias(weeklyData.loterias)
       .sort((a, b) => a - b);
 
     // Crear una pestaña por cada banda presente
@@ -80,26 +82,24 @@ export class CierreExportService {
 
     this.styleHeaderRow(headerRow);
 
-    // Ordenar bandas
-    const bandaKeys = Object.keys(data.bands)
-      .map((k) => Number(k))
+    // ✅ NUEVO: Calcular totales por banda desde la nueva estructura
+    const totalsByBanda = this.calculateTotalsByBanda(data.loterias);
+    const bandaKeys = Array.from(totalsByBanda.keys())
       .sort((a, b) => a - b);
 
     // Agregar fila por cada banda con sus totales
     for (const banda of bandaKeys) {
-      const bandaData = data.bands[String(banda)];
+      const bandaTotals = totalsByBanda.get(banda)!;
 
-      if (bandaData) {
-        const row = sheet.addRow([
-          `Banda ${banda}`,
-          bandaData.total.totalVendida,
-          bandaData.total.ganado,
-          bandaData.total.comisionTotal,
-          bandaData.total.netoDespuesComision,
-        ]);
+      const row = sheet.addRow([
+        `Banda ${banda}`,
+        bandaTotals.totalVendida,
+        bandaTotals.ganado,
+        bandaTotals.comisionTotal,
+        bandaTotals.netoDespuesComision,
+      ]);
 
-        this.styleTotalRow(row);
-      }
+      this.styleTotalRow(row);
     }
 
     // Fila final: totales globales
@@ -119,31 +119,20 @@ export class CierreExportService {
 
   /**
    * Agrega hoja para una banda específica
-   * Jerarquía: Día → Lotería → Turno
+   * ✅ NUEVO: Jerarquía: Lotería → Sorteo → Tipo (NUMERO/REVENTADO)
    */
   private static addBandSheet(
     workbook: ExcelJS.Workbook,
     data: CierreWeeklyData,
     banda: number
   ): void {
-    const bandaData = data.bands[String(banda)];
-
-    if (!bandaData) {
-      // Banda sin datos (no debería ocurrir porque solo creamos pestañas para bandas presentes)
-      const sheet = workbook.addWorksheet(`Banda ${banda}`);
-      sheet.addRow([`No hay datos para banda ${banda}`]);
-      return;
-    }
-
     const sheet = workbook.addWorksheet(`Banda ${banda}`);
     this.styleSheetHeader(sheet);
 
     // Encabezado
     const headerRow = sheet.addRow([
-      'Fecha',
       'Lotería',
-      'Turno',
-      'Tipo',
+      'Sorteo (Turno)',
       'Total Vendido',
       'Premios',
       'Comisión',
@@ -152,103 +141,144 @@ export class CierreExportService {
 
     this.styleHeaderRow(headerRow);
 
-    // Ordenar días cronológicamente
-    const fechas = Object.keys(bandaData.dias).sort();
-    const esMultiDia = fechas.length > 1;
+    let bandaTotal = this.createEmptyMetrics();
 
-    // Iterar por cada día
-    for (const fecha of fechas) {
-      const diaData = bandaData.dias[fecha];
+    // Iterar por cada lotería
+    for (const loteriaGroup of data.loterias) {
+      let loteriaSubtotal = this.createEmptyMetrics();
 
-      // Iterar por cada lotería del día
-      const loterias = Object.keys(diaData.loterias) as LoteriaType[];
-
-      for (const loteria of loterias) {
-        const loteriaData = diaData.loterias[loteria];
-        const turnos = Object.keys(loteriaData.turnos).sort();
-
-        // Iterar por cada turno (ahora agrupado)
-        for (const turnoKey of turnos) {
-          const turnoAgrupado = loteriaData.turnos[turnoKey];
-
-          // Agregar fila para NUMERO si existe
-          if (turnoAgrupado.NUMERO) {
-            const row = sheet.addRow([
-              fecha,
-              loteria,
-              turnoAgrupado.turno,
-              'NUMERO',
-              turnoAgrupado.NUMERO.totalVendida,
-              turnoAgrupado.NUMERO.ganado,
-              turnoAgrupado.NUMERO.comisionTotal,
-              turnoAgrupado.NUMERO.netoDespuesComision,
-            ]);
-            this.styleDataRow(row);
-          }
-
-          // Agregar fila para REVENTADO si existe
-          if (turnoAgrupado.REVENTADO) {
-            const row = sheet.addRow([
-              fecha,
-              loteria,
-              turnoAgrupado.turno,
-              'REVENTADO',
-              turnoAgrupado.REVENTADO.totalVendida,
-              turnoAgrupado.REVENTADO.ganado,
-              turnoAgrupado.REVENTADO.comisionTotal,
-              turnoAgrupado.REVENTADO.netoDespuesComision,
-            ]);
-            this.styleDataRow(row);
-          }
+      // Iterar por cada sorteo de la lotería
+      for (const sorteoGroup of loteriaGroup.sorteos) {
+        // ✅ NUEVO: Buscar la banda directamente (ya sumada NUMERO + REVENTADO)
+        const bandaData = sorteoGroup.bands[String(banda)];
+        
+        if (bandaData) {
+          const row = sheet.addRow([
+            loteriaGroup.loteria.name,
+            sorteoGroup.sorteo.turno,
+            bandaData.totalVendida,
+            bandaData.ganado,
+            bandaData.comisionTotal,
+            bandaData.netoDespuesComision,
+          ]);
+          this.styleDataRow(row);
+          this.accumulateMetrics(loteriaSubtotal, {
+            totalVendida: bandaData.totalVendida,
+            ganado: bandaData.ganado,
+            comisionTotal: bandaData.comisionTotal,
+            netoDespuesComision: bandaData.netoDespuesComision,
+            refuerzos: bandaData.refuerzos || 0,
+            ticketsCount: bandaData.ticketsCount,
+            jugadasCount: 0, // No disponible en CierreBandData
+          });
         }
-
-        // Subtotal por lotería
-        const subtotalRow = sheet.addRow([
-          fecha,
-          `SUBTOTAL ${loteria}`,
-          '',
-          '',
-          loteriaData.subtotal.totalVendida,
-          loteriaData.subtotal.ganado,
-          loteriaData.subtotal.comisionTotal,
-          loteriaData.subtotal.netoDespuesComision,
-        ]);
-
-        this.styleSubtotalRow(subtotalRow);
       }
 
-      // Total por día (solo si es multi-día)
-      if (esMultiDia) {
-        const totalDiaRow = sheet.addRow([
-          `TOTAL ${fecha}`,
+      // Subtotal por lotería (si hay datos)
+      if (loteriaSubtotal.totalVendida > 0) {
+        const subtotalRow = sheet.addRow([
+          `SUBTOTAL ${loteriaGroup.loteria.name}`,
           '',
-          '',
-          '',
-          diaData.totalDia.totalVendida,
-          diaData.totalDia.ganado,
-          diaData.totalDia.comisionTotal,
-          diaData.totalDia.netoDespuesComision,
+          loteriaSubtotal.totalVendida,
+          loteriaSubtotal.ganado,
+          loteriaSubtotal.comisionTotal,
+          loteriaSubtotal.netoDespuesComision,
         ]);
-
-        this.styleTotalRow(totalDiaRow);
+        this.styleSubtotalRow(subtotalRow);
+        this.accumulateMetrics(bandaTotal, loteriaSubtotal);
       }
     }
 
     // Total final de la banda
-    const totalBandaRow = sheet.addRow([
-      'TOTAL BANDA',
-      '',
-      '',
-      '',
-      bandaData.total.totalVendida,
-      bandaData.total.ganado,
-      bandaData.total.comisionTotal,
-      bandaData.total.netoDespuesComision,
-    ]);
-
-    this.styleGrandTotalRow(totalBandaRow);
+    if (bandaTotal.totalVendida > 0) {
+      const totalBandaRow = sheet.addRow([
+        'TOTAL BANDA',
+        '',
+        bandaTotal.totalVendida,
+        bandaTotal.ganado,
+        bandaTotal.comisionTotal,
+        bandaTotal.netoDespuesComision,
+      ]);
+      this.styleGrandTotalRow(totalBandaRow);
+    } else {
+      sheet.addRow([`No hay datos para banda ${banda}`]);
+    }
 
     this.autoSizeColumns(sheet);
+  }
+
+  /**
+   * ✅ Helper: Extrae todas las bandas únicas de la estructura de loterías
+   */
+  private static extractBandsFromLoterias(loterias: CierreLoteriaGroup[]): number[] {
+    const bandsSet = new Set<number>();
+
+    for (const loteriaGroup of loterias) {
+      for (const sorteoGroup of loteriaGroup.sorteos) {
+        // ✅ NUEVO: Extraer bandas directamente (ya sumadas NUMERO + REVENTADO)
+        for (const bandaKey of Object.keys(sorteoGroup.bands)) {
+          bandsSet.add(Number(bandaKey));
+        }
+      }
+    }
+
+    return Array.from(bandsSet);
+  }
+
+  /**
+   * ✅ Helper: Calcula totales por banda desde la estructura de loterías
+   */
+  private static calculateTotalsByBanda(loterias: CierreLoteriaGroup[]): Map<number, CeldaMetrics> {
+    const totalsByBanda = new Map<number, CeldaMetrics>();
+
+    for (const loteriaGroup of loterias) {
+      for (const sorteoGroup of loteriaGroup.sorteos) {
+        // ✅ NUEVO: Procesar bandas directamente (ya sumadas NUMERO + REVENTADO)
+        for (const [bandaKey, bandaData] of Object.entries(sorteoGroup.bands)) {
+          const banda = Number(bandaKey);
+          if (!totalsByBanda.has(banda)) {
+            totalsByBanda.set(banda, this.createEmptyMetrics());
+          }
+          const total = totalsByBanda.get(banda)!;
+          total.totalVendida += bandaData.totalVendida;
+          total.ganado += bandaData.ganado;
+          total.comisionTotal += bandaData.comisionTotal;
+          total.netoDespuesComision += bandaData.netoDespuesComision;
+          total.ticketsCount += bandaData.ticketsCount;
+          total.refuerzos = (total.refuerzos || 0) + (bandaData.refuerzos || 0);
+        }
+      }
+    }
+
+    return totalsByBanda;
+  }
+
+  /**
+   * ✅ Helper: Crea métricas vacías
+   */
+  private static createEmptyMetrics(): CeldaMetrics {
+    return {
+      totalVendida: 0,
+      ganado: 0,
+      comisionTotal: 0,
+      netoDespuesComision: 0,
+      refuerzos: 0,
+      ticketsCount: 0,
+      jugadasCount: 0,
+    };
+  }
+
+  /**
+   * ✅ Helper: Acumula métricas
+   */
+  private static accumulateMetrics(target: CeldaMetrics, source: CeldaMetrics): void {
+    target.totalVendida += source.totalVendida;
+    target.ganado += source.ganado;
+    target.comisionTotal += source.comisionTotal;
+    target.netoDespuesComision += source.netoDespuesComision;
+    target.refuerzos += source.refuerzos;
+    target.ticketsCount += source.ticketsCount;
+    target.jugadasCount += source.jugadasCount;
   }
 
   /**
@@ -330,9 +360,9 @@ export class CierreExportService {
   private static styleDataRow(row: ExcelJS.Row): void {
     row.alignment = { horizontal: 'left', vertical: 'middle' };
 
-    // Formato de moneda para columnas numéricas (columnas 5-8)
-    // Columnas: Fecha, Lotería, Turno, Tipo, [Total Vendido, Premios, Comisión, Neto]
-    for (let i = 5; i <= 8; i++) {
+    // Formato de moneda para columnas numéricas (columnas 3-6)
+    // ✅ ACTUALIZADO: Columnas: Lotería, Turno, [Total Vendido, Premios, Comisión, Neto]
+    for (let i = 3; i <= 6; i++) {
       const cell = row.getCell(i);
       if (typeof cell.value === 'number') {
         // Todas las columnas numéricas son monetarias
