@@ -9,21 +9,58 @@ export const AccountStatementRepository = {
   async findOrCreate(data: {
     date: Date;
     month: string;
+    bancaId?: string;
     ventanaId?: string;
     vendedorId?: string;
   }) {
-    const where: Prisma.AccountStatementWhereInput = {};
+    // ✅ CRÍTICO: Inferir bancaId y ventanaId si no están presentes
+    // Esto garantiza que siempre se persistan estos campos para evitar problemas
+    // cuando un vendedor cambia de ventana o una ventana cambia de banca
+    let finalVentanaId = data.ventanaId;
+    let finalBancaId = data.bancaId;
 
-    if (data.ventanaId) {
-      where.date = data.date;
-      where.ventanaId = data.ventanaId;
-      where.vendedorId = null;
-    } else if (data.vendedorId) {
-      where.date = data.date;
+    // Si falta ventanaId pero hay vendedorId, inferir desde el vendedor
+    if (!finalVentanaId && data.vendedorId) {
+      const vendedor = await prisma.user.findUnique({
+        where: { id: data.vendedorId },
+        select: { ventanaId: true },
+      });
+      if (vendedor?.ventanaId) {
+        finalVentanaId = vendedor.ventanaId;
+      }
+    }
+
+    // Si falta bancaId pero hay ventanaId, inferir desde la ventana
+    if (!finalBancaId && finalVentanaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: finalVentanaId },
+        select: { bancaId: true },
+      });
+      if (ventana?.bancaId) {
+        finalBancaId = ventana.bancaId;
+      }
+    }
+
+    const where: Prisma.AccountStatementWhereInput = {
+      date: data.date,
+    };
+
+    // ✅ ACTUALIZADO: Permitir búsqueda con ambos campos presentes
+    // El constraint _one_relation_check ha sido eliminado
+    if (data.vendedorId) {
+      // Si hay vendedorId, buscar por vendedorId (con o sin ventanaId)
+      // Los constraints únicos parciales protegen la unicidad por vendedor
       where.vendedorId = data.vendedorId;
-      where.ventanaId = null;
+      // Si también hay ventanaId, incluirlo en la búsqueda para mayor precisión
+      if (finalVentanaId) {
+        where.ventanaId = finalVentanaId;
+      }
+    } else if (finalVentanaId) {
+      // Si solo hay ventanaId (sin vendedorId), buscar statement consolidado de ventana
+      where.ventanaId = finalVentanaId;
+      where.vendedorId = null; // Statement consolidado de ventana
     } else {
-      where.date = data.date;
+      // Sin ninguno, buscar statement general (caso raro, pero permitido)
       where.ventanaId = null;
       where.vendedorId = null;
     }
@@ -33,14 +70,42 @@ export const AccountStatementRepository = {
     });
 
     if (existing) {
+      // ✅ CRÍTICO: Si el statement existe pero le faltan ventanaId o bancaId, actualizarlo
+      // Esto es importante cuando se crea un pago/cobro y el statement ya existe pero
+      // fue creado antes de que implementáramos la persistencia de estos campos
+      let needsUpdate = false;
+      const updateData: { ventanaId?: string | null; bancaId?: string | null } = {};
+
+      // Si falta ventanaId pero debería tenerlo
+      if (!existing.ventanaId && finalVentanaId) {
+        updateData.ventanaId = finalVentanaId;
+        needsUpdate = true;
+      }
+
+      // Si falta bancaId pero debería tenerlo
+      if (!existing.bancaId && finalBancaId) {
+        updateData.bancaId = finalBancaId;
+        needsUpdate = true;
+      }
+
+      // Actualizar si es necesario
+      if (needsUpdate) {
+        return await prisma.accountStatement.update({
+          where: { id: existing.id },
+          data: updateData,
+        });
+      }
+
       return existing;
     }
 
+    // ✅ ACTUALIZADO: Crear con ambos campos si están presentes, incluyendo bancaId
     return await prisma.accountStatement.create({
       data: {
         date: data.date,
         month: data.month,
-        ventanaId: data.ventanaId ?? null,
+        bancaId: finalBancaId ?? null,
+        ventanaId: finalVentanaId ?? null,
         vendedorId: data.vendedorId ?? null,
       },
     });
@@ -90,14 +155,18 @@ export const AccountStatementRepository = {
       month,
     };
 
-    // ✅ CRÍTICO: Asegurar que cuando se busca por ventanaId, vendedorId es null, y viceversa
-    // Esto es necesario porque el constraint requiere que solo uno de los dos sea no-null
-    if (filters.ventanaId) {
-      where.ventanaId = filters.ventanaId;
-      where.vendedorId = null; // ✅ Asegurar que vendedorId es null para statements de ventana
-    } else if (filters.vendedorId) {
+    // ✅ ACTUALIZADO: Permitir búsqueda con ambos campos presentes
+    // El constraint _one_relation_check ha sido eliminado
+    if (filters.vendedorId) {
+      // Si hay vendedorId, buscar por vendedorId (puede tener o no ventanaId)
       where.vendedorId = filters.vendedorId;
-      where.ventanaId = null; // ✅ Asegurar que ventanaId es null para statements de vendedor
+      if (filters.ventanaId) {
+        where.ventanaId = filters.ventanaId;
+      }
+    } else if (filters.ventanaId) {
+      // Si solo hay ventanaId, buscar statements consolidados de ventana
+      where.ventanaId = filters.ventanaId;
+      // No forzar vendedorId=null, permitir ambos casos
     }
 
     return await prisma.accountStatement.findMany({
@@ -179,13 +248,15 @@ export const AccountStatementRepository = {
       date,
     };
 
-    // CRITICAL: El constraint requiere que solo uno de ventanaId o vendedorId sea no-null
-    if (filters.ventanaId) {
-      where.ventanaId = filters.ventanaId;
-      where.vendedorId = null; // Asegurar que vendedorId es null para statements de ventana
-    } else if (filters.vendedorId) {
+    // ✅ ACTUALIZADO: Permitir búsqueda con ambos campos presentes
+    // El constraint _one_relation_check ha sido eliminado
+    if (filters.vendedorId) {
       where.vendedorId = filters.vendedorId;
-      where.ventanaId = null; // Asegurar que ventanaId es null para statements de vendedor
+      if (filters.ventanaId) {
+        where.ventanaId = filters.ventanaId;
+      }
+    } else if (filters.ventanaId) {
+      where.ventanaId = filters.ventanaId;
     }
     // ✅ FIX: Si no se especifica ninguno, NO forzar ventanaId/vendedorId a null
     // Dejar que la query encuentre cualquier statement para esa fecha

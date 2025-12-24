@@ -243,10 +243,8 @@ export const AccountsController = {
       if (!ventanaId && !vendedorId) {
         throw new AppError("Debe proporcionar ventanaId o vendedorId", 400, "MISSING_DIMENSION");
       }
-      // Si ambos están presentes, rechazar
-      if (ventanaId && vendedorId) {
-        throw new AppError("No se pueden proporcionar ventanaId y vendedorId al mismo tiempo", 400, "INVALID_DIMENSION");
-      }
+      // ✅ ACTUALIZADO: Permitir que ambos estén presentes (ventanaId se inferirá/persistirá cuando hay vendedorId)
+      // El constraint _one_relation_check ha sido eliminado
     }
 
     // Validar que al menos uno de los dos esté presente después del procesamiento

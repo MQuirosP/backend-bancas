@@ -78,26 +78,9 @@ export const CreatePaymentBodySchema = z
     idempotencyKey: z.string().min(8, "idempotencyKey debe tener al menos 8 caracteres").max(100, "idempotencyKey máximo 100 caracteres").optional().nullable(),
   })
   .strict()
-  .refine(
-    (data) => {
-      // Permitir que ambos sean null/undefined (el controller manejará según el rol)
-      // Solo rechazar si ambos están presentes con valores válidos
-      const hasVentanaId = data.ventanaId && data.ventanaId !== null && data.ventanaId !== undefined;
-      const hasVendedorId = data.vendedorId && data.vendedorId !== null && data.vendedorId !== undefined;
-      
-      // Si ambos están presentes, rechazar
-      if (hasVentanaId && hasVendedorId) {
-        return false;
-      }
-      
-      // Permitir cualquier otra combinación (ambos null, uno presente, etc.)
-      return true;
-    },
-    {
-      message: "No se pueden proporcionar ventanaId y vendedorId al mismo tiempo",
-      path: ["ventanaId", "vendedorId"],
-    }
-  );
+  // ✅ ACTUALIZADO: Permitir que ambos campos estén presentes simultáneamente
+  // Cuando hay vendedorId, también se persistirá ventanaId para mantener integridad histórica
+  // El constraint _one_relation_check ha sido eliminado para permitir esta flexibilidad
 
 /**
  * Schema para query parameters de GET /accounts/payment-history

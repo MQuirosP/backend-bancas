@@ -36,16 +36,45 @@ export async function registerPayment(data: {
         }
     }
 
+    // ✅ CRÍTICO: Inferir ventanaId desde vendedorId si no está presente
+    // y bancaId desde ventanaId para garantizar que siempre se persistan
+    // Esto debe hacerse ANTES de crear/buscar el AccountStatement para asegurar
+    // que el statement también tenga los campos correctos
+    let finalVentanaId = data.ventanaId;
+    let finalBancaId: string | undefined;
+
+    if (!finalVentanaId && data.vendedorId) {
+        const vendedor = await prisma.user.findUnique({
+            where: { id: data.vendedorId },
+            select: { ventanaId: true },
+        });
+        if (vendedor?.ventanaId) {
+            finalVentanaId = vendedor.ventanaId;
+        }
+    }
+
+    if (finalVentanaId) {
+        const ventana = await prisma.ventana.findUnique({
+            where: { id: finalVentanaId },
+            select: { bancaId: true },
+        });
+        if (ventana?.bancaId) {
+            finalBancaId = ventana.bancaId;
+        }
+    }
+
     // ✅ OPTIMIZACIÓN CRÍTICA: En lugar de recalcular todo el día con calculateDayStatement (muy costoso),
     // solo obtenemos o creamos el statement y validamos usando los valores ya guardados.
     // Esto reduce el tiempo de respuesta de ~12 segundos a menos de 1 segundo.
-    const dimension: "ventana" | "vendedor" = data.ventanaId ? "ventana" : "vendedor";
+    const dimension: "ventana" | "vendedor" = finalVentanaId ? "ventana" : "vendedor";
 
-    // Obtener o crear el statement (sin recalcular todo)
+    // ✅ CRÍTICO: Obtener o crear el statement con bancaId, ventanaId y vendedorId correctos
+    // findOrCreate ahora actualizará el statement existente si le faltan campos
     const statement = await AccountStatementRepository.findOrCreate({
         date: paymentDate,
         month,
-        ventanaId: data.ventanaId ?? undefined,
+        bancaId: finalBancaId,
+        ventanaId: finalVentanaId ?? undefined,
         vendedorId: data.vendedorId ?? undefined,
     });
 
@@ -82,13 +111,16 @@ export async function registerPayment(data: {
         }
     }
 
-    // Crear pago
+    // ✅ CRÍTICO: Crear pago con ventanaId, vendedorId y bancaId correctos
+    // El repository también inferirá si es necesario, pero aquí ya los tenemos correctos
+    // de la inferencia previa que se hizo para el AccountStatement
     const payment = await AccountPaymentRepository.create({
         accountStatementId: statement.id,
         date: paymentDate,
         month,
-        ventanaId: data.ventanaId,
+        ventanaId: finalVentanaId,
         vendedorId: data.vendedorId,
+        bancaId: finalBancaId,
         amount: data.amount,
         type: data.type,
         method: data.method,
