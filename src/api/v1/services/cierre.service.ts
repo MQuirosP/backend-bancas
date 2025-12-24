@@ -13,6 +13,9 @@ import {
   CierreAggregateRow,
   VendedorAggregateRow,
   LoteriaType,
+  CierreLoteriaGroup,
+  CierreSorteoGroup,
+  CierreBandData,
 } from '../types/cierre.types';
 import { CierreMetaExtras, BandsUsedMetadata } from '../types/cierre.types';
 import { createHash } from 'crypto';
@@ -39,20 +42,25 @@ export class CierreService {
     const rawData = await this.executeWeeklyAggregation(filters);
     queryCount += 1;
 
-    // Transformar datos en estructura jerárquica
-    const { totals, bands } = this.transformWeeklyData(rawData);
+    // Transformar datos en estructura jerárquica (Lotería → Sorteo → Tipo → Banda)
+    const { loterias, totals, orphanedDataCount } = this.transformWeeklyDataByLoteriaSorteo(rawData);
 
     // Calcular anomalías (jugadas fuera de banda)
     const anomalies = await computeAnomalies(filters);
     queryCount += 2; // count + sample
+
+    // Agregar orphanedDataCount a las anomalías si existe
+    if (orphanedDataCount !== undefined && orphanedDataCount > 0) {
+      anomalies.orphanedDataCount = orphanedDataCount;
+    }
 
     // Calcular bandsUsed y configHash
     const bandsUsed = computeBandsUsedFromWeekly(rawData);
     const configHash = hashConfig(bandsUsed);
 
     return {
+      loterias,
       totals,
-      bands,
       _performance: {
         queryExecutionTime: Date.now() - startTime,
         totalQueries: queryCount,
@@ -136,6 +144,9 @@ export class CierreService {
           s."scheduledAt"     AS "scheduledAt",
           CASE
             -- Jugadas NUMERO: usar su multiplicador como banda
+            -- ✅ VALIDACIÓN DE RANGOS: Verifica que el multiplicador esté activo y aplicable al momento/ticket
+            -- - appliesToDate: Si está definido, el ticket debe haberse creado DESPUÉS de esa fecha
+            -- - appliesToSorteoId: Si está definido, debe coincidir exactamente con el sorteo del ticket
             WHEN j.type = 'NUMERO' AND EXISTS (
               SELECT 1 FROM "LoteriaMultiplier" lm
               WHERE lm."loteriaId" = t."loteriaId"
@@ -179,7 +190,9 @@ export class CierreService {
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'YYYY-MM-DD') as fecha,
         l.id as "loteriaId",
         l.name as "loteriaNombre",
+        base."sorteoId" as "sorteoId", -- ✅ NUEVO: ID del sorteo para agrupar
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') as turno,
+        MIN(base."scheduledAt") as "scheduledAt", -- ✅ NUEVO: Fecha/hora programada del sorteo (MIN porque es el mismo sorteo)
         COALESCE(SUM(base.amount), 0)::FLOAT as "totalVendida",
         COALESCE(SUM(base.payout), 0)::FLOAT as ganado,
         COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT as "comisionTotal",
@@ -195,13 +208,13 @@ export class CierreService {
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'YYYY-MM-DD'),
         l.id,
         l.name,
+        base."sorteoId", -- ✅ NUEVO: Agrupar por sorteoId
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI')
       ORDER BY
-        CAST(base.banda AS INT) ASC,
-        fecha ASC,
         l.name ASC,
         turno ASC,
-        base.type ASC
+        base.type ASC,
+        CAST(base.banda AS INT) ASC
     `;
 
     const result = await prisma.$queryRaw<CierreAggregateRow[]>(query);
@@ -209,6 +222,7 @@ export class CierreService {
     return result.map((row: any) => ({
       ...row,
       banda: Number(row.banda),
+      scheduledAt: row.scheduledAt ? new Date(row.scheduledAt) : undefined,
     }));
   }
 
@@ -357,6 +371,180 @@ export class CierreService {
   }
 
   /**
+   * ✅ NUEVA: Transforma datos raw en estructura jerárquica weekly
+   * Organiza por: Lotería → Sorteo → Tipo → Banda
+   * Estructura solicitada por el frontend
+   */
+  private static transformWeeklyDataByLoteriaSorteo(rawData: CierreAggregateRow[]): {
+    loterias: CierreLoteriaGroup[];
+    totals: CeldaMetrics;
+    orphanedDataCount?: number;
+  } {
+    // ✅ NUEVA ESTRUCTURA: Mapas para agrupar datos (sin separar por tipo)
+    const loteriaMap = new Map<string, {
+      loteria: { id: string; name: string };
+      sorteos: Map<string, {
+        sorteo: { id: string; turno: string; scheduledAt?: string };
+        bands: Map<string, CierreBandData>; // ✅ Bands directamente (suma de NUMERO + REVENTADO)
+        subtotal: CeldaMetrics;
+      }>;
+      subtotal: CeldaMetrics;
+    }>();
+
+    const totals = this.createEmptyMetrics();
+
+    // Procesar cada fila (NUMERO y REVENTADO se suman en la misma banda)
+    for (const row of rawData) {
+      const loteriaId = row.loteriaId;
+      const sorteoId = row.sorteoId;
+      const bandaKey = String(row.banda);
+
+      // Obtener o crear lotería
+      if (!loteriaMap.has(loteriaId)) {
+        loteriaMap.set(loteriaId, {
+          loteria: {
+            id: loteriaId,
+            name: row.loteriaNombre,
+          },
+          sorteos: new Map(),
+          subtotal: this.createEmptyMetrics(),
+        });
+      }
+
+      const loteriaGroup = loteriaMap.get(loteriaId)!;
+
+      // Obtener o crear sorteo
+      if (!loteriaGroup.sorteos.has(sorteoId)) {
+        loteriaGroup.sorteos.set(sorteoId, {
+          sorteo: {
+            id: sorteoId,
+            turno: row.turno,
+            scheduledAt: row.scheduledAt?.toISOString(),
+          },
+          bands: new Map(), // ✅ Bands directamente (sin separar por tipo)
+          subtotal: this.createEmptyMetrics(),
+        });
+      }
+
+      const sorteoGroup = loteriaGroup.sorteos.get(sorteoId)!;
+      const sorteoBands = sorteoGroup.bands;
+
+      // ✅ SUMAR NUMERO + REVENTADO: Crear o actualizar banda (acumula ambos tipos)
+      const metrics = this.rowToMetrics(row);
+      if (!sorteoBands.has(bandaKey)) {
+        sorteoBands.set(bandaKey, {
+          band: row.banda,
+          totalVendida: metrics.totalVendida,
+          ganado: metrics.ganado,
+          comisionTotal: metrics.comisionTotal,
+          netoDespuesComision: metrics.netoDespuesComision,
+          ticketsCount: metrics.ticketsCount,
+          refuerzos: metrics.refuerzos,
+        });
+      } else {
+        // ✅ Acumular métricas en banda existente (suma NUMERO + REVENTADO)
+        const existingBand = sorteoBands.get(bandaKey)!;
+        existingBand.totalVendida += metrics.totalVendida;
+        existingBand.ganado += metrics.ganado;
+        existingBand.comisionTotal += metrics.comisionTotal;
+        existingBand.netoDespuesComision += metrics.netoDespuesComision;
+        existingBand.ticketsCount += metrics.ticketsCount;
+        existingBand.refuerzos = (existingBand.refuerzos || 0) + (metrics.refuerzos || 0);
+      }
+
+      // Acumular en subtotal de sorteo
+      this.accumulateMetrics(sorteoGroup.subtotal, metrics);
+
+      // Acumular en subtotal de lotería
+      this.accumulateMetrics(loteriaGroup.subtotal, metrics);
+
+      // Acumular en totales globales
+      this.accumulateMetrics(totals, metrics);
+    }
+
+    // Convertir Maps a arrays
+    const loterias: CierreLoteriaGroup[] = [];
+
+    // ✅ Usar Array.from() para evitar errores de iteración en TypeScript
+    for (const [loteriaId, loteriaGroup] of Array.from(loteriaMap.entries())) {
+      const sorteos: CierreSorteoGroup[] = [];
+
+      for (const [sorteoId, sorteoGroup] of Array.from(loteriaGroup.sorteos.entries())) {
+        // ✅ Convertir Map de bandas a Record (ya sumadas NUMERO + REVENTADO)
+        const bands: Record<string, CierreBandData> = {};
+        for (const [bandaKey, bandData] of Array.from(sorteoGroup.bands.entries())) {
+          bands[bandaKey] = bandData;
+        }
+
+        sorteos.push({
+          sorteo: sorteoGroup.sorteo,
+          bands, // ✅ Bands directamente (sin tipos)
+          subtotal: sorteoGroup.subtotal,
+        });
+      }
+
+      // Ordenar sorteos por turno (hora ascendente)
+      sorteos.sort((a, b) => {
+        const timeA = a.sorteo.turno;
+        const timeB = b.sorteo.turno;
+        return timeA.localeCompare(timeB);
+      });
+
+      loterias.push({
+        loteria: loteriaGroup.loteria,
+        sorteos,
+        subtotal: loteriaGroup.subtotal,
+      });
+    }
+
+    // Ordenar loterías alfabéticamente
+    loterias.sort((a, b) => a.loteria.name.localeCompare(b.loteria.name));
+
+    // ✅ VALIDACIÓN CRÍTICA: Verificar que totals = Σ(loterias[].subtotal)
+    const sumLoterias = loterias.reduce((acc, l) => {
+      acc.totalVendida += l.subtotal.totalVendida;
+      acc.ganado += l.subtotal.ganado;
+      acc.comisionTotal += l.subtotal.comisionTotal;
+      acc.netoDespuesComision += l.subtotal.netoDespuesComision;
+      acc.ticketsCount += l.subtotal.ticketsCount;
+      acc.refuerzos = (acc.refuerzos || 0) + (l.subtotal.refuerzos || 0);
+      return acc;
+    }, this.createEmptyMetrics());
+
+    const tolerance = 0.01; // Tolerancia para comparaciones de punto flotante
+    const hasDiscrepancy = 
+      Math.abs(totals.totalVendida - sumLoterias.totalVendida) > tolerance ||
+      Math.abs(totals.ganado - sumLoterias.ganado) > tolerance ||
+      Math.abs(totals.comisionTotal - sumLoterias.comisionTotal) > tolerance ||
+      Math.abs(totals.netoDespuesComision - sumLoterias.netoDespuesComision) > tolerance ||
+      totals.ticketsCount !== sumLoterias.ticketsCount;
+
+    let orphanedDataCount: number | undefined = undefined;
+    if (hasDiscrepancy) {
+      orphanedDataCount = Math.abs(totals.ticketsCount - sumLoterias.ticketsCount);
+      logger.warn({
+        layer: 'service',
+        action: 'CIERRE_TOTALS_DISCREPANCY',
+        payload: {
+          totals,
+          sumLoterias,
+          orphanedDataCount,
+          discrepancy: {
+            totalVendida: totals.totalVendida - sumLoterias.totalVendida,
+            ganado: totals.ganado - sumLoterias.ganado,
+            comisionTotal: totals.comisionTotal - sumLoterias.comisionTotal,
+            netoDespuesComision: totals.netoDespuesComision - sumLoterias.netoDespuesComision,
+            ticketsCount: totals.ticketsCount - sumLoterias.ticketsCount,
+          },
+        },
+      });
+    }
+
+    return { loterias, totals, orphanedDataCount };
+  }
+
+  /**
+   * @deprecated Usar transformWeeklyDataByLoteriaSorteo
    * Transforma datos raw en estructura jerárquica weekly
    * Organiza por: Banda → Día → Lotería → Turno
    */
@@ -600,6 +788,7 @@ export interface AnomaliesResult {
     createdAt: string;
     amount: number;
   }[];
+  orphanedDataCount?: number; // ✅ Datos huérfanos (discrepancia entre totals y Σ(loterias[].subtotal))
 }
 
 // Construye bandsUsed a partir de la estructura resultado
