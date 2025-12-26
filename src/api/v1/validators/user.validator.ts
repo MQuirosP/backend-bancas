@@ -54,11 +54,15 @@ const PrintSettingsSchema = z
 /**
  * Esquema completo de UserSettings
  * Incluye configuraciones de impresión y tema
+ * 
+ * El campo "system" se permite para almacenar configuraciones del sistema
+ * que no deben ser editables por el usuario (por ejemplo, preferencias de UI del frontend)
  */
 export const UserSettingsSchema = z
   .object({
     print: PrintSettingsSchema.optional(),
     theme: z.enum(['light', 'dark']).nullable().optional(),
+    system: z.record(z.string(), z.any()).optional(), // Permite cualquier objeto JSON para configuraciones del sistema
   })
   .strict()
 
