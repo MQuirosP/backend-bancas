@@ -14,7 +14,30 @@ import { resolveNumbersToValidate, validateMaxTotalForNumbers } from "./helpers/
 /**
  * Calcula el límite dinámico basado en baseAmount y salesPercentage
  * Obtiene las ventas del SORTEO dentro de la transacción
- * ✅ CORREGIDO: Ahora calcula sobre ventas del sorteo específico, no del día completo
+ * 
+ * ⚠️ IMPORTANTE: Este cálculo se hace sobre ventas BRUTAS del sorteo.
+ * - Excluye tickets CANCELLED y EXCLUDED del cálculo
+ * - NO excluye jugadas individuales con isExcluded=true (aún no procesadas en este momento)
+ * - Los límites dinámicos NO se recalculan automáticamente cuando se excluyen jugadas después
+ * 
+ * Comportamiento:
+ * - El límite se calcula una vez al momento de crear el ticket
+ * - Se basa en ventas del sorteo en ese instante
+ * - Si después se excluyen jugadas (SorteoListaExclusion), el límite NO se recalcula
+ * 
+ * Justificación:
+ * - Las exclusiones se aplican DESPUÉS de crear el ticket (proceso asíncrono)
+ * - Recalcular límites dinámicos después de exclusiones requeriría:
+ *   1. Trigger después de cada exclusión
+ *   2. Validación retroactiva de tickets ya creados
+ *   3. Complejidad adicional sin beneficio claro
+ * 
+ * ✅ CRÍTICO: Calcula sobre ventas del sorteo específico, no del día completo
+ * 
+ * @param tx Transacción de Prisma
+ * @param rule Regla con baseAmount y/o salesPercentage
+ * @param context Contexto del ticket (sorteoId, userId, ventanaId, etc.)
+ * @returns Límite dinámico calculado (siempre >= 0)
  */
 async function calculateDynamicLimit(
   tx: Prisma.TransactionClient,
@@ -33,13 +56,39 @@ async function calculateDynamicLimit(
 ): Promise<number> {
   let dynamicLimit = 0;
 
+  // ✅ VALIDACIÓN: baseAmount no puede ser negativo
+  if (rule.baseAmount != null && rule.baseAmount < 0) {
+    logger.warn({
+      layer: 'repository',
+      action: 'INVALID_BASE_AMOUNT',
+      payload: {
+        baseAmount: rule.baseAmount,
+        sorteoId: context.sorteoId,
+        message: 'baseAmount negativo detectado, usando 0 como fallback',
+      },
+    });
+  }
+
   // Monto base
   if (rule.baseAmount != null && rule.baseAmount > 0) {
     dynamicLimit += rule.baseAmount;
   }
 
-  // Porcentaje de ventas
-  if (rule.salesPercentage != null && rule.salesPercentage > 0) {
+  // ✅ VALIDACIÓN: salesPercentage debe estar entre 0 y 100
+  if (rule.salesPercentage != null && (rule.salesPercentage < 0 || rule.salesPercentage > 100)) {
+    logger.warn({
+      layer: 'repository',
+      action: 'INVALID_SALES_PERCENTAGE',
+      payload: {
+        salesPercentage: rule.salesPercentage,
+        sorteoId: context.sorteoId,
+        message: 'salesPercentage fuera de rango válido (0-100), ignorando porcentaje',
+      },
+    });
+  }
+
+  // Porcentaje de ventas (solo si salesPercentage es válido)
+  if (rule.salesPercentage != null && rule.salesPercentage > 0 && rule.salesPercentage <= 100) {
     // ✅ CRÍTICO: Calcular sobre ventas DEL SORTEO, no del día completo
     const where: Prisma.TicketWhereInput = {
       deletedAt: null,
@@ -77,11 +126,15 @@ async function calculateDynamicLimit(
         percentageAmount,
         dynamicLimit,
         appliesToVendedor: rule.appliesToVendedor,
+        // ✅ AGREGAR: Información sobre exclusión de tickets
+        excludedTicketStatuses: ['CANCELLED', 'EXCLUDED'],
+        calculationNote: 'Calculated on gross sales (before individual jugada exclusions)',
       },
     });
   }
 
-  return dynamicLimit;
+  // ✅ VALIDACIÓN: Asegurar que el límite dinámico nunca sea negativo
+  return Math.max(0, dynamicLimit);
 }
 
 type CreateTicketInput = {
@@ -122,6 +175,22 @@ function isSameLocalDay(a: Date, b: Date) {
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate()
   );
+}
+
+/**
+ * Calcula el score de prioridad de una regla de restricción
+ * Orden de prioridad: USER > VENTANA > BANCA
+ * Bonus por número específico y reglas de lotería/multiplicador
+ */
+function calculatePriorityScore(rule: RestrictionRuleWithRelations): number {
+  let score = 0;
+  if (rule.bancaId) score += 1;
+  if (rule.ventanaId) score += 10;
+  if (rule.userId) score += 100;
+  if (rule.number) score += 1000;
+  // Prioridad máxima a reglas específicas de lotería/multiplicador
+  if (rule.loteriaId && rule.multiplierId) score += 10000;
+  return score;
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -521,13 +590,7 @@ export const TicketRepository = {
             return true;
           })
           .map((r) => {
-            let score = 0;
-            if (r.bancaId) score += 1;
-            if (r.ventanaId) score += 10;
-            if (r.userId) score += 100;
-            if (r.number) score += 1000;
-            // ✅ Prioridad máxima a reglas específicas de lotería/multiplicador
-            if (r.loteriaId && r.multiplierId) score += 10000;
+            const score = calculatePriorityScore(r);
             return { r, score };
           })
           .sort((a, b) => b.score - a.score)
@@ -887,7 +950,42 @@ export const TicketRepository = {
         // Los límites deben aplicarse POR NÚMERO, no por total diario del vendedor.
         // La validación correcta está más abajo (validateMaxTotalForNumbers)
 
+        // ✅ LOGGING: Registrar todas las reglas aplicables para trazabilidad (después de preparar jugadas)
+        logger.info({
+          layer: 'repository',
+          action: 'RESTRICTION_RULES_EVALUATION_START',
+          payload: {
+            ticketContext: {
+              loteriaId,
+              sorteoId,
+              ventanaId,
+              userId,
+              bancaId,
+              jugadasCount: preparedJugadas.length,
+            },
+            applicableRules: applicable.map((r, idx) => ({
+              index: idx,
+              ruleId: r.id,
+              scope: r.userId ? 'USER' : r.ventanaId ? 'VENTANA' : r.bancaId ? 'BANCA' : 'GLOBAL',
+              priority: calculatePriorityScore(r),
+              hasMaxAmount: r.maxAmount != null,
+              hasMaxTotal: r.maxTotal != null,
+              hasDynamicLimit: (r.baseAmount != null || r.salesPercentage != null),
+              number: r.number,
+              isAutoDate: r.isAutoDate,
+              multiplierId: r.multiplierId || null,
+              loteriaId: r.loteriaId || null,
+            })),
+            totalRulesCount: applicable.length,
+            candidateRulesCount: candidateRules.length,
+          },
+        });
+
         // 8) Aplicar TODAS las reglas aplicables de forma acumulativa (USER > VENTANA > BANCA)
+        // ✅ CRÍTICO: Todas las reglas aplicables se validan, no solo la de mayor prioridad
+        // ✅ CRÍTICO: maxAmount se valida por número individual por ticket
+        // ✅ CRÍTICO: maxTotal se valida por número individual acumulado en el sorteo
+        // ⚠️ NUNCA se valida sobre total del ticket ni sobre total diario
         for (const rule of (applicable as any[])) {
           let dynamicLimit: number | null = null;
           const hasDynamicFields =
@@ -929,7 +1027,20 @@ export const TicketRepository = {
                     if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
                     return j.number === num;
                   } else if (j.type === 'REVENTADO') {
-                    if (rule.multiplierId) return false;
+                    if (rule.multiplierId) {
+                      // ✅ LOGGING: REVENTADO excluido de validación cuando la regla tiene multiplierId
+                      logger.debug({
+                        layer: 'repository',
+                        action: 'REVENTADO_EXCLUDED_FROM_MULTIPLIER_RULE',
+                        payload: {
+                          ruleId: rule.id,
+                          multiplierId: rule.multiplierId,
+                          reventadoNumber: j.reventadoNumber,
+                          reason: 'REVENTADO jugadas do not have multiplierId, excluded from multiplier-specific rules',
+                        },
+                      });
+                      return false;
+                    }
                     return j.reventadoNumber === num;
                   }
                   return false;
@@ -1015,7 +1126,20 @@ export const TicketRepository = {
                     if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
                     return j.number === num;
                   } else if (j.type === 'REVENTADO') {
-                    if (rule.multiplierId) return false;
+                    if (rule.multiplierId) {
+                      // ✅ LOGGING: REVENTADO excluido de validación cuando la regla tiene multiplierId
+                      logger.debug({
+                        layer: 'repository',
+                        action: 'REVENTADO_EXCLUDED_FROM_MULTIPLIER_RULE',
+                        payload: {
+                          ruleId: rule.id,
+                          multiplierId: rule.multiplierId,
+                          reventadoNumber: j.reventadoNumber,
+                          reason: 'REVENTADO jugadas do not have multiplierId, excluded from multiplier-specific rules',
+                        },
+                      });
+                      return false;
+                    }
                     return j.reventadoNumber === num;
                   }
                   return false;
@@ -1079,6 +1203,21 @@ export const TicketRepository = {
                 });
               }
             }
+
+            // ✅ LOGGING: Registrar resultado de validación de esta regla
+            logger.debug({
+              layer: 'repository',
+              action: 'RESTRICTION_RULE_VALIDATION_COMPLETE',
+              payload: {
+                ruleId: rule.id,
+                scope: rule.userId ? 'USER' : rule.ventanaId ? 'VENTANA' : rule.bancaId ? 'BANCA' : 'GLOBAL',
+                priority: calculatePriorityScore(rule),
+                status: 'PASSED',
+                hasMaxAmount: rule.maxAmount != null || dynamicLimit != null,
+                hasMaxTotal: rule.maxTotal != null || dynamicLimit != null,
+                numbersValidated: numbersInRule.length > 0 ? numbersInRule.length : 'all',
+              },
+            });
           }
         }
 
@@ -1836,7 +1975,20 @@ export const TicketRepository = {
                     if (rule.multiplierId && j.multiplierId !== rule.multiplierId) return false;
                     return j.number === num;
                   } else if (j.type === 'REVENTADO') {
-                    if (rule.multiplierId) return false;
+                    if (rule.multiplierId) {
+                      // ✅ LOGGING: REVENTADO excluido de validación cuando la regla tiene multiplierId
+                      logger.debug({
+                        layer: 'repository',
+                        action: 'REVENTADO_EXCLUDED_FROM_MULTIPLIER_RULE',
+                        payload: {
+                          ruleId: rule.id,
+                          multiplierId: rule.multiplierId,
+                          reventadoNumber: j.reventadoNumber,
+                          reason: 'REVENTADO jugadas do not have multiplierId, excluded from multiplier-specific rules',
+                        },
+                      });
+                      return false;
+                    }
                     return j.reventadoNumber === num;
                   }
                   return false;
