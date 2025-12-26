@@ -274,6 +274,12 @@ export function resolveNumbersToValidate(
  * Valida maxTotal para múltiples números contra el acumulado del sorteo
  * ⚡ OPTIMIZACIÓN: Calcula todos los acumulados en una sola query
  * 
+ * ⚠️ CRÍTICO: 
+ * - maxTotal es acumulado por número INDIVIDUAL en el sorteo
+ * - NO se valida sobre total del ticket
+ * - NO se valida sobre total diario
+ * - Cada número se valida independientemente
+ * 
  * @param tx Transacción de Prisma
  * @param params Parámetros de validación
  * @returns void si todos son válidos, lanza error si alguno excede el límite
