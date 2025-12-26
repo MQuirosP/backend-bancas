@@ -63,29 +63,39 @@ export async function registerPayment(data: {
         }
     }
 
-    // ✅ OPTIMIZACIÓN CRÍTICA: En lugar de recalcular todo el día con calculateDayStatement (muy costoso),
-    // solo obtenemos o creamos el statement y validamos usando los valores ya guardados.
-    // Esto reduce el tiempo de respuesta de ~12 segundos a menos de 1 segundo.
+    // ✅ CRÍTICO: Recalcular el statement completo desde tickets ANTES de registrar el movimiento
+    // Esto asegura que ticketCount, totalSales, totalPayouts, comisiones, etc. estén siempre correctos
     const dimension: "ventana" | "vendedor" = finalVentanaId ? "ventana" : "vendedor";
 
-    // ✅ CRÍTICO: Obtener o crear el statement con bancaId, ventanaId y vendedorId correctos
-    // findOrCreate ahora actualizará el statement existente si le faltan campos
-    const statement = await AccountStatementRepository.findOrCreate({
-        date: paymentDate,
+    // Recalcular statement completo desde tickets para asegurar consistencia
+    const recalculatedStatement = await calculateDayStatement(
+        paymentDate,
         month,
-        bancaId: finalBancaId,
+        dimension,
+        finalVentanaId ?? undefined,
+        data.vendedorId ?? undefined,
+        finalBancaId,
+        "ADMIN" // Usar ADMIN para permitir ver todos los datos
+    );
+
+    // Obtener el statement persistido (calculateDayStatement ya lo creó/actualizó)
+    const statement = await AccountStatementRepository.findByDate(paymentDate, {
         ventanaId: finalVentanaId ?? undefined,
         vendedorId: data.vendedorId ?? undefined,
     });
 
-    // ✅ OPTIMIZACIÓN: Obtener totales actuales en paralelo
+    if (!statement) {
+        throw new AppError("No se pudo obtener el estado de cuenta", 500, "STATEMENT_NOT_FOUND");
+    }
+
+    // ✅ Obtener totales actuales de movimientos (antes de agregar el nuevo)
     const [currentTotalPaid, currentTotalCollected] = await Promise.all([
         AccountPaymentRepository.getTotalPaid(statement.id),
         AccountPaymentRepository.getTotalCollected(statement.id),
     ]);
 
-    // Usar balance guardado en el statement (ya calculado previamente)
-    const baseBalance = statement.balance || 0;
+    // Usar balance recalculado desde tickets (ya incluye totalSales, totalPayouts, comisiones)
+    const baseBalance = recalculatedStatement.balance;
     // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
     // COBRO (banca cobra al listero): RESTA del saldo del listero
     // PAGO (banca paga al listero): SUMA al saldo del listero
@@ -144,12 +154,21 @@ export async function registerPayment(data: {
     const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
 
     // FIX: Usar helper para cálculo consistente de isSettled (incluye validación de hasPayments y ticketCount)
-    const isSettled = calculateIsSettled(statement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
+    // Usar ticketCount del statement recalculado para asegurar consistencia
+    const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
-    // ✅ FIX: Actualizar también totalCollected cuando se registra un movimiento
+    // ✅ CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
     await AccountStatementRepository.update(statement.id, {
+        // Valores de tickets (recalculados desde tickets/jugadas)
+        ticketCount: recalculatedStatement.ticketCount,
+        totalSales: recalculatedStatement.totalSales,
+        totalPayouts: recalculatedStatement.totalPayouts,
+        listeroCommission: recalculatedStatement.listeroCommission,
+        vendedorCommission: recalculatedStatement.vendedorCommission,
+        balance: baseBalance, // Balance desde tickets (sin movimientos)
+        // Valores de movimientos (actualizados con el nuevo movimiento)
         totalPaid: newTotalPaid,
-        totalCollected: newTotalCollected, // ✅ NUEVO: Actualizar totalCollected
+        totalCollected: newTotalCollected,
         remainingBalance: newRemainingBalance,
         isSettled,
         canEdit: !isSettled,
@@ -202,9 +221,25 @@ export async function reversePayment(
     
     const statement = payment.accountStatement;
 
-    // ✅ OPTIMIZACIÓN: Usar balance guardado en el statement (ya calculado previamente)
-    // No necesitamos recalcular baseBalance desde cero
-    const baseBalance = statement.balance || 0;
+    // ✅ CRÍTICO: Recalcular el statement completo desde tickets ANTES de revertir el movimiento
+    // Esto asegura que ticketCount, totalSales, totalPayouts, comisiones, etc. estén siempre correctos
+    const dimension: "ventana" | "vendedor" = statement.ventanaId ? "ventana" : "vendedor";
+    const paymentDate = new Date(payment.date);
+    const month = paymentDate.toISOString().substring(0, 7); // YYYY-MM
+
+    // Recalcular statement completo desde tickets para asegurar consistencia
+    const recalculatedStatement = await calculateDayStatement(
+        paymentDate,
+        month,
+        dimension,
+        statement.ventanaId ?? undefined,
+        statement.vendedorId ?? undefined,
+        statement.bancaId ?? undefined,
+        "ADMIN" // Usar ADMIN para permitir ver todos los datos
+    );
+
+    // Usar balance recalculado desde tickets (ya incluye totalSales, totalPayouts, comisiones)
+    const baseBalance = recalculatedStatement.balance;
 
     // ✅ OPTIMIZACIÓN: Obtener totales actuales en paralelo
     const [currentTotalPaid, currentTotalCollected] = await Promise.all([
@@ -260,12 +295,21 @@ export async function reversePayment(
     const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
 
     // FIX: Usar helper para cálculo consistente de isSettled (incluye validación de hasPayments y ticketCount)
-    const isSettled = calculateIsSettled(statement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
+    // Usar ticketCount del statement recalculado para asegurar consistencia
+    const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
-    // ✅ FIX: Actualizar también totalCollected cuando se revierte un movimiento
+    // ✅ CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
     await AccountStatementRepository.update(statement.id, {
+        // Valores de tickets (recalculados desde tickets/jugadas)
+        ticketCount: recalculatedStatement.ticketCount,
+        totalSales: recalculatedStatement.totalSales,
+        totalPayouts: recalculatedStatement.totalPayouts,
+        listeroCommission: recalculatedStatement.listeroCommission,
+        vendedorCommission: recalculatedStatement.vendedorCommission,
+        balance: baseBalance, // Balance desde tickets (sin movimientos)
+        // Valores de movimientos (actualizados con el movimiento revertido)
         totalPaid: newTotalPaid,
-        totalCollected: newTotalCollected, // ✅ NUEVO: Actualizar totalCollected
+        totalCollected: newTotalCollected,
         remainingBalance: newRemainingBalance,
         isSettled,
         canEdit: !isSettled,

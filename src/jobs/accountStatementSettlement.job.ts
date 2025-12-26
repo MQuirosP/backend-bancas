@@ -2,23 +2,26 @@
  * Account Statement Settlement Job
  *
  * Automatically settles account statements that meet criteria:
- * - Older than SETTLEMENT_AGE_DAYS (default: 7 days, configurable)
- * - remainingBalance ≈ 0
- * - Has tickets (ticketCount > 0)
+ * - Older than settlementAgeDays (configurable, default: 7 days)
+ * - Has activity: ticketCount > 0 OR totalPaid > 0 OR totalCollected > 0
+ *   - La tabla es un resumen para optimizar consultas, puede tener tickets, movimientos, o ambos
  * - Not already settled (isSettled = false)
+ *
+ * ⚠️ CRÍTICO: NO usa remainingBalance ≈ 0 como criterio.
+ * Los estados de cuenta siempre tendrán saldo (a favor o en contra).
  *
  * Schedule: Runs daily at 3:00 AM UTC (configurable via cronSchedule)
  *
  * Safety:
  * - Only settles days older than settlementAgeDays
- * - Validates remainingBalance before settling
+ * - Uses configuration from account_statement_settlement_config
  * - Logs all settlements for audit
  * - Can be disabled via configuration
+ * - Manual execution does NOT require enabled = true
  */
 
 import prisma from '../core/prismaClient';
 import { AccountStatementRepository } from '../repositories/accountStatement.repository';
-import { calculateIsSettled } from '../api/v1/services/accounts/accounts.commissions';
 import logger from '../core/logger';
 
 let settlementTimer: NodeJS.Timeout | null = null;
@@ -58,7 +61,7 @@ export async function executeSettlement(userId?: string): Promise<{
   errors?: Array<{ statementId: string; error: string }>;
 }> {
   try {
-    // ✅ Leer configuración desde BD
+    // ✅ CRÍTICO: Leer configuración desde BD (según especificación actualizada)
     let config = await prisma.accountStatementSettlementConfig.findFirst();
     
     if (!config) {
@@ -72,7 +75,9 @@ export async function executeSettlement(userId?: string): Promise<{
       });
     }
 
-    if (!config.enabled) {
+    // ✅ CRÍTICO: Ejecución manual NO requiere que enabled sea true (según especificación)
+    // Solo verificar enabled para ejecuciones automáticas (cuando userId es undefined)
+    if (!userId && !config.enabled) {
       logger.info({
         layer: 'job',
         action: 'SETTLEMENT_SKIPPED',
@@ -87,32 +92,86 @@ export async function executeSettlement(userId?: string): Promise<{
       };
     }
 
-    // Calcular fecha límite (días atrás desde hoy)
-    const today = new Date();
-    const cutoffDate = new Date(today);
-    cutoffDate.setUTCDate(cutoffDate.getUTCDate() - config.settlementAgeDays);
-    cutoffDate.setUTCHours(0, 0, 0, 0);
+    // ✅ CRÍTICO: Calcular fecha límite usando zona horaria de CR
+    // date < (today - settlementAgeDays días) en zona horaria de CR
+    const { crDateService } = await import('../utils/crDateService');
+    
+    // Obtener fecha actual en UTC y convertir a CR
+    const nowUTC = new Date();
+    const todayCRStr = crDateService.dateUTCToCRString(nowUTC); // 'YYYY-MM-DD'
+    
+    // Parsear fecha CR a Date para calcular cutoffDate
+    const [year, month, day] = todayCRStr.split('-').map(Number);
+    const todayCR = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    
+    // Calcular cutoffDate restando settlementAgeDays días
+    const cutoffDateCR = new Date(todayCR);
+    cutoffDateCR.setUTCDate(cutoffDateCR.getUTCDate() - config.settlementAgeDays);
+
+    // ✅ DIAGNÓSTICO: Contar estados para entender qué está pasando
+    const totalStatements = await prisma.accountStatement.count();
+    const settledStatementsCount = await prisma.accountStatement.count({
+      where: { isSettled: true }
+    });
+    const notSettledWithActivityCount = await prisma.accountStatement.count({
+      where: {
+        isSettled: false,
+        OR: [
+          { ticketCount: { gt: 0 } },
+          { totalPaid: { gt: 0 } },
+          { totalCollected: { gt: 0 } }
+        ]
+      }
+    });
+    const notSettledOldEnoughCount = await prisma.accountStatement.count({
+      where: {
+        isSettled: false,
+        date: { lt: cutoffDateCR },
+        OR: [
+          { ticketCount: { gt: 0 } },
+          { totalPaid: { gt: 0 } },
+          { totalCollected: { gt: 0 } }
+        ]
+      }
+    });
 
     logger.info({
       layer: 'job',
       action: 'SETTLEMENT_START',
       payload: {
-        cutoffDate: cutoffDate.toISOString(),
+        cutoffDateCR: crDateService.postgresDateToCRString(cutoffDateCR),
         settlementAgeDays: config.settlementAgeDays,
-        batchSize: config.batchSize
+        batchSize: config.batchSize,
+        executedBy: userId || 'SYSTEM',
+        diagnostics: {
+          totalStatements,
+          settledStatementsCount,
+          notSettledWithActivityCount,
+          notSettledOldEnoughCount
+        }
       }
     });
 
-    // Buscar statements no asentados anteriores a la fecha límite
+    // ✅ CRÍTICO: Buscar statements según criterios correctos
+    // Criterios:
+    // 1. date < (today - settlementAgeDays días) ✅
+    // 2. Tiene actividad: ticketCount > 0 OR totalPaid > 0 OR totalCollected > 0 ✅
+    //    - La tabla AccountStatement es un resumen para optimizar consultas
+    //    - Puede tener tickets (ventas), movimientos (pagos/cobros), o ambos
+    //    - Si tiene algún tipo de actividad, puede asentarse si es antiguo
+    // 3. isSettled = false ✅
+    // 4. NO requiere remainingBalance ≈ 0
     const statementsToSettle = await prisma.accountStatement.findMany({
       where: {
         isSettled: false,
         date: {
-          lt: cutoffDate
+          lt: cutoffDateCR
         },
-        ticketCount: {
-          gt: 0
-        }
+        OR: [
+          { ticketCount: { gt: 0 } },
+          { totalPaid: { gt: 0 } },
+          { totalCollected: { gt: 0 } }
+        ]
       },
       include: {
         payments: {
@@ -120,6 +179,9 @@ export async function executeSettlement(userId?: string): Promise<{
             isReversed: false
           }
         }
+      },
+      orderBy: {
+        date: 'asc' // Procesar desde más antiguo a más reciente
       },
       take: config.batchSize // Procesar en lotes
     });
@@ -139,58 +201,44 @@ export async function executeSettlement(userId?: string): Promise<{
           .filter(p => p.type === 'collection' && !p.isReversed)
           .reduce((sum, p) => sum + p.amount, 0);
 
-        // Calcular remainingBalance
+        // ✅ CRÍTICO: Recalcular remainingBalance (balance ya incluye movimientos)
         const remainingBalance = statement.balance - totalCollected + totalPaid;
 
-        // Verificar si debe asentarse
-        const shouldSettle = calculateIsSettled(
-          statement.ticketCount,
-          remainingBalance,
+        // ✅ CRÍTICO: NO usar calculateIsSettled (requiere remainingBalance ≈ 0)
+        // Si llegó aquí, ya cumple los criterios:
+        // - date < (today - settlementAgeDays)
+        // - ticketCount > 0
+        // - isSettled = false
+        // Por lo tanto, debe asentarse directamente
+        
+        // Actualizar statement como asentado
+        await AccountStatementRepository.update(statement.id, {
+          isSettled: true,
+          canEdit: false,
           totalPaid,
-          totalCollected
-        );
+          totalCollected,
+          remainingBalance,
+          settledAt: new Date(),
+          settledBy: userId || null, // null para automático, userId para manual
+        });
 
-        if (shouldSettle) {
-          // Actualizar statement como asentado
-          await AccountStatementRepository.update(statement.id, {
-            isSettled: true,
-            canEdit: false,
+        settledCount++;
+
+        logger.info({
+          layer: 'job',
+          action: 'STATEMENT_SETTLED',
+          payload: {
+            statementId: statement.id,
+            date: crDateService.postgresDateToCRString(statement.date),
+            ventanaId: statement.ventanaId,
+            vendedorId: statement.vendedorId,
+            ticketCount: statement.ticketCount,
             totalPaid,
             totalCollected,
             remainingBalance,
-            settledAt: new Date(),
-            settledBy: userId || null, // null para automático, userId para manual
-          });
-
-          settledCount++;
-
-          logger.info({
-            layer: 'job',
-            action: 'STATEMENT_SETTLED',
-            payload: {
-              statementId: statement.id,
-              date: statement.date.toISOString(),
-              ventanaId: statement.ventanaId,
-              vendedorId: statement.vendedorId,
-              remainingBalance,
-              settledBy: userId || 'SYSTEM'
-            }
-          });
-        } else {
-          skippedCount++;
-
-          logger.debug({
-            layer: 'job',
-            action: 'STATEMENT_SKIPPED',
-            payload: {
-              statementId: statement.id,
-              date: statement.date.toISOString(),
-              reason: 'Does not meet settlement criteria',
-              remainingBalance,
-              ticketCount: statement.ticketCount
-            }
-          });
-        }
+            settledBy: userId || 'SYSTEM'
+          }
+        });
       } catch (error) {
         errors.push({
           statementId: statement.id,
@@ -224,11 +272,16 @@ export async function executeSettlement(userId?: string): Promise<{
       layer: 'job',
       action: 'SETTLEMENT_COMPLETE',
       payload: {
+        cutoffDateCR: crDateService.postgresDateToCRString(cutoffDateCR),
+        settlementAgeDays: config.settlementAgeDays,
         totalProcessed: statementsToSettle.length,
         settledCount,
         skippedCount,
         errorCount: errors.length,
-        errors: errors.length > 0 ? errors : undefined
+        errors: errors.length > 0 ? errors : undefined,
+        message: statementsToSettle.length === 0 
+          ? 'No se encontraron estados de cuenta que cumplieran los criterios. Puede que ya estén todos asentados o que todos sean muy recientes.'
+          : undefined
       }
     });
 

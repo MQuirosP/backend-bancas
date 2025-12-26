@@ -150,6 +150,8 @@ export async function getCachedStatement<T>(params: {
 
 /**
  * Guardar estado de cuenta en caché
+ * @param ttlSeconds - TTL opcional en segundos. Si no se proporciona, usa STATEMENT_TTL por defecto.
+ *                      Útil para cache más largo para estados asentados (900s) vs no asentados (60s)
  */
 export async function setCachedStatement<T>(
     params: {
@@ -164,10 +166,12 @@ export async function setCachedStatement<T>(
         userRole?: string;
         sort?: string;
     },
-    value: T
+    value: T,
+    ttlSeconds?: number
 ): Promise<void> {
     const key = getStatementCacheKey(params);
-    await CacheService.set(key, value, STATEMENT_TTL);
+    const ttl = ttlSeconds !== undefined ? ttlSeconds : STATEMENT_TTL;
+    await CacheService.set(key, value, ttl);
 }
 
 /**

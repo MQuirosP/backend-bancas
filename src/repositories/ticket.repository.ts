@@ -1541,21 +1541,10 @@ export const TicketRepository = {
     delete (ticket as any).__jugadasCount;
     delete (ticket as any).__businessDateInfo;
 
-    // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se crea un ticket
-    // El ticket afecta el balance (totalSales) del statement del día
-    const { invalidateCacheForTicket } = await import('../utils/accountStatementCache');
-    invalidateCacheForTicket({
-      businessDate: bdInfo?.businessDate || ticket.businessDate,
-      ventanaId: ticket.ventanaId,
-      vendedorId: ticket.vendedorId,
-    }).catch((err: Error) => {
-      // Ignorar errores de invalidación de caché (no crítico)
-      logger.warn({
-        layer: 'repository',
-        action: 'CACHE_INVALIDATION_FAILED',
-        payload: { error: err.message, ticketId: ticket.id }
-      });
-    });
+    // ✅ NOTA: AccountStatement se actualiza cuando se evalúan los sorteos, no al crear tickets
+    // Los sorteos se evalúan conforme van sucediendo, y es ahí cuando los tickets se toman en cuenta
+    // Esto permite consolidar toda la información (ventas, premios, comisiones) en AccountStatement
+    // para eficiencia al servir datos al FE sin recalcular días enteros
 
     return { ticket, warnings };
   },

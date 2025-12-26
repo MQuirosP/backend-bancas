@@ -677,11 +677,12 @@ export const SorteoService = {
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
 
-    // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se evalúa un sorteo
+    // ✅ CRÍTICO: Actualizar AccountStatement de todos los días afectados cuando se evalúa un sorteo
     // La evaluación marca jugadas como ganadoras, afectando totalPayouts del statement
+    // Los sorteos se evalúan conforme van sucediendo, y es ahí cuando los tickets se toman en cuenta
     const evaluated = await SorteoRepository.findById(id);
     
-    // Obtener tickets afectados para invalidar caché específico por ventana/vendedor
+    // Obtener tickets afectados para agrupar por día/ventana/vendedor y actualizar AccountStatement
     const affectedTickets = await prisma.ticket.findMany({
       where: {
         sorteoId: id,
@@ -694,23 +695,96 @@ export const SorteoService = {
         ventanaId: true,
         vendedorId: true,
       },
-      take: 1000, // Limitar para no sobrecargar
     });
 
-    const { invalidateCacheForSorteo } = await import('../../../utils/accountStatementCache');
-    invalidateCacheForSorteo(
-      {
-        scheduledAt: evaluated?.scheduledAt || null,
-      },
-      affectedTickets
-    ).catch((err: Error) => {
-      // Ignorar errores de invalidación de caché (no crítico)
-      logger.warn({
-        layer: 'service',
-        action: 'CACHE_INVALIDATION_FAILED',
-        payload: { error: err.message, sorteoId: id }
-      });
-    });
+    // Agrupar por combinación única de día/ventana/vendedor
+    const uniqueDays = new Map<string, { businessDate: Date | null; ventanaId: string | null; vendedorId: string | null }>();
+    for (const ticket of affectedTickets) {
+      if (!ticket.businessDate) continue;
+      const dateStr = ticket.businessDate.toISOString().split('T')[0]; // YYYY-MM-DD
+      const key = `${dateStr}|${ticket.ventanaId || 'null'}|${ticket.vendedorId || 'null'}`;
+      if (!uniqueDays.has(key)) {
+        uniqueDays.set(key, {
+          businessDate: ticket.businessDate,
+          ventanaId: ticket.ventanaId,
+          vendedorId: ticket.vendedorId,
+        });
+      }
+    }
+
+    // Actualizar AccountStatement para cada combinación única de día/ventana/vendedor
+    if (uniqueDays.size > 0) {
+      try {
+        const { calculateDayStatement } = await import('./accounts/accounts.calculations');
+        const { crDateService } = await import('../../../utils/crDateService');
+        
+        // Procesar en paralelo para todos los días afectados
+        const updatePromises = Array.from(uniqueDays.values()).map(async (dayInfo) => {
+          if (!dayInfo.businessDate) return;
+          
+          try {
+            const statementDate = new Date(dayInfo.businessDate);
+            const month = crDateService.postgresDateToCRString(statementDate).substring(0, 7); // YYYY-MM
+            
+            // Determinar dimensión y obtener bancaId
+            const dimension: "ventana" | "vendedor" = dayInfo.ventanaId ? "ventana" : "vendedor";
+            
+            let bancaId: string | undefined;
+            if (dayInfo.ventanaId) {
+              const ventana = await prisma.ventana.findUnique({
+                where: { id: dayInfo.ventanaId },
+                select: { bancaId: true },
+              });
+              bancaId = ventana?.bancaId;
+            }
+            
+            // Recalcular y actualizar AccountStatement del día
+            await calculateDayStatement(
+              statementDate,
+              month,
+              dimension,
+              dayInfo.ventanaId ?? undefined,
+              dayInfo.vendedorId ?? undefined,
+              bancaId,
+              "ADMIN" // Usar ADMIN para ver todos los datos
+            );
+          } catch (err) {
+            logger.warn({
+              layer: 'service',
+              action: 'ACCOUNT_STATEMENT_UPDATE_FAILED_ON_SORTEO_EVALUATE',
+              payload: {
+                error: (err as Error).message,
+                sorteoId: id,
+                businessDate: dayInfo.businessDate?.toISOString().split('T')[0],
+                ventanaId: dayInfo.ventanaId,
+                vendedorId: dayInfo.vendedorId,
+              }
+            });
+          }
+        });
+        
+        await Promise.all(updatePromises);
+        
+        logger.info({
+          layer: 'service',
+          action: 'ACCOUNT_STATEMENT_UPDATED_ON_SORTEO_EVALUATE',
+          payload: {
+            sorteoId: id,
+            affectedDaysCount: uniqueDays.size,
+          }
+        });
+      } catch (err) {
+        // No crítico - solo loguear error pero no fallar la evaluación del sorteo
+        logger.warn({
+          layer: 'service',
+          action: 'ACCOUNT_STATEMENT_UPDATE_BATCH_FAILED',
+          payload: {
+            error: (err as Error).message,
+            sorteoId: id,
+          }
+        });
+      }
+    }
 
     // 5) Devolver sorteo evaluado (con include para mantener reventadoEnabled)
     return evaluated ? serializeSorteo(evaluated) : evaluated;
