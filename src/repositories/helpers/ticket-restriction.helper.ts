@@ -346,8 +346,47 @@ export async function validateMaxTotalForNumbers(
 
   // ✅ CRÍTICO: Validar cada número INDIVIDUALMENTE (no por total del ticket)
   for (const { number, amountForNumber } of numbers) {
+    // ✅ ROBUSTEZ: Validar que amountForNumber sea un número válido
+    if (!Number.isFinite(amountForNumber) || amountForNumber <= 0) {
+      logger.warn({
+        layer: 'repository',
+        action: 'INVALID_AMOUNT_FOR_NUMBER',
+        payload: { number, amountForNumber, ruleId: rule },
+      });
+      continue; // Saltar números con montos inválidos
+    }
+
     // ✅ CRÍTICO: accumulatedInSorteo es el acumulado SOLO de este número específico en el sorteo
     const accumulatedInSorteo = accumulatedMap.get(number) ?? 0;
+    
+    // ✅ ROBUSTEZ: Validar que accumulatedInSorteo sea un número válido
+    if (!Number.isFinite(accumulatedInSorteo) || accumulatedInSorteo < 0) {
+      logger.error({
+        layer: 'repository',
+        action: 'INVALID_ACCUMULATED_IN_SORTEO',
+        payload: { number, accumulatedInSorteo, sorteoId },
+      });
+      throw new AppError(
+        `Error al obtener acumulado del número ${number}. Contacte al administrador.`,
+        500,
+        'CALCULATION_ERROR'
+      );
+    }
+
+    // ✅ ROBUSTEZ: Validar que effectiveMaxTotal sea un número válido
+    if (!Number.isFinite(effectiveMaxTotal) || effectiveMaxTotal <= 0) {
+      logger.error({
+        layer: 'repository',
+        action: 'INVALID_EFFECTIVE_MAX_TOTAL',
+        payload: { number, effectiveMaxTotal, ruleId: rule },
+      });
+      throw new AppError(
+        `Error en configuración de límite para el número ${number}. Contacte al administrador.`,
+        500,
+        'CONFIGURATION_ERROR'
+      );
+    }
+
     const newAccumulated = accumulatedInSorteo + amountForNumber;
 
     if (newAccumulated > effectiveMaxTotal) {

@@ -987,12 +987,13 @@ export const TicketRepository = {
         // ✅ CRÍTICO: maxTotal se valida por número individual acumulado en el sorteo
         // ⚠️ NUNCA se valida sobre total del ticket ni sobre total diario
         for (const rule of (applicable as any[])) {
+          // ✅ EFICIENCIA: Solo calcular dynamicLimit si realmente se necesita (hay maxAmount o maxTotal)
+          const needsDynamicLimit = (rule.maxAmount != null || rule.maxTotal != null) &&
+            ((rule.baseAmount != null && rule.baseAmount > 0) ||
+             (rule.salesPercentage != null && rule.salesPercentage > 0));
+          
           let dynamicLimit: number | null = null;
-          const hasDynamicFields =
-            (rule.baseAmount != null && rule.baseAmount > 0) ||
-            (rule.salesPercentage != null && rule.salesPercentage > 0);
-
-          if (hasDynamicFields) {
+          if (needsDynamicLimit) {
             dynamicLimit = await calculateDynamicLimit(tx, {
               baseAmount: rule.baseAmount,
               salesPercentage: rule.salesPercentage,
@@ -1017,6 +1018,21 @@ export const TicketRepository = {
             }
 
             if (effectiveMaxAmount != null) {
+              // ✅ ROBUSTEZ: Validar que effectiveMaxAmount sea un número válido
+              if (!Number.isFinite(effectiveMaxAmount) || effectiveMaxAmount <= 0) {
+                logger.warn({
+                  layer: 'repository',
+                  action: 'INVALID_EFFECTIVE_MAX_AMOUNT',
+                  payload: {
+                    ruleId: rule.id,
+                    effectiveMaxAmount,
+                    maxAmount: rule.maxAmount,
+                    dynamicLimit,
+                  },
+                });
+                continue; // Saltar esta regla si el límite es inválido
+              }
+
               for (const num of numbersInRule) {
                 // ✅ CRÍTICO: Calcular sumForNumber SOLO para este número específico en este ticket
                 // NO debe incluir otros números ni el total del ticket
@@ -1046,7 +1062,33 @@ export const TicketRepository = {
                   return false;
                 });
                 
-                const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
+                const sumForNumber = jugadasDelNumero.reduce((acc, j) => {
+                  // ✅ ROBUSTEZ: Validar que cada amount sea un número válido
+                  const amount = Number(j.amount);
+                  if (!Number.isFinite(amount) || amount <= 0) {
+                    logger.warn({
+                      layer: 'repository',
+                      action: 'INVALID_JUGADA_AMOUNT',
+                      payload: { jugada: j, amount: j.amount },
+                    });
+                    return acc; // Ignorar jugadas con montos inválidos
+                  }
+                  return acc + amount;
+                }, 0);
+
+                // ✅ ROBUSTEZ: Validar que sumForNumber sea un número válido antes de comparar
+                if (!Number.isFinite(sumForNumber)) {
+                  logger.error({
+                    layer: 'repository',
+                    action: 'INVALID_SUM_FOR_NUMBER',
+                    payload: { num, sumForNumber, ruleId: rule.id },
+                  });
+                  throw new AppError(
+                    `Error al calcular monto del número ${num}. Contacte al administrador.`,
+                    500,
+                    'CALCULATION_ERROR'
+                  );
+                }
 
                 if (sumForNumber > effectiveMaxAmount) {
                   const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
@@ -1079,6 +1121,21 @@ export const TicketRepository = {
               const staticMaxTotal = rule.maxTotal ?? Infinity;
               const effectiveMaxTotal = dynamicLimit != null ? Math.min(staticMaxTotal, dynamicLimit) : staticMaxTotal;
 
+              // ✅ ROBUSTEZ: Validar que effectiveMaxTotal sea un número válido
+              if (!Number.isFinite(effectiveMaxTotal) || effectiveMaxTotal <= 0) {
+                logger.warn({
+                  layer: 'repository',
+                  action: 'INVALID_EFFECTIVE_MAX_TOTAL',
+                  payload: {
+                    ruleId: rule.id,
+                    effectiveMaxTotal,
+                    maxTotal: rule.maxTotal,
+                    dynamicLimit,
+                  },
+                });
+                continue; // Saltar esta regla si el límite es inválido
+              }
+
               // ✅ CRÍTICO: maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
               // ✅ CRÍTICO: Calcular amountForNumber por número INDIVIDUAL, no por total del ticket
               const numbersToCheck = numbersInRule.map(num => {
@@ -1090,9 +1147,26 @@ export const TicketRepository = {
                   return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
                 });
                 
-                const amount = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
+                const amount = jugadasDelNumero.reduce((acc, j) => {
+                  // ✅ ROBUSTEZ: Validar que cada amount sea un número válido
+                  const amountValue = Number(j.amount);
+                  if (!Number.isFinite(amountValue) || amountValue <= 0) {
+                    logger.warn({
+                      layer: 'repository',
+                      action: 'INVALID_JUGADA_AMOUNT',
+                      payload: { jugada: j, amount: j.amount },
+                    });
+                    return acc; // Ignorar jugadas con montos inválidos
+                  }
+                  return acc + amountValue;
+                }, 0);
+
+                // ✅ ROBUSTEZ: Validar que amount sea un número válido
+                if (!Number.isFinite(amount) || amount <= 0) {
+                  return null; // Filtrar después
+                }
                 return { number: num, amountForNumber: amount };
-              }).filter(n => n.amountForNumber > 0);
+              }).filter((n): n is { number: string; amountForNumber: number } => n !== null && n.amountForNumber > 0);
 
               if (numbersToCheck.length > 0) {
                 const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
@@ -1116,6 +1190,21 @@ export const TicketRepository = {
             }
 
             if (effectiveMaxAmount != null) {
+              // ✅ ROBUSTEZ: Validar que effectiveMaxAmount sea un número válido
+              if (!Number.isFinite(effectiveMaxAmount) || effectiveMaxAmount <= 0) {
+                logger.warn({
+                  layer: 'repository',
+                  action: 'INVALID_EFFECTIVE_MAX_AMOUNT',
+                  payload: {
+                    ruleId: rule.id,
+                    effectiveMaxAmount,
+                    maxAmount: rule.maxAmount,
+                    dynamicLimit,
+                  },
+                });
+                continue; // Saltar esta regla si el límite es inválido
+              }
+
               for (const num of uniqueNumbers) {
                 // ✅ CRÍTICO: Calcular sumForNumber SOLO para este número específico en este ticket
                 // NO debe incluir otros números ni el total del ticket
@@ -1145,7 +1234,33 @@ export const TicketRepository = {
                   return false;
                 });
                 
-                const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
+                const sumForNumber = jugadasDelNumero.reduce((acc, j) => {
+                  // ✅ ROBUSTEZ: Validar que cada amount sea un número válido
+                  const amount = Number(j.amount);
+                  if (!Number.isFinite(amount) || amount <= 0) {
+                    logger.warn({
+                      layer: 'repository',
+                      action: 'INVALID_JUGADA_AMOUNT',
+                      payload: { jugada: j, amount: j.amount },
+                    });
+                    return acc; // Ignorar jugadas con montos inválidos
+                  }
+                  return acc + amount;
+                }, 0);
+
+                // ✅ ROBUSTEZ: Validar que sumForNumber sea un número válido antes de comparar
+                if (!Number.isFinite(sumForNumber)) {
+                  logger.error({
+                    layer: 'repository',
+                    action: 'INVALID_SUM_FOR_NUMBER',
+                    payload: { num, sumForNumber, ruleId: rule.id },
+                  });
+                  throw new AppError(
+                    `Error al calcular monto del número ${num}. Contacte al administrador.`,
+                    500,
+                    'CALCULATION_ERROR'
+                  );
+                }
 
                 if (sumForNumber > effectiveMaxAmount) {
                   const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
@@ -1177,6 +1292,21 @@ export const TicketRepository = {
               const staticMaxTotal = rule.maxTotal ?? Infinity;
               const effectiveMaxTotal = dynamicLimit != null ? Math.min(staticMaxTotal, dynamicLimit) : staticMaxTotal;
 
+              // ✅ ROBUSTEZ: Validar que effectiveMaxTotal sea un número válido
+              if (!Number.isFinite(effectiveMaxTotal) || effectiveMaxTotal <= 0) {
+                logger.warn({
+                  layer: 'repository',
+                  action: 'INVALID_EFFECTIVE_MAX_TOTAL',
+                  payload: {
+                    ruleId: rule.id,
+                    effectiveMaxTotal,
+                    maxTotal: rule.maxTotal,
+                    dynamicLimit,
+                  },
+                });
+                continue; // Saltar esta regla si el límite es inválido
+              }
+
               // ✅ CRÍTICO: maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
               // ✅ CRÍTICO: Calcular amountForNumber por número INDIVIDUAL, no por total del ticket
               const numbersToCheck = uniqueNumbers.map(num => {
@@ -1188,9 +1318,26 @@ export const TicketRepository = {
                   return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
                 });
                 
-                const amount = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
+                const amount = jugadasDelNumero.reduce((acc, j) => {
+                  // ✅ ROBUSTEZ: Validar que cada amount sea un número válido
+                  const amountValue = Number(j.amount);
+                  if (!Number.isFinite(amountValue) || amountValue <= 0) {
+                    logger.warn({
+                      layer: 'repository',
+                      action: 'INVALID_JUGADA_AMOUNT',
+                      payload: { jugada: j, amount: j.amount },
+                    });
+                    return acc; // Ignorar jugadas con montos inválidos
+                  }
+                  return acc + amountValue;
+                }, 0);
+
+                // ✅ ROBUSTEZ: Validar que amount sea un número válido
+                if (!Number.isFinite(amount) || amount <= 0) {
+                  return null; // Filtrar después
+                }
                 return { number: num, amountForNumber: amount };
-              }).filter(n => n.amountForNumber > 0);
+              }).filter((n): n is { number: string; amountForNumber: number } => n !== null && n.amountForNumber > 0);
 
               if (numbersToCheck.length > 0) {
                 const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
@@ -1203,22 +1350,23 @@ export const TicketRepository = {
                 });
               }
             }
-
-            // ✅ LOGGING: Registrar resultado de validación de esta regla
-            logger.debug({
-              layer: 'repository',
-              action: 'RESTRICTION_RULE_VALIDATION_COMPLETE',
-              payload: {
-                ruleId: rule.id,
-                scope: rule.userId ? 'USER' : rule.ventanaId ? 'VENTANA' : rule.bancaId ? 'BANCA' : 'GLOBAL',
-                priority: calculatePriorityScore(rule),
-                status: 'PASSED',
-                hasMaxAmount: rule.maxAmount != null || dynamicLimit != null,
-                hasMaxTotal: rule.maxTotal != null || dynamicLimit != null,
-                numbersValidated: numbersInRule.length > 0 ? numbersInRule.length : 'all',
-              },
-            });
           }
+          
+          // ✅ LOGGING: Registrar resultado de validación de esta regla (al final de cada regla)
+          logger.debug({
+            layer: 'repository',
+            action: 'RESTRICTION_RULE_VALIDATION_COMPLETE',
+            payload: {
+              ruleId: rule.id,
+              scope: rule.userId ? 'USER' : rule.ventanaId ? 'VENTANA' : rule.bancaId ? 'BANCA' : 'GLOBAL',
+              priority: calculatePriorityScore(rule),
+              status: 'PASSED',
+              hasMaxAmount: (rule.maxAmount != null || dynamicLimit != null),
+              hasMaxTotal: (rule.maxTotal != null || dynamicLimit != null),
+              numbersValidated: numbersInRule.length > 0 ? numbersInRule.length : 'all',
+              dynamicLimitCalculated: dynamicLimit != null,
+            },
+          });
         }
 
         // 9) Crear ticket y jugadas con comisiones
@@ -1965,6 +2113,21 @@ export const TicketRepository = {
             }
 
             if (effectiveMaxAmount != null) {
+              // ✅ ROBUSTEZ: Validar que effectiveMaxAmount sea un número válido
+              if (!Number.isFinite(effectiveMaxAmount) || effectiveMaxAmount <= 0) {
+                logger.warn({
+                  layer: 'repository',
+                  action: 'INVALID_EFFECTIVE_MAX_AMOUNT',
+                  payload: {
+                    ruleId: rule.id,
+                    effectiveMaxAmount,
+                    maxAmount: rule.maxAmount,
+                    dynamicLimit,
+                  },
+                });
+                continue; // Saltar esta regla si el límite es inválido
+              }
+
               for (const num of uniqueNumbers) {
                 // ✅ CRÍTICO: Calcular sumForNumber SOLO para este número específico en este ticket
                 // NO debe incluir otros números ni el total del ticket
@@ -1994,7 +2157,33 @@ export const TicketRepository = {
                   return false;
                 });
                 
-                const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
+                const sumForNumber = jugadasDelNumero.reduce((acc, j) => {
+                  // ✅ ROBUSTEZ: Validar que cada amount sea un número válido
+                  const amount = Number(j.amount);
+                  if (!Number.isFinite(amount) || amount <= 0) {
+                    logger.warn({
+                      layer: 'repository',
+                      action: 'INVALID_JUGADA_AMOUNT',
+                      payload: { jugada: j, amount: j.amount },
+                    });
+                    return acc; // Ignorar jugadas con montos inválidos
+                  }
+                  return acc + amount;
+                }, 0);
+
+                // ✅ ROBUSTEZ: Validar que sumForNumber sea un número válido antes de comparar
+                if (!Number.isFinite(sumForNumber)) {
+                  logger.error({
+                    layer: 'repository',
+                    action: 'INVALID_SUM_FOR_NUMBER',
+                    payload: { num, sumForNumber, ruleId: rule.id },
+                  });
+                  throw new AppError(
+                    `Error al calcular monto del número ${num}. Contacte al administrador.`,
+                    500,
+                    'CALCULATION_ERROR'
+                  );
+                }
 
                 if (sumForNumber > effectiveMaxAmount) {
                   const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
@@ -2026,6 +2215,21 @@ export const TicketRepository = {
               const staticMaxTotal = rule.maxTotal ?? Infinity;
               const effectiveMaxTotal = dynamicLimit != null ? Math.min(staticMaxTotal, dynamicLimit) : staticMaxTotal;
 
+              // ✅ ROBUSTEZ: Validar que effectiveMaxTotal sea un número válido
+              if (!Number.isFinite(effectiveMaxTotal) || effectiveMaxTotal <= 0) {
+                logger.warn({
+                  layer: 'repository',
+                  action: 'INVALID_EFFECTIVE_MAX_TOTAL',
+                  payload: {
+                    ruleId: rule.id,
+                    effectiveMaxTotal,
+                    maxTotal: rule.maxTotal,
+                    dynamicLimit,
+                  },
+                });
+                continue; // Saltar esta regla si el límite es inválido
+              }
+
               // ✅ CRÍTICO: maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
               // ✅ CRÍTICO: Calcular amountForNumber por número INDIVIDUAL, no por total del ticket
               const numbersToCheck = uniqueNumbers.map(num => {
@@ -2037,9 +2241,26 @@ export const TicketRepository = {
                   return (j.type === 'NUMERO' && j.number === num && (!rule.multiplierId || j.multiplierId === rule.multiplierId)) || (j.type === 'REVENTADO' && j.reventadoNumber === num && !rule.multiplierId);
                 });
                 
-                const amount = jugadasDelNumero.reduce((acc, j) => acc + j.amount, 0);
+                const amount = jugadasDelNumero.reduce((acc, j) => {
+                  // ✅ ROBUSTEZ: Validar que cada amount sea un número válido
+                  const amountValue = Number(j.amount);
+                  if (!Number.isFinite(amountValue) || amountValue <= 0) {
+                    logger.warn({
+                      layer: 'repository',
+                      action: 'INVALID_JUGADA_AMOUNT',
+                      payload: { jugada: j, amount: j.amount },
+                    });
+                    return acc; // Ignorar jugadas con montos inválidos
+                  }
+                  return acc + amountValue;
+                }, 0);
+
+                // ✅ ROBUSTEZ: Validar que amount sea un número válido
+                if (!Number.isFinite(amount) || amount <= 0) {
+                  return null; // Filtrar después
+                }
                 return { number: num, amountForNumber: amount };
-              }).filter(n => n.amountForNumber > 0);
+              }).filter((n): n is { number: string; amountForNumber: number } => n !== null && n.amountForNumber > 0);
 
               if (numbersToCheck.length > 0) {
                 const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
