@@ -1,12 +1,13 @@
-import { AccountsFilters } from "./accounts.types";
+import { AccountsFilters, DayStatement } from "./accounts.types";
 import { resolveDateRange } from "../../../../utils/dateRange";
 import { getMonthDateRange, toCRDateString } from "./accounts.dates.utils";
-import { getDailySummariesFromMaterializedView, getMovementsForDay } from "./accounts.queries";
-import { getStatementDirect, calculateDayStatement } from "./accounts.calculations";
+import { getMovementsForDay } from "./accounts.queries";
+import { getStatementDirect, calculateDayStatement, getSettledStatements, getDatesNotSettled } from "./accounts.calculations";
 import { registerPayment, reversePayment, deleteStatement } from "./accounts.movements";
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
 import prisma from "../../../../core/prismaClient";
 import { getCachedStatement, setCachedStatement } from "../../../../utils/accountStatementCache";
+import { crDateService } from "../../../../utils/crDateService";
 import logger from "../../../../core/logger";
 
 /**
@@ -94,35 +95,241 @@ export const AccountsService = {
             payload: { cacheKey, dimension, bancaId, ventanaId, vendedorId }
         });
 
-        // ✅ OPTIMIZACIÓN: Intentar leer de la vista materializada primero (MUY RÁPIDO)
-        // ⚠️ NOTA: La vista materializada puede no tener datos para dimension='banca' sin bancaId específica
-        const materializedSummaries = await getDailySummariesFromMaterializedView(
+        // ✅ OPTIMIZACIÓN: Obtener estados asentados (datos consolidados + movimientos actualizados)
+        const settledStatements = await getSettledStatements(
             startDate,
             endDate,
             dimension,
             ventanaId,
             vendedorId,
-            bancaId, // ✅ NUEVO: Pasar bancaId
-            sort as "asc" | "desc"
+            bancaId
         );
 
-        // ✅ CRÍTICO: Calcular TODO directamente desde tickets/jugadas (sin AccountStatement)
-        const result = await getStatementDirect(
-            filters,
-            startDate,
-            endDate,
-            daysInMonth,
-            effectiveMonth,
-            dimension,
-            ventanaId,
-            vendedorId,
-            bancaId,
-            filters.userRole || "ADMIN",
-            sort as "asc" | "desc"
-        );
+        // ✅ CRÍTICO: Determinar si debemos agrupar por fecha solamente (igual que getStatementDirect)
+        // - dimension=banca sin bancaId específico (todas las bancas)
+        // - dimension=banca con bancaId pero sin ventanaId/vendedorId (todas las ventanas/vendedores de esa banca)
+        const shouldGroupByDate =
+            (dimension === "banca" && (!bancaId || bancaId === "" || bancaId === null)) ||
+            (dimension === "banca" && bancaId && !ventanaId && !vendedorId) || // ✅ NUEVO: Agrupar cuando hay bancaId pero múltiples ventanas/vendedores
+            (dimension === "ventana" && (!ventanaId || ventanaId === "" || ventanaId === null)) ||
+            (dimension === "vendedor" && (!vendedorId || vendedorId === "" || vendedorId === null));
 
-        // Guardar en caché (no esperar, hacerlo en background)
-        setCachedStatement(cacheKey, result).catch(() => {
+        // Identificar días no asentados que requieren cálculo completo
+        const datesNotSettled = getDatesNotSettled(startDate, endDate, settledStatements);
+
+        let result;
+
+        // ✅ CRÍTICO: Cuando shouldGroupByDate=true, SIEMPRE usar getStatementDirect para obtener bySorteo
+        // Incluso si todos los días están asentados, necesitamos el desglose por sorteo
+        if (datesNotSettled.length === 0 && !shouldGroupByDate) {
+            // ✅ TODOS los días están asentados Y NO hay agrupación - solo usar datos precomputados
+            logger.info({
+                layer: 'service',
+                action: 'ACCOUNT_STATEMENT_ALL_SETTLED',
+                payload: { dimension, bancaId, ventanaId, vendedorId, count: settledStatements.size }
+            });
+
+            // Combinar todos los estados asentados
+            const allStatements = Array.from(settledStatements.values())
+                .sort((a, b) => {
+                    const dateA = new Date(a.date).getTime();
+                    const dateB = new Date(b.date).getTime();
+                    return sort === "desc" ? dateB - dateA : dateA - dateB;
+                });
+
+            // Calcular totales desde estados asentados
+            const totalSales = allStatements.reduce((sum, s) => sum + s.totalSales, 0);
+            const totalPayouts = allStatements.reduce((sum, s) => sum + s.totalPayouts, 0);
+            const totalListeroCommission = allStatements.reduce((sum, s) => sum + s.listeroCommission, 0);
+            const totalVendedorCommission = allStatements.reduce((sum, s) => sum + s.vendedorCommission, 0);
+            // ✅ CRÍTICO: Usar comisión correcta según dimension (no vendedorId)
+            // - Si dimension='vendedor' → usar vendedorCommission
+            // - Si dimension='banca' o 'ventana' → usar listeroCommission (siempre)
+            const totalCommissionToUse = dimension === "vendedor" ? totalVendedorCommission : totalListeroCommission;
+            const totalPaid = allStatements.reduce((sum, s) => sum + s.totalPaid, 0);
+            const totalCollected = allStatements.reduce((sum, s) => sum + s.totalCollected, 0);
+            // ✅ CRÍTICO: totalBalance debe incluir movimientos (igual que balance en statements individuales)
+            // balance = balanceBase + totalPaid - totalCollected, donde balanceBase = totalSales - totalPayouts - commission
+            const totalBalanceBase = totalSales - totalPayouts - totalCommissionToUse;
+            const totalBalance = totalBalanceBase + totalPaid - totalCollected;
+            // ✅ CRÍTICO: totalRemainingBalance = totalBalance (que ya incluye movimientos)
+            // NO usar suma de remainingBalance porque esos valores son acumulados progresivamente
+            const totalRemainingBalance = totalBalance;
+
+            // Calcular acumulados del mes (desde todos los días asentados del mes)
+            const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
+            const [yearForMonth, monthForMonth] = effectiveMonth.split("-").map(Number);
+            const monthStartDate = new Date(Date.UTC(yearForMonth, monthForMonth - 1, 1));
+            const monthEndDate = new Date(Date.UTC(yearForMonth, monthForMonth, 0, 23, 59, 59, 999));
+            
+            // ✅ OPTIMIZACIÓN: Si el período filtrado es el mes completo, reutilizar los mismos datos
+            const isFullMonth = startDate.getTime() === monthStartDate.getTime() && 
+                                endDate.getTime() === monthEndDate.getTime();
+            
+            let allStatementsFromMonth: DayStatement[];
+            if (isFullMonth) {
+                // El período filtrado es el mes completo, usar los mismos statements
+                allStatementsFromMonth = allStatements;
+            } else {
+                // Obtener todos los días asentados del mes (para acumulados)
+                const allSettledFromMonth = await getSettledStatements(
+                    monthStartDate,
+                    monthEndDate,
+                    dimension,
+                    ventanaId,
+                    vendedorId,
+                    bancaId
+                );
+                allStatementsFromMonth = Array.from(allSettledFromMonth.values());
+            }
+            const monthlyTotalSales = allStatementsFromMonth.reduce((sum, s) => sum + s.totalSales, 0);
+            const monthlyTotalPayouts = allStatementsFromMonth.reduce((sum, s) => sum + s.totalPayouts, 0);
+            const monthlyTotalListeroCommission = allStatementsFromMonth.reduce((sum, s) => sum + s.listeroCommission, 0);
+            const monthlyTotalVendedorCommission = allStatementsFromMonth.reduce((sum, s) => sum + s.vendedorCommission, 0);
+            // ✅ CRÍTICO: Usar comisión correcta según dimension (no vendedorId)
+            // - Si dimension='vendedor' → usar vendedorCommission
+            // - Si dimension='banca' o 'ventana' → usar listeroCommission (siempre)
+            const monthlyTotalCommissionToUse = dimension === "vendedor" ? monthlyTotalVendedorCommission : monthlyTotalListeroCommission;
+            const monthlyTotalPaid = allStatementsFromMonth.reduce((sum, s) => sum + s.totalPaid, 0);
+            const monthlyTotalCollected = allStatementsFromMonth.reduce((sum, s) => sum + s.totalCollected, 0);
+            // ✅ CRÍTICO: monthlyTotalBalance debe incluir movimientos (igual que balance en statements individuales)
+            // balance = balanceBase + totalPaid - totalCollected, donde balanceBase = totalSales - totalPayouts - commission
+            const monthlyTotalBalanceBase = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalCommissionToUse;
+            const monthlyTotalBalance = monthlyTotalBalanceBase + monthlyTotalPaid - monthlyTotalCollected;
+            // ✅ CRÍTICO: monthlyRemainingBalance debe ser igual a monthlyTotalBalance (que ya incluye movimientos)
+            // En statements individuales: remainingBalance = balance (que ya incluye movimientos)
+            const monthlyRemainingBalance = monthlyTotalBalance;
+
+            result = {
+                statements: allStatements,
+                totals: {
+                    totalSales: parseFloat(totalSales.toFixed(2)),
+                    totalPayouts: parseFloat(totalPayouts.toFixed(2)),
+                    totalListeroCommission: parseFloat(totalListeroCommission.toFixed(2)),
+                    totalVendedorCommission: parseFloat(totalVendedorCommission.toFixed(2)),
+                    totalBalance: parseFloat(totalBalance.toFixed(2)),
+                    totalPaid: parseFloat(totalPaid.toFixed(2)),
+                    totalCollected: parseFloat(totalCollected.toFixed(2)),
+                    totalRemainingBalance: parseFloat(totalRemainingBalance.toFixed(2)),
+                    settledDays: allStatements.length,
+                    pendingDays: 0,
+                },
+                monthlyAccumulated: {
+                    totalSales: parseFloat(monthlyTotalSales.toFixed(2)),
+                    totalPayouts: parseFloat(monthlyTotalPayouts.toFixed(2)),
+                    totalBalance: parseFloat(monthlyTotalBalance.toFixed(2)),
+                    totalPaid: parseFloat(monthlyTotalPaid.toFixed(2)),
+                    totalCollected: parseFloat(monthlyTotalCollected.toFixed(2)),
+                    totalRemainingBalance: parseFloat(monthlyRemainingBalance.toFixed(2)),
+                    settledDays: allStatementsFromMonth.length,
+                    pendingDays: 0,
+                },
+                meta: {
+                    month: effectiveMonth,
+                    startDate: startDateCRStr,
+                    endDate: endDateCRStr,
+                    dimension,
+                    totalDays: daysInMonth,
+                    monthStartDate: crDateService.dateUTCToCRString(monthStartDate),
+                    monthEndDate: crDateService.dateUTCToCRString(monthEndDate),
+                },
+            };
+        } else {
+            // ✅ HAY días no asentados O shouldGroupByDate=true - calcular todo con getStatementDirect para obtener bySorteo
+            logger.info({
+                layer: 'service',
+                action: 'ACCOUNT_STATEMENT_CALCULATING',
+                payload: {
+                    dimension,
+                    bancaId,
+                    ventanaId,
+                    vendedorId,
+                    shouldGroupByDate,
+                    settledCount: settledStatements.size,
+                    notSettledCount: datesNotSettled.length,
+                    reason: shouldGroupByDate ? 'grouping_required' : 'partial_settled',
+                }
+            });
+
+            // Calcular TODO el rango (necesario para acumulados correctos y para obtener bySorteo cuando hay agrupación)
+            const calculatedResult = await getStatementDirect(
+                filters,
+                startDate,
+                endDate,
+                daysInMonth,
+                effectiveMonth,
+                dimension,
+                ventanaId,
+                vendedorId,
+                bancaId,
+                filters.userRole || "ADMIN",
+                sort as "asc" | "desc"
+            );
+
+            // ✅ CRÍTICO: Cuando shouldGroupByDate=true, NO reemplazar con settledStatements
+            // porque settledStatements están desagrupados (uno por entidad) y sin bySorteo,
+            // mientras que calculatedResult.statements están agrupados (uno por fecha) con bySorteo
+            let optimizedStatements;
+            if (shouldGroupByDate) {
+                // Usar directamente los statements calculados (ya agrupados con bySorteo)
+                optimizedStatements = calculatedResult.statements;
+            } else {
+                // Reemplazar días asentados con los optimizados (que tienen movimientos actualizados)
+                optimizedStatements = calculatedResult.statements.map(stmt => {
+                    // ✅ CRÍTICO: Asegurar que date sea un objeto Date
+                    const dateObj = stmt.date instanceof Date ? stmt.date : new Date(stmt.date);
+                    const dateKey = crDateService.postgresDateToCRString(dateObj);
+                    const settledStmt = settledStatements.get(dateKey);
+                    if (settledStmt) {
+                        // Usar el estado asentado optimizado (con movimientos actualizados)
+                        return settledStmt;
+                    }
+                    // Mantener el estado calculado en tiempo real
+                    return stmt;
+                });
+            }
+
+            // Recalcular totales desde statements optimizados
+            const totalSales = optimizedStatements.reduce((sum, s) => sum + s.totalSales, 0);
+            const totalPayouts = optimizedStatements.reduce((sum, s) => sum + s.totalPayouts, 0);
+            const totalListeroCommission = optimizedStatements.reduce((sum, s) => sum + s.listeroCommission, 0);
+            const totalVendedorCommission = optimizedStatements.reduce((sum, s) => sum + s.vendedorCommission, 0);
+            // ✅ CRÍTICO: Usar comisión correcta según dimension (no vendedorId)
+            // - Si dimension='vendedor' → usar vendedorCommission
+            // - Si dimension='banca' o 'ventana' → usar listeroCommission (siempre)
+            const totalCommissionToUse = dimension === "vendedor" ? totalVendedorCommission : totalListeroCommission;
+            // ✅ CRÍTICO: totalBalance debe incluir movimientos (igual que balance en statements individuales)
+            // balance = balanceBase + totalPaid - totalCollected, donde balanceBase = totalSales - totalPayouts - commission
+            const totalBalanceBase = totalSales - totalPayouts - totalCommissionToUse;
+            const totalPaid = optimizedStatements.reduce((sum, s) => sum + s.totalPaid, 0);
+            const totalCollected = optimizedStatements.reduce((sum, s) => sum + s.totalCollected, 0);
+            const totalBalance = totalBalanceBase + totalPaid - totalCollected;
+            // ✅ CRÍTICO: totalRemainingBalance = totalBalance (que ya incluye movimientos)
+            // NO usar suma de remainingBalance porque esos valores son acumulados progresivamente
+            const totalRemainingBalance = totalBalance;
+
+            result = {
+                statements: optimizedStatements,
+                totals: {
+                    totalSales: parseFloat(totalSales.toFixed(2)),
+                    totalPayouts: parseFloat(totalPayouts.toFixed(2)),
+                    totalListeroCommission: parseFloat(totalListeroCommission.toFixed(2)),
+                    totalVendedorCommission: parseFloat(totalVendedorCommission.toFixed(2)),
+                    totalBalance: parseFloat(totalBalance.toFixed(2)),
+                    totalPaid: parseFloat(totalPaid.toFixed(2)),
+                    totalCollected: parseFloat(totalCollected.toFixed(2)),
+                    totalRemainingBalance: parseFloat(totalRemainingBalance.toFixed(2)),
+                    settledDays: optimizedStatements.filter(s => s.isSettled).length,
+                    pendingDays: optimizedStatements.filter(s => !s.isSettled).length,
+                },
+                monthlyAccumulated: calculatedResult.monthlyAccumulated, // Usar acumulados del cálculo completo
+                meta: calculatedResult.meta,
+            };
+        }
+
+        // Guardar en caché con TTL diferenciado
+        const cacheTTL = datesNotSettled.length > 0 ? 60 : 900; // 1 min vs 15 min
+        setCachedStatement(cacheKey, result, cacheTTL).catch(() => {
             // Ignorar errores de caché
         });
 

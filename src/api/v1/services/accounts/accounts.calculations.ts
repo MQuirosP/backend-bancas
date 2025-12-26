@@ -455,8 +455,12 @@ export async function getStatementDirect(
     // - dimension=ventana y ventanaId NO está especificado
     // - dimension=vendedor y vendedorId NO está especificado
     // ✅ CRÍTICO: Verificar tanto undefined como null y cadena vacía
+    // ✅ CRÍTICO: shouldGroupByDate=true cuando necesitamos agrupar múltiples entidades por fecha
+    // - dimension=banca sin bancaId específico (todas las bancas)
+    // - dimension=banca con bancaId pero sin ventanaId/vendedorId (todas las ventanas/vendedores de esa banca)
     const shouldGroupByDate =
         (dimension === "banca" && (!bancaId || bancaId === "" || bancaId === null)) ||
+        (dimension === "banca" && bancaId && !ventanaId && !vendedorId) || // ✅ NUEVO: Agrupar cuando hay bancaId pero múltiples ventanas/vendedores
         (dimension === "ventana" && (!ventanaId || ventanaId === "" || ventanaId === null)) ||
         (dimension === "vendedor" && (!vendedorId || vendedorId === "" || vendedorId === null));
 
@@ -1078,13 +1082,11 @@ export async function getStatementDirect(
                     for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
                         const breakdownDate = breakdownKey.split("_")[0];
                         if (breakdownDate === date && breakdownEntry.bancaId) {
-                            // ✅ CRÍTICO: Calcular totalPayouts desde sorteos para este breakdown
-                            // Dentro de dimension="banca", los breakdowns pueden ser por ventana o vendedor
-                            const breakdownSorteoKey = breakdownEntry.vendedorId
-                                ? `${date}_${breakdownEntry.vendedorId}`
-                                : `${date}_${breakdownEntry.ventanaId}`;
-                            const breakdownSorteos = sorteoBreakdownBatch.get(breakdownSorteoKey) || [];
-                            const breakdownTotalPayouts = breakdownSorteos.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
+                            // ✅ CRÍTICO: Calcular totalPayouts desde sorteos agrupados por banca
+                            // Cuando dimension=banca sin bancaId, sorteoBreakdownBatch tiene claves por banca
+                            // Como los sorteos están agrupados por banca, no podemos obtener payouts específicos por ventana/vendedor
+                            // Usaremos 0 aquí y se calculará correctamente desde los sorteos de la banca al construir el breakdown
+                            const breakdownTotalPayouts = 0; // Se calculará después desde sorteoBreakdownBatch al construir byVentana/byVendedor
 
                             let bancaGroup = bancaMap.get(breakdownEntry.bancaId);
                             if (!bancaGroup) {
@@ -1106,7 +1108,8 @@ export async function getStatementDirect(
                             // Agregar a totales de banca (bancaGroup está garantizado que no es undefined aquí)
                             const group = bancaGroup;
                             group.totalSales += breakdownEntry.totalSales;
-                            group.totalPayouts += breakdownTotalPayouts;
+                            // ✅ NOTA: totalPayouts se calculará después desde sorteoBreakdownBatch al construir byVentana/byVendedor
+                            // No acumular aquí porque breakdownEntry no tiene totalPayouts (se calcula desde sorteos)
                             group.commissionListero += breakdownEntry.commissionListero;
                             group.commissionVendedor += breakdownEntry.commissionVendedor;
                             breakdownEntry.totalTickets.forEach(id => group.totalTickets.add(id));
@@ -1129,7 +1132,8 @@ export async function getStatementDirect(
                                     group.ventanas.set(ventanaKey, ventanaGroup);
                                 }
                                 ventanaGroup.totalSales += breakdownEntry.totalSales;
-                                ventanaGroup.totalPayouts += breakdownTotalPayouts;
+                                // ✅ NOTA: totalPayouts no se puede calcular aquí porque los sorteos están agrupados por banca
+                                // Se usará el totalPayouts de la banca distribuido proporcionalmente, o se calculará desde sorteos de la banca
                                 ventanaGroup.commissionListero += breakdownEntry.commissionListero;
                                 ventanaGroup.commissionVendedor += breakdownEntry.commissionVendedor;
                                 breakdownEntry.totalTickets.forEach(id => ventanaGroup.totalTickets.add(id));
@@ -1156,7 +1160,8 @@ export async function getStatementDirect(
                                     group.vendedores.set(vendedorKey, vendedorGroup);
                                 }
                                 vendedorGroup.totalSales += breakdownEntry.totalSales;
-                                vendedorGroup.totalPayouts += breakdownTotalPayouts;
+                                // ✅ NOTA: totalPayouts no se puede calcular aquí porque los sorteos están agrupados por banca
+                                // Se usará el totalPayouts de la banca distribuido proporcionalmente
                                 vendedorGroup.commissionListero += breakdownEntry.commissionListero;
                                 vendedorGroup.commissionVendedor += breakdownEntry.commissionVendedor;
                                 breakdownEntry.totalTickets.forEach(id => vendedorGroup.totalTickets.add(id));
@@ -1166,6 +1171,12 @@ export async function getStatementDirect(
 
                     // Construir byBanca con byVentana y byVendedor
                     for (const [bancaId, bancaGroup] of bancaMap.entries()) {
+                        // ✅ CORRECCIÓN: Calcular totalPayouts desde sorteoBreakdownBatch (agrupado por banca)
+                        const bancaSorteoKey = `${date}_${bancaId}`;
+                        const bancaSorteos = sorteoBreakdownBatch.get(bancaSorteoKey) || [];
+                        const bancaTotalPayouts = bancaSorteos.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
+                        bancaGroup.totalPayouts = bancaTotalPayouts; // Actualizar totalPayouts desde sorteos
+                        
                         const bancaBalance = bancaGroup.totalSales - bancaGroup.totalPayouts - bancaGroup.commissionListero;
                         const bancaMovements = allMovementsForDate.filter((m: any) => m.bancaId === bancaId);
                         const bancaTotalPaid = bancaMovements
@@ -1179,6 +1190,14 @@ export async function getStatementDirect(
                         // Construir byVentana para esta banca
                         const byVentana: any[] = [];
                         for (const [ventanaId, ventanaGroup] of bancaGroup.ventanas.entries()) {
+                            // ✅ CORRECCIÓN: Calcular totalPayouts desde sorteos de la banca (proporcional a ventas de esta ventana)
+                            // Como los sorteos están agrupados por banca, usamos el totalPayouts de la banca
+                            // y lo distribuimos proporcionalmente según las ventas de esta ventana
+                            const ventanaTotalPayouts = bancaGroup.totalSales > 0
+                                ? (ventanaGroup.totalSales / bancaGroup.totalSales) * bancaGroup.totalPayouts
+                                : 0;
+                            ventanaGroup.totalPayouts = ventanaTotalPayouts; // Actualizar totalPayouts proporcional
+                            
                             const ventanaBalance = ventanaGroup.totalSales - ventanaGroup.totalPayouts - ventanaGroup.commissionListero;
                             const ventanaMovements = allMovementsForDate.filter((m: any) => m.ventanaId === ventanaId);
                             const ventanaTotalPaid = ventanaMovements
@@ -1188,8 +1207,10 @@ export async function getStatementDirect(
                                 .filter((m: any) => m.type === "collection" && !m.isReversed)
                                 .reduce((sum: number, m: any) => sum + m.amount, 0);
                             const ventanaRemainingBalance = ventanaBalance - ventanaTotalCollected + ventanaTotalPaid;
-                            const ventanaSorteoKey = `${date}_${ventanaId}`;
-                            const ventanaSorteos = sorteoBreakdownBatch.get(ventanaSorteoKey) || [];
+                            // ✅ CORRECCIÓN: Cuando dimension=banca sin bancaId, NO mostrar sorteos individuales por ventana
+                            // Los sorteos ya están agrupados por banca en el nivel principal (statement.bySorteo)
+                            // El breakdown por entidad muestra solo totales, no sorteos individuales para evitar duplicados
+                            const ventanaSorteos: any[] = []; // Vacío: sorteos ya mostrados en nivel principal
 
                             byVentana.push({
                                 ventanaId: ventanaGroup.ventanaId,
@@ -1215,6 +1236,14 @@ export async function getStatementDirect(
                         const byVendedor: any[] = [];
                         for (const [vendedorId, vendedorGroup] of bancaGroup.vendedores.entries()) {
                             // ✅ CORRECCIÓN: Balance de vendedor usando vendedorCommission
+                            // ✅ CORRECCIÓN: Calcular totalPayouts desde sorteos de la banca (proporcional a ventas de este vendedor)
+                            // Como los sorteos están agrupados por banca, usamos el totalPayouts de la banca
+                            // y lo distribuimos proporcionalmente según las ventas de este vendedor
+                            const vendedorTotalPayouts = bancaGroup.totalSales > 0
+                                ? (vendedorGroup.totalSales / bancaGroup.totalSales) * bancaGroup.totalPayouts
+                                : 0;
+                            vendedorGroup.totalPayouts = vendedorTotalPayouts; // Actualizar totalPayouts proporcional
+                            
                             const vendedorBalance = vendedorGroup.totalSales - vendedorGroup.totalPayouts - vendedorGroup.commissionVendedor;
                             const vendedorMovements = allMovementsForDate.filter((m: any) => m.vendedorId === vendedorId);
                             const vendedorTotalPaid = vendedorMovements
@@ -1224,8 +1253,10 @@ export async function getStatementDirect(
                                 .filter((m: any) => m.type === "collection" && !m.isReversed)
                                 .reduce((sum: number, m: any) => sum + m.amount, 0);
                             const vendedorRemainingBalance = vendedorBalance - vendedorTotalCollected + vendedorTotalPaid;
-                            const vendedorSorteoKey = `${date}_${vendedorId || 'null'}`;
-                            const vendedorSorteos = sorteoBreakdownBatch.get(vendedorSorteoKey) || [];
+                            // ✅ CORRECCIÓN: Cuando dimension=banca sin bancaId, NO mostrar sorteos individuales por vendedor
+                            // Los sorteos ya están agrupados por banca en el nivel principal (statement.bySorteo)
+                            // El breakdown por entidad muestra solo totales, no sorteos individuales para evitar duplicados
+                            const vendedorSorteos: any[] = []; // Vacío: sorteos ya mostrados en nivel principal
 
                             byVendedor.push({
                                 vendedorId: vendedorGroup.vendedorId,
@@ -1660,23 +1691,32 @@ export async function getStatementDirect(
         (sum, entry) => sum + entry.commissionVendedor,
         0
     );
-    // ✅ CRÍTICO: Usar comisión correcta según filtros del cliente
-    // - Si hay vendedorId específico → usar monthlyTotalVendedorCommission
-    // - Si NO hay vendedorId → usar monthlyTotalListeroCommission (por defecto)
-    const monthlyTotalCommissionToUse = vendedorId ? monthlyTotalVendedorCommission : monthlyTotalListeroCommission;
-    const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalCommissionToUse;
+    // ✅ CRÍTICO: Usar comisión correcta según dimension (no vendedorId)
+    // - Si dimension='vendedor' → usar vendedorCommission
+    // - Si dimension='banca' o 'ventana' → usar listeroCommission (siempre)
+    const monthlyTotalCommissionToUse = dimension === "vendedor" ? monthlyTotalVendedorCommission : monthlyTotalListeroCommission;
 
     // Calcular totales de pagos/cobros del mes
     let monthlyTotalPaid = 0;
     let monthlyTotalCollected = 0;
     for (const movements of monthlyMovementsByDate.values()) {
-        monthlyTotalPaid += movements
+        // ✅ CRÍTICO: Filtrar movimientos por bancaId cuando dimension=banca con bancaId
+        let filteredMovements = movements;
+        if (dimension === "banca" && bancaId) {
+            filteredMovements = movements.filter((m: any) => m.bancaId === bancaId);
+        }
+        monthlyTotalPaid += filteredMovements
             .filter((m: any) => m.type === "payment" && !m.isReversed)
             .reduce((sum: number, m: any) => sum + m.amount, 0);
-        monthlyTotalCollected += movements
+        monthlyTotalCollected += filteredMovements
             .filter((m: any) => m.type === "collection" && !m.isReversed)
             .reduce((sum: number, m: any) => sum + m.amount, 0);
     }
+
+    // ✅ CRÍTICO: monthlyTotalBalance debe incluir movimientos (igual que balance en statements individuales)
+    // balance = balanceBase + totalPaid - totalCollected, donde balanceBase = totalSales - totalPayouts - commission
+    const monthlyTotalBalanceBase = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalCommissionToUse;
+    const monthlyTotalBalance = monthlyTotalBalanceBase + monthlyTotalPaid - monthlyTotalCollected;
 
     // Contar días saldados en el mes
     const monthlySettledDays = Array.from(monthlyByDateAndDimension.entries())
@@ -1684,10 +1724,15 @@ export async function getStatementDirect(
             const date = key.split("_")[0];
             // Obtener movimientos específicos para esta entrada (fecha + dimensión)
             const allMovements = monthlyMovementsByDate.get(date) || [];
-            const movements = allMovements.filter((m: any) => {
-                if (dimension === "ventana") return m.ventanaId === entry.ventanaId;
-                else return m.vendedorId === entry.vendedorId;
-            });
+            let movements = allMovements;
+            // ✅ CRÍTICO: Filtrar movimientos según dimension y filtros
+            if (dimension === "banca" && bancaId) {
+                movements = allMovements.filter((m: any) => m.bancaId === bancaId);
+            } else if (dimension === "ventana") {
+                movements = allMovements.filter((m: any) => m.ventanaId === entry.ventanaId);
+            } else {
+                movements = allMovements.filter((m: any) => m.vendedorId === entry.vendedorId);
+            }
 
             const totalPaid = movements
                 .filter((m: any) => m.type === "payment" && !m.isReversed)
@@ -1703,9 +1748,9 @@ export async function getStatementDirect(
         }).length;
     const monthlyPendingDays = monthlyByDateAndDimension.size - monthlySettledDays;
 
-    // ✅ CRÍTICO: Calcular monthlyRemainingBalance desde los totales agregados del mes
-    // Esto asegura consistencia matemática: remainingBalance = balance - totalCollected + totalPaid
-    const monthlyRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
+    // ✅ CRÍTICO: monthlyRemainingBalance debe ser igual a monthlyTotalBalance (que ya incluye movimientos)
+    // En statements individuales: remainingBalance = balance (que ya incluye movimientos)
+    const monthlyRemainingBalance = monthlyTotalBalance;
 
     const monthlyAccumulated: StatementTotals = {
         totalSales: parseFloat(monthlyTotalSales.toFixed(2)),
@@ -1907,4 +1952,320 @@ async function getExcludedTicketIdsForDate(date: Date): Promise<string[]> {
     `;
 
     return excludedIds.map(r => r.id);
+}
+
+/**
+ * ✅ OPTIMIZACIÓN: Obtiene estados de cuenta asentados desde account_statements
+ * Usa datos precomputados (totalSales, totalPayouts, comisiones) pero recalcula movimientos
+ * desde AccountPayment para asegurar que estén actualizados
+ */
+export async function getSettledStatements(
+    startDate: Date,
+    endDate: Date,
+    dimension: "banca" | "ventana" | "vendedor",
+    ventanaId?: string,
+    vendedorId?: string,
+    bancaId?: string
+): Promise<Map<string, DayStatement>> {
+    try {
+        // 1. Query optimizada a account_statements (solo asentados)
+        const where: Prisma.AccountStatementWhereInput = {
+            date: {
+                gte: startDate,
+                lte: endDate,
+            },
+            isSettled: true, // ⭐ Solo estados asentados
+        };
+
+        // Filtros según dimension
+        if (dimension === "vendedor" && vendedorId) {
+            where.vendedorId = vendedorId;
+        } else if (dimension === "ventana" && ventanaId) {
+            where.ventanaId = ventanaId;
+            where.vendedorId = null; // Statements consolidados de ventana
+        } else if (dimension === "banca" && bancaId) {
+            // ✅ CRÍTICO: Incluir statements con bancaId explícito O statements que pertenecen a esa banca a través de ventanaId
+            // Algunos statements antiguos pueden tener bancaId=null pero ventanaId que pertenece a esa banca
+            where.OR = [
+                { bancaId: bancaId },
+                {
+                    bancaId: null,
+                    ventana: {
+                        bancaId: bancaId,
+                    },
+                },
+            ];
+        }
+
+        const settledStatementsRaw = await prisma.accountStatement.findMany({
+            where,
+            include: {
+                ventana: {
+                    select: {
+                        name: true,
+                        code: true,
+                        banca: { select: { id: true, name: true, code: true } }, // ✅ Para obtener banca cuando bancaId es null
+                    },
+                },
+                vendedor: { select: { name: true, code: true } },
+                banca: { select: { id: true, name: true, code: true } },
+            },
+            orderBy: { date: "desc" },
+        });
+
+        if (settledStatementsRaw.length === 0) {
+            return new Map();
+        }
+
+        // 2. Recalcular movimientos desde AccountPayment (batch)
+        const statementIds = settledStatementsRaw.map(s => s.id);
+        const movementsTotals = await AccountPaymentRepository.getTotalsBatch(statementIds);
+
+        // ✅ CRÍTICO: Determinar si necesitamos agregar por fecha
+        // Cuando dimension=banca con bancaId pero sin ventanaId/vendedorId, hay múltiples statements por fecha
+        // (uno por cada ventana/vendedor dentro de esa banca) y necesitamos agregarlos
+        const requiresGrouping = dimension === "banca" && bancaId && !ventanaId && !vendedorId;
+
+        // 3. Combinar datos consolidados + movimientos actualizados
+        // Si requiere agrupación, agrupamos por fecha; si no, usamos Map normal (puede sobrescribir)
+        const settledStatementsByDate = new Map<string, DayStatement[]>();
+
+        for (const statement of settledStatementsRaw) {
+            const totals = movementsTotals.get(statement.id) || { totalPaid: 0, totalCollected: 0, totalPaymentsCollections: 0 };
+
+            // Calcular balance base (sin movimientos)
+            const balanceBase = dimension === "vendedor"
+                ? statement.totalSales - statement.totalPayouts - statement.vendedorCommission
+                : statement.totalSales - statement.totalPayouts - statement.listeroCommission;
+
+            // Recalcular balance y remainingBalance con movimientos actualizados
+            const balance = balanceBase + totals.totalPaid - totals.totalCollected;
+            const remainingBalance = balance;
+
+            const dateKey = crDateService.postgresDateToCRString(statement.date);
+
+            // ✅ Obtener bancaId, bancaName, bancaCode (puede venir de statement.banca o statement.ventana.banca)
+            const effectiveBancaId = statement.bancaId || statement.ventana?.banca?.id || null;
+            const effectiveBancaName = statement.banca?.name || statement.ventana?.banca?.name || null;
+            const effectiveBancaCode = statement.banca?.code || statement.ventana?.banca?.code || null;
+
+            const dayStatement: DayStatement = {
+                id: statement.id,
+                date: statement.date,
+                month: statement.month,
+                bancaId: effectiveBancaId, // ✅ Usar el bancaId efectivo (del statement o de ventana.banca)
+                bancaName: effectiveBancaName,
+                bancaCode: effectiveBancaCode,
+                ventanaId: statement.ventanaId,
+                ventanaName: statement.ventana?.name || null,
+                ventanaCode: statement.ventana?.code || null,
+                vendedorId: statement.vendedorId,
+                vendedorName: statement.vendedor?.name || null,
+                vendedorCode: statement.vendedor?.code || null,
+                totalSales: statement.totalSales,
+                totalPayouts: statement.totalPayouts,
+                listeroCommission: statement.listeroCommission,
+                vendedorCommission: statement.vendedorCommission,
+                balance: parseFloat(balance.toFixed(2)),
+                totalPaid: totals.totalPaid, // ⭐ Actualizado desde AccountPayment
+                totalCollected: totals.totalCollected, // ⭐ Actualizado desde AccountPayment
+                totalPaymentsCollections: totals.totalPaymentsCollections,
+                remainingBalance: parseFloat(remainingBalance.toFixed(2)),
+                isSettled: true,
+                canEdit: false,
+                ticketCount: statement.ticketCount,
+                createdAt: statement.createdAt,
+                updatedAt: statement.updatedAt,
+            };
+
+            // Agrupar por fecha (siempre, pero cuando requiresGrouping=true, acumulamos múltiples)
+            if (!settledStatementsByDate.has(dateKey)) {
+                settledStatementsByDate.set(dateKey, []);
+            }
+            if (requiresGrouping) {
+                // Acumular múltiples statements por fecha
+                settledStatementsByDate.get(dateKey)!.push(dayStatement);
+            } else {
+                // Solo mantener el último (comportamiento original cuando no requiere agrupación)
+                settledStatementsByDate.set(dateKey, [dayStatement]);
+            }
+        }
+
+        // 4. Si requiere agrupación, agregar statements por fecha; si no, usar el único statement por fecha
+        const settledStatements = new Map<string, DayStatement>();
+        
+        for (const [dateKey, statements] of Array.from(settledStatementsByDate.entries())) {
+            if (requiresGrouping && statements.length > 1) {
+                // Agregar múltiples statements por fecha (sumar totales)
+                const aggregated: DayStatement = {
+                    id: statements[0].id, // Usar el primer ID (solo para referencia, no tiene significado real cuando está agregado)
+                    date: statements[0].date,
+                    month: statements[0].month,
+                    bancaId: bancaId || null, // Usar el bancaId proporcionado
+                    // ✅ Obtener bancaName y bancaCode del primer statement que los tenga, o usar null
+                    bancaName: statements.find((s) => s.bancaName)?.bancaName || null,
+                    bancaCode: statements.find((s) => s.bancaCode)?.bancaCode || null,
+                    ventanaId: null, // Agregado: sin ventanaId específica
+                    ventanaName: null,
+                    ventanaCode: null,
+                    vendedorId: null, // Agregado: sin vendedorId específico
+                    vendedorName: null,
+                    vendedorCode: null,
+                    totalSales: statements.reduce((sum, s) => sum + s.totalSales, 0),
+                    totalPayouts: statements.reduce((sum, s) => sum + s.totalPayouts, 0),
+                    listeroCommission: statements.reduce((sum, s) => sum + s.listeroCommission, 0),
+                    vendedorCommission: statements.reduce((sum, s) => sum + s.vendedorCommission, 0),
+                    // ✅ CRÍTICO: Calcular balance agregado usando la comisión correcta según dimension
+                    // balance debe incluir movimientos: balance = balanceBase + totalPaid - totalCollected
+                    // Donde balanceBase = totalSales - totalPayouts - commission
+                    balance: (() => {
+                        const totalSales = statements.reduce((sum, s) => sum + s.totalSales, 0);
+                        const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
+                        const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
+                        const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
+                        const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
+                        // Cuando dimension=banca con bancaId, siempre usar listeroCommission (no vendedorCommission)
+                        const balanceBase = totalSales - totalPayouts - totalListeroCommission;
+                        // ✅ CRÍTICO: balance debe incluir movimientos (igual que en statements individuales)
+                        return balanceBase + totalPaid - totalCollected;
+                    })(),
+                    totalPaid: statements.reduce((sum, s) => sum + s.totalPaid, 0),
+                    totalCollected: statements.reduce((sum, s) => sum + s.totalCollected, 0),
+                    totalPaymentsCollections: statements.reduce((sum, s) => sum + s.totalPaymentsCollections, 0),
+                    // ✅ CRÍTICO: remainingBalance debe ser igual a balance (que ya incluye movimientos)
+                    // En statements individuales: remainingBalance = balance = balanceBase + totalPaid - totalCollected
+                    // Entonces cuando agregamos, remainingBalance debe ser igual al balance agregado (que ya incluye movimientos)
+                    remainingBalance: (() => {
+                        // Reutilizar el cálculo de balance que ya incluye movimientos
+                        const totalSales = statements.reduce((sum, s) => sum + s.totalSales, 0);
+                        const totalPayouts = statements.reduce((sum, s) => sum + s.totalPayouts, 0);
+                        const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
+                        const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
+                        const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
+                        // Cuando dimension=banca con bancaId, siempre usar listeroCommission (no vendedorCommission)
+                        const balanceBase = totalSales - totalPayouts - totalListeroCommission;
+                        // balance ya incluye movimientos, y remainingBalance = balance
+                        return balanceBase + totalPaid - totalCollected;
+                    })(),
+                    isSettled: true,
+                    canEdit: false,
+                    ticketCount: statements.reduce((sum, s) => sum + s.ticketCount, 0),
+                    createdAt: statements.reduce((earliest, s) => s.createdAt < earliest ? s.createdAt : earliest, statements[0].createdAt),
+                    updatedAt: statements.reduce((latest, s) => s.updatedAt > latest ? s.updatedAt : latest, statements[0].updatedAt),
+                };
+                settledStatements.set(dateKey, aggregated);
+            } else if (requiresGrouping && statements.length === 1) {
+                // Si requiere agrupación pero solo hay un statement, usar ese pero limpiar ventanaId/vendedorId
+                const singleStatement = statements[0];
+                settledStatements.set(dateKey, {
+                    ...singleStatement,
+                    ventanaId: null,
+                    ventanaName: null,
+                    ventanaCode: null,
+                    vendedorId: null,
+                    vendedorName: null,
+                    vendedorCode: null,
+                    bancaId: bancaId || singleStatement.bancaId,
+                });
+            } else {
+                // Un solo statement por fecha (comportamiento original cuando no requiere agrupación)
+                settledStatements.set(dateKey, statements[0]);
+            }
+        }
+
+        logger.info({
+            layer: "service",
+            action: "GET_SETTLED_STATEMENTS",
+            payload: {
+                dimension,
+                bancaId,
+                ventanaId,
+                vendedorId,
+                statementsCount: settledStatements.size,
+                rawStatementsCount: settledStatementsRaw.length,
+                requiresGrouping,
+            },
+        });
+
+        return settledStatements;
+    } catch (error: any) {
+        logger.error({
+            layer: "service",
+            action: "GET_SETTLED_STATEMENTS_ERROR",
+            payload: {
+                error: error.message,
+                dimension,
+                bancaId,
+                ventanaId,
+                vendedorId,
+            },
+        });
+        // Si hay error, retornar Map vacío (se calculará en tiempo real)
+        return new Map();
+    }
+}
+
+/**
+ * ✅ OPTIMIZACIÓN: Identifica días que NO están asentados y requieren cálculo completo
+ */
+export function getDatesNotSettled(
+    startDate: Date,
+    endDate: Date,
+    settledStatements: Map<string, DayStatement>
+): Date[] {
+    const dates: Date[] = [];
+    const current = new Date(startDate);
+
+    while (current <= endDate) {
+        const dateKey = crDateService.postgresDateToCRString(current);
+        if (!settledStatements.has(dateKey)) {
+            // Este día no está asentado, requiere cálculo completo
+            dates.push(new Date(current)); // Clonar para evitar mutación
+        }
+        current.setUTCDate(current.getUTCDate() + 1);
+    }
+
+    return dates;
+}
+
+/**
+ * ✅ OPTIMIZACIÓN: Combina estados asentados y calculados en tiempo real
+ */
+export function combineSettledAndCalculated(
+    settled: Map<string, DayStatement>,
+    calculated: DayStatement[],
+    startDate: Date,
+    endDate: Date,
+    sort: "asc" | "desc"
+): DayStatement[] {
+    const combined = new Map<string, DayStatement>();
+
+    // Agregar estados asentados
+    for (const [dateKey, statement] of Array.from(settled.entries())) {
+        combined.set(dateKey, statement);
+    }
+
+    // Agregar estados calculados (sobrescriben si hay conflicto, pero no debería haberlo)
+    for (const statement of calculated) {
+        const dateKey = crDateService.postgresDateToCRString(statement.date);
+        combined.set(dateKey, statement);
+    }
+
+    // Convertir a array y ordenar
+    const result = Array.from(combined.values())
+        .filter(stmt => {
+            // ✅ CRÍTICO: Asegurar que date sea un objeto Date
+            const dateObj = stmt.date instanceof Date ? stmt.date : new Date(stmt.date);
+            const date = crDateService.postgresDateToCRString(dateObj);
+            const startDateCR = crDateService.postgresDateToCRString(startDate);
+            const endDateCR = crDateService.postgresDateToCRString(endDate);
+            return date >= startDateCR && date <= endDateCR;
+        })
+        .sort((a, b) => {
+            const dateA = (a.date instanceof Date ? a.date : new Date(a.date)).getTime();
+            const dateB = (b.date instanceof Date ? b.date : new Date(b.date)).getTime();
+            return sort === "desc" ? dateB - dateA : dateA - dateB;
+        });
+
+    return result;
 }
