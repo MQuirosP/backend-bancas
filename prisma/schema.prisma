@@ -676,11 +676,11 @@ model AccountStatement {
   updatedAt DateTime @updatedAt
 
   // Relaciones
-  banca          Banca?          @relation(fields: [bancaId], references: [id], onDelete: Cascade)
-  ventana        Ventana?        @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
-  vendedor       User?           @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
-  payments       AccountPayment[]
-  settledByUser  User?           @relation("AccountStatementSettledBy", fields: [settledBy], references: [id])
+  banca         Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
+  ventana       Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
+  vendedor      User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
+  payments      AccountPayment[]
+  settledByUser User?            @relation("AccountStatementSettledBy", fields: [settledBy], references: [id])
 
   @@unique([date, ventanaId], map: "account_statements_date_ventana_unique")
   @@unique([date, vendedorId], map: "account_statements_date_vendedor_unique")
@@ -734,7 +734,9 @@ model AccountPayment {
   updatedAt DateTime @updatedAt
 
   // Relaciones
-  accountStatement AccountStatement @relation(fields: [accountStatementId], references: [id], onDelete: Cascade)
+  // ✅ CRÍTICO: onDelete: Restrict previene borrar AccountStatement si tiene AccountPayment asociados
+  // Esto protege los datos críticos de pagos/cobros de producción
+  accountStatement AccountStatement @relation(fields: [accountStatementId], references: [id], onDelete: Restrict)
   banca            Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
   ventana          Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
   vendedor         User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
