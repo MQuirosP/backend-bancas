@@ -1,4 +1,5 @@
 import { getCRLocalComponents } from "../../../../utils/businessDate";
+import { crDateService } from "../../../../utils/crDateService";
 
 /**
  * Formatea una hora en formato 12h con AM/PM
@@ -85,6 +86,7 @@ export function intercalateSorteosAndMovements(
     isReversed: boolean;
     createdAt: string;
     date: string;
+    time?: string | null; // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
   }>,
   dateStr: string
 ): SorteoOrMovement[] {
@@ -97,12 +99,28 @@ export function intercalateSorteosAndMovements(
     // Los movimientos reversados se muestran en el frontend con estilo diferente
     // pero NO afectan el balance acumulado (balance: 0 si isReversed)
 
-    // ✅ CORRECCIÓN: Usar createdAt directamente como scheduledAt
-    // movement.createdAt viene como ISO string en UTC desde el repositorio
-    // Este timestamp UTC representa el momento exacto del registro del movimiento
-    // Cuando se compara con sorteo.scheduledAt (también en UTC), el orden cronológico será correcto
-    const createdAtDate = new Date(movement.createdAt);
-    const scheduledAt = createdAtDate;
+    // ✅ CRÍTICO: Usar time si está disponible, sino usar createdAt
+    // Si movement.time existe, combinar date + time en CR y convertir a UTC para scheduledAt
+    // Esto permite que el usuario especifique la hora del movimiento y se intercale correctamente con sorteos
+    let scheduledAt: Date;
+    if (movement.time) {
+      // Combinar date + time en CR y convertir a UTC para comparar con sorteos
+      // date viene como YYYY-MM-DD, time como HH:MM (hora en CR, UTC-6)
+      const [year, month, day] = movement.date.split('-').map(Number);
+      const [hours, minutes] = movement.time.split(':').map(Number);
+      // ✅ CRÍTICO: Crear fecha/hora en CR y convertir a UTC correctamente
+      // CR está en UTC-6, así que para convertir CR a UTC: SUMAR 6 horas
+      // Ejemplo: 13:00 CR = 19:00 UTC
+      // Date.UTC crea una fecha en UTC con los valores especificados
+      // Si especificamos 13:00, Date.UTC crea 13:00 UTC, pero queremos 13:00 CR = 19:00 UTC
+      // Por lo tanto, debemos crear 13:00 UTC y luego sumar 6 horas para obtener 19:00 UTC
+      const crDateTimeUTC = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0, 0));
+      scheduledAt = new Date(crDateTimeUTC.getTime() + crDateService.CR_TIMEZONE_OFFSET_MS); // ✅ SUMAR 6 horas para convertir CR a UTC
+    } else {
+      // Si no hay time, usar createdAt (que ya está en UTC)
+      // createdAt viene como ISO string UTC, así que solo necesitamos parsearlo
+      scheduledAt = new Date(movement.createdAt);
+    }
 
     // ✅ CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
     // Si no está reversado, usar el monto normal
@@ -115,7 +133,7 @@ export function intercalateSorteosAndMovements(
       sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
       scheduledAt: scheduledAt.toISOString(),
       date: movement.date,
-      time: formatTime12h(scheduledAt),
+      time: movement.time ? formatTime12h(scheduledAt) : formatTime12h(scheduledAt), // ✅ Usar time si existe, sino formatear desde scheduledAt
       balance: effectiveBalance, // ✅ 0 si reversado, monto normal si activo
       accumulated: 0,
       chronologicalIndex: 0,
@@ -141,26 +159,36 @@ export function intercalateSorteosAndMovements(
   }
 
   // PASO 2: Convertir sorteos a formato unificado
-  const sorteoItems: SorteoOrMovement[] = sorteos.map(sorteo => ({
-    sorteoId: sorteo.sorteoId,
-    sorteoName: sorteo.sorteoName,
-    scheduledAt: sorteo.scheduledAt,
-    date: dateStr,
-    time: formatTime12h(new Date(sorteo.scheduledAt)),
-    balance: sorteo.balance,
-    accumulated: 0,
-    chronologicalIndex: 0,
-    totalChronological: 0,
+  // ✅ CRÍTICO: scheduledAt de sorteos viene como string ISO desde la BD
+  // Según la documentación, se guarda como hora local CR (sin 'Z')
+  // Pero cuando Prisma lo lee y convierte a string con toISOString(), ya está en UTC
+  // Necesitamos normalizar ambos (sorteos y movimientos) a UTC para comparar correctamente
+  const sorteoItems: SorteoOrMovement[] = sorteos.map(sorteo => {
+    // scheduledAt viene como string ISO desde accounts.queries.ts (ya convertido con toISOString())
+    // Por lo tanto, ya está en UTC y podemos usarlo directamente
+    const sorteoScheduledAt = new Date(sorteo.scheduledAt);
+    
+    return {
+      sorteoId: sorteo.sorteoId,
+      sorteoName: sorteo.sorteoName,
+      scheduledAt: sorteoScheduledAt.toISOString(), // ✅ Ya está en UTC
+      date: dateStr,
+      time: formatTime12h(sorteoScheduledAt),
+      balance: sorteo.balance,
+      accumulated: 0,
+      chronologicalIndex: 0,
+      totalChronological: 0,
 
-    loteriaId: sorteo.loteriaId,
-    loteriaName: sorteo.loteriaName,
-    sales: sorteo.sales,
-    payouts: sorteo.payouts,
-    listeroCommission: sorteo.listeroCommission,
-    vendedorCommission: sorteo.vendedorCommission,
-    ticketCount: sorteo.ticketCount,
-    sorteoAccumulated: sorteo.sorteoAccumulated,
-  }));
+      loteriaId: sorteo.loteriaId,
+      loteriaName: sorteo.loteriaName,
+      sales: sorteo.sales,
+      payouts: sorteo.payouts,
+      listeroCommission: sorteo.listeroCommission,
+      vendedorCommission: sorteo.vendedorCommission,
+      ticketCount: sorteo.ticketCount,
+      sorteoAccumulated: sorteo.sorteoAccumulated,
+    };
+  });
 
   // PASO 3: Combinar y ordenar cronológicamente ASC (para calcular accumulated)
   const allEvents = [...sorteoItems, ...movementItems];

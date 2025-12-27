@@ -752,6 +752,7 @@ export async function getMovementsForDay(
     id: string;
     accountStatementId: string;
     date: string;
+    time: string | null; // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
     amount: number;
     type: "payment" | "collection";
     method: "cash" | "transfer" | "check" | "other";
@@ -775,6 +776,7 @@ export async function getMovementsForDay(
             id: p.id,
             accountStatementId: p.accountStatementId,
             date: p.date.toISOString().split("T")[0],
+            time: p.time || null, // ✅ NUEVO: Hora del movimiento si está disponible
             amount: p.amount,
             type: p.type as "payment" | "collection",
             method: p.method as "cash" | "transfer" | "check" | "other",

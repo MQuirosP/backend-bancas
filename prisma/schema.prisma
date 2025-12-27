@@ -702,6 +702,7 @@ model AccountPayment {
   // Identificación del día
   date  DateTime @db.Date
   month String   @db.VarChar(7) // YYYY-MM
+  time  String?  @db.VarChar(5) // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
 
   // Relaciones
   // ✅ CRÍTICO: bancaId y ventanaId deben persistirse directamente (no inferirse)

@@ -330,6 +330,7 @@ export const CierreController = {
 
     // Obtener datos según la vista
     let result;
+    let sellerResult: any = null;
 
     if (view === 'seller') {
       const top = query.top ? parseInt(query.top, 10) : undefined;
@@ -337,13 +338,31 @@ export const CierreController = {
       result = await CierreService.aggregateBySeller(filters, top, orderBy);
     } else {
       result = await CierreService.aggregateWeekly(filters);
+      // ✅ NUEVO: También obtener datos por vendedor para incluir en el export
+      const top = query.top ? parseInt(query.top, 10) : undefined;
+      const orderBy = query.orderBy || 'totalVendida';
+      sellerResult = await CierreService.aggregateBySeller(filters, top, orderBy);
     }
 
     // Remover _performance antes de exportar
     const { _performance, _metaExtras, ...data } = result as any;
+    let sellerData: any = null;
+    if (sellerResult) {
+      const { _performance: _sellerPerformance, _metaExtras: _sellerMetaExtras, ...sellerDataOnly } = sellerResult as any;
+      sellerData = sellerDataOnly;
+    }
+
+    // Calcular si el periodo es extenso (más de un día)
+    const daysDiff = Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24));
+    const isExtendedPeriod = daysDiff > 1;
 
     // Generar workbook de Excel
-    const workbook = await CierreExportService.generateWorkbook(data as any, view);
+    const workbook = await CierreExportService.generateWorkbook(
+      data as any,
+      view,
+      isExtendedPeriod,
+      sellerData
+    );
 
     // Configurar headers de respuesta
     res.setHeader(

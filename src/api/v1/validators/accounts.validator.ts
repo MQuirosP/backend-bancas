@@ -67,6 +67,7 @@ export const GetStatementQuerySchema = z
 export const CreatePaymentBodySchema = z
   .object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD"),
+    time: z.string().regex(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/, "La hora debe ser en formato HH:MM (24 horas)").optional().nullable(), // ✅ NUEVO: Hora opcional del movimiento
     ventanaId: z.string().uuid().optional().nullable(),
     vendedorId: z.string().uuid().optional().nullable(),
     bancaId: z.string().uuid().optional(), // ✅ Agregado: Permitir bancaId opcional

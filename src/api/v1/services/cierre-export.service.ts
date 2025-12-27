@@ -12,6 +12,7 @@ import {
   CierreSorteoGroup,
   CierreBandData,
 } from '../types/cierre.types';
+import { crDateService } from '../../../utils/crDateService';
 
 /**
  * Servicio para exportar cierres a Excel (.xlsx)
@@ -22,11 +23,16 @@ export class CierreExportService {
    * Genera un workbook de Excel con todas las pestañas
    * - Una pestaña por cada banda presente
    * - Una pestaña "Cierre Total" consolidada
+   * - Una pestaña "Cierre por Vendedor" (si sellerData está disponible)
    * - Si es vista por vendedor, genera solo esa pestaña
+   * @param isExtendedPeriod Si es true, incluye fechas en los sorteos (periodo > 1 día)
+   * @param sellerData Datos por vendedor para incluir como pestaña adicional (opcional)
    */
   static async generateWorkbook(
     data: CierreWeeklyData | CierreBySellerData,
-    view: CierreView
+    view: CierreView,
+    isExtendedPeriod: boolean = false,
+    sellerData?: CierreBySellerData | null
   ): Promise<ExcelJS.Workbook> {
     const workbook = new ExcelJS.Workbook();
 
@@ -50,11 +56,16 @@ export class CierreExportService {
 
     // Crear una pestaña por cada banda presente
     for (const banda of bandasPresentes) {
-      this.addBandSheet(workbook, weeklyData, banda);
+      this.addBandSheet(workbook, weeklyData, banda, isExtendedPeriod);
     }
 
     // Crear pestaña "Cierre Total" al final
     this.addTotalSheet(workbook, weeklyData);
+
+    // ✅ NUEVO: Agregar pestaña por vendedor si está disponible
+    if (sellerData) {
+      this.addSellerSheet(workbook, sellerData);
+    }
 
     return workbook;
   }
@@ -120,11 +131,13 @@ export class CierreExportService {
   /**
    * Agrega hoja para una banda específica
    * ✅ NUEVO: Jerarquía: Lotería → Sorteo → Tipo (NUMERO/REVENTADO)
+   * @param isExtendedPeriod Si es true, incluye fechas en los sorteos
    */
   private static addBandSheet(
     workbook: ExcelJS.Workbook,
     data: CierreWeeklyData,
-    banda: number
+    banda: number,
+    isExtendedPeriod: boolean = false
   ): void {
     const sheet = workbook.addWorksheet(`Banda ${banda}`);
     this.styleSheetHeader(sheet);
@@ -153,9 +166,19 @@ export class CierreExportService {
         const bandaData = sorteoGroup.bands[String(banda)];
         
         if (bandaData) {
+          // ✅ NUEVO: Formatear sorteo con fecha si el periodo es extenso
+          let sorteoDisplay = sorteoGroup.sorteo.turno;
+          if (isExtendedPeriod && sorteoGroup.sorteo.scheduledAt) {
+            const sorteoDate = new Date(sorteoGroup.sorteo.scheduledAt);
+            // Formato: "YYYY-MM-DD HH:MM" (fecha en CR)
+            const dateStr = crDateService.dateUTCToCRString(sorteoDate);
+            const timeStr = sorteoGroup.sorteo.turno;
+            sorteoDisplay = `${dateStr} ${timeStr}`;
+          }
+
           const row = sheet.addRow([
             loteriaGroup.loteria.name,
-            sorteoGroup.sorteo.turno,
+            sorteoDisplay,
             bandaData.totalVendida,
             bandaData.ganado,
             bandaData.comisionTotal,

@@ -324,11 +324,20 @@ export const AccountsController = {
    */
   async createPayment(req: AuthenticatedRequest, res: Response) {
     const user = req.user!;
-    const { date, ventanaId, vendedorId, amount, type, method, notes, isFinal, idempotencyKey } = req.body;
+    const { date, time, ventanaId, vendedorId, amount, type, method, notes, isFinal, idempotencyKey } = req.body;
 
     // Validar permisos según rol
     if (user.role === Role.VENDEDOR) {
       throw new AppError("Los vendedores no pueden registrar pagos/cobros", 403, "FORBIDDEN");
+    }
+
+    // ✅ NUEVO: Validar formato de hora si se proporciona
+    if (time !== undefined && time !== null) {
+      // Validar formato HH:MM
+      const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+      if (!timeRegex.test(time)) {
+        throw new AppError("El formato de hora debe ser HH:MM (24 horas)", 400, "INVALID_TIME_FORMAT");
+      }
     }
 
     // Validar que la fecha no sea futura
@@ -336,6 +345,24 @@ export const AccountsController = {
     const now = new Date();
     if (paymentDate > now) {
       throw new AppError("La fecha no puede ser futura", 400, "FUTURE_DATE");
+    }
+
+    // ✅ NUEVO: Validar que hora no sea futura si fecha es hoy
+    if (time) {
+      const today = new Date();
+      const todayCR = new Date(today.getTime() + 6 * 60 * 60 * 1000); // Convertir a CR
+      const todayDateStr = `${todayCR.getUTCFullYear()}-${String(todayCR.getUTCMonth() + 1).padStart(2, '0')}-${String(todayCR.getUTCDate()).padStart(2, '0')}`;
+      
+      if (date === todayDateStr) {
+        // Fecha es hoy, validar que hora no sea futura
+        const [hours, minutes] = time.split(':').map(Number);
+        const nowHours = todayCR.getUTCHours();
+        const nowMinutes = todayCR.getUTCMinutes();
+        
+        if (hours > nowHours || (hours === nowHours && minutes > nowMinutes)) {
+          throw new AppError("La hora no puede ser futura si la fecha es hoy", 400, "FUTURE_TIME");
+        }
+      }
     }
 
     // Validar relaciones según rol
@@ -396,6 +423,7 @@ export const AccountsController = {
 
     const result = await AccountsService.createPayment({
       date,
+      time, // ✅ NUEVO: Pasar campo de hora
       ventanaId: effectiveVentanaId,
       vendedorId: effectiveVendedorId,
       amount,

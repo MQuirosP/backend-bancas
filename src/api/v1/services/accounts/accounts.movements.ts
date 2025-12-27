@@ -12,6 +12,7 @@ import { invalidateAccountStatementCache } from "../../../../utils/accountStatem
  */
 export async function registerPayment(data: {
     date: string; // YYYY-MM-DD
+    time?: string; // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
     ventanaId?: string;
     vendedorId?: string;
     amount: number;
@@ -128,6 +129,7 @@ export async function registerPayment(data: {
         accountStatementId: statement.id,
         date: paymentDate,
         month,
+        time: data.time || null, // ✅ NUEVO: Almacenar hora si se proporciona
         ventanaId: finalVentanaId,
         vendedorId: data.vendedorId,
         bancaId: finalBancaId,
