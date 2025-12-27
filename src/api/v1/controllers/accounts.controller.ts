@@ -256,7 +256,7 @@ export const AccountsController = {
     // Nota: Si el token incluye el nombre del usuario, podemos evitar esta query
     const paidByName = (user as any).name || "Usuario";
 
-    const payment = await AccountsService.createPayment({
+    const result = await AccountsService.createPayment({
       date,
       ventanaId: effectiveVentanaId,
       vendedorId: effectiveVendedorId,
@@ -268,7 +268,10 @@ export const AccountsController = {
       idempotencyKey,
       paidById: user.id,
       paidByName,
-    });
+    }) as { payment: any; statement: any };
+
+    // ✅ NUEVO: La respuesta ahora incluye { payment, statement }
+    const { payment, statement } = result;
 
     // Verificar si es una respuesta cacheada (pago duplicado con idempotencyKey)
     const isCached = (payment as any).cached === true;
@@ -310,13 +313,17 @@ export const AccountsController = {
     });
 
     // Limpiar propiedad temporal antes de enviar respuesta
-    const responseData = { ...payment };
-    delete (responseData as any).cached;
+    const paymentResponse = { ...payment };
+    delete (paymentResponse as any).cached;
 
-    // Enviar respuesta con status code apropiado y meta indicando si es cacheado
+    // ✅ OPTIMIZACIÓN: Incluir statement actualizado en la respuesta para sincronía total con FE
+    // Esto evita que el FE tenga que hacer un GET adicional y mejora los tiempos de actualización
     return res.status(statusCode).json({
       success: true,
-      data: responseData,
+      data: {
+        payment: paymentResponse,
+        statement, // ✅ Statement actualizado con totalPaid, totalCollected, remainingBalance, etc.
+      },
       ...(isCached ? { meta: { cached: true } } : {}),
     });
   },
@@ -550,7 +557,10 @@ export const AccountsController = {
 
     // ✅ OPTIMIZACIÓN: Pasar el payment ya obtenido en lugar de solo el ID
     // Esto evita buscar el pago dos veces
-    const reversed = await AccountsService.reversePayment(payment, user.id, reason);
+    const result = await AccountsService.reversePayment(payment, user.id, reason) as { payment: any; statement: any };
+
+    // ✅ NUEVO: La respuesta ahora incluye { payment, statement }
+    const { payment: reversed, statement } = result;
 
     // ✅ OPTIMIZACIÓN: Obtener nombre del usuario solo una vez (necesario para la respuesta)
     // AuthUser no incluye name, así que necesitamos buscarlo
@@ -587,18 +597,21 @@ export const AccountsController = {
       },
     });
 
-    // Formatear respuesta según el documento
+    // ✅ OPTIMIZACIÓN: Incluir statement actualizado en la respuesta para sincronía total con FE
     return success(res, {
-      id: reversed.id,
-      isReversed: reversed.isReversed,
-      reversedAt: reversed.reversedAt?.toISOString() || null,
-      reversedBy: reversed.reversedBy,
-      reversedByUser: reversedByUser
-        ? {
-            id: reversedByUser.id,
-            name: reversedByUser.name,
-          }
-        : null,
+      payment: {
+        id: reversed.id,
+        isReversed: reversed.isReversed,
+        reversedAt: reversed.reversedAt?.toISOString() || null,
+        reversedBy: reversed.reversedBy,
+        reversedByUser: reversedByUser
+          ? {
+              id: reversedByUser.id,
+              name: reversedByUser.name,
+            }
+          : null,
+      },
+      statement, // ✅ Statement actualizado con totalPaid, totalCollected, remainingBalance, etc.
     }, 200);
   },
 
