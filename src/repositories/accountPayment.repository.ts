@@ -10,6 +10,7 @@ export const AccountPaymentRepository = {
     accountStatementId: string;
     date: Date;
     month: string;
+    time?: string | null; // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
     ventanaId?: string;
     vendedorId?: string;
     bancaId?: string; // ✅ NUEVO: bancaId para persistir directamente
@@ -270,7 +271,7 @@ export const AccountPaymentRepository = {
    * Obtiene todos los pagos/cobros de un statement (para historial)
    */
   async findByStatementId(accountStatementId: string) {
-    return await prisma.accountPayment.findMany({
+    const payments = await prisma.accountPayment.findMany({
       where: {
         accountStatementId,
       },
@@ -284,6 +285,12 @@ export const AccountPaymentRepository = {
         },
       },
     });
+    
+    // ✅ NUEVO: Incluir campo time en la respuesta
+    return payments.map(payment => ({
+      ...payment,
+      time: payment.time || null,
+    }));
   },
 
   /**
@@ -451,6 +458,7 @@ export const AccountPaymentRepository = {
         id: payment.id,
         accountStatementId: payment.accountStatementId,
         date: dateKey,
+        time: payment.time || null, // ✅ NUEVO: Hora del movimiento si está disponible
         amount: payment.amount,
         type: payment.type,
         method: payment.method,
@@ -511,6 +519,7 @@ export const AccountPaymentRepository = {
         id: payment.id,
         accountStatementId: payment.accountStatementId,
         date: payment.date.toISOString().split("T")[0],
+        time: payment.time || null, // ✅ NUEVO: Hora del movimiento si está disponible
         amount: payment.amount,
         type: payment.type,
         method: payment.method,

@@ -483,8 +483,17 @@ export class CierreService {
         });
       }
 
-      // Ordenar sorteos por turno (hora ascendente)
+      // ✅ NUEVO: Ordenar sorteos por fecha (si está disponible) y luego por hora
       sorteos.sort((a, b) => {
+        // Si ambos tienen scheduledAt, ordenar por fecha primero
+        if (a.sorteo.scheduledAt && b.sorteo.scheduledAt) {
+          const dateA = new Date(a.sorteo.scheduledAt).getTime();
+          const dateB = new Date(b.sorteo.scheduledAt).getTime();
+          if (dateA !== dateB) {
+            return dateA - dateB; // Ordenar por fecha ascendente
+          }
+        }
+        // Si las fechas son iguales o no están disponibles, ordenar por hora
         const timeA = a.sorteo.turno;
         const timeB = b.sorteo.turno;
         return timeA.localeCompare(timeB);
