@@ -73,6 +73,37 @@ export async function calculateDayStatement(
         where.vendedorId = vendedorId;
     }
 
+    // ✅ CRÍTICO: Si se busca por vendedorId sin ventanaId, pero los tickets tienen ventanaId,
+    // debemos corregir el ventanaId desde los tickets reales para evitar crear statements incorrectos
+    // Esto soluciona el problema de statements con ventanaId: null cuando deberían tenerlo
+    let correctedVentanaId = ventanaId;
+    if (dimension === "vendedor" && vendedorId && !ventanaId) {
+        // Buscar un ticket de ejemplo para obtener el ventanaId real de ese día
+        // Usamos la misma query where pero solo necesitamos el primer ticket que tenga ventanaId
+        const sampleTicket = await prisma.ticket.findFirst({
+            where: {
+                ...where,
+            },
+            select: {
+                ventanaId: true,
+            },
+        });
+        
+        if (sampleTicket?.ventanaId) {
+            correctedVentanaId = sampleTicket.ventanaId;
+            logger.info({
+                layer: 'service',
+                action: 'CORRECT_VENTANA_ID_FROM_TICKETS',
+                payload: {
+                    date: dateStr,
+                    vendedorId,
+                    inferredVentanaId: correctedVentanaId,
+                    note: 'Corrected ventanaId from actual tickets for the day',
+                },
+            });
+        }
+    }
+
     // Usar agregaciones de Prisma para calcular totales directamente en la base de datos
     // Esto es mucho más eficiente que traer todos los tickets y jugadas a memoria
     const [ticketAgg, ticketAggWinners, jugadaAggVendor, jugadaAggListero] = await Promise.all([
@@ -192,9 +223,10 @@ export async function calculateDayStatement(
     // Si no hay tickets, retornar valores por defecto sin crear statement
     // FIX: No crear fechas nuevas cada vez para mantener consistencia
     if (ticketCount === 0) {
+        // ✅ CRÍTICO: Usar correctedVentanaId si fue corregido desde los tickets
         // Intentar obtener statement existente si existe
         const existingStatement = await AccountStatementRepository.findByDate(date, {
-            ventanaId,
+            ventanaId: correctedVentanaId ?? ventanaId,
             vendedorId,
         });
 
@@ -264,11 +296,12 @@ export async function calculateDayStatement(
 
         // Si no existe, crear statement para tener un id
         // ✅ Calcular month desde la fecha si no está disponible
+        // ✅ CRÍTICO: Usar correctedVentanaId si fue corregido desde los tickets
         const monthForStatement = month || `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
         const newStatement = await AccountStatementRepository.findOrCreate({
             date,
             month: monthForStatement,
-            ventanaId,
+            ventanaId: correctedVentanaId ?? ventanaId,
             vendedorId,
         });
 
@@ -316,8 +349,9 @@ export async function calculateDayStatement(
     // ✅ ACTUALIZADO: Permitir ambos campos cuando hay vendedorId
     // El constraint _one_relation_check ha sido eliminado
     // findOrCreate ahora maneja la inferencia de ventanaId y bancaId automáticamente
+    // ✅ CRÍTICO: Usar correctedVentanaId si fue corregido desde los tickets
     let targetBancaId = bancaId ?? undefined;
-    let targetVentanaId = ventanaId ?? undefined;
+    let targetVentanaId = correctedVentanaId ?? undefined;
     let targetVendedorId = vendedorId ?? undefined;
 
     // Crear o actualizar estado de cuenta primero con los valores correctos
@@ -331,6 +365,19 @@ export async function calculateDayStatement(
         ventanaId: targetVentanaId,
         vendedorId: targetVendedorId,
     });
+    
+    // ✅ CRÍTICO: Si el statement encontrado tiene ventanaId: null pero debería tenerlo (corregido desde tickets),
+    // actualizarlo para evitar que quede con datos incorrectos
+    if (statement.ventanaId === null && correctedVentanaId) {
+        await AccountStatementRepository.update(statement.id, {
+            ventanaId: correctedVentanaId,
+        });
+        // Refrescar el statement para tener los datos actualizados
+        const updatedStatement = await AccountStatementRepository.findById(statement.id);
+        if (updatedStatement) {
+            Object.assign(statement, updatedStatement);
+        }
+    }
 
     // ✅ ACTUALIZADO: Ya no necesitamos verificar el tipo porque ambos campos pueden estar presentes
     // findOrCreate ya maneja correctamente la búsqueda y creación

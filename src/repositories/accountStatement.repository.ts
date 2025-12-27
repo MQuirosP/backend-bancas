@@ -65,19 +65,90 @@ export const AccountStatementRepository = {
       where.vendedorId = null;
     }
 
-    const existing = await prisma.accountStatement.findFirst({
+    let existing = await prisma.accountStatement.findFirst({
       where,
     });
+
+    // ✅ CRÍTICO: Si buscamos por vendedorId con ventanaId pero no encontramos,
+    // intentar buscar por vendedorId con ventanaId: null (statement incorrecto que necesita corrección)
+    if (!existing && data.vendedorId && finalVentanaId) {
+      const fallbackWhere: Prisma.AccountStatementWhereInput = {
+        date: data.date,
+        vendedorId: data.vendedorId,
+        ventanaId: null, // Buscar el statement incorrecto
+      };
+      existing = await prisma.accountStatement.findFirst({
+        where: fallbackWhere,
+      });
+    }
 
     if (existing) {
       // ✅ CRÍTICO: Si el statement existe pero le faltan ventanaId o bancaId, actualizarlo
       // Esto es importante cuando se crea un pago/cobro y el statement ya existe pero
       // fue creado antes de que implementáramos la persistencia de estos campos
+      // IMPORTANTE: Si el statement tiene ventanaId: null pero debería tenerlo, primero
+      // verificamos si ya existe otro statement con el ventanaId corregido (violaría constraint único)
       let needsUpdate = false;
       const updateData: { ventanaId?: string | null; bancaId?: string | null } = {};
 
       // Si falta ventanaId pero debería tenerlo
       if (!existing.ventanaId && finalVentanaId) {
+        // Verificar si ya existe un statement con este ventanaId y date (constraint único)
+        const conflictingStatement = await prisma.accountStatement.findFirst({
+          where: {
+            date: data.date,
+            ventanaId: finalVentanaId,
+            vendedorId: null, // Statement consolidado de ventana
+          },
+        });
+
+        if (conflictingStatement) {
+          // Ya existe un statement consolidado de ventana
+          // Retornar el consolidado en lugar del incorrecto
+          logger.info({
+            layer: 'repository',
+            action: 'ACCOUNT_STATEMENT_USE_CONSOLIDADO',
+            payload: {
+              date: data.date,
+              vendedorId: data.vendedorId,
+              ventanaId: finalVentanaId,
+              incorrectStatementId: existing.id,
+              consolidadoStatementId: conflictingStatement.id,
+              note: 'Using consolidado statement instead of incorrect one with ventanaId: null',
+            },
+          });
+          return conflictingStatement;
+        }
+
+        // También verificar si existe un statement con ventanaId y vendedorId (otro vendedor de la misma ventana)
+        // En este caso, no podemos crear/actualizar porque violaría el constraint (date, ventanaId)
+        const anotherVendedorStatement = await prisma.accountStatement.findFirst({
+          where: {
+            date: data.date,
+            ventanaId: finalVentanaId,
+            vendedorId: { not: null }, // Otro vendedor
+          },
+        });
+
+        if (anotherVendedorStatement) {
+          // Ya existe un statement de otro vendedor para esta ventana y fecha
+          // Por el constraint (date, ventanaId), no podemos tener múltiples
+          // Retornar el existente sin actualizar
+          logger.warn({
+            layer: 'repository',
+            action: 'ACCOUNT_STATEMENT_CONSTRAINT_CONFLICT',
+            payload: {
+              date: data.date,
+              vendedorId: data.vendedorId,
+              attemptedVentanaId: finalVentanaId,
+              existingStatementId: existing.id,
+              conflictingStatementId: anotherVendedorStatement.id,
+              note: 'Cannot update ventanaId: null to ventanaId because another vendedor statement exists for same ventana and date',
+            },
+          });
+          return existing;
+        }
+
         updateData.ventanaId = finalVentanaId;
         needsUpdate = true;
       }
