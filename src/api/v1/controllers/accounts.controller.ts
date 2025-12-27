@@ -1,5 +1,6 @@
 // src/api/v1/controllers/accounts.controller.ts
 import { Response } from "express";
+import { createHash } from "crypto";
 import { AccountsService } from "../services/accounts.service";
 import { AccountsExportService } from "../services/accounts-export.service";
 import { AuthenticatedRequest } from "../../../core/types";
@@ -13,6 +14,48 @@ import { AccountPaymentRepository } from "../../../repositories/accountPayment.r
 import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
 import { ExportFormat } from "../types/accounts-export.types";
 import { StatementResponse } from "../services/accounts/accounts.types";
+
+/**
+ * Calcula el ETag para una respuesta de estado de cuenta
+ * Incluye todos los parámetros relevantes para invalidar correctamente el caché
+ */
+function calculateStatementETag(
+  month: string | undefined,
+  date: string | undefined,
+  fromDate: string | undefined,
+  toDate: string | undefined,
+  dimension: string | undefined,
+  ventanaId: string | undefined,
+  vendedorId: string | undefined,
+  bancaId: string | undefined,
+  scope: string | undefined,
+  sort: string | undefined,
+  result: StatementResponse
+): string {
+  // Crear clave única con todos los parámetros relevantes
+  const etagRawKey = [
+    month || '',
+    date || '',
+    fromDate || '',
+    toDate || '',
+    dimension || '',
+    ventanaId || '',
+    vendedorId || '',
+    bancaId || '',
+    scope || '',
+    sort || '',
+    // Incluir hash de los totales para detectar cambios en datos
+    JSON.stringify({
+      totalSales: result.totals?.totalSales,
+      totalPayouts: result.totals?.totalPayouts,
+      totalRemainingBalance: result.totals?.totalRemainingBalance,
+      statementCount: result.statements?.length || 0,
+    })
+  ].join(':');
+  
+  const hash = createHash('sha1').update(etagRawKey).digest('hex');
+  return `W/"${hash}"`;
+}
 
 export const AccountsController = {
   /**
@@ -43,7 +86,31 @@ export const AccountsController = {
           sort: sort || "desc",
           userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario
         };
-      const result = await AccountsService.getStatement(filters);
+      const result = await AccountsService.getStatement(filters) as StatementResponse;
+      
+      // ✅ ETags: Calcular y verificar antes de procesar
+      const etagVal = calculateStatementETag(
+        month,
+        date,
+        fromDate,
+        toDate,
+        "vendedor",
+        undefined,
+        user.id,
+        undefined,
+        "mine",
+        sort,
+        result
+      );
+      
+      res.setHeader('ETag', etagVal);
+      res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
+      
+      const ifNoneMatch = req.headers['if-none-match'];
+      if (ifNoneMatch && ifNoneMatch === etagVal) {
+        return res.status(304).end();
+      }
+      
       return success(res, result);
     }
 
@@ -81,7 +148,31 @@ export const AccountsController = {
           sort: sort || "desc",
           userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario
         };
-        const result = await AccountsService.getStatement(filters);
+        const result = await AccountsService.getStatement(filters) as StatementResponse;
+        
+        // ✅ ETags: Calcular y verificar antes de procesar
+        const etagVal = calculateStatementETag(
+          month,
+          date,
+          fromDate,
+          toDate,
+          dimension,
+          effectiveVentanaId,
+          undefined,
+          undefined,
+          scope,
+          sort,
+          result
+        );
+        
+        res.setHeader('ETag', etagVal);
+        res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
+        
+        const ifNoneMatch = req.headers['if-none-match'];
+        if (ifNoneMatch && ifNoneMatch === etagVal) {
+          return res.status(304).end();
+        }
+        
         return success(res, result);
       }
 
@@ -113,7 +204,31 @@ export const AccountsController = {
           sort: sort || "desc",
           userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario
         };
-        const result = await AccountsService.getStatement(filters);
+        const result = await AccountsService.getStatement(filters) as StatementResponse;
+        
+        // ✅ ETags: Calcular y verificar antes de procesar
+        const etagVal = calculateStatementETag(
+          month,
+          date,
+          fromDate,
+          toDate,
+          dimension,
+          effectiveVentanaId,
+          vendedorId || undefined,
+          undefined,
+          scope,
+          sort,
+          result
+        );
+        
+        res.setHeader('ETag', etagVal);
+        res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
+        
+        const ifNoneMatch = req.headers['if-none-match'];
+        if (ifNoneMatch && ifNoneMatch === etagVal) {
+          return res.status(304).end();
+        }
+        
         return success(res, result);
       }
     }
@@ -173,6 +288,29 @@ export const AccountsController = {
         requestId: req.requestId,
         payload: { month, scope, dimension },
       });
+      
+      // ✅ ETags: Calcular y verificar antes de procesar
+      const etagVal = calculateStatementETag(
+        month,
+        date,
+        fromDate,
+        toDate,
+        dimension,
+        filters.ventanaId,
+        filters.vendedorId,
+        filters.bancaId,
+        scope,
+        sort,
+        result
+      );
+      
+      res.setHeader('ETag', etagVal);
+      res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
+      
+      const ifNoneMatch = req.headers['if-none-match'];
+      if (ifNoneMatch && ifNoneMatch === etagVal) {
+        return res.status(304).end();
+      }
       
       return success(res, result);
     }

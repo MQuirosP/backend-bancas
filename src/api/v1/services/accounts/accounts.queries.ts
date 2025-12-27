@@ -213,8 +213,12 @@ export async function getSorteoBreakdownBatch(
     }
 
     // ✅ OPTIMIZACIÓN: Una sola query para todos los días
+    // ✅ CRÍTICO: Agregar límite para prevenir picos de memoria (512 MB en producción)
+    // Límite razonable: 10000 tickets. Si se alcanza, agregar log para monitoreo
+    const MAX_TICKETS_FOR_BREAKDOWN = 10000;
     const tickets = await prisma.ticket.findMany({
         where,
+        take: MAX_TICKETS_FOR_BREAKDOWN,
         select: {
             id: true,
             totalAmount: true,
@@ -263,6 +267,24 @@ export async function getSorteoBreakdownBatch(
             },
         },
     });
+
+    // ✅ CRÍTICO: Log si se alcanza el límite (para monitoreo)
+    if (tickets.length >= MAX_TICKETS_FOR_BREAKDOWN) {
+        logger.warn({
+            layer: "service",
+            action: "SORTEO_BREAKDOWN_LIMIT_REACHED",
+            payload: {
+                dates: dates.map(d => d.toISOString().split('T')[0]),
+                dimension,
+                ventanaId,
+                vendedorId,
+                bancaId,
+                ticketCount: tickets.length,
+                limit: MAX_TICKETS_FOR_BREAKDOWN,
+                message: "Se alcanzó el límite de tickets para desglose por sorteo. Puede haber datos incompletos."
+            }
+        });
+    }
 
     // ✅ CRÍTICO: Obtener usuarios VENTANA con sus políticas (igual que getSorteoBreakdown)
     const ventanaIds = Array.from(new Set(tickets.map(t => t.ventanaId).filter((id): id is string => id !== null)));
