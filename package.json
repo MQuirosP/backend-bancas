@@ -25,6 +25,8 @@
     "prisma:seed": "npx dotenv-cli -e .env.local -- ts-node prisma/seed.ts",
     "prisma:seed:test": "npx dotenv-cli -e .env.test -- ts-node prisma/seed.ts",
     "backfill:total-commission": "npx dotenv-cli -e .env.local -- ts-node src/scripts/ticket-backfill-total-commission.ts",
+    "migrate:account-payments": "npx dotenv-cli -e .env.local -- ts-node src/scripts/migrate-account-payments-to-correct-statements.ts",
+    "migrate:account-payments:execute": "npx dotenv-cli -e .env.local -- ts-node -e \"process.env.MIGRATE_EXECUTE='true'; require('./src/scripts/migrate-account-payments-to-correct-statements.ts')\"",
     "normalize:legacy-tickets": "npx dotenv-cli -e .env.local -- ts-node src/scripts/normalize-legacy-tickets.ts",
     "normalize:legacy-tickets:dry-run": "npx dotenv-cli -e .env.local -- ts-node src/scripts/normalize-legacy-tickets.ts --dry-run",
     "check:legacy-tickets": "npx dotenv-cli -e .env.local -- ts-node src/scripts/check-legacy-tickets.ts",
