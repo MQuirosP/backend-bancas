@@ -823,13 +823,15 @@ export async function getStatementDirect(
         rowsPerDate.set(dateKey, (rowsPerDate.get(dateKey) || 0) + 1);
 
         // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + entidad
+        // ✅ CRÍTICO: Cuando hay un ID específico en el query (bancaId, ventanaId, vendedorId), usar ese ID directamente
+        // para asegurar que todas las filas SQL se agrupen correctamente en una sola entrada por día
         const groupKey = shouldGroupByDate
             ? dateKey // Solo fecha cuando hay agrupación
             : (dimension === "banca"
-                ? `${dateKey}_${row.banca_id || 'null'}`
+                ? `${dateKey}_${bancaId || row.banca_id || 'null'}`
                 : dimension === "ventana"
-                    ? `${dateKey}_${row.ventana_id}`
-                    : `${dateKey}_${row.vendedor_id || 'null'}`);
+                    ? `${dateKey}_${ventanaId || row.ventana_id}`
+                    : `${dateKey}_${vendedorId || row.vendedor_id || 'null'}`);
 
         // Clave para el desglose por entidad (siempre incluye entidad)
         const breakdownKey = dimension === "banca"
@@ -848,7 +850,7 @@ export async function getStatementDirect(
                 ventanaId: shouldGroupByDate ? null : (dimension === "ventana" ? row.ventana_id : null),
                 ventanaName: shouldGroupByDate ? null : (dimension === "ventana" ? row.ventana_name : null),
                 ventanaCode: shouldGroupByDate ? null : (dimension === "ventana" ? row.ventana_code : null),
-                vendedorId: shouldGroupByDate ? null : (dimension === "vendedor" ? row.vendedor_id : null),
+                vendedorId: shouldGroupByDate ? null : (dimension === "vendedor" ? (vendedorId || row.vendedor_id) : null),
                 vendedorName: shouldGroupByDate ? null : (dimension === "vendedor" ? row.vendedor_name : null),
                 vendedorCode: shouldGroupByDate ? null : (dimension === "vendedor" ? row.vendedor_code : null),
                 totalSales: 0,
@@ -903,8 +905,10 @@ export async function getStatementDirect(
         entry.commissionListero += Number(row.commission_listero || 0);
         entry.commissionVendedor += Number(row.commission_vendedor || 0);
         // ✅ OPTIMIZACIÓN: Usar contador directo en lugar de Set sintético (reduce memoria)
-        const ticketCount = Number(row.total_tickets || 0);
-        entry.totalTicketsCount = ticketCount;
+        // ✅ CRÍTICO: Acumular ticketCount en lugar de asignarlo directamente
+        // Cuando hay múltiples filas SQL para el mismo día (por ejemplo, vendedor en diferentes ventanas),
+        // necesitamos acumular el conteo, no sobrescribirlo
+        entry.totalTicketsCount += Number(row.total_tickets || 0);
     }
 
     // ✅ CRÍTICO: Obtener movimientos desde el inicio del mes para calcular acumulados correctos
@@ -935,9 +939,15 @@ export async function getStatementDirect(
             if (dimension === "vendedor" && vendedorId && targetId !== vendedorId) continue;
 
             // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + entidad
+            // ✅ CRÍTICO: Cuando hay un ID específico en el query (bancaId, ventanaId, vendedorId), usar ese ID directamente
+            // para asegurar que todos los movimientos se agrupen correctamente en una sola entrada por día
             const groupKey = shouldGroupByDate
                 ? dateKey // Solo fecha cuando hay agrupación
-                : `${dateKey}_${targetId || 'null'}`;
+                : (dimension === "banca"
+                    ? `${dateKey}_${bancaId || targetId || 'null'}`
+                    : dimension === "ventana"
+                        ? `${dateKey}_${ventanaId || targetId || 'null'}`
+                        : `${dateKey}_${vendedorId || targetId || 'null'}`);
 
             if (!byDateAndDimension.has(groupKey)) {
                 // Crear entrada vacía si no existe (día sin ventas)
@@ -948,7 +958,7 @@ export async function getStatementDirect(
                     ventanaId: shouldGroupByDate ? null : (dimension === "ventana" ? movement.ventanaId : (dimension === "banca" ? movement.ventanaId : null)),
                     ventanaName: shouldGroupByDate ? null : (dimension === "ventana" ? (movement.ventanaName || "Desconocido") : (dimension === "banca" ? (movement.ventanaName || "Desconocido") : null)),
                     ventanaCode: shouldGroupByDate ? null : (dimension === "ventana" ? movement.ventanaCode : (dimension === "banca" ? movement.ventanaCode : null)),
-                    vendedorId: shouldGroupByDate ? null : (dimension === "vendedor" ? movement.vendedorId : null),
+                    vendedorId: shouldGroupByDate ? null : (dimension === "vendedor" ? (vendedorId || movement.vendedorId) : null),
                     vendedorName: shouldGroupByDate ? null : (dimension === "vendedor" ? (movement.vendedorName || "Desconocido") : null),
                     vendedorCode: shouldGroupByDate ? null : (dimension === "vendedor" ? movement.vendedorCode : null),
                     totalSales: 0,
@@ -1053,7 +1063,8 @@ export async function getStatementDirect(
                     }
                 });
                 // Obtener desglose por sorteo usando clave según dimensión
-                // ✅ CRÍTICO: Cuando hay bancaId en el query, usar directamente ese bancaId
+                // ✅ CRÍTICO: Cuando hay un ID específico en el query (bancaId, ventanaId, vendedorId), usar directamente ese ID
+                // Esto asegura que se use la misma clave que en getSorteoBreakdownBatch
                 const sorteoKey = dimension === "banca"
                     ? `${date}_${bancaId || entry.bancaId || 'null'}`
                     : dimension === "ventana"

@@ -119,9 +119,10 @@ export const AccountsService = {
 
         let result;
 
-        // ✅ CRÍTICO: Cuando shouldGroupByDate=true, SIEMPRE usar getStatementDirect para obtener bySorteo
-        // Incluso si todos los días están asentados, necesitamos el desglose por sorteo
-        if (datesNotSettled.length === 0 && !shouldGroupByDate) {
+        // ✅ CRÍTICO: SIEMPRE usar getStatementDirect para obtener bySorteo (sorteos intercalados con pagos/cobros)
+        // Los statements asentados de la BD NO incluyen bySorteo, pero el frontend lo necesita siempre
+        // Por lo tanto, SIEMPRE calcular con getStatementDirect para tener el desglose completo
+        if (false) { // ✅ DESHABILITADO: Ya no usamos statements asentados directamente porque no tienen bySorteo
             // ✅ TODOS los días están asentados Y NO hay agrupación - solo usar datos precomputados
             logger.info({
                 layer: 'service',
@@ -266,28 +267,10 @@ export const AccountsService = {
                 sort as "asc" | "desc"
             );
 
-            // ✅ CRÍTICO: Cuando shouldGroupByDate=true, NO reemplazar con settledStatements
-            // porque settledStatements están desagrupados (uno por entidad) y sin bySorteo,
-            // mientras que calculatedResult.statements están agrupados (uno por fecha) con bySorteo
-            let optimizedStatements;
-            if (shouldGroupByDate) {
-                // Usar directamente los statements calculados (ya agrupados con bySorteo)
-                optimizedStatements = calculatedResult.statements;
-            } else {
-                // Reemplazar días asentados con los optimizados (que tienen movimientos actualizados)
-                optimizedStatements = calculatedResult.statements.map(stmt => {
-                    // ✅ CRÍTICO: Asegurar que date sea un objeto Date
-                    const dateObj = stmt.date instanceof Date ? stmt.date : new Date(stmt.date);
-                    const dateKey = crDateService.postgresDateToCRString(dateObj);
-                    const settledStmt = settledStatements.get(dateKey);
-                    if (settledStmt) {
-                        // Usar el estado asentado optimizado (con movimientos actualizados)
-                        return settledStmt;
-                    }
-                    // Mantener el estado calculado en tiempo real
-                    return stmt;
-                });
-            }
+            // ✅ CRÍTICO: SIEMPRE usar los statements calculados directamente porque tienen bySorteo
+            // NO reemplazar con settledStatements porque estos NO incluyen bySorteo (sorteos intercalados con pagos/cobros)
+            // getStatementDirect ya calcula correctamente desde tickets y genera bySorteo completo
+            const optimizedStatements = calculatedResult.statements;
 
             // Recalcular totales desde statements optimizados
             const totalSales = optimizedStatements.reduce((sum, s) => sum + s.totalSales, 0);
