@@ -12,6 +12,7 @@ import { getExclusionWhereCondition } from "./sorteo-listas.helpers";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { UserService } from "./user.service";
 import { nowCR, validateDate, formatDateCRWithTZ } from "../../../utils/datetime";
+import { getCRLocalComponents } from "../../../utils/businessDate";
 
 const CUTOFF_GRACE_MS = 1000;
 // Updated: Added clienteNombre field support
@@ -30,6 +31,28 @@ function extractPrintConfig(settings: any, defaultName: string | null, defaultPh
     printBarcode: printSettings.barcode ?? true,
     printBluetoothMacAddress: printSettings.bluetoothMacAddress ?? null,
   };
+}
+
+/**
+ * Formatea la hora de un Date a formato "h:mm a" (ej: "7:00 PM", "12:00 PM")
+ * Usa hora local de Costa Rica
+ */
+function formatTime12h(date: Date): string {
+  const { hour, minute } = getCRLocalComponents(date);
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  let hours12 = hour % 12;
+  hours12 = hours12 || 12; // 0 debe ser 12
+  const minutesStr = String(minute).padStart(2, '0');
+  return `${hours12}:${minutesStr} ${ampm}`;
+}
+
+/**
+ * Formatea el nombre del sorteo concatenando la hora al nombre existente
+ * Ejemplo: "TICA" + "7:00 PM" = "TICA 7:00 PM"
+ */
+function formatSorteoNameWithTime(sorteoName: string, scheduledAt: Date): string {
+  const timeFormatted = formatTime12h(scheduledAt);
+  return `${sorteoName} ${timeFormatted}`;
 }
 
 // Interfaces para pagos
@@ -118,6 +141,7 @@ export const TicketService = {
         where: { id: sorteoId },
         select: {
           id: true,
+          name: true, // ✅ Incluir name para formatear con hora
           scheduledAt: true,
           status: true,
           loteriaId: true,
@@ -380,9 +404,17 @@ export const TicketService = {
         select: { name: true, phone: true, settings: true },
       });
 
+      // ✅ Formatear sorteo.name concatenando la hora (requerido por frontend)
+      // El ticket de createOptimized no incluye sorteo, así que lo obtenemos por separado
+      const sorteoWithFormattedName = {
+        ...sorteo,
+        name: formatSorteoNameWithTime(sorteo.name, sorteo.scheduledAt),
+      };
+
       // Enriquecer respuesta con configuraciones de impresión
       const response = {
         ...ticket,
+        sorteo: sorteoWithFormattedName,
         vendedor: {
           id: effectiveVendedorId,
           ...extractPrintConfig(vendedor?.settings, vendedor?.name || null, vendedor?.phone || null),
@@ -495,9 +527,16 @@ export const TicketService = {
       select: { name: true, phone: true, settings: true },
     });
 
+    // ✅ Formatear sorteo.name concatenando la hora (requerido por frontend)
+    const sorteoWithFormattedName = {
+      ...ticket.sorteo,
+      name: formatSorteoNameWithTime(ticket.sorteo.name, ticket.sorteo.scheduledAt),
+    };
+
     // Enriquecer respuesta con configuraciones de impresión
     const enriched = {
       ...ticket,
+      sorteo: sorteoWithFormattedName,
       vendedor: ticket.vendedor ? {
         ...ticket.vendedor,
         ...extractPrintConfig(vendedor?.settings, vendedor?.name || null, vendedor?.phone || null),
