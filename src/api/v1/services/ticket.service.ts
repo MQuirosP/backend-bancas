@@ -452,6 +452,39 @@ export const TicketService = {
       throw new AppError("Ticket no encontrado", 404);
     }
 
+    // ✅ Validar que sorteo existe y tiene name (requerido por frontend)
+    if (!ticket.sorteo) {
+      logger.error({
+        layer: "service",
+        action: "TICKET_GET_BY_ID_SORTEO_MISSING",
+        payload: {
+          ticketId: id,
+          sorteoId: ticket.sorteoId,
+          message: "El ticket no tiene un sorteo asociado válido",
+        },
+      });
+      throw new AppError("El ticket no tiene un sorteo asociado válido", 500);
+    }
+
+    if (!ticket.sorteo.name || ticket.sorteo.name.trim() === "") {
+      logger.warn({
+        layer: "service",
+        action: "TICKET_GET_BY_ID_SORTEO_NAME_MISSING",
+        payload: {
+          ticketId: id,
+          sorteoId: ticket.sorteoId,
+          sorteo: {
+            id: ticket.sorteo.id,
+            name: ticket.sorteo.name,
+            scheduledAt: ticket.sorteo.scheduledAt,
+            status: ticket.sorteo.status,
+          },
+          message: "El sorteo asociado no tiene nombre o está vacío",
+        },
+      });
+      throw new AppError("El sorteo asociado no tiene nombre válido", 500);
+    }
+
     // 🖨️ Obtener configuraciones de impresión del vendedor y ventana
     const vendedor = await prisma.user.findUnique({
       where: { id: ticket.vendedorId },
