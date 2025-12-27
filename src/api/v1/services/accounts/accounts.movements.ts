@@ -158,7 +158,7 @@ export async function registerPayment(data: {
     const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
     // ✅ CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
-    await AccountStatementRepository.update(statement.id, {
+    const updatedStatement = await AccountStatementRepository.update(statement.id, {
         // Valores de tickets (recalculados desde tickets/jugadas)
         ticketCount: recalculatedStatement.ticketCount,
         totalSales: recalculatedStatement.totalSales,
@@ -184,7 +184,17 @@ export async function registerPayment(data: {
         // Ignorar errores de invalidación de caché
     });
 
-    return payment;
+    // ✅ OPTIMIZACIÓN: Construir statement para respuesta (evita query adicional)
+    // Ya tenemos todos los datos actualizados en updatedStatement
+    // Las relaciones (ventana, vendedor) no son críticas para la respuesta, el FE puede obtenerlas del statement completo si las necesita
+    const statementForResponse: any = {
+        ...updatedStatement,
+    };
+
+    return {
+        payment,
+        statement: statementForResponse,
+    };
 }
 
 /**
@@ -299,7 +309,7 @@ export async function reversePayment(
     const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
     // ✅ CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
-    await AccountStatementRepository.update(statement.id, {
+    const updatedStatement = await AccountStatementRepository.update(statement.id, {
         // Valores de tickets (recalculados desde tickets/jugadas)
         ticketCount: recalculatedStatement.ticketCount,
         totalSales: recalculatedStatement.totalSales,
@@ -325,7 +335,18 @@ export async function reversePayment(
         // Ignorar errores de invalidación de caché
     });
 
-    return reversed;
+    // ✅ OPTIMIZACIÓN: Construir statement completo para respuesta (evita query adicional)
+    // Ya tenemos todos los datos, solo combinamos con las relaciones del statement original
+    // El statement viene de payment.accountStatement que no incluye relaciones, así que las omitimos
+    // El FE puede obtenerlas del statement original si las necesita
+    const statementForResponse: any = {
+        ...updatedStatement,
+    };
+
+    return {
+        payment: reversed,
+        statement: statementForResponse,
+    };
 }
 
 /**
