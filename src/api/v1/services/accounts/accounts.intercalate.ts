@@ -122,37 +122,25 @@ export function intercalateSorteosAndMovements(
     const timeValue = movement.time;
     const hasTime = timeValue != null && typeof timeValue === 'string' && timeValue.trim().length > 0;
     
-    // ✅ CRÍTICO: Validar que el time es razonable (no es una hora UTC mal guardada)
-    // createdAt es un timestamp real generado por la BD, no podemos "corregirlo"
-    // Si el time está muy lejos de la hora CR de createdAt, probablemente está mal guardado
+    // ✅ CRÍTICO: Si el usuario especificó manualmente el time, SIEMPRE usarlo
+    // El time puede estar lejos de createdAt si el usuario registró el movimiento después
+    // (ej: registró a las 01:17 un movimiento que ocurrió a las 18:00)
+    // Solo validamos que el formato sea correcto (HH:MM válido)
     const createdAtDate = new Date(movement.createdAt);
-    const { hour: createdAtHourCR, minute: createdAtMinuteCR } = getCRLocalComponents(createdAtDate);
-    const createdAtTimeCR = `${String(createdAtHourCR).padStart(2, '0')}:${String(createdAtMinuteCR).padStart(2, '0')}`;
     
     let useTime = false;
     if (hasTime && timeValue) {
       const timeStr = timeValue.trim();
       const [hours, minutes] = timeStr.split(':').map(Number);
       
-      // ✅ VALIDACIÓN: Si el time está muy lejos de createdAt (más de 6 horas de diferencia),
-      // probablemente está mal guardado (ej: guardado como UTC en lugar de CR, o extraído incorrectamente)
-      // En ese caso, NO usar el time y usar createdAt en su lugar
-      const timeMinutes = hours * 60 + minutes;
-      const createdAtMinutes = createdAtHourCR * 60 + createdAtMinuteCR;
-      const diffMinutes = Math.abs(timeMinutes - createdAtMinutes);
-      const diffHours = diffMinutes / 60;
-      
-      // ✅ CRÍTICO: Si la diferencia es más de 6 horas, probablemente está mal guardado
-      // Ejemplos de casos problemáticos:
-      // - time: 03:22, createdAt CR: 15:22 → diferencia 12h → mal guardado, usar createdAt
-      // - time: 09:22, createdAt CR: 15:22 → diferencia 6h → válido (pago registrado 6h después)
-      // - time: 15:22, createdAt CR: 15:22 → diferencia 0h → válido (coincide)
-      // Usamos 6 horas como umbral razonable
-      if (diffHours > 6) {
-        // Time parece estar mal guardado, NO usarlo, usar createdAt en su lugar
-        useTime = false;
-      } else {
+      // ✅ VALIDACIÓN: Solo verificar que el formato sea válido (0-23 horas, 0-59 minutos)
+      // Si el usuario especificó manualmente la hora, siempre debemos respetarla
+      // incluso si está lejos de createdAt (el usuario puede registrar movimientos después)
+      if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
         useTime = true;
+      } else {
+        // Formato inválido, no usar
+        useTime = false;
       }
     }
     
