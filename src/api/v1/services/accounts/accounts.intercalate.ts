@@ -122,6 +122,12 @@ export function intercalateSorteosAndMovements(
     const timeValue = movement.time;
     const hasTime = timeValue != null && typeof timeValue === 'string' && timeValue.trim().length > 0;
     
+    // ✅ DEBUG: Log temporal para verificar qué está llegando
+    // TODO: Remover después de verificar
+    if (movement.id && hasTime) {
+      console.log(`[DEBUG intercalate] Movement ${movement.id}: timeValue="${timeValue}", hasTime=${hasTime}`);
+    }
+    
     // ✅ CRÍTICO: Si el usuario especificó manualmente el time, SIEMPRE usarlo
     // El time puede estar lejos de createdAt si el usuario registró el movimiento después
     // (ej: registró a las 01:17 un movimiento que ocurrió a las 18:00)
@@ -136,7 +142,7 @@ export function intercalateSorteosAndMovements(
       // ✅ VALIDACIÓN: Solo verificar que el formato sea válido (0-23 horas, 0-59 minutos)
       // Si el usuario especificó manualmente la hora, siempre debemos respetarla
       // incluso si está lejos de createdAt (el usuario puede registrar movimientos después)
-      if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+      if (!isNaN(hours) && !isNaN(minutes) && hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
         useTime = true;
       } else {
         // Formato inválido, no usar
@@ -172,12 +178,20 @@ export function intercalateSorteosAndMovements(
         scheduledAt = new Date(Date.UTC(utcYear, utcMonth - 1, utcDay, utcHours, minutes, 0, 0));
       }
       timeToDisplay = formatTime24hTo12h(timeStr);
+      // ✅ DEBUG: Log temporal
+      if (movement.id) {
+        console.log(`[DEBUG intercalate] Movement ${movement.id}: USANDO time="${timeStr}" -> timeToDisplay="${timeToDisplay}"`);
+      }
     } else {
       // Si no hay time válido, usar createdAt (que ya está en UTC)
       // ✅ CRÍTICO: createdAt es un timestamp real generado por la BD, no podemos "corregirlo"
       // Si el time está mal guardado, simplemente usamos createdAt convertido a CR
       scheduledAt = createdAtDate;
       timeToDisplay = formatTime12h(createdAtDate);
+      // ✅ DEBUG: Log temporal
+      if (movement.id) {
+        console.log(`[DEBUG intercalate] Movement ${movement.id}: NO usando time, usando createdAt -> timeToDisplay="${timeToDisplay}", useTime=${useTime}, hasTime=${hasTime}, timeValue="${timeValue}"`);
+      }
     }
 
     // ✅ CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
