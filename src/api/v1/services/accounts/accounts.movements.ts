@@ -6,6 +6,7 @@ import { AccountStatementRepository } from "../../../../repositories/accountStat
 import { calculateDayStatement } from "./accounts.calculations";
 import { calculateIsSettled } from "./accounts.commissions";
 import { invalidateAccountStatementCache } from "../../../../utils/accountStatementCache";
+import { crDateService } from "../../../../utils/crDateService";
 
 /**
  * Registra un pago o cobro
@@ -189,12 +190,38 @@ export async function registerPayment(data: {
     // ✅ OPTIMIZACIÓN: Construir statement para respuesta (evita query adicional)
     // Ya tenemos todos los datos actualizados en updatedStatement
     // Las relaciones (ventana, vendedor) no son críticas para la respuesta, el FE puede obtenerlas del statement completo si las necesita
+    
+    // ✅ CRÍTICO: Formatear fechas a strings YYYY-MM-DD para el frontend
     const statementForResponse: any = {
         ...updatedStatement,
+        date: crDateService.postgresDateToCRString(updatedStatement.date), // Convertir Date a YYYY-MM-DD
+        // month ya es string YYYY-MM, no necesita conversión
+        createdAt: updatedStatement.createdAt.toISOString(),
+        updatedAt: updatedStatement.updatedAt.toISOString(),
+        // settledAt puede ser null, formatear solo si existe
+        settledAt: updatedStatement.settledAt ? updatedStatement.settledAt.toISOString() : null,
     };
 
+    // ✅ CRÍTICO: Formatear payment para respuesta (fechas a strings)
+    const paymentForResponse: any = {
+        ...payment,
+        date: crDateService.postgresDateToCRString(payment.date), // Convertir Date a YYYY-MM-DD
+        createdAt: payment.createdAt.toISOString(),
+        updatedAt: payment.updatedAt.toISOString(),
+        reversedAt: payment.reversedAt ? payment.reversedAt.toISOString() : null,
+        // Eliminar relaciones anidadas si existen (paidBy, accountStatement, etc.)
+        // El FE no las necesita en la respuesta (ya las tiene del statement)
+        paidBy: undefined,
+        accountStatement: undefined,
+        reversedByUser: undefined,
+    };
+    // Limpiar campos undefined
+    delete paymentForResponse.paidBy;
+    delete paymentForResponse.accountStatement;
+    delete paymentForResponse.reversedByUser;
+
     return {
-        payment,
+        payment: paymentForResponse,
         statement: statementForResponse,
     };
 }
@@ -341,12 +368,37 @@ export async function reversePayment(
     // Ya tenemos todos los datos, solo combinamos con las relaciones del statement original
     // El statement viene de payment.accountStatement que no incluye relaciones, así que las omitimos
     // El FE puede obtenerlas del statement original si las necesita
+    
+    // ✅ CRÍTICO: Formatear fechas a strings YYYY-MM-DD para el frontend
     const statementForResponse: any = {
         ...updatedStatement,
+        date: crDateService.postgresDateToCRString(updatedStatement.date), // Convertir Date a YYYY-MM-DD
+        // month ya es string YYYY-MM, no necesita conversión
+        createdAt: updatedStatement.createdAt.toISOString(),
+        updatedAt: updatedStatement.updatedAt.toISOString(),
+        // settledAt puede ser null, formatear solo si existe
+        settledAt: updatedStatement.settledAt ? updatedStatement.settledAt.toISOString() : null,
     };
 
+    // ✅ CRÍTICO: Formatear payment para respuesta (fechas a strings)
+    const reversedForResponse: any = {
+        ...reversed,
+        date: crDateService.postgresDateToCRString(reversed.date), // Convertir Date a YYYY-MM-DD
+        createdAt: reversed.createdAt.toISOString(),
+        updatedAt: reversed.updatedAt.toISOString(),
+        reversedAt: reversed.reversedAt ? reversed.reversedAt.toISOString() : null,
+        // Eliminar relaciones anidadas si existen
+        paidBy: undefined,
+        accountStatement: undefined,
+        reversedByUser: undefined,
+    };
+    // Limpiar campos undefined
+    delete reversedForResponse.paidBy;
+    delete reversedForResponse.accountStatement;
+    delete reversedForResponse.reversedByUser;
+
     return {
-        payment: reversed,
+        payment: reversedForResponse,
         statement: statementForResponse,
     };
 }

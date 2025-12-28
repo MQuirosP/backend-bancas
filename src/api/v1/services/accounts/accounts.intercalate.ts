@@ -2,7 +2,7 @@ import { getCRLocalComponents } from "../../../../utils/businessDate";
 import { crDateService } from "../../../../utils/crDateService";
 
 /**
- * Formatea una hora en formato 12h con AM/PM
+ * Formatea una hora en formato 12h con AM/PM desde un Date
  */
 function formatTime12h(date: Date): string {
   const { hour, minute } = getCRLocalComponents(date);
@@ -10,6 +10,19 @@ function formatTime12h(date: Date): string {
   let hours12 = hour % 12;
   hours12 = hours12 ? hours12 : 12;
   const minutesStr = String(minute).padStart(2, '0');
+  return `${hours12}:${minutesStr}${ampm} `;
+}
+
+/**
+ * Convierte hora en formato 24h (HH:MM) a formato 12h (HH:MM AM/PM)
+ * Ejemplo: "18:00" -> "6:00PM"
+ */
+function formatTime24hTo12h(time24h: string): string {
+  const [hours, minutes] = time24h.split(':').map(Number);
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  let hours12 = hours % 12;
+  hours12 = hours12 ? hours12 : 12; // 0 se convierte en 12
+  const minutesStr = String(minutes).padStart(2, '0');
   return `${hours12}:${minutesStr}${ampm} `;
 }
 
@@ -133,7 +146,7 @@ export function intercalateSorteosAndMovements(
       sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
       scheduledAt: scheduledAt.toISOString(),
       date: movement.date,
-      time: movement.time ? formatTime12h(scheduledAt) : formatTime12h(scheduledAt), // ✅ Usar time si existe, sino formatear desde scheduledAt
+      time: movement.time ? formatTime24hTo12h(movement.time) : formatTime12h(scheduledAt), // ✅ Si time existe, convertir directamente de 24h a 12h; sino formatear desde scheduledAt
       balance: effectiveBalance, // ✅ 0 si reversado, monto normal si activo
       accumulated: 0,
       chronologicalIndex: 0,
