@@ -879,6 +879,77 @@ export const AccountsController = {
   },
 
   /**
+   * ✅ NUEVO: GET /api/v1/accounts/statement/:date/bySorteo
+   * Obtiene bySorteo (sorteos intercalados con movimientos) para un día específico
+   * Usado para lazy loading desde el frontend
+   */
+  async getBySorteo(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    const { date } = req.params;
+    const { dimension, ventanaId, vendedorId, bancaId } = req.query as any;
+    const user = req.user;
+
+    // Validar fecha
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new AppError("Fecha inválida. Debe ser YYYY-MM-DD", 400, "INVALID_DATE");
+    }
+
+    // Validar dimension
+    if (!dimension || !["banca", "ventana", "vendedor"].includes(dimension)) {
+      throw new AppError("dimension es requerido y debe ser 'banca', 'ventana' o 'vendedor'", 400, "INVALID_DIMENSION");
+    }
+
+    // Aplicar RBAC según rol
+    let effectiveDimension = dimension;
+    let effectiveVentanaId = ventanaId;
+    let effectiveVendedorId = vendedorId;
+    let effectiveBancaId = bancaId;
+
+    if (user.role === Role.VENDEDOR) {
+      if (dimension !== "vendedor") {
+        throw new AppError("Los vendedores solo pueden ver su propio bySorteo", 403, "FORBIDDEN");
+      }
+      effectiveDimension = "vendedor";
+      effectiveVendedorId = user.id;
+    } else if (user.role === Role.VENTANA) {
+      if (dimension !== "ventana") {
+        throw new AppError("Los usuarios VENTANA solo pueden ver bySorteo de su ventana", 403, "FORBIDDEN");
+      }
+      effectiveDimension = "ventana";
+      if (!effectiveVentanaId) {
+        const userWithVentana = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { ventanaId: true },
+        });
+        effectiveVentanaId = userWithVentana?.ventanaId || null;
+      }
+      if (!effectiveVentanaId) {
+        throw new AppError("El usuario VENTANA no tiene una ventana asignada", 400, "NO_VENTANA");
+      }
+    }
+
+    // Obtener bySorteo
+    const bySorteo = await AccountsService.getBySorteo(date, {
+      dimension: effectiveDimension as "banca" | "ventana" | "vendedor",
+      ventanaId: effectiveVentanaId,
+      vendedorId: effectiveVendedorId,
+      bancaId: effectiveBancaId,
+      userRole: user.role,
+    });
+
+    req.logger?.info({
+      layer: "controller",
+      action: "GET_BY_SORTEO",
+      userId: user.id,
+      requestId: req.requestId,
+      payload: { date, dimension: effectiveDimension, ventanaId: effectiveVentanaId, vendedorId: effectiveVendedorId, bancaId: effectiveBancaId, count: bySorteo.length },
+    });
+
+    return success(res, bySorteo);
+  },
+
+  /**
    * GET /api/v1/accounts/export
    * Exporta estados de cuenta en CSV, Excel o PDF
    */

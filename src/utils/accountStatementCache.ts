@@ -7,6 +7,7 @@ import logger from '../core/logger';
  * TTL configurables por variable de entorno:
  * - CACHE_TTL_ACCOUNT_STATEMENT (default: 300s = 5 min)
  * - CACHE_TTL_ACCOUNT_DAY_STATEMENT (default: 180s = 3 min)
+ * - CACHE_TTL_BY_SORTEO (default: 3600s = 1 hora)
  * 
  * Si Redis no está disponible, las funciones retornan null y el sistema
  * funciona normalmente consultando la base de datos.
@@ -14,6 +15,7 @@ import logger from '../core/logger';
 
 const STATEMENT_TTL = parseInt(process.env.CACHE_TTL_ACCOUNT_STATEMENT || '300'); // 5 min
 const DAY_STATEMENT_TTL = parseInt(process.env.CACHE_TTL_ACCOUNT_DAY_STATEMENT || '180'); // 3 min
+const BY_SORTEO_TTL = parseInt(process.env.CACHE_TTL_BY_SORTEO || '3600'); // 1 hora (bySorteo cambia menos frecuentemente)
 
 /**
  * Generar clave de caché para estado de cuenta (mes/período)
@@ -65,6 +67,27 @@ function getDayStatementCacheKey(params: {
         params.vendedorId || 'null',
         params.bancaId || 'null',
         params.userRole || 'ADMIN',
+    ];
+    return parts.join(':');
+}
+
+/**
+ * Generar clave de caché para bySorteo de un día específico
+ */
+function getBySorteoCacheKey(params: {
+    date: string; // YYYY-MM-DD
+    dimension: string;
+    ventanaId?: string | null;
+    vendedorId?: string | null;
+    bancaId?: string | null;
+}): string {
+    const parts = [
+        'account:bySorteo',
+        params.date,
+        params.dimension,
+        params.ventanaId || 'null',
+        params.vendedorId || 'null',
+        params.bancaId || 'null',
     ];
     return parts.join(':');
 }
@@ -369,20 +392,36 @@ export async function invalidateCacheForSorteo(
                 const key = `${ticket.ventanaId || 'null'}:${ticket.vendedorId || 'null'}`;
                 if (!uniqueKeys.has(key)) {
                     uniqueKeys.add(key);
-                    await invalidateAccountStatementCache({
-                        date: dateStr,
-                        ventanaId: ticket.ventanaId || null,
-                        vendedorId: ticket.vendedorId || null,
-                    });
+                    await Promise.all([
+                        invalidateAccountStatementCache({
+                            date: dateStr,
+                            ventanaId: ticket.ventanaId || null,
+                            vendedorId: ticket.vendedorId || null,
+                        }),
+                        invalidateBySorteoCache({
+                            date: dateStr,
+                            ventanaId: ticket.ventanaId || null,
+                            vendedorId: ticket.vendedorId || null,
+                            bancaId: null, // No tenemos bancaId en tickets directamente
+                        }),
+                    ]);
                 }
             }
         } else {
             // Si no hay tickets, invalidar todo el día (sin filtros específicos)
-            await invalidateAccountStatementCache({
-                date: dateStr,
-                ventanaId: null,
-                vendedorId: null,
-            });
+            await Promise.all([
+                invalidateAccountStatementCache({
+                    date: dateStr,
+                    ventanaId: null,
+                    vendedorId: null,
+                }),
+                invalidateBySorteoCache({
+                    date: dateStr,
+                    ventanaId: null,
+                    vendedorId: null,
+                    bancaId: null,
+                }),
+            ]);
         }
     } catch (error) {
         logger.warn({
@@ -396,3 +435,80 @@ export async function invalidateCacheForSorteo(
     }
 }
 
+/**
+ * ✅ OPTIMIZACIÓN: Obtener bySorteo del caché
+ * Cachea bySorteo por separado con TTL más largo (1 hora) ya que cambia menos frecuentemente
+ * @returns bySorteo cacheado o null si no existe/Redis no disponible
+ */
+export async function getCachedBySorteo(params: {
+    date: string; // YYYY-MM-DD
+    dimension: string;
+    ventanaId?: string | null;
+    vendedorId?: string | null;
+    bancaId?: string | null;
+}): Promise<Array<any> | null> {
+    const key = getBySorteoCacheKey(params);
+    const result = await CacheService.get<Array<any>>(key);
+    
+    // Validación básica
+    if (!result || !Array.isArray(result)) {
+        return null;
+    }
+    
+    return result;
+}
+
+/**
+ * ✅ OPTIMIZACIÓN: Guardar bySorteo en caché
+ * Usa TTL más largo (1 hora) porque bySorteo cambia menos frecuentemente que el statement completo
+ */
+export async function setCachedBySorteo(
+    params: {
+        date: string; // YYYY-MM-DD
+        dimension: string;
+        ventanaId?: string | null;
+        vendedorId?: string | null;
+        bancaId?: string | null;
+    },
+    value: Array<any>,
+    ttlSeconds?: number
+): Promise<void> {
+    const key = getBySorteoCacheKey(params);
+    const ttl = ttlSeconds !== undefined ? ttlSeconds : BY_SORTEO_TTL;
+    await CacheService.set(key, value, ttl);
+}
+
+/**
+ * ✅ OPTIMIZACIÓN: Invalidar caché de bySorteo para un día específico
+ * Se llama cuando se registra o revierte un pago/cobro, o cuando se evalúa un sorteo
+ */
+export async function invalidateBySorteoCache(params: {
+    date: string; // YYYY-MM-DD
+    ventanaId?: string | null;
+    vendedorId?: string | null;
+    bancaId?: string | null;
+}): Promise<void> {
+    try {
+        // Invalidar todos los bySorteo de esta fecha (sin importar dimension)
+        const pattern = `account:bySorteo:${params.date}:*`;
+        await CacheService.delPattern(pattern);
+        
+        logger.info({
+            layer: 'cache',
+            action: 'INVALIDATE_BY_SORTEO',
+            payload: { 
+                date: params.date,
+                pattern
+            }
+        });
+    } catch (error) {
+        logger.warn({
+            layer: 'cache',
+            action: 'INVALIDATE_BY_SORTEO_ERROR',
+            payload: { 
+                error: (error as Error).message,
+                date: params.date 
+            }
+        });
+    }
+}

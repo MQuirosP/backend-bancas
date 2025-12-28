@@ -112,27 +112,84 @@ export function intercalateSorteosAndMovements(
     // Los movimientos reversados se muestran en el frontend con estilo diferente
     // pero NO afectan el balance acumulado (balance: 0 si isReversed)
 
-    // ✅ CRÍTICO: Usar time si está disponible, sino usar createdAt
+    // ✅ CRÍTICO: Usar time si está disponible y es válido, sino usar createdAt
     // Si movement.time existe, combinar date + time en CR y convertir a UTC para scheduledAt
     // Esto permite que el usuario especifique la hora del movimiento y se intercale correctamente con sorteos
     let scheduledAt: Date;
-    if (movement.time) {
+    let timeToDisplay: string;
+    
+    // ✅ CRÍTICO: Validar que time existe y no es una cadena vacía
+    const timeValue = movement.time;
+    const hasTime = timeValue != null && typeof timeValue === 'string' && timeValue.trim().length > 0;
+    
+    // ✅ CRÍTICO: Validar que el time es razonable (no es una hora UTC mal guardada)
+    // createdAt es un timestamp real generado por la BD, no podemos "corregirlo"
+    // Si el time está muy lejos de la hora CR de createdAt, probablemente está mal guardado
+    const createdAtDate = new Date(movement.createdAt);
+    const { hour: createdAtHourCR, minute: createdAtMinuteCR } = getCRLocalComponents(createdAtDate);
+    const createdAtTimeCR = `${String(createdAtHourCR).padStart(2, '0')}:${String(createdAtMinuteCR).padStart(2, '0')}`;
+    
+    let useTime = false;
+    if (hasTime && timeValue) {
+      const timeStr = timeValue.trim();
+      const [hours, minutes] = timeStr.split(':').map(Number);
+      
+      // ✅ VALIDACIÓN: Si el time está muy lejos de createdAt (más de 6 horas de diferencia),
+      // probablemente está mal guardado (ej: guardado como UTC en lugar de CR, o extraído incorrectamente)
+      // En ese caso, NO usar el time y usar createdAt en su lugar
+      const timeMinutes = hours * 60 + minutes;
+      const createdAtMinutes = createdAtHourCR * 60 + createdAtMinuteCR;
+      const diffMinutes = Math.abs(timeMinutes - createdAtMinutes);
+      const diffHours = diffMinutes / 60;
+      
+      // ✅ CRÍTICO: Si la diferencia es más de 6 horas, probablemente está mal guardado
+      // Ejemplos de casos problemáticos:
+      // - time: 03:22, createdAt CR: 15:22 → diferencia 12h → mal guardado, usar createdAt
+      // - time: 09:22, createdAt CR: 15:22 → diferencia 6h → válido (pago registrado 6h después)
+      // - time: 15:22, createdAt CR: 15:22 → diferencia 0h → válido (coincide)
+      // Usamos 6 horas como umbral razonable
+      if (diffHours > 6) {
+        // Time parece estar mal guardado, NO usarlo, usar createdAt en su lugar
+        useTime = false;
+      } else {
+        useTime = true;
+      }
+    }
+    
+    if (useTime && timeValue) {
       // Combinar date + time en CR y convertir a UTC para comparar con sorteos
       // date viene como YYYY-MM-DD, time como HH:MM (hora en CR, UTC-6)
       const [year, month, day] = movement.date.split('-').map(Number);
-      const [hours, minutes] = movement.time.split(':').map(Number);
-      // ✅ CRÍTICO: Crear fecha/hora en CR y convertir a UTC correctamente
+      const timeStr = timeValue.trim();
+      const [hours, minutes] = timeStr.split(':').map(Number);
+      // ✅ CRÍTICO: Convertir hora CR a UTC correctamente
       // CR está en UTC-6, así que para convertir CR a UTC: SUMAR 6 horas
-      // Ejemplo: 13:00 CR = 19:00 UTC
-      // Date.UTC crea una fecha en UTC con los valores especificados
-      // Si especificamos 13:00, Date.UTC crea 13:00 UTC, pero queremos 13:00 CR = 19:00 UTC
-      // Por lo tanto, debemos crear 13:00 UTC y luego sumar 6 horas para obtener 19:00 UTC
-      const crDateTimeUTC = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0, 0));
-      scheduledAt = new Date(crDateTimeUTC.getTime() + crDateService.CR_TIMEZONE_OFFSET_MS); // ✅ SUMAR 6 horas para convertir CR a UTC
+      // Ejemplo: 18:00 CR = 00:00 UTC del día siguiente
+      // Si hours + 6 >= 24, entonces es el día siguiente
+      const utcHours = hours + 6;
+      let utcYear = year;
+      let utcMonth = month;
+      let utcDay = day;
+      
+      if (utcHours >= 24) {
+        // Es el día siguiente en UTC
+        const nextDay = new Date(Date.UTC(year, month - 1, day));
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+        utcYear = nextDay.getUTCFullYear();
+        utcMonth = nextDay.getUTCMonth() + 1;
+        utcDay = nextDay.getUTCDate();
+        scheduledAt = new Date(Date.UTC(utcYear, utcMonth - 1, utcDay, utcHours - 24, minutes, 0, 0));
+      } else {
+        // Mismo día en UTC
+        scheduledAt = new Date(Date.UTC(utcYear, utcMonth - 1, utcDay, utcHours, minutes, 0, 0));
+      }
+      timeToDisplay = formatTime24hTo12h(timeStr);
     } else {
-      // Si no hay time, usar createdAt (que ya está en UTC)
-      // createdAt viene como ISO string UTC, así que solo necesitamos parsearlo
-      scheduledAt = new Date(movement.createdAt);
+      // Si no hay time válido, usar createdAt (que ya está en UTC)
+      // ✅ CRÍTICO: createdAt es un timestamp real generado por la BD, no podemos "corregirlo"
+      // Si el time está mal guardado, simplemente usamos createdAt convertido a CR
+      scheduledAt = createdAtDate;
+      timeToDisplay = formatTime12h(createdAtDate);
     }
 
     // ✅ CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
@@ -146,7 +203,7 @@ export function intercalateSorteosAndMovements(
       sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
       scheduledAt: scheduledAt.toISOString(),
       date: movement.date,
-      time: movement.time ? formatTime24hTo12h(movement.time) : formatTime12h(scheduledAt), // ✅ Si time existe, convertir directamente de 24h a 12h; sino formatear desde scheduledAt
+      time: timeToDisplay, // ✅ Usar time validado o createdAt convertido a CR
       balance: effectiveBalance, // ✅ 0 si reversado, monto normal si activo
       accumulated: 0,
       chronologicalIndex: 0,

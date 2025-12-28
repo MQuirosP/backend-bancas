@@ -11,7 +11,7 @@ import { AccountsFilters, DayStatement, StatementTotals } from "./accounts.types
 import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
 import { resolveCommission } from "../../../../services/commission.resolver";
 import { getSorteoBreakdownBatch } from "./accounts.queries";
-import { getCachedDayStatement, setCachedDayStatement } from "../../../../utils/accountStatementCache";
+import { getCachedDayStatement, setCachedDayStatement, getCachedBySorteo, setCachedBySorteo } from "../../../../utils/accountStatementCache";
 import { intercalateSorteosAndMovements, SorteoOrMovement } from "./accounts.intercalate";
 
 /**
@@ -998,8 +998,9 @@ export async function getStatementDirect(
     // Construir statements desde el mapa agrupado
     // ✅ NOTA: NO filtrar aquí - necesitamos todos los días del mes para calcular acumulados correctos
     // El filtro se aplicará al final después de calcular la acumulación
-    const allStatementsFromMonth = Array.from(byDateAndDimension.entries())
-        .map(([key, entry]) => {
+    // ✅ CRÍTICO: Usar Promise.all para procesar en paralelo y permitir await dentro
+    const allStatementsFromMonthPromises = Array.from(byDateAndDimension.entries())
+        .map(async ([key, entry]) => {
             // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_entidad
             const date = shouldGroupByDate ? key : key.split("_")[0];
 
@@ -1008,59 +1009,11 @@ export async function getStatementDirect(
             let movements: any[];
             let bySorteo: any[];
 
+            // ✅ CRÍTICO: Inicializar movements ANTES de cualquier uso (necesario tanto si hay caché como si no)
             if (shouldGroupByDate) {
-                // Cuando hay agrupación, incluir TODOS los movimientos de la fecha (sin filtrar por entidad)
                 movements = allMovementsForDate;
-
-                // ✅ NUEVO: Agrupar bySorteo por fecha solamente (sumar todos los sorteos de todas las entidades)
-                // sorteoBreakdownBatch es un Map<string, Array<...>> donde la clave es `${date}_${ventanaId}` o `${date}_${vendedorId}`
-                const sorteoMap = new Map<string, any>();
-                for (const [sorteoKey, sorteoDataArray] of sorteoBreakdownBatch.entries()) {
-                    const sorteoDate = sorteoKey.split("_")[0];
-                    if (sorteoDate === date) {
-                        // sorteoDataArray es un array de sorteos para esta fecha y entidad
-                        for (const sorteoData of sorteoDataArray) {
-                            const sorteoId = sorteoData.sorteoId;
-                            if (sorteoId) {
-                                const existing = sorteoMap.get(sorteoId);
-                                if (existing) {
-                                    // Sumar campos numéricos
-                                    existing.sales += sorteoData.sales;
-                                    existing.payouts += sorteoData.payouts;
-                                    existing.listeroCommission += sorteoData.listeroCommission;
-                                    existing.vendedorCommission += sorteoData.vendedorCommission;
-                                    // ✅ CORRECCIÓN: Balance usando vendedorCommission si vendedorId está presente, sino listeroCommission
-                                    const commissionToUse = vendedorId ? existing.vendedorCommission : existing.listeroCommission;
-                                    existing.balance = existing.sales - existing.payouts - commissionToUse;
-                                    existing.ticketCount += sorteoData.ticketCount;
-                                } else {
-                                    sorteoMap.set(sorteoId, {
-                                        sorteoId: sorteoData.sorteoId,
-                                        sorteoName: sorteoData.sorteoName,
-                                        loteriaId: sorteoData.loteriaId,
-                                        loteriaName: sorteoData.loteriaName,
-                                        scheduledAt: sorteoData.scheduledAt,
-                                        sales: sorteoData.sales,
-                                        payouts: sorteoData.payouts,
-                                        listeroCommission: sorteoData.listeroCommission,
-                                        vendedorCommission: sorteoData.vendedorCommission,
-                                        // ✅ CORRECCIÓN: Balance usando vendedorCommission si vendedorId está presente, sino listeroCommission
-                                        balance: sorteoData.sales - sorteoData.payouts - (vendedorId ? sorteoData.vendedorCommission : sorteoData.listeroCommission),
-                                        ticketCount: sorteoData.ticketCount,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                bySorteo = Array.from(sorteoMap.values()).sort((a, b) =>
-                    new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
-                );
-
-                // ✅ NOTA: sorteoAccumulated se calculará después en intercalateSorteosAndMovements
-                // para incluir movimientos en el acumulado progresivo
             } else {
-                // Sin agrupación: comportamiento original (filtrar por entidad)
+                // Sin agrupación: filtrar por entidad
                 movements = allMovementsForDate.filter((m: any) => {
                     if (dimension === "banca") {
                         return m.bancaId === entry.bancaId;
@@ -1070,18 +1023,101 @@ export async function getStatementDirect(
                         return m.vendedorId === entry.vendedorId;
                     }
                 });
-                // Obtener desglose por sorteo usando clave según dimensión
-                // ✅ CRÍTICO: Cuando hay un ID específico en el query (bancaId, ventanaId, vendedorId), usar directamente ese ID
-                // Esto asegura que se use la misma clave que en getSorteoBreakdownBatch
-                const sorteoKey = dimension === "banca"
-                    ? `${date}_${bancaId || entry.bancaId || 'null'}`
-                    : dimension === "ventana"
-                        ? `${date}_${ventanaId || entry.ventanaId}`
-                        : `${date}_${vendedorId || entry.vendedorId || 'null'}`;
-                bySorteo = sorteoBreakdownBatch.get(sorteoKey) || [];
+            }
 
-                // ✅ NOTA: sorteoAccumulated se calculará después en intercalateSorteosAndMovements
-                // para incluir movimientos en el acumulado progresivo
+            // ✅ OPTIMIZACIÓN: Intentar obtener bySorteo del caché primero (TTL 1 hora)
+            // La clave de caché debe reflejar exactamente cómo se calcula bySorteo
+            const bySorteoCacheKey = {
+                date,
+                dimension,
+                ventanaId: shouldGroupByDate ? null : (ventanaId || entry.ventanaId || null),
+                vendedorId: shouldGroupByDate ? null : (vendedorId || entry.vendedorId || null),
+                bancaId: shouldGroupByDate ? null : (bancaId || entry.bancaId || null),
+            };
+            let cachedBySorteo = await getCachedBySorteo(bySorteoCacheKey);
+
+            // Si está en caché, usarlo directamente; sino calcularlo
+            if (cachedBySorteo && cachedBySorteo.length > 0) {
+                logger.info({
+                    layer: 'cache',
+                    action: 'BY_SORTEO_CACHE_HIT',
+                    payload: { date, dimension, ventanaId, vendedorId, bancaId }
+                });
+                bySorteo = cachedBySorteo;
+            } else {
+                // Calcular bySorteo desde sorteoBreakdownBatch
+                if (shouldGroupByDate) {
+                    // movements ya está inicializado arriba
+
+                    // ✅ NUEVO: Agrupar bySorteo por fecha solamente (sumar todos los sorteos de todas las entidades)
+                    // sorteoBreakdownBatch es un Map<string, Array<...>> donde la clave es `${date}_${ventanaId}` o `${date}_${vendedorId}`
+                    const sorteoMap = new Map<string, any>();
+                    for (const [sorteoKey, sorteoDataArray] of sorteoBreakdownBatch.entries()) {
+                        const sorteoDate = sorteoKey.split("_")[0];
+                        if (sorteoDate === date) {
+                            // sorteoDataArray es un array de sorteos para esta fecha y entidad
+                            for (const sorteoData of sorteoDataArray) {
+                                const sorteoId = sorteoData.sorteoId;
+                                if (sorteoId) {
+                                    const existing = sorteoMap.get(sorteoId);
+                                    if (existing) {
+                                        // Sumar campos numéricos
+                                        existing.sales += sorteoData.sales;
+                                        existing.payouts += sorteoData.payouts;
+                                        existing.listeroCommission += sorteoData.listeroCommission;
+                                        existing.vendedorCommission += sorteoData.vendedorCommission;
+                                        // ✅ CORRECCIÓN: Balance usando vendedorCommission si vendedorId está presente, sino listeroCommission
+                                        const commissionToUse = vendedorId ? existing.vendedorCommission : existing.listeroCommission;
+                                        existing.balance = existing.sales - existing.payouts - commissionToUse;
+                                        existing.ticketCount += sorteoData.ticketCount;
+                                    } else {
+                                        sorteoMap.set(sorteoId, {
+                                            sorteoId: sorteoData.sorteoId,
+                                            sorteoName: sorteoData.sorteoName,
+                                            loteriaId: sorteoData.loteriaId,
+                                            loteriaName: sorteoData.loteriaName,
+                                            scheduledAt: sorteoData.scheduledAt,
+                                            sales: sorteoData.sales,
+                                            payouts: sorteoData.payouts,
+                                            listeroCommission: sorteoData.listeroCommission,
+                                            vendedorCommission: sorteoData.vendedorCommission,
+                                            // ✅ CORRECCIÓN: Balance usando vendedorCommission si vendedorId está presente, sino listeroCommission
+                                            balance: sorteoData.sales - sorteoData.payouts - (vendedorId ? sorteoData.vendedorCommission : sorteoData.listeroCommission),
+                                            ticketCount: sorteoData.ticketCount,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    bySorteo = Array.from(sorteoMap.values()).sort((a, b) =>
+                        new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
+                    );
+
+                    // ✅ NOTA: sorteoAccumulated se calculará después en intercalateSorteosAndMovements
+                    // para incluir movimientos en el acumulado progresivo
+                } else {
+                    // movements ya está inicializado arriba (línea ~1012)
+                    // Obtener desglose por sorteo usando clave según dimensión
+                    // ✅ CRÍTICO: Cuando hay un ID específico en el query (bancaId, ventanaId, vendedorId), usar directamente ese ID
+                    // Esto asegura que se use la misma clave que en getSorteoBreakdownBatch
+                    const sorteoKey = dimension === "banca"
+                        ? `${date}_${bancaId || entry.bancaId || 'null'}`
+                        : dimension === "ventana"
+                            ? `${date}_${ventanaId || entry.ventanaId}`
+                            : `${date}_${vendedorId || entry.vendedorId || 'null'}`;
+                    bySorteo = sorteoBreakdownBatch.get(sorteoKey) || [];
+
+                    // ✅ NOTA: sorteoAccumulated se calculará después en intercalateSorteosAndMovements
+                    // para incluir movimientos en el acumulado progresivo
+                }
+
+                // Guardar en caché en background (no esperar) si hay datos
+                if (bySorteo.length > 0) {
+                    setCachedBySorteo(bySorteoCacheKey, bySorteo).catch(() => {
+                        // Ignorar errores de caché
+                    });
+                }
             }
 
             // ✅ CRÍTICO: Calcular totalPayouts sumando desde bySorteo en lugar de la query SQL
@@ -1137,7 +1173,8 @@ export async function getStatementDirect(
                 isSettled: calculateIsSettled(entry.totalTicketsCount, remainingBalance, totalPaid, totalCollected),
                 canEdit: !calculateIsSettled(entry.totalTicketsCount, remainingBalance, totalPaid, totalCollected),
                 ticketCount: entry.totalTicketsCount,
-                bySorteo: sorteosAndMovements, // ✅ NUEVO: Sorteos + Movimientos intercalados (incluye accumulated)
+                bySorteo: sorteosAndMovements, // ✅ Sorteos + Movimientos intercalados (incluye accumulated)
+                hasSorteos: sorteosAndMovements.length > 0, // ✅ NUEVO: Flag para lazy loading (FE puede usar para saber si hay sorteos)
             };
 
             // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
@@ -1511,8 +1548,14 @@ export async function getStatementDirect(
             }
 
             return statement;
-        }).sort((a, b) => {
-            const dateA = new Date(a.date).getTime();
+        });
+    
+    // ✅ CRÍTICO: Esperar todas las promesas antes de ordenar
+    const allStatementsFromMonth = await Promise.all(allStatementsFromMonthPromises);
+    
+    // Ordenar statements por fecha
+    allStatementsFromMonth.sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
             const dateB = new Date(b.date).getTime();
             return sort === "desc" ? dateB - dateA : dateA - dateB;
         });
