@@ -6,3 +6,4 @@ ALTER TABLE "AccountPayment" ADD COLUMN "time" VARCHAR(5);
 -- ✅ NOTA: El campo es opcional (NULL permitido) para mantener compatibilidad con registros existentes
 -- Los registros antiguos tendrán time = NULL y usarán createdAt para el ordenamiento cronológico
 
+

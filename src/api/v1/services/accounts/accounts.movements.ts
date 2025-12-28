@@ -79,11 +79,11 @@ export async function registerPayment(data: {
         "ADMIN" // Usar ADMIN para permitir ver todos los datos
     );
 
-    // Obtener el statement persistido (calculateDayStatement ya lo creó/actualizó)
-    const statement = await AccountStatementRepository.findByDate(paymentDate, {
-        ventanaId: finalVentanaId ?? undefined,
-        vendedorId: data.vendedorId ?? undefined,
-    });
+    // ✅ FIX: Usar el ID del statement que ya retornó calculateDayStatement
+    // Esto evita problemas de búsqueda cuando hay conflictos de constraint único
+    // (por ejemplo, cuando findOrCreate retorna un statement consolidado de ventana
+    // pero findByDate busca con ventanaId + vendedorId)
+    const statement = await AccountStatementRepository.findById(recalculatedStatement.id);
 
     if (!statement) {
         throw new AppError("No se pudo obtener el estado de cuenta", 500, "STATEMENT_NOT_FOUND");
