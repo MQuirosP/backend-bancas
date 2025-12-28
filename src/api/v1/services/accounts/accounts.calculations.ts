@@ -670,6 +670,12 @@ export async function getStatementDirect(
     // Esto reduce significativamente la cantidad de datos transferidos y mejora el rendimiento
     // Usar subquery para calcular payouts correctamente (una vez por ticket, solo si tiene jugadas ganadoras)
     const queryStartTime = Date.now();
+    
+    // ✅ OPTIMIZACIÓN: Calcular límite dinámico basado en días del mes (evita truncamiento)
+    // Estimación: ~200 tickets/día promedio × días en mes = límite seguro
+    // Mínimo 5000 para mantener compatibilidad con queries pequeñas
+    const dynamicLimit = Math.max(5000, daysInMonth * 200);
+    
     logger.info({
         layer: "service",
         action: "ACCOUNT_STATEMENT_SQL_QUERY_START",
@@ -681,6 +687,7 @@ export async function getStatementDirect(
             startDate: startDateCRStr,
             endDate: endDateCRStr,
             shouldGroupByDate,
+            dynamicLimit,
         },
     });
 
@@ -726,7 +733,8 @@ export async function getStatementDirect(
     AND j."deletedAt" IS NULL
     GROUP BY ${groupByClause}
     ORDER BY business_date ${sort === "desc" ? Prisma.sql`DESC` : Prisma.sql`ASC`}
-    LIMIT 5000
+    -- ✅ OPTIMIZACIÓN: Límite dinámico basado en días del mes (evita truncamiento)
+    LIMIT ${dynamicLimit}
   `;
 
     const aggregatedData = await prisma.$queryRaw<
@@ -1572,6 +1580,11 @@ export async function getStatementDirect(
 
     const monthlyWhereClause = Prisma.sql`WHERE ${Prisma.join(monthlyWhereConditions, " AND ")}`;
 
+    // ✅ OPTIMIZACIÓN: Calcular límite dinámico para query mensual
+    // Estimación: ~200 tickets/día × días en mes × 5 jugadas/ticket promedio × 2 (margen seguridad)
+    // Mínimo 50000 para mantener compatibilidad
+    const monthlyDynamicLimit = Math.max(50000, daysInMonth * 200 * 5 * 2);
+    
     // ✅ OPTIMIZACIÓN: Log de rendimiento para consulta mensual
     const monthlyQueryStartTime = Date.now();
     logger.info({
@@ -1583,6 +1596,7 @@ export async function getStatementDirect(
             ventanaId,
             vendedorId,
             month: effectiveMonth,
+            monthlyDynamicLimit,
         },
     });
 
@@ -1634,7 +1648,8 @@ export async function getStatementDirect(
     LEFT JOIN "User" u ON u.id = t."vendedorId"
     ${monthlyWhereClause}
     AND j."deletedAt" IS NULL
-    LIMIT 50000 -- ✅ CRÍTICO: Limitar resultados para prevenir consultas masivas del mes completo
+    -- ✅ OPTIMIZACIÓN: Límite dinámico basado en días del mes (evita truncamiento)
+    LIMIT ${monthlyDynamicLimit}
   `;
 
     const monthlyQueryEndTime = Date.now();
