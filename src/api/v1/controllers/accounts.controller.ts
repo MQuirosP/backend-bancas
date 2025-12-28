@@ -764,12 +764,10 @@ export const AccountsController = {
     });
 
     // ✅ OPTIMIZACIÓN: Incluir statement actualizado en la respuesta para sincronía total con FE
+    // El servicio ya retorna el payment formateado correctamente (con reversedAt como string)
     return success(res, {
       payment: {
-        id: reversed.id,
-        isReversed: reversed.isReversed,
-        reversedAt: reversed.reversedAt?.toISOString() || null,
-        reversedBy: reversed.reversedBy,
+        ...reversed,
         reversedByUser: reversedByUser
           ? {
               id: reversedByUser.id,
