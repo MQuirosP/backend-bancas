@@ -1,10 +1,11 @@
 import { AccountsFilters, DayStatement } from "./accounts.types";
 import { resolveDateRange } from "../../../../utils/dateRange";
 import { getMonthDateRange, toCRDateString } from "./accounts.dates.utils";
-import { getMovementsForDay } from "./accounts.queries";
+import { getMovementsForDay, getSorteoBreakdownBatch } from "./accounts.queries";
 import { getStatementDirect, calculateDayStatement, getSettledStatements, getDatesNotSettled } from "./accounts.calculations";
 import { registerPayment, reversePayment, deleteStatement } from "./accounts.movements";
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
+import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";
 import prisma from "../../../../core/prismaClient";
 import { getCachedStatement, setCachedStatement } from "../../../../utils/accountStatementCache";
 import { crDateService } from "../../../../utils/crDateService";
@@ -376,6 +377,125 @@ export const AccountsService = {
      * Elimina un estado de cuenta
      */
     deleteStatement,
+
+    /**
+     * ✅ NUEVO: Obtiene bySorteo (sorteos intercalados con movimientos) para un día específico
+     * Usado para lazy loading desde el frontend
+     */
+    async getBySorteo(
+        date: string, // YYYY-MM-DD
+        filters: {
+            dimension: "banca" | "ventana" | "vendedor";
+            ventanaId?: string;
+            vendedorId?: string;
+            bancaId?: string;
+            userRole?: "ADMIN" | "VENTANA" | "VENDEDOR";
+        }
+    ) {
+        // Convertir fecha string a Date
+        const [year, month, day] = date.split('-').map(Number);
+        const targetDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+
+        // Obtener sorteos del día usando getSorteoBreakdownBatch
+        const sorteoBreakdownBatch = await getSorteoBreakdownBatch(
+            [targetDate],
+            filters.dimension,
+            filters.ventanaId,
+            filters.vendedorId,
+            filters.bancaId,
+            filters.userRole || "ADMIN"
+        );
+
+        // Obtener movimientos del día
+        const movementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
+            targetDate,
+            new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999)),
+            filters.dimension,
+            filters.ventanaId,
+            filters.vendedorId,
+            filters.bancaId
+        );
+
+        // Determinar si hay agrupación
+        const shouldGroupByDate =
+            (filters.dimension === "banca" && (!filters.bancaId || filters.bancaId === "" || filters.bancaId === null)) ||
+            (filters.dimension === "banca" && filters.bancaId && !filters.ventanaId && !filters.vendedorId) ||
+            (filters.dimension === "ventana" && (!filters.ventanaId || filters.ventanaId === "" || filters.ventanaId === null)) ||
+            (filters.dimension === "vendedor" && (!filters.vendedorId || filters.vendedorId === "" || filters.vendedorId === null));
+
+        // Obtener bySorteo según agrupación
+        let bySorteo: any[];
+        const allMovementsForDate = movementsByDate.get(date) || [];
+        let movements: any[];
+
+        if (shouldGroupByDate) {
+            // Agrupar sorteos por fecha (sumar todos los sorteos de todas las entidades)
+            const sorteoMap = new Map<string, any>();
+            for (const [sorteoKey, sorteoDataArray] of sorteoBreakdownBatch.entries()) {
+                const sorteoDate = sorteoKey.split("_")[0];
+                if (sorteoDate === date) {
+                    for (const sorteoData of sorteoDataArray) {
+                        const sorteoId = sorteoData.sorteoId;
+                        if (sorteoId) {
+                            const existing = sorteoMap.get(sorteoId);
+                            if (existing) {
+                                existing.sales += sorteoData.sales;
+                                existing.payouts += sorteoData.payouts;
+                                existing.listeroCommission += sorteoData.listeroCommission;
+                                existing.vendedorCommission += sorteoData.vendedorCommission;
+                                const commissionToUse = filters.vendedorId ? existing.vendedorCommission : existing.listeroCommission;
+                                existing.balance = existing.sales - existing.payouts - commissionToUse;
+                                existing.ticketCount += sorteoData.ticketCount;
+                            } else {
+                                sorteoMap.set(sorteoId, {
+                                    sorteoId: sorteoData.sorteoId,
+                                    sorteoName: sorteoData.sorteoName,
+                                    loteriaId: sorteoData.loteriaId,
+                                    loteriaName: sorteoData.loteriaName,
+                                    scheduledAt: sorteoData.scheduledAt,
+                                    sales: sorteoData.sales,
+                                    payouts: sorteoData.payouts,
+                                    listeroCommission: sorteoData.listeroCommission,
+                                    vendedorCommission: sorteoData.vendedorCommission,
+                                    balance: sorteoData.sales - sorteoData.payouts - (filters.vendedorId ? sorteoData.vendedorCommission : sorteoData.listeroCommission),
+                                    ticketCount: sorteoData.ticketCount,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            bySorteo = Array.from(sorteoMap.values()).sort((a, b) =>
+                new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
+            );
+            movements = allMovementsForDate;
+        } else {
+            // Sin agrupación: filtrar por entidad
+            const sorteoKey = filters.dimension === "banca"
+                ? `${date}_${filters.bancaId || 'null'}`
+                : filters.dimension === "ventana"
+                    ? `${date}_${filters.ventanaId}`
+                    : `${date}_${filters.vendedorId || 'null'}`;
+            bySorteo = sorteoBreakdownBatch.get(sorteoKey) || [];
+
+            // Filtrar movimientos por entidad
+            movements = allMovementsForDate.filter((m: any) => {
+                if (filters.dimension === "banca") {
+                    return m.bancaId === filters.bancaId;
+                } else if (filters.dimension === "ventana") {
+                    return m.ventanaId === filters.ventanaId;
+                } else {
+                    return m.vendedorId === filters.vendedorId;
+                }
+            });
+        }
+
+        // Intercalar sorteos y movimientos
+        const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
+        const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date);
+
+        return sorteosAndMovements;
+    },
 
     /**
      * Obtiene el balance acumulado actual de una ventana

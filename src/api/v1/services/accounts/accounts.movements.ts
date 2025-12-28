@@ -5,7 +5,7 @@ import { AccountPaymentRepository } from "../../../../repositories/accountPaymen
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
 import { calculateDayStatement } from "./accounts.calculations";
 import { calculateIsSettled } from "./accounts.commissions";
-import { invalidateAccountStatementCache } from "../../../../utils/accountStatementCache";
+import { invalidateAccountStatementCache, invalidateBySorteoCache } from "../../../../utils/accountStatementCache";
 import { crDateService } from "../../../../utils/crDateService";
 
 /**
@@ -177,13 +177,21 @@ export async function registerPayment(data: {
         canEdit: !isSettled,
     });
 
-    // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta para este día
+    // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
     const dateStr = data.date; // Ya está en formato YYYY-MM-DD
-    invalidateAccountStatementCache({
-        date: dateStr,
-        ventanaId: data.ventanaId || null,
-        vendedorId: data.vendedorId || null,
-    }).catch(() => {
+    Promise.all([
+        invalidateAccountStatementCache({
+            date: dateStr,
+            ventanaId: finalVentanaId || null,
+            vendedorId: data.vendedorId || null,
+        }),
+        invalidateBySorteoCache({
+            date: dateStr,
+            ventanaId: finalVentanaId || null,
+            vendedorId: data.vendedorId || null,
+            bancaId: finalBancaId || null,
+        }),
+    ]).catch(() => {
         // Ignorar errores de invalidación de caché
     });
 
@@ -354,13 +362,21 @@ export async function reversePayment(
         canEdit: !isSettled,
     });
 
-    // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta para este día
-    const dateStr = payment.date.toISOString().split('T')[0]; // Convertir Date a YYYY-MM-DD
-    invalidateAccountStatementCache({
-        date: dateStr,
-        ventanaId: payment.ventanaId || null,
-        vendedorId: payment.vendedorId || null,
-    }).catch(() => {
+    // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
+    const dateStr = crDateService.postgresDateToCRString(payment.date);
+    Promise.all([
+        invalidateAccountStatementCache({
+            date: dateStr,
+            ventanaId: payment.ventanaId || null,
+            vendedorId: payment.vendedorId || null,
+        }),
+        invalidateBySorteoCache({
+            date: dateStr,
+            ventanaId: payment.ventanaId || null,
+            vendedorId: payment.vendedorId || null,
+            bancaId: payment.bancaId || null,
+        }),
+    ]).catch(() => {
         // Ignorar errores de invalidación de caché
     });
 

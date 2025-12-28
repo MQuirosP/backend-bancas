@@ -141,6 +141,9 @@ export interface DayStatement {
     byBanca?: BancaBreakdown[];   // ✅ NUEVO: Solo cuando bancaId es null y dimension='banca'
     byVentana?: VentanaBreakdown[];
     byVendedor?: VendedorBreakdown[];
+    // ✅ NUEVO: Flag para lazy loading de bySorteo
+    hasSorteos?: boolean;          // Indica si hay sorteos disponibles (para lazy loading)
+    bySorteo?: any[] | null;      // Sorteos intercalados con movimientos (null si lazy loading activo)
 }
 
 /**
