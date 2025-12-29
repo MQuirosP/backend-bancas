@@ -442,25 +442,112 @@ export const AccountsService = {
                     "desc"
                 );
                 
-                // Buscar el statement del día anterior en los resultados
-                const previousDayStatement = statementsFromMonthStart.statements?.find((s: any) => {
+                // ✅ CRÍTICO: Buscar el último statement con datos (no necesariamente el día anterior)
+                // Si el día anterior no tiene datos, buscar el último día que sí tiene datos
+                // Esto es importante cuando hay días sin ventas entre el último día con datos y el día actual
+                let previousDayStatement: any = null;
+                
+                // Primero intentar encontrar el día anterior exacto
+                previousDayStatement = statementsFromMonthStart.statements?.find((s: any) => {
                     const statementDate = crDateService.dateUTCToCRString(new Date(s.date));
-                    return statementDate === previousDateStr;
+                    const dateMatches = statementDate === previousDateStr;
+                    
+                    // ✅ CRÍTICO: Verificar que el statement corresponda al mismo vendedorId si hay filtro
+                    if (filters.dimension === "vendedor" && filters.vendedorId) {
+                        return dateMatches && s.vendedorId === filters.vendedorId;
+                    }
+                    
+                    return dateMatches;
                 });
                 
-                if (previousDayStatement && previousDayStatement.bySorteo && previousDayStatement.bySorteo.length > 0) {
-                    // Ordenar bySorteo por scheduledAt ASC para encontrar el último accumulated del día
-                    const sortedStatement = [...previousDayStatement.bySorteo].sort((a: any, b: any) => {
-                        const timeA = new Date(a.scheduledAt).getTime();
-                        const timeB = new Date(b.scheduledAt).getTime();
-                        return timeA - timeB; // ASC
-                    });
+                // Si no se encuentra el día anterior, buscar el último día con datos antes del día actual
+                if (!previousDayStatement && statementsFromMonthStart.statements && statementsFromMonthStart.statements.length > 0) {
+                    // Filtrar statements que sean anteriores al día actual y correspondan al mismo vendedorId
+                    const candidateStatements = statementsFromMonthStart.statements
+                        .filter((s: any) => {
+                            const statementDate = crDateService.dateUTCToCRString(new Date(s.date));
+                            const statementDateObj = new Date(statementDate);
+                            const targetDateObj = new Date(date);
+                            
+                            // Solo considerar statements anteriores al día actual
+                            if (statementDateObj >= targetDateObj) {
+                                return false;
+                            }
+                            
+                            // ✅ CRÍTICO: Verificar que el statement corresponda al mismo vendedorId si hay filtro
+                            if (filters.dimension === "vendedor" && filters.vendedorId) {
+                                return s.vendedorId === filters.vendedorId;
+                            }
+                            
+                            return true;
+                        })
+                        .sort((a: any, b: any) => {
+                            // Ordenar por fecha DESC para obtener el más reciente
+                            const dateA = new Date(crDateService.dateUTCToCRString(new Date(a.date))).getTime();
+                            const dateB = new Date(crDateService.dateUTCToCRString(new Date(b.date))).getTime();
+                            return dateB - dateA; // DESC
+                        });
                     
-                    // El último accumulated del bySorteo del día anterior ya incluye el acumulado progresivo
-                    // porque getStatementDirect calcula el acumulado progresivo para todos los días del mes
-                    lastDayAccumulated = sortedStatement.length > 0 
-                        ? (sortedStatement[sortedStatement.length - 1].accumulated || 0)
-                        : 0;
+                    // Tomar el más reciente (el primero después de ordenar DESC)
+                    if (candidateStatements.length > 0) {
+                        previousDayStatement = candidateStatements[0];
+                    }
+                }
+                
+                if (previousDayStatement) {
+                    // ✅ CRÍTICO: Si hay bySorteo, usar el último accumulated del bySorteo
+                    // Si no hay bySorteo o está vacío, usar el remainingBalance del día anterior
+                    // El remainingBalance ya incluye el acumulado progresivo desde el inicio del mes
+                    if (previousDayStatement.bySorteo && previousDayStatement.bySorteo.length > 0) {
+                        // Ordenar bySorteo por scheduledAt ASC para encontrar el último accumulated del día
+                        const sortedStatement = [...previousDayStatement.bySorteo].sort((a: any, b: any) => {
+                            const timeA = new Date(a.scheduledAt).getTime();
+                            const timeB = new Date(b.scheduledAt).getTime();
+                            return timeA - timeB; // ASC
+                        });
+                        
+                        // El último accumulated del bySorteo del día anterior ya incluye el acumulado progresivo
+                        // porque getStatementDirect calcula el acumulado progresivo para todos los días del mes
+                        lastDayAccumulated = sortedStatement.length > 0 
+                            ? (sortedStatement[sortedStatement.length - 1].accumulated || 0)
+                            : 0;
+                    } else {
+                        // ✅ CRÍTICO: Si no hay bySorteo, usar remainingBalance del día anterior
+                        // El remainingBalance ya incluye el acumulado progresivo desde el inicio del mes
+                        // (se calcula en el Paso 3.5 de getStatementDirect)
+                        lastDayAccumulated = previousDayStatement.remainingBalance || 0;
+                    }
+                    
+                    const foundDate = crDateService.dateUTCToCRString(new Date(previousDayStatement.date));
+                    logger.info({
+                        layer: "service",
+                        action: "GET_PREVIOUS_DAY_ACCUMULATED_SUCCESS",
+                        payload: {
+                            date,
+                            previousDateStr,
+                            foundDate, // ✅ NUEVO: Fecha del statement encontrado (puede ser diferente a previousDateStr)
+                            dimension: filters.dimension,
+                            vendedorId: filters.vendedorId,
+                            lastDayAccumulated,
+                            hasBySorteo: previousDayStatement.bySorteo && previousDayStatement.bySorteo.length > 0,
+                            remainingBalance: previousDayStatement.remainingBalance,
+                        },
+                    });
+                } else {
+                    logger.warn({
+                        layer: "service",
+                        action: "GET_PREVIOUS_DAY_ACCUMULATED_NOT_FOUND",
+                        payload: {
+                            date,
+                            previousDateStr,
+                            dimension: filters.dimension,
+                            vendedorId: filters.vendedorId,
+                            statementsCount: statementsFromMonthStart.statements?.length || 0,
+                            availableDates: statementsFromMonthStart.statements?.map((s: any) => 
+                                crDateService.dateUTCToCRString(new Date(s.date))
+                            ) || [],
+                        },
+                    });
                 }
             } catch (error) {
                 // Si hay error al obtener el día anterior (ej: no existe), usar 0
