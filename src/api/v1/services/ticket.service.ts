@@ -2565,6 +2565,172 @@ export const TicketService = {
       );
     }
   },
+
+  /**
+   * Obtiene la imagen del ticket como blob PNG
+   * GET /api/v1/tickets/:id/image
+   */
+  async getTicketImage(id: string, userId: string, role: Role, requestId?: string): Promise<Buffer> {
+    try {
+      // Obtener ticket con todas las relaciones necesarias
+      const ticket = await prisma.ticket.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          ticketNumber: true,
+          totalAmount: true,
+          clienteNombre: true,
+          createdAt: true,
+          vendedorId: true,
+          ventanaId: true,
+          jugadas: {
+            where: { deletedAt: null },
+            select: {
+              type: true,
+              number: true,
+              amount: true,
+              finalMultiplierX: true,
+            },
+            orderBy: { createdAt: 'asc' },
+          },
+          sorteo: {
+            select: {
+              name: true,
+              scheduledAt: true,
+              loteria: {
+                select: {
+                  name: true,
+                  rulesJson: true,
+                },
+              },
+            },
+          },
+          vendedor: {
+            select: {
+              name: true,
+              phone: true,
+              code: true,
+              settings: true,
+            },
+          },
+          ventana: {
+            select: {
+              name: true,
+              phone: true,
+              settings: true,
+            },
+          },
+        },
+      });
+
+      if (!ticket) {
+        throw new AppError("Ticket no encontrado", 404);
+      }
+
+      // Verificar permisos (RBAC)
+      if (role === Role.VENDEDOR && ticket.vendedorId !== userId) {
+        throw new AppError("No autorizado para ver este ticket", 403);
+      } else if (role === Role.VENTANA) {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { ventanaId: true },
+        });
+        if (!user?.ventanaId || ticket.ventanaId !== user.ventanaId) {
+          throw new AppError("No autorizado para ver este ticket", 403);
+        }
+      }
+      // ADMIN puede ver cualquier ticket
+
+      // Obtener configuraciones de impresión
+      const vendedorConfig = extractPrintConfig(
+        ticket.vendedor?.settings,
+        ticket.vendedor?.name || null,
+        ticket.vendedor?.phone || null
+      );
+      const ventanaConfig = extractPrintConfig(
+        ticket.ventana?.settings,
+        ticket.ventana?.name || null,
+        ticket.ventana?.phone || null
+      );
+
+      // Formatear sorteo.name concatenando la hora
+      const sorteoWithFormattedName = {
+        ...ticket.sorteo,
+        name: formatSorteoNameWithTime(ticket.sorteo.name, ticket.sorteo.scheduledAt),
+      };
+
+      // Determinar ancho según configuración de impresión (prioridad: vendedor > ventana > default)
+      // printWidth viene en mm (58 o 88), convertir a píxeles
+      const { mmToPixels } = await import('../../../services/ticket-image-generator.service');
+      const printWidthMm = vendedorConfig.printWidth || ventanaConfig.printWidth || 58; // Default: 58mm
+      const printWidthPx = mmToPixels(printWidthMm);
+
+      // Generar imagen
+      const { generateTicketImage } = await import('../../../services/ticket-image-generator.service');
+      
+      const imageBuffer = await generateTicketImage(
+        {
+          ticket: {
+            id: ticket.id,
+            ticketNumber: ticket.ticketNumber,
+            totalAmount: ticket.totalAmount,
+            clienteNombre: ticket.clienteNombre,
+            createdAt: ticket.createdAt,
+            jugadas: ticket.jugadas,
+            sorteo: {
+              ...sorteoWithFormattedName,
+              loteria: ticket.sorteo.loteria,
+            },
+            vendedor: {
+              name: ticket.vendedor?.name || null,
+              code: ticket.vendedor?.code || null,
+              printName: vendedorConfig.printName,
+              printPhone: vendedorConfig.printPhone,
+              printBarcode: vendedorConfig.printBarcode,
+            },
+            ventana: {
+              name: ticket.ventana?.name || null,
+              printName: ventanaConfig.printName,
+              printPhone: ventanaConfig.printPhone,
+              printBarcode: ventanaConfig.printBarcode,
+              printFooter: ventanaConfig.printFooter,
+            },
+          },
+        },
+        {
+          width: printWidthPx,
+          scale: 2, // Calidad suficiente para impresión térmica
+        }
+      );
+
+      logger.info({
+        layer: 'service',
+        action: 'TICKET_IMAGE_GENERATED',
+        userId,
+        requestId,
+        payload: {
+          ticketId: ticket.id,
+          imageSize: imageBuffer.length,
+          printWidthMm,
+          printWidthPx,
+        },
+      });
+
+      return imageBuffer;
+    } catch (err: any) {
+      logger.error({
+        layer: 'service',
+        action: 'TICKET_IMAGE_GENERATION_FAILED',
+        userId,
+        requestId,
+        payload: {
+          ticketId: id,
+          error: err.message,
+        },
+      });
+      throw err;
+    }
+  },
 };
 
 export default TicketService;

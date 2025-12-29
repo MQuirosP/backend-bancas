@@ -24,6 +24,46 @@ export const TicketController = {
     return success(res, result);
   },
 
+  async getTicketImage(req: AuthenticatedRequest, res: Response) {
+    const ticketId = req.params.id;
+    const userId = req.user!.id;
+    const role = req.user!.role;
+
+    try {
+      const imageBuffer = await TicketService.getTicketImage(ticketId, userId, role, req.requestId);
+
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Content-Disposition', `inline; filename="ticket-${ticketId}.png"`);
+      res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache por 1 hora
+      res.setHeader('Content-Length', imageBuffer.length.toString());
+
+      return res.send(imageBuffer);
+    } catch (err: any) {
+      if (err.statusCode && err.message) {
+        return res.status(err.statusCode).json({
+          success: false,
+          error: err.errorCode || "ERROR",
+          message: err.message,
+        });
+      }
+
+      req.logger?.error({
+        layer: "controller",
+        action: "TICKET_IMAGE_ERROR",
+        payload: {
+          ticketId,
+          error: err.message,
+        },
+      });
+
+      return res.status(500).json({
+        success: false,
+        error: "INTERNAL_ERROR",
+        message: "Error al generar imagen del ticket",
+      });
+    }
+  },
+
   async list(req: AuthenticatedRequest, res: Response) {
     const { page = 1, pageSize = 10, scope = "mine", date = "today", fromDate, toDate, number, isActive, winnersOnly, ...rest } = req.query as any;
 
