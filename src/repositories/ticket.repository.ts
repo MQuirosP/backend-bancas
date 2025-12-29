@@ -1094,9 +1094,10 @@ export const TicketRepository = {
                   const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
                   const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
                   const multiplierContext = rule.multiplierId ? ` (multiplicador: ${rule.multiplier?.name || '...'})` : '';
+                  const available = Math.max(0, effectiveMaxAmount - sumForNumber);
                   // ✅ CRÍTICO: maxAmount es por número por ticket, NO acumulado. El mensaje debe ser claro.
                   throw new AppError(
-                    `El número ${num}${multiplierContext}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto del número en este ticket: ₡${sumForNumber.toFixed(2)}, límite máximo permitido: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico)` : ''}`,
+                    `El número ${num}${multiplierContext}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
                     400,
                     { 
                       code: "NUMBER_MAXAMOUNT_EXCEEDED", 
@@ -1265,9 +1266,10 @@ export const TicketRepository = {
                 if (sumForNumber > effectiveMaxAmount) {
                   const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
                   const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
+                  const available = Math.max(0, effectiveMaxAmount - sumForNumber);
                   // ✅ CRÍTICO: maxAmount es por número por ticket, NO acumulado. El mensaje debe ser claro.
                   throw new AppError(
-                    `El número ${num}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto del número en este ticket: ₡${sumForNumber.toFixed(2)}, límite máximo permitido: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico)` : ''}`,
+                    `El número ${num}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
                     400,
                     { 
                       code: "NUMBER_MAXAMOUNT_EXCEEDED", 
@@ -2046,9 +2048,10 @@ export const TicketRepository = {
                   const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
                   const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
                   const multiplierContext = rule.multiplierId ? ` (multiplicador: ${rule.multiplier?.name || '...'})` : '';
+                  const available = Math.max(0, effectiveMaxAmount - sumForNumber);
 
                   throw new AppError(
-                    `El número ${num}${multiplierContext}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto en el ticket: ₡${sumForNumber.toFixed(2)}, límite máximo por ticket: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (dinámico)` : ''}`,
+                    `El número ${num}${multiplierContext}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
                     400,
                     {
                       code: "NUMBER_MAXAMOUNT_EXCEEDED",
@@ -2177,9 +2180,10 @@ export const TicketRepository = {
                 if (sumForNumber > effectiveMaxAmount) {
                   const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
                   const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
+                  const available = Math.max(0, effectiveMaxAmount - sumForNumber);
                   // ✅ CRÍTICO: maxAmount es por número por ticket, NO acumulado. El mensaje debe ser claro.
                   throw new AppError(
-                    `El número ${num}${isAutoDatePrefix} excede el límite ${ruleScope} por ticket. Monto del número en este ticket: ₡${sumForNumber.toFixed(2)}, límite máximo permitido: ₡${effectiveMaxAmount.toFixed(2)}${dynamicLimit != null ? ` (límite dinámico)` : ''}`,
+                    `El número ${num}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
                     400,
                     { 
                       code: "NUMBER_MAXAMOUNT_EXCEEDED", 

@@ -423,7 +423,7 @@ export async function validateMaxTotalForNumbers(
 
       // ✅ CRÍTICO: Mensaje claro - maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
       throw new AppError(
-        `El número ${number}${isAutoDateLabel} excede el límite ${scopeLabel} acumulado en este sorteo. Acumulado previo del número: ₡${accumulatedInSorteo.toFixed(2)}, monto del número en este ticket: ₡${amountForNumber.toFixed(2)}, nuevo acumulado sería: ₡${newAccumulated.toFixed(2)}, límite máximo para este número: ₡${effectiveMaxTotal.toFixed(2)}. Disponible para este número: ₡${available.toFixed(2)}`,
+        `El número ${number}${isAutoDateLabel}: Límite máximo: ₡${effectiveMaxTotal.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
         400,
         {
           code: "NUMBER_MAXTOTAL_EXCEEDED",
