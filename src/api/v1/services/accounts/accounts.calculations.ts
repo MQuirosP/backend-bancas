@@ -2114,12 +2114,40 @@ export async function getStatementDirect(
             };
         });
 
+        // Actualizar statement.bySorteo (ya está ordenado DESC por intercalateSorteosAndMovements)
+        statement.bySorteo = adjustedBySorteo;
+
+        // ✅ CRÍTICO: Actualizar remainingBalance para que coincida con el último accumulated del bySorteo
+        // El remainingBalance debe ser igual al último accumulated del día (que ya incluye el acumulado progresivo)
+        // Esto asegura que el "total del día" coincida con el acumulado progresivo de los sorteos
+        if (adjustedBySorteo.length > 0) {
+            // El último accumulated es el más reciente en orden cronológico
+            // Ordenar adjustedBySorteo por scheduledAt ASC para obtener el último (más reciente)
+            const adjustedBySorteoSorted = [...adjustedBySorteo].sort((a, b) => {
+                const timeA = new Date(a.scheduledAt).getTime();
+                const timeB = new Date(b.scheduledAt).getTime();
+                return timeA - timeB; // ASC
+            });
+            
+            const lastAccumulatedAdjusted = adjustedBySorteoSorted.length > 0 
+                ? (adjustedBySorteoSorted[adjustedBySorteoSorted.length - 1].accumulated || 0)
+                : 0;
+            
+            statement.remainingBalance = parseFloat(lastAccumulatedAdjusted.toFixed(2));
+            
+            // Recalcular isSettled y canEdit con el nuevo remainingBalance
+            statement.isSettled = calculateIsSettled(
+                statement.ticketCount,
+                statement.remainingBalance,
+                statement.totalPaid,
+                statement.totalCollected
+            );
+            statement.canEdit = !statement.isSettled;
+        }
+
         // Actualizar el último accumulated para el siguiente día
         // Es el último accumulated ajustado del día actual (que ya incluye lastDayAccumulated)
         lastDayAccumulated = lastDayAccumulated + lastAccumulatedOfDay;
-        
-        // Actualizar statement.bySorteo (ya está ordenado DESC por intercalateSorteosAndMovements)
-        statement.bySorteo = adjustedBySorteo;
     }
 
     // ✅ CRÍTICO: Paso 4 - Filtrar para retornar solo los días dentro del período solicitado
