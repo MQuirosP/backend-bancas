@@ -38,6 +38,7 @@
     "test:concurrent-now": "npx dotenv-cli -e .env.local -- ts-node scripts/run-concurrent-test-now.ts",
     "test:simple-ticket": "npx dotenv-cli -e .env.local -- ts-node scripts/simple-ticket-test.ts",
     "apply:get-previous-day-accumulated": "npx dotenv-cli -e .env.local -- ts-node scripts/apply-get-previous-day-accumulated.ts",
+    "apply:missing-indexes": "npx dotenv-cli -e .env.local -- ts-node scripts/apply-missing-indexes.ts",
     "maintenance": "npx dotenv-cli -e .env.local -- ts-node src/tools/maintenance/index.ts",
     "test": "npx dotenv-cli -e .env.test -- jest --runInBand --detectOpenHandles",
     "test:watch": "npx dotenv-cli -e .env.test -- jest --watch",

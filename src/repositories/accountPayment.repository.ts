@@ -393,11 +393,15 @@ export const AccountPaymentRepository = {
       }
     } else if (dimension === "ventana") {
       if (ventanaId) {
+        // ✅ CRÍTICO: Cuando hay un ventanaId específico, incluir TODOS los movimientos de esa ventana
+        // (tanto consolidados de ventana como de vendedores específicos dentro de esa ventana)
         where.ventanaId = ventanaId;
+        // NO filtrar por vendedorId = null, permitir movimientos de vendedores también
       } else {
+        // Sin ventanaId específico: solo movimientos consolidados de ventana (sin vendedorId)
         where.ventanaId = { not: null };
+        where.vendedorId = null;
       }
-      where.vendedorId = null;
     } else {
       if (vendedorId) {
         where.vendedorId = vendedorId;
