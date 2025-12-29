@@ -1,4 +1,4 @@
-import { AccountsFilters, DayStatement } from "./accounts.types";
+import { AccountsFilters, DayStatement, StatementResponse } from "./accounts.types";
 import { resolveDateRange } from "../../../../utils/dateRange";
 import { getMonthDateRange, toCRDateString } from "./accounts.dates.utils";
 import { getMovementsForDay, getSorteoBreakdownBatch } from "./accounts.queries";
@@ -381,6 +381,7 @@ export const AccountsService = {
     /**
      * ✅ NUEVO: Obtiene bySorteo (sorteos intercalados con movimientos) para un día específico
      * Usado para lazy loading desde el frontend
+     * ✅ ACTUALIZADO: Ahora incluye el acumulado progresivo del día anterior
      */
     async getBySorteo(
         date: string, // YYYY-MM-DD
@@ -390,11 +391,101 @@ export const AccountsService = {
             vendedorId?: string;
             bancaId?: string;
             userRole?: "ADMIN" | "VENTANA" | "VENDEDOR";
-        }
+        },
+        includePreviousDayAccumulated: boolean = true // ✅ NUEVO: Flag para controlar si se incluye acumulado del día anterior
     ) {
         // Convertir fecha string a Date
         const [year, month, day] = date.split('-').map(Number);
         const targetDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+
+        // ✅ NUEVO: Calcular fecha del día anterior
+        const previousDayDate = new Date(targetDate);
+        previousDayDate.setUTCDate(previousDayDate.getUTCDate() - 1);
+        const previousDateStr = `${previousDayDate.getUTCFullYear()}-${String(previousDayDate.getUTCMonth() + 1).padStart(2, '0')}-${String(previousDayDate.getUTCDate()).padStart(2, '0')}`;
+
+        // ✅ NUEVO: Obtener el último accumulated del día anterior (si se solicita)
+        let lastDayAccumulated = 0;
+        if (includePreviousDayAccumulated) {
+            try {
+                // ✅ OPTIMIZACIÓN: Obtener bySorteo del día anterior SIN acumulado progresivo (más rápido)
+                const previousDayBySorteo = await AccountsService.getBySorteo(previousDateStr, filters, false);
+                
+                if (previousDayBySorteo && previousDayBySorteo.length > 0) {
+                    // Ordenar por scheduledAt ASC para encontrar el último accumulated del día (acumulado interno)
+                    const sorted = [...previousDayBySorteo].sort((a: any, b: any) => {
+                        const timeA = new Date(a.scheduledAt).getTime();
+                        const timeB = new Date(b.scheduledAt).getTime();
+                        return timeA - timeB; // ASC
+                    });
+                    
+                    // El último accumulated del día anterior (acumulado interno, desde 0)
+                    // Este es el acumulado dentro del día (sorteos + movimientos)
+                    const previousDayInternalAccumulated = sorted.length > 0 
+                        ? (sorted[sorted.length - 1].accumulated || 0)
+                        : 0;
+                    
+                    // ✅ OPTIMIZACIÓN: Obtener acumulado progresivo desde inicio del mes hasta día anterior
+                    // Usar getStatementDirect solo para el rango necesario (más eficiente que getStatement completo)
+                    const [prevYear, prevMonth, prevDay] = previousDateStr.split('-').map(Number);
+                    const monthStartDate = new Date(Date.UTC(prevYear, prevMonth - 1, 1));
+                    const previousDayEndDate = new Date(Date.UTC(prevYear, prevMonth - 1, prevDay, 23, 59, 59, 999));
+                    const monthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
+                    
+                    // Obtener statements desde inicio del mes hasta día anterior usando getStatementDirect
+                    // Esto calcula correctamente el acumulado progresivo incluyendo movimientos
+                    const statementsFromMonthStart = await getStatementDirect(
+                        {
+                            date: "range" as const,
+                            fromDate: `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`,
+                            toDate: previousDateStr,
+                            dimension: filters.dimension,
+                            ventanaId: filters.ventanaId,
+                            vendedorId: filters.vendedorId,
+                            bancaId: filters.bancaId,
+                            scope: "all",
+                            sort: "desc",
+                            userRole: filters.userRole || "ADMIN",
+                        },
+                        monthStartDate,
+                        previousDayEndDate,
+                        prevDay, // daysInMonth
+                        monthStr,
+                        filters.dimension,
+                        filters.ventanaId,
+                        filters.vendedorId,
+                        filters.bancaId,
+                        filters.userRole || "ADMIN",
+                        "desc"
+                    );
+                    
+                    // Buscar el statement del día anterior en los resultados
+                    const previousDayStatement = statementsFromMonthStart.statements?.find((s: any) => {
+                        const statementDate = crDateService.dateUTCToCRString(new Date(s.date));
+                        return statementDate === previousDateStr;
+                    });
+                    
+                    if (previousDayStatement && previousDayStatement.bySorteo && previousDayStatement.bySorteo.length > 0) {
+                        // El último accumulated del bySorteo del día anterior ya incluye el acumulado progresivo
+                        const sortedStatement = [...previousDayStatement.bySorteo].sort((a: any, b: any) => {
+                            const timeA = new Date(a.scheduledAt).getTime();
+                            const timeB = new Date(b.scheduledAt).getTime();
+                            return timeA - timeB; // ASC
+                        });
+                        
+                        lastDayAccumulated = sortedStatement.length > 0 
+                            ? (sortedStatement[sortedStatement.length - 1].accumulated || 0)
+                            : 0;
+                    } else {
+                        // Si no hay bySorteo, usar el acumulado interno calculado
+                        lastDayAccumulated = previousDayInternalAccumulated;
+                    }
+                }
+            } catch (error) {
+                // Si hay error al obtener el día anterior (ej: no existe), usar 0
+                // Esto es normal para el primer día del mes o si no hay datos previos
+                lastDayAccumulated = 0;
+            }
+        }
 
         // Obtener sorteos del día usando getSorteoBreakdownBatch
         const sorteoBreakdownBatch = await getSorteoBreakdownBatch(
@@ -494,7 +585,17 @@ export const AccountsService = {
         const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
         const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date);
 
-        return sorteosAndMovements;
+        // ✅ NUEVO: Sumar el accumulated del día anterior a todos los items del día actual
+        const adjustedSorteosAndMovements = sorteosAndMovements.map((item: any) => {
+            const newAccumulated = lastDayAccumulated + (item.accumulated || 0);
+            return {
+                ...item,
+                accumulated: newAccumulated,
+                sorteoAccumulated: newAccumulated,
+            };
+        });
+
+        return adjustedSorteosAndMovements;
     },
 
     /**
