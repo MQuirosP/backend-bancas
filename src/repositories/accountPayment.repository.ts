@@ -392,13 +392,35 @@ export const AccountPaymentRepository = {
         where.vendedorId = vendedorId;
       }
     } else if (dimension === "ventana") {
+      /**
+       * ========================================================================
+       * FILTRADO DE MOVIMIENTOS POR VENTANA
+       * ========================================================================
+       * 
+       * REGLA CRÍTICA DE RETROCOMPATIBILIDAD:
+       * Cuando dimension='ventana' y hay un ventanaId específico, DEBEMOS incluir
+       * TODOS los movimientos de esa ventana, incluyendo:
+       * - Movimientos consolidados de ventana (vendedorId = null)
+       * - Movimientos de vendedores específicos dentro de esa ventana (vendedorId != null)
+       * 
+       * Esto es necesario para que los movimientos se intercalen correctamente
+       * con los sorteos en el historial del día.
+       * 
+       * Si NO incluimos movimientos de vendedores cuando hay un ventanaId específico,
+       * el historial del día no mostrará todos los movimientos y los resultados
+       * serán incorrectos.
+       * 
+       * ========================================================================
+       */
       if (ventanaId) {
         // ✅ CRÍTICO: Cuando hay un ventanaId específico, incluir TODOS los movimientos de esa ventana
         // (tanto consolidados de ventana como de vendedores específicos dentro de esa ventana)
         where.ventanaId = ventanaId;
         // NO filtrar por vendedorId = null, permitir movimientos de vendedores también
+        // Esto asegura que todos los movimientos de la ventana se incluyan en el historial
       } else {
         // Sin ventanaId específico: solo movimientos consolidados de ventana (sin vendedorId)
+        // Esto es para cuando se consulta todas las ventanas sin especificar una
         where.ventanaId = { not: null };
         where.vendedorId = null;
       }

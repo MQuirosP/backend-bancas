@@ -15,7 +15,55 @@ import { getCachedDayStatement, setCachedDayStatement, getCachedBySorteo, setCac
 import { intercalateSorteosAndMovements, SorteoOrMovement } from "./accounts.intercalate";
 
 /**
+ * ============================================================================
+ * MÓDULO: ACCOUNTS - CÁLCULOS DE ESTADOS DE CUENTA
+ * ============================================================================
+ * 
+ * Este módulo maneja el cálculo de estados de cuenta diarios y mensuales,
+ * incluyendo la intercalación de sorteos y movimientos (pagos/cobros).
+ * 
+ * CONCEPTOS CLAVE:
+ * 
+ * 1. DIMENSIONES:
+ *    - "banca": Agrupa por banca (puede incluir múltiples ventanas/vendedores)
+ *    - "ventana": Agrupa por ventana (puede incluir múltiples vendedores)
+ *    - "vendedor": Agrupa por vendedor específico
+ * 
+ * 2. AGRUPACIÓN (shouldGroupByDate):
+ *    - true: Agrupa múltiples entidades por fecha (ej: todas las bancas del día)
+ *    - false: Separa por entidad específica (ej: una ventana específica)
+ * 
+ * 3. FILTRADO DE MOVIMIENTOS:
+ *    - findMovementsByDateRange filtra en la BD según dimension y filtros
+ *    - Cuando dimension='ventana' y hay ventanaId: incluye TODOS los movimientos
+ *      de esa ventana (consolidados + de vendedores específicos)
+ *    - Cuando dimension='ventana' sin ventanaId: solo movimientos consolidados
+ *      (vendedorId = null)
+ * 
+ * 4. INTERCALACIÓN:
+ *    - Los sorteos y movimientos se intercalan cronológicamente por scheduledAt
+ *    - Los movimientos usan el campo 'time' (HH:MM) si está disponible
+ *    - El accumulated se calcula progresivamente sumando balances
+ * 
+ * 5. ACUMULADOS PROGRESIVOS:
+ *    - Se calculan desde el inicio del mes hasta cada día
+ *    - NO dependen del filtro de fecha aplicado
+ *    - El acumulado del día anterior se suma al acumulado interno del día actual
+ * 
+ * ============================================================================
+ */
+
+/**
  * Calcula y actualiza el estado de cuenta para un día específico
+ * 
+ * @param date - Fecha del día a calcular
+ * @param month - Mes en formato YYYY-MM
+ * @param dimension - Dimensión de agrupación: "banca" | "ventana" | "vendedor"
+ * @param ventanaId - ID de ventana (opcional, según dimension)
+ * @param vendedorId - ID de vendedor (opcional, según dimension)
+ * @param bancaId - ID de banca (opcional, según dimension)
+ * @param userRole - Rol del usuario para calcular balance correctamente
+ * @returns Estado de cuenta del día con todos los totales y bySorteo
  */
 export async function calculateDayStatement(
     date: Date,
@@ -496,15 +544,35 @@ export async function getStatementDirect(
     const monthStartDateForQuery = new Date(Date.UTC(yearForMonth, monthForMonth - 1, 1));
     const monthStartDateCRStrForQuery = crDateService.dateUTCToCRString(monthStartDateForQuery);
 
-    // ✅ NUEVO: Detectar si debemos agrupar por fecha solamente (sin separar por entidad)
-    // Agrupamos cuando:
-    // - dimension=banca y bancaId NO está especificado
-    // - dimension=ventana y ventanaId NO está especificado
-    // - dimension=vendedor y vendedorId NO está especificado
-    // ✅ CRÍTICO: Verificar tanto undefined como null y cadena vacía
-    // ✅ CRÍTICO: shouldGroupByDate=true cuando necesitamos agrupar múltiples entidades por fecha
-    // - dimension=banca sin bancaId específico (todas las bancas)
-    // - dimension=banca con bancaId pero sin ventanaId/vendedorId (todas las ventanas/vendedores de esa banca)
+    /**
+     * ========================================================================
+     * LÓGICA DE AGRUPACIÓN: shouldGroupByDate
+     * ========================================================================
+     * 
+     * shouldGroupByDate determina si agrupamos múltiples entidades por fecha
+     * o si separamos por entidad específica.
+     * 
+     * shouldGroupByDate = true:
+     * - Agrupa múltiples entidades en una sola entrada por fecha
+     * - Ejemplo: Todas las bancas del día en una sola entrada
+     * - Los movimientos se incluyen sin filtrar por entidad
+     * - Útil para vistas globales o cuando no hay filtro específico
+     * 
+     * shouldGroupByDate = false:
+     * - Separa por entidad específica (una entrada por fecha + entidad)
+     * - Ejemplo: Una entrada por cada ventana del día
+     * - Los movimientos se filtran por la entidad específica
+     * - Útil cuando hay un ID específico (bancaId, ventanaId, vendedorId)
+     * 
+     * REGLAS:
+     * - dimension='banca' sin bancaId → true (todas las bancas)
+     * - dimension='banca' con bancaId pero sin ventanaId/vendedorId → true (todas las ventanas/vendedores de esa banca)
+     * - dimension='ventana' sin ventanaId → true (todas las ventanas)
+     * - dimension='vendedor' sin vendedorId → true (todos los vendedores)
+     * - Cualquier otra combinación → false (entidad específica)
+     * 
+     * ========================================================================
+     */
     const shouldGroupByDate =
         (dimension === "banca" && (!bancaId || bancaId === "" || bancaId === null)) ||
         (dimension === "banca" && bancaId && !ventanaId && !vendedorId) || // ✅ NUEVO: Agrupar cuando hay bancaId pero múltiples ventanas/vendedores
@@ -1021,6 +1089,34 @@ export async function getStatementDirect(
             let movements: any[];
             let bySorteo: any[];
 
+            /**
+             * ========================================================================
+             * FILTRADO DE MOVIMIENTOS PARA INTERCALACIÓN
+             * ========================================================================
+             * 
+             * REGLA CRÍTICA DE RETROCOMPATIBILIDAD:
+             * Los movimientos DEBEN incluirse correctamente según la dimensión y filtros
+             * para que se intercalen con los sorteos en el historial del día.
+             * 
+             * Cuando shouldGroupByDate = true:
+             * - Incluir TODOS los movimientos del día sin filtrar
+             * - Útil para vistas globales donde se agrupan múltiples entidades
+             * 
+             * Cuando shouldGroupByDate = false:
+             * - Filtrar movimientos por la entidad específica de esta entrada
+             * - PRIORIDAD: Usar el ID del filtro directamente (más confiable que entry.ventanaId)
+             * - Esto asegura que cuando se filtra por ventanaId específico, se incluyan
+             *   TODOS los movimientos de esa ventana (consolidados + de vendedores)
+             * 
+             * IMPORTANTE:
+             * - findMovementsByDateRange ya filtra en la BD según dimension y filtros
+             * - Cuando dimension='ventana' y hay ventanaId, findMovementsByDateRange
+             *   incluye TODOS los movimientos de esa ventana (no solo consolidados)
+             * - Este filtro adicional es una capa de seguridad para asegurar que solo
+             *   se incluyan movimientos de la entidad correcta
+             * 
+             * ========================================================================
+             */
             // ✅ CRÍTICO: Inicializar movements ANTES de cualquier uso (necesario tanto si hay caché como si no)
             if (shouldGroupByDate) {
                 movements = allMovementsForDate;
