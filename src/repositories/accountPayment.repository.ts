@@ -10,7 +10,7 @@ export const AccountPaymentRepository = {
     accountStatementId: string;
     date: Date;
     month: string;
-    time?: string | null; // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
+    time: string; // ✅ CRÍTICO: HH:MM (siempre presente, nunca null/undefined según especificación FE)
     ventanaId?: string;
     vendedorId?: string;
     bancaId?: string; // ✅ NUEVO: bancaId para persistir directamente
@@ -51,11 +51,26 @@ export const AccountPaymentRepository = {
       }
     }
 
+    // ✅ CRÍTICO: Pasar todos los campos explícitamente, especialmente time
+    // No usar spread operator para campos opcionales que pueden ser undefined
+    // porque Prisma puede omitirlos y no guardarlos en la BD
     return await prisma.accountPayment.create({
       data: {
-        ...data,
+        accountStatementId: data.accountStatementId,
+        date: data.date,
+        month: data.month,
+        time: data.time, // ✅ CRÍTICO: Siempre string (HH:MM), nunca null/undefined según especificación FE
         ventanaId: finalVentanaId,
+        vendedorId: data.vendedorId,
         bancaId: finalBancaId,
+        amount: data.amount,
+        type: data.type,
+        method: data.method,
+        notes: data.notes,
+        isFinal: data.isFinal,
+        idempotencyKey: data.idempotencyKey,
+        paidById: data.paidById,
+        paidByName: data.paidByName,
       },
       include: {
         accountStatement: true,

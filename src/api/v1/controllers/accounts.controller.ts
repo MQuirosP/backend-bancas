@@ -331,12 +331,15 @@ export const AccountsController = {
       throw new AppError("Los vendedores no pueden registrar pagos/cobros", 403, "FORBIDDEN");
     }
 
-    // ✅ NUEVO: Validar formato de hora si se proporciona
-    if (time !== undefined && time !== null) {
-      // Validar formato HH:MM
-      const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
-      if (!timeRegex.test(time)) {
-        throw new AppError("El formato de hora debe ser HH:MM (24 horas)", 400, "INVALID_TIME_FORMAT");
+    // ✅ CRÍTICO: Validar formato de hora según especificación del FE
+    // El FE siempre envía formato válido HH:MM si está presente
+    // Patrón: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+    // Si no está presente, el service usará "00:00" como default
+    if (time !== undefined && time !== null && typeof time === 'string' && time.trim().length > 0) {
+      // Validar formato HH:MM estricto (según especificación del FE)
+      const timeRegex = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+      if (!timeRegex.test(time.trim())) {
+        throw new AppError("El formato de hora debe ser HH:MM (24 horas, dos dígitos)", 400, "INVALID_TIME_FORMAT");
       }
     }
 
@@ -423,7 +426,7 @@ export const AccountsController = {
 
     const result = await AccountsService.createPayment({
       date,
-      time, // ✅ NUEVO: Pasar campo de hora
+      time: time, // ✅ CRÍTICO: Pasar time tal cual (el service procesará y usará "00:00" si no está presente)
       ventanaId: effectiveVentanaId,
       vendedorId: effectiveVendedorId,
       amount,
