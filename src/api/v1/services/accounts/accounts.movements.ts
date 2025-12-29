@@ -7,13 +7,54 @@ import { calculateDayStatement } from "./accounts.calculations";
 import { calculateIsSettled } from "./accounts.commissions";
 import { invalidateAccountStatementCache, invalidateBySorteoCache } from "../../../../utils/accountStatementCache";
 import { crDateService } from "../../../../utils/crDateService";
+import logger from "../../../../core/logger";
+
+/**
+ * Valida y procesa el campo time según especificación del FE
+ * 
+ * Especificación del FE:
+ * - Campo time es opcional en el request
+ * - Si está presente, siempre será un string en formato HH:MM válido (ej: "14:30", "09:00")
+ * - Si está presente y es válido, debe persistirse exactamente como se recibe
+ * - Formato: HH:MM donde HH: 00-23 (dos dígitos), MM: 00-59 (dos dígitos)
+ * - Patrón regex: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+ * - Si no está presente, usar hora por defecto "00:00"
+ * 
+ * @param time - Hora en formato HH:MM (siempre válido si viene del FE) o undefined/null
+ * @returns Hora en formato HH:MM o "00:00" si no está presente
+ * @throws AppError si el formato es inválido (solo para casos edge)
+ */
+function processTime(time: string | undefined | null): string {
+    // Si no está presente, usar hora por defecto según especificación del FE
+    if (!time || typeof time !== 'string' || time.trim().length === 0) {
+        return "00:00"; // Hora por defecto según especificación
+    }
+    
+    const trimmed = time.trim();
+    
+    // Validar formato HH:MM estricto (según especificación del FE)
+    // Patrón: ^([01][0-9]|2[0-3]):[0-5][0-9]$
+    const timeRegex = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(trimmed)) {
+        // El FE siempre envía formato válido, pero validamos por seguridad
+        throw new AppError(
+            `Formato de hora inválido: "${trimmed}". Debe ser HH:MM (24 horas, dos dígitos).`,
+            400,
+            "INVALID_TIME_FORMAT"
+        );
+    }
+    
+    // ✅ CRÍTICO: Persistir exactamente como se recibe (no modificar)
+    // El FE siempre envía en formato correcto HH:MM
+    return trimmed;
+}
 
 /**
  * Registra un pago o cobro
  */
 export async function registerPayment(data: {
     date: string; // YYYY-MM-DD
-    time?: string; // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
+    time?: string; // ✅ OPCIONAL: HH:MM (si no está presente, se usa "00:00" como default según especificación FE)
     ventanaId?: string;
     vendedorId?: string;
     amount: number;
@@ -103,34 +144,45 @@ export async function registerPayment(data: {
     // PAGO (banca paga al listero): SUMA al saldo del listero
     const currentRemainingBalance = baseBalance - currentTotalCollected + currentTotalPaid;
 
-    // Validar monto según el tipo de movimiento
-    // Los movimientos solo afectan remainingBalance, no balance
-    // Se permite registrar cualquier movimiento mientras el statement no esté saldado
-    // El usuario puede seleccionar libremente el tipo (payment o collection)
-    if (data.type === "payment") {
-        // Payment: suma al remainingBalance (reduce CxP o aumenta CxC)
-        // Efecto: newRemainingBalance = currentRemainingBalance + amount
-        // Validar que el monto sea positivo
-        if (data.amount <= 0) {
-            throw new AppError("El monto debe ser positivo", 400, "INVALID_AMOUNT");
-        }
-    } else if (data.type === "collection") {
-        // Collection: resta del remainingBalance (reduce CxC o aumenta CxP)
-        // Efecto: newRemainingBalance = currentRemainingBalance - amount
-        // Validar que el monto sea positivo
-        if (data.amount <= 0) {
-            throw new AppError("El monto debe ser positivo", 400, "INVALID_AMOUNT");
-        }
+    // ✅ FASE 4: Las validaciones de monto positivo, tipo válido, etc.
+    // ahora se hacen automáticamente en PostgreSQL mediante el trigger validate_account_payment_trigger
+    // Si el monto es <= 0 o el tipo es inválido, PostgreSQL lanzará un error automáticamente
+
+    // ✅ CRÍTICO: Procesar el campo time según especificación del FE
+    // El FE siempre envía formato válido HH:MM si está presente
+    // Si no está presente, usar "00:00" como default
+    let processedTime: string;
+    try {
+        processedTime = processTime(data.time);
+    } catch (error: any) {
+        // Si hay error de validación, propagarlo
+        if (error instanceof AppError) throw error;
+        throw new AppError(
+            `Error al procesar la hora: ${error.message}`,
+            400,
+            "TIME_VALIDATION_ERROR"
+        );
     }
+
+    logger.debug({
+        layer: 'service',
+        action: 'PAYMENT_TIME_PROCESSED',
+        payload: {
+            originalTime: data.time,
+            processedTime: processedTime,
+            isDefault: !data.time || data.time.trim().length === 0,
+        },
+    });
 
     // ✅ CRÍTICO: Crear pago con ventanaId, vendedorId y bancaId correctos
     // El repository también inferirá si es necesario, pero aquí ya los tenemos correctos
     // de la inferencia previa que se hizo para el AccountStatement
+    // ⚠️ IMPORTANTE: Pasar time explícitamente (nunca undefined) para asegurar que se guarde
     const payment = await AccountPaymentRepository.create({
         accountStatementId: statement.id,
         date: paymentDate,
         month,
-        time: data.time || null, // ✅ NUEVO: Almacenar hora si se proporciona
+        time: processedTime, // ✅ CRÍTICO: Siempre string (HH:MM), nunca undefined/null según especificación FE
         ventanaId: finalVentanaId,
         vendedorId: data.vendedorId,
         bancaId: finalBancaId,
@@ -144,23 +196,81 @@ export async function registerPayment(data: {
         paidByName: data.paidByName,
     });
 
-    // ✅ OPTIMIZACIÓN: Calcular nuevos totales directamente sin consultar la BD nuevamente
-    // Ya sabemos los totales actuales, solo sumamos el nuevo pago/cobro
-    const newTotalPaid = data.type === "payment" 
-        ? currentTotalPaid + data.amount 
-        : currentTotalPaid;
-    const newTotalCollected = data.type === "collection"
-        ? currentTotalCollected + data.amount
-        : currentTotalCollected;
+    // ✅ CRÍTICO: Verificar post-guardado que time se guardó correctamente
+    // El FE siempre envía time (o no lo envía, en cuyo caso usamos "00:00")
+    // Si no se guardó, actualizar inmediatamente (no lanzar error, el usuario no tiene la culpa)
+    if (payment.time !== processedTime) {
+        logger.warn({
+            layer: 'service',
+            action: 'PAYMENT_TIME_MISMATCH_RETRY',
+            payload: {
+                paymentId: payment.id,
+                expectedTime: processedTime,
+                actualTime: payment.time,
+                originalTime: data.time,
+            },
+        });
+        
+        // ⚠️ CRÍTICO: Si el time no se guardó, actualizar inmediatamente
+        // El FE siempre envía time válido o no lo envía (usamos "00:00"), así que debe guardarse SIEMPRE
+        // No lanzamos error porque el usuario no tiene la culpa, es un bug del sistema
+        try {
+            const updatedPayment = await prisma.accountPayment.update({
+                where: { id: payment.id },
+                data: { time: processedTime },
+            });
+            
+            logger.info({
+                layer: 'service',
+                action: 'PAYMENT_TIME_UPDATED',
+                payload: {
+                    paymentId: payment.id,
+                    time: updatedPayment.time,
+                },
+            });
+            
+            // Actualizar el objeto payment para que tenga el time correcto en la respuesta
+            payment.time = updatedPayment.time;
+        } catch (updateError: any) {
+            // Si falla la actualización, loggear error crítico
+            // Esto es un bug del sistema que debe investigarse
+            logger.error({
+                layer: 'service',
+                action: 'PAYMENT_TIME_UPDATE_FAILED',
+                payload: {
+                    paymentId: payment.id,
+                    expectedTime: processedTime,
+                    error: updateError.message,
+                },
+            });
+            // ⚠️ No lanzamos error al usuario, pero loggeamos para investigar el bug
+        }
+    } else {
+        // Loggear éxito si time se guardó correctamente
+        logger.debug({
+            layer: 'service',
+            action: 'PAYMENT_TIME_SAVED_SUCCESS',
+            payload: {
+                paymentId: payment.id,
+                time: payment.time,
+            },
+        });
+    }
 
-    // Fórmula: remainingBalance = balance - totalCollected + totalPaid
-    const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
-
-    // FIX: Usar helper para cálculo consistente de isSettled (incluye validación de hasPayments y ticketCount)
-    // Usar ticketCount del statement recalculado para asegurar consistencia
-    const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
-
-    // ✅ CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
+    // ✅ FASE 2: El trigger update_account_statement_on_payment_change() actualizará automáticamente:
+    // - totalPaid
+    // - totalCollected
+    // - remainingBalance
+    // - isSettled
+    // - canEdit
+    // 
+    // ⚠️ IMPORTANTE: El trigger se ejecuta DENTRO de la misma transacción que crea el AccountPayment,
+    // así que cuando hacemos el UPDATE a continuación, el trigger ya habrá actualizado los campos.
+    // Solo actualizamos los campos relacionados con tickets (que no cambian con movimientos).
+    // 
+    // NOTA: No actualizamos totalPaid, totalCollected, remainingBalance, isSettled, canEdit aquí
+    // porque el trigger ya los actualizó. Si los actualizáramos aquí, podríamos sobrescribir
+    // los valores correctos calculados por el trigger.
     const updatedStatement = await AccountStatementRepository.update(statement.id, {
         // Valores de tickets (recalculados desde tickets/jugadas)
         ticketCount: recalculatedStatement.ticketCount,
@@ -169,12 +279,9 @@ export async function registerPayment(data: {
         listeroCommission: recalculatedStatement.listeroCommission,
         vendedorCommission: recalculatedStatement.vendedorCommission,
         balance: baseBalance, // Balance desde tickets (sin movimientos)
-        // Valores de movimientos (actualizados con el nuevo movimiento)
-        totalPaid: newTotalPaid,
-        totalCollected: newTotalCollected,
-        remainingBalance: newRemainingBalance,
-        isSettled,
-        canEdit: !isSettled,
+        // ✅ FASE 2: Los campos de movimientos (totalPaid, totalCollected, remainingBalance, isSettled, canEdit)
+        // se actualizarán automáticamente por el trigger después de que se inserte el AccountPayment
+        // NO los actualizamos aquí para evitar sobrescribir los valores del trigger
     });
 
     // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
@@ -329,23 +436,13 @@ export async function reversePayment(
     // Revertir pago
     const reversed = await AccountPaymentRepository.reverse(payment.id, userId);
 
-    // ✅ OPTIMIZACIÓN: Calcular nuevos totales directamente sin consultar la BD nuevamente
-    // Ya sabemos los totales actuales, solo restamos el pago/cobro revertido
-    const newTotalPaid = payment.type === "payment"
-        ? currentTotalPaid - payment.amount
-        : currentTotalPaid;
-    const newTotalCollected = payment.type === "collection"
-        ? currentTotalCollected - payment.amount
-        : currentTotalCollected;
-
-    // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
-    const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
-
-    // FIX: Usar helper para cálculo consistente de isSettled (incluye validación de hasPayments y ticketCount)
-    // Usar ticketCount del statement recalculado para asegurar consistencia
-    const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
-
-    // ✅ CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
+    // ✅ FASE 2: El trigger update_account_statement_on_payment_change() actualizará automáticamente:
+    // - totalPaid
+    // - totalCollected
+    // - remainingBalance
+    // - isSettled
+    // - canEdit
+    // Solo necesitamos actualizar los campos relacionados con tickets (que no cambian con movimientos)
     const updatedStatement = await AccountStatementRepository.update(statement.id, {
         // Valores de tickets (recalculados desde tickets/jugadas)
         ticketCount: recalculatedStatement.ticketCount,
@@ -354,12 +451,8 @@ export async function reversePayment(
         listeroCommission: recalculatedStatement.listeroCommission,
         vendedorCommission: recalculatedStatement.vendedorCommission,
         balance: baseBalance, // Balance desde tickets (sin movimientos)
-        // Valores de movimientos (actualizados con el movimiento revertido)
-        totalPaid: newTotalPaid,
-        totalCollected: newTotalCollected,
-        remainingBalance: newRemainingBalance,
-        isSettled,
-        canEdit: !isSettled,
+        // ✅ FASE 2: Los campos de movimientos (totalPaid, totalCollected, remainingBalance, isSettled, canEdit)
+        // se actualizarán automáticamente por el trigger después de que se actualice el AccountPayment (isReversed=true)
     });
 
     // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día

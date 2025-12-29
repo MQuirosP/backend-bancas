@@ -666,9 +666,8 @@ export async function getStatementDirect(
 
     const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`;
 
-    // ✅ OPTIMIZACIÓN: Usar agregaciones SQL directamente en lugar de traer todas las jugadas
-    // Esto reduce significativamente la cantidad de datos transferidos y mejora el rendimiento
-    // Usar subquery para calcular payouts correctamente (una vez por ticket, solo si tiene jugadas ganadoras)
+    // ✅ FASE 1: Usar función almacenada PostgreSQL para agregaciones
+    // Esto mueve la lógica de agregación a la BD, mejorando rendimiento
     const queryStartTime = Date.now();
     
     // ✅ OPTIMIZACIÓN: Calcular límite dinámico basado en días del mes (evita truncamiento)
@@ -688,55 +687,12 @@ export async function getStatementDirect(
             endDate: endDateCRStr,
             shouldGroupByDate,
             dynamicLimit,
+            usingFunction: true,
         },
     });
 
-    // ✅ CRÍTICO: GROUP BY dinámico según shouldGroupByDate
-    // Si shouldGroupByDate=true: agrupar solo por (date, banca) para evitar filas duplicadas
-    // Si shouldGroupByDate=false: agrupar por (date, banca, ventana, vendedor) para separar por entidad
-    const groupByClause = shouldGroupByDate
-        ? Prisma.sql`
-      COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
-      b.id`
-        : Prisma.sql`
-      COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
-      b.id,
-      t."ventanaId",
-      t."vendedorId"`;
-
-    const query = Prisma.sql`
-    SELECT
-      COALESCE(
-        t."businessDate",
-        DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
-      ) as business_date,
-      b.id as banca_id,
-      MAX(b.name) as banca_name,
-      MAX(b.code) as banca_code,
-      ${shouldGroupByDate ? Prisma.sql`NULL::uuid` : Prisma.sql`t."ventanaId"`} as ventana_id,
-      MAX(v.name) as ventana_name,
-      MAX(v.code) as ventana_code,
-      ${shouldGroupByDate ? Prisma.sql`NULL::uuid` : Prisma.sql`t."vendedorId"`} as vendedor_id,
-      MAX(u.name) as vendedor_name,
-      MAX(u.code) as vendedor_code,
-      COALESCE(SUM(j.amount), 0) as total_sales,
-      0 as total_payouts,
-      COUNT(DISTINCT t.id) as total_tickets,
-      COALESCE(SUM(j."listeroCommissionAmount"), 0) as commission_listero,
-      COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as commission_vendedor
-    FROM "Ticket" t
-    INNER JOIN "Jugada" j ON j."ticketId" = t.id
-    INNER JOIN "Ventana" v ON v.id = t."ventanaId"
-    INNER JOIN "Banca" b ON b.id = v."bancaId"
-    LEFT JOIN "User" u ON u.id = t."vendedorId"
-    WHERE ${Prisma.join(whereConditions, " AND ")}
-    AND j."deletedAt" IS NULL
-    GROUP BY ${groupByClause}
-    ORDER BY business_date ${sort === "desc" ? Prisma.sql`DESC` : Prisma.sql`ASC`}
-    -- ✅ OPTIMIZACIÓN: Límite dinámico basado en días del mes (evita truncamiento)
-    LIMIT ${dynamicLimit}
-  `;
-
+    // ✅ FASE 1: Llamar función almacenada calculate_account_statement_aggregates
+    // La función maneja todos los filtros y agregaciones en la BD
     const aggregatedData = await prisma.$queryRaw<
         Array<{
             business_date: Date;
@@ -755,7 +711,19 @@ export async function getStatementDirect(
             commission_listero: number;
             commission_vendedor: number;
         }>
-    >(query);
+    >(Prisma.sql`
+        SELECT * FROM calculate_account_statement_aggregates(
+            ${startDateCRStr}::date,
+            ${endDateCRStr}::date,
+            ${dimension}::text,
+            ${bancaId || null}::uuid,
+            ${ventanaId || null}::uuid,
+            ${vendedorId || null}::uuid,
+            ${shouldGroupByDate}::boolean,
+            ${dynamicLimit}::bigint,
+            ${sort}::text
+        )
+    `);
 
     const queryEndTime = Date.now();
     logger.info({
