@@ -1461,6 +1461,13 @@ export const TicketRepository = {
         (createdTicket as any).__businessDateInfo = bd;
         (createdTicket as any).__commissionsDetails = commissionsDetails;
         (createdTicket as any).__jugadasCount = jugadasWithCommissions.length;
+        // Guardar detalles de jugadas para el ActivityLog
+        (createdTicket as any).__jugadasDetails = jugadasWithCommissions.map((j) => ({
+          number: j.number,
+          type: j.type,
+          amount: j.amount,
+          reventadoNumber: j.reventadoNumber ?? null,
+        }));
 
         return { ticket: createdTicket, warnings };
       },
@@ -1492,6 +1499,7 @@ export const TicketRepository = {
 
     // ActivityLog fuera de la TX (no bloqueante)
     const commissionsDetailsForLog = (ticket as any).__commissionsDetails || [];
+    const jugadasDetailsForLog = (ticket as any).__jugadasDetails || [];
     prisma.activityLog
       .create({
         data: {
@@ -1504,6 +1512,7 @@ export const TicketRepository = {
             totalAmount: ticket.totalAmount,
             jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
             commissions: commissionsDetailsForLog,
+            jugadasDetails: jugadasDetailsForLog, // ✅ NUEVO: Lista de jugadas con número, tipo y monto
           },
         },
       })
@@ -2494,6 +2503,13 @@ export const TicketRepository = {
         (ticketWithJugadas as any).__businessDateInfo = bd;
         (ticketWithJugadas as any).__commissionsDetails = commissionsDetails;
         (ticketWithJugadas as any).__jugadasCount = jugadasWithCommissions.length;
+        // Guardar detalles de jugadas para el ActivityLog
+        (ticketWithJugadas as any).__jugadasDetails = jugadasWithCommissions.map((j) => ({
+          number: j.number,
+          type: j.type,
+          amount: j.amount,
+          reventadoNumber: j.reventadoNumber ?? null,
+        }));
 
         logger.info({
           layer: 'repository',
@@ -2539,6 +2555,7 @@ export const TicketRepository = {
 
     // ActivityLog fuera de la TX (no bloqueante)
     const commissionsDetailsForLog = (ticket as any).__commissionsDetails || [];
+    const jugadasDetailsForLog = (ticket as any).__jugadasDetails || [];
     prisma.activityLog
       .create({
         data: {
@@ -2551,6 +2568,7 @@ export const TicketRepository = {
             totalAmount: ticket.totalAmount,
             jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
             commissions: commissionsDetailsForLog,
+            jugadasDetails: jugadasDetailsForLog, // ✅ NUEVO: Lista de jugadas con número, tipo y monto
             optimized: true,
           },
         },
@@ -2577,6 +2595,7 @@ export const TicketRepository = {
 
     delete (ticket as any).__commissionsDetails;
     delete (ticket as any).__jugadasCount;
+    delete (ticket as any).__jugadasDetails;
     delete (ticket as any).__businessDateInfo;
 
     return { ticket, warnings };
