@@ -289,7 +289,7 @@ model Jugada {
   excludedReason String? // Motivo de la exclusión
 
   multiplier     LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
-  ticket         Ticket             @relation(fields: [ticketId], references: [id])
+  ticket         Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   excludedByUser User?              @relation("JugadaExcludedBy", fields: [excludedBy], references: [id])
 
   @@index([ticketId])
