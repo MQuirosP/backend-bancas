@@ -2642,6 +2642,7 @@ export const TicketService = {
       // ADMIN puede ver cualquier ticket
 
       // Obtener configuraciones de impresión
+      // IMPORTANTE: Siempre leer y validar la configuración del vendedor para el código de barras
       const vendedorConfig = extractPrintConfig(
         ticket.vendedor?.settings,
         ticket.vendedor?.name || null,
@@ -2652,6 +2653,11 @@ export const TicketService = {
         ticket.ventana?.name || null,
         ticket.ventana?.phone || null
       );
+      
+      // Validar explícitamente la configuración del código de barras del vendedor
+      // Si printBarcode es false, no se mostrará el código de barras en la imagen
+      const vendedorBarcodeEnabled = vendedorConfig.printBarcode !== false;
+      const ventanaBarcodeEnabled = ventanaConfig.printBarcode !== false;
 
       // Formatear sorteo.name concatenando la hora
       const sorteoWithFormattedName = {
@@ -2686,13 +2692,15 @@ export const TicketService = {
               code: ticket.vendedor?.code || null,
               printName: vendedorConfig.printName,
               printPhone: vendedorConfig.printPhone,
-              printBarcode: vendedorConfig.printBarcode,
+              // Siempre validar la configuración del vendedor: si printBarcode es false, no mostrar código de barras
+              printBarcode: vendedorBarcodeEnabled,
             },
             ventana: {
               name: ticket.ventana?.name || null,
               printName: ventanaConfig.printName,
               printPhone: ventanaConfig.printPhone,
-              printBarcode: ventanaConfig.printBarcode,
+              // Validar también la configuración de la ventana
+              printBarcode: ventanaBarcodeEnabled,
               printFooter: ventanaConfig.printFooter,
             },
           },
