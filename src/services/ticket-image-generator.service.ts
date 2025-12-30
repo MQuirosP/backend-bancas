@@ -162,7 +162,7 @@ export async function generateTicketImage(
   const lineGap = 1 * scale; // Gap entre líneas dentro de sección
 
   // Calcular altura aproximada (se ajustará dinámicamente)
-  const canvasHeight = calculateTicketHeight(ticketData, scale, padding, sectionGap);
+  const canvasHeight = calculateTicketHeight(ticketData, scale, padding, sectionGap, canvasWidth, lineGap);
   
   const canvas = createCanvas(canvasWidth, canvasHeight);
   const ctx = canvas.getContext('2d');
@@ -328,10 +328,28 @@ export async function generateTicketImage(
   ctx.fillText(`PAGAMOS ${multiplierX}x`, canvasWidth / 2, y);
   y += 12 * scale + 4 * scale;
 
-  if (ticketData.ticket.ventana.printFooter) {
+  // Renderizar footer si existe y no está vacío
+  const footerText = ticketData.ticket.ventana.printFooter;
+  if (footerText && typeof footerText === 'string' && footerText.trim().length > 0) {
     ctx.font = `900 ${11 * scale}px monospace`;
-    ctx.fillText(ticketData.ticket.ventana.printFooter, canvasWidth / 2, y);
-    y += 11 * scale;
+    // Envolver texto largo si es necesario
+    const footerLines = wrapText(footerText.trim(), canvasWidth - 2 * padding, ctx, 11 * scale);
+    for (const line of footerLines) {
+      ctx.fillText(line, canvasWidth / 2, y);
+      y += 11 * scale + lineGap;
+    }
+  } else {
+    // Log para debugging si el footer no se renderiza
+    logger.debug({
+      layer: 'service',
+      action: 'TICKET_FOOTER_NOT_RENDERED',
+      payload: {
+        ticketId: ticketData.ticket.id,
+        printFooter: footerText,
+        printFooterType: typeof footerText,
+        printFooterLength: footerText ? footerText.length : 0,
+      },
+    });
   }
 
   y += 4 * scale; // Margin-top antes del código de barras
@@ -422,7 +440,9 @@ function calculateTicketHeight(
   ticketData: TicketData,
   scale: number,
   padding: number,
-  sectionGap: number
+  sectionGap: number,
+  canvasWidth: number,
+  lineGap: number
 ): number {
   let height = padding * 2; // Padding superior e inferior
 
@@ -454,8 +474,15 @@ function calculateTicketHeight(
 
   // MULTIPLICADOR Y FOOTER
   height += 12 * scale + 4 * scale;
-  if (ticketData.ticket.ventana.printFooter) {
-    height += 11 * scale;
+  // Calcular altura del footer si existe y no está vacío
+  const footerText = ticketData.ticket.ventana.printFooter;
+  if (footerText && typeof footerText === 'string' && footerText.trim().length > 0) {
+    // Calcular líneas del footer (aproximado, considerando wrap)
+    // Usar el mismo ancho que en wrapText para consistencia
+    const maxWidth = canvasWidth - 2 * padding;
+    const estimatedCharsPerLine = Math.floor(maxWidth / (11 * scale * 0.6)); // Aproximado: 0.6 es el ancho promedio de un carácter
+    const estimatedFooterLines = Math.max(1, Math.ceil(footerText.trim().length / estimatedCharsPerLine));
+    height += 11 * scale * estimatedFooterLines + lineGap * Math.max(0, estimatedFooterLines - 1);
   }
 
   // CÓDIGO DE BARRAS
