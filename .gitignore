@@ -94,3 +94,7 @@ backups/
 docs/
 **/docs/
 .cursorrules
+
+# Archivos relacionados con problemas específicos (no versionar)
+problema_Cristina/
+**/problema_Cristina/
