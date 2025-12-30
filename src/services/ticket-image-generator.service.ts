@@ -3,6 +3,7 @@ import logger from '../core/logger';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import bwipjs from 'bwip-js';
+import { getCRLocalComponents } from '../utils/businessDate';
 
 interface TicketImageOptions {
   width: number; // Ancho en píxeles (220px para 58mm o 340px para 88mm)
@@ -54,9 +55,29 @@ interface Group {
 
 /**
  * Formatea fecha para impresión térmica: "dd/MM/yy HH:mm"
+ * Usa hora local de Costa Rica
  */
 function formatDateForThermal(date: Date): string {
-  return format(date, 'dd/MM/yy HH:mm', { locale: es });
+  const { year, month, day, hour, minute } = getCRLocalComponents(date);
+  const dayStr = String(day).padStart(2, '0');
+  const monthStr = String(month).padStart(2, '0');
+  const yearStr = String(year).slice(-2); // Últimos 2 dígitos del año
+  const hourStr = String(hour).padStart(2, '0');
+  const minuteStr = String(minute).padStart(2, '0');
+  return `${dayStr}/${monthStr}/${yearStr} ${hourStr}:${minuteStr}`;
+}
+
+/**
+ * Formatea la hora de un Date a formato "h:mm a" (ej: "7:00 PM", "12:00 PM")
+ * Usa hora local de Costa Rica
+ */
+function formatTime12h(date: Date): string {
+  const { hour, minute } = getCRLocalComponents(date);
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  let hours12 = hour % 12;
+  hours12 = hours12 || 12; // 0 debe ser 12
+  const minutesStr = String(minute).padStart(2, '0');
+  return `${hours12}:${minutesStr} ${ampm}`;
 }
 
 /**
@@ -166,9 +187,10 @@ export async function generateTicketImage(
   y += 14 * scale + 4 * scale; // fontSize + gap
 
   const loteriaName = (ticketData.ticket.sorteo.loteria.name ?? 'TICA').toUpperCase();
+  // ✅ CRÍTICO: Usar formatTime12h para obtener hora correcta en Costa Rica
   const horaFormateada = ticketData.ticket.sorteo.scheduledAt
-    ? format(ticketData.ticket.sorteo.scheduledAt, 'h:mm a', { locale: es }).toUpperCase()
-    : '00:00 AM';
+    ? formatTime12h(ticketData.ticket.sorteo.scheduledAt).toUpperCase()
+    : '12:00 AM';
   ctx.fillText(`${loteriaName} TIEMPOS ${horaFormateada}`, canvasWidth / 2, y);
   y += 14 * scale + sectionGap;
 
@@ -198,14 +220,26 @@ export async function generateTicketImage(
     y += 13 * scale + lineGap;
   }
 
+  // ✅ CRÍTICO: Usar getCRLocalComponents para obtener fecha/hora correcta en Costa Rica
   const fechaFormateada = ticketData.ticket.sorteo.scheduledAt
-    ? format(ticketData.ticket.sorteo.scheduledAt, 'dd/MM/yyyy', { locale: es })
+    ? (() => {
+        const { year, month, day } = getCRLocalComponents(ticketData.ticket.sorteo.scheduledAt);
+        const dayStr = String(day).padStart(2, '0');
+        const monthStr = String(month).padStart(2, '0');
+        return `${dayStr}/${monthStr}/${year}`;
+      })()
     : '--/--/----';
   ctx.fillText(`SORTEO: ${fechaFormateada}`, padding, y);
   y += 13 * scale + lineGap;
 
+  // ✅ CRÍTICO: Usar getCRLocalComponents para obtener hora correcta en Costa Rica
   const horaFormateada24 = ticketData.ticket.sorteo.scheduledAt
-    ? format(ticketData.ticket.sorteo.scheduledAt, 'HH:mm', { locale: es })
+    ? (() => {
+        const { hour, minute } = getCRLocalComponents(ticketData.ticket.sorteo.scheduledAt);
+        const hourStr = String(hour).padStart(2, '0');
+        const minuteStr = String(minute).padStart(2, '0');
+        return `${hourStr}:${minuteStr}`;
+      })()
     : '--:--';
   ctx.fillText(`TIEMPOS: ${horaFormateada24} hrs`, padding, y);
   y += 13 * scale + lineGap;
@@ -303,7 +337,15 @@ export async function generateTicketImage(
   y += 4 * scale; // Margin-top antes del código de barras
 
   // ========== 7. CÓDIGO DE BARRAS ==========
-  if (ticketData.ticket.vendedor.printBarcode !== false && ticketData.ticket.ventana.printBarcode !== false) {
+  // Validar siempre la configuración del vendedor: si está desactivado explícitamente, no mostrar código de barras
+  // La configuración del vendedor tiene prioridad absoluta
+  // Si el vendedor no tiene configuración (undefined/null), se asume true (mostrar)
+  // Si el vendedor tiene printBarcode: false, NO mostrar (sin importar la ventana)
+  const vendedorBarcodeEnabled = ticketData.ticket.vendedor.printBarcode !== false;
+  const ventanaBarcodeEnabled = ticketData.ticket.ventana.printBarcode !== false;
+  const shouldShowBarcode = vendedorBarcodeEnabled && ventanaBarcodeEnabled;
+  
+  if (shouldShowBarcode) {
     try {
       const barcodeText = ticketNumber;
       
@@ -417,7 +459,10 @@ function calculateTicketHeight(
   }
 
   // CÓDIGO DE BARRAS
-  if (ticketData.ticket.vendedor.printBarcode !== false && ticketData.ticket.ventana.printBarcode !== false) {
+  // Validar siempre la configuración del vendedor
+  const shouldShowBarcode = ticketData.ticket.vendedor.printBarcode !== false && 
+                            ticketData.ticket.ventana.printBarcode !== false;
+  if (shouldShowBarcode) {
     height += 12 * scale + 4 * scale + 50 * scale; // Texto + espacio para código de barras
   }
 
@@ -441,3 +486,4 @@ export function mmToPixels(widthMm: number | null): number {
   // Fallback: calcular proporcionalmente
   return Math.round(widthMm * 3.779527559);
 }
+
