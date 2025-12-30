@@ -1,11 +1,11 @@
 {
-  "versionName": "2.0.6",
-  "versionCode": 7,
-  "buildNumber": 7,
+  "versionName": "2.0.7",
+  "versionCode": 8,
+  "buildNumber": 8,
   "minSupportedVersion": "2.0.0",
   "forceUpdate": false,
-  "changelog": "Correcciones y mejoras de rendimiento en las actualizaciones de la aplicación",
-  "releasedAt": "2025-12-21T20:00:00Z",
+  "changelog": "Correcciones y mejoras de rendimiento digitación de jugadas",
+  "releasedAt": "2025-12-29T20:00:00Z",
   "apkUrl": "https://backend-bancas-yk1i.onrender.com/api/v1/app/download",
-  "sha256": "dc04d0a618c4247eaed52009ccb037d0c4518d3d0cc5c8bdd7ad879358504475"
+  "sha256": "fbd15c888be43a2128ca00cd91851b21360fec12ccc5d3be0524fe97c4d49eec"
 }
