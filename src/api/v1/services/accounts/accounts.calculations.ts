@@ -11,7 +11,7 @@ import { AccountsFilters, DayStatement, StatementTotals } from "./accounts.types
 import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
 import { resolveCommission } from "../../../../services/commission.resolver";
 import { getSorteoBreakdownBatch } from "./accounts.queries";
-import { getCachedDayStatement, setCachedDayStatement, getCachedBySorteo, setCachedBySorteo } from "../../../../utils/accountStatementCache";
+import { getCachedDayStatement, setCachedDayStatement, getCachedBySorteo, setCachedBySorteo, getCachedPreviousMonthBalance, setCachedPreviousMonthBalance } from "../../../../utils/accountStatementCache";
 import { intercalateSorteosAndMovements, SorteoOrMovement } from "./accounts.intercalate";
 
 /**
@@ -2018,7 +2018,27 @@ export async function getStatementDirect(
     );
     
     // Sumar saldo del mes anterior al acumulado del mes actual
+    // ✅ CRÍTICO: Si no hay transacciones en el mes actual, monthlyTotalBalance será 0,
+    // pero monthlyRemainingBalance debe ser igual al saldo del mes anterior
     const monthlyRemainingBalance = previousMonthBalance + monthlyTotalBalance;
+    
+    logger.info({
+        layer: "service",
+        action: "MONTHLY_ACCUMULATED_CALCULATION",
+        payload: {
+            effectiveMonth,
+            dimension,
+            vendedorId,
+            previousMonthBalance,
+            monthlyTotalBalance,
+            monthlyTotalSales,
+            monthlyTotalPayouts,
+            monthlyTotalCommissionToUse,
+            monthlyTotalPaid,
+            monthlyTotalCollected,
+            monthlyRemainingBalance,
+        },
+    });
 
     const monthlyAccumulated: StatementTotals = {
         totalSales: parseFloat(monthlyTotalSales.toFixed(2)),
@@ -2269,16 +2289,28 @@ async function calculatePreviousMonthBalanceFromSource(
 ): Promise<number> {
     try {
         const [year, month] = effectiveMonth.split("-").map(Number);
-        const firstDay = new Date(Date.UTC(year, month - 2, 1));
-        const lastDay = new Date(Date.UTC(year, month - 1, 0, 23, 59, 59, 999));
-        const lastDayCRStr = crDateService.dateUTCToCRString(lastDay);
+        // Calcular primer y último día del mes anterior en CR
+        // Mes anterior: month - 1 (si month = 1, mes anterior = 12 del año anterior)
+        const previousYear = month === 1 ? year - 1 : year;
+        const previousMonth = month === 1 ? 12 : month - 1;
+        const lastDayOfPreviousMonth = new Date(previousYear, previousMonth, 0).getDate(); // Día 0 = último día del mes anterior
+        
+        const firstDay = new Date(Date.UTC(previousYear, previousMonth - 1, 1, 6, 0, 0, 0)); // 00:00 CR = 06:00 UTC
+        // Último día: 23:59:59.999 CR = 05:59:59.999 UTC del día siguiente
+        const lastDay = new Date(Date.UTC(previousYear, previousMonth - 1, lastDayOfPreviousMonth + 1, 5, 59, 59, 999));
+        
+        // Para las queries SQL, usar fechas CR directamente (YYYY-MM-DD)
+        const firstDayCRStr = `${previousYear}-${String(previousMonth).padStart(2, '0')}-01`;
+        const lastDayCRStr = `${previousYear}-${String(previousMonth).padStart(2, '0')}-${String(lastDayOfPreviousMonth).padStart(2, '0')}`;
 
         // Construir condiciones WHERE para tickets
+        // ✅ CRÍTICO: Incluir AMBOS límites (inicio y fin del mes anterior)
         const ticketConditions: Prisma.Sql[] = [
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
             Prisma.sql`t."status" != 'CANCELLED'`,
             Prisma.sql`EXISTS (SELECT 1 FROM "Sorteo" s WHERE s.id = t."sorteoId" AND s.status = 'EVALUATED')`,
+            Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${firstDayCRStr}::date`,
             Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${lastDayCRStr}::date`,
             Prisma.sql`NOT EXISTS (
                 SELECT 1 FROM "sorteo_lista_exclusion" sle
@@ -2306,12 +2338,14 @@ async function calculatePreviousMonthBalanceFromSource(
         const ticketWhereClause = Prisma.sql`WHERE ${Prisma.join(ticketConditions, " AND ")}`;
 
         // 1. Calcular ventas desde jugadas
+        // ✅ CRÍTICO: Excluir jugadas excluidas (isExcluded = true)
         const salesResult = await prisma.$queryRaw<Array<{ total_sales: number }>>`
             SELECT COALESCE(SUM(j.amount), 0) as total_sales
             FROM "Ticket" t
             INNER JOIN "Jugada" j ON j."ticketId" = t.id
             ${ticketWhereClause}
             AND j."deletedAt" IS NULL
+            AND j."isExcluded" = false
         `;
 
         // 2. Calcular premios desde tickets (no desde jugadas para evitar duplicar)
@@ -2322,6 +2356,7 @@ async function calculatePreviousMonthBalanceFromSource(
         `;
 
         // 3. Calcular comisiones según dimensión
+        // ✅ CRÍTICO: Excluir jugadas excluidas (isExcluded = true)
         const commissionField = dimension === "vendedor" 
             ? Prisma.sql`CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END`
             : Prisma.sql`j."listeroCommissionAmount"`;
@@ -2332,11 +2367,16 @@ async function calculatePreviousMonthBalanceFromSource(
             INNER JOIN "Jugada" j ON j."ticketId" = t.id
             ${ticketWhereClause}
             AND j."deletedAt" IS NULL
+            AND j."isExcluded" = false
         `;
 
-        // 4. Obtener pagos y cobros
+        // 4. Obtener pagos y cobros del mes anterior
+        // ✅ CRÍTICO: Incluir AMBOS límites (inicio y fin del mes anterior)
         const paymentsWhere: Prisma.AccountPaymentWhereInput = {
-            date: { lte: lastDay },
+            date: { 
+                gte: firstDay,
+                lte: lastDay,
+            },
             isReversed: false,
         };
 
@@ -2370,18 +2410,61 @@ async function calculatePreviousMonthBalanceFromSource(
         const balance = totalSales - totalPayouts - totalCommission;
         const remainingBalance = balance - totalCollected + totalPaid;
 
+        // ✅ VALIDACIÓN: Contar tickets para debugging
+        const ticketsCount = await prisma.$queryRaw<Array<{ count: bigint }>>`
+            SELECT COUNT(*)::bigint as count
+            FROM "Ticket" t
+            ${ticketWhereClause}
+        `;
+        const ticketsCountNum = Number(ticketsCount[0]?.count || 0);
+
+        // ✅ VALIDACIÓN: Si no hay tickets ni pagos, el saldo debe ser 0
+        if (ticketsCountNum === 0 && payments.length === 0 && remainingBalance !== 0) {
+            logger.warn({
+                layer: "service",
+                action: "PREVIOUS_MONTH_BALANCE_INVALID",
+                payload: {
+                    effectiveMonth,
+                    dimension,
+                    filters: {
+                        ventanaId: filters.ventanaId || null,
+                        vendedorId: filters.vendedorId || null,
+                        bancaId: filters.bancaId || null,
+                    },
+                    issue: "No hay tickets ni pagos pero saldo no es 0",
+                    calculatedBalance: remainingBalance,
+                },
+            });
+            return 0; // ✅ CORRECCIÓN: Si no hay datos, retornar 0
+        }
+
         logger.info({
             layer: "service",
             action: "PREVIOUS_MONTH_BALANCE_CALCULATED_FROM_SOURCE",
             payload: {
                 effectiveMonth,
                 dimension,
-                totalSales,
-                totalPayouts,
-                totalCommission,
-                totalPaid,
-                totalCollected,
-                remainingBalance,
+                filters: {
+                    ventanaId: filters.ventanaId || null,
+                    vendedorId: filters.vendedorId || null,
+                    bancaId: filters.bancaId || null,
+                },
+                dateRange: {
+                    firstDay: firstDayCRStr,
+                    lastDay: lastDayCRStr,
+                },
+                counts: {
+                    tickets: ticketsCountNum,
+                    payments: payments.length,
+                },
+                totals: {
+                    totalSales,
+                    totalPayouts,
+                    totalCommission,
+                    totalPaid,
+                    totalCollected,
+                    remainingBalance,
+                },
             },
         });
 
@@ -2418,14 +2501,78 @@ export async function getPreviousMonthFinalBalancesBatch(
     }
 
     try {
-        // Calcular rango del mes anterior
+        // Calcular mes anterior
         const [year, month] = effectiveMonth.split("-").map(Number);
-        const firstDayOfPreviousMonth = new Date(Date.UTC(year, month - 2, 1));
-        const lastDayOfPreviousMonth = new Date(Date.UTC(year, month - 1, 0, 23, 59, 59, 999));
+        const previousYear = month === 1 ? year - 1 : year;
+        const previousMonth = month === 1 ? 12 : month - 1;
+        const previousMonthStr = `${previousYear}-${String(previousMonth).padStart(2, '0')}`;
+        const lastDayNum = new Date(previousYear, previousMonth, 0).getDate();
+        
+        const firstDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, 1, 6, 0, 0, 0)); // 00:00 CR
+        // Último día: 23:59:59.999 CR = 05:59:59.999 UTC del día siguiente
+        const lastDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, lastDayNum + 1, 5, 59, 59, 999));
 
         const balancesMap = new Map<string, number>();
 
-        // PASO 1: Intentar obtener desde statements ASENTADOS del mes anterior
+        // ✅ PASO 1: Buscar en tabla de cierre mensual (FUENTE DE VERDAD)
+        const closingWhere: any = {
+            closingMonth: previousMonthStr,
+            dimension,
+        };
+
+        if (dimension === "ventana") {
+            closingWhere.ventanaId = { in: entityIds };
+            closingWhere.vendedorId = null;
+        } else {
+            closingWhere.vendedorId = { in: entityIds };
+        }
+
+        const closingBalances = await prisma.monthlyClosingBalance.findMany({
+            where: closingWhere,
+            select: {
+                vendedorId: true,
+                ventanaId: true,
+                closingBalance: true,
+            },
+        });
+
+        // Mapear saldos desde cierre mensual
+        for (const closing of closingBalances) {
+            const entityId = dimension === "ventana" ? closing.ventanaId : closing.vendedorId;
+            if (entityId) {
+                balancesMap.set(entityId, Number(closing.closingBalance));
+            }
+        }
+
+        // Si todos los entities tienen cierre, retornar
+        const missingEntities = entityIds.filter(id => !balancesMap.has(id));
+        if (missingEntities.length === 0) {
+            logger.info({
+                layer: "service",
+                action: "PREVIOUS_MONTH_BALANCES_BATCH_FROM_CLOSING",
+                payload: {
+                    effectiveMonth,
+                    dimension,
+                    count: balancesMap.size,
+                    source: "monthly_closing_balance",
+                },
+            });
+            return balancesMap;
+        }
+
+        // ✅ PASO 2: Para entities sin cierre, calcular desde fuente (fallback)
+        logger.info({
+            layer: "service",
+            action: "PREVIOUS_MONTH_BALANCES_BATCH_CALCULATING_FROM_SOURCE",
+            payload: {
+                effectiveMonth,
+                dimension,
+                missingCount: missingEntities.length,
+                reason: "no_closing_balance_found",
+            },
+        });
+
+        // Intentar obtener desde statements ASENTADOS del mes anterior (fallback)
         const where: Prisma.AccountStatementWhereInput = {
             date: {
                 gte: firstDayOfPreviousMonth,
@@ -2435,10 +2582,10 @@ export async function getPreviousMonthFinalBalancesBatch(
         };
 
         if (dimension === "ventana") {
-            where.ventanaId = { in: entityIds };
+            where.ventanaId = { in: missingEntities };
             where.vendedorId = null;
         } else {
-            where.vendedorId = { in: entityIds };
+            where.vendedorId = { in: missingEntities };
         }
 
         const settledStatements = await prisma.accountStatement.findMany({
@@ -2448,37 +2595,106 @@ export async function getPreviousMonthFinalBalancesBatch(
                 vendedorId: true,
                 remainingBalance: true,
                 date: true,
+                ticketCount: true,
             },
             orderBy: { date: "desc" },
         });
 
         // Agrupar por entidad y tomar el más reciente (último statement asentado)
-        const entityToStatement = new Map<string, number>();
+        // ✅ VALIDACIÓN CRÍTICA: Verificar que cada statement tenga tickets válidos
+        const entityToStatement = new Map<string, { balance: number; date: Date; ticketCount: number }>();
         for (const stmt of settledStatements) {
             const entityId = dimension === "ventana" ? stmt.ventanaId : stmt.vendedorId;
             if (entityId && !entityToStatement.has(entityId)) {
-                entityToStatement.set(entityId, stmt.remainingBalance || 0);
-                balancesMap.set(entityId, stmt.remainingBalance || 0);
+                entityToStatement.set(entityId, {
+                    balance: stmt.remainingBalance || 0,
+                    date: stmt.date,
+                    ticketCount: stmt.ticketCount || 0,
+                });
             }
         }
 
-        // PASO 2: Para entidades sin statement asentado, calcular desde fuente de verdad
-        const missingEntities = entityIds.filter(id => !entityToStatement.has(id));
+        // Validar cada statement antes de usarlo
+        for (const [entityId, stmtInfo] of entityToStatement.entries()) {
+            // Verificar si hay tickets válidos para ese statement
+            const statementDate = stmtInfo.date;
+            const hasValidTickets = await prisma.ticket.count({
+                where: {
+                    ...(dimension === "ventana" ? { ventanaId: entityId } : { vendedorId: entityId }),
+                    OR: [
+                        { businessDate: statementDate },
+                        {
+                            businessDate: null,
+                            createdAt: {
+                                gte: new Date(statementDate.getTime()),
+                                lt: new Date(statementDate.getTime() + 24 * 60 * 60 * 1000),
+                            },
+                        },
+                    ],
+                    deletedAt: null,
+                    isActive: true,
+                    status: { not: "CANCELLED" },
+                    sorteo: {
+                        status: "EVALUATED",
+                    },
+                },
+            }) > 0;
+
+            // Si el statement tiene tickets válidos o no tiene tickets (saldo 0), usarlo
+            if (hasValidTickets || stmtInfo.ticketCount === 0) {
+                balancesMap.set(entityId, stmtInfo.balance);
+            } else {
+                // Statement tiene saldo pero no tiene tickets válidos - marcarlo para recalcular
+                logger.warn({
+                    layer: "service",
+                    action: "PREVIOUS_MONTH_BALANCE_SETTLED_INVALID_BATCH",
+                    payload: {
+                        effectiveMonth,
+                        dimension,
+                        entityId,
+                        statementDate: statementDate.toISOString().split("T")[0],
+                        statementTicketCount: stmtInfo.ticketCount,
+                        statementBalance: stmtInfo.balance,
+                        reason: "Statement has balance but no valid tickets - will recalculate from source",
+                    },
+                });
+                // No agregar al map, se calculará desde fuente más abajo
+            }
+        }
+
+        // PASO 3: Para entidades sin statement asentado o con statement inválido, intentar caché o calcular desde fuente
+        const missingEntitiesAfterStatements = entityIds.filter(id => !balancesMap.has(id));
         
-        if (missingEntities.length > 0) {
+        if (missingEntitiesAfterStatements.length > 0) {
             logger.info({
                 layer: "service",
                 action: "PREVIOUS_MONTH_BALANCES_CALCULATING_FROM_SOURCE",
                 payload: {
                     effectiveMonth,
                     dimension,
-                    missingCount: missingEntities.length,
+                    missingCount: missingEntitiesAfterStatements.length,
                     totalCount: entityIds.length,
+                    reason: "No settled statement or invalid statement (no valid tickets)",
                 },
             });
 
-            // Calcular desde fuente para cada entidad faltante
-            for (const entityId of missingEntities) {
+            // Para cada entidad faltante, intentar caché primero
+            for (const entityId of missingEntitiesAfterStatements) {
+                const cacheKey = {
+                    effectiveMonth,
+                    dimension,
+                    ventanaId: dimension === "ventana" ? entityId : null,
+                    vendedorId: dimension === "vendedor" ? entityId : null,
+                    bancaId: null,
+                };
+                
+                const cachedBalance = await getCachedPreviousMonthBalance(cacheKey);
+                if (cachedBalance !== null) {
+                    balancesMap.set(entityId, cachedBalance);
+                    continue;
+                }
+
+                // Si no hay en caché, calcular desde fuente
                 const balance = await calculatePreviousMonthBalanceFromSource(
                     effectiveMonth,
                     dimension,
@@ -2487,6 +2703,11 @@ export async function getPreviousMonthFinalBalancesBatch(
                         : { vendedorId: entityId }
                 );
                 balancesMap.set(entityId, balance);
+
+                // Guardar en caché
+                await setCachedPreviousMonthBalance(cacheKey, balance, 300).catch(() => {
+                    // Ignorar errores de caché
+                });
             }
         }
 
@@ -2525,12 +2746,66 @@ export async function getPreviousMonthFinalBalance(
     bancaId?: string | null
 ): Promise<number> {
     try {
-        // Calcular rango del mes anterior
+        // Calcular mes anterior
         const [year, month] = effectiveMonth.split("-").map(Number);
-        const firstDayOfPreviousMonth = new Date(Date.UTC(year, month - 2, 1));
-        const lastDayOfPreviousMonth = new Date(Date.UTC(year, month - 1, 0, 23, 59, 59, 999));
+        const previousYear = month === 1 ? year - 1 : year;
+        const previousMonth = month === 1 ? 12 : month - 1;
+        const previousMonthStr = `${previousYear}-${String(previousMonth).padStart(2, '0')}`;
 
-        // PASO 1: Intentar obtener desde statements ASENTADOS del mes anterior
+        // ✅ PASO 1: Buscar en tabla de cierre mensual (FUENTE DE VERDAD)
+        // Nota: Usamos findFirst porque Prisma no permite null en findUnique con constraint único
+        const closingBalance = await prisma.monthlyClosingBalance.findFirst({
+            where: {
+                closingMonth: previousMonthStr,
+                dimension,
+                ...(dimension === "vendedor" && vendedorId ? { vendedorId } : {}),
+                ...(dimension === "vendedor" && ventanaId ? { ventanaId } : {}),
+                ...(dimension === "ventana" && ventanaId ? { ventanaId, vendedorId: null } : {}),
+                ...(dimension === "banca" && bancaId ? { bancaId, vendedorId: null, ventanaId: null } : {}),
+            },
+            select: {
+                closingBalance: true,
+            },
+        });
+
+        if (closingBalance) {
+            logger.info({
+                layer: "service",
+                action: "PREVIOUS_MONTH_BALANCE_FROM_CLOSING",
+                payload: {
+                    effectiveMonth,
+                    dimension,
+                    ventanaId,
+                    vendedorId,
+                    bancaId,
+                    closingMonth: previousMonthStr,
+                    closingBalance: Number(closingBalance.closingBalance),
+                    source: "monthly_closing_balance",
+                },
+            });
+            return Number(closingBalance.closingBalance);
+        }
+
+        // ✅ PASO 2: Si no hay cierre, calcular desde fuente (solo para meses históricos sin cierre)
+        logger.info({
+            layer: "service",
+            action: "PREVIOUS_MONTH_BALANCE_CALCULATING_FROM_SOURCE",
+            payload: {
+                effectiveMonth,
+                dimension,
+                ventanaId,
+                vendedorId,
+                bancaId,
+                closingMonth: previousMonthStr,
+                reason: "no_closing_balance_found",
+            },
+        });
+
+        const lastDayNum = new Date(previousYear, previousMonth, 0).getDate();
+        const firstDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, 1, 6, 0, 0, 0)); // 00:00 CR
+        const lastDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, lastDayNum + 1, 5, 59, 59, 999));
+
+        // Intentar obtener desde statements ASENTADOS del mes anterior (fallback)
         const where: Prisma.AccountStatementWhereInput = {
             date: {
                 gte: firstDayOfPreviousMonth,
@@ -2565,25 +2840,100 @@ export async function getPreviousMonthFinalBalance(
                 date: "desc",
             },
             select: {
+                date: true,
                 remainingBalance: true,
+                ticketCount: true,
             },
         });
 
-        // Si encontramos un statement asentado, usarlo
+        // ✅ VALIDACIÓN CRÍTICA: Verificar que el statement tenga tickets válidos
+        // Si el statement tiene saldo pero no tiene tickets, puede ser incorrecto
+        // (tickets eliminados/cancelados después del asentamiento)
         if (lastSettledStatement) {
+            // Verificar si hay tickets válidos para ese statement
+            const statementDate = lastSettledStatement.date;
+            const hasValidTickets = await prisma.ticket.count({
+                where: {
+                    ...(dimension === "vendedor" && vendedorId ? { vendedorId } : {}),
+                    ...(dimension === "ventana" && ventanaId ? { ventanaId } : {}),
+                    ...(dimension === "banca" && bancaId ? {
+                        ventana: { bancaId },
+                    } : {}),
+                    OR: [
+                        { businessDate: statementDate },
+                        {
+                            businessDate: null,
+                            createdAt: {
+                                gte: new Date(statementDate.getTime()),
+                                lt: new Date(statementDate.getTime() + 24 * 60 * 60 * 1000),
+                            },
+                        },
+                    ],
+                    deletedAt: null,
+                    isActive: true,
+                    status: { not: "CANCELLED" },
+                    sorteo: {
+                        status: "EVALUATED",
+                    },
+                },
+            }) > 0;
+
+            // Si el statement tiene tickets válidos, usarlo
+            if (hasValidTickets || lastSettledStatement.ticketCount === 0) {
+                logger.info({
+                    layer: "service",
+                    action: "PREVIOUS_MONTH_BALANCE_FROM_SETTLED",
+                    payload: {
+                        effectiveMonth,
+                        dimension,
+                        source: "settled_statement",
+                        statementDate: statementDate.toISOString().split("T")[0],
+                        ticketCount: lastSettledStatement.ticketCount,
+                        hasValidTickets,
+                    },
+                });
+                return lastSettledStatement.remainingBalance || 0;
+            } else {
+                // Statement tiene saldo pero no tiene tickets válidos - puede ser incorrecto
+                logger.warn({
+                    layer: "service",
+                    action: "PREVIOUS_MONTH_BALANCE_SETTLED_INVALID",
+                    payload: {
+                        effectiveMonth,
+                        dimension,
+                        statementDate: statementDate.toISOString().split("T")[0],
+                        statementTicketCount: lastSettledStatement.ticketCount,
+                        statementBalance: lastSettledStatement.remainingBalance,
+                        reason: "Statement has balance but no valid tickets - recalculating from source",
+                    },
+                });
+                // Continuar para calcular desde fuente
+            }
+        }
+
+        // PASO 2: Intentar obtener del caché (si fue calculado recientemente)
+        const cacheKey = {
+            effectiveMonth,
+            dimension,
+            ventanaId: ventanaId || null,
+            vendedorId: vendedorId || null,
+            bancaId: bancaId || null,
+        };
+        const cachedBalance = await getCachedPreviousMonthBalance(cacheKey);
+        if (cachedBalance !== null) {
             logger.info({
                 layer: "service",
-                action: "PREVIOUS_MONTH_BALANCE_FROM_SETTLED",
+                action: "PREVIOUS_MONTH_BALANCE_FROM_CACHE",
                 payload: {
                     effectiveMonth,
                     dimension,
-                    source: "settled_statement",
+                    source: "cache",
                 },
             });
-            return lastSettledStatement.remainingBalance || 0;
+            return cachedBalance;
         }
 
-        // PASO 2: Si no hay statements asentados, calcular desde fuente de verdad
+        // PASO 3: Si no hay en caché, calcular desde fuente de verdad
         logger.info({
             layer: "service",
             action: "PREVIOUS_MONTH_BALANCE_CALCULATING_FROM_SOURCE",
@@ -2594,11 +2944,18 @@ export async function getPreviousMonthFinalBalance(
             },
         });
 
-        return await calculatePreviousMonthBalanceFromSource(
+        const balance = await calculatePreviousMonthBalanceFromSource(
             effectiveMonth,
             dimension,
             { ventanaId, vendedorId, bancaId }
         );
+
+        // Guardar en caché (TTL: 5 minutos)
+        await setCachedPreviousMonthBalance(cacheKey, balance, 300).catch(() => {
+            // Ignorar errores de caché
+        });
+
+        return balance;
     } catch (error) {
         // Si hay error, retornar 0 (no bloquear el cálculo)
         logger.warn({

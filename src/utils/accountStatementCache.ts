@@ -512,3 +512,95 @@ export async function invalidateBySorteoCache(params: {
         });
     }
 }
+
+/**
+ * ✅ NUEVO: Generar clave de caché para saldo del mes anterior
+ */
+function getPreviousMonthBalanceCacheKey(params: {
+    effectiveMonth: string; // YYYY-MM
+    dimension: string;
+    ventanaId?: string | null;
+    vendedorId?: string | null;
+    bancaId?: string | null;
+}): string {
+    const parts = [
+        'account:previous_month_balance',
+        params.effectiveMonth,
+        params.dimension,
+        params.ventanaId || 'null',
+        params.vendedorId || 'null',
+        params.bancaId || 'null',
+    ];
+    return parts.join(':');
+}
+
+/**
+ * ✅ NUEVO: Obtener saldo del mes anterior del caché
+ * TTL: 5 minutos (balance entre frescura y rendimiento)
+ * Si se asientan statements durante el cache, se detectarán en la próxima consulta
+ */
+export async function getCachedPreviousMonthBalance(params: {
+    effectiveMonth: string;
+    dimension: string;
+    ventanaId?: string | null;
+    vendedorId?: string | null;
+    bancaId?: string | null;
+}): Promise<number | null> {
+    const key = getPreviousMonthBalanceCacheKey(params);
+    const result = await CacheService.get<number>(key);
+    return result;
+}
+
+/**
+ * ✅ NUEVO: Guardar saldo del mes anterior en caché
+ * TTL: 5 minutos (300 segundos)
+ * Se invalida automáticamente cuando se asientan statements
+ */
+export async function setCachedPreviousMonthBalance(
+    params: {
+        effectiveMonth: string;
+        dimension: string;
+        ventanaId?: string | null;
+        vendedorId?: string | null;
+        bancaId?: string | null;
+    },
+    value: number,
+    ttlSeconds: number = 300 // 5 minutos por defecto
+): Promise<void> {
+    const key = getPreviousMonthBalanceCacheKey(params);
+    await CacheService.set(key, value, ttlSeconds);
+}
+
+/**
+ * ✅ NUEVO: Invalidar caché de saldos del mes anterior
+ * Se llama cuando se asientan statements del mes anterior
+ */
+export async function invalidatePreviousMonthBalanceCache(params: {
+    month: string; // YYYY-MM del mes anterior
+    ventanaId?: string | null;
+    vendedorId?: string | null;
+}): Promise<void> {
+    try {
+        // Invalidar todos los saldos del mes anterior para esta entidad
+        const pattern = `account:previous_month_balance:${params.month}:*:${params.ventanaId || '*'}:${params.vendedorId || '*'}:*`;
+        await CacheService.delPattern(pattern);
+        
+        logger.info({
+            layer: 'cache',
+            action: 'INVALIDATE_PREVIOUS_MONTH_BALANCE',
+            payload: { 
+                month: params.month,
+                pattern
+            }
+        });
+    } catch (error) {
+        logger.warn({
+            layer: 'cache',
+            action: 'INVALIDATE_PREVIOUS_MONTH_BALANCE_ERROR',
+            payload: { 
+                error: (error as Error).message,
+                month: params.month 
+            }
+        });
+    }
+}
