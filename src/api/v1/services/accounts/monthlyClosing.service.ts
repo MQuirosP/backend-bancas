@@ -187,42 +187,44 @@ export async function saveMonthlyClosingBalance(
     bancaId?: string | null
 ): Promise<void> {
     try {
-        await prisma.monthlyClosingBalance.upsert({
+        // ✅ CRÍTICO: Prisma no permite null en constraint único del where del upsert
+        // Usar findFirst + create/update en su lugar
+        const existing = await prisma.monthlyClosingBalance.findFirst({
             where: {
-                closingMonth_dimension_vendedorId_ventanaId_bancaId: {
-                    closingMonth,
-                    dimension,
-                    vendedorId: vendedorId || null,
-                    ventanaId: ventanaId || null,
-                    bancaId: bancaId || null,
-                },
-            },
-            create: {
                 closingMonth,
                 dimension,
                 vendedorId: vendedorId || null,
                 ventanaId: ventanaId || null,
                 bancaId: bancaId || null,
-                closingBalance: balance.remainingBalance,
-                totalSales: balance.totalSales,
-                totalPayouts: balance.totalPayouts,
-                totalCommission: balance.totalCommission,
-                totalPaid: balance.totalPaid,
-                totalCollected: balance.totalCollected,
-                ticketCount: balance.ticketCount,
-                closingDate: new Date(),
-            },
-            update: {
-                closingBalance: balance.remainingBalance,
-                totalSales: balance.totalSales,
-                totalPayouts: balance.totalPayouts,
-                totalCommission: balance.totalCommission,
-                totalPaid: balance.totalPaid,
-                totalCollected: balance.totalCollected,
-                ticketCount: balance.ticketCount,
-                closingDate: new Date(),
             },
         });
+
+        const data = {
+            closingMonth,
+            dimension,
+            vendedorId: vendedorId || null,
+            ventanaId: ventanaId || null,
+            bancaId: bancaId || null,
+            closingBalance: balance.remainingBalance,
+            totalSales: balance.totalSales,
+            totalPayouts: balance.totalPayouts,
+            totalCommission: balance.totalCommission,
+            totalPaid: balance.totalPaid,
+            totalCollected: balance.totalCollected,
+            ticketCount: balance.ticketCount,
+            closingDate: new Date(),
+        };
+
+        if (existing) {
+            await prisma.monthlyClosingBalance.update({
+                where: { id: existing.id },
+                data,
+            });
+        } else {
+            await prisma.monthlyClosingBalance.create({
+                data,
+            });
+        }
 
         logger.info({
             layer: "service",
@@ -344,5 +346,76 @@ export async function processMonthlyClosingForVendedores(closingMonth: string): 
             },
         });
         throw error;
+    }
+}
+
+/**
+ * Recalcula el cierre mensual para una dimensión específica cuando se detecta un cambio
+ * en datos del mes (ej: se registra un pago/cobro después del cierre)
+ */
+export async function recalculateMonthlyClosingForDimension(
+    closingMonth: string,
+    dimension: "banca" | "ventana" | "vendedor",
+    ventanaId?: string | null,
+    vendedorId?: string | null,
+    bancaId?: string | null
+): Promise<void> {
+    try {
+        logger.info({
+            layer: "service",
+            action: "MONTHLY_CLOSING_RECALCULATE_START",
+            payload: {
+                closingMonth,
+                dimension,
+                ventanaId,
+                vendedorId,
+                bancaId,
+                reason: "data_change_after_closing",
+            },
+        });
+
+        const balance = await calculateRealMonthBalance(
+            closingMonth,
+            dimension,
+            ventanaId || undefined,
+            vendedorId || undefined,
+            bancaId || undefined
+        );
+
+        await saveMonthlyClosingBalance(
+            closingMonth,
+            dimension,
+            balance,
+            ventanaId || undefined,
+            vendedorId || undefined,
+            bancaId || undefined
+        );
+
+        logger.info({
+            layer: "service",
+            action: "MONTHLY_CLOSING_RECALCULATE_COMPLETE",
+            payload: {
+                closingMonth,
+                dimension,
+                ventanaId,
+                vendedorId,
+                bancaId,
+                closingBalance: balance.remainingBalance,
+            },
+        });
+    } catch (error: any) {
+        logger.error({
+            layer: "service",
+            action: "MONTHLY_CLOSING_RECALCULATE_ERROR",
+            payload: {
+                closingMonth,
+                dimension,
+                ventanaId,
+                vendedorId,
+                bancaId,
+                error: error.message,
+            },
+        });
+        // No lanzar error, solo loguear - no queremos bloquear la creación del pago
     }
 }

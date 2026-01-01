@@ -7,6 +7,7 @@ import { calculateDayStatement } from "./accounts.calculations";
 import { calculateIsSettled } from "./accounts.commissions";
 import { invalidateAccountStatementCache, invalidateBySorteoCache } from "../../../../utils/accountStatementCache";
 import { crDateService } from "../../../../utils/crDateService";
+import { recalculateMonthlyClosingForDimension } from "./monthlyClosing.service";
 import logger from "../../../../core/logger";
 
 /**
@@ -211,6 +212,62 @@ export async function registerPayment(data: {
         paidById: data.paidById,
         paidByName: data.paidByName,
     });
+
+    // ✅ CRÍTICO: Si se registró un pago/cobro en un mes que ya tiene cierre mensual,
+    // recalcular automáticamente el cierre para mantener los saldos actualizados
+    // Esto se hace de forma asíncrona para no bloquear la creación del pago
+    const paymentMonth = month; // month ya está en formato "YYYY-MM"
+    const nowCRStr = crDateService.dateUTCToCRString(new Date());
+    const [currentYear, currentMonth] = nowCRStr.split('-').map(Number);
+    const paymentMonthYear = parseInt(paymentMonth.split('-')[0]);
+    const paymentMonthNum = parseInt(paymentMonth.split('-')[1]);
+    
+    // Verificar si el mes del pago es anterior al mes actual (ya cerrado)
+    const isPastMonth = paymentMonthYear < currentYear || 
+                       (paymentMonthYear === currentYear && paymentMonthNum < currentMonth);
+    
+    if (isPastMonth) {
+        // Recalcular cierre mensual de forma asíncrona (no bloquear)
+        Promise.all([
+            // Recalcular para vendedor si aplica
+            data.vendedorId ? recalculateMonthlyClosingForDimension(
+                paymentMonth,
+                "vendedor",
+                finalVentanaId || undefined,
+                data.vendedorId,
+                finalBancaId || undefined
+            ) : Promise.resolve(),
+            
+            // Recalcular para ventana si aplica
+            finalVentanaId ? recalculateMonthlyClosingForDimension(
+                paymentMonth,
+                "ventana",
+                finalVentanaId,
+                undefined,
+                finalBancaId || undefined
+            ) : Promise.resolve(),
+            
+            // Recalcular para banca si aplica
+            finalBancaId ? recalculateMonthlyClosingForDimension(
+                paymentMonth,
+                "banca",
+                undefined,
+                undefined,
+                finalBancaId
+            ) : Promise.resolve(),
+        ]).catch((error) => {
+            // Log error pero no bloquear
+            logger.error({
+                layer: "service",
+                action: "MONTHLY_CLOSING_AUTO_RECALCULATE_ERROR",
+                payload: {
+                    paymentId: payment.id,
+                    paymentMonth,
+                    error: error.message,
+                },
+            });
+        });
+    }
 
     // ✅ CRÍTICO: Verificar post-guardado que time se guardó correctamente
     // El FE siempre envía time (o no lo envía, en cuyo caso usamos "00:00")

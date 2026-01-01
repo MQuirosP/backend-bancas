@@ -5,6 +5,7 @@ import { config } from '../config'
 import prisma from '../core/prismaClient'
 import { startSorteosAutoJobs, stopSorteosAutoJobs } from '../jobs/sorteosAuto.job'
 import { startAccountStatementSettlementJob, stopAccountStatementSettlementJob } from '../jobs/accountStatementSettlement.job'
+import { startMonthlyClosingJob, stopMonthlyClosingJob } from '../jobs/monthlyClosing.job'
 import { initRedisClient, closeRedisClient } from '../core/redisClient'
 
 const server = http.createServer(app)
@@ -64,6 +65,24 @@ server.listen(config.port, async () => {
       meta: { error: error instanceof Error ? error.message : String(error) },
     })
   }
+
+  // Iniciar job de cierre mensual automático
+  try {
+    startMonthlyClosingJob()
+    logger.info({
+      layer: 'server',
+      action: 'MONTHLY_CLOSING_JOB_STARTED',
+      requestId: null,
+      payload: { message: 'Job de cierre mensual automático iniciado' },
+    })
+  } catch (error: any) {
+    logger.error({
+      layer: 'server',
+      action: 'MONTHLY_CLOSING_JOB_START_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
 })
 
 // Graceful shutdown
@@ -90,6 +109,18 @@ const gracefulShutdown = async (signal: string) => {
     logger.warn({
       layer: 'server',
       action: 'ACCOUNT_STATEMENT_SETTLEMENT_JOB_STOP_ERROR',
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
+  // Detener job de cierre mensual automático
+  try {
+    stopMonthlyClosingJob()
+    logger.info({ layer: 'server', action: 'MONTHLY_CLOSING_JOB_STOPPED' })
+  } catch (error: any) {
+    logger.warn({
+      layer: 'server',
+      action: 'MONTHLY_CLOSING_JOB_STOP_ERROR',
       meta: { error: error instanceof Error ? error.message : String(error) },
     })
   }
