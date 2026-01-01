@@ -12,28 +12,29 @@ datasource db {
 }
 
 model Banca {
-  id                   String                @id @default(uuid()) @db.Uuid
-  name                 String                @unique
-  code                 String                @unique
-  defaultMinBet        Float                 @default(100.00)
-  globalMaxPerNumber   Int                   @default(5000)
-  deletedAt            DateTime?
-  deletedBy            String?
-  deletedReason        String?
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  address              String?
-  email                String?
-  phone                String?
-  isActive             Boolean               @default(true)
-  salesCutoffMinutes   Int                   @default(5)
-  commissionPolicyJson Json? // Política de comisiones jerárquica
-  loteriaSettings      BancaLoteriaSetting[]
-  restrictionRules     RestrictionRule[]
-  ventanas             Ventana[]
-  users                UserBanca[]
-  accountPayments      AccountPayment[]
-  accountStatements    AccountStatement[]
+  id                     String                  @id @default(uuid()) @db.Uuid
+  name                   String                  @unique
+  code                   String                  @unique
+  defaultMinBet          Float                   @default(100.00)
+  globalMaxPerNumber     Int                     @default(5000)
+  deletedAt              DateTime?
+  deletedBy              String?
+  deletedReason          String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  address                String?
+  email                  String?
+  phone                  String?
+  isActive               Boolean                 @default(true)
+  salesCutoffMinutes     Int                     @default(5)
+  commissionPolicyJson   Json? // Política de comisiones jerárquica
+  loteriaSettings        BancaLoteriaSetting[]
+  restrictionRules       RestrictionRule[]
+  ventanas               Ventana[]
+  users                  UserBanca[]
+  accountPayments        AccountPayment[]
+  accountStatements      AccountStatement[]
+  monthlyClosingBalances MonthlyClosingBalance[] @relation("MonthlyClosingBalanceBanca")
 }
 
 model Ventana {
@@ -56,12 +57,13 @@ model Ventana {
 
   banca Banca @relation(fields: [bancaId], references: [id]) // <- relación requerida
 
-  restrictionRules    RestrictionRule[]
-  tickets             Ticket[]
-  users               User[]
-  multiplierOverrides MultiplierOverride[]
-  accountStatements   AccountStatement[]
-  accountPayments     AccountPayment[]
+  restrictionRules       RestrictionRule[]
+  tickets                Ticket[]
+  users                  User[]
+  multiplierOverrides    MultiplierOverride[]
+  accountStatements      AccountStatement[]
+  accountPayments        AccountPayment[]
+  monthlyClosingBalances MonthlyClosingBalance[] @relation("MonthlyClosingBalanceVentana")
 
   @@index([code])
   @@index([email])
@@ -113,6 +115,7 @@ model User {
   sorteosAutoConfigUpdated                SorteosAutoConfig[]                @relation("SorteosAutoConfigUpdatedBy")
   accountStatementsSettled                AccountStatement[]                 @relation("AccountStatementSettledBy")
   accountStatementSettlementConfigUpdated AccountStatementSettlementConfig[] @relation("AccountStatementSettlementConfigUpdatedBy")
+  monthlyClosingBalances                  MonthlyClosingBalance[]            @relation("MonthlyClosingBalanceVendedor")
   exclusionsAsVentana                     SorteoListaExclusion[]             @relation("ExclusionVentana")
   exclusionsAsVendedor                    SorteoListaExclusion[]             @relation("ExclusionVendedor")
   exclusionsCreated                       SorteoListaExclusion[]             @relation("ExclusionExcludedBy")
@@ -898,4 +901,39 @@ model AccountStatementSettlementConfig {
   updatedByUser User? @relation("AccountStatementSettlementConfigUpdatedBy", fields: [updatedBy], references: [id])
 
   @@index([enabled])
+}
+
+model MonthlyClosingBalance {
+  id           String  @id @default(uuid()) @db.Uuid
+  closingMonth String  @db.VarChar(7) // YYYY-MM
+  dimension    String  @db.VarChar(20) // "vendedor", "ventana", "banca"
+  vendedorId   String? @db.Uuid
+  ventanaId    String? @db.Uuid
+  bancaId      String? @db.Uuid
+
+  // Saldo de cierre
+  closingBalance Decimal @db.Decimal(15, 2)
+
+  // Totales del mes
+  totalSales      Decimal @db.Decimal(15, 2)
+  totalPayouts    Decimal @db.Decimal(15, 2)
+  totalCommission Decimal @db.Decimal(15, 2)
+  totalPaid       Decimal @db.Decimal(15, 2)
+  totalCollected  Decimal @db.Decimal(15, 2)
+  ticketCount     Int
+
+  // Auditoría
+  closingDate DateTime @default(now()) // Fecha/hora del cierre
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones (opcionales, para referencia)
+  vendedor User?    @relation("MonthlyClosingBalanceVendedor", fields: [vendedorId], references: [id])
+  ventana  Ventana? @relation("MonthlyClosingBalanceVentana", fields: [ventanaId], references: [id])
+  banca    Banca?   @relation("MonthlyClosingBalanceBanca", fields: [bancaId], references: [id])
+
+  @@unique([closingMonth, dimension, vendedorId, ventanaId, bancaId])
+  @@index([closingMonth])
+  @@index([dimension, vendedorId, ventanaId, bancaId])
+  @@index([closingDate])
 }
