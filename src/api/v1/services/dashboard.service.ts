@@ -3,6 +3,7 @@ import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { resolveCommission } from "../../../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
+import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts/accounts.calculations";
 
 /**
  * Dashboard Service
@@ -1386,9 +1387,20 @@ export const DashboardService = {
       // Calcular saldoAHoy para cada ventana
       // Balance: Ventas - Premios - Comisión Listero
       // Comisión Vendedor es SOLO informativa, no se resta del balance
+      // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
+      const effectiveMonth = `${crYear}-${String(crMonth + 1).padStart(2, '0')}`;
+      const ventanaIds = Array.from(monthAggregated.keys());
+      const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
+        effectiveMonth,
+        "ventana",
+        ventanaIds
+      );
+      
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
+        const previousMonthBalance = previousMonthBalances.get(ventanaId) || 0;
         const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
-        const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        // Sumar saldo del mes anterior al acumulado del mes actual
+        const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
         monthSaldoByVentana.set(ventanaId, saldoAHoy);
       }
     }
@@ -2265,9 +2277,20 @@ export const DashboardService = {
 
       // Balance: Ventas - Premios - Comisión Listero
       // Comisión Vendedor es SOLO informativa, no se resta del balance
+      // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
+      const effectiveMonth = `${crYear}-${String(crMonth + 1).padStart(2, '0')}`;
+      const ventanaIds = Array.from(monthAggregated.keys());
+      const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
+        effectiveMonth,
+        "ventana",
+        ventanaIds
+      );
+      
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
+        const previousMonthBalance = previousMonthBalances.get(ventanaId) || 0;
         const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
-        const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        // Sumar saldo del mes anterior al acumulado del mes actual
+        const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
         monthSaldoByVentana.set(ventanaId, saldoAHoy);
       }
     }
@@ -2724,9 +2747,20 @@ export const DashboardService = {
       }
 
       // Balance: Ventas - Premios - Comisión Vendedor
+      // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
+      const effectiveMonth = `${crYear}-${String(crMonth + 1).padStart(2, '0')}`;
+      const vendedorIds = Array.from(monthAggregated.keys());
+      const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
+        effectiveMonth,
+        "vendedor",
+        vendedorIds
+      );
+      
       for (const [vendedorId, monthEntry] of monthAggregated.entries()) {
+        const previousMonthBalance = previousMonthBalances.get(vendedorId) || 0;
         const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
-        const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        // Sumar saldo del mes anterior al acumulado del mes actual
+        const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
         monthSaldoByVendedor.set(vendedorId, saldoAHoy);
       }
     }
