@@ -1129,9 +1129,8 @@ export const DashboardService = {
     }
     // Filtrar por banca activa si está disponible
     if (filters.bancaId) {
-      accountPaymentWhere.ventana = {
-        bancaId: filters.bancaId,
-      };
+      // ✅ CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
+      accountPaymentWhere.bancaId = filters.bancaId;
     }
 
     const collections = await prisma.accountPayment.findMany({
@@ -1315,7 +1314,7 @@ export const DashboardService = {
           },
           vendedorId: null,
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }),
-          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
         },
       });
 
@@ -1330,7 +1329,7 @@ export const DashboardService = {
           isReversed: false,
           type: "collection",
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }),
-          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
         },
         select: {
           ventanaId: true,
@@ -1393,7 +1392,8 @@ export const DashboardService = {
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
         "ventana",
-        ventanaIds
+        ventanaIds,
+        filters.bancaId
       );
       
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
@@ -1700,9 +1700,8 @@ export const DashboardService = {
       accountPaymentWhere.ventanaId = filters.ventanaId;
     }
     if (filters.bancaId) {
-      accountPaymentWhere.ventana = {
-        bancaId: filters.bancaId,
-      };
+      // ✅ CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
+      accountPaymentWhere.bancaId = filters.bancaId;
     }
 
     const collections = await prisma.accountPayment.findMany({
@@ -1791,7 +1790,7 @@ export const DashboardService = {
           date: { gte: monthStart, lte: monthEnd },
           vendedorId: { not: null },
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
         },
       });
 
@@ -1802,7 +1801,7 @@ export const DashboardService = {
           isReversed: false,
           type: "collection",
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
         },
         select: {
           vendedorId: true,
@@ -2153,9 +2152,8 @@ export const DashboardService = {
     }
     // Filtrar por banca activa si está disponible
     if (filters.bancaId) {
-      accountPaymentWhere.ventana = {
-        bancaId: filters.bancaId,
-      };
+      // ✅ CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
+      accountPaymentWhere.bancaId = filters.bancaId;
     }
 
     const collections = await prisma.accountPayment.findMany({
@@ -2283,7 +2281,8 @@ export const DashboardService = {
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
         "ventana",
-        ventanaIds
+        ventanaIds,
+        filters.bancaId
       );
       
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
@@ -2594,9 +2593,8 @@ export const DashboardService = {
       accountPaymentWhere.ventanaId = filters.ventanaId;
     }
     if (filters.bancaId) {
-      accountPaymentWhere.ventana = {
-        bancaId: filters.bancaId,
-      };
+      // ✅ CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
+      accountPaymentWhere.bancaId = filters.bancaId;
     }
 
     const collections = await prisma.accountPayment.findMany({
@@ -2685,7 +2683,7 @@ export const DashboardService = {
           date: { gte: monthStart, lte: monthEnd },
           vendedorId: { not: null },
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
         },
       });
 
@@ -2696,7 +2694,7 @@ export const DashboardService = {
           isReversed: false,
           type: "collection",
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
         },
         select: {
           vendedorId: true,
@@ -2758,7 +2756,7 @@ export const DashboardService = {
           isActive: true,
           deletedAt: null,
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          ...(filters.bancaId ? { ventana: { bancaId: filters.bancaId } } : {}),
+          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
         },
         select: { id: true },
       }).then(users => users.map(u => u.id));
@@ -2766,7 +2764,8 @@ export const DashboardService = {
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
         "vendedor",
-        allVendedorIds
+        allVendedorIds,
+        filters.bancaId
       );
       
       // ✅ CRÍTICO: Asegurar que todos los vendedores con saldo del mes anterior estén en monthAggregated

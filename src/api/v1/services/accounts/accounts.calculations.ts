@@ -2020,7 +2020,9 @@ export async function getStatementDirect(
     // Sumar saldo del mes anterior al acumulado del mes actual
     // ✅ CRÍTICO: Si no hay transacciones en el mes actual, monthlyTotalBalance será 0,
     // pero monthlyRemainingBalance debe ser igual al saldo del mes anterior
-    const monthlyRemainingBalance = previousMonthBalance + monthlyTotalBalance;
+    // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
+    const previousMonthBalanceNum = Number(previousMonthBalance);
+    const monthlyRemainingBalance = previousMonthBalanceNum + monthlyTotalBalance;
     
     logger.info({
         layer: "service",
@@ -2029,7 +2031,7 @@ export async function getStatementDirect(
             effectiveMonth,
             dimension,
             vendedorId,
-            previousMonthBalance,
+            previousMonthBalance: previousMonthBalanceNum,
             monthlyTotalBalance,
             monthlyTotalSales,
             monthlyTotalPayouts,
@@ -2043,7 +2045,7 @@ export async function getStatementDirect(
     const monthlyAccumulated: StatementTotals = {
         totalSales: parseFloat(monthlyTotalSales.toFixed(2)),
         totalPayouts: parseFloat(monthlyTotalPayouts.toFixed(2)),
-        totalBalance: parseFloat((previousMonthBalance + monthlyTotalBalance).toFixed(2)),
+        totalBalance: parseFloat((previousMonthBalanceNum + monthlyTotalBalance).toFixed(2)),
         totalPaid: parseFloat(monthlyTotalPaid.toFixed(2)),
         totalCollected: parseFloat(monthlyTotalCollected.toFixed(2)),
         totalRemainingBalance: parseFloat(monthlyRemainingBalance.toFixed(2)),
@@ -2372,22 +2374,31 @@ async function calculatePreviousMonthBalanceFromSource(
 
         // 4. Obtener pagos y cobros del mes anterior
         // ✅ CRÍTICO: Incluir AMBOS límites (inicio y fin del mes anterior)
+        // ✅ CRÍTICO: AccountPayment.date es @db.Date (solo fecha, sin hora)
+        // Para @db.Date, Prisma espera Date objects, pero debemos usar solo la parte de fecha
+        // Usar firstDayCRStr y lastDayCRStr para comparación directa de fechas
         const paymentsWhere: Prisma.AccountPaymentWhereInput = {
             date: { 
-                gte: firstDay,
-                lte: lastDay,
+                gte: new Date(firstDayCRStr + "T00:00:00.000Z"),
+                lte: new Date(lastDayCRStr + "T23:59:59.999Z"),
             },
             isReversed: false,
         };
 
+        // ✅ CRÍTICO: Aplicar filtros según dimensión
         if (dimension === "vendedor" && filters.vendedorId) {
             paymentsWhere.vendedorId = filters.vendedorId;
         } else if (dimension === "ventana" && filters.ventanaId) {
             paymentsWhere.ventanaId = filters.ventanaId;
-            paymentsWhere.vendedorId = null;
-        } else if (dimension === "banca" && filters.bancaId) {
-            paymentsWhere.ventana = { bancaId: filters.bancaId };
-            paymentsWhere.vendedorId = null;
+            // ✅ CRÍTICO: NO forzar vendedorId a null porque algunos payments de ventana pueden tener vendedorId
+            // Los payments pueden tener vendedorId incluso cuando pertenecen a una ventana específica
+        } else if (dimension === "banca") {
+            // ✅ CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
+            if (filters.bancaId) {
+                paymentsWhere.bancaId = filters.bancaId;
+            }
+            // ✅ CRÍTICO: NO forzar vendedorId/ventanaId a null porque algunos payments pueden tenerlos
+            // Los payments pueden tener vendedorId o ventanaId incluso cuando pertenecen a una banca específica
         }
 
         const payments = await prisma.accountPayment.findMany({
@@ -2494,7 +2505,8 @@ async function calculatePreviousMonthBalanceFromSource(
 export async function getPreviousMonthFinalBalancesBatch(
     effectiveMonth: string,
     dimension: "ventana" | "vendedor",
-    entityIds: string[]
+    entityIds: string[],
+    bancaId?: string | null
 ): Promise<Map<string, number>> {
     if (entityIds.length === 0) {
         return new Map();
@@ -2523,8 +2535,16 @@ export async function getPreviousMonthFinalBalancesBatch(
         if (dimension === "ventana") {
             closingWhere.ventanaId = { in: entityIds };
             closingWhere.vendedorId = null;
+            // ✅ CRÍTICO: Si hay bancaId, filtrar también por banca
+            if (bancaId) {
+                closingWhere.bancaId = bancaId;
+            }
         } else {
             closingWhere.vendedorId = { in: entityIds };
+            // ✅ CRÍTICO: Si hay bancaId, filtrar también por banca (a través de ventana)
+            if (bancaId) {
+                closingWhere.bancaId = bancaId;
+            }
         }
 
         const closingBalances = await prisma.monthlyClosingBalance.findMany({
@@ -2584,8 +2604,16 @@ export async function getPreviousMonthFinalBalancesBatch(
         if (dimension === "ventana") {
             where.ventanaId = { in: missingEntities };
             where.vendedorId = null;
+            // ✅ CRÍTICO: Si hay bancaId, filtrar también por banca
+            if (bancaId) {
+                where.bancaId = bancaId;
+            }
         } else {
             where.vendedorId = { in: missingEntities };
+            // ✅ CRÍTICO: Si hay bancaId, filtrar también por banca (a través de ventana)
+            if (bancaId) {
+                where.bancaId = bancaId;
+            }
         }
 
         const settledStatements = await prisma.accountStatement.findMany({
@@ -2685,7 +2713,7 @@ export async function getPreviousMonthFinalBalancesBatch(
                     dimension,
                     ventanaId: dimension === "ventana" ? entityId : null,
                     vendedorId: dimension === "vendedor" ? entityId : null,
-                    bancaId: null,
+                    bancaId: bancaId || null,
                 };
                 
                 const cachedBalance = await getCachedPreviousMonthBalance(cacheKey);
@@ -2699,8 +2727,8 @@ export async function getPreviousMonthFinalBalancesBatch(
                     effectiveMonth,
                     dimension,
                     dimension === "ventana" 
-                        ? { ventanaId: entityId }
-                        : { vendedorId: entityId }
+                        ? { ventanaId: entityId, bancaId: bancaId || null }
+                        : { vendedorId: entityId, bancaId: bancaId || null }
                 );
                 balancesMap.set(entityId, balance);
 
@@ -2769,6 +2797,7 @@ export async function getPreviousMonthFinalBalance(
         });
 
         if (closingBalance) {
+            const balance = parseFloat(closingBalance.closingBalance.toString());
             logger.info({
                 layer: "service",
                 action: "PREVIOUS_MONTH_BALANCE_FROM_CLOSING",
@@ -2779,11 +2808,11 @@ export async function getPreviousMonthFinalBalance(
                     vendedorId,
                     bancaId,
                     closingMonth: previousMonthStr,
-                    closingBalance: Number(closingBalance.closingBalance),
+                    closingBalance: balance,
                     source: "monthly_closing_balance",
                 },
             });
-            return Number(closingBalance.closingBalance);
+            return balance;
         }
 
         // ✅ PASO 2: Si no hay cierre, calcular desde fuente (solo para meses históricos sin cierre)
@@ -2829,7 +2858,8 @@ export async function getPreviousMonthFinalBalance(
         } else if (dimension === "banca") {
             where.vendedorId = null; // Solo statements consolidados
             if (bancaId) {
-                where.ventana = { bancaId };
+                // ✅ CRÍTICO: AccountStatement tiene bancaId directamente (no usar relación ventana)
+                where.bancaId = bancaId;
             }
         }
 
