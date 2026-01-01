@@ -18,6 +18,7 @@ import { resolveDigits } from "../../../utils/loteriaRules";
 import { parseCommissionPolicy, CommissionPolicy, CommissionRule } from "../../../services/commission.resolver";
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { crDateService } from "../../../utils/crDateService";
+import { getPreviousMonthFinalBalance } from "./accounts/accounts.calculations";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
@@ -2243,6 +2244,17 @@ gs."hour24" ASC
       const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPrizes - monthlyTotalCommission;
       const monthlyTotalRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
 
+      // ✅ NUEVO: Obtener saldo final del mes anterior para este vendedor
+      const effectiveMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+      const previousMonthBalance = await getPreviousMonthFinalBalance(
+        effectiveMonth,
+        "vendedor",
+        undefined,
+        vendedorId,
+        undefined
+      );
+
+      // Sumar saldo del mes anterior al acumulado del mes actual
       const monthlyAccumulated = {
         totalSales: monthlyTotalSales,
         totalCommission: monthlyTotalCommission,
@@ -2252,9 +2264,9 @@ gs."hour24" ASC
         totalTickets: monthlyTotalTickets,
         totalPaid: monthlyTotalPaid,
         totalCollected: monthlyTotalCollected,
-        totalBalance: monthlyTotalBalance,
-        totalRemainingBalance: monthlyTotalRemainingBalance,
-        totalSubtotal: monthlyTotalRemainingBalance, // ✅ DEPRECATED: igual a totalRemainingBalance
+        totalBalance: previousMonthBalance + monthlyTotalBalance,
+        totalRemainingBalance: previousMonthBalance + monthlyTotalRemainingBalance,
+        totalSubtotal: previousMonthBalance + monthlyTotalRemainingBalance, // ✅ DEPRECATED: igual a totalRemainingBalance
       };
       const result = {
         data: daysArray,
