@@ -99,22 +99,21 @@ export function dateRangeUTCToCRStrings(startDate: Date, endDate: Date): {
 } {
   const startDateCRStr = dateUTCToCRString(startDate);
   
-  // ⚠️ CRÍTICO: endDate es 05:59:59.999 UTC del día siguiente (fin del día anterior en CR)
-  // Ejemplo: endDate = 2025-12-07T05:59:59.999Z representa fin del día 6 en CR
-  // 
-  // Cálculo paso a paso:
-  // - endDate = 2025-12-07T05:59:59.999Z (fin del día 6 en CR)
-  // - Restar 6 horas: 2025-12-06T23:59:59.999Z
-  // - dateUTCToCRString suma 6 horas: 2025-12-07T05:59:59.999Z → "2025-12-07" ❌
+  // ⚠️ CRÍTICO: endDate representa el fin del día en CR
+  // Ejemplo: endDate = 2026-01-03T05:59:59.999Z representa fin del día 2 en CR (23:59:59.999 del día 2)
+  // Pero si endDate = 2026-01-04T05:59:59.999Z representa fin del día 3 en CR (23:59:59.999 del día 3)
   //
-  // Solución: Extraer directamente la fecha CR sin usar dateUTCToCRString
-  // porque ya sabemos que endDate representa el fin del día anterior
+  // Para obtener la fecha CR correcta:
+  // - endDate está en UTC y representa 23:59:59.999 CR del día anterior al día siguiente en UTC
+  // - Si endDate = 2026-01-04T05:59:59.999Z, esto es 23:59:59.999 del 3 de enero en CR
+  // - Necesitamos extraer el día 3, no el día 4
+  //
+  // Solución: endDate - 6 horas nos da 23:59:59.999 UTC del día correcto en CR
+  // Luego extraemos la fecha de ese timestamp
   const endDateAdjusted = new Date(endDate.getTime() - CR_TIMEZONE_OFFSET_MS);
-  // Extraer directamente año, mes, día sin convertir (ya está en el día correcto)
-  const endYear = endDateAdjusted.getUTCFullYear();
-  const endMonth = String(endDateAdjusted.getUTCMonth() + 1).padStart(2, '0');
-  const endDay = String(endDateAdjusted.getUTCDate()).padStart(2, '0');
-  const endDateCRStr = `${endYear}-${endMonth}-${endDay}`;
+  // endDateAdjusted ahora representa 23:59:59.999 UTC del día correcto en CR
+  // Extraer la fecha CR usando dateUTCToCRString que maneja correctamente la conversión
+  const endDateCRStr = dateUTCToCRString(endDateAdjusted);
   
   return { startDateCRStr, endDateCRStr };
 }
