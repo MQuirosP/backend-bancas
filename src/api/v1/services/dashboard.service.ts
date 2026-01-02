@@ -1304,12 +1304,13 @@ export const DashboardService = {
       );
 
       // Obtener statements del mes completo
-      // ✅ CRÍTICO: Usar monthStartDate y monthEndDate (DATE sin hora) para campos @db.Date
+      // ✅ CRÍTICO: Usar monthStart y monthEnd (timestamps completos) para incluir todo el día de hoy
+      // Prisma maneja correctamente la conversión de timestamps a DATE para campos @db.Date
       const monthStatements = await prisma.accountStatement.findMany({
         where: {
           date: {
-            gte: monthStartDate,
-            lte: monthEndDate,
+            gte: monthStart,
+            lte: monthEnd,
           },
           vendedorId: null,
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }),
@@ -1318,12 +1319,13 @@ export const DashboardService = {
       });
 
       // Obtener collections del mes
-      // ✅ CRÍTICO: Usar monthStartDate y monthEndDate (DATE sin hora) para campos @db.Date
+      // ✅ CRÍTICO: Usar monthStart y monthEnd (timestamps completos) para incluir todo el día de hoy
+      // Prisma maneja correctamente la conversión de timestamps a DATE para campos @db.Date
       const monthCollections = await prisma.accountPayment.findMany({
         where: {
           date: {
-            gte: monthStartDate,
-            lte: monthEndDate,
+            gte: monthStart,
+            lte: monthEnd,
           },
           vendedorId: null,
           isReversed: false,
@@ -1390,20 +1392,38 @@ export const DashboardService = {
       // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-      const ventanaIds = Array.from(monthAggregated.keys());
+      
+      // ✅ CRÍTICO: Obtener TODAS las ventanas que están en aggregated (período filtrado)
+      // no solo las que tienen datos en el mes actual, para incluir saldo del mes anterior
+      const allVentanaIds = new Set([
+        ...Array.from(aggregated.keys()),
+        ...Array.from(monthAggregated.keys()),
+      ]);
+      
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
         "ventana",
-        ventanaIds,
+        Array.from(allVentanaIds),
         filters.bancaId
       );
       
+      // Calcular saldoAHoy para ventanas con datos del mes actual
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
         const previousMonthBalance = previousMonthBalances.get(ventanaId) || 0;
         const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
         // Sumar saldo del mes anterior al acumulado del mes actual
         const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
         monthSaldoByVentana.set(ventanaId, saldoAHoy);
+      }
+      
+      // ✅ CRÍTICO: Incluir también ventanas que solo tienen saldo del mes anterior
+      // pero no tienen datos en el mes actual (para que aparezcan en monthlyAccumulated)
+      for (const ventanaId of allVentanaIds) {
+        if (!monthSaldoByVentana.has(ventanaId)) {
+          const previousMonthBalance = previousMonthBalances.get(ventanaId) || 0;
+          // Si solo tiene saldo del mes anterior, ese es su saldo a hoy
+          monthSaldoByVentana.set(ventanaId, previousMonthBalance);
+        }
       }
     }
 
