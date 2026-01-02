@@ -1,6 +1,7 @@
 import { Prisma, Role } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
+import logger from "../../../core/logger";
 import { resolveCommission } from "../../../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
 import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts/accounts.calculations";
@@ -1304,43 +1305,73 @@ export const DashboardService = {
       );
 
       // Obtener statements del mes completo
-      // ✅ CRÍTICO: Usar monthStart y monthEnd (timestamps completos) para incluir todo el día de hoy
-      // Prisma maneja correctamente la conversión de timestamps a DATE para campos @db.Date
-      const monthStatements = await prisma.accountStatement.findMany({
-        where: {
-          date: {
-            gte: monthStart,
-            lte: monthEnd,
-          },
-          vendedorId: null,
-          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }),
-          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
-        },
-      });
+      // ✅ SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
+      // PostgreSQL interpreta los strings directamente como DATE sin conversión de timezone
+      const monthStatements = await prisma.$queryRaw<Array<{
+        id: string;
+        date: Date;
+        ventanaId: string | null;
+        bancaId: string | null;
+        totalPaid: number;
+        totalCollected: number;
+        remainingBalance: number;
+      }>>`
+        SELECT 
+          id,
+          date,
+          "ventanaId",
+          "bancaId",
+          "totalPaid",
+          "totalCollected",
+          "remainingBalance"
+        FROM "AccountStatement"
+        WHERE date >= ${monthStartStr}::date
+          AND date <= ${monthEndStr}::date
+          AND "vendedorId" IS NULL
+          ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = ${filters.ventanaId}::uuid` : Prisma.sql`AND "ventanaId" IS NOT NULL`}
+          ${filters.bancaId ? Prisma.sql`AND "bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+      `;
 
       // Obtener collections del mes
-      // ✅ CRÍTICO: Usar monthStart y monthEnd (timestamps completos) para incluir todo el día de hoy
-      // Prisma maneja correctamente la conversión de timestamps a DATE para campos @db.Date
-      const monthCollections = await prisma.accountPayment.findMany({
-        where: {
-          date: {
-            gte: monthStart,
-            lte: monthEnd,
-          },
-          vendedorId: null,
-          isReversed: false,
-          type: "collection",
-          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }),
-          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
-        },
-        select: {
-          ventanaId: true,
-          amount: true,
-        },
-      });
+      // ✅ SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
+      // PostgreSQL interpreta los strings directamente como DATE sin conversión de timezone
+      const monthCollections = await prisma.$queryRaw<Array<{
+        ventanaId: string | null;
+        amount: number;
+      }>>`
+        SELECT 
+          "ventanaId",
+          amount
+        FROM "AccountPayment"
+        WHERE date >= ${monthStartStr}::date
+          AND date <= ${monthEndStr}::date
+          AND "vendedorId" IS NULL
+          AND "isReversed" = false
+          AND type = 'collection'
+          ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = ${filters.ventanaId}::uuid` : Prisma.sql`AND "ventanaId" IS NOT NULL`}
+          ${filters.bancaId ? Prisma.sql`AND "bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+      `;
 
       // Mapear datos del mes por ventana
       const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
+
+      // ✅ DEBUG: Log para verificar qué datos estamos obteniendo
+      logger.info({
+        layer: 'service',
+        action: 'MONTHLY_ACCUMULATED_DEBUG',
+        payload: {
+          monthStartStr,
+          monthEndStr,
+          monthVentanaDataCount: monthVentanaData.length,
+          monthStatementsCount: monthStatements.length,
+          monthCollectionsCount: monthCollections.length,
+          monthVentanaDataSample: monthVentanaData.slice(0, 3).map(v => ({
+            ventanaId: v.ventana_id?.substring(0, 8),
+            totalSales: v.total_sales,
+            totalPayouts: v.total_payouts,
+          })),
+        },
+      });
 
       // Procesar datos de ventanas del mes
       for (const ventanaRow of monthVentanaData) {
@@ -1407,24 +1438,50 @@ export const DashboardService = {
         filters.bancaId
       );
       
-      // Calcular saldoAHoy para ventanas con datos del mes actual
+      // ✅ CRÍTICO: Calcular saldoAHoy para TODAS las ventanas
+      // Primero procesar ventanas con datos del mes actual
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
-        const previousMonthBalance = previousMonthBalances.get(ventanaId) || 0;
+        // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
+        const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
         const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
         // Sumar saldo del mes anterior al acumulado del mes actual
         const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        
+        // ✅ DEBUG: Log para verificar el cálculo
+        logger.info({
+          layer: 'service',
+          action: 'MONTHLY_ACCUMULATED_CALCULATION_DEBUG',
+          payload: {
+            ventanaId: ventanaId.substring(0, 8),
+            previousMonthBalance,
+            monthEntry: {
+              totalSales: monthEntry.totalSales,
+              totalPayouts: monthEntry.totalPayouts,
+              totalListeroCommission: monthEntry.totalListeroCommission,
+              totalPaid: monthEntry.totalPaid,
+              totalCollected: monthEntry.totalCollected,
+            },
+            baseBalance,
+            saldoAHoy,
+          },
+        });
+        
         monthSaldoByVentana.set(ventanaId, saldoAHoy);
       }
       
       // ✅ CRÍTICO: Incluir también ventanas que solo tienen saldo del mes anterior
       // pero no tienen datos en el mes actual (para que aparezcan en monthlyAccumulated)
+      // IMPORTANTE: Esto asegura que ventanas con saldo anterior pero sin actividad del mes actual
+      // también tengan su saldo a hoy calculado
       for (const ventanaId of allVentanaIds) {
         if (!monthSaldoByVentana.has(ventanaId)) {
-          const previousMonthBalance = previousMonthBalances.get(ventanaId) || 0;
+          // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
+          const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
           // Si solo tiene saldo del mes anterior, ese es su saldo a hoy
           monthSaldoByVentana.set(ventanaId, previousMonthBalance);
         }
       }
+      
     }
 
     const byVentana = Array.from(aggregated.values())
@@ -1808,6 +1865,7 @@ export const DashboardService = {
         Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(DISTINCT t."totalPayout"), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
       );
 
+      // ✅ Vendedores funcionan correctamente, mantener consulta original
       const monthStatements = await prisma.accountStatement.findMany({
         where: {
           date: { gte: monthStart, lte: monthEnd },
@@ -1817,6 +1875,7 @@ export const DashboardService = {
         },
       });
 
+      // ✅ Vendedores funcionan correctamente, mantener consulta original
       const monthCollections = await prisma.accountPayment.findMany({
         where: {
           date: { gte: monthStart, lte: monthEnd },
@@ -1874,11 +1933,47 @@ export const DashboardService = {
         monthAggregated.set(collection.vendedorId, entry);
       }
 
-      // Balance: Ventas - Premios - Comisión Vendedor
+      // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
+      // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
+      const nowCRStr = crDateService.dateUTCToCRString(new Date());
+      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
+      
+      // ✅ CRÍTICO: Obtener TODOS los vendedores que están en aggregated (período filtrado)
+      // no solo los que tienen datos en el mes actual, para incluir saldo del mes anterior
+      const allVendedorIds = new Set([
+        ...Array.from(aggregated.keys()),
+        ...Array.from(monthAggregated.keys()),
+      ]);
+      
+      const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
+        effectiveMonth,
+        "vendedor",
+        Array.from(allVendedorIds),
+        filters.bancaId
+      );
+      
+      // ✅ CRÍTICO: Calcular saldoAHoy para TODOS los vendedores
+      // Primero procesar vendedores con datos del mes actual
       for (const [vendedorId, monthEntry] of monthAggregated.entries()) {
+        // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
+        const previousMonthBalance = Number(previousMonthBalances.get(vendedorId) || 0);
         const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
-        const saldoAHoy = baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        // Sumar saldo del mes anterior al acumulado del mes actual
+        const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
         monthSaldoByVendedor.set(vendedorId, saldoAHoy);
+      }
+      
+      // ✅ CRÍTICO: Incluir también vendedores que solo tienen saldo del mes anterior
+      // pero no tienen datos en el mes actual (para que aparezcan en monthlyAccumulated)
+      // IMPORTANTE: Esto asegura que vendedores con saldo anterior pero sin actividad del mes actual
+      // también tengan su saldo a hoy calculado
+      for (const vendedorId of allVendedorIds) {
+        if (!monthSaldoByVendedor.has(vendedorId)) {
+          // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
+          const previousMonthBalance = Number(previousMonthBalances.get(vendedorId) || 0);
+          // Si solo tiene saldo del mes anterior, ese es su saldo a hoy
+          monthSaldoByVendedor.set(vendedorId, previousMonthBalance);
+        }
       }
     }
 
@@ -2265,9 +2360,49 @@ export const DashboardService = {
         Prisma.sql`SELECT v.id AS ventana_id, v.name AS ventana_name, v."isActive" AS is_active, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "Ventana" v LEFT JOIN (SELECT t."ventanaId" AS ventana_id, COALESCE(SUM(t."totalAmount"), 0) AS total_sales, COALESCE(SUM(t."totalPayout"), 0) AS total_payouts FROM "Ticket" t WHERE ${monthBaseFilters} GROUP BY t."ventanaId") sp ON sp.ventana_id = v.id LEFT JOIN (SELECT t."ventanaId" AS ventana_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND j."deletedAt" IS NULL GROUP BY t."ventanaId") cp ON cp.ventana_id = v.id WHERE v."isActive" = true ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty} ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}`
       );
 
-      const monthStatements = await prisma.accountStatement.findMany({ where: { date: { gte: monthStart, lte: monthEnd }, vendedorId: null, ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }), ...(filters.bancaId ? { bancaId: filters.bancaId } : {}) } });
+      // ✅ SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
+      const monthStatements = await prisma.$queryRaw<Array<{
+        id: string;
+        date: Date;
+        ventanaId: string | null;
+        bancaId: string | null;
+        totalPaid: number;
+        totalCollected: number;
+        remainingBalance: number;
+      }>>`
+        SELECT 
+          id,
+          date,
+          "ventanaId",
+          "bancaId",
+          "totalPaid",
+          "totalCollected",
+          "remainingBalance"
+        FROM "AccountStatement"
+        WHERE date >= ${monthStartStr}::date
+          AND date <= ${monthEndStr}::date
+          AND "vendedorId" IS NULL
+          ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = ${filters.ventanaId}::uuid` : Prisma.sql`AND "ventanaId" IS NOT NULL`}
+          ${filters.bancaId ? Prisma.sql`AND "bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+      `;
 
-      const monthCollections = await prisma.accountPayment.findMany({ where: { date: { gte: monthStart, lte: monthEnd }, vendedorId: null, isReversed: false, type: "collection", ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }), ...(filters.bancaId ? { bancaId: filters.bancaId } : {}) }, select: { ventanaId: true, amount: true } });
+      // ✅ SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
+      const monthCollections = await prisma.$queryRaw<Array<{
+        ventanaId: string | null;
+        amount: number;
+      }>>`
+        SELECT 
+          "ventanaId",
+          amount
+        FROM "AccountPayment"
+        WHERE date >= ${monthStartStr}::date
+          AND date <= ${monthEndStr}::date
+          AND "vendedorId" IS NULL
+          AND "isReversed" = false
+          AND type = 'collection'
+          ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = ${filters.ventanaId}::uuid` : Prisma.sql`AND "ventanaId" IS NOT NULL`}
+          ${filters.bancaId ? Prisma.sql`AND "bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+      `;
 
       const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
 
@@ -2305,7 +2440,8 @@ export const DashboardService = {
       );
       
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
-        const previousMonthBalance = previousMonthBalances.get(ventanaId) || 0;
+        // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
+        const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
         const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
         // Sumar saldo del mes anterior al acumulado del mes actual
         const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
@@ -2698,6 +2834,7 @@ export const DashboardService = {
         Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(DISTINCT t."totalPayout"), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
       );
 
+      // ✅ Vendedores funcionan correctamente, mantener consulta original
       const monthStatements = await prisma.accountStatement.findMany({
         where: {
           date: { gte: monthStart, lte: monthEnd },
@@ -2707,6 +2844,7 @@ export const DashboardService = {
         },
       });
 
+      // ✅ Vendedores funcionan correctamente, mantener consulta original
       const monthCollections = await prisma.accountPayment.findMany({
         where: {
           date: { gte: monthStart, lte: monthEnd },
@@ -2807,7 +2945,8 @@ export const DashboardService = {
       
       // Calcular saldo para todos los vendedores (con o sin datos en el mes actual)
       for (const [vendedorId, monthEntry] of monthAggregated.entries()) {
-        const previousMonthBalance = previousMonthBalances.get(vendedorId) || 0;
+        // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
+        const previousMonthBalance = Number(previousMonthBalances.get(vendedorId) || 0);
         const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
         // Sumar saldo del mes anterior al acumulado del mes actual
         const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
