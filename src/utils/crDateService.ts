@@ -153,6 +153,8 @@ export function isDateInCRRange(
  * const dateStr = crDateService.dateUTCToCRString(dateUTC);
  * const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(fromAt, toAt);
  * ```
+ * 
+ * NOTA: Para calcular el primer día del mes en CR, usar `resolveDateRange('month')` de `dateRange.ts`
  */
 export const crDateService = {
   dateUTCToCRString,
