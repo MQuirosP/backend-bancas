@@ -4,6 +4,8 @@ import { AppError } from "../../../core/errors";
 import { resolveCommission } from "../../../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
 import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts/accounts.calculations";
+import { resolveDateRange } from "../../../utils/dateRange";
+import { crDateService } from "../../../utils/crDateService";
 
 /**
  * Dashboard Service
@@ -1195,27 +1197,17 @@ export const DashboardService = {
     // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada ventana
     const monthSaldoByVentana = new Map<string, number>();
     {
-      // ✅ CORREGIDO: Convertir fecha actual a zona horaria de Costa Rica (UTC-6)
-      // Primero, obtener la fecha UTC actual
-      const utcNow = new Date();
-      // Convertir a Costa Rica sumando 6 horas offset
-      const COSTA_RICA_UTC_OFFSET_MS = -6 * 60 * 60 * 1000; // UTC-6
-      const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
+      // ✅ CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
+      // Esto asegura consistencia entre local y producción (Render)
+      const monthRange = resolveDateRange('month'); // Primer día del mes en CR
+      const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
+      
+      const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
+      const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
-      // Extraer año, mes y día en zona horaria de Costa Rica
-      const crYear = crNow.getUTCFullYear();
-      const crMonth = crNow.getUTCMonth(); // 0-based
-      const crDay = crNow.getUTCDate();
-
-      // Calcular primer día del mes y fin del día de hoy en Costa Rica
-      const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
-      // ✅ FIX: monthEnd debe ser el FINAL del día de hoy (23:59:59.999)
-      // para incluir tickets programados más tarde en el día actual
-      const monthEnd = new Date(Date.UTC(crYear, crMonth, crDay, 23, 59, 59, 999));
-
-      // Convertir a strings de fecha para filtros
-      const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
-      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(crDay).padStart(2, '0')}`; // ✅ FIX: usar día actual
+      // Convertir a strings de fecha para filtros usando crDateService
+      const monthStartStr = crDateService.dateUTCToCRString(monthStart);
+      const monthEndStr = crDateService.dateUTCToCRString(todayRange.fromAt); // Usar fromAt de todayRange para obtener el día de hoy
 
       // Construir filtros WHERE desde inicio del mes hasta hoy (Saldo a Hoy)
       const monthBaseFilters = buildTicketBaseFilters(
@@ -1387,7 +1379,9 @@ export const DashboardService = {
       // Balance: Ventas - Premios - Comisión Listero
       // Comisión Vendedor es SOLO informativa, no se resta del balance
       // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      const effectiveMonth = `${crYear}-${String(crMonth + 1).padStart(2, '0')}`;
+      // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
+      const nowCRStr = crDateService.dateUTCToCRString(new Date());
+      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
       const ventanaIds = Array.from(monthAggregated.keys());
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
@@ -1762,17 +1756,17 @@ export const DashboardService = {
     // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
     const monthSaldoByVendedor = new Map<string, number>();
     {
-      const utcNow = new Date();
-      const COSTA_RICA_UTC_OFFSET_MS = -6 * 60 * 60 * 1000;
-      const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
-      const crYear = crNow.getUTCFullYear();
-      const crMonth = crNow.getUTCMonth();
-      const crDay = crNow.getUTCDate(); // ✅ FIX: Obtener día actual
-      const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
-      // ✅ FIX: monthEnd debe ser el FINAL del día de hoy (23:59:59.999)
-      const monthEnd = new Date(Date.UTC(crYear, crMonth, crDay, 23, 59, 59, 999));
-      const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
-      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(crDay).padStart(2, '0')}`; // ✅ FIX: usar día actual
+      // ✅ CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
+      // Esto asegura consistencia entre local y producción (Render)
+      const monthRange = resolveDateRange('month'); // Primer día del mes en CR
+      const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
+      
+      const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
+      const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
+
+      // Convertir a strings de fecha para filtros usando crDateService
+      const monthStartStr = crDateService.dateUTCToCRString(monthStart);
+      const monthEndStr = crDateService.dateUTCToCRString(todayRange.fromAt); // Usar fromAt de todayRange para obtener el día de hoy
 
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
@@ -2218,24 +2212,17 @@ export const DashboardService = {
     // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana en CxP
     const monthSaldoByVentana = new Map<string, number>();
     {
-      // ✅ CORREGIDO: Convertir fecha actual a zona horaria de Costa Rica (UTC-6)
-      // Primero, obtener la fecha UTC actual
-      const utcNow = new Date();
-      // Convertir a Costa Rica sumando 6 horas offset
-      const COSTA_RICA_UTC_OFFSET_MS = -6 * 60 * 60 * 1000; // UTC-6
-      const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
+      // ✅ CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
+      // Esto asegura consistencia entre local y producción (Render)
+      const monthRange = resolveDateRange('month'); // Primer día del mes en CR
+      const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
+      
+      const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
+      const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
-      // Extraer año y mes en zona horaria de Costa Rica
-      const crYear = crNow.getUTCFullYear();
-      const crMonth = crNow.getUTCMonth(); // 0-based
-
-      // Calcular primer y último día del mes en Costa Rica
-      const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
-      const monthEnd = new Date(Date.UTC(crYear, crMonth + 1, 0));
-
-      // Convertir a strings de fecha para filtros
-      const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
-      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(new Date(Date.UTC(crYear, crMonth + 1, 0)).getUTCDate()).padStart(2, '0')}`;
+      // Convertir a strings de fecha para filtros usando crDateService
+      const monthStartStr = crDateService.dateUTCToCRString(monthStart);
+      const monthEndStr = crDateService.dateUTCToCRString(todayRange.fromAt); // Usar fromAt de todayRange para obtener el día de hoy
 
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
@@ -2276,7 +2263,9 @@ export const DashboardService = {
       // Balance: Ventas - Premios - Comisión Listero
       // Comisión Vendedor es SOLO informativa, no se resta del balance
       // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      const effectiveMonth = `${crYear}-${String(crMonth + 1).padStart(2, '0')}`;
+      // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
+      const nowCRStr = crDateService.dateUTCToCRString(new Date());
+      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
       const ventanaIds = Array.from(monthAggregated.keys());
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
@@ -2655,17 +2644,17 @@ export const DashboardService = {
     // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
     const monthSaldoByVendedor = new Map<string, number>();
     {
-      const utcNow = new Date();
-      const COSTA_RICA_UTC_OFFSET_MS = -6 * 60 * 60 * 1000;
-      const crNow = new Date(utcNow.getTime() + COSTA_RICA_UTC_OFFSET_MS);
-      const crYear = crNow.getUTCFullYear();
-      const crMonth = crNow.getUTCMonth();
-      const crDay = crNow.getUTCDate(); // ✅ FIX: Obtener día actual
-      const monthStart = new Date(Date.UTC(crYear, crMonth, 1));
-      // ✅ FIX: monthEnd debe ser el FINAL del día de hoy (23:59:59.999)
-      const monthEnd = new Date(Date.UTC(crYear, crMonth, crDay, 23, 59, 59, 999));
-      const monthStartStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-01`;
-      const monthEndStr = `${crYear}-${String(crMonth + 1).padStart(2, '0')}-${String(crDay).padStart(2, '0')}`; // ✅ FIX: usar día actual
+      // ✅ CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
+      // Esto asegura consistencia entre local y producción (Render)
+      const monthRange = resolveDateRange('month'); // Primer día del mes en CR
+      const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
+      
+      const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
+      const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
+
+      // Convertir a strings de fecha para filtros usando crDateService
+      const monthStartStr = crDateService.dateUTCToCRString(monthStart);
+      const monthEndStr = crDateService.dateUTCToCRString(todayRange.fromAt); // Usar fromAt de todayRange para obtener el día de hoy
 
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
@@ -2746,7 +2735,9 @@ export const DashboardService = {
 
       // Balance: Ventas - Premios - Comisión Vendedor
       // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      const effectiveMonth = `${crYear}-${String(crMonth + 1).padStart(2, '0')}`;
+      // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
+      const nowCRStr = crDateService.dateUTCToCRString(new Date());
+      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
       
       // ✅ CRÍTICO: Obtener TODOS los vendedores activos, no solo los que tienen datos en el mes actual
       // Esto asegura que vendedores con saldo del mes anterior pero sin datos en el mes actual también aparezcan
