@@ -282,27 +282,19 @@ export const AccountsService = {
             // - Si dimension='vendedor' → usar vendedorCommission
             // - Si dimension='banca' o 'ventana' → usar listeroCommission (siempre)
             const totalCommissionToUse = dimension === "vendedor" ? totalVendedorCommission : totalListeroCommission;
-            // ✅ CRÍTICO: totalBalance debe incluir movimientos (igual que balance en statements individuales)
-            // balance = balanceBase + totalPaid - totalCollected, donde balanceBase = totalSales - totalPayouts - commission
-            const totalBalanceBase = totalSales - totalPayouts - totalCommissionToUse;
-            const totalPaid = optimizedStatements.reduce((sum, s) => sum + s.totalPaid, 0);
-            const totalCollected = optimizedStatements.reduce((sum, s) => sum + s.totalCollected, 0);
-            const totalBalance = totalBalanceBase + totalPaid - totalCollected;
-            // ✅ CRÍTICO: totalRemainingBalance = totalBalance (que ya incluye movimientos)
-            // NO usar suma de remainingBalance porque esos valores son acumulados progresivamente
-            const totalRemainingBalance = totalBalance;
-
+            // ✅ CRÍTICO: Usar los totales calculados por getStatementDirect que ya incluyen el saldo del mes anterior
+            // getStatementDirect ya calcula correctamente todos los totales incluyendo el saldo del mes anterior
             result = {
                 statements: optimizedStatements,
                 totals: {
-                    totalSales: parseFloat(totalSales.toFixed(2)),
-                    totalPayouts: parseFloat(totalPayouts.toFixed(2)),
-                    totalListeroCommission: parseFloat(totalListeroCommission.toFixed(2)),
-                    totalVendedorCommission: parseFloat(totalVendedorCommission.toFixed(2)),
-                    totalBalance: parseFloat(totalBalance.toFixed(2)),
-                    totalPaid: parseFloat(totalPaid.toFixed(2)),
-                    totalCollected: parseFloat(totalCollected.toFixed(2)),
-                    totalRemainingBalance: parseFloat(totalRemainingBalance.toFixed(2)),
+                    totalSales: calculatedResult.totals.totalSales,
+                    totalPayouts: calculatedResult.totals.totalPayouts,
+                    totalListeroCommission: calculatedResult.totals.totalListeroCommission,
+                    totalVendedorCommission: calculatedResult.totals.totalVendedorCommission,
+                    totalBalance: calculatedResult.totals.totalBalance,
+                    totalPaid: calculatedResult.totals.totalPaid,
+                    totalCollected: calculatedResult.totals.totalCollected,
+                    totalRemainingBalance: calculatedResult.totals.totalRemainingBalance,
                     settledDays: optimizedStatements.filter(s => s.isSettled).length,
                     pendingDays: optimizedStatements.filter(s => !s.isSettled).length,
                 },
@@ -585,6 +577,95 @@ export const AccountsService = {
             filters.bancaId
         );
 
+        // ✅ NUEVO: Agregar movimiento especial del saldo del mes anterior para el primer día
+        const firstDayOfMonthStr = `${year}-${String(month).padStart(2, '0')}-01`;
+        const isFirstDay = date === firstDayOfMonthStr;
+        if (isFirstDay) {
+            const { getPreviousMonthFinalBalance } = await import('./accounts.calculations');
+            const effectiveMonth = `${year}-${String(month).padStart(2, '0')}`;
+            let previousMonthBalance = 0;
+            
+            if (filters.dimension === "banca") {
+                previousMonthBalance = await getPreviousMonthFinalBalance(
+                    effectiveMonth,
+                    "banca",
+                    undefined,
+                    undefined,
+                    filters.bancaId || null
+                );
+            } else if (filters.dimension === "ventana") {
+                previousMonthBalance = await getPreviousMonthFinalBalance(
+                    effectiveMonth,
+                    "ventana",
+                    filters.ventanaId || null,
+                    undefined,
+                    filters.bancaId
+                );
+            } else {
+                previousMonthBalance = await getPreviousMonthFinalBalance(
+                    effectiveMonth,
+                    "vendedor",
+                    undefined,
+                    filters.vendedorId || null,
+                    filters.bancaId
+                );
+            }
+            
+            if (previousMonthBalance !== 0) {
+                const firstDayMovements = movementsByDate.get(date) || [];
+                // ✅ CRÍTICO: Verificar que no exista ya un movimiento especial con el mismo ID
+                const existingSpecialMovement = firstDayMovements.find((m: any) => m.id?.startsWith('previous-month-balance-'));
+                if (!existingSpecialMovement) {
+                    const entityId = filters.dimension === "banca" 
+                        ? (filters.bancaId || 'null')
+                        : filters.dimension === "ventana"
+                            ? (filters.ventanaId || 'null')
+                            : (filters.vendedorId || 'null');
+                    
+                    // Agregar movimiento especial al inicio del día
+                    firstDayMovements.unshift({
+                        id: `previous-month-balance-${entityId}`,
+                        type: "payment" as const,
+                        amount: previousMonthBalance,
+                        method: "Saldo del mes anterior",
+                        notes: `Saldo arrastrado del mes anterior`,
+                        isReversed: false,
+                        createdAt: new Date(`${date}T00:00:00.000Z`).toISOString(),
+                        date: date,
+                        time: "00:00",
+                        balance: previousMonthBalance,
+                        bancaId: filters.dimension === "banca" ? (filters.bancaId || null) : null,
+                        ventanaId: filters.dimension === "ventana" ? (filters.ventanaId || null) : null,
+                        vendedorId: filters.dimension === "vendedor" ? (filters.vendedorId || null) : null,
+                    });
+                    movementsByDate.set(date, firstDayMovements);
+                    
+                    logger.info({
+                        layer: "service",
+                        action: "GET_BY_SORTEO_ADDED_PREVIOUS_MONTH_BALANCE",
+                        payload: {
+                            date,
+                            dimension: filters.dimension,
+                            previousMonthBalance,
+                            entityId,
+                            bancaId: filters.bancaId,
+                            ventanaId: filters.ventanaId,
+                            vendedorId: filters.vendedorId,
+                        },
+                    });
+                } else {
+                    logger.warn({
+                        layer: "service",
+                        action: "GET_BY_SORTEO_PREVIOUS_MONTH_BALANCE_ALREADY_EXISTS",
+                        payload: {
+                            date,
+                            existingId: existingSpecialMovement.id,
+                        },
+                    });
+                }
+            }
+        }
+
         // Determinar si hay agrupación
         const shouldGroupByDate =
             (filters.dimension === "banca" && (!filters.bancaId || filters.bancaId === "" || filters.bancaId === null)) ||
@@ -660,34 +741,27 @@ export const AccountsService = {
         }
 
         // Intercalar sorteos y movimientos
+        // ✅ CRÍTICO: Para el primer día, el acumulado inicial debe ser 0 porque el movimiento especial ya está incluido
+        // Para días siguientes, pasar el acumulado del día anterior como initialAccumulated
         const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
-        const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date);
-
-        // ✅ NUEVO: Sumar el accumulated del día anterior a todos los items del día actual
-        const adjustedSorteosAndMovements = sorteosAndMovements.map((item: any) => {
-            const newAccumulated = lastDayAccumulated + (item.accumulated || 0);
-            return {
-                ...item,
-                accumulated: newAccumulated,
-                sorteoAccumulated: newAccumulated,
-            };
-        });
+        const initialAccumulated = isFirstDay ? 0 : lastDayAccumulated;
+        const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date, initialAccumulated);
         
         // Log para debugging
-        if (includePreviousDayAccumulated && adjustedSorteosAndMovements.length > 0) {
+        if (includePreviousDayAccumulated && sorteosAndMovements.length > 0) {
             logger.info({
                 layer: "service",
                 action: "GET_BY_SORTEO_ACCUMULATED_ADJUSTED",
                 payload: { 
                     date,
                     lastDayAccumulated,
-                    firstItemAccumulated: adjustedSorteosAndMovements[adjustedSorteosAndMovements.length - 1]?.accumulated,
-                    lastItemAccumulated: adjustedSorteosAndMovements[0]?.accumulated,
+                    firstItemAccumulated: sorteosAndMovements[sorteosAndMovements.length - 1]?.accumulated,
+                    lastItemAccumulated: sorteosAndMovements[0]?.accumulated,
                 },
             });
         }
 
-        return adjustedSorteosAndMovements;
+        return sorteosAndMovements;
     },
 
     /**
