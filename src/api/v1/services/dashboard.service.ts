@@ -1206,8 +1206,14 @@ export const DashboardService = {
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
       // Convertir a strings de fecha para filtros usando crDateService
-      const monthStartStr = crDateService.dateUTCToCRString(monthStart);
-      const monthEndStr = crDateService.dateUTCToCRString(todayRange.fromAt); // Usar fromAt de todayRange para obtener el día de hoy
+      // ✅ CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
+      // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
+      const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
+
+      // ✅ CRÍTICO: Para consultas de Prisma con campos @db.Date, necesitamos crear Dates que representen
+      // el día completo como DATE (sin hora). monthEndStr ya es el día de hoy en formato YYYY-MM-DD
+      const monthStartDate = new Date(`${monthStartStr}T00:00:00.000Z`);
+      const monthEndDate = new Date(`${monthEndStr}T00:00:00.000Z`);
 
       // Construir filtros WHERE desde inicio del mes hasta hoy (Saldo a Hoy)
       const monthBaseFilters = buildTicketBaseFilters(
@@ -1298,11 +1304,12 @@ export const DashboardService = {
       );
 
       // Obtener statements del mes completo
+      // ✅ CRÍTICO: Usar monthStartDate y monthEndDate (DATE sin hora) para campos @db.Date
       const monthStatements = await prisma.accountStatement.findMany({
         where: {
           date: {
-            gte: monthStart,
-            lte: monthEnd,
+            gte: monthStartDate,
+            lte: monthEndDate,
           },
           vendedorId: null,
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : { ventanaId: { not: null } }),
@@ -1311,11 +1318,12 @@ export const DashboardService = {
       });
 
       // Obtener collections del mes
+      // ✅ CRÍTICO: Usar monthStartDate y monthEndDate (DATE sin hora) para campos @db.Date
       const monthCollections = await prisma.accountPayment.findMany({
         where: {
           date: {
-            gte: monthStart,
-            lte: monthEnd,
+            gte: monthStartDate,
+            lte: monthEndDate,
           },
           vendedorId: null,
           isReversed: false,
@@ -1765,8 +1773,9 @@ export const DashboardService = {
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
       // Convertir a strings de fecha para filtros usando crDateService
-      const monthStartStr = crDateService.dateUTCToCRString(monthStart);
-      const monthEndStr = crDateService.dateUTCToCRString(todayRange.fromAt); // Usar fromAt de todayRange para obtener el día de hoy
+      // ✅ CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
+      // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
+      const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
 
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
@@ -2221,8 +2230,9 @@ export const DashboardService = {
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
       // Convertir a strings de fecha para filtros usando crDateService
-      const monthStartStr = crDateService.dateUTCToCRString(monthStart);
-      const monthEndStr = crDateService.dateUTCToCRString(todayRange.fromAt); // Usar fromAt de todayRange para obtener el día de hoy
+      // ✅ CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
+      // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
+      const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
 
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
@@ -2653,8 +2663,9 @@ export const DashboardService = {
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
       // Convertir a strings de fecha para filtros usando crDateService
-      const monthStartStr = crDateService.dateUTCToCRString(monthStart);
-      const monthEndStr = crDateService.dateUTCToCRString(todayRange.fromAt); // Usar fromAt de todayRange para obtener el día de hoy
+      // ✅ CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
+      // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
+      const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
 
       const monthBaseFilters = buildTicketBaseFilters(
         "t",
