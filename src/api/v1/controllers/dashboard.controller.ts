@@ -8,6 +8,7 @@ import { DashboardExportService } from "../services/dashboard-export.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { validateVentanaUser } from "../../../utils/rbac";
 import prisma from "../../../core/prismaClient";
+import { crDateService } from "../../../utils/crDateService";
 
 // Nota: Usa el mismo patrón que Venta/Sales módulo
 // date: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'range'
@@ -131,35 +132,29 @@ export const DashboardController = {
       throw new AppError("El parámetro 'dimension' debe ser 'ventana'", 400);
     }
 
-    // ✅ Calcular rango del mes actual en zona horaria de Costa Rica (UTC-6)
-    const COSTA_RICA_TZ = 'America/Costa_Rica';
-    const now = new Date();
-
-    // Obtener fecha actual en Costa Rica
-    const nowCR = new Date(now.toLocaleString('en-US', { timeZone: COSTA_RICA_TZ }));
-
-    // Primer día del mes actual en Costa Rica (00:00:00)
-    const firstDayOfMonth = new Date(nowCR.getFullYear(), nowCR.getMonth(), 1, 0, 0, 0, 0);
-
-    // Fecha actual en Costa Rica (hora actual)
-    const toDate = nowCR;
+    // ✅ Usar resolveDateRange existente para calcular correctamente el mes actual en CR timezone
+    // Para "month-to-date", necesitamos desde el primer día del mes hasta HOY (no hasta el último día)
+    const monthRange = resolveDateRange('month'); // Primer día del mes
+    const todayRange = resolveDateRange('today'); // Hoy
 
     // ✅ Aplicar RBAC para obtener ventanaId y bancaId según el usuario
     const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
-    // ✅ Llamar al servicio existente con el rango calculado
+    // ✅ Llamar al servicio existente con el rango calculado (desde primer día del mes hasta hoy)
     const result = await DashboardService.calculateGanancia({
-      fromDate: firstDayOfMonth,
-      toDate: toDate,
+      fromDate: monthRange.fromAt, // Primer día del mes en CR (06:00:00 UTC)
+      toDate: todayRange.toAt, // Fin del día de hoy en CR
       ventanaId,
       bancaId,
       dimension: 'ventana',
     }, req.user!.role);
 
-    // ✅ Obtener nombre del mes en español
+    // ✅ Obtener nombre del mes en español desde la fecha actual en CR
+    const nowCRStr = crDateService.dateUTCToCRString(new Date());
+    const [year, month] = nowCRStr.split('-').map(Number);
     const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
                         'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const monthName = monthNames[nowCR.getMonth()];
+    const monthName = monthNames[month - 1];
 
     // ✅ Mapear resultado a estructura esperada por el frontend
     return success(res, {
@@ -175,10 +170,11 @@ export const DashboardController = {
         margin: parseFloat(result.margin.toFixed(2)),
       },
       meta: {
-        fromDate: firstDayOfMonth.toISOString(),
-        toDate: toDate.toISOString(),
-        timezone: COSTA_RICA_TZ,
+        fromDate: monthRange.fromAt.toISOString(),
+        toDate: todayRange.toAt.toISOString(),
+        timezone: monthRange.tz,
         monthName: monthName,
+        description: `Month-to-date (${monthRange.description.split('(')[1]?.split(' to')[0]} to today)`,
       },
     });
   },
