@@ -1009,8 +1009,138 @@ export async function getStatementDirect(
         bancaId
     );
 
+    // ✅ NUEVO: Obtener saldos del mes anterior para agregarlos como movimiento especial al primer día
+    // Esto permite que el saldo se intercale naturalmente con los sorteos, igual que los pagos/cobros
+    const firstDayOfMonthStr = `${yearForMonth}-${String(monthForMonth).padStart(2, '0')}-01`;
+    const previousMonthBalancesByEntity = new Map<string, number>();
+    
+    // ✅ CRÍTICO: Obtener saldo del mes anterior ANTES de procesar statements
+    // Esto asegura que el movimiento especial esté disponible incluso si no hay ventas el primer día
+    let previousMonthBalanceForMovement: number = 0;
+    if (dimension === "banca") {
+        previousMonthBalanceForMovement = await getPreviousMonthFinalBalance(
+            effectiveMonth,
+            "banca",
+            undefined,
+            undefined,
+            bancaId || null
+        );
+    } else if (dimension === "ventana") {
+        previousMonthBalanceForMovement = await getPreviousMonthFinalBalance(
+            effectiveMonth,
+            "ventana",
+            ventanaId || null,
+            undefined,
+            bancaId
+        );
+    } else {
+        previousMonthBalanceForMovement = await getPreviousMonthFinalBalance(
+            effectiveMonth,
+            "vendedor",
+            undefined,
+            vendedorId || null,
+            bancaId
+        );
+    }
+    
+    // ✅ CRÍTICO: Agregar movimiento especial directamente a movementsByDate para el primer día
+    // Esto asegura que esté disponible incluso si no hay ventas ni movimientos ese día
+    if (previousMonthBalanceForMovement !== 0) {
+        const firstDayMovements = movementsByDate.get(firstDayOfMonthStr) || [];
+        const entityId = dimension === "banca" 
+            ? (bancaId || 'null')
+            : dimension === "ventana"
+                ? (ventanaId || 'null')
+                : (vendedorId || 'null');
+        
+        // Agregar movimiento especial al inicio del día
+        firstDayMovements.unshift({
+            id: `previous-month-balance-${entityId}`,
+            type: "payment" as const,
+            amount: previousMonthBalanceForMovement,
+            method: "Saldo del mes anterior",
+            notes: `Saldo arrastrado del mes anterior`,
+            isReversed: false,
+            createdAt: new Date(`${firstDayOfMonthStr}T00:00:00.000Z`).toISOString(),
+            date: firstDayOfMonthStr,
+            time: "00:00",
+            balance: previousMonthBalanceForMovement,
+            bancaId: dimension === "banca" ? (bancaId || null) : null,
+            ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
+            vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
+        });
+        movementsByDate.set(firstDayOfMonthStr, firstDayMovements);
+    }
+    
+    // Obtener todas las entidades únicas que aparecerán en los statements (para casos con múltiples entidades)
+    const allEntityIdsForPreviousBalance = new Set<string>();
+    for (const [dateKey, entry] of byDateAndDimension.entries()) {
+        let entityId: string;
+        if (dimension === "banca") {
+            entityId = entry.bancaId || 'null';
+        } else if (dimension === "ventana") {
+            entityId = entry.ventanaId || 'null';
+        } else {
+            entityId = entry.vendedorId || 'null';
+        }
+        allEntityIdsForPreviousBalance.add(entityId);
+    }
+    
+    // Obtener saldos del mes anterior para cada entidad (para casos con múltiples entidades)
+    for (const entityId of allEntityIdsForPreviousBalance) {
+        let balance: number;
+        if (dimension === "banca") {
+            balance = await getPreviousMonthFinalBalance(
+                effectiveMonth,
+                "banca",
+                undefined,
+                undefined,
+                entityId === 'null' ? null : entityId
+            );
+        } else if (dimension === "ventana") {
+            balance = await getPreviousMonthFinalBalance(
+                effectiveMonth,
+                "ventana",
+                entityId === 'null' ? null : entityId,
+                undefined,
+                bancaId
+            );
+        } else {
+            balance = await getPreviousMonthFinalBalance(
+                effectiveMonth,
+                "vendedor",
+                undefined,
+                entityId === 'null' ? null : entityId,
+                bancaId
+            );
+        }
+        previousMonthBalancesByEntity.set(entityId, Number(balance));
+    }
+
     // ✅ NUEVO: Incorporar días que solo tienen movimientos (sin ventas)
     // ✅ NOTA: NO filtrar aquí - necesitamos todos los movimientos del mes para calcular acumulados correctos
+    // ✅ CRÍTICO: Asegurar que el primer día tenga una entrada en byDateAndDimension si hay movimiento especial
+    if (previousMonthBalanceForMovement !== 0 && !byDateAndDimension.has(firstDayOfMonthStr)) {
+        // Crear entrada vacía para el primer día si no existe (para que el movimiento especial se muestre)
+        byDateAndDimension.set(firstDayOfMonthStr, {
+            bancaId: dimension === "banca" ? (bancaId || null) : null,
+            bancaName: null,
+            bancaCode: null,
+            ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
+            ventanaName: null,
+            ventanaCode: null,
+            vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
+            vendedorName: null,
+            vendedorCode: null,
+            totalSales: 0,
+            totalPayouts: 0,
+            totalTicketsCount: 0,
+            commissionListero: 0,
+            commissionVendedor: 0,
+            payoutTicketsCount: 0,
+        });
+    }
+    
     for (const [dateKey, movements] of movementsByDate.entries()) {
         // El filtro se aplicará al final después de calcular la acumulación
 
@@ -1078,14 +1208,27 @@ export async function getStatementDirect(
     // Construir statements desde el mapa agrupado
     // ✅ NOTA: NO filtrar aquí - necesitamos todos los días del mes para calcular acumulados correctos
     // El filtro se aplicará al final después de calcular la acumulación
-    // ✅ CRÍTICO: Usar Promise.all para procesar en paralelo y permitir await dentro
-    const allStatementsFromMonthPromises = Array.from(byDateAndDimension.entries())
+    // ✅ CRÍTICO: Procesar días en orden secuencial para arrastrar acumulados correctamente
+    // Mantener un mapa del último accumulated por entidad para cada día
+    const lastAccumulatedByEntity = new Map<string, number>(); // Clave: `${date}_${entityId}`, Valor: último accumulated
+    
+    // Ordenar entradas por fecha ASC para procesar en orden cronológico
+    const sortedEntries = Array.from(byDateAndDimension.entries()).sort(([keyA], [keyB]) => {
+        const dateA = shouldGroupByDate ? keyA : keyA.split("_")[0];
+        const dateB = shouldGroupByDate ? keyB : keyB.split("_")[0];
+        return dateA.localeCompare(dateB); // ASC
+    });
+    
+    const allStatementsFromMonthPromises = sortedEntries
         .map(async ([key, entry]) => {
             // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_entidad
             const date = shouldGroupByDate ? key : key.split("_")[0];
 
             // ✅ NUEVO: Obtener movimientos y desglose por sorteo según si hay agrupación
+            // El movimiento especial "Saldo del mes anterior" ya está en movementsByDate para el primer día
             const allMovementsForDate = movementsByDate.get(date) || [];
+            let movementsWithPreviousBalance = [...allMovementsForDate];
+            
             let movements: any[];
             let bySorteo: any[];
 
@@ -1118,15 +1261,30 @@ export async function getStatementDirect(
              * ========================================================================
              */
             // ✅ CRÍTICO: Inicializar movements ANTES de cualquier uso (necesario tanto si hay caché como si no)
+            // Usar movementsWithPreviousBalance que incluye el saldo del mes anterior como movimiento especial
             if (shouldGroupByDate) {
-                movements = allMovementsForDate;
+                movements = movementsWithPreviousBalance;
             } else {
                 // Sin agrupación: filtrar por entidad
                 // ✅ CRÍTICO: Cuando hay un ID específico en el filtro (bancaId, ventanaId, vendedorId),
                 // findMovementsByDateRange ya filtra correctamente en la BD, pero puede haber múltiples entidades
                 // en byDateAndDimension. Necesitamos filtrar por la entidad específica de esta entrada.
                 // PRIORIDAD: Usar el ID del filtro directamente cuando está presente (más confiable que entry.ventanaId)
-                movements = allMovementsForDate.filter((m: any) => {
+                // ✅ CRÍTICO: Usar movementsWithPreviousBalance (no allMovementsForDate) para incluir el movimiento especial
+                movements = movementsWithPreviousBalance.filter((m: any) => {
+                    // ✅ CRÍTICO: El movimiento especial "Saldo del mes anterior" debe incluirse siempre si corresponde a esta entidad
+                    if (m.id?.startsWith('previous-month-balance-')) {
+                        let entityId: string;
+                        if (dimension === "banca") {
+                            entityId = entry.bancaId || 'null';
+                        } else if (dimension === "ventana") {
+                            entityId = entry.ventanaId || 'null';
+                        } else {
+                            entityId = entry.vendedorId || 'null';
+                        }
+                        return m.id === `previous-month-balance-${entityId}`;
+                    }
+                    
                     if (dimension === "banca") {
                         // ✅ CRÍTICO: Usar bancaId del filtro si está presente (más confiable)
                         // Si no hay filtro, usar entry.bancaId (puede ser null si hay múltiples bancas)
@@ -1252,12 +1410,14 @@ export async function getStatementDirect(
             const commissionToUse = dimension === "vendedor" ? entry.commissionVendedor : entry.commissionListero;
 
             // Calcular totales de pagos y cobros del DÍA (para el statement diario)
-            const totalPaid = movements
-                .filter((m: any) => m.type === "payment" && !m.isReversed)
-                .reduce((sum: number, m: any) => sum + m.amount, 0);
-            const totalCollected = movements
-                .filter((m: any) => m.type === "collection" && !m.isReversed)
-                .reduce((sum: number, m: any) => sum + m.amount, 0);
+            // ✅ CRÍTICO: Excluir el movimiento especial "Saldo del mes anterior" de los totales del día
+            // Solo debe afectar el acumulado, no los totales de pagos/cobros del día
+            const totalPaid = Number(movements
+                .filter((m: any) => m.type === "payment" && !m.isReversed && !m.id?.startsWith('previous-month-balance-'))
+                .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0));
+            const totalCollected = Number(movements
+                .filter((m: any) => m.type === "collection" && !m.isReversed && !m.id?.startsWith('previous-month-balance-'))
+                .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0));
 
             // ✅ CRÍTICO: Balance del día = ventas - premios - comisiones + movimientos
             // Los movimientos (pagos/cobros) deben participar en el balance diario
@@ -1270,7 +1430,53 @@ export async function getStatementDirect(
             const remainingBalance = 0; // Temporal, se calcula después
 
             // ✅ NUEVO: Intercalar sorteos y movimientos en una lista unificada
-            const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date);
+            // El saldo del mes anterior ya está incluido como movimiento especial en movements
+            // ✅ CRÍTICO: Obtener el acumulado del día anterior para arrastrar el acumulado progresivo
+            // Para el primer día, el acumulado inicial es 0 (el movimiento especial ya tiene el balance)
+            // Para días siguientes, usar el último accumulated del día anterior de la misma entidad
+            let initialAccumulated = 0;
+            
+            // Calcular clave de entidad para buscar el acumulado del día anterior
+            const entityKey = shouldGroupByDate 
+                ? date // Si hay agrupación, usar solo la fecha
+                : dimension === "banca"
+                    ? `${date}_${bancaId || entry.bancaId || 'null'}`
+                    : dimension === "ventana"
+                        ? `${date}_${ventanaId || entry.ventanaId || 'null'}`
+                        : `${date}_${vendedorId || entry.vendedorId || 'null'}`;
+            
+            // Calcular fecha del día anterior
+            const [year, month, day] = date.split('-').map(Number);
+            const previousDayDate = new Date(Date.UTC(year, month - 1, day));
+            previousDayDate.setUTCDate(previousDayDate.getUTCDate() - 1);
+            const previousDateStr = `${previousDayDate.getUTCFullYear()}-${String(previousDayDate.getUTCMonth() + 1).padStart(2, '0')}-${String(previousDayDate.getUTCDate()).padStart(2, '0')}`;
+            
+            // Buscar el último accumulated del día anterior de la misma entidad
+            const previousEntityKey = shouldGroupByDate
+                ? previousDateStr
+                : dimension === "banca"
+                    ? `${previousDateStr}_${bancaId || entry.bancaId || 'null'}`
+                    : dimension === "ventana"
+                        ? `${previousDateStr}_${ventanaId || entry.ventanaId || 'null'}`
+                        : `${previousDateStr}_${vendedorId || entry.vendedorId || 'null'}`;
+            
+            initialAccumulated = lastAccumulatedByEntity.get(previousEntityKey) || 0;
+            
+            const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date, initialAccumulated);
+            
+            // ✅ CRÍTICO: Guardar el último accumulated de este día para el siguiente día
+            if (sorteosAndMovements.length > 0) {
+                // Ordenar por scheduledAt ASC para obtener el último accumulated (más reciente)
+                const sorted = [...sorteosAndMovements].sort((a, b) => {
+                    const timeA = new Date(a.scheduledAt).getTime();
+                    const timeB = new Date(b.scheduledAt).getTime();
+                    return timeA - timeB; // ASC
+                });
+                const lastAccumulated = sorted.length > 0 
+                    ? Number(sorted[sorted.length - 1].accumulated || 0)
+                    : 0;
+                lastAccumulatedByEntity.set(entityKey, lastAccumulated);
+            }
 
             const statement: any = {
                 date,
@@ -2076,6 +2282,54 @@ export async function getStatementDirect(
 
     // ✅ CRÍTICO: Paso 3 - Acumular remainingBalance progresivamente para TODOS los días del mes
     const accumulatedByEntity = new Map<string, number>();
+    
+    // ✅ NUEVO: Obtener saldos del mes anterior para inicializar el acumulado del día 1
+    // Esto asegura que el remainingBalance del statement del día 1 incluya el saldo del mes anterior
+    const previousMonthBalancesForAccumulation = new Map<string, number>();
+    for (const statement of allStatementsFromMonth) {
+        const statementDate = statement.date;
+        if (statementDate === firstDayOfMonthStr) {
+            let entityId: string;
+            if (dimension === "banca") {
+                entityId = statement.bancaId || 'null';
+            } else if (dimension === "ventana") {
+                entityId = statement.ventanaId || 'null';
+            } else {
+                entityId = statement.vendedorId || 'null';
+            }
+            
+            // Si no hemos obtenido el saldo del mes anterior para esta entidad, obtenerlo
+            if (!previousMonthBalancesForAccumulation.has(entityId)) {
+                let previousMonthBalance = 0;
+                if (dimension === "banca") {
+                    previousMonthBalance = await getPreviousMonthFinalBalance(
+                        effectiveMonth,
+                        "banca",
+                        undefined,
+                        undefined,
+                        statement.bancaId || null
+                    );
+                } else if (dimension === "ventana") {
+                    previousMonthBalance = await getPreviousMonthFinalBalance(
+                        effectiveMonth,
+                        "ventana",
+                        statement.ventanaId || null,
+                        undefined,
+                        statement.bancaId
+                    );
+                } else {
+                    previousMonthBalance = await getPreviousMonthFinalBalance(
+                        effectiveMonth,
+                        "vendedor",
+                        undefined,
+                        statement.vendedorId || null,
+                        statement.bancaId
+                    );
+                }
+                previousMonthBalancesForAccumulation.set(entityId, previousMonthBalance);
+            }
+        }
+    }
 
     for (const statement of allStatementsFromMonth) {
         // Obtener el ID correcto según la dimensión
@@ -2088,13 +2342,15 @@ export async function getStatementDirect(
             entityId = statement.vendedorId || 'null';
         }
 
-        // Obtener el acumulado previo de esta entidad (empieza en 0)
-        const prevAccumulated = accumulatedByEntity.get(entityId) || 0;
+        // ✅ CRÍTICO: El remainingBalance NO debe incluir el saldo del mes anterior
+        // El saldo del mes anterior solo se suma en totals.totalRemainingBalance
+        // Por lo tanto, el acumulado empieza en 0 para todos los días
+        const prevAccumulated = Number(accumulatedByEntity.get(entityId) || 0);
 
         // ✅ CRÍTICO: Usar el valor diario guardado, NO el que está en statement.remainingBalance
         // porque ese ya puede haber sido sobreescrito en una iteración anterior
-        const dailyValue = dailyRemainingBalance.get(statement)!;
-        const newAccumulated = prevAccumulated + dailyValue;
+        const dailyValue = Number(dailyRemainingBalance.get(statement)!);
+        const newAccumulated = Number(prevAccumulated) + Number(dailyValue);
 
         // Actualizar el mapa de acumulados
         accumulatedByEntity.set(entityId, newAccumulated);
@@ -2112,74 +2368,39 @@ export async function getStatementDirect(
         statement.canEdit = !statement.isSettled;
     }
 
-    // ✅ CRÍTICO: Paso 3.5 - Acumular balance por sorteo progresivamente a través de todos los días
-    // El accumulated dentro del día ya está calculado correctamente por intercalateSorteosAndMovements
-    // Solo necesitamos arrastrar el último accumulated del día anterior
-    let lastDayAccumulated = 0; // Último accumulated del día anterior (acumulado general del día)
-    
+    // ✅ CRÍTICO: Paso 3.5 - El acumulado por sorteo ya está calculado correctamente
+    // El saldo del mes anterior ya está intercalado como movimiento especial al inicio del primer día
+    // No necesitamos ajustar nada aquí, el acumulado se calcula naturalmente desde el movimiento especial
+    // Solo necesitamos actualizar remainingBalance para que coincida con el último accumulated del bySorteo
     for (const statement of allStatementsFromMonth) {
         if (!statement.bySorteo || statement.bySorteo.length === 0) {
-            // Si no hay bySorteo, el acumulado se mantiene igual al día anterior
             continue;
         }
 
-        // Ordenar bySorteo por scheduledAt ASC para encontrar el último accumulated del día
+        // Ordenar bySorteo por scheduledAt ASC para obtener el último accumulated (más reciente)
         const bySorteoSorted = [...statement.bySorteo].sort((a, b) => {
             const timeA = new Date(a.scheduledAt).getTime();
             const timeB = new Date(b.scheduledAt).getTime();
             return timeA - timeB; // ASC
         });
-
-        // El último accumulated del día (el más reciente en orden cronológico)
-        // Este es el acumulado total dentro del día (desde 0)
-        const lastAccumulatedOfDay = bySorteoSorted.length > 0 
-            ? (bySorteoSorted[bySorteoSorted.length - 1].accumulated || 0)
+        
+        const lastAccumulated = bySorteoSorted.length > 0 
+            ? Number(bySorteoSorted[bySorteoSorted.length - 1].accumulated || 0)
             : 0;
-
-        // Sumar el accumulated del día anterior a todos los items del día actual
-        const adjustedBySorteo = statement.bySorteo.map((item: SorteoOrMovement) => {
-            const newAccumulated = lastDayAccumulated + (item.accumulated || 0);
-            return {
-                ...item,
-                accumulated: newAccumulated,
-                sorteoAccumulated: newAccumulated,
-            };
-        });
-
-        // Actualizar statement.bySorteo (ya está ordenado DESC por intercalateSorteosAndMovements)
-        statement.bySorteo = adjustedBySorteo;
-
-        // ✅ CRÍTICO: Actualizar remainingBalance para que coincida con el último accumulated del bySorteo
-        // El remainingBalance debe ser igual al último accumulated del día (que ya incluye el acumulado progresivo)
-        // Esto asegura que el "total del día" coincida con el acumulado progresivo de los sorteos
-        if (adjustedBySorteo.length > 0) {
-            // El último accumulated es el más reciente en orden cronológico
-            // Ordenar adjustedBySorteo por scheduledAt ASC para obtener el último (más reciente)
-            const adjustedBySorteoSorted = [...adjustedBySorteo].sort((a, b) => {
-                const timeA = new Date(a.scheduledAt).getTime();
-                const timeB = new Date(b.scheduledAt).getTime();
-                return timeA - timeB; // ASC
-            });
-            
-            const lastAccumulatedAdjusted = adjustedBySorteoSorted.length > 0 
-                ? (adjustedBySorteoSorted[adjustedBySorteoSorted.length - 1].accumulated || 0)
-                : 0;
-            
-            statement.remainingBalance = parseFloat(lastAccumulatedAdjusted.toFixed(2));
-            
-            // Recalcular isSettled y canEdit con el nuevo remainingBalance
-            statement.isSettled = calculateIsSettled(
-                statement.ticketCount,
-                statement.remainingBalance,
-                statement.totalPaid,
-                statement.totalCollected
-            );
-            statement.canEdit = !statement.isSettled;
-        }
-
-        // Actualizar el último accumulated para el siguiente día
-        // Es el último accumulated ajustado del día actual (que ya incluye lastDayAccumulated)
-        lastDayAccumulated = lastDayAccumulated + lastAccumulatedOfDay;
+        
+        // ✅ CRÍTICO: El remainingBalance del statement debe mostrar el balance acumulado correcto
+        // El lastAccumulated del bySorteo ya incluye el saldo del mes anterior (intercalado como movimiento especial)
+        // NO debemos modificar el remainingBalance, debe seguir mostrando el balance acumulado correcto
+        statement.remainingBalance = parseFloat(Number(lastAccumulated).toFixed(2));
+        
+        // Recalcular isSettled y canEdit con el nuevo remainingBalance
+        statement.isSettled = calculateIsSettled(
+            statement.ticketCount,
+            statement.remainingBalance,
+            statement.totalPaid,
+            statement.totalCollected
+        );
+        statement.canEdit = !statement.isSettled;
     }
 
     // ✅ CRÍTICO: Paso 4 - Filtrar para retornar solo los días dentro del período solicitado
@@ -2196,10 +2417,108 @@ export async function getStatementDirect(
     const totalListeroCommission = statements.reduce((sum, s) => sum + s.listeroCommission, 0);
     const totalVendedorCommission = statements.reduce((sum, s) => sum + s.vendedorCommission, 0);
     const totalCommissionToUse = vendedorId ? totalVendedorCommission : totalListeroCommission;
-    const totalBalance = totalSales - totalPayouts - totalCommissionToUse;
+    const totalBalanceBase = totalSales - totalPayouts - totalCommissionToUse;
     const totalPaid = statements.reduce((sum, s) => sum + s.totalPaid, 0);
     const totalCollected = statements.reduce((sum, s) => sum + s.totalCollected, 0);
-    const totalRemainingBalance = totalBalance - totalCollected + totalPaid;
+    
+    // ✅ NUEVO: Obtener saldo del mes anterior para incluir en totals.totalBalance y totals.totalRemainingBalance
+    // El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
+    // Solo si el período incluye el día 1 del mes
+    let periodPreviousMonthBalance = 0;
+    const startDateCRStrForPeriod = crDateService.dateUTCToCRString(startDate);
+    const periodIncludesFirstDay = startDateCRStrForPeriod === firstDayOfMonthStr;
+    
+    if (periodIncludesFirstDay) {
+        // Obtener el saldo del mes anterior usando la función existente
+        if (dimension === "banca") {
+            periodPreviousMonthBalance = await getPreviousMonthFinalBalance(
+                effectiveMonth,
+                "banca",
+                undefined,
+                undefined,
+                bancaId || null
+            );
+        } else if (dimension === "ventana") {
+            periodPreviousMonthBalance = await getPreviousMonthFinalBalance(
+                effectiveMonth,
+                "ventana",
+                ventanaId || null,
+                undefined,
+                bancaId
+            );
+        } else {
+            periodPreviousMonthBalance = await getPreviousMonthFinalBalance(
+                effectiveMonth,
+                "vendedor",
+                undefined,
+                vendedorId || null,
+                bancaId
+            );
+        }
+    }
+    
+    // ✅ CRÍTICO: totalRemainingBalance debe incluir el saldo del mes anterior si el período incluye el día 1
+    // Según el requerimiento: totals.totalRemainingBalance = saldoFinalMesAnterior + SUM(statements[].remainingBalance)
+    // El remainingBalance de cada statement se calcula acumulativamente, pero el del día 1 ya incluye el saldo del mes anterior
+    // ✅ CRÍTICO: totalRemainingBalance debe incluir el saldo del mes anterior si el período incluye el día 1
+    // Según el requerimiento: totals.totalRemainingBalance = saldoFinalMesAnterior + totalBalance del período
+    // El remainingBalance de cada statement ya incluye el saldo del mes anterior (para mostrar el balance acumulado correcto)
+    // Pero el totalRemainingBalance debe ser simplemente: saldo del mes anterior + totalBalance del período
+    // Esto evita duplicar el saldo del mes anterior cuando sumamos los remainingBalance de múltiples días
+    // ✅ CRÍTICO: Asegurar que periodPreviousMonthBalance sea un número
+    // getPreviousMonthFinalBalance puede devolver un Decimal de Prisma, string, o number
+    let periodPreviousMonthBalanceNum = 0;
+    if (typeof periodPreviousMonthBalance === 'string') {
+        periodPreviousMonthBalanceNum = parseFloat(periodPreviousMonthBalance);
+    } else if (typeof periodPreviousMonthBalance === 'object' && periodPreviousMonthBalance !== null && 'toNumber' in periodPreviousMonthBalance) {
+        periodPreviousMonthBalanceNum = (periodPreviousMonthBalance as any).toNumber();
+    } else {
+        periodPreviousMonthBalanceNum = Number(periodPreviousMonthBalance) || 0;
+    }
+    
+    // ✅ CRÍTICO: totalBalance debe incluir el saldo del mes anterior si el período incluye el día 1
+    // Cuando se consulta el mes completo, totalBalance debe ser: saldo del mes anterior + totalBalanceBase
+    const totalBalance = periodIncludesFirstDay 
+        ? Number(periodPreviousMonthBalanceNum) + Number(totalBalanceBase)
+        : Number(totalBalanceBase);
+    
+    // ✅ CRÍTICO: totalRemainingBalance debe incluir pagos y cobros del período
+    // totalRemainingBalance = totalBalance + totalPaid - totalCollected
+    const totalRemainingBalance = Number(totalBalance) + Number(totalPaid) - Number(totalCollected);
+    
+    // ✅ DEBUG: Log para verificar la conversión
+    logger.info({
+        layer: "service",
+        action: "TOTALS_REMAINING_BALANCE_CONVERSION",
+        payload: {
+            dimension,
+            periodPreviousMonthBalance,
+            periodPreviousMonthBalanceType: typeof periodPreviousMonthBalance,
+            periodPreviousMonthBalanceNum,
+            totalBalance,
+            totalBalanceType: typeof totalBalance,
+            totalRemainingBalance,
+        },
+    });
+    
+    // ✅ DEBUG: Log para verificar el cálculo
+    logger.info({
+        layer: "service",
+        action: "TOTALS_REMAINING_BALANCE_CALCULATION",
+        payload: {
+            dimension,
+            periodIncludesFirstDay,
+            periodPreviousMonthBalance: Number(periodPreviousMonthBalance),
+            totalBalance,
+            totalRemainingBalance,
+            calculation: `${Number(periodPreviousMonthBalance)} + ${totalBalance} = ${totalRemainingBalance}`,
+            statementsCount: statements.length,
+            statementsRemainingBalances: statements.map(s => ({
+                date: s.date,
+                remainingBalance: s.remainingBalance
+            })),
+        },
+    });
 
     const functionEndTime = Date.now();
     logger.info({
@@ -2216,6 +2535,39 @@ export async function getStatementDirect(
     });
 
    
+
+    // ✅ DEBUG: Log para verificar el valor que se devuelve
+    logger.info({
+        layer: "service",
+        action: "TOTALS_RETURN_VALUE",
+        payload: {
+            dimension,
+            totalRemainingBalance,
+            totalRemainingBalanceFormatted: parseFloat(totalRemainingBalance.toFixed(2)),
+            periodPreviousMonthBalance,
+            totalBalance,
+        },
+    });
+
+    // ✅ DEBUG: Log final antes de devolver la respuesta
+    logger.info({
+        layer: "service",
+        action: "TOTALS_FINAL_BEFORE_RETURN",
+        payload: {
+            dimension,
+            periodIncludesFirstDay,
+            periodPreviousMonthBalanceNum,
+            totalBalanceBase,
+            totalBalance,
+            totalPaid,
+            totalCollected,
+            totalRemainingBalance,
+            totalsObject: {
+                totalBalance: parseFloat(totalBalance.toFixed(2)),
+                totalRemainingBalance: parseFloat(totalRemainingBalance.toFixed(2)),
+            },
+        },
+    });
 
     return {
         statements,

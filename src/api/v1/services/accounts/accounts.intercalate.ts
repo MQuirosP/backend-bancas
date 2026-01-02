@@ -52,7 +52,7 @@ export interface SorteoOrMovement {
   sorteoAccumulated?: number;
 
   // Campos específicos de movimientos (undefined en sorteos)
-  type?: "payment" | "collection";
+  type?: "payment" | "collection" | "initial_balance"; // ✅ NUEVO: "initial_balance" para saldo del mes anterior
   amount?: number;
   method?: string;
   notes?: string | null;
@@ -101,7 +101,8 @@ export function intercalateSorteosAndMovements(
     date: string;
     time?: string | null; // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
   }>,
-  dateStr: string
+  dateStr: string,
+  initialAccumulated: number = 0 // ✅ NUEVO: Acumulado inicial (para arrastrar saldo del día anterior)
 ): SorteoOrMovement[] {
 
   // PASO 1: Convertir movimientos a formato unificado
@@ -112,6 +113,9 @@ export function intercalateSorteosAndMovements(
     // Los movimientos reversados se muestran en el frontend con estilo diferente
     // pero NO afectan el balance acumulado (balance: 0 si isReversed)
 
+    // ✅ CRÍTICO: Detectar si es el movimiento especial "Saldo del mes anterior"
+    const isPreviousMonthBalance = movement.id?.startsWith('previous-month-balance-');
+    
     // ✅ CRÍTICO: Usar time si está disponible y es válido, sino usar createdAt
     // Si movement.time existe, combinar date + time en CR y convertir a UTC para scheduledAt
     // Esto permite que el usuario especifique la hora del movimiento y se intercale correctamente con sorteos
@@ -180,15 +184,21 @@ export function intercalateSorteosAndMovements(
       timeToDisplay = formatTime12h(createdAtDate);
     }
 
+    // ✅ CRÍTICO: Convertir amount a Number (puede venir como Decimal de Prisma)
+    const amountNum = Number(movement.amount || 0);
+    
     // ✅ CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
     // Si no está reversado, usar el monto normal
+    // ✅ NUEVO: El movimiento especial "Saldo del mes anterior" se trata como saldo inicial (balance positivo)
     const effectiveBalance = movement.isReversed 
       ? 0 
-      : (movement.type === 'payment' ? movement.amount : -movement.amount);
+      : (isPreviousMonthBalance 
+          ? amountNum // Saldo inicial (positivo)
+          : (movement.type === 'payment' ? amountNum : -amountNum));
 
     movementItems.push({
       sorteoId: `mov-${movement.id}`,
-      sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
+      sorteoName: isPreviousMonthBalance ? 'Saldo inicial' : (movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado'),
       scheduledAt: scheduledAt.toISOString(),
       date: movement.date,
       time: timeToDisplay, // ✅ Usar time validado o createdAt convertido a CR
@@ -207,8 +217,8 @@ export function intercalateSorteosAndMovements(
       ticketCount: 0,
 
       // Campos específicos de movimiento
-      type: movement.type,
-      amount: movement.amount, // ✅ Mantener monto original para mostrar en frontend
+      type: isPreviousMonthBalance ? 'initial_balance' : movement.type, // ✅ NUEVO: Tipo especial para saldo inicial
+      amount: amountNum, // ✅ CRÍTICO: Convertir a Number (puede venir como Decimal de Prisma)
       method: movement.method,
       notes: movement.notes,
       isReversed: movement.isReversed, // ✅ Frontend usa esto para aplicar estilo diferente
@@ -226,25 +236,28 @@ export function intercalateSorteosAndMovements(
     // Por lo tanto, ya está en UTC y podemos usarlo directamente
     const sorteoScheduledAt = new Date(sorteo.scheduledAt);
     
+    // ✅ CRÍTICO: Convertir balance a Number (puede venir como Decimal de Prisma)
+    const balanceNum = Number(sorteo.balance || 0);
+    
     return {
       sorteoId: sorteo.sorteoId,
       sorteoName: sorteo.sorteoName,
       scheduledAt: sorteoScheduledAt.toISOString(), // ✅ Ya está en UTC
       date: dateStr,
       time: formatTime12h(sorteoScheduledAt),
-      balance: sorteo.balance,
+      balance: balanceNum, // ✅ CRÍTICO: Asegurar que balance sea Number
       accumulated: 0,
       chronologicalIndex: 0,
       totalChronological: 0,
 
       loteriaId: sorteo.loteriaId,
       loteriaName: sorteo.loteriaName,
-      sales: sorteo.sales,
-      payouts: sorteo.payouts,
-      listeroCommission: sorteo.listeroCommission,
-      vendedorCommission: sorteo.vendedorCommission,
+      sales: Number(sorteo.sales || 0), // ✅ CRÍTICO: Convertir a Number
+      payouts: Number(sorteo.payouts || 0), // ✅ CRÍTICO: Convertir a Number
+      listeroCommission: Number(sorteo.listeroCommission || 0), // ✅ CRÍTICO: Convertir a Number
+      vendedorCommission: Number(sorteo.vendedorCommission || 0), // ✅ CRÍTICO: Convertir a Number
       ticketCount: sorteo.ticketCount,
-      sorteoAccumulated: sorteo.sorteoAccumulated,
+      sorteoAccumulated: Number(sorteo.sorteoAccumulated || 0), // ✅ CRÍTICO: Convertir a Number
     };
   });
 
@@ -257,12 +270,16 @@ export function intercalateSorteosAndMovements(
   });
 
   // PASO 4: Calcular accumulated y chronologicalIndex
-  let eventAccumulated = 0;
+  // ✅ CRÍTICO: Iniciar con el acumulado inicial (saldo del día anterior o saldo del mes anterior para el primer día)
+  let eventAccumulated = Number(initialAccumulated || 0);
   const totalEvents = allEvents.length;
   const eventsWithAccumulated = allEvents.map((event, index) => {
-    eventAccumulated += event.balance;
+    // ✅ CRÍTICO: Convertir balance a Number (puede venir como Decimal de Prisma)
+    const balanceNum = Number(event.balance || 0);
+    eventAccumulated += balanceNum;
     return {
       ...event,
+      balance: balanceNum, // ✅ CRÍTICO: Asegurar que balance sea Number
       accumulated: eventAccumulated,
       sorteoAccumulated: eventAccumulated, // ✅ NUEVO: También asignar a sorteoAccumulated para movimientos
       chronologicalIndex: index + 1,

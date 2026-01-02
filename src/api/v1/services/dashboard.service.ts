@@ -1195,6 +1195,14 @@ export const DashboardService = {
       ensureEntry(ventana.id, ventana.name, ventana.isActive);
     }
 
+    // ✅ NUEVO: Verificar si el período filtrado es el mes completo
+    // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
+    const monthRangeCheck = resolveDateRange('month');
+    const todayRangeCheck = resolveDateRange('today');
+    const isMonthComplete = 
+      filters.fromDate.getTime() === monthRangeCheck.fromAt.getTime() &&
+      filters.toDate.getTime() === todayRangeCheck.toAt.getTime();
+
     // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada ventana
     const monthSaldoByVentana = new Map<string, number>();
     {
@@ -1484,6 +1492,35 @@ export const DashboardService = {
       
     }
 
+    // ✅ NUEVO: Verificar si el período filtrado es el mes completo
+    // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
+    const monthRangeCheck2 = resolveDateRange('month');
+    const todayRangeCheck2 = resolveDateRange('today');
+    const isMonthComplete2 = 
+      filters.fromDate.getTime() === monthRangeCheck2.fromAt.getTime() &&
+      filters.toDate.getTime() === todayRangeCheck2.toAt.getTime();
+
+    // ✅ NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
+    // El saldo del mes anterior es un movimiento más, como un pago, que debe incluirse en el balance del período
+    const periodPreviousMonthBalances = new Map<string, number>();
+    const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+    const periodIncludesFirstDay = filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime();
+    
+    if (periodIncludesFirstDay) {
+      const nowCRStr = crDateService.dateUTCToCRString(new Date());
+      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
+      const allVentanaIdsForPeriod = Array.from(aggregated.keys());
+      const previousMonthBalancesForPeriod = await getPreviousMonthFinalBalancesBatch(
+        effectiveMonth,
+        "ventana",
+        allVentanaIdsForPeriod,
+        filters.bancaId
+      );
+      for (const [ventanaId, balance] of previousMonthBalancesForPeriod.entries()) {
+        periodPreviousMonthBalances.set(ventanaId, Number(balance || 0));
+      }
+    }
+
     const byVentana = Array.from(aggregated.values())
       .map((entry) => {
         const totalPaid = entry.totalPaid;
@@ -1492,7 +1529,18 @@ export const DashboardService = {
         // Balance: Ventas - Premios - Comisión Listero
         // Comisión Vendedor es SOLO informativa, no se resta del balance
         const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
-        const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
+        // ✅ CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
+        // Solo si el período incluye el día 1 del mes
+        const previousMonthBalance = periodPreviousMonthBalances.get(entry.ventanaId) || 0;
+        const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
+        
+        // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
+        // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
+        const monthlyAccumulatedBalance = monthSaldoByVentana.get(entry.ventanaId) ?? 0;
+        const recalculatedRemainingBalance = isMonthComplete2
+          ? monthlyAccumulatedBalance 
+          : periodRemainingBalance;
+        
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado
         const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
 
@@ -1838,6 +1886,14 @@ export const DashboardService = {
       entry.totalPaidToCustomer += payment.amountPaid ?? 0;
     }
 
+    // ✅ NUEVO: Verificar si el período filtrado es el mes completo
+    // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
+    const monthRangeCheck = resolveDateRange('month');
+    const todayRangeCheck = resolveDateRange('today');
+    const isMonthComplete = 
+      filters.fromDate.getTime() === monthRangeCheck.fromAt.getTime() &&
+      filters.toDate.getTime() === todayRangeCheck.toAt.getTime();
+
     // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
     const monthSaldoByVendedor = new Map<string, number>();
     {
@@ -1977,6 +2033,27 @@ export const DashboardService = {
       }
     }
 
+    // ✅ NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
+    // El saldo del mes anterior es un movimiento más, como un pago, que debe incluirse en el balance del período
+    const periodPreviousMonthBalances = new Map<string, number>();
+    const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+    const periodIncludesFirstDay = filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime();
+    
+    if (periodIncludesFirstDay) {
+      const nowCRStr = crDateService.dateUTCToCRString(new Date());
+      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
+      const allVendedorIdsForPeriod = Array.from(aggregated.keys());
+      const previousMonthBalancesForPeriod = await getPreviousMonthFinalBalancesBatch(
+        effectiveMonth,
+        "vendedor",
+        allVendedorIdsForPeriod,
+        filters.bancaId
+      );
+      for (const [vendedorId, balance] of previousMonthBalancesForPeriod.entries()) {
+        periodPreviousMonthBalances.set(vendedorId, Number(balance || 0));
+      }
+    }
+
     const byVendedor = Array.from(aggregated.values())
       .map((entry) => {
         const totalPaid = entry.totalPaid;
@@ -1984,7 +2061,18 @@ export const DashboardService = {
         const totalPaidToCustomer = entry.totalPaidToCustomer;
         // Balance: Ventas - Premios - Comisión Vendedor
         const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
-        const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
+        // ✅ CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
+        // Solo si el período incluye el día 1 del mes
+        const previousMonthBalance = periodPreviousMonthBalances.get(entry.vendedorId) || 0;
+        const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
+        
+        // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
+        // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
+        const monthlyAccumulatedBalance = monthSaldoByVendedor.get(entry.vendedorId) ?? 0;
+        const recalculatedRemainingBalance = isMonthComplete 
+          ? monthlyAccumulatedBalance 
+          : periodRemainingBalance;
+        
         const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
 
         return {
@@ -2333,6 +2421,14 @@ export const DashboardService = {
       ensureEntry(ventana.id, ventana.name, ventana.isActive);
     }
 
+    // ✅ NUEVO: Verificar si el período filtrado es el mes completo
+    // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
+    const monthRangeCheck3 = resolveDateRange('month');
+    const todayRangeCheck3 = resolveDateRange('today');
+    const isMonthComplete3 = 
+      filters.fromDate.getTime() === monthRangeCheck3.fromAt.getTime() &&
+      filters.toDate.getTime() === todayRangeCheck3.toAt.getTime();
+
     // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana en CxP
     const monthSaldoByVentana = new Map<string, number>();
     {
@@ -2431,14 +2527,23 @@ export const DashboardService = {
       // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-      const ventanaIds = Array.from(monthAggregated.keys());
+      
+      // ✅ CRÍTICO: Obtener TODAS las ventanas que están en aggregated (período filtrado)
+      // no solo las que tienen datos en el mes actual, para incluir saldo del mes anterior
+      const allVentanaIds = new Set([
+        ...Array.from(aggregated.keys()),
+        ...Array.from(monthAggregated.keys()),
+      ]);
+      
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
         "ventana",
-        ventanaIds,
+        Array.from(allVentanaIds),
         filters.bancaId
       );
       
+      // ✅ CRÍTICO: Calcular saldoAHoy para TODAS las ventanas
+      // Primero procesar ventanas con datos del mes actual
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
         // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
         const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
@@ -2446,6 +2551,40 @@ export const DashboardService = {
         // Sumar saldo del mes anterior al acumulado del mes actual
         const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
         monthSaldoByVentana.set(ventanaId, saldoAHoy);
+      }
+      
+      // ✅ CRÍTICO: Incluir también ventanas que solo tienen saldo del mes anterior
+      // pero no tienen datos en el mes actual (para que aparezcan en monthlyAccumulated)
+      // IMPORTANTE: Esto asegura que ventanas con saldo anterior pero sin actividad del mes actual
+      // también tengan su saldo a hoy calculado
+      for (const ventanaId of allVentanaIds) {
+        if (!monthSaldoByVentana.has(ventanaId)) {
+          // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
+          const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
+          // Si solo tiene saldo del mes anterior, ese es su saldo a hoy
+          monthSaldoByVentana.set(ventanaId, previousMonthBalance);
+        }
+      }
+    }
+
+    // ✅ NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
+    // El saldo del mes anterior es un movimiento más, como un pago, que debe incluirse en el balance del período
+    const periodPreviousMonthBalances = new Map<string, number>();
+    const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+    const periodIncludesFirstDay = filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime();
+    
+    if (periodIncludesFirstDay) {
+      const nowCRStr = crDateService.dateUTCToCRString(new Date());
+      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
+      const allVentanaIdsForPeriod = Array.from(aggregated.keys());
+      const previousMonthBalancesForPeriod = await getPreviousMonthFinalBalancesBatch(
+        effectiveMonth,
+        "ventana",
+        allVentanaIdsForPeriod,
+        filters.bancaId
+      );
+      for (const [ventanaId, balance] of previousMonthBalancesForPeriod.entries()) {
+        periodPreviousMonthBalances.set(ventanaId, Number(balance || 0));
       }
     }
 
@@ -2458,7 +2597,18 @@ export const DashboardService = {
         // Balance: Ventas - Premios - Comisión Listero
         // Comisión Vendedor es SOLO informativa, no se resta del balance
         const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
-        const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
+        // ✅ CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
+        // Solo si el período incluye el día 1 del mes
+        const previousMonthBalance = periodPreviousMonthBalances.get(entry.ventanaId) || 0;
+        const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
+        
+        // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
+        // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
+        const monthlyAccumulatedBalance = monthSaldoByVentana.get(entry.ventanaId) ?? 0;
+        const recalculatedRemainingBalance = isMonthComplete3 
+          ? monthlyAccumulatedBalance 
+          : periodRemainingBalance;
+        
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
         const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
 
@@ -2807,6 +2957,14 @@ export const DashboardService = {
       entry.totalPaidToCustomer += payment.amountPaid ?? 0;
     }
 
+    // ✅ NUEVO: Verificar si el período filtrado es el mes completo
+    // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
+    const monthRangeCheck = resolveDateRange('month');
+    const todayRangeCheck = resolveDateRange('today');
+    const isMonthComplete = 
+      filters.fromDate.getTime() === monthRangeCheck.fromAt.getTime() &&
+      filters.toDate.getTime() === todayRangeCheck.toAt.getTime();
+
     // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
     const monthSaldoByVendedor = new Map<string, number>();
     {
@@ -3029,7 +3187,15 @@ export const DashboardService = {
         const totalPaidToVentana = entry.totalPaidToVentana || 0;
         // Balance: Ventas - Premios - Comisión Vendedor
         const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
-        const recalculatedRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
+        const periodRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
+        
+        // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
+        // Si el período es un día específico, usar solo el balance del período
+        const monthlyAccumulatedBalance = monthSaldoByVendedor.get(entry.vendedorId) ?? 0;
+        const recalculatedRemainingBalance = isMonthComplete 
+          ? monthlyAccumulatedBalance 
+          : periodRemainingBalance;
+        
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
         const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
 
