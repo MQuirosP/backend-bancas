@@ -2524,24 +2524,6 @@ export async function getStatementDirect(
     const previousMonthBalanceNum = Number(previousMonthBalance);
     const monthlyRemainingBalance = previousMonthBalanceNum + monthlyTotalBalance;
     
-    logger.info({
-        layer: "service",
-        action: "MONTHLY_ACCUMULATED_CALCULATION",
-        payload: {
-            effectiveMonth, // Mes del período filtrado (puede ser diferente al mes actual)
-            currentMonthStr, // ✅ NUEVO: Mes actual usado para monthlyAccumulated
-            dimension,
-            vendedorId,
-            previousMonthBalance: previousMonthBalanceNum,
-            monthlyTotalBalance,
-            monthlyTotalSales,
-            monthlyTotalPayouts,
-            monthlyTotalCommissionToUse,
-            monthlyTotalPaid,
-            monthlyTotalCollected,
-            monthlyRemainingBalance,
-        },
-    });
 
     const monthlyAccumulated: StatementTotals = {
         totalSales: parseFloat(monthlyTotalSales.toFixed(2)),
@@ -2868,40 +2850,6 @@ export async function getStatementDirect(
     // ✅ CRÍTICO: totalRemainingBalance debe incluir pagos y cobros del período
     // totalRemainingBalance = totalBalance + totalPaid - totalCollected
     const totalRemainingBalance = Number(totalBalance) + Number(totalPaid) - Number(totalCollected);
-    
-    // ✅ DEBUG: Log para verificar la conversión
-    logger.info({
-        layer: "service",
-        action: "TOTALS_REMAINING_BALANCE_CONVERSION",
-        payload: {
-            dimension,
-            periodPreviousMonthBalance,
-            periodPreviousMonthBalanceType: typeof periodPreviousMonthBalance,
-            periodPreviousMonthBalanceNum,
-            totalBalance,
-            totalBalanceType: typeof totalBalance,
-            totalRemainingBalance,
-        },
-    });
-    
-    // ✅ DEBUG: Log para verificar el cálculo
-    logger.info({
-        layer: "service",
-        action: "TOTALS_REMAINING_BALANCE_CALCULATION",
-        payload: {
-            dimension,
-            periodIncludesFirstDay,
-            periodPreviousMonthBalance: Number(periodPreviousMonthBalance),
-            totalBalance,
-            totalRemainingBalance,
-            calculation: `${Number(periodPreviousMonthBalance)} + ${totalBalance} = ${totalRemainingBalance}`,
-            statementsCount: statements.length,
-            statementsRemainingBalances: statements.map(s => ({
-                date: s.date,
-                remainingBalance: s.remainingBalance
-            })),
-        },
-    });
 
     const functionEndTime = Date.now();
     logger.info({
@@ -2914,41 +2862,6 @@ export async function getStatementDirect(
             vendedorId,
             statementsCount: statements.length,
             totalTimeMs: functionEndTime - functionStartTime,
-        },
-    });
-
-   
-
-    // ✅ DEBUG: Log para verificar el valor que se devuelve
-    logger.info({
-        layer: "service",
-        action: "TOTALS_RETURN_VALUE",
-        payload: {
-            dimension,
-            totalRemainingBalance,
-            totalRemainingBalanceFormatted: parseFloat(totalRemainingBalance.toFixed(2)),
-            periodPreviousMonthBalance,
-            totalBalance,
-        },
-    });
-
-    // ✅ DEBUG: Log final antes de devolver la respuesta
-    logger.info({
-        layer: "service",
-        action: "TOTALS_FINAL_BEFORE_RETURN",
-        payload: {
-            dimension,
-            periodIncludesFirstDay,
-            periodPreviousMonthBalanceNum,
-            totalBalanceBase,
-            totalBalance,
-            totalPaid,
-            totalCollected,
-            totalRemainingBalance,
-            totalsObject: {
-                totalBalance: parseFloat(totalBalance.toFixed(2)),
-                totalRemainingBalance: parseFloat(totalRemainingBalance.toFixed(2)),
-            },
         },
     });
 

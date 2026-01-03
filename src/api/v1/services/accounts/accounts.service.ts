@@ -432,17 +432,6 @@ export const AccountsService = {
                 if (dbStatement && dbStatement.remainingBalance !== null) {
                     // ✅ Usar el remainingBalance guardado directamente (mucho más rápido)
                     lastDayAccumulated = Number(dbStatement.remainingBalance);
-                    logger.info({
-                        layer: "service",
-                        action: "GET_PREVIOUS_DAY_ACCUMULATED_FROM_DB",
-                        payload: {
-                            date,
-                            previousDateStr,
-                            dimension: filters.dimension,
-                            lastDayAccumulated,
-                            remainingBalance: dbStatement.remainingBalance,
-                        },
-                    });
                 } else {
                     // ✅ Si no existe en la BD, calcular con getStatementDirect (fallback)
                     const [prevYear, prevMonth, prevDay] = previousDateStr.split('-').map(Number);
@@ -552,51 +541,13 @@ export const AccountsService = {
                         // (se calcula en el Paso 3.5 de getStatementDirect)
                         lastDayAccumulated = previousDayStatement.remainingBalance || 0;
                     }
-                    
-                    const foundDate = crDateService.dateUTCToCRString(new Date(previousDayStatement.date));
-                    logger.info({
-                        layer: "service",
-                        action: "GET_PREVIOUS_DAY_ACCUMULATED_SUCCESS",
-                        payload: {
-                            date,
-                            previousDateStr,
-                            foundDate, // ✅ NUEVO: Fecha del statement encontrado (puede ser diferente a previousDateStr)
-                            dimension: filters.dimension,
-                            vendedorId: filters.vendedorId,
-                            lastDayAccumulated,
-                            hasBySorteo: previousDayStatement.bySorteo && previousDayStatement.bySorteo.length > 0,
-                            remainingBalance: previousDayStatement.remainingBalance,
-                        },
-                    });
                 } else {
-                    logger.warn({
-                        layer: "service",
-                        action: "GET_PREVIOUS_DAY_ACCUMULATED_NOT_FOUND",
-                        payload: {
-                            date,
-                            previousDateStr,
-                            dimension: filters.dimension,
-                            vendedorId: filters.vendedorId,
-                            statementsCount: statementsFromMonthStart.statements?.length || 0,
-                            availableDates: statementsFromMonthStart.statements?.map((s: any) => 
-                                crDateService.dateUTCToCRString(new Date(s.date))
-                            ) || [],
-                        },
-                    });
+                    // No se encontró statement del día anterior, usar 0
                 }
                 } // ✅ Cierre del bloque else que comienza en la línea 446
             } catch (error) {
                 // Si hay error al obtener el día anterior (ej: no existe), usar 0
                 // Esto es normal para el primer día del mes o si no hay datos previos
-                logger.warn({
-                    layer: "service",
-                    action: "GET_PREVIOUS_DAY_ACCUMULATED_ERROR",
-                    payload: { 
-                        date, 
-                        previousDateStr, 
-                        error: error instanceof Error ? error.message : String(error) 
-                    },
-                });
                 lastDayAccumulated = 0;
             }
         }
@@ -683,29 +634,6 @@ export const AccountsService = {
                         vendedorId: filters.dimension === "vendedor" ? (filters.vendedorId || null) : null,
                     });
                     movementsByDate.set(date, firstDayMovements);
-                    
-                    logger.info({
-                        layer: "service",
-                        action: "GET_BY_SORTEO_ADDED_PREVIOUS_MONTH_BALANCE",
-                        payload: {
-                            date,
-                            dimension: filters.dimension,
-                            previousMonthBalance,
-                            entityId,
-                            bancaId: filters.bancaId,
-                            ventanaId: filters.ventanaId,
-                            vendedorId: filters.vendedorId,
-                        },
-                    });
-                } else {
-                    logger.warn({
-                        layer: "service",
-                        action: "GET_BY_SORTEO_PREVIOUS_MONTH_BALANCE_ALREADY_EXISTS",
-                        payload: {
-                            date,
-                            existingId: existingSpecialMovement.id,
-                        },
-                    });
                 }
             }
         }
@@ -790,20 +718,6 @@ export const AccountsService = {
         const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
         const initialAccumulated = isFirstDay ? previousMonthBalance : lastDayAccumulated;
         const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date, initialAccumulated);
-        
-        // Log para debugging
-        if (includePreviousDayAccumulated && sorteosAndMovements.length > 0) {
-            logger.info({
-                layer: "service",
-                action: "GET_BY_SORTEO_ACCUMULATED_ADJUSTED",
-                payload: { 
-                    date,
-                    lastDayAccumulated,
-                    firstItemAccumulated: sorteosAndMovements[sorteosAndMovements.length - 1]?.accumulated,
-                    lastItemAccumulated: sorteosAndMovements[0]?.accumulated,
-                },
-            });
-        }
 
         return sorteosAndMovements;
     },
