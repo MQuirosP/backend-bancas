@@ -272,18 +272,23 @@ export function intercalateSorteosAndMovements(
   });
 
   // PASO 4: Calcular accumulated y chronologicalIndex
-  // ✅ CRÍTICO: Iniciar con el acumulado inicial (saldo del día anterior o saldo del mes anterior para el primer día)
+  // ✅ CRÍTICO: Iniciar con el acumulado inicial (saldo del día anterior desde AccountStatement.accumulatedBalance
+  // o saldo del mes anterior para el primer día del mes)
+  // Este initialAccumulated DEBE venir desde AccountStatement.accumulatedBalance del día anterior
+  // para asegurar que el acumulado progresivo por sorteo sea correcto
   let eventAccumulated = Number(initialAccumulated || 0);
   const totalEvents = allEvents.length;
   const eventsWithAccumulated = allEvents.map((event, index) => {
     // ✅ CRÍTICO: Convertir balance a Number (puede venir como Decimal de Prisma)
     const balanceNum = Number(event.balance || 0);
+    // ✅ CRÍTICO: Acumular progresivamente: cada evento suma su balance al acumulado anterior
+    // El accumulated representa el saldo acumulado DESPUÉS de este evento
     eventAccumulated += balanceNum;
     return {
       ...event,
       balance: balanceNum, // ✅ CRÍTICO: Asegurar que balance sea Number
-      accumulated: eventAccumulated,
-      sorteoAccumulated: eventAccumulated, // ✅ NUEVO: También asignar a sorteoAccumulated para movimientos
+      accumulated: parseFloat(eventAccumulated.toFixed(2)), // ✅ Redondear a 2 decimales para consistencia
+      sorteoAccumulated: parseFloat(eventAccumulated.toFixed(2)), // ✅ NUEVO: También asignar a sorteoAccumulated para movimientos
       chronologicalIndex: index + 1,
       totalChronological: totalEvents,
     };
