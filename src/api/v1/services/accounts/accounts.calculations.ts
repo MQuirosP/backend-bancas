@@ -2782,9 +2782,10 @@ export async function getStatementDirect(
     // ✅ CRÍTICO: Paso 4 - Filtrar para retornar solo los días dentro del período solicitado
     // La acumulación ya se calculó correctamente para todos los días del mes
     // Ahora solo devolvemos los días que el usuario pidió ver
+    // ✅ CORREGIDO: statement.date ya es un string YYYY-MM-DD, no necesita conversión
     const statements = allStatementsFromMonth.filter(statement => {
-        const date = crDateService.dateUTCToCRString(new Date(statement.date));
-        return date >= startDateCRStr && date <= endDateCRStr;
+        const statementDateStr = statement.date; // Ya es YYYY-MM-DD
+        return statementDateStr >= startDateCRStr && statementDateStr <= endDateCRStr;
     });
 
     // ✅ CRÍTICO: Paso 5 - Calcular totales SOLO para los días filtrados
