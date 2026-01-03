@@ -2301,12 +2301,26 @@ export async function getStatementDirect(
             // NO usar accountStatementAccumulated porque puede estar desactualizado o incorrecto
             // El cálculo progresivo desde sorteos/movimientos es la fuente de verdad para el remainingBalance del día
             if (sorteosAndMovements.length > 0) {
-                // ✅ CORRECCIÓN CRÍTICA: intercalateSorteosAndMovements devuelve eventos ordenados DESC (más reciente primero)
-                // El primer elemento del array (índice 0) es el evento MÁS RECIENTE cronológicamente
-                // Este es el último evento del día y su accumulated es el saldo acumulado correcto al final del día
-                // NO necesitamos reordenar, solo tomar el primer elemento
-                const mostRecentEvent = sorteosAndMovements[0]; // Primer elemento = más reciente (DESC order)
+                // ✅ CORRECCIÓN CRÍTICA: Encontrar el evento MÁS RECIENTE cronológicamente
+                // Problema: Cuando hay múltiples sorteos a la misma hora, solo ordenar por scheduledAt no es suficiente
+                // Solución: Ordenar por scheduledAt DESC y luego por chronologicalIndex DESC
+                // El chronologicalIndex representa el orden de procesamiento (mayor índice = procesado después)
+                const sortedByChronology = [...sorteosAndMovements].sort((a, b) => {
+                    const timeA = new Date(a.scheduledAt).getTime();
+                    const timeB = new Date(b.scheduledAt).getTime();
+                    if (timeB !== timeA) {
+                        return timeB - timeA; // DESC por tiempo
+                    }
+                    // Si mismo tiempo, usar chronologicalIndex DESC (mayor índice = más reciente)
+                    const indexA = a.chronologicalIndex || 0;
+                    const indexB = b.chronologicalIndex || 0;
+                    return indexB - indexA; // DESC por índice
+                });
                 
+                // El primer elemento es el más reciente (mayor timestamp, o si igual, mayor chronologicalIndex)
+                const mostRecentEvent = sortedByChronology[0];
+                
+                // ✅ CRÍTICO: Verificar que el accumulated esté presente y sea válido
                 if (mostRecentEvent && mostRecentEvent.accumulated !== undefined && mostRecentEvent.accumulated !== null && !isNaN(Number(mostRecentEvent.accumulated))) {
                     statementRemainingBalance = Number(mostRecentEvent.accumulated);
                     
