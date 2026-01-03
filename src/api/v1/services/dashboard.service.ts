@@ -3074,7 +3074,12 @@ export const DashboardService = {
           isActive: true,
           deletedAt: null,
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
+          // ✅ CORRECCIÓN: User no tiene bancaId directo, se infiere a través de ventana.bancaId
+          ...(filters.bancaId ? { 
+            ventana: {
+              bancaId: filters.bancaId
+            }
+          } : {}),
         },
         select: { id: true },
       }).then(users => users.map(u => u.id));
