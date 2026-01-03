@@ -1,6 +1,7 @@
 // src/repositories/restrictionRule.repository.ts
 import prisma from "../core/prismaClient";
 import logger from "../core/logger";
+import { Role } from "@prisma/client";
 import { getCRLocalComponents } from "../utils/businessDate";
 import { SalesService } from "../api/v1/services/sales.service";
 import { getCachedCutoff, setCachedCutoff, invalidateRestrictionCaches, getCachedRestrictions, setCachedRestrictions } from "../utils/restrictionCache";
@@ -180,9 +181,48 @@ export const RestrictionRuleRepository = {
     const where: any = {};
     // Aplicar filtro isActive siempre (por defecto true si no se especifica)
     where.isActive = _isActive;
-    if (bancaId) where.bancaId = bancaId;
-    if (ventanaId) where.ventanaId = ventanaId;
-    if (userId) where.userId = userId;
+    
+    // ✅ CORRECCIÓN: Inferir bancaId cuando se consulta por bancaId pero las restricciones solo tienen ventanaId/vendedorId
+    if (bancaId) {
+        // Obtener ventanas y vendedores de esta banca para incluir sus restricciones
+        const ventanas = await prisma.ventana.findMany({
+            where: { bancaId },
+            select: { id: true },
+        });
+        const ventanaIds = ventanas.map(v => v.id);
+        
+        const vendedores = ventanaIds.length > 0 ? await prisma.user.findMany({
+            where: {
+                ventanaId: { in: ventanaIds },
+                role: Role.VENDEDOR,
+            },
+            select: { id: true },
+        }) : [];
+        const vendedorIds = vendedores.map(u => u.id);
+        
+        // Buscar restricciones que:
+        // 1. Tengan bancaId directamente, O
+        // 2. Tengan ventanaId de esta banca, O
+        // 3. Tengan userId (vendedor) de esta banca
+        const bancaOrConditions: any[] = [{ bancaId }];
+        if (ventanaIds.length > 0) {
+            bancaOrConditions.push({ ventanaId: { in: ventanaIds } });
+        }
+        if (vendedorIds.length > 0) {
+            bancaOrConditions.push({ userId: { in: vendedorIds } });
+        }
+        
+        // Si solo hay una condición, usar directamente, sino usar OR
+        if (bancaOrConditions.length === 1) {
+            Object.assign(where, bancaOrConditions[0]);
+        } else {
+            where.OR = bancaOrConditions;
+        }
+    } else {
+        if (ventanaId) where.ventanaId = ventanaId;
+        if (userId) where.userId = userId;
+    }
+    
     if (number) where.number = number;
 
     // Determinar si hay algún filtro de tipo especificado
@@ -199,26 +239,57 @@ export const RestrictionRuleRepository = {
       if (loteriaId) where.loteriaId = loteriaId;
       if (multiplierId) where.multiplierId = multiplierId;
 
+      // ✅ CRÍTICO: Combinar filtros de tipo con filtros de banca/ventana existentes
+      // Si ya hay un OR de bancaId, necesitamos combinar con AND
+      const typeFilterConditions: any[] = [];
+      
       if (_hasCutoff && _hasAmount) {
         // ambas clases de reglas
-        where.OR = [
+        typeFilterConditions.push(
           { AND: [{ salesCutoffMinutes: { not: null } }, { number: null }] },
-          { OR: [{ maxAmount: { not: null } }, { maxTotal: { not: null } }] },
-        ];
+          { OR: [{ maxAmount: { not: null } }, { maxTotal: { not: null } }] }
+        );
       } else if (_hasCutoff) {
         // solo cutoff: sin number
-        where.AND = [
-          ...(where.AND ?? []),
+        typeFilterConditions.push(
           { salesCutoffMinutes: { not: null } },
-          { number: null },
-        ];
+          { number: null }
+        );
       } else if (_hasAmount) {
         // solo montos (incluye automáticas con maxAmount/maxTotal)
-        where.OR = [
-          ...(where.OR ?? []),
+        typeFilterConditions.push(
           { maxAmount: { not: null } },
-          { maxTotal: { not: null } },
-        ];
+          { maxTotal: { not: null } }
+        );
+      }
+      
+      // Si hay filtros de tipo, combinarlos con los filtros existentes usando AND
+      if (typeFilterConditions.length > 0) {
+        const existingConditions = { ...where };
+        delete existingConditions.OR; // Separar OR si existe
+        
+        if (where.OR) {
+          // Si ya hay OR (de bancaId), usar AND para combinar
+          where.AND = [
+            { OR: where.OR },
+            ...(_hasCutoff && _hasAmount 
+              ? [{ OR: typeFilterConditions }]
+              : typeFilterConditions.length === 1 
+                ? typeFilterConditions 
+                : [{ OR: typeFilterConditions }]
+            )
+          ];
+          delete where.OR;
+        } else {
+          // Si no hay OR, agregar directamente
+          if (typeFilterConditions.length === 1) {
+            Object.assign(where, typeFilterConditions[0]);
+          } else if (_hasCutoff && _hasAmount) {
+            where.OR = typeFilterConditions;
+          } else {
+            where.AND = [...(where.AND ?? []), ...typeFilterConditions];
+          }
+        }
       }
     } else {
       // Si NO hay filtros de tipo, no aplicar ningún filtro de tipo (retornar TODAS las restricciones)
