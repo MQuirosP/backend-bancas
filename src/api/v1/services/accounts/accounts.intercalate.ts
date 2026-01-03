@@ -295,10 +295,18 @@ export function intercalateSorteosAndMovements(
   });
 
   // PASO 5: Ordenar DESC para presentación (más reciente primero)
+  // ✅ CRÍTICO: Si hay múltiples eventos con el mismo scheduledAt, ordenar por chronologicalIndex DESC
+  // Esto asegura que cuando hay sorteos a la misma hora, el último procesado (mayor índice) aparezca primero
   eventsWithAccumulated.sort((a, b) => {
     const timeA = new Date(a.scheduledAt).getTime();
     const timeB = new Date(b.scheduledAt).getTime();
-    return timeB - timeA; // DESC
+    if (timeB !== timeA) {
+      return timeB - timeA; // DESC por tiempo
+    }
+    // Si mismo tiempo, usar chronologicalIndex DESC (mayor índice = procesado después = más reciente)
+    const indexA = a.chronologicalIndex || 0;
+    const indexB = b.chronologicalIndex || 0;
+    return indexB - indexA; // DESC por índice
   });
 
   return eventsWithAccumulated;
