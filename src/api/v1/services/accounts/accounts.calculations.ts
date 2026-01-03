@@ -2180,18 +2180,19 @@ export async function getStatementDirect(
         });
 
     // ✅ NUEVO: Calcular monthlyAccumulated (Saldo a Hoy - acumulado desde inicio del mes hasta hoy)
-    // Esto es INMUTABLE respecto al período filtrado (siempre desde el día 1 del mes hasta hoy)
-    const [year, month] = effectiveMonth.split("-").map(Number);
-    const monthStartDate = new Date(Date.UTC(year, month - 1, 1)); // Primer día del mes
-
-    // ✅ FIX: Para monthlyAccumulated, usar la MISMA lógica que getMonthDateRange()
-    // pero aplicarla aquí para asegurar consistencia temporal dentro del mismo request
-    // Esto previene problemas cuando new Date() se llama en momentos diferentes
+    // Esto es INMUTABLE respecto al período filtrado (siempre desde el día 1 del mes ACTUAL hasta hoy)
+    // ✅ CRÍTICO: monthlyAccumulated SIEMPRE debe calcularse para el mes ACTUAL, no para effectiveMonth
+    // Esto es especialmente importante cuando se consulta por "week" que cruza meses
     const now = new Date();
-    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
-    const lastDayOfMonth = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
-    const isCurrentMonth = year === now.getUTCFullYear() && month === now.getUTCMonth() + 1;
-    const monthEndDate = isCurrentMonth ? (today < monthStartDate ? monthStartDate : today) : lastDayOfMonth;
+    const currentYear = now.getUTCFullYear();
+    const currentMonth = now.getUTCMonth() + 1;
+    const currentMonthStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+    
+    // ✅ CRÍTICO: Usar el mes ACTUAL para monthlyAccumulated, no effectiveMonth
+    const monthStartDate = new Date(Date.UTC(currentYear, currentMonth - 1, 1)); // Primer día del mes actual
+    const today = new Date(Date.UTC(currentYear, currentMonth - 1, now.getUTCDate(), 23, 59, 59, 999));
+    const lastDayOfMonth = new Date(Date.UTC(currentYear, currentMonth, 0, 23, 59, 59, 999));
+    const monthEndDate = today < monthStartDate ? monthStartDate : today;
     const monthStartDateCRStr = crDateService.dateUTCToCRString(monthStartDate);
     const monthEndDateCRStr = crDateService.dateUTCToCRString(monthEndDate);
 
@@ -2506,8 +2507,10 @@ export async function getStatementDirect(
     // ✅ CRÍTICO: monthlyRemainingBalance debe ser igual a monthlyTotalBalance (que ya incluye movimientos)
     // En statements individuales: remainingBalance = balance (que ya incluye movimientos)
     // ✅ NUEVO: Obtener saldo final del mes anterior y sumarlo al acumulado del mes actual
+    // ✅ CRÍTICO: Usar currentMonthStr (mes actual) para obtener el saldo del mes anterior correcto
+    // No usar effectiveMonth porque puede ser el mes del inicio del rango (ej: diciembre si la semana cruza meses)
     const previousMonthBalance = await getPreviousMonthFinalBalance(
-        effectiveMonth,
+        currentMonthStr, // ✅ CORREGIDO: Usar mes actual, no effectiveMonth
         dimension,
         ventanaId,
         vendedorId,
@@ -2525,7 +2528,8 @@ export async function getStatementDirect(
         layer: "service",
         action: "MONTHLY_ACCUMULATED_CALCULATION",
         payload: {
-            effectiveMonth,
+            effectiveMonth, // Mes del período filtrado (puede ser diferente al mes actual)
+            currentMonthStr, // ✅ NUEVO: Mes actual usado para monthlyAccumulated
             dimension,
             vendedorId,
             previousMonthBalance: previousMonthBalanceNum,
