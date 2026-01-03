@@ -1283,6 +1283,107 @@ export async function getStatementDirect(
         return dateA.localeCompare(dateB); // ASC
     });
     
+    // ✅ OPTIMIZACIÓN CRÍTICA: Pre-cargar TODOS los AccountStatement necesarios en una sola consulta
+    // Esto evita hacer consultas secuenciales dentro del loop (causa principal de lentitud)
+    const allDatesInRange = Array.from(new Set(sortedEntriesFinal.map(([key]) => {
+        const date = shouldGroupByDate ? key : key.split("_")[0];
+        return date;
+    }))).sort();
+    
+    // Calcular rango de fechas (día anterior del primero hasta el último día)
+    const firstDateStr = allDatesInRange[0];
+    const [firstYear, firstMonth, firstDay] = firstDateStr.split('-').map(Number);
+    const firstDate = new Date(Date.UTC(firstYear, firstMonth - 1, firstDay));
+    const previousDayOfFirst = new Date(firstDate);
+    previousDayOfFirst.setUTCDate(previousDayOfFirst.getUTCDate() - 1);
+    
+    const lastDateStr = allDatesInRange[allDatesInRange.length - 1];
+    const [lastYear, lastMonth, lastDay] = lastDateStr.split('-').map(Number);
+    const lastDate = new Date(Date.UTC(lastYear, lastMonth - 1, lastDay));
+    
+    // Pre-cargar todos los AccountStatement del rango (incluyendo día anterior del primero)
+    const preloadedStatementsMap = new Map<string, Map<string, any>>(); // fecha -> Map<bancaId|ventanaId|vendedorId, statement>
+    
+    if (shouldGroupByDate && dimension === "banca" && !bancaId) {
+        // Pre-cargar todos los statements de bancas del rango (para consolidado)
+        const preloadedStatements = await prisma.accountStatement.findMany({
+            where: {
+                date: {
+                    gte: previousDayOfFirst,
+                    lte: lastDate,
+                },
+                bancaId: { not: null },
+                ventanaId: null,
+                vendedorId: null,
+            },
+            select: {
+                date: true,
+                bancaId: true,
+                accumulatedBalance: true,
+            },
+        });
+        
+        // Agrupar por fecha y sumar accumulatedBalance
+        for (const stmt of preloadedStatements) {
+            if (stmt.accumulatedBalance !== null) {
+                const dateStr = crDateService.postgresDateToCRString(stmt.date);
+                if (!preloadedStatementsMap.has(dateStr)) {
+                    preloadedStatementsMap.set(dateStr, new Map());
+                }
+                const dateMap = preloadedStatementsMap.get(dateStr)!;
+                // Para consolidado, sumar todos los accumulatedBalance
+                const existing = dateMap.get('_consolidado') || 0;
+                dateMap.set('_consolidado', existing + Number(stmt.accumulatedBalance));
+            }
+        }
+    } else {
+        // Pre-cargar statements específicos según dimensión
+        const whereClause: any = {
+            date: {
+                gte: previousDayOfFirst,
+                lte: lastDate,
+            },
+        };
+        
+        if (dimension === "vendedor" && vendedorId) {
+            whereClause.vendedorId = vendedorId;
+        } else if (dimension === "ventana" && ventanaId) {
+            whereClause.ventanaId = ventanaId;
+            whereClause.vendedorId = null;
+        } else if (dimension === "banca" && bancaId) {
+            whereClause.bancaId = bancaId;
+            whereClause.ventanaId = null;
+            whereClause.vendedorId = null;
+        }
+        
+        const preloadedStatements = await prisma.accountStatement.findMany({
+            where: whereClause,
+            select: {
+                date: true,
+                bancaId: true,
+                ventanaId: true,
+                vendedorId: true,
+                accumulatedBalance: true,
+            },
+        });
+        
+        for (const stmt of preloadedStatements) {
+            if (stmt.accumulatedBalance !== null) {
+                const dateStr = crDateService.postgresDateToCRString(stmt.date);
+                if (!preloadedStatementsMap.has(dateStr)) {
+                    preloadedStatementsMap.set(dateStr, new Map());
+                }
+                const dateMap = preloadedStatementsMap.get(dateStr)!;
+                const entityKey = dimension === "banca" 
+                    ? (stmt.bancaId || 'null')
+                    : dimension === "ventana"
+                        ? (stmt.ventanaId || 'null')
+                        : (stmt.vendedorId || 'null');
+                dateMap.set(entityKey, stmt.accumulatedBalance);
+            }
+        }
+    }
+    
     // ✅ CRÍTICO: Procesar en orden SECUENCIAL, no en paralelo
     // Esto asegura que el acumulado del día anterior esté disponible cuando se procesa el día actual
     const allStatementsFromMonth: any[] = [];
@@ -1546,8 +1647,16 @@ export async function getStatementDirect(
                             ? `${date}_${ventanaId || entry.ventanaId || 'null'}`
                             : `${date}_${vendedorId || entry.vendedorId || 'null'}`;
             
-            // ✅ CRÍTICO: Si es el primer día del mes, incluir el saldo del mes anterior
-            if (date === firstDayOfMonthStr) {
+            // ✅ CRÍTICO: Detectar si es el primer día del mes del día actual (no solo del mes de inicio del rango)
+            // Esto es importante cuando el rango cruza meses (ej: semana del 29/12 al 04/01)
+            const [currentYear, currentMonth, currentDay] = date.split('-').map(Number);
+            const isFirstDayOfCurrentMonth = currentDay === 1;
+            const currentMonthStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+            
+            // ✅ CRÍTICO: Si es el primer día del mes actual, usar el saldo del mes anterior correspondiente
+            if (isFirstDayOfCurrentMonth) {
+                // Obtener el saldo del mes anterior para el mes del día actual
+                
                 let entityIdForPreviousMonth: string;
                 if (dimension === "banca") {
                     entityIdForPreviousMonth = entry.bancaId || bancaId || 'null';
@@ -1556,13 +1665,62 @@ export async function getStatementDirect(
                 } else {
                     entityIdForPreviousMonth = entry.vendedorId || vendedorId || 'null';
                 }
-                // ✅ CRÍTICO: Intentar obtener el saldo específico de la entidad, sino usar el general
-                let previousMonthBalance = previousMonthBalancesByEntity.get(entityIdForPreviousMonth);
-                if (previousMonthBalance === undefined || previousMonthBalance === 0) {
-                    // Si no hay saldo específico, usar el saldo general del mes anterior
-                    previousMonthBalance = previousMonthBalanceForMovement;
+                
+                // ✅ CRÍTICO: Obtener saldo del mes anterior para el mes del día actual
+                let previousMonthBalance: number;
+                
+                // Primero intentar usar el saldo pre-calculado si estamos en el mes de inicio del rango
+                if (currentMonthStr === effectiveMonth && date === firstDayOfMonthStr) {
+                    const cachedBalance = previousMonthBalancesByEntity.get(entityIdForPreviousMonth);
+                    previousMonthBalance = (cachedBalance !== undefined && cachedBalance !== 0) 
+                        ? cachedBalance 
+                        : previousMonthBalanceForMovement;
+                } else {
+                    // Para otros meses (cuando el rango cruza meses), calcular dinámicamente
+                    try {
+                        if (dimension === "banca") {
+                            previousMonthBalance = await getPreviousMonthFinalBalance(
+                                currentMonthStr,
+                                "banca",
+                                undefined,
+                                undefined,
+                                entry.bancaId || bancaId || null
+                            );
+                        } else if (dimension === "ventana") {
+                            previousMonthBalance = await getPreviousMonthFinalBalance(
+                                currentMonthStr,
+                                "ventana",
+                                entry.ventanaId || ventanaId || null,
+                                undefined,
+                                entry.bancaId || bancaId || undefined
+                            );
+                        } else {
+                            previousMonthBalance = await getPreviousMonthFinalBalance(
+                                currentMonthStr,
+                                "vendedor",
+                                entry.ventanaId || ventanaId || undefined,
+                                entry.vendedorId || vendedorId || null,
+                                entry.bancaId || bancaId || undefined
+                            );
+                        }
+                        previousMonthBalance = Number(previousMonthBalance);
+                    } catch (error) {
+                        logger.warn({
+                            layer: "service",
+                            action: "PREVIOUS_MONTH_BALANCE_FETCH_ERROR",
+                            payload: {
+                                date,
+                                currentMonthStr,
+                                dimension,
+                                error: (error as Error).message,
+                            },
+                        });
+                        previousMonthBalance = 0;
+                    }
                 }
+                
                 initialAccumulated = Number(previousMonthBalance);
+                // Reducir logs innecesarios - solo log si hay problema
             } else {
                 // Calcular fecha del día anterior
                 const [year, month, day] = date.split('-').map(Number);
@@ -1570,54 +1728,274 @@ export async function getStatementDirect(
                 previousDayDate.setUTCDate(previousDayDate.getUTCDate() - 1);
                 const previousDateStr = `${previousDayDate.getUTCFullYear()}-${String(previousDayDate.getUTCMonth() + 1).padStart(2, '0')}-${String(previousDayDate.getUTCDate()).padStart(2, '0')}`;
                 
+                // ✅ CRÍTICO: Detectar si el día anterior está en un mes diferente
+                const previousDateMonthStr = `${previousDayDate.getUTCFullYear()}-${String(previousDayDate.getUTCMonth() + 1).padStart(2, '0')}`;
+                const previousDateIsDifferentMonth = previousDateMonthStr !== currentMonthStr;
+                
                 // ✅ CRÍTICO: Intentar obtener el remainingBalance del día anterior desde AccountStatement
                 // Esto es más confiable que depender solo de lastAccumulatedByEntity
                 let previousDayRemainingBalance: number | null = null;
+                let daysSearched = 0; // Declarar fuera para usarlo en el warning después
+                const maxSearchDays = 30; // Constante para el límite de búsqueda
                 
                 try {
-                    // Determinar IDs para buscar el statement del día anterior
+                    // ✅ CRÍTICO: Determinar IDs para buscar el statement del día anterior
+                    // Cuando shouldGroupByDate === true y dimension === "banca" sin bancaId,
+                    // cada entry tiene su propio bancaId, así que buscamos el statement específico de esa banca
                     let targetBancaId: string | undefined = undefined;
                     let targetVentanaId: string | undefined = undefined;
                     let targetVendedorId: string | undefined = undefined;
                     
-                    if (dimension === "banca") {
-                        if (bancaId) {
-                            targetBancaId = bancaId;
-                        } else {
+                    // ✅ CRÍTICO: Cuando shouldGroupByDate === true y dimension === "banca" sin bancaId,
+                    // el entry tiene bancaId: null porque agrupa todas las bancas.
+                    // En este caso, debemos sumar accumulatedBalance de TODAS las bancas del día anterior.
+                    // ✅ OPTIMIZACIÓN: Usar statements pre-cargados en lugar de consultar BD
+                    if (shouldGroupByDate && dimension === "banca" && !bancaId) {
+                        // ✅ CASO ESPECIAL: Consolidado - buscar en mapa pre-cargado
+                        let searchDate = new Date(previousDayDate);
+                        daysSearched = 0;
+                        
+                        while (previousDayRemainingBalance === null && daysSearched < maxSearchDays) {
+                            const searchDateStr = crDateService.postgresDateToCRString(searchDate);
+                            const dateMap = preloadedStatementsMap.get(searchDateStr);
+                            
+                            if (dateMap && dateMap.has('_consolidado')) {
+                                previousDayRemainingBalance = dateMap.get('_consolidado');
+                                // Solo log si hay discrepancia (no log cada día)
+                                break;
+                            }
+                            
+                            searchDate.setUTCDate(searchDate.getUTCDate() - 1);
+                            daysSearched++;
+                        }
+                    } else {
+                        // ✅ CASO NORMAL: Buscar statement específico de la entidad
+                        if (dimension === "banca") {
+                            targetBancaId = bancaId || entry.bancaId || undefined;
+                            if (!shouldGroupByDate) {
+                                targetVentanaId = entry.ventanaId || undefined;
+                                targetVendedorId = entry.vendedorId || undefined;
+                            }
+                        } else if (dimension === "ventana") {
+                            targetBancaId = entry.bancaId || undefined;
+                            targetVentanaId = ventanaId || entry.ventanaId || undefined;
+                            if (!shouldGroupByDate) {
+                                targetVendedorId = entry.vendedorId || undefined;
+                            }
+                        } else if (dimension === "vendedor") {
                             targetBancaId = entry.bancaId || undefined;
                             targetVentanaId = entry.ventanaId || undefined;
-                            targetVendedorId = entry.vendedorId || undefined;
+                            targetVendedorId = vendedorId || entry.vendedorId || undefined;
                         }
-                    } else if (dimension === "ventana") {
-                        if (ventanaId) {
-                            targetBancaId = entry.bancaId || undefined;
-                            targetVentanaId = ventanaId;
-                        } else {
-                            targetBancaId = entry.bancaId || undefined;
-                            targetVentanaId = entry.ventanaId || undefined;
-                            targetVendedorId = entry.vendedorId || undefined;
+                        
+                        // ✅ OPTIMIZACIÓN: Buscar en mapa pre-cargado en lugar de consultar BD
+                        let searchDate = new Date(previousDayDate);
+                        daysSearched = 0;
+                        
+                        while (previousDayRemainingBalance === null && daysSearched < maxSearchDays) {
+                            const searchDateStr = crDateService.postgresDateToCRString(searchDate);
+                            const dateMap = preloadedStatementsMap.get(searchDateStr);
+                            
+                            if (dateMap) {
+                                const entityKey = targetVendedorId 
+                                    ? targetVendedorId
+                                    : targetVentanaId
+                                        ? targetVentanaId
+                                        : targetBancaId || 'null';
+                                
+                                if (dateMap.has(entityKey)) {
+                                    previousDayRemainingBalance = Number(dateMap.get(entityKey));
+                                    break; // Solo log si hay problema, no cada día
+                                }
+                            }
+                            
+                            searchDate.setUTCDate(searchDate.getUTCDate() - 1);
+                            daysSearched++;
                         }
-                    } else if (dimension === "vendedor") {
-                        targetBancaId = entry.bancaId || undefined;
-                        targetVentanaId = entry.ventanaId || undefined;
-                        targetVendedorId = vendedorId || entry.vendedorId || undefined;
                     }
                     
-                    // Buscar el statement del día anterior
-                    const previousStatement = await prisma.accountStatement.findFirst({
-                        where: {
-                            date: previousDayDate,
-                            bancaId: targetBancaId || null,
-                            ventanaId: targetVentanaId || null,
-                            vendedorId: targetVendedorId || null,
-                        },
-                        orderBy: {
-                            createdAt: 'desc', // Obtener el más reciente si hay múltiples
-                        },
-                    });
-                    
-                    if (previousStatement && previousStatement.remainingBalance !== null) {
-                        previousDayRemainingBalance = Number(previousStatement.remainingBalance);
+                    // ✅ CRÍTICO: Si después de buscar 30 días no encontramos un statement con accumulatedBalance,
+                    // y el día anterior está en un mes diferente, intentar obtener el saldo del mes anterior
+                    // desde MonthlyClosingBalance o getPreviousMonthFinalBalance
+                    if (previousDayRemainingBalance === null && daysSearched >= maxSearchDays) {
+                        // Solo log warning si realmente hay un problema (no cada vez)
+                        logger.warn({
+                            layer: "service",
+                            action: "PREVIOUS_STATEMENT_NOT_FOUND_MAX_DAYS",
+                            payload: {
+                                date,
+                                previousDateStr,
+                                dimension,
+                                daysSearched,
+                                note: "No AccountStatement found with accumulatedBalance after searching 30 days",
+                            },
+                        });
+                        
+                        // ✅ CRÍTICO: Si el día anterior está en un mes diferente, usar el saldo del mes anterior
+                        if (previousDateIsDifferentMonth) {
+                        try {
+                            let previousMonthBalance: number;
+                            
+                            if (dimension === "banca") {
+                                previousMonthBalance = await getPreviousMonthFinalBalance(
+                                    currentMonthStr,
+                                    "banca",
+                                    undefined,
+                                    undefined,
+                                    entry.bancaId || bancaId || null
+                                );
+                            } else if (dimension === "ventana") {
+                                previousMonthBalance = await getPreviousMonthFinalBalance(
+                                    currentMonthStr,
+                                    "ventana",
+                                    entry.ventanaId || ventanaId || null,
+                                    undefined,
+                                    entry.bancaId || bancaId || undefined
+                                );
+                            } else {
+                                previousMonthBalance = await getPreviousMonthFinalBalance(
+                                    currentMonthStr,
+                                    "vendedor",
+                                    entry.ventanaId || ventanaId || undefined,
+                                    entry.vendedorId || vendedorId || null,
+                                    entry.bancaId || bancaId || undefined
+                                );
+                            }
+                            
+                            previousDayRemainingBalance = Number(previousMonthBalance);
+                            
+                            logger.info({
+                                layer: "service",
+                                action: "USING_PREVIOUS_MONTH_BALANCE_FOR_CROSS_MONTH",
+                                payload: {
+                                    date,
+                                    previousDateStr,
+                                    currentMonthStr,
+                                    previousDateMonthStr,
+                                    previousMonthBalance: previousDayRemainingBalance,
+                                    dimension,
+                                },
+                            });
+                        } catch (error) {
+                            logger.warn({
+                                layer: "service",
+                                action: "PREVIOUS_MONTH_BALANCE_FETCH_ERROR_CROSS_MONTH",
+                                payload: {
+                                    date,
+                                    previousDateStr,
+                                    currentMonthStr,
+                                    dimension,
+                                    error: (error as Error).message,
+                                },
+                            });
+                        }
+                        } else {
+                            // Si el día anterior está en el mismo mes pero no encontramos statement,
+                            // intentar obtener el último accumulatedBalance del mes anterior desde MonthlyClosingBalance
+                            try {
+                                const [prevYear, prevMonth] = previousDateMonthStr.split('-').map(Number);
+                                const lastDayOfPrevMonth = new Date(prevYear, prevMonth, 0).getDate();
+                                const lastDayDate = new Date(Date.UTC(prevYear, prevMonth - 1, lastDayOfPrevMonth, 0, 0, 0, 0));
+                                
+                                // Buscar statement del último día del mes anterior
+                                let lastDayStatement: any = null;
+                                if (targetVendedorId) {
+                                    lastDayStatement = await prisma.accountStatement.findFirst({
+                                        where: {
+                                            date: lastDayDate,
+                                            vendedorId: targetVendedorId,
+                                        },
+                                        select: { accumulatedBalance: true },
+                                    });
+                                } else if (targetVentanaId) {
+                                    lastDayStatement = await prisma.accountStatement.findFirst({
+                                        where: {
+                                            date: lastDayDate,
+                                            ventanaId: targetVentanaId,
+                                            vendedorId: null,
+                                        },
+                                        select: { accumulatedBalance: true },
+                                    });
+                                } else if (targetBancaId) {
+                                    lastDayStatement = await prisma.accountStatement.findFirst({
+                                        where: {
+                                            date: lastDayDate,
+                                            bancaId: targetBancaId,
+                                            ventanaId: null,
+                                            vendedorId: null,
+                                        },
+                                        select: { accumulatedBalance: true },
+                                    });
+                                }
+                                
+                                if (lastDayStatement && lastDayStatement.accumulatedBalance !== null) {
+                                    previousDayRemainingBalance = Number(lastDayStatement.accumulatedBalance);
+                                    logger.info({
+                                        layer: "service",
+                                        action: "USING_LAST_DAY_OF_PREVIOUS_MONTH_ACCUMULATED",
+                                        payload: {
+                                            date,
+                                            previousDateStr,
+                                            previousDateMonthStr,
+                                            lastDayDate: crDateService.postgresDateToCRString(lastDayDate),
+                                            accumulatedBalance: previousDayRemainingBalance,
+                                            dimension,
+                                        },
+                                    });
+                                } else {
+                                    // Si tampoco hay statement del último día, usar getPreviousMonthFinalBalance
+                                    let previousMonthBalance: number;
+                                    if (dimension === "banca") {
+                                        previousMonthBalance = await getPreviousMonthFinalBalance(
+                                            currentMonthStr,
+                                            "banca",
+                                            undefined,
+                                            undefined,
+                                            entry.bancaId || bancaId || null
+                                        );
+                                    } else if (dimension === "ventana") {
+                                        previousMonthBalance = await getPreviousMonthFinalBalance(
+                                            currentMonthStr,
+                                            "ventana",
+                                            entry.ventanaId || ventanaId || null,
+                                            undefined,
+                                            entry.bancaId || bancaId || undefined
+                                        );
+                                    } else {
+                                        previousMonthBalance = await getPreviousMonthFinalBalance(
+                                            currentMonthStr,
+                                            "vendedor",
+                                            entry.ventanaId || ventanaId || undefined,
+                                            entry.vendedorId || vendedorId || null,
+                                            entry.bancaId || bancaId || undefined
+                                        );
+                                    }
+                                    previousDayRemainingBalance = Number(previousMonthBalance);
+                                    logger.info({
+                                        layer: "service",
+                                        action: "USING_PREVIOUS_MONTH_BALANCE_FROM_FUNCTION",
+                                        payload: {
+                                            date,
+                                            previousDateStr,
+                                            currentMonthStr,
+                                            previousMonthBalance: previousDayRemainingBalance,
+                                            dimension,
+                                        },
+                                    });
+                                }
+                            } catch (error) {
+                                logger.warn({
+                                    layer: "service",
+                                    action: "PREVIOUS_MONTH_BALANCE_FALLBACK_ERROR",
+                                    payload: {
+                                        date,
+                                        previousDateStr,
+                                        dimension,
+                                        error: (error as Error).message,
+                                    },
+                                });
+                            }
+                        }
                     }
                 } catch (error) {
                     // Si falla, continuar con el fallback
@@ -1638,17 +2016,49 @@ export async function getStatementDirect(
                     initialAccumulated = previousDayRemainingBalance;
                 } else {
                     // Fallback: usar lastAccumulatedByEntity (calculado durante el procesamiento)
-                    const previousEntityKey = shouldGroupByDate
-                        ? previousDateStr
-                        : dimension === "banca" && !bancaId
-                            ? previousDateStr
-                            : dimension === "banca"
-                                ? `${previousDateStr}_${bancaId || entry.bancaId || 'null'}`
-                                : dimension === "ventana"
-                                    ? `${previousDateStr}_${ventanaId || entry.ventanaId || 'null'}`
-                                    : `${previousDateStr}_${vendedorId || entry.vendedorId || 'null'}`;
+                    // ✅ CORRECCIÓN: Si el día anterior no tiene entrada, buscar retrocediendo días
+                    let foundAccumulated: number | undefined = undefined;
+                    let searchDate = new Date(previousDayDate);
+                    let maxSearchDays = 30;
+                    let daysSearched = 0;
                     
-                    initialAccumulated = lastAccumulatedByEntity.get(previousEntityKey) || 0;
+                    while (foundAccumulated === undefined && daysSearched < maxSearchDays) {
+                        const searchDateStr = `${searchDate.getUTCFullYear()}-${String(searchDate.getUTCMonth() + 1).padStart(2, '0')}-${String(searchDate.getUTCDate()).padStart(2, '0')}`;
+                        
+                        const entityKeyToCheck = shouldGroupByDate
+                            ? searchDateStr
+                            : dimension === "banca" && !bancaId
+                                ? searchDateStr
+                                : dimension === "banca"
+                                    ? `${searchDateStr}_${bancaId || entry.bancaId || 'null'}`
+                                    : dimension === "ventana"
+                                        ? `${searchDateStr}_${ventanaId || entry.ventanaId || 'null'}`
+                                        : `${searchDateStr}_${vendedorId || entry.vendedorId || 'null'}`;
+                        
+                        foundAccumulated = lastAccumulatedByEntity.get(entityKeyToCheck);
+                        
+                        if (foundAccumulated !== undefined) {
+                            logger.info({
+                                layer: "service",
+                                action: "PREVIOUS_ACCUMULATED_FOUND_IN_CACHE",
+                                payload: {
+                                    currentDate: date,
+                                    foundDate: searchDateStr,
+                                    daysSearched,
+                                    accumulated: foundAccumulated,
+                                },
+                            });
+                            break;
+                        }
+                        
+                        // Retroceder un día más
+                        searchDate.setUTCDate(searchDate.getUTCDate() - 1);
+                        daysSearched++;
+                    }
+                    
+                    initialAccumulated = foundAccumulated || 0;
+                    
+                    // Reducir logs - solo usar 0 como fallback
                 }
             }
             
@@ -1660,25 +2070,70 @@ export async function getStatementDirect(
             // El lastAccumulated ya incluye el acumulado progresivo correcto desde initialAccumulated.
             // ✅ CORREGIDO: Cuando hay agrupación, solo actualizar lastAccumulatedByEntity una vez por día
             // (usar el máximo accumulated de todos los sorteos/movimientos del día)
-            // ✅ CRÍTICO: Obtener el último accumulated de este día desde sorteosAndMovements
-            // El accumulated ya se calculó progresivamente en intercalateSorteosAndMovements
-            // usando initialAccumulated como punto de partida
+            // ✅ CRÍTICO: Intentar obtener el accumulatedBalance desde AccountStatement del día actual (fuente de verdad)
+            // Si existe, usarlo en lugar del calculado, porque es más confiable
             let statementRemainingBalance = initialAccumulated; // Default: usar acumulado del día anterior
+            let accountStatementAccumulated: number | null = null;
+            
+            // ✅ OPTIMIZACIÓN: Usar statements pre-cargados para referencia (pero remainingBalance del día se calcula desde sorteos)
+            // El accountStatementAccumulated es solo para referencia/comparación, el remainingBalance real viene del cálculo progresivo
+            const currentDateMap = preloadedStatementsMap.get(date);
+            
+            if (shouldGroupByDate && dimension === "banca" && !bancaId) {
+                // Consolidado: usar suma pre-cargada (remainingBalance)
+                if (currentDateMap && currentDateMap.has('_consolidado')) {
+                    accountStatementAccumulated = currentDateMap.get('_consolidado');
+                }
+            } else if (currentDateMap) {
+                // Statement específico
+                const entityKey = dimension === "vendedor" && (vendedorId || entry.vendedorId)
+                    ? (vendedorId || entry.vendedorId || 'null')
+                    : dimension === "ventana" && (ventanaId || entry.ventanaId)
+                        ? (ventanaId || entry.ventanaId || 'null')
+                        : dimension === "banca" && (bancaId || entry.bancaId)
+                            ? (bancaId || entry.bancaId || 'null')
+                            : null;
+                
+                if (entityKey && currentDateMap.has(entityKey)) {
+                    accountStatementAccumulated = currentDateMap.get(entityKey);
+                }
+            }
+            
+            // ✅ CRÍTICO: El remainingBalance del día debe ser igual al último accumulated de sorteosAndMovements
+            // NO usar accountStatementAccumulated porque puede estar desactualizado o incorrecto
+            // El cálculo progresivo desde sorteos/movimientos es la fuente de verdad para el remainingBalance del día
             if (sorteosAndMovements.length > 0) {
-                // Ordenar por scheduledAt ASC para obtener el último accumulated (más reciente)
+                // ✅ PRIORIDAD: Usar el último accumulated calculado desde sorteos/movimientos (fuente de verdad)
                 const sorted = [...sorteosAndMovements].sort((a, b) => {
                     const timeA = new Date(a.scheduledAt).getTime();
                     const timeB = new Date(b.scheduledAt).getTime();
                     return timeA - timeB; // ASC
                 });
                 const lastItem = sorted[sorted.length - 1];
-                // ✅ CRÍTICO: Usar el accumulated del último item si existe y es válido
                 if (lastItem && lastItem.accumulated !== undefined && lastItem.accumulated !== null && !isNaN(Number(lastItem.accumulated))) {
                     statementRemainingBalance = Number(lastItem.accumulated);
+                    
+                    // ✅ OPCIONAL: Log si hay discrepancia con AccountStatement para detectar problemas
+                    if (accountStatementAccumulated !== null) {
+                        const diff = Math.abs(statementRemainingBalance - accountStatementAccumulated);
+                        if (diff > 0.01) {
+                            logger.warn({
+                                layer: "service",
+                                action: "REMAINING_BALANCE_DISCREPANCY",
+                                payload: {
+                                    date,
+                                    dimension,
+                                    calculatedFromSorteos: statementRemainingBalance,
+                                    fromAccountStatement: accountStatementAccumulated,
+                                    difference: diff,
+                                    note: "remainingBalance calculated from sorteos/movements differs from AccountStatement.accumulatedBalance",
+                                },
+                            });
+                        }
+                    }
                 }
-                // Si no hay accumulated válido, statementRemainingBalance ya tiene initialAccumulated
             }
-            // Si no hay sorteos/movimientos, statementRemainingBalance ya tiene initialAccumulated
+            // Si no hay sorteos/movimientos, statementRemainingBalance ya tiene initialAccumulated (correcto)
             
             // ✅ CRÍTICO: Actualizar lastAccumulatedByEntity con el statementRemainingBalance correcto
             // Esto asegura que el siguiente día tenga el acumulado correcto
@@ -1712,11 +2167,12 @@ export async function getStatementDirect(
                 totalPaid: parseFloat(totalPaid.toFixed(2)),
                 totalCollected: parseFloat(totalCollected.toFixed(2)),
                 totalPaymentsCollections: parseFloat((totalPaid + totalCollected).toFixed(2)),
-                remainingBalance: parseFloat(statementRemainingBalance.toFixed(2)), // ✅ CORREGIDO: Usar el acumulado progresivo correcto
+                remainingBalance: parseFloat(statementRemainingBalance.toFixed(2)), // ✅ CORREGIDO: Usar accumulatedBalance de AccountStatement si está disponible, sino el calculado
+                accumulatedBalance: accountStatementAccumulated !== null ? parseFloat(accountStatementAccumulated.toFixed(2)) : undefined, // ✅ NUEVO: Exponer accumulatedBalance desde AccountStatement para referencia
                 isSettled: calculateIsSettled(entry.totalTicketsCount, statementRemainingBalance, totalPaid, totalCollected),
                 canEdit: !calculateIsSettled(entry.totalTicketsCount, statementRemainingBalance, totalPaid, totalCollected),
                 ticketCount: entry.totalTicketsCount,
-                bySorteo: sorteosAndMovements, // ✅ Sorteos + Movimientos intercalados (incluye accumulated)
+                bySorteo: sorteosAndMovements, // ✅ Sorteos + Movimientos intercalados (incluye accumulated, calculado desde initialAccumulated correcto)
                 hasSorteos: sorteosAndMovements.length > 0, // ✅ NUEVO: Flag para lazy loading (FE puede usar para saber si hay sorteos)
             };
 
@@ -2248,23 +2704,72 @@ export async function getStatementDirect(
     // Mínimo 50000 para mantener compatibilidad
     const monthlyDynamicLimit = Math.max(50000, daysInMonth * 200 * 5 * 2);
     
-    // ✅ OPTIMIZACIÓN: Log de rendimiento para consulta mensual
+    // ✅ OPTIMIZACIÓN CRÍTICA: Intentar usar AccountStatement para calcular monthlyAccumulated
+    // Esto es mucho más rápido que recalcular desde tickets (como hace Dashboard)
+    let useAccountStatementForMonthly = false;
     const monthlyQueryStartTime = Date.now();
-    logger.info({
-        layer: "service",
-        action: "ACCOUNT_STATEMENT_MONTHLY_QUERY_START",
-        payload: {
-            dimension,
-            bancaId,
-            ventanaId,
-            vendedorId,
-            month: effectiveMonth,
-            monthlyDynamicLimit,
+    
+    // Verificar si tenemos AccountStatement para todos los días del mes actual
+    const monthlyStatements = await prisma.accountStatement.findMany({
+        where: {
+            date: {
+                gte: monthStartDate,
+                lte: monthEndDate,
+            },
+            ...(dimension === "banca" && bancaId
+                ? { bancaId, ventanaId: null, vendedorId: null }
+                : dimension === "ventana" && ventanaId
+                    ? { ventanaId, vendedorId: null }
+                    : dimension === "vendedor" && vendedorId
+                        ? { vendedorId }
+                        : {}),
         },
+        select: {
+            date: true,
+            totalSales: true,
+            totalPayouts: true,
+            listeroCommission: true,
+            vendedorCommission: true,
+            totalPaid: true,
+            totalCollected: true,
+            remainingBalance: true,
+        },
+        orderBy: { date: 'asc' },
     });
+    
+    // ✅ OPTIMIZACIÓN: Si tenemos statements para el mes, usarlos directamente (mucho más rápido)
+    let monthlyTotalSales = 0;
+    let monthlyTotalPayouts = 0;
+    let monthlyTotalListeroCommission = 0;
+    let monthlyTotalVendedorCommission = 0;
+    let monthlyTotalPaid = 0;
+    let monthlyTotalCollected = 0;
+    let monthlySettledDays = 0;
+    let monthlyPendingDays = 0;
+    let monthlyTotalBalance = 0;
+    
+    // ✅ CORRECCIÓN: No usar AccountStatement.remainingBalance directamente porque puede estar incorrecto
+    // En su lugar, siempre calcular desde tickets/movimientos para asegurar exactitud
+    // Solo usar AccountStatement para acelerar las consultas de totales (sales, payouts, etc.)
+    // pero el remainingBalance se calculará correctamente desde los datos base
+    useAccountStatementForMonthly = false;
 
-    // Obtener jugadas del mes completo
-    const monthlyJugadas = await prisma.$queryRaw<
+    if (!useAccountStatementForMonthly) {
+        // Fallback: calcular desde tickets (más lento)
+        logger.info({
+            layer: "service",
+            action: "ACCOUNT_STATEMENT_MONTHLY_QUERY_START",
+            payload: {
+                dimension,
+                bancaId,
+                month: currentMonthStr,
+                monthlyDynamicLimit,
+                note: "Using tickets calculation (no AccountStatement found)",
+            },
+        });
+
+        // Obtener jugadas del mes completo
+        const monthlyJugadas = await prisma.$queryRaw<
         Array<{
             business_date: Date;
             ventana_id: string;
@@ -2315,213 +2820,197 @@ export async function getStatementDirect(
     LIMIT ${monthlyDynamicLimit}
   `;
 
-    const monthlyQueryEndTime = Date.now();
-    logger.info({
-        layer: "service",
-        action: "ACCOUNT_STATEMENT_MONTHLY_QUERY_END",
-        payload: {
-            dimension,
-            bancaId,
-            ventanaId,
-            vendedorId,
-            month: effectiveMonth,
-            rowsReturned: monthlyJugadas.length,
-            queryTimeMs: monthlyQueryEndTime - monthlyQueryStartTime,
-        },
-    });
+        const monthlyQueryEndTime = Date.now();
+        logger.info({
+            layer: "service",
+            action: "ACCOUNT_STATEMENT_MONTHLY_QUERY_END",
+            payload: {
+                dimension,
+                bancaId,
+                month: currentMonthStr,
+                rowsReturned: monthlyJugadas.length,
+                queryTimeMs: monthlyQueryEndTime - monthlyQueryStartTime,
+            },
+        });
 
-    // Agrupar jugadas del mes por día y dimensión
-    const monthlyByDateAndDimension = new Map<
-        string,
-        {
-            ventanaId: string;
-            ventanaName: string;
-            vendedorId: string | null;
-            vendedorName: string | null;
-            totalSales: number;
-            totalPayouts: number;
-            totalTicketsCount: number; // ✅ OPTIMIZACIÓN: Contador en lugar de Set (reduce memoria 20-30%)
-            commissionListero: number;
-            commissionVendedor: number;
-            payoutTicketsCount: number; // ✅ OPTIMIZACIÓN: Contador en lugar de Set
-            processedPayoutTicketIds: Set<string>; // ✅ CRÍTICO: Set pequeño solo para evitar duplicados de payouts
-        }
-    >();
+        // Agrupar jugadas del mes por día y dimensión
+        const monthlyByDateAndDimension = new Map<
+            string,
+            {
+                ventanaId: string;
+                ventanaName: string;
+                vendedorId: string | null;
+                vendedorName: string | null;
+                totalSales: number;
+                totalPayouts: number;
+                totalTicketsCount: number;
+                commissionListero: number;
+                commissionVendedor: number;
+                payoutTicketsCount: number;
+                processedPayoutTicketIds: Set<string>;
+            }
+        >();
 
-    // Procesar jugadas del mes (misma lógica que periodo filtrado)
-    for (const jugada of monthlyJugadas) {
-        // ✅ CORREGIDO: Usar listeroCommissionAmount directamente de Jugada (igual que dashboard)
-        // Esto asegura consistencia entre ambos endpoints
-        const commissionListeroFinal = Number(jugada.listero_commission_amount || 0);
-        const dateKey = crDateService.postgresDateToCRString(jugada.business_date);
-        const key = dimension === "banca"
-            ? `${dateKey}_null` // Cuando dimension=banca sin bancaId, todos comparten bancaId=null
-            : dimension === "ventana"
-                ? `${dateKey}_${jugada.ventana_id}`
-                : `${dateKey}_${jugada.vendedor_id || 'null'}`;
+        // Procesar jugadas del mes
+        for (const jugada of monthlyJugadas) {
+            const commissionListeroFinal = Number(jugada.listero_commission_amount || 0);
+            const dateKey = crDateService.postgresDateToCRString(jugada.business_date);
+            const key = dimension === "banca"
+                ? `${dateKey}_null`
+                : dimension === "ventana"
+                    ? `${dateKey}_${jugada.ventana_id}`
+                    : `${dateKey}_${jugada.vendedor_id || 'null'}`;
 
-        let entry = monthlyByDateAndDimension.get(key);
-        if (!entry) {
-            entry = {
-                ventanaId: jugada.ventana_id,
-                ventanaName: jugada.ventana_name,
-                vendedorId: jugada.vendedor_id,
-                vendedorName: jugada.vendedor_name,
-                totalSales: 0,
-                totalPayouts: 0,
-                totalTicketsCount: 0, // ✅ OPTIMIZACIÓN: Contador en lugar de Set
-                commissionListero: 0,
-                commissionVendedor: 0,
-                payoutTicketsCount: 0, // ✅ OPTIMIZACIÓN: Contador en lugar de Set
-                processedPayoutTicketIds: new Set<string>(), // ✅ CRÍTICO: Set pequeño solo para evitar duplicados de payouts
-            };
-            monthlyByDateAndDimension.set(key, entry);
-        }
-
-        entry.totalSales += jugada.amount;
-        entry.totalTicketsCount += 1;
-        entry.commissionListero += commissionListeroFinal;
-        if (jugada.commission_origin === "USER") {
-            entry.commissionVendedor += Number(jugada.commission_amount || 0);
-        }
-        // ✅ CRÍTICO: Evitar duplicados de payouts - un ticket puede tener múltiples jugadas
-        // Solo sumar el payout una vez por ticket_id
-        if (jugada.ticket_id && !entry.processedPayoutTicketIds.has(jugada.ticket_id)) {
-            entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-            entry.payoutTicketsCount += 1;
-            entry.processedPayoutTicketIds.add(jugada.ticket_id);
-        }
-    }
-
-    // Calcular movimientos del mes completo
-    const monthlyMovementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
-        monthStartDate,
-        monthEndDate,
-        dimension,
-        ventanaId,
-        vendedorId,
-        bancaId
-    );
-
-    // ✅ NUEVO: Incorporar días que solo tienen movimientos al mapa mensual
-    for (const [dateKey, movements] of monthlyMovementsByDate.entries()) {
-        for (const movement of movements) {
-            const targetId = dimension === "ventana" ? movement.ventanaId : movement.vendedorId;
-            if (dimension === "ventana" && ventanaId && targetId !== ventanaId) continue;
-            if (dimension === "vendedor" && vendedorId && targetId !== vendedorId) continue;
-
-            const key = `${dateKey}_${targetId || 'null'}`;
-
-            if (!monthlyByDateAndDimension.has(key)) {
-                monthlyByDateAndDimension.set(key, {
-                    ventanaId: movement.ventanaId,
-                    ventanaName: movement.ventanaName || "Desconocido",
-                    vendedorId: movement.vendedorId,
-                    vendedorName: movement.vendedorName || "Desconocido",
+            let entry = monthlyByDateAndDimension.get(key);
+            if (!entry) {
+                entry = {
+                    ventanaId: jugada.ventana_id,
+                    ventanaName: jugada.ventana_name,
+                    vendedorId: jugada.vendedor_id,
+                    vendedorName: jugada.vendedor_name,
                     totalSales: 0,
                     totalPayouts: 0,
-                    totalTicketsCount: 0, // ✅ OPTIMIZACIÓN: Contador en lugar de Set
+                    totalTicketsCount: 0,
                     commissionListero: 0,
                     commissionVendedor: 0,
-                    payoutTicketsCount: 0, // ✅ OPTIMIZACIÓN: Contador en lugar de Set
-                    processedPayoutTicketIds: new Set<string>(), // ✅ CRÍTICO: Set pequeño solo para evitar duplicados de payouts
-                });
+                    payoutTicketsCount: 0,
+                    processedPayoutTicketIds: new Set<string>(),
+                };
+                monthlyByDateAndDimension.set(key, entry);
+            }
+
+            entry.totalSales += jugada.amount;
+            entry.totalTicketsCount += 1;
+            entry.commissionListero += commissionListeroFinal;
+            if (jugada.commission_origin === "USER") {
+                entry.commissionVendedor += Number(jugada.commission_amount || 0);
+            }
+            if (jugada.ticket_id && !entry.processedPayoutTicketIds.has(jugada.ticket_id)) {
+                entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
+                entry.payoutTicketsCount += 1;
+                entry.processedPayoutTicketIds.add(jugada.ticket_id);
             }
         }
-    }
 
-    // Calcular totales mensuales
-    const monthlyTotalSales = Array.from(monthlyByDateAndDimension.values()).reduce(
-        (sum, entry) => sum + entry.totalSales,
-        0
-    );
-    const monthlyTotalPayouts = Array.from(monthlyByDateAndDimension.values()).reduce(
-        (sum, entry) => sum + entry.totalPayouts,
-        0
-    );
-    const monthlyTotalListeroCommission = Array.from(monthlyByDateAndDimension.values()).reduce(
-        (sum, entry) => sum + entry.commissionListero,
-        0
-    );
-    const monthlyTotalVendedorCommission = Array.from(monthlyByDateAndDimension.values()).reduce(
-        (sum, entry) => sum + entry.commissionVendedor,
-        0
-    );
-    // ✅ CRÍTICO: Usar comisión correcta según dimension (no vendedorId)
-    // - Si dimension='vendedor' → usar vendedorCommission
-    // - Si dimension='banca' o 'ventana' → usar listeroCommission (siempre)
-    const monthlyTotalCommissionToUse = dimension === "vendedor" ? monthlyTotalVendedorCommission : monthlyTotalListeroCommission;
+        // Calcular movimientos del mes completo
+        const monthlyMovementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
+            monthStartDate,
+            monthEndDate,
+            dimension,
+            ventanaId,
+            vendedorId,
+            bancaId
+        );
 
-    // Calcular totales de pagos/cobros del mes
-    let monthlyTotalPaid = 0;
-    let monthlyTotalCollected = 0;
-    for (const movements of monthlyMovementsByDate.values()) {
-        // ✅ CRÍTICO: Filtrar movimientos por bancaId cuando dimension=banca con bancaId
-        let filteredMovements = movements;
-        if (dimension === "banca" && bancaId) {
-            filteredMovements = movements.filter((m: any) => m.bancaId === bancaId);
+        // ✅ NUEVO: Incorporar días que solo tienen movimientos al mapa mensual
+        for (const [dateKey, movements] of monthlyMovementsByDate.entries()) {
+            for (const movement of movements) {
+                const targetId = dimension === "ventana" ? movement.ventanaId : movement.vendedorId;
+                if (dimension === "ventana" && ventanaId && targetId !== ventanaId) continue;
+                if (dimension === "vendedor" && vendedorId && targetId !== vendedorId) continue;
+
+                const key = `${dateKey}_${targetId || 'null'}`;
+
+                if (!monthlyByDateAndDimension.has(key)) {
+                    monthlyByDateAndDimension.set(key, {
+                        ventanaId: movement.ventanaId,
+                        ventanaName: movement.ventanaName || "Desconocido",
+                        vendedorId: movement.vendedorId,
+                        vendedorName: movement.vendedorName || "Desconocido",
+                        totalSales: 0,
+                        totalPayouts: 0,
+                        totalTicketsCount: 0,
+                        commissionListero: 0,
+                        commissionVendedor: 0,
+                        payoutTicketsCount: 0,
+                        processedPayoutTicketIds: new Set<string>(),
+                    });
+                }
+            }
         }
-        monthlyTotalPaid += filteredMovements
-            .filter((m: any) => m.type === "payment" && !m.isReversed)
-            .reduce((sum: number, m: any) => sum + m.amount, 0);
-        monthlyTotalCollected += filteredMovements
-            .filter((m: any) => m.type === "collection" && !m.isReversed)
-            .reduce((sum: number, m: any) => sum + m.amount, 0);
-    }
 
-    // ✅ CRÍTICO: monthlyTotalBalance debe incluir movimientos (igual que balance en statements individuales)
-    // balance = balanceBase + totalPaid - totalCollected, donde balanceBase = totalSales - totalPayouts - commission
-    const monthlyTotalBalanceBase = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalCommissionToUse;
-    const monthlyTotalBalance = monthlyTotalBalanceBase + monthlyTotalPaid - monthlyTotalCollected;
+        // Calcular totales mensuales desde tickets
+        monthlyTotalSales = Array.from(monthlyByDateAndDimension.values()).reduce(
+            (sum, entry) => sum + entry.totalSales,
+            0
+        );
+        monthlyTotalPayouts = Array.from(monthlyByDateAndDimension.values()).reduce(
+            (sum, entry) => sum + entry.totalPayouts,
+            0
+        );
+        monthlyTotalListeroCommission = Array.from(monthlyByDateAndDimension.values()).reduce(
+            (sum, entry) => sum + entry.commissionListero,
+            0
+        );
+        monthlyTotalVendedorCommission = Array.from(monthlyByDateAndDimension.values()).reduce(
+            (sum, entry) => sum + entry.commissionVendedor,
+            0
+        );
 
-    // Contar días saldados en el mes
-    const monthlySettledDays = Array.from(monthlyByDateAndDimension.entries())
-        .filter(([key, entry]) => {
-            const date = key.split("_")[0];
-            // Obtener movimientos específicos para esta entrada (fecha + dimensión)
-            const allMovements = monthlyMovementsByDate.get(date) || [];
-            let movements = allMovements;
-            // ✅ CRÍTICO: Filtrar movimientos según dimension y filtros
+        // Calcular totales de pagos/cobros del mes
+        for (const movements of monthlyMovementsByDate.values()) {
+            let filteredMovements = movements;
             if (dimension === "banca" && bancaId) {
-                movements = allMovements.filter((m: any) => m.bancaId === bancaId);
-            } else if (dimension === "ventana") {
-                movements = allMovements.filter((m: any) => m.ventanaId === entry.ventanaId);
-            } else {
-                movements = allMovements.filter((m: any) => m.vendedorId === entry.vendedorId);
+                filteredMovements = movements.filter((m: any) => m.bancaId === bancaId);
             }
-
-            const totalPaid = movements
+            monthlyTotalPaid += filteredMovements
                 .filter((m: any) => m.type === "payment" && !m.isReversed)
                 .reduce((sum: number, m: any) => sum + m.amount, 0);
-            const totalCollected = movements
+            monthlyTotalCollected += filteredMovements
                 .filter((m: any) => m.type === "collection" && !m.isReversed)
                 .reduce((sum: number, m: any) => sum + m.amount, 0);
+        }
 
-            // ✅ CORRECCIÓN: Balance según dimensión
-            const commission = dimension === "vendedor" ? entry.commissionVendedor : entry.commissionListero;
-            const remainingBalance = entry.totalSales - entry.totalPayouts - commission - totalCollected + totalPaid;
-            return calculateIsSettled(entry.totalTicketsCount, remainingBalance, totalPaid, totalCollected);
-        }).length;
-    const monthlyPendingDays = monthlyByDateAndDimension.size - monthlySettledDays;
+        // Calcular monthlyTotalBalance
+        const monthlyTotalCommissionToUse = dimension === "vendedor" ? monthlyTotalVendedorCommission : monthlyTotalListeroCommission;
+        const monthlyTotalBalanceBase = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalCommissionToUse;
+        monthlyTotalBalance = monthlyTotalBalanceBase + monthlyTotalPaid - monthlyTotalCollected;
 
-    // ✅ CRÍTICO: monthlyRemainingBalance debe ser igual a monthlyTotalBalance (que ya incluye movimientos)
-    // En statements individuales: remainingBalance = balance (que ya incluye movimientos)
-    // ✅ NUEVO: Obtener saldo final del mes anterior y sumarlo al acumulado del mes actual
-    // ✅ CRÍTICO: Usar currentMonthStr (mes actual) para obtener el saldo del mes anterior correcto
-    // No usar effectiveMonth porque puede ser el mes del inicio del rango (ej: diciembre si la semana cruza meses)
+        // Contar días saldados
+        monthlySettledDays = Array.from(monthlyByDateAndDimension.entries())
+            .filter(([key, entry]) => {
+                const date = key.split("_")[0];
+                const allMovements = monthlyMovementsByDate.get(date) || [];
+                let movements = allMovements;
+                if (dimension === "banca" && bancaId) {
+                    movements = allMovements.filter((m: any) => m.bancaId === bancaId);
+                } else if (dimension === "ventana") {
+                    movements = allMovements.filter((m: any) => m.ventanaId === entry.ventanaId);
+                } else {
+                    movements = allMovements.filter((m: any) => m.vendedorId === entry.vendedorId);
+                }
+
+                const totalPaid = movements
+                    .filter((m: any) => m.type === "payment" && !m.isReversed)
+                    .reduce((sum: number, m: any) => sum + m.amount, 0);
+                const totalCollected = movements
+                    .filter((m: any) => m.type === "collection" && !m.isReversed)
+                    .reduce((sum: number, m: any) => sum + m.amount, 0);
+
+                const commission = dimension === "vendedor" ? entry.commissionVendedor : entry.commissionListero;
+                const remainingBalance = entry.totalSales - entry.totalPayouts - commission - totalCollected + totalPaid;
+                return calculateIsSettled(entry.totalTicketsCount, remainingBalance, totalPaid, totalCollected);
+            }).length;
+        monthlyPendingDays = monthlyByDateAndDimension.size - monthlySettledDays;
+    }
+    
+    // ✅ CRÍTICO: Calcular comisión total a usar según dimension (fuera del bloque if)
+    const monthlyTotalCommissionToUse = dimension === "vendedor" ? monthlyTotalVendedorCommission : monthlyTotalListeroCommission;
+
+    // ✅ CORRECCIÓN: SIEMPRE calcular remainingBalance desde datos base (tickets/movimientos)
+    // NO usar AccountStatement.remainingBalance porque puede estar incorrecto
     const previousMonthBalance = await getPreviousMonthFinalBalance(
-        currentMonthStr, // ✅ CORREGIDO: Usar mes actual, no effectiveMonth
+        currentMonthStr,
         dimension,
         ventanaId,
         vendedorId,
         bancaId
     );
-    
-    // Sumar saldo del mes anterior al acumulado del mes actual
-    // ✅ CRÍTICO: Si no hay transacciones en el mes actual, monthlyTotalBalance será 0,
-    // pero monthlyRemainingBalance debe ser igual al saldo del mes anterior
-    // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
     const previousMonthBalanceNum = Number(previousMonthBalance);
+    
+    // ✅ CRÍTICO: monthlyTotalBalance = balance del mes actual (sin mes anterior)
+    // monthlyRemainingBalance = previousMonthBalance + monthlyTotalBalance
+    // (monthlyTotalBalance ya incluye movimientos: paid - collected)
     const monthlyRemainingBalance = previousMonthBalanceNum + monthlyTotalBalance;
     
 
@@ -2896,7 +3385,7 @@ export async function getStatementDirect(
  * Helper para obtener IDs de tickets excluidos en una fecha específica
  * Basado en la tabla sorteo_lista_exclusion
  */
-async function getExcludedTicketIdsForDate(date: Date): Promise<string[]> {
+export async function getExcludedTicketIdsForDate(date: Date): Promise<string[]> {
     // Convertir fecha a string YYYY-MM-DD para comparación SQL
     // Nota: date viene como objeto Date UTC (00:00:00Z) que representa el día
     const dateStr = crDateService.dateUTCToCRString(date);

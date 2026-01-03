@@ -519,26 +519,92 @@ export const AccountsService = {
                 }
                 
                 if (previousDayStatement) {
-                    // ✅ CRÍTICO: Si hay bySorteo, usar el último accumulated del bySorteo
-                    // Si no hay bySorteo o está vacío, usar el remainingBalance del día anterior
-                    // El remainingBalance ya incluye el acumulado progresivo desde el inicio del mes
-                    if (previousDayStatement.bySorteo && previousDayStatement.bySorteo.length > 0) {
-                        // Ordenar bySorteo por scheduledAt ASC para encontrar el último accumulated del día
+                    // ✅ CRÍTICO: Priorizar accumulatedBalance desde AccountStatement (fuente de verdad)
+                    // Si hay bySorteo, usar el último accumulated del bySorteo (ya calculado con accumulatedBalance como base)
+                    // Si no hay bySorteo, buscar el accumulatedBalance directamente desde AccountStatement
+                    
+                    // Primero intentar obtener accumulatedBalance desde AccountStatement del día anterior
+                    const previousDateUTC = new Date(Date.UTC(year, month - 1, day - 1, 0, 0, 0, 0));
+                    let accountStatementAccumulated: number | null = null;
+                    
+                    try {
+                        // Determinar IDs para buscar el statement del día anterior
+                        let targetBancaId: string | undefined = undefined;
+                        let targetVentanaId: string | undefined = undefined;
+                        let targetVendedorId: string | undefined = undefined;
+                        
+                        if (filters.dimension === "banca") {
+                            targetBancaId = filters.bancaId || undefined;
+                        } else if (filters.dimension === "ventana") {
+                            targetVentanaId = filters.ventanaId || undefined;
+                        } else if (filters.dimension === "vendedor") {
+                            targetVendedorId = filters.vendedorId || undefined;
+                        }
+                        
+                        // Buscar statement del día anterior desde AccountStatement (fuente de verdad)
+                        let previousAccountStatement: any = null;
+                        if (targetVendedorId) {
+                            previousAccountStatement = await prisma.accountStatement.findFirst({
+                                where: {
+                                    date: previousDateUTC,
+                                    vendedorId: targetVendedorId,
+                                },
+                                select: { accumulatedBalance: true },
+                            });
+                        } else if (targetVentanaId) {
+                            previousAccountStatement = await prisma.accountStatement.findFirst({
+                                where: {
+                                    date: previousDateUTC,
+                                    ventanaId: targetVentanaId,
+                                    vendedorId: null,
+                                },
+                                select: { accumulatedBalance: true },
+                            });
+                        } else if (targetBancaId) {
+                            previousAccountStatement = await prisma.accountStatement.findFirst({
+                                where: {
+                                    date: previousDateUTC,
+                                    bancaId: targetBancaId,
+                                    ventanaId: null,
+                                    vendedorId: null,
+                                },
+                                select: { accumulatedBalance: true },
+                            });
+                        }
+                        
+                        if (previousAccountStatement && previousAccountStatement.accumulatedBalance !== null) {
+                            accountStatementAccumulated = Number(previousAccountStatement.accumulatedBalance);
+                        }
+                    } catch (error) {
+                        // Si falla, continuar con lógica alternativa
+                        logger.warn({
+                            layer: "service",
+                            action: "GET_BY_SORTEO_ACCOUNT_STATEMENT_FETCH_ERROR",
+                            payload: {
+                                date: date, // date ya es string en formato YYYY-MM-DD
+                                previousDate: crDateService.postgresDateToCRString(previousDateUTC),
+                                dimension: filters.dimension,
+                                error: (error as Error).message,
+                            },
+                        });
+                    }
+                    
+                    if (accountStatementAccumulated !== null) {
+                        // ✅ CRÍTICO: Usar accumulatedBalance desde AccountStatement (fuente de verdad)
+                        lastDayAccumulated = accountStatementAccumulated;
+                    } else if (previousDayStatement.bySorteo && previousDayStatement.bySorteo.length > 0) {
+                        // Fallback: Si no hay AccountStatement, usar el último accumulated del bySorteo
                         const sortedStatement = [...previousDayStatement.bySorteo].sort((a: any, b: any) => {
                             const timeA = new Date(a.scheduledAt).getTime();
                             const timeB = new Date(b.scheduledAt).getTime();
                             return timeA - timeB; // ASC
                         });
                         
-                        // El último accumulated del bySorteo del día anterior ya incluye el acumulado progresivo
-                        // porque getStatementDirect calcula el acumulado progresivo para todos los días del mes
                         lastDayAccumulated = sortedStatement.length > 0 
                             ? (sortedStatement[sortedStatement.length - 1].accumulated || 0)
                             : 0;
                     } else {
-                        // ✅ CRÍTICO: Si no hay bySorteo, usar remainingBalance del día anterior
-                        // El remainingBalance ya incluye el acumulado progresivo desde el inicio del mes
-                        // (se calcula en el Paso 3.5 de getStatementDirect)
+                        // Último fallback: usar remainingBalance (no ideal, pero mejor que 0)
                         lastDayAccumulated = previousDayStatement.remainingBalance || 0;
                     }
                 } else {

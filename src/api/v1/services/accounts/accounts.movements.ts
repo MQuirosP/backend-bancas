@@ -347,6 +347,7 @@ export async function registerPayment(data: {
     const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
     // ✅ CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
+    // NOTA: accumulatedBalance se actualizará después mediante syncDayStatement para mantener consistencia
     const updatedStatement = await AccountStatementRepository.update(statement.id, {
         // Valores de tickets (recalculados desde tickets/jugadas)
         ticketCount: recalculatedStatement.ticketCount,
@@ -359,9 +360,96 @@ export async function registerPayment(data: {
         totalPaid: newTotalPaid,
         totalCollected: newTotalCollected,
         remainingBalance: newRemainingBalance,
+        // ⚠️ NOTA: accumulatedBalance se actualizará después mediante syncDayStatement
         isSettled,
         canEdit: !isSettled,
     });
+
+    // ✅ CRÍTICO: Sincronizar accumulatedBalance después de registrar el pago
+    // Esto asegura que accumulatedBalance se mantenga correcto y actualizado
+    try {
+      const { AccountStatementSyncService } = await import('./accounts.sync.service');
+      const paymentDateUTC = new Date(Date.UTC(
+        parseInt(data.date.split('-')[0]),
+        parseInt(data.date.split('-')[1]) - 1,
+        parseInt(data.date.split('-')[2]),
+        0, 0, 0, 0
+      ));
+
+      // Sincronizar statement de vendedor (si hay vendedorId)
+      if (data.vendedorId) {
+        await AccountStatementSyncService.syncDayStatement(
+          paymentDateUTC,
+          "vendedor",
+          data.vendedorId,
+          { force: true }
+        ).catch((error) => {
+          logger.warn({
+            layer: "service",
+            action: "SYNC_DAY_STATEMENT_AFTER_PAYMENT_ERROR_VENDEDOR",
+            payload: {
+              paymentId: payment.id,
+              date: data.date,
+              vendedorId: data.vendedorId,
+              error: (error as Error).message,
+            },
+          });
+        });
+      }
+
+      // Sincronizar statement consolidado de ventana (si hay ventanaId)
+      if (finalVentanaId) {
+        await AccountStatementSyncService.syncDayStatement(
+          paymentDateUTC,
+          "ventana",
+          finalVentanaId,
+          { force: true }
+        ).catch((error) => {
+          logger.warn({
+            layer: "service",
+            action: "SYNC_DAY_STATEMENT_AFTER_PAYMENT_ERROR_VENTANA",
+            payload: {
+              paymentId: payment.id,
+              date: data.date,
+              ventanaId: finalVentanaId,
+              error: (error as Error).message,
+            },
+          });
+        });
+      }
+
+      // Sincronizar statement consolidado de banca (si hay bancaId)
+      if (finalBancaId) {
+        await AccountStatementSyncService.syncDayStatement(
+          paymentDateUTC,
+          "banca",
+          finalBancaId,
+          { force: true }
+        ).catch((error) => {
+          logger.warn({
+            layer: "service",
+            action: "SYNC_DAY_STATEMENT_AFTER_PAYMENT_ERROR_BANCA",
+            payload: {
+              paymentId: payment.id,
+              date: data.date,
+              bancaId: finalBancaId,
+              error: (error as Error).message,
+            },
+          });
+        });
+      }
+    } catch (error) {
+      // No bloquear la creación del pago si falla la sincronización
+      logger.error({
+        layer: "service",
+        action: "SYNC_DAY_STATEMENT_AFTER_PAYMENT_IMPORT_ERROR",
+        payload: {
+          paymentId: payment.id,
+          date: data.date,
+          error: (error as Error).message,
+        },
+      });
+    }
 
     // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
     const dateStr = data.date; // Ya está en formato YYYY-MM-DD
@@ -547,6 +635,87 @@ export async function reversePayment(
         isSettled,
         canEdit: !isSettled,
     });
+
+    // ✅ CRÍTICO: Sincronizar accumulatedBalance después de revertir el pago
+    // Esto asegura que accumulatedBalance se mantenga correcto y actualizado
+    try {
+      const { AccountStatementSyncService } = await import('./accounts.sync.service');
+      const paymentDateUTC = payment.date; // Ya es Date UTC que representa día calendario en CR
+
+      // Sincronizar statement de vendedor (si hay vendedorId)
+      if (payment.vendedorId) {
+        await AccountStatementSyncService.syncDayStatement(
+          paymentDateUTC,
+          "vendedor",
+          payment.vendedorId,
+          { force: true }
+        ).catch((error) => {
+          logger.warn({
+            layer: "service",
+            action: "SYNC_DAY_STATEMENT_AFTER_REVERSE_ERROR_VENDEDOR",
+            payload: {
+              paymentId: payment.id,
+              date: crDateService.postgresDateToCRString(payment.date),
+              vendedorId: payment.vendedorId,
+              error: (error as Error).message,
+            },
+          });
+        });
+      }
+
+      // Sincronizar statement consolidado de ventana (si hay ventanaId)
+      if (payment.ventanaId) {
+        await AccountStatementSyncService.syncDayStatement(
+          paymentDateUTC,
+          "ventana",
+          payment.ventanaId,
+          { force: true }
+        ).catch((error) => {
+          logger.warn({
+            layer: "service",
+            action: "SYNC_DAY_STATEMENT_AFTER_REVERSE_ERROR_VENTANA",
+            payload: {
+              paymentId: payment.id,
+              date: crDateService.postgresDateToCRString(payment.date),
+              ventanaId: payment.ventanaId,
+              error: (error as Error).message,
+            },
+          });
+        });
+      }
+
+      // Sincronizar statement consolidado de banca (si hay bancaId)
+      if (payment.bancaId) {
+        await AccountStatementSyncService.syncDayStatement(
+          paymentDateUTC,
+          "banca",
+          payment.bancaId,
+          { force: true }
+        ).catch((error) => {
+          logger.warn({
+            layer: "service",
+            action: "SYNC_DAY_STATEMENT_AFTER_REVERSE_ERROR_BANCA",
+            payload: {
+              paymentId: payment.id,
+              date: crDateService.postgresDateToCRString(payment.date),
+              bancaId: payment.bancaId,
+              error: (error as Error).message,
+            },
+          });
+        });
+      }
+    } catch (error) {
+      // No bloquear la reversión del pago si falla la sincronización
+      logger.error({
+        layer: "service",
+        action: "SYNC_DAY_STATEMENT_AFTER_REVERSE_IMPORT_ERROR",
+        payload: {
+          paymentId: payment.id,
+          date: crDateService.postgresDateToCRString(payment.date),
+          error: (error as Error).message,
+        },
+      });
+    }
 
     // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
     const dateStr = crDateService.postgresDateToCRString(payment.date);
