@@ -3587,15 +3587,35 @@ export async function getStatementDirect(
         periodPreviousMonthBalanceNum = 0;
     }
     
-    // ✅ CRÍTICO: totalBalance debe incluir el saldo del mes anterior si el período incluye el día 1
-    // Cuando se consulta el mes completo, totalBalance debe ser: saldo del mes anterior + totalBalanceBase
-    const totalBalance = periodIncludesFirstDay 
-        ? Number(periodPreviousMonthBalanceNum) + Number(totalBalanceBase)
-        : Number(totalBalanceBase);
+    // ✅ CORRECCIÓN CRÍTICA: totalBalance debe ser igual al remainingBalance del último día del período
+    // El remainingBalance del último día ya incluye:
+    // - Saldo del mes anterior (si periodIncludesFirstDay)
+    // - Todos los balances diarios (ventas - premios - comisiones + movimientos) acumulados progresivamente
+    // 
+    // NO debemos calcular totalBalance sumando totalBalanceBase (que NO incluye movimientos)
+    // porque cada statement.balance individual SÍ incluye movimientos
+    // 
+    // La forma correcta es usar el remainingBalance del último statement del período
+    let totalBalance = 0;
+    if (statements.length > 0) {
+        // Ordenar statements por fecha para obtener el último día
+        const sortedStatements = [...statements].sort((a, b) => 
+            new Date(a.date).getTime() - new Date(b.date).getTime()
+        );
+        const lastStatement = sortedStatements[sortedStatements.length - 1];
+        // ✅ El remainingBalance del último día es el acumulado total correcto
+        totalBalance = lastStatement.remainingBalance || 0;
+    } else {
+        // Si no hay statements, calcular desde balance base + movimientos + saldo mes anterior
+        const totalBalanceBase = totalSales - totalPayouts - totalCommissionToUse;
+        totalBalance = periodIncludesFirstDay 
+            ? Number(periodPreviousMonthBalanceNum) + Number(totalBalanceBase) + Number(totalPaid) - Number(totalCollected)
+            : Number(totalBalanceBase) + Number(totalPaid) - Number(totalCollected);
+    }
     
-    // ✅ CRÍTICO: totalRemainingBalance debe incluir pagos y cobros del período
-    // totalRemainingBalance = totalBalance + totalPaid - totalCollected
-    const totalRemainingBalance = Number(totalBalance) + Number(totalPaid) - Number(totalCollected);
+    // ✅ CORRECCIÓN: totalRemainingBalance debe ser igual a totalBalance
+    // Ambos representan el saldo acumulado al final del período
+    const totalRemainingBalance = Number(totalBalance);
 
     const functionEndTime = Date.now();
     logger.info({
