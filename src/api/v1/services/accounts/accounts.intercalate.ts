@@ -189,11 +189,13 @@ export function intercalateSorteosAndMovements(
     
     // ✅ CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
     // Si no está reversado, usar el monto normal
-    // ✅ NUEVO: El movimiento especial "Saldo del mes anterior" se trata como saldo inicial (balance positivo)
+    // ✅ CRÍTICO: El movimiento especial "Saldo del mes anterior" tiene balance = 0
+    // porque el saldo del mes anterior ya está incluido en initialAccumulated
+    // Este movimiento es solo para MOSTRARLO en el desglose, NO para afectar el acumulado
     const effectiveBalance = movement.isReversed 
       ? 0 
       : (isPreviousMonthBalance 
-          ? amountNum // Saldo inicial (positivo)
+          ? 0 // ✅ CRÍTICO: Balance = 0 porque ya está en initialAccumulated
           : (movement.type === 'payment' ? amountNum : -amountNum));
 
     movementItems.push({
