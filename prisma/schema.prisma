@@ -662,6 +662,13 @@ model AccountStatement {
   totalPaid        Float @default(0)
   totalCollected   Float @default(0) // ✅ NUEVO: Total de collections (cobros) del día
   remainingBalance Float @default(0)
+  
+  // ✅ NUEVO: Saldo acumulado progresivo desde el día 1 del mes
+  // Este campo se actualiza cuando se asienta el día (isSettled = true)
+  // Fórmula: accumulatedBalance = previousDayAccumulatedBalance + balance
+  // Para el día 1: accumulatedBalance = saldoMesAnterior + balance
+  // Se usa como fuente de verdad para evitar recalcular en cada consulta
+  accumulatedBalance Float @default(0)
 
   // Estado
   isSettled Boolean @default(false)
@@ -694,6 +701,7 @@ model AccountStatement {
   @@index([vendedorId])
   @@index([isSettled])
   @@index([isSettled, date]) // Para queries del cron job
+  @@index([month, isSettled, date]) // ✅ NUEVO: Para queries eficientes de accumulatedBalance
 }
 
 model AccountPayment {
