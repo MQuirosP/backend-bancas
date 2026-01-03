@@ -100,20 +100,22 @@ export function dateRangeUTCToCRStrings(startDate: Date, endDate: Date): {
   const startDateCRStr = dateUTCToCRString(startDate);
   
   // ⚠️ CRÍTICO: endDate representa el fin del día en CR
-  // Ejemplo: endDate = 2026-01-03T05:59:59.999Z representa fin del día 2 en CR (23:59:59.999 del día 2)
-  // Pero si endDate = 2026-01-04T05:59:59.999Z representa fin del día 3 en CR (23:59:59.999 del día 3)
-  //
+  // Ejemplo: endDate = 2026-01-02T05:59:59.999Z representa fin del día 1 en CR (23:59:59.999 del día 1)
   // Para obtener la fecha CR correcta:
   // - endDate está en UTC y representa 23:59:59.999 CR del día anterior al día siguiente en UTC
-  // - Si endDate = 2026-01-04T05:59:59.999Z, esto es 23:59:59.999 del 3 de enero en CR
-  // - Necesitamos extraer el día 3, no el día 4
+  // - Si endDate = 2026-01-02T05:59:59.999Z, esto es 23:59:59.999 del 1 de enero en CR
+  // - Necesitamos extraer el día 1, no el día 2
   //
-  // Solución: endDate - 6 horas nos da 23:59:59.999 UTC del día correcto en CR
-  // Luego extraemos la fecha de ese timestamp
-  const endDateAdjusted = new Date(endDate.getTime() - CR_TIMEZONE_OFFSET_MS);
-  // endDateAdjusted ahora representa 23:59:59.999 UTC del día correcto en CR
-  // Extraer la fecha CR usando dateUTCToCRString que maneja correctamente la conversión
-  const endDateCRStr = dateUTCToCRString(endDateAdjusted);
+  // Solución: endDate representa el fin del día N en CR, que es 05:59:59.999 UTC del día N+1
+  // Para obtener el día N: restar 1 día completo (24 horas) de endDate antes de convertir
+  // Esto nos da 05:59:59.999 UTC del día N, que representa 23:59:59.999 del día N-1 en CR
+  // Pero queremos el día N, así que necesitamos ajustar: endDate - 1 día = fin del día N-1
+  // Mejor: endDate representa fin del día N, así que restamos 1 día para obtener inicio del día N
+  // Luego usamos dateUTCToCRString para obtener el día N correcto
+  const endDateMinusOneDay = new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
+  // endDateMinusOneDay ahora representa el inicio del día N en UTC (05:59:59.999 UTC del día N)
+  // dateUTCToCRString suma 6 horas y extrae la fecha CR correcta (día N)
+  const endDateCRStr = dateUTCToCRString(endDateMinusOneDay);
   
   return { startDateCRStr, endDateCRStr };
 }

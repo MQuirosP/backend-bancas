@@ -396,20 +396,63 @@ export const AccountsService = {
         const previousDateStr = `${previousDayDate.getUTCFullYear()}-${String(previousDayDate.getUTCMonth() + 1).padStart(2, '0')}-${String(previousDayDate.getUTCDate()).padStart(2, '0')}`;
 
         // ✅ NUEVO: Obtener el último accumulated del día anterior (si se solicita)
-        // Esto calcula el acumulado progresivo desde el inicio del mes hasta el día anterior
+        // ✅ OPTIMIZADO: Para el día 1, no consultar el día anterior (no existe)
+        // Para días siguientes, primero intentar leer directamente de AccountStatement
+        // Solo si no existe o no es válido, entonces calcular con getStatementDirect
+        const firstDayOfMonthStr = `${year}-${String(month).padStart(2, '0')}-01`;
+        const isFirstDay = date === firstDayOfMonthStr;
         let lastDayAccumulated = 0;
-        if (includePreviousDayAccumulated) {
+        if (includePreviousDayAccumulated && !isFirstDay) {
             try {
-                // ✅ CRÍTICO: Obtener todos los statements del mes hasta el día anterior usando getStatementDirect
-                // Esto es lo mismo que se hacía antes, pero solo para calcular el acumulado
-                const [prevYear, prevMonth, prevDay] = previousDateStr.split('-').map(Number);
-                const monthStartDate = new Date(Date.UTC(prevYear, prevMonth - 1, 1));
-                const previousDayEndDate = new Date(Date.UTC(prevYear, prevMonth - 1, prevDay, 23, 59, 59, 999));
-                const monthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
-                const daysInMonth = new Date(prevYear, prevMonth, 0).getDate();
+                // ✅ OPTIMIZACIÓN: Primero intentar leer directamente de AccountStatement
+                // previousDayDate ya está definido arriba, solo necesitamos usarlo directamente
                 
-                // Obtener statements desde inicio del mes hasta día anterior
-                const statementsFromMonthStart = await getStatementDirect(
+                // Determinar IDs según la dimensión
+                let targetBancaId: string | undefined = undefined;
+                let targetVentanaId: string | undefined = undefined;
+                let targetVendedorId: string | undefined = undefined;
+                
+                if (filters.dimension === "banca") {
+                    targetBancaId = filters.bancaId || undefined;
+                } else if (filters.dimension === "ventana") {
+                    targetBancaId = filters.bancaId || undefined;
+                    targetVentanaId = filters.ventanaId || undefined;
+                } else if (filters.dimension === "vendedor") {
+                    targetBancaId = filters.bancaId || undefined;
+                    targetVentanaId = filters.ventanaId || undefined;
+                    targetVendedorId = filters.vendedorId || undefined;
+                }
+                
+                // Intentar leer directamente de AccountStatement
+                const dbStatement = await AccountStatementRepository.findByDate(previousDayDate, {
+                    ventanaId: targetVentanaId,
+                    vendedorId: targetVendedorId,
+                });
+                
+                if (dbStatement && dbStatement.remainingBalance !== null) {
+                    // ✅ Usar el remainingBalance guardado directamente (mucho más rápido)
+                    lastDayAccumulated = Number(dbStatement.remainingBalance);
+                    logger.info({
+                        layer: "service",
+                        action: "GET_PREVIOUS_DAY_ACCUMULATED_FROM_DB",
+                        payload: {
+                            date,
+                            previousDateStr,
+                            dimension: filters.dimension,
+                            lastDayAccumulated,
+                            remainingBalance: dbStatement.remainingBalance,
+                        },
+                    });
+                } else {
+                    // ✅ Si no existe en la BD, calcular con getStatementDirect (fallback)
+                    const [prevYear, prevMonth, prevDay] = previousDateStr.split('-').map(Number);
+                    const monthStartDate = new Date(Date.UTC(prevYear, prevMonth - 1, 1));
+                    const previousDayEndDate = new Date(Date.UTC(prevYear, prevMonth - 1, prevDay, 23, 59, 59, 999));
+                    const monthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
+                    const daysInMonth = new Date(prevYear, prevMonth, 0).getDate();
+                    
+                    // Obtener statements desde inicio del mes hasta día anterior
+                    const statementsFromMonthStart = await getStatementDirect(
                     {
                         date: "range" as const,
                         fromDate: `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`,
@@ -541,6 +584,7 @@ export const AccountsService = {
                         },
                     });
                 }
+                } // ✅ Cierre del bloque else que comienza en la línea 446
             } catch (error) {
                 // Si hay error al obtener el día anterior (ej: no existe), usar 0
                 // Esto es normal para el primer día del mes o si no hay datos previos
@@ -578,12 +622,11 @@ export const AccountsService = {
         );
 
         // ✅ NUEVO: Agregar movimiento especial del saldo del mes anterior para el primer día
-        const firstDayOfMonthStr = `${year}-${String(month).padStart(2, '0')}-01`;
-        const isFirstDay = date === firstDayOfMonthStr;
+        // ✅ NOTA: isFirstDay y firstDayOfMonthStr ya están definidos arriba (líneas 402-403)
+        let previousMonthBalance = 0;
         if (isFirstDay) {
             const { getPreviousMonthFinalBalance } = await import('./accounts.calculations');
             const effectiveMonth = `${year}-${String(month).padStart(2, '0')}`;
-            let previousMonthBalance = 0;
             
             if (filters.dimension === "banca") {
                 previousMonthBalance = await getPreviousMonthFinalBalance(
@@ -622,18 +665,19 @@ export const AccountsService = {
                             ? (filters.ventanaId || 'null')
                             : (filters.vendedorId || 'null');
                     
-                    // Agregar movimiento especial al inicio del día
+                    // ✅ CRÍTICO: El movimiento especial tiene balance: 0 porque el saldo ya está en initialAccumulated
+                    // Pero amount debe ser el saldo del mes anterior para mostrarlo en el frontend
                     firstDayMovements.unshift({
                         id: `previous-month-balance-${entityId}`,
                         type: "payment" as const,
-                        amount: previousMonthBalance,
+                        amount: previousMonthBalance, // ✅ Para mostrar en el frontend
                         method: "Saldo del mes anterior",
                         notes: `Saldo arrastrado del mes anterior`,
                         isReversed: false,
                         createdAt: new Date(`${date}T00:00:00.000Z`).toISOString(),
                         date: date,
                         time: "00:00",
-                        balance: previousMonthBalance,
+                        balance: 0, // ✅ CRÍTICO: Balance = 0 porque ya está en initialAccumulated
                         bancaId: filters.dimension === "banca" ? (filters.bancaId || null) : null,
                         ventanaId: filters.dimension === "ventana" ? (filters.ventanaId || null) : null,
                         vendedorId: filters.dimension === "vendedor" ? (filters.vendedorId || null) : null,
@@ -741,10 +785,10 @@ export const AccountsService = {
         }
 
         // Intercalar sorteos y movimientos
-        // ✅ CRÍTICO: Para el primer día, el acumulado inicial debe ser 0 porque el movimiento especial ya está incluido
-        // Para días siguientes, pasar el acumulado del día anterior como initialAccumulated
+        // ✅ CRÍTICO: Para el primer día, usar previousMonthBalance como initialAccumulated
+        // Para días siguientes, usar el acumulado del día anterior
         const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
-        const initialAccumulated = isFirstDay ? 0 : lastDayAccumulated;
+        const initialAccumulated = isFirstDay ? previousMonthBalance : lastDayAccumulated;
         const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date, initialAccumulated);
         
         // Log para debugging

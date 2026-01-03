@@ -941,15 +941,18 @@ export const AccountsController = {
       userRole: user.role,
     });
 
+    // ✅ CRÍTICO: Verificar que bySorteo sea un array antes de acceder a .length
+    const bySorteoArray = Array.isArray(bySorteo) ? bySorteo : [];
+
     req.logger?.info({
       layer: "controller",
       action: "GET_BY_SORTEO",
       userId: user.id,
       requestId: req.requestId,
-      payload: { date, dimension: effectiveDimension, ventanaId: effectiveVentanaId, vendedorId: effectiveVendedorId, bancaId: effectiveBancaId, count: bySorteo.length },
+      payload: { date, dimension: effectiveDimension, ventanaId: effectiveVentanaId, vendedorId: effectiveVendedorId, bancaId: effectiveBancaId, count: bySorteoArray.length },
     });
 
-    return success(res, bySorteo);
+    return success(res, bySorteoArray);
   },
 
   /**
