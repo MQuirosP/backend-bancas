@@ -1447,32 +1447,66 @@ export const DashboardService = {
       );
       
       // ✅ CRÍTICO: Calcular saldoAHoy para TODAS las ventanas
+      // ✅ CORRECCIÓN: Usar AccountStatement.remainingBalance del último día del mes como fuente de verdad
+      // en lugar de recalcular desde tickets (más confiable y consistente con módulo accounts)
+      const statementsByVentana = new Map<string, typeof monthStatements[0]>();
+      for (const stmt of monthStatements) {
+        if (!stmt.ventanaId) continue;
+        // Guardar el statement más reciente por ventana (último día con datos)
+        const existing = statementsByVentana.get(stmt.ventanaId);
+        if (!existing || stmt.date > existing.date) {
+          statementsByVentana.set(stmt.ventanaId, stmt);
+        }
+      }
+      
       // Primero procesar ventanas con datos del mes actual
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
-        // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
-        const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
-        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
-        // Sumar saldo del mes anterior al acumulado del mes actual
-        const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        // ✅ CORRECCIÓN: Intentar usar remainingBalance del AccountStatement del último día
+        // Si existe, es la fuente de verdad (ya incluye saldo anterior + movimientos del mes)
+        const lastStatement = statementsByVentana.get(ventanaId);
+        let saldoAHoy: number;
         
-        // ✅ DEBUG: Log para verificar el cálculo
-        logger.info({
-          layer: 'service',
-          action: 'MONTHLY_ACCUMULATED_CALCULATION_DEBUG',
-          payload: {
-            ventanaId: ventanaId.substring(0, 8),
-            previousMonthBalance,
-            monthEntry: {
-              totalSales: monthEntry.totalSales,
-              totalPayouts: monthEntry.totalPayouts,
-              totalListeroCommission: monthEntry.totalListeroCommission,
-              totalPaid: monthEntry.totalPaid,
-              totalCollected: monthEntry.totalCollected,
+        if (lastStatement && lastStatement.remainingBalance !== null) {
+          // ✅ USAR remainingBalance del AccountStatement (fuente de verdad)
+          saldoAHoy = Number(lastStatement.remainingBalance);
+          
+          logger.info({
+            layer: 'service',
+            action: 'MONTHLY_ACCUMULATED_FROM_STATEMENT',
+            payload: {
+              ventanaId: ventanaId.substring(0, 8),
+              lastStatementDate: crDateService.postgresDateToCRString(lastStatement.date),
+              remainingBalance: saldoAHoy,
+              note: "Using AccountStatement.remainingBalance as source of truth",
             },
-            baseBalance,
-            saldoAHoy,
-          },
-        });
+          });
+        } else {
+          // ✅ FALLBACK: Calcular manualmente si no hay AccountStatement
+          // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
+          const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
+          const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
+          // Sumar saldo del mes anterior al acumulado del mes actual
+          saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+          
+          logger.info({
+            layer: 'service',
+            action: 'MONTHLY_ACCUMULATED_CALCULATED',
+            payload: {
+              ventanaId: ventanaId.substring(0, 8),
+              previousMonthBalance,
+              monthEntry: {
+                totalSales: monthEntry.totalSales,
+                totalPayouts: monthEntry.totalPayouts,
+                totalListeroCommission: monthEntry.totalListeroCommission,
+                totalPaid: monthEntry.totalPaid,
+                totalCollected: monthEntry.totalCollected,
+              },
+              baseBalance,
+              saldoAHoy,
+              note: "Calculated manually (no AccountStatement found)",
+            },
+          });
+        }
         
         monthSaldoByVentana.set(ventanaId, saldoAHoy);
       }
@@ -2543,13 +2577,37 @@ export const DashboardService = {
       );
       
       // ✅ CRÍTICO: Calcular saldoAHoy para TODAS las ventanas
+      // ✅ CORRECCIÓN: Usar AccountStatement.remainingBalance del último día del mes como fuente de verdad
+      // en lugar de recalcular desde tickets (más confiable y consistente con módulo accounts)
+      const statementsByVentanaCxP = new Map<string, typeof monthStatements[0]>();
+      for (const stmt of monthStatements) {
+        if (!stmt.ventanaId) continue;
+        // Guardar el statement más reciente por ventana (último día con datos)
+        const existing = statementsByVentanaCxP.get(stmt.ventanaId);
+        if (!existing || stmt.date > existing.date) {
+          statementsByVentanaCxP.set(stmt.ventanaId, stmt);
+        }
+      }
+      
       // Primero procesar ventanas con datos del mes actual
       for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
-        // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
-        const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
-        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
-        // Sumar saldo del mes anterior al acumulado del mes actual
-        const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        // ✅ CORRECCIÓN: Intentar usar remainingBalance del AccountStatement del último día
+        // Si existe, es la fuente de verdad (ya incluye saldo anterior + movimientos del mes)
+        const lastStatement = statementsByVentanaCxP.get(ventanaId);
+        let saldoAHoy: number;
+        
+        if (lastStatement && lastStatement.remainingBalance !== null) {
+          // ✅ USAR remainingBalance del AccountStatement (fuente de verdad)
+          saldoAHoy = Number(lastStatement.remainingBalance);
+        } else {
+          // ✅ FALLBACK: Calcular manualmente si no hay AccountStatement
+          // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
+          const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
+          const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
+          // Sumar saldo del mes anterior al acumulado del mes actual
+          saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
+        }
+        
         monthSaldoByVentana.set(ventanaId, saldoAHoy);
       }
       

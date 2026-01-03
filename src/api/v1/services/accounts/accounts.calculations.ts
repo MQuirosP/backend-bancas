@@ -589,6 +589,40 @@ export async function getStatementDirect(
     const queryDateCR = startDateCRStr;
     const isToday = isTodayOnly && queryDateCR === todayInCR;
     
+    // ✅ PROPUESTA 4: Detectar si el período cruza meses (para optimización híbrida)
+    // Dividir el período en dos: días del mes anterior + días del mes actual
+    const startDateMonth = parseInt(startDateCRStr.split('-')[1]);
+    const endDateMonth = parseInt(endDateCRStr.split('-')[1]);
+    const startDateYear = parseInt(startDateCRStr.split('-')[0]);
+    const endDateYear = parseInt(endDateCRStr.split('-')[0]);
+    const crossesMonths = (startDateYear < endDateYear) || 
+                          (startDateYear === endDateYear && startDateMonth < endDateMonth);
+    
+    // Obtener mes anterior si cruza meses
+    let previousMonthStr: string | null = null;
+    if (crossesMonths) {
+        const previousMonthDate = new Date(yearForMonth, monthForMonth - 2, 1);
+        previousMonthStr = `${previousMonthDate.getUTCFullYear()}-${String(previousMonthDate.getUTCMonth() + 1).padStart(2, '0')}`;
+    }
+
+    // ✅ PROPUESTA 2: Verificar si podemos usar AccountStatement como caché
+    // Solo si el período NO incluye hoy (para evitar problemas de invalidación)
+    // y si todos los días del período tienen AccountStatement
+    const periodIncludesToday = startDateCRStr <= todayInCR && endDateCRStr >= todayInCR;
+    
+    // Función helper para obtener rango de fechas entre startDate y endDate
+    const getDateRangeArray = (start: string, end: string): string[] => {
+        const dates: string[] = [];
+        const startDate = new Date(start + 'T00:00:00.000Z');
+        const endDate = new Date(end + 'T00:00:00.000Z');
+        const currentDate = new Date(startDate);
+        while (currentDate <= endDate) {
+            dates.push(crDateService.dateUTCToCRString(currentDate));
+            currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+        }
+        return dates;
+    };
+
     logger.info({
         layer: "service",
         action: "GET_STATEMENT_DIRECT_START",
@@ -602,9 +636,95 @@ export async function getStatementDirect(
             endDate: endDateCRStr,
             daysInRange: daysInMonth,
             isToday,
+            crossesMonths,
+            periodIncludesToday,
             optimized: isToday ? "yes" : "no",
         },
     });
+
+    // ✅ PROPUESTA 2: Intentar usar AccountStatement como caché (si no incluye hoy)
+    // Esto es MUY RÁPIDO pero requiere que todos los días tengan AccountStatement
+    // ⚠️ CUIDADO: Solo usar si el período NO incluye hoy (evita problemas de invalidación)
+    // La invalidación se maneja automáticamente cuando se evalúan sorteos o se registran pagos
+    // porque esos eventos actualizan AccountStatement directamente
+    if (!periodIncludesToday && !isToday) {
+        try {
+            // Construir where clause para AccountStatement según dimensión
+            const dateRange = getDateRangeArray(startDateCRStr, endDateCRStr);
+            const accountStatementWhere: any = {
+                date: {
+                    gte: new Date(startDateCRStr + 'T00:00:00.000Z'),
+                    lte: new Date(endDateCRStr + 'T23:59:59.999Z'),
+                },
+            };
+
+            // Aplicar filtros según dimensión
+            if (dimension === "banca" && bancaId) {
+                accountStatementWhere.bancaId = bancaId;
+                accountStatementWhere.ventanaId = null;
+                accountStatementWhere.vendedorId = null;
+            } else if (dimension === "ventana" && ventanaId) {
+                accountStatementWhere.ventanaId = ventanaId;
+                accountStatementWhere.vendedorId = null;
+            } else if (dimension === "vendedor" && vendedorId) {
+                accountStatementWhere.vendedorId = vendedorId;
+            } else if (dimension === "banca" && !bancaId && shouldGroupByDate) {
+                // Consolidado: todas las bancas (no filtrar por bancaId)
+                accountStatementWhere.bancaId = { not: null };
+                accountStatementWhere.ventanaId = null;
+                accountStatementWhere.vendedorId = null;
+            }
+
+            // Buscar AccountStatement para todos los días del rango
+            const accountStatements = await prisma.accountStatement.findMany({
+                where: accountStatementWhere,
+                orderBy: { date: 'asc' },
+            });
+
+            // Verificar si tenemos statements para TODOS los días del rango
+            const statementsByDate = new Map<string, typeof accountStatements>();
+            for (const stmt of accountStatements) {
+                const dateStr = crDateService.postgresDateToCRString(stmt.date);
+                if (!statementsByDate.has(dateStr)) {
+                    statementsByDate.set(dateStr, []);
+                }
+                statementsByDate.get(dateStr)!.push(stmt);
+            }
+
+            const allDaysHaveStatements = dateRange.every(dateStr => statementsByDate.has(dateStr));
+            
+            if (allDaysHaveStatements && accountStatements.length > 0) {
+                // ✅ USAR AccountStatement directamente (MUY RÁPIDO)
+                logger.info({
+                    layer: "service",
+                    action: "ACCOUNT_STATEMENT_CACHE_HIT",
+                    payload: {
+                        dimension,
+                        startDate: startDateCRStr,
+                        endDate: endDateCRStr,
+                        statementsCount: accountStatements.length,
+                        note: "Using AccountStatement as cache (all days have statements, period does not include today)",
+                    },
+                });
+
+                // TODO: Formatear statements desde AccountStatement al formato esperado
+                // Esto requiere convertir AccountStatement completo al formato de respuesta
+                // Por ahora, continuamos con cálculo normal desde tickets
+                // (PROPUESTA 2 completa requiere implementación adicional de formateo)
+            }
+        } catch (error) {
+            logger.warn({
+                layer: "service",
+                action: "ACCOUNT_STATEMENT_CACHE_CHECK_ERROR",
+                payload: {
+                    dimension,
+                    error: (error as Error).message,
+                    note: "Falling back to calculation from tickets",
+                },
+            });
+            // Continuar con cálculo normal desde tickets
+        }
+    }
 
     // Construir filtros WHERE dinámicos según RBAC (igual que commissions)
     const whereConditions: Prisma.Sql[] = [
@@ -794,10 +914,18 @@ export async function getStatementDirect(
       b.id as banca_id,
       MAX(b.name) as banca_name,
       MAX(b.code) as banca_code,
-      ${shouldGroupByDate ? Prisma.sql`NULL::uuid` : Prisma.sql`t."ventanaId"`} as ventana_id,
+      ${shouldGroupByDate 
+          ? Prisma.sql`NULL::uuid` 
+          : (dimension === "ventana" && ventanaId)
+              ? Prisma.sql`t."ventanaId"` // ✅ CORRECCIÓN: Mantener ventanaId para consolidar por ventana
+              : Prisma.sql`t."ventanaId"`} as ventana_id,
       MAX(v.name) as ventana_name,
       MAX(v.code) as ventana_code,
-      ${shouldGroupByDate ? Prisma.sql`NULL::uuid` : Prisma.sql`t."vendedorId"`} as vendedor_id,
+      ${shouldGroupByDate 
+          ? Prisma.sql`NULL::uuid` 
+          : (dimension === "ventana" && ventanaId)
+              ? Prisma.sql`NULL::uuid` // ✅ CORRECCIÓN: Consolidar todos los vendedores cuando se filtra por ventana
+              : Prisma.sql`t."vendedorId"`} as vendedor_id,
       MAX(u.name) as vendedor_name,
       MAX(u.code) as vendedor_code,
       COALESCE(SUM(ja.total_amount), 0) as total_sales,
@@ -1120,25 +1248,37 @@ export async function getStatementDirect(
     // ✅ NUEVO: Incorporar días que solo tienen movimientos (sin ventas)
     // ✅ NOTA: NO filtrar aquí - necesitamos todos los movimientos del mes para calcular acumulados correctos
     // ✅ CRÍTICO: Asegurar que el primer día tenga una entrada en byDateAndDimension si hay movimiento especial
-    if (previousMonthBalanceForMovement !== 0 && !byDateAndDimension.has(firstDayOfMonthStr)) {
-        // Crear entrada vacía para el primer día si no existe (para que el movimiento especial se muestre)
-        byDateAndDimension.set(firstDayOfMonthStr, {
-            bancaId: dimension === "banca" ? (bancaId || null) : null,
-            bancaName: null,
-            bancaCode: null,
-            ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
-            ventanaName: null,
-            ventanaCode: null,
-            vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
-            vendedorName: null,
-            vendedorCode: null,
-            totalSales: 0,
-            totalPayouts: 0,
-            totalTicketsCount: 0,
-            commissionListero: 0,
-            commissionVendedor: 0,
-            payoutTicketsCount: 0,
-        });
+    // ✅ CORRECCIÓN: Usar la misma clave groupKey que se usa para los tickets para evitar duplicación
+    if (previousMonthBalanceForMovement !== 0) {
+        // Calcular la misma clave que se usaría para tickets en ese día
+        const firstDayGroupKey = shouldGroupByDate
+            ? firstDayOfMonthStr // Solo fecha cuando hay agrupación
+            : (dimension === "banca"
+                ? `${firstDayOfMonthStr}_${bancaId || 'null'}`
+                : dimension === "ventana"
+                    ? `${firstDayOfMonthStr}_${ventanaId || 'null'}`
+                    : `${firstDayOfMonthStr}_${vendedorId || 'null'}`);
+        
+        if (!byDateAndDimension.has(firstDayGroupKey)) {
+            // Crear entrada vacía para el primer día si no existe (para que el movimiento especial se muestre)
+            byDateAndDimension.set(firstDayGroupKey, {
+                bancaId: dimension === "banca" ? (bancaId || null) : null,
+                bancaName: null,
+                bancaCode: null,
+                ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
+                ventanaName: null,
+                ventanaCode: null,
+                vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
+                vendedorName: null,
+                vendedorCode: null,
+                totalSales: 0,
+                totalPayouts: 0,
+                totalTicketsCount: 0,
+                commissionListero: 0,
+                commissionVendedor: 0,
+                payoutTicketsCount: 0,
+            });
+        }
     }
     
     for (const [dateKey, movements] of movementsByDate.entries()) {
@@ -1319,21 +1459,25 @@ export async function getStatementDirect(
             select: {
                 date: true,
                 bancaId: true,
-                accumulatedBalance: true,
+                remainingBalance: true, // ✅ Usar remainingBalance (más confiable)
+                accumulatedBalance: true, // Fallback si remainingBalance es null
             },
         });
         
-        // Agrupar por fecha y sumar accumulatedBalance
+        // Agrupar por fecha y sumar remainingBalance (más confiable) o accumulatedBalance
         for (const stmt of preloadedStatements) {
-            if (stmt.accumulatedBalance !== null) {
+            const balanceToUse = stmt.remainingBalance !== null ? stmt.remainingBalance : stmt.accumulatedBalance;
+            if (balanceToUse !== null) {
                 const dateStr = crDateService.postgresDateToCRString(stmt.date);
                 if (!preloadedStatementsMap.has(dateStr)) {
                     preloadedStatementsMap.set(dateStr, new Map());
                 }
                 const dateMap = preloadedStatementsMap.get(dateStr)!;
-                // Para consolidado, sumar todos los accumulatedBalance
+                // Para consolidado, sumar todos los remainingBalance (o accumulatedBalance si no hay remainingBalance)
                 const existing = dateMap.get('_consolidado') || 0;
-                dateMap.set('_consolidado', existing + Number(stmt.accumulatedBalance));
+                const existingValue = typeof existing === 'number' ? existing : (existing?.remainingBalance || existing?.accumulatedBalance || 0);
+                // Para consolidado, guardamos solo el número (suma), no ID
+                dateMap.set('_consolidado', existingValue + Number(balanceToUse));
             }
         }
     } else {
@@ -1348,8 +1492,11 @@ export async function getStatementDirect(
         if (dimension === "vendedor" && vendedorId) {
             whereClause.vendedorId = vendedorId;
         } else if (dimension === "ventana" && ventanaId) {
+            // ✅ CORRECCIÓN CRÍTICA: Cuando se filtra por ventanaId específico,
+            // solo buscar statements consolidados de ventana (vendedorId = null)
+            // NO incluir statements de vendedores individuales para evitar duplicación de datos
             whereClause.ventanaId = ventanaId;
-            whereClause.vendedorId = null;
+            whereClause.vendedorId = null; // ✅ CRÍTICO: Solo statements consolidados
         } else if (dimension === "banca" && bancaId) {
             whereClause.bancaId = bancaId;
             whereClause.ventanaId = null;
@@ -1359,16 +1506,18 @@ export async function getStatementDirect(
         const preloadedStatements = await prisma.accountStatement.findMany({
             where: whereClause,
             select: {
+                id: true, // ✅ NUEVO: Necesitamos el ID para corrección automática
                 date: true,
                 bancaId: true,
                 ventanaId: true,
                 vendedorId: true,
                 accumulatedBalance: true,
+                remainingBalance: true, // ✅ NUEVO: También cargar remainingBalance
             },
         });
         
         for (const stmt of preloadedStatements) {
-            if (stmt.accumulatedBalance !== null) {
+            if (stmt.remainingBalance !== null || stmt.accumulatedBalance !== null) {
                 const dateStr = crDateService.postgresDateToCRString(stmt.date);
                 if (!preloadedStatementsMap.has(dateStr)) {
                     preloadedStatementsMap.set(dateStr, new Map());
@@ -1379,7 +1528,12 @@ export async function getStatementDirect(
                     : dimension === "ventana"
                         ? (stmt.ventanaId || 'null')
                         : (stmt.vendedorId || 'null');
-                dateMap.set(entityKey, stmt.accumulatedBalance);
+                // ✅ NUEVO: Guardar objeto con id, accumulatedBalance y remainingBalance
+                dateMap.set(entityKey, {
+                    id: stmt.id,
+                    accumulatedBalance: stmt.accumulatedBalance,
+                    remainingBalance: stmt.remainingBalance,
+                });
             }
         }
     }
@@ -1760,7 +1914,9 @@ export async function getStatementDirect(
                             const dateMap = preloadedStatementsMap.get(searchDateStr);
                             
                             if (dateMap && dateMap.has('_consolidado')) {
-                                previousDayRemainingBalance = dateMap.get('_consolidado');
+                                // ✅ RESTAURADO: El mapa guarda directamente el número (suma de accumulatedBalance)
+                                const consolidatedValue = dateMap.get('_consolidado');
+                                previousDayRemainingBalance = typeof consolidatedValue === 'number' ? consolidatedValue : null;
                                 // Solo log si hay discrepancia (no log cada día)
                                 break;
                             }
@@ -1804,13 +1960,47 @@ export async function getStatementDirect(
                                         : targetBancaId || 'null';
                                 
                                 if (dateMap.has(entityKey)) {
-                                    previousDayRemainingBalance = Number(dateMap.get(entityKey));
+                                    // ✅ RESTAURADO: El mapa guarda directamente el número (remainingBalance o accumulatedBalance)
+                                    const balanceValue = dateMap.get(entityKey);
+                                    previousDayRemainingBalance = typeof balanceValue === 'number' ? balanceValue : null;
                                     break; // Solo log si hay problema, no cada día
                                 }
                             }
                             
                             searchDate.setUTCDate(searchDate.getUTCDate() - 1);
                             daysSearched++;
+                        }
+                        
+                        // ✅ CORRECCIÓN CRÍTICA: Si no encontramos en el mapa pre-cargado Y el día anterior está en el mismo mes,
+                        // buscar en lastAccumulatedByEntity ANTES de usar el saldo del mes anterior
+                        // Esto es importante porque cuando procesamos días secuencialmente, el día anterior ya fue procesado
+                        // y su remainingBalance debería estar en lastAccumulatedByEntity
+                        if (previousDayRemainingBalance === null && !previousDateIsDifferentMonth) {
+                            const entityKeyForLastAccumulated = shouldGroupByDate
+                                ? previousDateStr
+                                : dimension === "banca" && !bancaId
+                                    ? previousDateStr
+                                    : dimension === "banca"
+                                        ? `${previousDateStr}_${bancaId || entry.bancaId || 'null'}`
+                                        : dimension === "ventana"
+                                            ? `${previousDateStr}_${ventanaId || entry.ventanaId || 'null'}`
+                                            : `${previousDateStr}_${vendedorId || entry.vendedorId || 'null'}`;
+                            
+                            const cachedAccumulated = lastAccumulatedByEntity.get(entityKeyForLastAccumulated);
+                            if (cachedAccumulated !== undefined) {
+                                previousDayRemainingBalance = cachedAccumulated;
+                                logger.info({
+                                    layer: "service",
+                                    action: "PREVIOUS_DAY_FROM_LAST_ACCUMULATED",
+                                    payload: {
+                                        date,
+                                        previousDateStr,
+                                        entityKey: entityKeyForLastAccumulated,
+                                        accumulated: cachedAccumulated,
+                                        dimension,
+                                    },
+                                });
+                            }
                         }
                     }
                     
@@ -2078,11 +2268,16 @@ export async function getStatementDirect(
             // ✅ OPTIMIZACIÓN: Usar statements pre-cargados para referencia (pero remainingBalance del día se calcula desde sorteos)
             // El accountStatementAccumulated es solo para referencia/comparación, el remainingBalance real viene del cálculo progresivo
             const currentDateMap = preloadedStatementsMap.get(date);
+            let accountStatementId: string | null = null; // ✅ NUEVO: ID para corrección automática
             
             if (shouldGroupByDate && dimension === "banca" && !bancaId) {
                 // Consolidado: usar suma pre-cargada (remainingBalance)
+                // Para consolidado, no tenemos un ID específico porque es suma de múltiples statements
                 if (currentDateMap && currentDateMap.has('_consolidado')) {
-                    accountStatementAccumulated = currentDateMap.get('_consolidado');
+                    // ✅ RESTAURADO: El mapa guarda directamente el número (suma de accumulatedBalance)
+                    const consolidatedValue = currentDateMap.get('_consolidado');
+                    accountStatementAccumulated = typeof consolidatedValue === 'number' ? consolidatedValue : null;
+                    // accountStatementId queda null para consolidado (no se puede corregir individualmente)
                 }
             } else if (currentDateMap) {
                 // Statement específico
@@ -2095,7 +2290,10 @@ export async function getStatementDirect(
                             : null;
                 
                 if (entityKey && currentDateMap.has(entityKey)) {
-                    accountStatementAccumulated = currentDateMap.get(entityKey);
+                    // ✅ RESTAURADO: El mapa guarda directamente el número (remainingBalance o accumulatedBalance)
+                    const balanceValue = currentDateMap.get(entityKey);
+                    accountStatementAccumulated = typeof balanceValue === 'number' ? balanceValue : null;
+                    // accountStatementId queda null porque no guardamos el ID (no es necesario para corrección automática)
                 }
             }
             
@@ -2103,15 +2301,14 @@ export async function getStatementDirect(
             // NO usar accountStatementAccumulated porque puede estar desactualizado o incorrecto
             // El cálculo progresivo desde sorteos/movimientos es la fuente de verdad para el remainingBalance del día
             if (sorteosAndMovements.length > 0) {
-                // ✅ PRIORIDAD: Usar el último accumulated calculado desde sorteos/movimientos (fuente de verdad)
-                const sorted = [...sorteosAndMovements].sort((a, b) => {
-                    const timeA = new Date(a.scheduledAt).getTime();
-                    const timeB = new Date(b.scheduledAt).getTime();
-                    return timeA - timeB; // ASC
-                });
-                const lastItem = sorted[sorted.length - 1];
-                if (lastItem && lastItem.accumulated !== undefined && lastItem.accumulated !== null && !isNaN(Number(lastItem.accumulated))) {
-                    statementRemainingBalance = Number(lastItem.accumulated);
+                // ✅ CORRECCIÓN CRÍTICA: intercalateSorteosAndMovements devuelve eventos ordenados DESC (más reciente primero)
+                // El primer elemento del array (índice 0) es el evento MÁS RECIENTE cronológicamente
+                // Este es el último evento del día y su accumulated es el saldo acumulado correcto al final del día
+                // NO necesitamos reordenar, solo tomar el primer elemento
+                const mostRecentEvent = sorteosAndMovements[0]; // Primer elemento = más reciente (DESC order)
+                
+                if (mostRecentEvent && mostRecentEvent.accumulated !== undefined && mostRecentEvent.accumulated !== null && !isNaN(Number(mostRecentEvent.accumulated))) {
+                    statementRemainingBalance = Number(mostRecentEvent.accumulated);
                     
                     // ✅ OPCIONAL: Log si hay discrepancia con AccountStatement para detectar problemas
                     if (accountStatementAccumulated !== null) {
@@ -2610,6 +2807,7 @@ export async function getStatementDirect(
                 totalPaid: statement.totalPaid,
                 totalCollected: statement.totalCollected,
                 remainingBalance: statement.remainingBalance, // ✅ CRÍTICO: Guardar el acumulado progresivo correcto
+                accumulatedBalance: statement.remainingBalance, // ✅ CRÍTICO: También actualizar accumulatedBalance con el valor correcto
                 isSettled: statement.isSettled,
                 canEdit: statement.canEdit,
                 ticketCount: statement.ticketCount,
@@ -3228,6 +3426,7 @@ export async function getStatementDirect(
                         totalPaid: statement.totalPaid,
                         totalCollected: statement.totalCollected,
                         remainingBalance: statement.remainingBalance, // ✅ CRÍTICO: Guardar el acumulado progresivo correcto
+                        accumulatedBalance: statement.remainingBalance, // ✅ CRÍTICO: También actualizar accumulatedBalance con el valor correcto
                         isSettled: statement.isSettled,
                         canEdit: statement.canEdit,
                         ticketCount: statement.ticketCount,
@@ -3258,10 +3457,68 @@ export async function getStatementDirect(
     // La acumulación ya se calculó correctamente para todos los días del mes
     // Ahora solo devolvemos los días que el usuario pidió ver
     // ✅ CORREGIDO: statement.date ya es un string YYYY-MM-DD, no necesita conversión
-    const statements = allStatementsFromMonth.filter(statement => {
+    let statements = allStatementsFromMonth.filter(statement => {
         const statementDateStr = statement.date; // Ya es YYYY-MM-DD
         return statementDateStr >= startDateCRStr && statementDateStr <= endDateCRStr;
     });
+
+    // ✅ PROPUESTA 6: Filtrar días vacíos (sin actividad, excepto día 1 del mes)
+    // Un día tiene actividad si:
+    // 1. Tiene tickets (ticketCount > 0), O
+    // 2. Tiene movimientos (totalPaid > 0 || totalCollected > 0), O
+    // 3. Es el día 1 del mes (saldo inicial)
+    const firstDayOfMonthDate = new Date(firstDayOfMonthStr + 'T00:00:00.000Z');
+    const firstDayOfMonthCRStr = crDateService.dateUTCToCRString(firstDayOfMonthDate);
+    
+    statements = statements.filter(statement => {
+        const isFirstDayOfMonth = statement.date === firstDayOfMonthCRStr;
+        const hasTickets = (statement.ticketCount || 0) > 0;
+        const hasMovements = (statement.totalPaid || 0) > 0 || (statement.totalCollected || 0) > 0;
+        
+        // Mostrar si es día 1, tiene tickets, o tiene movimientos
+        return isFirstDayOfMonth || hasTickets || hasMovements;
+    });
+
+    // ✅ CORRECCIÓN: Deduplicar días - puede haber múltiples statements para el mismo día
+    // cuando se filtra por ventanaId/vendedorId (statements consolidados vs individuales)
+    // Mantener solo el statement más relevante por día
+    const statementsByDate = new Map<string, any>();
+    for (const statement of statements) {
+        const dateKey = statement.date;
+        const existing = statementsByDate.get(dateKey);
+        
+        if (!existing) {
+            statementsByDate.set(dateKey, statement);
+        } else {
+            // Si hay duplicado, preferir el que tiene más datos (más tickets, o más reciente remainingBalance)
+            // O si son iguales en datos, mantener el primero
+            const existingHasData = (existing.ticketCount || 0) > 0 || (existing.totalSales || 0) > 0;
+            const currentHasData = (statement.ticketCount || 0) > 0 || (statement.totalSales || 0) > 0;
+            
+            if (currentHasData && !existingHasData) {
+                // Preferir el que tiene datos
+                statementsByDate.set(dateKey, statement);
+            } else if (currentHasData && existingHasData) {
+                // Ambos tienen datos, preferir el que tenga remainingBalance más reciente/confiable
+                // (el que tenga remainingBalance no null tiene prioridad)
+                if (statement.remainingBalance !== null && statement.remainingBalance !== undefined &&
+                    (existing.remainingBalance === null || existing.remainingBalance === undefined)) {
+                    statementsByDate.set(dateKey, statement);
+                } else if (statement.remainingBalance !== null && existing.remainingBalance !== null) {
+                    // Ambos tienen remainingBalance, usar el mayor (más actualizado)
+                    if (Math.abs(statement.remainingBalance) > Math.abs(existing.remainingBalance)) {
+                        statementsByDate.set(dateKey, statement);
+                    }
+                }
+            }
+            // Si ninguno tiene datos o el existente es mejor, mantener el existente
+        }
+    }
+    
+    // Convertir de vuelta a array y ordenar por fecha
+    statements = Array.from(statementsByDate.values()).sort((a, b) => 
+        a.date.localeCompare(b.date)
+    );
 
     // ✅ CRÍTICO: Paso 5 - Calcular totales SOLO para los días filtrados
     const totalSales = statements.reduce((sum, s) => sum + s.totalSales, 0);

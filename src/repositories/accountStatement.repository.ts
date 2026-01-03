@@ -341,6 +341,7 @@ export const AccountStatementRepository = {
     totalPaid?: number;
     totalCollected?: number; // ✅ Campo para totales de collections
     remainingBalance?: number;
+    accumulatedBalance?: number; // ✅ NUEVO: Campo para balance acumulado
     isSettled?: boolean;
     canEdit?: boolean;
     ticketCount?: number;
