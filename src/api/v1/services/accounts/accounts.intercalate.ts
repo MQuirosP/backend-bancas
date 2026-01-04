@@ -115,28 +115,28 @@ export function intercalateSorteosAndMovements(
 
     // ✅ CRÍTICO: Detectar si es el movimiento especial "Saldo del mes anterior"
     const isPreviousMonthBalance = movement.id?.startsWith('previous-month-balance-');
-    
+
     // ✅ CRÍTICO: Usar time si está disponible y es válido, sino usar createdAt
     // Si movement.time existe, combinar date + time en CR y convertir a UTC para scheduledAt
     // Esto permite que el usuario especifique la hora del movimiento y se intercale correctamente con sorteos
     let scheduledAt: Date;
     let timeToDisplay: string;
-    
+
     // ✅ CRÍTICO: Validar que time existe y no es una cadena vacía
     const timeValue = movement.time;
     const hasTime = timeValue != null && typeof timeValue === 'string' && timeValue.trim().length > 0;
-    
+
     // ✅ CRÍTICO: Si el usuario especificó manualmente el time, SIEMPRE usarlo
     // El time puede estar lejos de createdAt si el usuario registró el movimiento después
     // (ej: registró a las 01:17 un movimiento que ocurrió a las 18:00)
     // Solo validamos que el formato sea correcto (HH:MM válido)
     const createdAtDate = new Date(movement.createdAt);
-    
+
     let useTime = false;
     if (hasTime && timeValue) {
       const timeStr = timeValue.trim();
       const [hours, minutes] = timeStr.split(':').map(Number);
-      
+
       // ✅ VALIDACIÓN: Solo verificar que el formato sea válido (0-23 horas, 0-59 minutos)
       // Si el usuario especificó manualmente la hora, siempre debemos respetarla
       // incluso si está lejos de createdAt (el usuario puede registrar movimientos después)
@@ -147,7 +147,7 @@ export function intercalateSorteosAndMovements(
         useTime = false;
       }
     }
-    
+
     if (useTime && timeValue) {
       // Combinar date + time en CR y convertir a UTC para comparar con sorteos
       // date viene como YYYY-MM-DD, time como HH:MM (hora en CR, UTC-6)
@@ -162,7 +162,7 @@ export function intercalateSorteosAndMovements(
       let utcYear = year;
       let utcMonth = month;
       let utcDay = day;
-      
+
       if (utcHours >= 24) {
         // Es el día siguiente en UTC
         const nextDay = new Date(Date.UTC(year, month - 1, day));
@@ -186,17 +186,14 @@ export function intercalateSorteosAndMovements(
 
     // ✅ CRÍTICO: Convertir amount a Number (puede venir como Decimal de Prisma)
     const amountNum = Number(movement.amount || 0);
-    
+
     // ✅ CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
     // Si no está reversado, usar el monto normal
-    // ✅ CRÍTICO: El movimiento especial "Saldo del mes anterior" tiene balance = 0
-    // porque el saldo del mes anterior ya está incluido en initialAccumulated
-    // Este movimiento es solo para MOSTRARLO en el desglose, NO para afectar el acumulado
-    const effectiveBalance = movement.isReversed 
-      ? 0 
-      : (isPreviousMonthBalance 
-          ? 0 // ✅ CRÍTICO: Balance = 0 porque ya está en initialAccumulated
-          : (movement.type === 'payment' ? amountNum : -amountNum));
+    // ✅ CAMBIO: Permitir que "Saldo del mes anterior" tenga balance real para que se muestre en el historial
+    // y participe en el cálculo acumulado (siempre y cuando initialAccumulated se ajuste a 0 externally)
+    const effectiveBalance = movement.isReversed
+      ? 0
+      : (movement.type === 'payment' ? amountNum : -amountNum);
 
     movementItems.push({
       sorteoId: `mov-${movement.id}`,
@@ -237,10 +234,10 @@ export function intercalateSorteosAndMovements(
     // scheduledAt viene como string ISO desde accounts.queries.ts (ya convertido con toISOString())
     // Por lo tanto, ya está en UTC y podemos usarlo directamente
     const sorteoScheduledAt = new Date(sorteo.scheduledAt);
-    
+
     // ✅ CRÍTICO: Convertir balance a Number (puede venir como Decimal de Prisma)
     const balanceNum = Number(sorteo.balance || 0);
-    
+
     return {
       sorteoId: sorteo.sorteoId,
       sorteoName: sorteo.sorteoName,
@@ -268,6 +265,13 @@ export function intercalateSorteosAndMovements(
   allEvents.sort((a, b) => {
     const timeA = new Date(a.scheduledAt).getTime();
     const timeB = new Date(b.scheduledAt).getTime();
+
+    // ✅ CRÍTICO: Si tiempos son iguales, priorizar "initial_balance"
+    if (timeA === timeB) {
+      if (a.type === 'initial_balance') return -1;
+      if (b.type === 'initial_balance') return 1;
+    }
+
     return timeA - timeB; // ASC para calcular
   });
 
