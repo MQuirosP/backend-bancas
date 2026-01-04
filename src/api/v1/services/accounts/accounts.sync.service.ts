@@ -519,10 +519,9 @@ export class AccountStatementSyncService {
       const ticketCount = tickets.length;
       const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
 
-      // 7. Si no existe statement, crearlo
-      // ⚠️ CRÍTICO: El constraint (date, ventanaId) NO permite tener statement consolidado de ventana
-      // Y statement de vendedor con el mismo ventanaId. Por lo tanto, para vendedores,
-      // debemos buscar SOLO por vendedorId (el constraint (date, vendedorId) sí permite esto)
+      // 7. Si no existe statement, crearlo usando findOrCreate del repositorio
+      // ✅ CORREGIDO: Usar AccountStatementRepository.findOrCreate que maneja correctamente
+      // los constraints únicos y evita warnings de duplicados
       if (!statement) {
         // Para vendedores: NO incluir ventanaId al crear (aunque lo tenemos)
         // El constraint (date, vendedorId) permite crear el statement sin conflicto
@@ -530,65 +529,28 @@ export class AccountStatementSyncService {
         const createVentanaId = dimension === "vendedor" ? null : finalVentanaId;
         
         try {
-          statement = await tx.accountStatement.create({
-            data: {
-              date: date,
-              month: monthStr,
-              bancaId: finalBancaId ?? null,
-              ventanaId: createVentanaId ?? null,
-              vendedorId: vendedorId ?? null,
-              totalSales: 0,
-              totalPayouts: 0,
-              listeroCommission: 0,
-              vendedorCommission: 0,
-              balance: 0,
-              totalPaid: 0,
-              totalCollected: 0,
-              remainingBalance: 0,
-              accumulatedBalance: 0,
-              isSettled: false,
-              canEdit: true,
-              ticketCount: 0,
-            },
+          // ✅ CORREGIDO: Usar findOrCreate del repositorio que maneja correctamente los constraints
+          // Esto evita warnings de constraint y asegura que se actualice si ya existe
+          statement = await AccountStatementRepository.findOrCreate({
+            date: date,
+            month: monthStr,
+            bancaId: finalBancaId,
+            ventanaId: createVentanaId,
+            vendedorId: vendedorId,
           });
         } catch (error: any) {
-          // Si falla por constraint único (race condition), buscar nuevamente
-          if (error.code === 'P2002') {
-            // Buscar por vendedorId si existe
-            if (vendedorId) {
-              statement = await tx.accountStatement.findFirst({
-                where: {
-                  date: date,
-                  vendedorId: vendedorId,
-                },
-              });
-            } else if (finalVentanaId) {
-              statement = await tx.accountStatement.findFirst({
-                where: {
-                  date: date,
-                  ventanaId: finalVentanaId,
-                  vendedorId: null,
-                },
-              });
-            }
-            
-            if (!statement) {
-              logger.error({
-                layer: "service",
-                action: "SYNC_DAY_STATEMENT_CREATE_CONSTRAINT_ERROR",
-                payload: {
-                  date: dateStrCR,
-                  dimension,
-                  entityId,
-                  error: error.message,
-                  note: "Could not create or find statement after constraint error",
-                },
-              });
-              throw new Error(`No se pudo crear ni encontrar statement para fecha ${dateStrCR} después de constraint único: ${error.message}`);
-            }
-          } else {
-            throw error;
-          }
+          logger.error({
+            layer: "service",
+            action: "SYNC_DAY_STATEMENT_FIND_OR_CREATE_ERROR",
+            payload: {
+              date: dateStrCR,
+              dimension,
+              entityId,
+              error: error.message,
+              note: "Error al crear/buscar statement usando findOrCreate",
+            },
+          });
+          throw new Error(`No se pudo crear ni encontrar statement para fecha ${dateStrCR}: ${error.message}`);
         }
       }
 

@@ -198,9 +198,22 @@ export const AccountsService = {
             // balance = balanceBase + totalPaid - totalCollected, donde balanceBase = totalSales - totalPayouts - commission
             const monthlyTotalBalanceBase = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalCommissionToUse;
             const monthlyTotalBalance = monthlyTotalBalanceBase + monthlyTotalPaid - monthlyTotalCollected;
-            // ✅ CRÍTICO: monthlyRemainingBalance debe ser igual a monthlyTotalBalance (que ya incluye movimientos)
-            // En statements individuales: remainingBalance = balance (que ya incluye movimientos)
-            const monthlyRemainingBalance = monthlyTotalBalance;
+            // ✅ CORRECCIÓN CRÍTICA: monthlyRemainingBalance debe ser el remainingBalance del último día del mes
+            // Este es el acumulado progresivo del mes completo (invariable), NO la suma de balances
+            // El remainingBalance del último día ya incluye: saldoMesAnterior + todos los balances del mes acumulados
+            let monthlyRemainingBalance = 0;
+            if (allStatementsFromMonth.length > 0) {
+                // Ordenar por fecha para obtener el último día del mes
+                const sortedStatements = [...allStatementsFromMonth].sort((a, b) => 
+                    new Date(a.date).getTime() - new Date(b.date).getTime()
+                );
+                const lastStatementOfMonth = sortedStatements[sortedStatements.length - 1];
+                // ✅ Usar remainingBalance del último día (acumulado progresivo del mes completo)
+                monthlyRemainingBalance = Number(lastStatementOfMonth.remainingBalance || 0);
+            } else {
+                // Si no hay statements, usar monthlyTotalBalance como fallback
+                monthlyRemainingBalance = monthlyTotalBalance;
+            }
 
             result = {
                 statements: allStatements,
