@@ -47,6 +47,40 @@ export class AccountStatementSyncService {
   ): Promise<void> {
     // ⚠️ CRÍTICO: Convertir date a string CR para operaciones
     const dateStrCR = crDateService.postgresDateToCRString(date);
+    
+    // ✅ VALIDACIÓN CRÍTICA: No permitir crear AccountStatement para días futuros
+    // EXCEPCIÓN: Si force=true, permitir procesar (puede ser necesario para correcciones)
+    const todayCR = crDateService.dateUTCToCRString(new Date());
+    if (dateStrCR > todayCR && !options?.force) {
+      logger.warn({
+        layer: "service",
+        action: "SYNC_DAY_STATEMENT_FUTURE_DATE_PREVENTED",
+        payload: {
+          date: dateStrCR,
+          today: todayCR,
+          dimension,
+          entityId,
+          note: "Prevented creating AccountStatement for future date (use force=true to override)",
+        },
+      });
+      return; // No procesar días futuros (a menos que force=true)
+    }
+    
+    // ✅ Si es día futuro pero force=true, permitir procesar (para correcciones o sincronización de sorteos)
+    if (dateStrCR > todayCR && options?.force) {
+      logger.info({
+        layer: "service",
+        action: "SYNC_DAY_STATEMENT_FUTURE_DATE_ALLOWED",
+        payload: {
+          date: dateStrCR,
+          today: todayCR,
+          dimension,
+          entityId,
+          note: "Processing future date because force=true (may be for sorteo sync or corrections)",
+        },
+      });
+    }
+    
     const [year, month, day] = dateStrCR.split('-').map(Number);
     const monthStr = `${year}-${String(month).padStart(2, '0')}`;
 
@@ -473,11 +507,12 @@ export class AccountStatementSyncService {
           }
 
           // Si aún no se encuentra, usar saldo del mes anterior (fallback)
+          // ✅ CRÍTICO: Para vendedores, NO pasar ventanaId (solo vendedorId)
           if (!foundAccumulated) {
             const previousMonthBalance = await getPreviousMonthFinalBalance(
               monthStr,
               dimension,
-              ventanaId || undefined,
+              dimension === "vendedor" ? undefined : (ventanaId || undefined), // ✅ NO pasar ventanaId para vendedores
               vendedorId || undefined,
               bancaId || undefined
             );
@@ -545,57 +580,63 @@ export class AccountStatementSyncService {
       const ticketCount = tickets.length;
       const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
 
-      // 7. Si no existe statement, crearlo usando findOrCreate del repositorio
-      // ✅ CORREGIDO: Usar AccountStatementRepository.findOrCreate que maneja correctamente
-      // los constraints únicos y evita warnings de duplicados
-      if (!statement) {
-        // Para vendedores: NO incluir ventanaId al crear (aunque lo tenemos)
-        // El constraint (date, vendedorId) permite crear el statement sin conflicto
-        // aunque exista un statement consolidado de ventana
-        const createVentanaId = dimension === "vendedor" ? undefined : finalVentanaId;
-        
-        try {
-          // ✅ CORREGIDO: Usar findOrCreate del repositorio que maneja correctamente los constraints
-          // Esto evita warnings de constraint y asegura que se actualice si ya existe
-          statement = await AccountStatementRepository.findOrCreate({
+      // 7-8. Usar upsert directamente dentro de la transacción (más seguro y eficiente)
+      // ✅ CORREGIDO: Usar upsert en lugar de findOrCreate + update para evitar errores
+      // cuando el registro no existe o está fuera de la transacción
+      const updateData = {
+        totalSales: parseFloat(totalSales.toFixed(2)),
+        totalPayouts: parseFloat(totalPayouts.toFixed(2)),
+        listeroCommission: parseFloat(listeroCommission.toFixed(2)),
+        vendedorCommission: parseFloat(vendedorCommission.toFixed(2)),
+        balance: parseFloat(balance.toFixed(2)),
+        totalPaid: parseFloat(totalPaid.toFixed(2)),
+        totalCollected: parseFloat(totalCollected.toFixed(2)),
+        remainingBalance: parseFloat(remainingBalance.toFixed(2)),
+        accumulatedBalance: parseFloat(accumulatedBalance.toFixed(2)), // ✅ CRÍTICO: Guardar accumulatedBalance
+        isSettled,
+        canEdit: !isSettled,
+        ticketCount,
+        month: monthStr,
+        bancaId: finalBancaId,
+        ventanaId: dimension === "vendedor" ? undefined : finalVentanaId, // Para vendedores: NO incluir ventanaId
+        vendedorId: vendedorId,
+      };
+
+      // Construir where único según dimensión (usando los constraints únicos del schema)
+      // Prisma usa el nombre del constraint compuesto como clave
+      let uniqueWhere: any;
+      
+      if (dimension === "vendedor" && vendedorId) {
+        // Constraint: @@unique([date, vendedorId], map: "account_statements_date_vendedor_unique")
+        uniqueWhere = {
+          account_statements_date_vendedor_unique: {
             date: date,
-            month: monthStr,
-            bancaId: finalBancaId,
-            ventanaId: createVentanaId,
             vendedorId: vendedorId,
-          });
-        } catch (error: any) {
-          logger.error({
-            layer: "service",
-            action: "SYNC_DAY_STATEMENT_FIND_OR_CREATE_ERROR",
-            payload: {
-              date: dateStrCR,
-              dimension,
-              entityId,
-              error: error.message,
-              note: "Error al crear/buscar statement usando findOrCreate",
-            },
-          });
-          throw new Error(`No se pudo crear ni encontrar statement para fecha ${dateStrCR}: ${error.message}`);
+          },
+        };
+      } else if (dimension === "ventana" && finalVentanaId) {
+        // Constraint: @@unique([date, ventanaId], map: "account_statements_date_ventana_unique")
+        uniqueWhere = {
+          account_statements_date_ventana_unique: {
+            date: date,
+            ventanaId: finalVentanaId,
+          },
+        };
+      } else {
+        // Si no hay constraint único disponible, usar el statement.id si existe
+        if (statement?.id) {
+          uniqueWhere = { id: statement.id };
+        } else {
+          throw new Error(`No se puede determinar constraint único para dimensión ${dimension} en fecha ${dateStrCR}`);
         }
       }
 
-      // 8. Actualizar statement con valores calculados
-      await tx.accountStatement.update({
-        where: { id: statement.id },
-        data: {
-          totalSales: parseFloat(totalSales.toFixed(2)),
-          totalPayouts: parseFloat(totalPayouts.toFixed(2)),
-          listeroCommission: parseFloat(listeroCommission.toFixed(2)),
-          vendedorCommission: parseFloat(vendedorCommission.toFixed(2)),
-          balance: parseFloat(balance.toFixed(2)),
-          totalPaid: parseFloat(totalPaid.toFixed(2)),
-          totalCollected: parseFloat(totalCollected.toFixed(2)),
-          remainingBalance: parseFloat(remainingBalance.toFixed(2)),
-          accumulatedBalance: parseFloat(accumulatedBalance.toFixed(2)), // ✅ CRÍTICO: Guardar accumulatedBalance
-          isSettled,
-          canEdit: !isSettled,
-          ticketCount,
+      await tx.accountStatement.upsert({
+        where: uniqueWhere,
+        update: updateData,
+        create: {
+          ...updateData,
+          date: date,
         },
       });
 
@@ -793,6 +834,42 @@ export class AccountStatementSyncService {
         entityId,
       },
     });
+
+    // ✅ CORREGIDO: Si dimension="ventana" o "vendedor" sin entityId, iterar sobre todas las entidades
+    if ((dimension === "ventana" || dimension === "vendedor") && !entityId) {
+      let entities: Array<{ id: string }>;
+      
+      if (dimension === "ventana") {
+        entities = await prisma.ventana.findMany({
+          where: { deletedAt: null },
+          select: { id: true },
+        });
+      } else {
+        entities = await prisma.user.findMany({
+          where: {
+            role: "VENDEDOR",
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+      }
+
+      logger.info({
+        layer: "service",
+        action: "RECALCULATE_ACCUMULATED_BALANCE_MULTIPLE_ENTITIES",
+        payload: {
+          dimension,
+          totalEntities: entities.length,
+        },
+      });
+
+      // Procesar cada entidad individualmente
+      for (const entity of entities) {
+        await this.recalculateAccumulatedBalance(startDate, endDate, dimension, entity.id);
+      }
+
+      return;
+    }
 
     // Generar lista de días en orden cronológico ASC
     const daysToProcess: Date[] = [];
