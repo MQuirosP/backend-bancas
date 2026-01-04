@@ -880,21 +880,6 @@ export async function getStatementDirect(
     // Estimación: ~200 tickets/día promedio × días en mes = límite seguro
     // Mínimo 5000 para mantener compatibilidad con queries pequeñas
     const dynamicLimit = Math.max(5000, daysInMonth * 200);
-    
-    logger.info({
-        layer: "service",
-        action: "ACCOUNT_STATEMENT_SQL_QUERY_START",
-        payload: {
-            dimension,
-            bancaId,
-            ventanaId,
-            vendedorId,
-            startDate: startDateCRStr,
-            endDate: endDateCRStr,
-            shouldGroupByDate,
-            dynamicLimit,
-        },
-    });
 
     // ✅ CRÍTICO: GROUP BY dinámico según shouldGroupByDate
     // Si shouldGroupByDate=true: agrupar solo por (date, banca) para evitar filas duplicadas
@@ -1042,18 +1027,12 @@ export async function getStatementDirect(
         }
     >();
 
-    // 🔍 DEBUG: Contador para ver cuántas filas SQL por fecha
-    const rowsPerDate = new Map<string, number>();
-
     // ✅ OPTIMIZACIÓN: Procesar datos agregados en lugar de jugadas individuales
     for (const row of aggregatedData) {
         const dateKey = crDateService.postgresDateToCRString(row.business_date);
 
         // ✅ NOTA: NO filtrar aquí - necesitamos todos los días del mes para calcular acumulados correctos
         // El filtro se aplicará al final después de calcular la acumulación
-
-        // 🔍 DEBUG: Contar filas por fecha
-        rowsPerDate.set(dateKey, (rowsPerDate.get(dateKey) || 0) + 1);
 
         // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + entidad
         // ✅ CRÍTICO: Cuando hay un ID específico en el query (bancaId, ventanaId, vendedorId), usar ese ID directamente
@@ -1158,6 +1137,10 @@ export async function getStatementDirect(
     // Esto permite que el saldo se intercale naturalmente con los sorteos, igual que los pagos/cobros
     const firstDayOfMonthStr = `${yearForMonth}-${String(monthForMonth).padStart(2, '0')}-01`;
     const previousMonthBalancesByEntity = new Map<string, number>();
+    
+    // ✅ OPTIMIZACIÓN: Cache para saldos del mes anterior cuando el rango cruza meses/años
+    // Clave: `${monthStr}_${dimension}_${entityId}`
+    const previousMonthBalanceCache = new Map<string, number>();
     
     // ✅ CRÍTICO: Obtener saldo del mes anterior ANTES de procesar statements
     // Esto asegura que el movimiento especial esté disponible incluso si no hay ventas el primer día
@@ -1918,46 +1901,54 @@ export async function getStatementDirect(
                         ? cachedBalance 
                         : previousMonthBalanceForMovement;
                 } else {
-                    // Para otros meses (cuando el rango cruza meses), calcular dinámicamente
-                    try {
-                        if (dimension === "banca") {
-                            previousMonthBalance = await getPreviousMonthFinalBalance(
-                                currentMonthStr,
-                                "banca",
-                                undefined,
-                                undefined,
-                                entry.bancaId || bancaId || null
-                            );
-                        } else if (dimension === "ventana") {
-                            previousMonthBalance = await getPreviousMonthFinalBalance(
-                                currentMonthStr,
-                                "ventana",
-                                entry.ventanaId || ventanaId || null,
-                                undefined,
-                                entry.bancaId || bancaId || undefined
-                            );
-                        } else {
-                            previousMonthBalance = await getPreviousMonthFinalBalance(
-                                currentMonthStr,
-                                "vendedor",
-                                entry.ventanaId || ventanaId || undefined,
-                                entry.vendedorId || vendedorId || null,
-                                entry.bancaId || bancaId || undefined
-                            );
+                    // Para otros meses (cuando el rango cruza meses), calcular dinámicamente con cache
+                    const cacheKey = `${currentMonthStr}_${dimension}_${entityIdForPreviousMonth}`;
+                    
+                    if (previousMonthBalanceCache.has(cacheKey)) {
+                        previousMonthBalance = previousMonthBalanceCache.get(cacheKey)!;
+                    } else {
+                        try {
+                            if (dimension === "banca") {
+                                previousMonthBalance = await getPreviousMonthFinalBalance(
+                                    currentMonthStr,
+                                    "banca",
+                                    undefined,
+                                    undefined,
+                                    entry.bancaId || bancaId || null
+                                );
+                            } else if (dimension === "ventana") {
+                                previousMonthBalance = await getPreviousMonthFinalBalance(
+                                    currentMonthStr,
+                                    "ventana",
+                                    entry.ventanaId || ventanaId || null,
+                                    undefined,
+                                    entry.bancaId || bancaId || undefined
+                                );
+                            } else {
+                                previousMonthBalance = await getPreviousMonthFinalBalance(
+                                    currentMonthStr,
+                                    "vendedor",
+                                    entry.ventanaId || ventanaId || undefined,
+                                    entry.vendedorId || vendedorId || null,
+                                    entry.bancaId || bancaId || undefined
+                                );
+                            }
+                            previousMonthBalance = Number(previousMonthBalance);
+                            previousMonthBalanceCache.set(cacheKey, previousMonthBalance);
+                        } catch (error) {
+                            logger.warn({
+                                layer: "service",
+                                action: "PREVIOUS_MONTH_BALANCE_FETCH_ERROR",
+                                payload: {
+                                    date,
+                                    currentMonthStr,
+                                    dimension,
+                                    error: (error as Error).message,
+                                },
+                            });
+                            previousMonthBalance = 0;
+                            previousMonthBalanceCache.set(cacheKey, 0);
                         }
-                        previousMonthBalance = Number(previousMonthBalance);
-                    } catch (error) {
-                        logger.warn({
-                            layer: "service",
-                            action: "PREVIOUS_MONTH_BALANCE_FETCH_ERROR",
-                            payload: {
-                                date,
-                                currentMonthStr,
-                                dimension,
-                                error: (error as Error).message,
-                            },
-                        });
-                        previousMonthBalance = 0;
                     }
                 }
                 
@@ -1990,33 +1981,40 @@ export async function getStatementDirect(
                             ? cachedBalance
                             : previousMonthBalanceForMovement;
                     } else {
-                        // Para otros meses (cuando el rango cruza meses), calcular dinámicamente
-                        if (dimension === "banca") {
-                            previousMonthBalance = await getPreviousMonthFinalBalance(
-                                currentMonthStr,
-                                "banca",
-                                undefined,
-                                undefined,
-                                entry.bancaId || bancaId || null
-                            );
-                        } else if (dimension === "ventana") {
-                            previousMonthBalance = await getPreviousMonthFinalBalance(
-                                currentMonthStr,
-                                "ventana",
-                                entry.ventanaId || ventanaId || null,
-                                undefined,
-                                entry.bancaId || bancaId || undefined
-                            );
+                        // Para otros meses (cuando el rango cruza meses), calcular dinámicamente con cache
+                        const cacheKey = `${currentMonthStr}_${dimension}_${entityIdForPreviousMonth}`;
+                        
+                        if (previousMonthBalanceCache.has(cacheKey)) {
+                            previousMonthBalance = previousMonthBalanceCache.get(cacheKey)!;
                         } else {
-                            previousMonthBalance = await getPreviousMonthFinalBalance(
-                                currentMonthStr,
-                                "vendedor",
-                                entry.ventanaId || ventanaId || undefined,
-                                entry.vendedorId || vendedorId || null,
-                                entry.bancaId || bancaId || undefined
-                            );
+                            if (dimension === "banca") {
+                                previousMonthBalance = await getPreviousMonthFinalBalance(
+                                    currentMonthStr,
+                                    "banca",
+                                    undefined,
+                                    undefined,
+                                    entry.bancaId || bancaId || null
+                                );
+                            } else if (dimension === "ventana") {
+                                previousMonthBalance = await getPreviousMonthFinalBalance(
+                                    currentMonthStr,
+                                    "ventana",
+                                    entry.ventanaId || ventanaId || null,
+                                    undefined,
+                                    entry.bancaId || bancaId || undefined
+                                );
+                            } else {
+                                previousMonthBalance = await getPreviousMonthFinalBalance(
+                                    currentMonthStr,
+                                    "vendedor",
+                                    entry.ventanaId || ventanaId || undefined,
+                                    entry.vendedorId || vendedorId || null,
+                                    entry.bancaId || bancaId || undefined
+                                );
+                            }
+                            previousMonthBalance = Number(previousMonthBalance);
+                            previousMonthBalanceCache.set(cacheKey, previousMonthBalance);
                         }
-                        previousMonthBalance = Number(previousMonthBalance);
                     }
                 } catch (error) {
                     logger.warn({
@@ -2160,21 +2158,6 @@ export async function getStatementDirect(
                                 // Si no encontramos statement del vendedor, usar el saldo del mes anterior
                                 // Esto evita usar el saldo de la ventana por error
                                 previousDayRemainingBalance = Number(previousMonthBalance);
-                                
-                                // ✅ DEBUG: Logging específico para Titular2 día 3
-                                if (targetVendedorId === "b83a74d5-6899-4e50-b162-b130bc401cf5" && previousDateStr === "2026-01-02") {
-                                    logger.info({
-                                        layer: "service",
-                                        action: "GET_STATEMENT_DIRECT_TITULAR2_DAY3_NO_PREVIOUS_DAY",
-                                        payload: {
-                                            date: "2026-01-03",
-                                            previousDateStr,
-                                            previousDayRemainingBalance,
-                                            previousMonthBalance,
-                                            note: "DEBUG: Titular2 Day 3 - no previous day statement found, using previousMonthBalance",
-                                        },
-                                    });
-                                }
                             }
                         }
                     } catch (error) {
@@ -2191,40 +2174,10 @@ export async function getStatementDirect(
                     // ✅ VALIDACIÓN: Si dimension="vendedor" y el valor es sospechosamente grande (probablemente de ventana),
                     // usar el saldo del mes anterior en su lugar
                     if (dimension === "vendedor" && vendedorId && Math.abs(previousDayRemainingBalance) > Math.abs(previousMonthBalance) * 3) {
-                        // El valor es sospechosamente grande, probablemente es de la ventana
-                        logger.warn({
-                            layer: "service",
-                            action: "GET_STATEMENT_DIRECT_SUSPICIOUS_PREVIOUS_DAY_BALANCE",
-                            payload: {
-                                date,
-                                dimension,
-                                vendedorId,
-                                previousDayRemainingBalance,
-                                previousMonthBalance,
-                                note: "Previous day balance seems too large (probably from ventana), using previousMonthBalance instead",
-                            },
-                        });
+                        
                         initialAccumulated = Number(previousMonthBalance);
                     } else {
                         initialAccumulated = previousDayRemainingBalance;
-                    }
-                    
-                    // ✅ DEBUG: Logging específico para Titular2 día 3
-                    if (entry.vendedorId === "b83a74d5-6899-4e50-b162-b130bc401cf5" && date === "2026-01-03") {
-                        logger.info({
-                            layer: "service",
-                            action: "GET_STATEMENT_DIRECT_TITULAR2_DAY3_INITIAL_ACCUMULATED",
-                            payload: {
-                                date,
-                                previousDateStr,
-                                previousDayRemainingBalance,
-                                initialAccumulated,
-                                previousMonthBalance,
-                                entityKeyForLastAccumulated,
-                                fromLastAccumulatedByEntity: lastAccumulatedByEntity.has(entityKeyForLastAccumulated),
-                                note: "DEBUG: Titular2 Day 3 - initialAccumulated from previousDayRemainingBalance",
-                            },
-                        });
                     }
                 } else {
                     // Último fallback: buscar retrocediendo días en lastAccumulatedByEntity (más confiable que mapa pre-cargado)
@@ -2257,39 +2210,7 @@ export async function getStatementDirect(
                     }
                     
                     initialAccumulated = foundAccumulated ?? 0;
-                    
-                    // ✅ DEBUG: Logging específico para Titular2 día 3 cuando no se encontró previousDayRemainingBalance
-                    if (entry.vendedorId === "b83a74d5-6899-4e50-b162-b130bc401cf5" && date === "2026-01-03") {
-                        logger.info({
-                            layer: "service",
-                            action: "GET_STATEMENT_DIRECT_TITULAR2_DAY3_INITIAL_ACCUMULATED_FALLBACK",
-                            payload: {
-                                date,
-                                previousDateStr,
-                                foundAccumulated,
-                                initialAccumulated,
-                                entityKeyForLastAccumulated,
-                                lastAccumulatedByEntityKeys: Array.from(lastAccumulatedByEntity.keys()),
-                                note: "DEBUG: Titular2 Day 3 - initialAccumulated from fallback search",
-                            },
-                        });
-                    }
                 }
-            }
-
-            // ✅ DEBUG: Logging específico para Titular2 día 3 antes de intercalateSorteosAndMovements
-            if (entry.vendedorId === "b83a74d5-6899-4e50-b162-b130bc401cf5" && date === "2026-01-03") {
-                logger.info({
-                    layer: "service",
-                    action: "GET_STATEMENT_DIRECT_TITULAR2_DAY3_BEFORE_INTERCALATE",
-                    payload: {
-                        date,
-                        initialAccumulated,
-                        bySorteoCount: bySorteo.length,
-                        movementsCount: movements.length,
-                        note: "DEBUG: Titular2 Day 3 - before intercalateSorteosAndMovements",
-                    },
-                });
             }
 
             const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date, initialAccumulated);
@@ -2364,62 +2285,10 @@ export async function getStatementDirect(
                 if (mostRecentEvent && mostRecentEvent.accumulated !== undefined && mostRecentEvent.accumulated !== null && !isNaN(Number(mostRecentEvent.accumulated))) {
                     statementRemainingBalance = Number(mostRecentEvent.accumulated);
 
-                    // ✅ DEBUG: Logging específico para Titular2 día 3
-                    if (vendedorId === "b83a74d5-6899-4e50-b162-b130bc401cf5" && date === "2026-01-03") {
-                        logger.info({
-                            layer: "service",
-                            action: "GET_STATEMENT_DIRECT_TITULAR2_DAY3_DEBUG",
-                            payload: {
-                                date,
-                                vendedorId,
-                                statementRemainingBalance,
-                                mostRecentEventAccumulated: mostRecentEvent.accumulated,
-                                mostRecentEventChronologicalIndex: mostRecentEvent.chronologicalIndex,
-                                mostRecentEventType: mostRecentEvent.type,
-                                totalEvents: sorteosAndMovements.length,
-                                allAccumulatedValues: sorteosAndMovements.map(e => ({
-                                    type: e.type,
-                                    chronologicalIndex: e.chronologicalIndex,
-                                    accumulated: e.accumulated,
-                                })),
-                                note: "DEBUG: Titular2 Day 3 - calculated from sorteos",
-                            },
-                        });
-                    }
-
-                    logger.info({
-                        layer: "service",
-                        action: "GET_STATEMENT_DIRECT_CALCULATED_FROM_SORTEOS",
-                        payload: {
-                            date,
-                            dimension,
-                            vendedorId,
-                            ventanaId,
-                            bancaId,
-                            calculatedBalance: statementRemainingBalance,
-                            accountStatementAccumulated, // Solo para referencia/comparación
-                            mostRecentEventChronologicalIndex: mostRecentEvent.chronologicalIndex,
-                            mostRecentEventScheduledAt: mostRecentEvent.scheduledAt,
-                            totalEvents: sorteosAndMovements.length,
-                            note: "Calculated from last sorteo/movement (chronologicalIndex order) - ALWAYS from source",
-                        },
-                    });
+                    // Log eliminado para reducir ruido - solo loggear en caso de error
                 } else {
                     // Si no hay accumulated válido en el último evento, usar initialAccumulated
-                    logger.warn({
-                        layer: "service",
-                        action: "GET_STATEMENT_DIRECT_NO_VALID_ACCUMULATED",
-                        payload: {
-                            date,
-                            dimension,
-                            vendedorId,
-                            ventanaId,
-                            bancaId,
-                            initialAccumulated,
-                            mostRecentEvent,
-                            note: "No valid accumulated in most recent event, using initialAccumulated",
-                        },
-                    });
+                    // statementRemainingBalance ya tiene initialAccumulated como default
                 }
             }
             // Si no hay sorteos/movimientos, statementRemainingBalance ya tiene initialAccumulated (correcto)
@@ -2430,22 +2299,6 @@ export async function getStatementDirect(
             // El loop procesa días en orden ASC, así que cuando procesamos el día N, el día N-1 ya está guardado
             // Para la misma entityKey, siempre sobrescribir (el último procesado es el correcto)
             lastAccumulatedByEntity.set(entityKey, statementRemainingBalance);
-            
-            // ✅ DEBUG: Logging específico para Titular2 día 2 y 3
-            if (entry.vendedorId === "b83a74d5-6899-4e50-b162-b130bc401cf5" && (date === "2026-01-02" || date === "2026-01-03")) {
-                logger.info({
-                    layer: "service",
-                    action: "GET_STATEMENT_DIRECT_TITULAR2_DAY2_3_LAST_ACCUMULATED",
-                    payload: {
-                        date,
-                        entityKey,
-                        statementRemainingBalance,
-                        lastAccumulatedByEntityValue: lastAccumulatedByEntity.get(entityKey),
-                        allKeysForDate: Array.from(lastAccumulatedByEntity.keys()).filter(k => k.startsWith(date)),
-                        note: `DEBUG: Titular2 Day ${date === "2026-01-02" ? "2" : "3"} - lastAccumulatedByEntity.set`,
-                    },
-                });
-            }
             
             const statement: any = {
                 date,
@@ -2462,37 +2315,20 @@ export async function getStatementDirect(
                 totalPayouts: parseFloat(totalPayouts.toFixed(2)),
                 listeroCommission: parseFloat(entry.commissionListero.toFixed(2)),
                 vendedorCommission: parseFloat(entry.commissionVendedor.toFixed(2)),
-                balance: parseFloat(balance.toFixed(2)),
+                dailyBalance: parseFloat(balance.toFixed(2)), // ✅ NUEVO: Balance del día (ventas - premios - comisiones + movimientos) - para referencia
+                balance: parseFloat(statementRemainingBalance.toFixed(2)), // ✅ CORRECCIÓN: balance ahora contiene el acumulado progresivo secuencial del último sorteo (lo que el frontend espera)
                 totalPaid: parseFloat(totalPaid.toFixed(2)),
                 totalCollected: parseFloat(totalCollected.toFixed(2)),
                 totalPaymentsCollections: parseFloat((totalPaid + totalCollected).toFixed(2)),
                 remainingBalance: parseFloat(statementRemainingBalance.toFixed(2)), // ✅ CRÍTICO: Este es el accumulated del último sorteo/movimiento del día
-                accumulatedBalance: accountStatementAccumulated !== null ? parseFloat(accountStatementAccumulated.toFixed(2)) : undefined, // ✅ NUEVO: Exponer accumulatedBalance desde AccountStatement para referencia
+                accumulatedBalance: parseFloat(statementRemainingBalance.toFixed(2)), // ✅ CRÍTICO: accumulatedBalance debe ser el mismo que remainingBalance (accumulated del último sorteo del día)
+                progressiveSequentialBalance: parseFloat(statementRemainingBalance.toFixed(2)), // ✅ NUEVO: Acumulado progresivo secuencial del último sorteo del día (para uso del frontend)
                 isSettled: calculateIsSettled(entry.totalTicketsCount, statementRemainingBalance, totalPaid, totalCollected),
                 canEdit: !calculateIsSettled(entry.totalTicketsCount, statementRemainingBalance, totalPaid, totalCollected),
                 ticketCount: entry.totalTicketsCount,
                 bySorteo: sorteosAndMovements, // ✅ Sorteos + Movimientos intercalados (incluye accumulated, calculado desde initialAccumulated correcto)
                 hasSorteos: sorteosAndMovements.length > 0, // ✅ NUEVO: Flag para lazy loading (FE puede usar para saber si hay sorteos)
             };
-
-            // ✅ DEBUG: Logging específico para Titular2 día 3 después de crear el statement
-            if (entry.vendedorId === "b83a74d5-6899-4e50-b162-b130bc401cf5" && date === "2026-01-03") {
-                logger.info({
-                    layer: "service",
-                    action: "GET_STATEMENT_DIRECT_TITULAR2_DAY3_STATEMENT_CREATED",
-                    payload: {
-                        date,
-                        vendedorId: entry.vendedorId,
-                        statementRemainingBalance: statement.remainingBalance,
-                        statementRemainingBalanceRaw: statementRemainingBalance,
-                        bySorteoLength: sorteosAndMovements.length,
-                        lastSorteoAccumulated: sorteosAndMovements.length > 0 
-                            ? sorteosAndMovements[sorteosAndMovements.length - 1]?.accumulated 
-                            : null,
-                        note: "DEBUG: Titular2 Day 3 - statement created with remainingBalance",
-                    },
-                });
-            }
 
             // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
             if (shouldGroupByDate) {
@@ -3749,17 +3585,28 @@ export async function getStatementDirect(
     // Un día tiene actividad si:
     // 1. Tiene tickets (ticketCount > 0), O
     // 2. Tiene movimientos (totalPaid > 0 || totalCollected > 0), O
-    // 3. Es el día 1 del mes (saldo inicial)
-    const firstDayOfMonthDate = new Date(firstDayOfMonthStr + 'T00:00:00.000Z');
-    const firstDayOfMonthCRStr = crDateService.dateUTCToCRString(firstDayOfMonthDate);
+    // 3. Es el día 1 de cualquier mes en el rango (saldo inicial) - ✅ CORRECCIÓN: No solo del mes de inicio
+    // ✅ NOTA: startDateCRStr y endDateCRStr ya están declaradas al inicio de la función (línea 539)
+    
+    // ✅ CRÍTICO: Detectar todos los días 1 que están en el rango (puede haber múltiples si cruza meses/años)
+    const firstDaysInRange = new Set<string>();
+    let currentDate = new Date(startDate);
+    while (currentDate <= endDate) {
+        const currentDateCRStr = crDateService.dateUTCToCRString(currentDate);
+        const [year, month, day] = currentDateCRStr.split('-').map(Number);
+        if (day === 1) {
+            firstDaysInRange.add(currentDateCRStr);
+        }
+        currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+    }
     
     statements = statements.filter(statement => {
-        const isFirstDayOfMonth = statement.date === firstDayOfMonthCRStr;
+        const isFirstDayOfAnyMonthInRange = firstDaysInRange.has(statement.date);
         const hasTickets = (statement.ticketCount || 0) > 0;
         const hasMovements = (statement.totalPaid || 0) > 0 || (statement.totalCollected || 0) > 0;
         
-        // Mostrar si es día 1, tiene tickets, o tiene movimientos
-        return isFirstDayOfMonth || hasTickets || hasMovements;
+        // Mostrar si es día 1 de cualquier mes en el rango, tiene tickets, o tiene movimientos
+        return isFirstDayOfAnyMonthInRange || hasTickets || hasMovements;
     });
 
     // ✅ CORRECCIÓN: Deduplicar días - puede haber múltiples statements para el mismo día
@@ -3855,34 +3702,6 @@ export async function getStatementDirect(
     statements = Array.from(statementsByDate.values()).sort((a, b) => 
         a.date.localeCompare(b.date)
     );
-
-    // ✅ DEBUG: Logging específico para Titular2 día 3 después de deduplicación
-    if (vendedorId === "b83a74d5-6899-4e50-b162-b130bc401cf5") {
-        const day3Statement = statements.find(s => s.date === "2026-01-03");
-        if (day3Statement) {
-            logger.info({
-                layer: "service",
-                action: "GET_STATEMENT_DIRECT_TITULAR2_DAY3_AFTER_DEDUP",
-                payload: {
-                    date: day3Statement.date,
-                    vendedorId: day3Statement.vendedorId,
-                    remainingBalance: day3Statement.remainingBalance,
-                    bySorteoLength: day3Statement.bySorteo?.length || 0,
-                    lastSorteoAccumulated: day3Statement.bySorteo && day3Statement.bySorteo.length > 0
-                        ? (() => {
-                            const sorted = [...day3Statement.bySorteo].sort((a, b) => {
-                                const indexA = a.chronologicalIndex || 0;
-                                const indexB = b.chronologicalIndex || 0;
-                                return indexB - indexA;
-                            });
-                            return sorted[0]?.accumulated;
-                        })()
-                        : null,
-                    note: "DEBUG: Titular2 Day 3 - after deduplication, before return",
-                },
-            });
-        }
-    }
 
     // ✅ CRÍTICO: Paso 5 - Calcular totales SOLO para los días filtrados
     const totalSales = statements.reduce((sum, s) => sum + s.totalSales, 0);
@@ -4662,37 +4481,11 @@ export async function getPreviousMonthFinalBalance(
 
         if (closingBalance) {
             const balance = parseFloat(closingBalance.closingBalance.toString());
-            logger.info({
-                layer: "service",
-                action: "PREVIOUS_MONTH_BALANCE_FROM_CLOSING",
-                payload: {
-                    effectiveMonth,
-                    dimension,
-                    ventanaId,
-                    vendedorId,
-                    bancaId,
-                    closingMonth: previousMonthStr,
-                    closingBalance: balance,
-                    source: "monthly_closing_balance",
-                },
-            });
+            // Log eliminado para reducir ruido - solo loggear en caso de error
             return balance;
         }
 
-        // ✅ PASO 2: Si no hay cierre, calcular desde fuente (solo para meses históricos sin cierre)
-        logger.info({
-            layer: "service",
-            action: "PREVIOUS_MONTH_BALANCE_CALCULATING_FROM_SOURCE",
-            payload: {
-                effectiveMonth,
-                dimension,
-                ventanaId,
-                vendedorId,
-                bancaId,
-                closingMonth: previousMonthStr,
-                reason: "no_closing_balance_found",
-            },
-        });
+       
 
         const lastDayNum = new Date(previousYear, previousMonth, 0).getDate();
         const firstDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, 1, 6, 0, 0, 0)); // 00:00 CR
@@ -4826,17 +4619,6 @@ export async function getPreviousMonthFinalBalance(
             });
             return cachedBalance;
         }
-
-        // PASO 3: Si no hay en caché, calcular desde fuente de verdad
-        logger.info({
-            layer: "service",
-            action: "PREVIOUS_MONTH_BALANCE_CALCULATING_FROM_SOURCE",
-            payload: {
-                effectiveMonth,
-                dimension,
-                source: "tickets_and_payments",
-            },
-        });
 
         // ✅ CRÍTICO: Para vendedores, NO pasar ventanaId a calculatePreviousMonthBalanceFromSource
         // Esto asegura que solo se calculen los tickets/pagos del vendedor específico, no de toda la ventana

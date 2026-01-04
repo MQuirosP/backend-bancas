@@ -1067,47 +1067,14 @@ export const AccountsService = {
                             const lastEvent = sortedBySorteo[sortedBySorteo.length - 1];
                             if (lastEvent && lastEvent.accumulated !== undefined && lastEvent.accumulated !== null) {
                                 lastDayAccumulated = Number(lastEvent.accumulated);
-                                
-                                logger.debug({
-                                    layer: "service",
-                                    action: "GET_BY_SORTEO_USING_PREVIOUS_BYSORTEO",
-                                    payload: {
-                                        date,
-                                        previousDate: previousDateStr,
-                                        lastEventAccumulated: Number(lastEvent.accumulated),
-                                        lastDayAccumulated,
-                                    },
-                                });
                             } else {
                                 // Fallback: usar remainingBalance del statement
                                 lastDayAccumulated = previousDayStatement.remainingBalance || 0;
-                                
-                                logger.debug({
-                                    layer: "service",
-                                    action: "GET_BY_SORTEO_USING_PREVIOUS_REMAINING_BALANCE",
-                                    payload: {
-                                        date,
-                                        previousDate: previousDateStr,
-                                        remainingBalance: previousDayStatement.remainingBalance,
-                                        lastDayAccumulated,
-                                    },
-                                });
                             }
                         } else {
                             // PRIORIDAD 2: Si no hay bySorteo, usar remainingBalance del día anterior
                             // remainingBalance es el acumulado al final del día anterior (después de todos los eventos)
                             lastDayAccumulated = previousDayStatement.remainingBalance || 0;
-                            
-                            logger.debug({
-                                layer: "service",
-                                action: "GET_BY_SORTEO_USING_PREVIOUS_REMAINING_BALANCE_NO_BYSORTEO",
-                                payload: {
-                                    date,
-                                    previousDate: previousDateStr,
-                                    remainingBalance: previousDayStatement.remainingBalance,
-                                    lastDayAccumulated,
-                                },
-                            });
                         }
                     } else {
                         // No se encontró statement del día anterior, usar 0

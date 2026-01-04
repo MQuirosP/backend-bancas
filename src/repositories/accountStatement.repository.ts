@@ -299,18 +299,6 @@ export const AccountStatementRepository = {
             }
           }
           
-          logger.info({
-            layer: 'repository',
-            action: 'ACCOUNT_STATEMENT_CONSTRAINT_PREVENTED',
-            payload: {
-              date: data.date,
-              ventanaId: finalVentanaId,
-              vendedorId: data.vendedorId,
-              existingStatementId: conflictingStatement.id,
-              updated: needsUpdate,
-              note: 'Prevented creation of duplicate statement, using existing one',
-            },
-          });
           return conflictingStatement;
         }
       }
