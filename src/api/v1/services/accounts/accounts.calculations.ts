@@ -1557,6 +1557,13 @@ export async function getStatementDirect(
                         continue; // Saltar statements de vendedores
                     }
                     entityKey = stmt.ventanaId || 'null';
+                } else if (dimension === "vendedor") {
+                    // ✅ CRÍTICO: Solo guardar statements de vendedores específicos
+                    // NO guardar statements consolidados de ventana o banca
+                    if (!stmt.vendedorId) {
+                        continue; // Saltar statements consolidados (ventana/banca)
+                    }
+                    entityKey = stmt.vendedorId || 'null';
                 } else {
                     entityKey = stmt.vendedorId || 'null';
                 }
@@ -2015,9 +2022,13 @@ export async function getStatementDirect(
                                     targetVendedorId = entry.vendedorId || undefined;
                                 }
                             } else if (dimension === "vendedor") {
+                                // ✅ CRÍTICO: Cuando dimension="vendedor" con vendedorId específico,
+                                // SOLO usar el vendedorId del filtro, NO el del entry
+                                // Esto evita usar el vendedorId de otro vendedor cuando hay múltiples entries
                                 targetBancaId = entry.bancaId || undefined;
                                 targetVentanaId = entry.ventanaId || undefined;
-                                targetVendedorId = vendedorId || entry.vendedorId || undefined;
+                                // ✅ CRÍTICO: Priorizar vendedorId del filtro sobre entry.vendedorId
+                                targetVendedorId = vendedorId || undefined;
                             }
                             
                             let searchDate = new Date(previousDayDate);
@@ -2031,14 +2042,17 @@ export async function getStatementDirect(
                                 if (dateMap) {
                                     // ✅ CRÍTICO: Construir entityKey según dimensión
                                     // Cuando dimension="banca" con bancaId, usar SOLO el bancaId (no ventanaId/vendedorId)
-                                    // Esto asegura que se use el statement consolidado de la banca, no el de una ventana/vendedor
+                                    // Cuando dimension="vendedor" con vendedorId, usar SOLO el vendedorId (no ventanaId/bancaId)
+                                    // Esto asegura que se use el statement correcto, no el de otra entidad
                                     const entityKey = dimension === "banca" && targetBancaId
                                         ? targetBancaId // ✅ CRÍTICO: Solo bancaId cuando dimension="banca"
-                                        : targetVendedorId 
-                                            ? targetVendedorId
-                                            : targetVentanaId
-                                                ? targetVentanaId
-                                                : targetBancaId || 'null';
+                                        : dimension === "vendedor" && targetVendedorId
+                                            ? targetVendedorId // ✅ CRÍTICO: Solo vendedorId cuando dimension="vendedor"
+                                            : targetVendedorId 
+                                                ? targetVendedorId
+                                                : targetVentanaId
+                                                    ? targetVentanaId
+                                                    : targetBancaId || 'null';
                                     
                                     if (dateMap.has(entityKey)) {
                                         const balanceValue = dateMap.get(entityKey);
