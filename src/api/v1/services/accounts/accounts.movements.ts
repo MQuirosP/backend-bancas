@@ -181,16 +181,6 @@ export async function registerPayment(data: {
         );
     }
 
-    logger.debug({
-        layer: 'service',
-        action: 'PAYMENT_TIME_PROCESSED',
-        payload: {
-            originalTime: data.time,
-            processedTime: processedTime,
-            isDefault: !data.time || data.time.trim().length === 0,
-        },
-    });
-
     // ✅ CRÍTICO: Crear pago con ventanaId, vendedorId y bancaId correctos
     // El repository también inferirá si es necesario, pero aquí ya los tenemos correctos
     // de la inferencia previa que se hizo para el AccountStatement
@@ -318,16 +308,6 @@ export async function registerPayment(data: {
             });
             // ⚠️ No lanzamos error al usuario, pero loggeamos para investigar el bug
         }
-    } else {
-        // Loggear éxito si time se guardó correctamente
-        logger.debug({
-            layer: 'service',
-            action: 'PAYMENT_TIME_SAVED_CORRECTLY',
-            payload: {
-                paymentId: payment.id,
-                time: payment.time,
-            },
-        });
     }
 
     // ✅ OPTIMIZACIÓN: Calcular nuevos totales directamente sin consultar la BD nuevamente
