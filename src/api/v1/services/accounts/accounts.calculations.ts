@@ -736,11 +736,23 @@ export async function getStatementDirect(
 
     // ✅ PROPUESTA 4: Detectar si el período cruza meses (para optimización híbrida)
     // Dividir el período en dos: días del mes anterior + días del mes actual
-    // ✅ DEFENSIÓN: Los strings ya fueron validados en línea 650
-    const startDateMonth = parseInt(startDateCRStr.split('-')[1]);
-    const endDateMonth = parseInt(endDateCRStr.split('-')[1]);
-    const startDateYear = parseInt(startDateCRStr.split('-')[0]);
-    const endDateYear = parseInt(endDateCRStr.split('-')[0]);
+    // ✅ DEFENSIÓN: Los strings ya fueron validados en línea 650, pero asegurar que tengan el formato esperado
+    const startDateParts = (startDateCRStr || "").split('-');
+    const endDateParts = (endDateCRStr || "").split('-');
+
+    if (startDateParts.length < 2 || endDateParts.length < 2) {
+        logger.error({
+            layer: "service",
+            action: "GET_STATEMENT_DIRECT_DATE_FORMAT_ERROR",
+            payload: { startDateCRStr, endDateCRStr, dimension }
+        });
+        throw new Error("Invalid date format from conversion service");
+    }
+
+    const startDateMonth = parseInt(startDateParts[1]);
+    const endDateMonth = parseInt(endDateParts[1]);
+    const startDateYear = parseInt(startDateParts[0]);
+    const endDateYear = parseInt(endDateParts[0]);
     const crossesMonths = (startDateYear < endDateYear) ||
         (startDateYear === endDateYear && startDateMonth < endDateMonth);
 
@@ -1568,7 +1580,45 @@ export async function getStatementDirect(
         return date;
     }))).sort();
 
-    // Calcular rango de fechas (día anterior del primero hasta el último día)
+    // ✅ DEFENSIÓN: Si no hay fechas en el rango, no podemos calcular el primer/último día
+    if (allDatesInRange.length === 0) {
+        // Retornar respuesta vacía o con datos básicos si no hay nada que procesar
+        return {
+            statements: [],
+            totals: {
+                totalSales: 0,
+                totalPayouts: 0,
+                totalListeroCommission: 0,
+                totalVendedorCommission: 0,
+                totalBalance: 0,
+                totalPaid: 0,
+                totalCollected: 0,
+                totalRemainingBalance: 0,
+                settledDays: 0,
+                pendingDays: 0,
+            },
+            monthlyAccumulated: {
+                totalSales: 0,
+                totalPayouts: 0,
+                totalBalance: 0,
+                totalPaid: 0,
+                totalCollected: 0,
+                totalRemainingBalance: 0,
+                settledDays: 0,
+                pendingDays: 0,
+            },
+            meta: {
+                month: effectiveMonth,
+                startDate: startDateCRStr,
+                endDate: endDateCRStr,
+                dimension,
+                totalDays: daysInMonth,
+                monthStartDate: crDateService.dateUTCToCRString(new Date(Date.UTC(yearForMonth, monthForMonth - 1, 1))),
+                monthEndDate: crDateService.dateUTCToCRString(new Date(Date.UTC(yearForMonth, monthForMonth, 0))),
+            },
+        };
+    }
+
     const firstDateStr = allDatesInRange[0];
     const [firstYear, firstMonth, firstDay] = firstDateStr.split('-').map(Number);
     const firstDate = new Date(Date.UTC(firstYear, firstMonth - 1, firstDay));
@@ -1627,16 +1677,27 @@ export async function getStatementDirect(
             },
         };
 
-        if (dimension === "vendedor" && vendedorId) {
-            whereClause.vendedorId = vendedorId;
-        } else if (dimension === "ventana" && ventanaId) {
-            // ✅ CORRECCIÓN CRÍTICA: Cuando se filtra por ventanaId específico,
+        if (dimension === "vendedor") {
+            if (vendedorId) {
+                whereClause.vendedorId = vendedorId;
+            } else {
+                whereClause.vendedorId = { not: null };
+            }
+        } else if (dimension === "ventana") {
+            // ✅ CORRECCIÓN CRÍTICA: Cuando se filtra por ventana, 
             // solo buscar statements consolidados de ventana (vendedorId = null)
-            // NO incluir statements de vendedores individuales para evitar duplicación de datos
-            whereClause.ventanaId = ventanaId;
-            whereClause.vendedorId = null; // ✅ CRÍTICO: Solo statements consolidados
-        } else if (dimension === "banca" && bancaId) {
-            whereClause.bancaId = bancaId;
+            if (ventanaId) {
+                whereClause.ventanaId = ventanaId;
+            } else {
+                whereClause.ventanaId = { not: null };
+            }
+            whereClause.vendedorId = null;
+        } else if (dimension === "banca") {
+            if (bancaId) {
+                whereClause.bancaId = bancaId;
+            } else {
+                whereClause.bancaId = { not: null };
+            }
             whereClause.ventanaId = null;
             whereClause.vendedorId = null;
         }
@@ -2096,7 +2157,11 @@ export async function getStatementDirect(
 
             } else {
                 // Calcular fecha del día anterior
-                const [year, month, day] = date.split('-').map(Number);
+                const dateParts = (date || "").split('-');
+                if (dateParts.length < 3) {
+                    throw new Error(`Invalid date format for split: ${date}`);
+                }
+                const [year, month, day] = dateParts.map(Number);
                 const previousDayDate = new Date(Date.UTC(year, month - 1, day));
                 previousDayDate.setUTCDate(previousDayDate.getUTCDate() - 1);
                 const previousDateStr = `${previousDayDate.getUTCFullYear()}-${String(previousDayDate.getUTCMonth() + 1).padStart(2, '0')}-${String(previousDayDate.getUTCDate()).padStart(2, '0')}`;
