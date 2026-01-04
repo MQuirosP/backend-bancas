@@ -1301,7 +1301,7 @@ export async function getStatementDirect(
     }
 
     // ✅ CRÍTICO: Agregar movimiento especial directamente a movementsByDate para el primer día
-    // Esto asegura que esté disponible incluso si no hay ventas ni movimientos ese día
+    // SOLO si no existe ya (para evitar duplicación)
     if (previousMonthBalanceForMovement !== 0) {
         const firstDayMovements = movementsByDate.get(firstDayOfMonthStr) || [];
         const entityId = dimension === "banca"
@@ -1310,23 +1310,29 @@ export async function getStatementDirect(
                 ? (ventanaId || 'null')
                 : (vendedorId || 'null');
 
-        // Agregar movimiento especial al inicio del día
-        firstDayMovements.unshift({
-            id: `previous-month-balance-${entityId}`,
-            type: "payment" as const,
-            amount: previousMonthBalanceForMovement,
-            method: "Saldo del mes anterior",
-            notes: `Saldo arrastrado del mes anterior`,
-            isReversed: false,
-            createdAt: new Date(`${firstDayOfMonthStr}T00:00:00.000Z`).toISOString(),
-            date: firstDayOfMonthStr,
-            time: "00:00",
-            balance: previousMonthBalanceForMovement,
-            bancaId: dimension === "banca" ? (bancaId || null) : null,
-            ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
-            vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
-        });
-        movementsByDate.set(firstDayOfMonthStr, firstDayMovements);
+        // ✅ VALIDACIÓN: Verificar que no exista ya para evitar duplicación
+        const movementId = `previous-month-balance-${entityId}`;
+        const alreadyExists = firstDayMovements.some(m => m.id === movementId);
+
+        if (!alreadyExists) {
+            // Agregar movimiento especial al inicio del día
+            firstDayMovements.unshift({
+                id: movementId,
+                type: "payment" as const,
+                amount: previousMonthBalanceForMovement,
+                method: "Saldo del mes anterior",
+                notes: `Saldo arrastrado del mes anterior`,
+                isReversed: false,
+                createdAt: new Date(`${firstDayOfMonthStr}T00:00:00.000Z`).toISOString(),
+                date: firstDayOfMonthStr,
+                time: "00:00",
+                balance: previousMonthBalanceForMovement,
+                bancaId: dimension === "banca" ? (bancaId || null) : null,
+                ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
+                vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
+            });
+            movementsByDate.set(firstDayOfMonthStr, firstDayMovements);
+        }
     }
 
     // Obtener todas las entidades únicas que aparecerán en los statements (para casos con múltiples entidades)
@@ -1481,6 +1487,7 @@ export async function getStatementDirect(
     // El acumulado progresivo requiere que cada día se procese después del anterior
     // Mantener un mapa del último accumulated por entidad para cada día
     const lastAccumulatedByEntity = new Map<string, number>(); // Clave: `${date}_${entityId}`, Valor: último accumulated
+    const runningAccumulatedByEntity = new Map<string, number>(); // ✅ NUEVO: Clave: `${entityId}`, Valor: último accumulated (para carry-over robusto)
 
     // Ordenar entradas por fecha ASC para procesar en orden cronológico
     const sortedEntries = Array.from(byDateAndDimension.entries()).sort(([keyA], [keyB]) => {
@@ -1495,8 +1502,10 @@ export async function getStatementDirect(
     // Pero NO ralentiza consultas de "today" o "este mes"
     const isFullMonthQuery = startDateCRStr === firstDayOfMonthStr && endDateCRStr >= `${yearForMonth}-${String(monthForMonth).padStart(2, '0')}-${new Date(yearForMonth, monthForMonth, 0).getDate()}`;
 
-    if (isFullMonthQuery && sortedEntries.length > 1) {
-        // Solo crear entradas faltantes para consultas de mes completo con múltiples días
+    // ✅ CRÍTICO: SIEMPRE crear entradas para días faltantes para mantener secuencia progresiva
+    // Esto asegura que el acumulado del día N+1 pueda encontrar el del día N
+    // Sin días intermedios, el acumulado progresivo se rompe
+    if (sortedEntries.length > 1) {
         const allDatesInRange = new Set<string>();
         for (const [key] of sortedEntries) {
             const date = shouldGroupByDate ? key : key.split("_")[0];
@@ -1715,43 +1724,24 @@ export async function getStatementDirect(
     const allStatementsFromMonth: any[] = [];
     for (const [key, entry] of sortedEntriesFinal) {
         const statement = await (async () => {
+            // ✅ NUEVO: Determinar ID de entidad de forma consistente para esta entrada
+            const entityId = dimension === "banca" && bancaId
+                ? (bancaId || entry.bancaId || 'null')
+                : dimension === "ventana" && (ventanaId || entry.ventanaId)
+                    ? (ventanaId || entry.ventanaId || 'null')
+                    : (vendedorId || entry.vendedorId || 'null');
+
+            const isMarcela = (entityId === 'c127ba4b-fefc-47d2-a67b-7cce92319621');
+
             // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_entidad
             const date = shouldGroupByDate ? key : key.split("_")[0];
+
 
             // ✅ NUEVO: Obtener movimientos y desglose por sorteo según si hay agrupación
             // El movimiento especial "Saldo del mes anterior" ya está en movementsByDate para el primer día
             const allMovementsForDate = movementsByDate.get(date) || [];
-            let movementsWithPreviousBalance = [...allMovementsForDate];
+            const movementsWithPreviousBalance = [...allMovementsForDate];
 
-            // ✅ CRÍTICO: Si es el primer día del mes y hay saldo del mes anterior, asegurar que el movimiento especial esté incluido
-            if (date === firstDayOfMonthStr && previousMonthBalanceForMovement !== 0) {
-                const hasPreviousMonthMovement = movementsWithPreviousBalance.some(m =>
-                    m.id && m.id.startsWith('previous-month-balance-')
-                );
-                if (!hasPreviousMonthMovement) {
-                    // Agregar el movimiento especial si no está presente
-                    const entityId = dimension === "banca"
-                        ? (bancaId || 'null')
-                        : dimension === "ventana"
-                            ? (ventanaId || 'null')
-                            : (vendedorId || 'null');
-                    movementsWithPreviousBalance.unshift({
-                        id: `previous-month-balance-${entityId}`,
-                        type: "payment" as const,
-                        amount: previousMonthBalanceForMovement,
-                        method: "Saldo del mes anterior",
-                        notes: `Saldo arrastrado del mes anterior`,
-                        isReversed: false,
-                        createdAt: new Date(`${firstDayOfMonthStr}T00:00:00.000Z`).toISOString(),
-                        date: firstDayOfMonthStr,
-                        time: "00:00",
-                        balance: previousMonthBalanceForMovement,
-                        bancaId: dimension === "banca" ? (bancaId || null) : null,
-                        ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
-                        vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
-                    });
-                }
-            }
 
             let movements: any[];
             let bySorteo: any[];
@@ -1942,9 +1932,10 @@ export async function getStatementDirect(
             // Los movimientos (pagos/cobros) deben participar en el balance diario
             // payment = positivo (aumenta balance), collection = negativo (disminuye balance)
             const filteredMovements = movements.filter((m: any) => {
-                // ✅ CAMBIO: Incluir "previous-month-balance-" si queremos que afecte el balance del día
-                // El usuario indicó que "debe aparecer en el itemBalance"
-                // if (m.id?.startsWith('previous-month-balance-')) return false; 
+                // ✅ CRÍTICO: Excluir movimiento especial "Saldo del mes anterior"
+                // Este movimiento solo debe afectar initialAccumulated, NO totalPaid
+                // Si no se excluye, el saldo se cuenta DOS VECES (en initialAccumulated + totalPaid)
+                if (m.id?.startsWith('previous-month-balance-')) return false;
 
                 // Excluir movimientos revertidos
                 if (m.isReversed) return false;
@@ -2086,15 +2077,18 @@ export async function getStatementDirect(
                     }
                 }
 
-                // ✅ CRÍTICO: Si existe un movimiento "previous-month-balance-", 
-                // debemos iniciar el acumulado en 0 y dejar que el movimiento aporte el saldo.
-                // Esto permite que el movimiento se muestre con su valor real en el historial
-                // y evita duplicar el saldo (una vez en initialAccumulated y otra en el movimiento).
-                const hasPreviousBalanceMovement = movementsWithPreviousBalance.some(m => m.id?.startsWith('previous-month-balance-'));
+                // ✅ CRÍTICO: Si existe movimiento "previous-month-balance-", usar 0
+                // Si NO existe, usar previousMonthBalance directamente
+                // El movimiento solo se agrega si previousMonthBalanceForMovement !== 0
+                const hasPreviousBalanceMovement = movementsWithPreviousBalance.some(m =>
+                    m.id?.startsWith('previous-month-balance-')
+                );
 
                 if (hasPreviousBalanceMovement) {
+                    // El movimiento especial aportará el saldo, iniciar en 0
                     initialAccumulated = 0;
                 } else {
+                    // No hay movimiento especial, usar saldo del mes anterior directamente
                     initialAccumulated = Number(previousMonthBalance);
                 }
 
@@ -2316,65 +2310,53 @@ export async function getStatementDirect(
                 // Esto maneja casos donde puede haber gaps en el procesamiento
                 // ✅ CRÍTICO: Validar que cuando dimension="vendedor", NO usar valores de ventana
                 // Si previousDayRemainingBalance es muy grande (como 797754.25), probablemente es de la ventana, no del vendedor
-                if (previousDayRemainingBalance !== null) {
-                    // ✅ VALIDACIÓN: Si dimension="vendedor" y el valor es sospechosamente grande (probablemente de ventana),
-                    // usar el saldo del mes anterior en su lugar
-                    if (dimension === "vendedor" && vendedorId && Math.abs(previousDayRemainingBalance) > Math.abs(previousMonthBalance) * 3) {
 
-                        initialAccumulated = Number(previousMonthBalance);
-                    } else {
+
+                // ✅ CRÍTICO: Determinar initialAccumulated final para el día
+                // Prioridad 1: Caché en memoria de esta ejecución (runningAccumulatedByEntity)
+                // Prioridad 2: Saldo del mes anterior (si es cambio de mes o inicio de rango)
+                // Prioridad 3: Fallback a BD (solo si no es el mes actual o no hay caché)
+
+                // ✅ NUEVO: Usar mapa simple de entityId para carry-over robusto
+                const runningValue = runningAccumulatedByEntity.get(entityId);
+
+                if (runningValue !== undefined && runningValue !== null && !previousDateIsDifferentMonth) {
+                    // Si ya calculamos algo en esta ejecución para esta entidad, usarlo (MÁS CONFIABLE)
+                    initialAccumulated = runningValue;
+                } else if (previousDateIsDifferentMonth || runningValue === undefined) {
+                    // Si es inicio de mes o inicio de rango, intentar usar saldo del mes anterior
+                    // Pero PRIMERO verificar si hay un statement en el mapa pre-cargado para el día anterior
+                    if (previousDayRemainingBalance !== null) {
                         initialAccumulated = previousDayRemainingBalance;
+                    } else {
+                        initialAccumulated = Number(previousMonthBalance);
                     }
                 } else {
-                    // Último fallback: buscar retrocediendo días en lastAccumulatedByEntity (más confiable que mapa pre-cargado)
-                    let foundAccumulated: number | undefined = undefined;
-                    let searchDate = new Date(previousDayDate);
-                    let maxSearchDays = 30;
-                    let daysSearched = 0;
-
-                    while (foundAccumulated === undefined && daysSearched < maxSearchDays) {
-                        const searchDateStr = `${searchDate.getUTCFullYear()}-${String(searchDate.getUTCMonth() + 1).padStart(2, '0')}-${String(searchDate.getUTCDate()).padStart(2, '0')}`;
-
-                        // ✅ CRÍTICO: Usar EXACTAMENTE la misma lógica que entityKey para asegurar coincidencia
-                        const entityKeyToCheck = shouldGroupByDate && dimension === "banca" && bancaId
-                            ? `${searchDateStr}_${bancaId}` // ✅ CRÍTICO: Incluir bancaId aunque shouldGroupByDate=true
-                            : shouldGroupByDate
-                                ? searchDateStr
-                                : dimension === "banca" && !bancaId
-                                    ? searchDateStr
-                                    : dimension === "banca"
-                                        ? `${searchDateStr}_${bancaId || entry.bancaId || 'null'}`
-                                        : dimension === "ventana"
-                                            ? `${searchDateStr}_${ventanaId || entry.ventanaId || 'null'}`
-                                            : `${searchDateStr}_${vendedorId || entry.vendedorId || 'null'}`;
-
-                        foundAccumulated = lastAccumulatedByEntity.get(entityKeyToCheck);
-                        if (foundAccumulated !== undefined && foundAccumulated !== null) break;
-
-                        searchDate.setUTCDate(searchDate.getUTCDate() - 1);
-                        daysSearched++;
-                    }
-
-                    initialAccumulated = foundAccumulated ?? 0;
+                    // Fallback final: 0 si no hay nada (no debería pasar con gaps llenos)
+                    initialAccumulated = 0;
                 }
 
-                // ✅ DEBUG TEMPORAL: Log para investigar problema de saldo dia 2+
-                if (date === '2026-01-02' || date === '2026-01-03') {
+                // ✅ DEBUG MARCELA: Investigar problema de acumulado
+
+                if (isMarcela && (date === '2026-01-01' || date === '2026-01-02' || date === '2026-01-03' || date === '2026-01-04')) {
                     logger.info({
                         layer: "service",
-                        action: "DEBUG_DAY_X_ACCUMULATION",
+                        action: "DEBUG_MARCELA_ACCUMULATION",
                         payload: {
                             date,
-                            dimension,
-                            entityKeyForLastAccumulated,
+                            previousDateStr,
+                            runningValue,
                             previousDayRemainingBalance,
-                            foundInLastAccumulated: lastAccumulatedByEntity.has(entityKeyForLastAccumulated),
-                            lastAccumulatedKeys: Array.from(lastAccumulatedByEntity.keys()),
-                            initialAccumulated
+                            previousMonthBalance: Number(previousMonthBalance),
+                            previousDateIsDifferentMonth,
+                            initialAccumulated,
                         }
                     });
                 }
             }
+
+
+
 
             const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date, initialAccumulated);
 
@@ -2447,22 +2429,31 @@ export async function getStatementDirect(
                 // ✅ CRÍTICO: El accumulated del último evento es el acumulado progresivo secuencial del día
                 if (mostRecentEvent && mostRecentEvent.accumulated !== undefined && mostRecentEvent.accumulated !== null && !isNaN(Number(mostRecentEvent.accumulated))) {
                     statementRemainingBalance = Number(mostRecentEvent.accumulated);
-                } else {
-                    // Si no hay accumulated válido en el último evento, usar initialAccumulated si no hay eventos
-                    // Pero si hay eventos y el accumulated es 0 o inválido, algo anda mal en intercalateSorteosAndMovements
-                    // Si el array no está vacío, debería tener accumulated calculado.
-                    // Si por alguna razón es 0 (ej: primer día, primer movimiento cancela saldo), es válido 0.
                 }
             } else {
                 // Si no hay sorteos/movimientos, mantener el accumulated del día anterior
                 statementRemainingBalance = initialAccumulated;
             }
 
-            // ✅ CRÍTICO: SIEMPRE actualizar lastAccumulatedByEntity con el statementRemainingBalance correcto
-            // El statementRemainingBalance ya viene del evento más reciente cronológicamente (usando chronologicalIndex)
-            // El loop procesa días en orden ASC, así que cuando procesamos el día N, el día N-1 ya está guardado
-            // Para la misma entityKey, siempre sobrescribir (el último procesado es el correcto)
+            // ✅ DEBUG MARCELA: Investigar por qué el resumen difiere del último sorteo
+            if (isMarcela && (date === '2026-01-01' || date === '2026-01-02' || date === '2026-01-03' || date === '2026-01-04')) {
+                logger.info({
+                    layer: "service",
+                    action: "DEBUG_MARCELA_RESULT",
+                    payload: {
+                        date,
+                        dailyBalance: balance,
+                        initialAccumulated,
+                        statementRemainingBalance,
+                        lastEventAccumulated: (sorteosAndMovements.length > 0) ? sorteosAndMovements[0].accumulated : 'EMPTY'
+                    }
+                });
+            }
+
+            // ✅ CRÍTICO: SIEMPRE actualizar caches con el statementRemainingBalance correcto
+            runningAccumulatedByEntity.set(entityId, statementRemainingBalance);
             lastAccumulatedByEntity.set(entityKey, statementRemainingBalance);
+
 
             const statement: any = {
                 date,
@@ -2493,6 +2484,24 @@ export async function getStatementDirect(
                 bySorteo: sorteosAndMovements, // ✅ Sorteos + Movimientos intercalados (incluye accumulated, calculado desde initialAccumulated correcto)
                 hasSorteos: sorteosAndMovements.length > 0, // ✅ NUEVO: Flag para lazy loading (FE puede usar para saber si hay sorteos)
             };
+
+            // ✅ DEBUG MARCELA FINAL: ¿Por qué el acumulado del día no coincide con el último sorteo?
+            if (isMarcela && (date === '2026-01-01' || date === '2026-01-02' || date === '2026-01-03' || date === '2026-01-04')) {
+                logger.info({
+                    layer: "service",
+                    action: "DEBUG_MARCELA_FINAL_STATEMENT",
+                    payload: {
+                        date,
+                        dailyBalance: balance,
+                        initialAccumulated,
+                        statementRemainingBalance,
+                        topLevelRemainingBalance: statement.remainingBalance,
+                        lastEventAccumulated: sorteosAndMovements.length > 0 ? sorteosAndMovements[0].accumulated : 'N/A',
+                        firstEventAccumulated: sorteosAndMovements.length > 0 ? sorteosAndMovements[sorteosAndMovements.length - 1].accumulated : 'N/A'
+                    }
+                });
+            }
+
 
             // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
             if (shouldGroupByDate) {
@@ -3120,6 +3129,80 @@ export async function getStatementDirect(
     const allHaveRemainingBalance = monthlyStatements.every(s => s.remainingBalance !== null && s.remainingBalance !== undefined);
 
     useAccountStatementForMonthly = hasAllDays && allHaveRemainingBalance && monthlyStatements.length > 0;
+
+    // ✅ VALIDACIÓN CRÍTICA: Verificar que los statements sean de la entidad correcta
+    // Esto previene mezcla de datos entre entidades (ej: mostrar datos de vendedor en ventana)
+    if (monthlyStatements.length > 0) {
+        let filteredStatements = monthlyStatements;
+
+        if (dimension === "vendedor" && vendedorId) {
+            const wrongStatements = monthlyStatements.filter(s => s.vendedorId !== vendedorId);
+            if (wrongStatements.length > 0) {
+                logger.error({
+                    layer: "service",
+                    action: "MONTHLY_STATEMENTS_WRONG_ENTITY_VENDEDOR",
+                    payload: {
+                        dimension,
+                        expectedVendedorId: vendedorId,
+                        foundVendedorIds: [...new Set(wrongStatements.map(s => s.vendedorId))],
+                        wrongCount: wrongStatements.length,
+                        totalCount: monthlyStatements.length
+                    }
+                });
+                filteredStatements = monthlyStatements.filter(s => s.vendedorId === vendedorId);
+            }
+        } else if (dimension === "ventana" && ventanaId) {
+            const wrongStatements = monthlyStatements.filter(s =>
+                s.ventanaId !== ventanaId || s.vendedorId !== null
+            );
+            if (wrongStatements.length > 0) {
+                logger.error({
+                    layer: "service",
+                    action: "MONTHLY_STATEMENTS_WRONG_ENTITY_VENTANA",
+                    payload: {
+                        dimension,
+                        expectedVentanaId: ventanaId,
+                        foundVentanaIds: [...new Set(wrongStatements.map(s => s.ventanaId))],
+                        wrongCount: wrongStatements.length,
+                        totalCount: monthlyStatements.length
+                    }
+                });
+                filteredStatements = monthlyStatements.filter(s =>
+                    s.ventanaId === ventanaId && s.vendedorId === null
+                );
+            }
+        } else if (dimension === "banca" && bancaId) {
+            const wrongStatements = monthlyStatements.filter(s =>
+                s.bancaId !== bancaId || s.ventanaId !== null || s.vendedorId !== null
+            );
+            if (wrongStatements.length > 0) {
+                logger.error({
+                    layer: "service",
+                    action: "MONTHLY_STATEMENTS_WRONG_ENTITY_BANCA",
+                    payload: {
+                        dimension,
+                        expectedBancaId: bancaId,
+                        foundBancaIds: [...new Set(wrongStatements.map(s => s.bancaId))],
+                        wrongCount: wrongStatements.length,
+                        totalCount: monthlyStatements.length
+                    }
+                });
+                filteredStatements = monthlyStatements.filter(s =>
+                    s.bancaId === bancaId && s.ventanaId === null && s.vendedorId === null
+                );
+            }
+        }
+
+        // Reemplazar con statements filtrados
+        monthlyStatements.length = 0;
+        monthlyStatements.push(...filteredStatements);
+
+        // Recalcular validación después del filtrado
+        const expectedDaysAfterFilter = Math.ceil((monthEndDate.getTime() - monthStartDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        const hasAllDaysAfterFilter = monthlyStatements.length >= expectedDaysAfterFilter;
+        const allHaveRemainingBalanceAfterFilter = monthlyStatements.every(s => s.remainingBalance !== null && s.remainingBalance !== undefined);
+        useAccountStatementForMonthly = hasAllDaysAfterFilter && allHaveRemainingBalanceAfterFilter && monthlyStatements.length > 0;
+    }
 
     if (useAccountStatementForMonthly) {
         // ✅ OPTIMIZACIÓN: Usar AccountStatement directamente (mucho más rápido)

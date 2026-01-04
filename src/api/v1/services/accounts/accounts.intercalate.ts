@@ -308,6 +308,12 @@ export function intercalateSorteosAndMovements(
       return timeB - timeA; // DESC por tiempo
     }
     // Si mismo tiempo, usar chronologicalIndex DESC (mayor índice = procesado después = más reciente)
+    // ✅ MEJORADO: Agregar sorteoId como criterio secundario para estabilidad
+    const sorteoIdA = a.sorteoId || '';
+    const sorteoIdB = b.sorteoId || '';
+    if (sorteoIdA !== sorteoIdB) {
+      return sorteoIdB.localeCompare(sorteoIdA); // DESC por sorteoId
+    }
     const indexA = a.chronologicalIndex || 0;
     const indexB = b.chronologicalIndex || 0;
     return indexB - indexA; // DESC por índice

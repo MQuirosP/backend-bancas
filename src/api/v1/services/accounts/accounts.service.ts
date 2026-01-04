@@ -152,13 +152,15 @@ export async function getMonthlyRemainingBalancesBatch(
             });
             return result;
         }
+        // ✅ VALIDACIÓN CRÍTICA: Asegurar que month sea válido antes de split
+        // Esto previene el error: "Cannot read properties of undefined (reading 'split')"
         if (!month || typeof month !== 'string' || !month.includes('-')) {
             logger.error({
                 layer: "service",
                 action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_INVALID_MONTH_FORMAT",
-                payload: { month, dimension }
+                payload: { month, dimension, entityIds }
             });
-            return result;
+            return result; // Retornar Map vacío en lugar de crashear
         }
         const [year, monthNum] = month.split("-").map(Number);
         const daysInMonth = new Date(year, monthNum, 0).getDate();
@@ -329,6 +331,15 @@ export async function getMonthlyRemainingBalance(
 
     // ✅ FALLBACK: Si no hay AccountStatement, calcular con getStatementDirect (lento pero necesario)
     // Solo se ejecuta si no hay datos en AccountStatement
+    // ✅ VALIDACIÓN CRÍTICA: Asegurar que month sea válido antes de split
+    if (!month || typeof month !== 'string' || !month.includes('-')) {
+        logger.warn({
+            layer: "service",
+            action: "GET_MONTHLY_REMAINING_BALANCE_INVALID_MONTH",
+            payload: { month, dimension, ventanaId, vendedorId, bancaId }
+        });
+        return 0;
+    }
     const [year, monthNum] = month.split("-").map(Number);
     const daysInMonth = new Date(year, monthNum, 0).getDate();
 
