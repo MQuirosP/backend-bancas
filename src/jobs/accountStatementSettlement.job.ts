@@ -193,6 +193,7 @@ export async function executeSettlement(userId?: string): Promise<{
     for (const statement of statementsToSettle) {
       try {
         // ✅ CRÍTICO: Recalcular totalPaid y totalCollected desde movimientos activos
+        // Esto asegura que los totales estén actualizados si hubo cambios en los movimientos
         const totalPaid = statement.payments
           .filter(p => p.type === 'payment' && !p.isReversed)
           .reduce((sum, p) => sum + p.amount, 0);
@@ -201,8 +202,18 @@ export async function executeSettlement(userId?: string): Promise<{
           .filter(p => p.type === 'collection' && !p.isReversed)
           .reduce((sum, p) => sum + p.amount, 0);
 
-        // ✅ CRÍTICO: Recalcular remainingBalance (balance ya incluye movimientos)
-        const remainingBalance = statement.balance - totalCollected + totalPaid;
+        // ✅ CORRECCIÓN CRÍTICA: NO recalcular remainingBalance
+        // El remainingBalance ya está calculado correctamente cuando se creó/actualizó el statement
+        // Recalcularlo aquí causa errores porque:
+        // - statement.balance ya incluye movimientos: balance = sales - payouts - commission + totalPaid - totalCollected
+        // - Si hacemos: remainingBalance = balance - totalCollected + totalPaid
+        //   Resultado: remainingBalance = sales - payouts - commission + 2*totalPaid - 2*totalCollected (INCORRECTO)
+        // 
+        // El remainingBalance debe venir del cálculo progresivo desde sorteos/movimientos,
+        // no de una fórmula que duplica movimientos
+        // 
+        // Solo actualizamos totalPaid y totalCollected para asegurar que estén sincronizados con los movimientos
+        // El remainingBalance se mantiene como está (fue calculado correctamente cuando se creó el statement)
 
         // ✅ CRÍTICO: NO usar calculateIsSettled (requiere remainingBalance ≈ 0)
         // Si llegó aquí, ya cumple los criterios:
@@ -212,12 +223,14 @@ export async function executeSettlement(userId?: string): Promise<{
         // Por lo tanto, debe asentarse directamente
         
         // Actualizar statement como asentado
+        // ✅ IMPORTANTE: NO actualizar remainingBalance, mantener el valor existente que es correcto
         await AccountStatementRepository.update(statement.id, {
           isSettled: true,
           canEdit: false,
           totalPaid,
           totalCollected,
-          remainingBalance,
+          // remainingBalance NO se actualiza - mantener el valor correcto existente
+          // accumulatedBalance NO se actualiza - mantener el valor correcto existente
           settledAt: new Date(),
           settledBy: userId || null, // null para automático, userId para manual
         });
@@ -235,7 +248,7 @@ export async function executeSettlement(userId?: string): Promise<{
             ticketCount: statement.ticketCount,
             totalPaid,
             totalCollected,
-            remainingBalance,
+            remainingBalance: statement.remainingBalance,
             settledBy: userId || 'SYSTEM'
           }
         });

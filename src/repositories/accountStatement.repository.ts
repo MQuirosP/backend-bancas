@@ -263,8 +263,36 @@ export const AccountStatementRepository = {
 
         if (conflictingStatement) {
           // Ya existe un statement con esta combinación de date y ventanaId
-          // Retornar el existente en lugar de intentar crear uno nuevo
-          logger.warn({
+          // ✅ CORREGIDO: Actualizar campos básicos si están desactualizados antes de retornar
+          // Esto evita mantener valores antiguos incorrectos
+          const needsUpdate = 
+            (!conflictingStatement.bancaId && finalBancaId) ||
+            (!conflictingStatement.ventanaId && finalVentanaId);
+          
+          if (needsUpdate) {
+            try {
+              const updated = await tx.accountStatement.update({
+                where: { id: conflictingStatement.id },
+                data: {
+                  ...(finalBancaId && !conflictingStatement.bancaId ? { bancaId: finalBancaId } : {}),
+                  ...(finalVentanaId && !conflictingStatement.ventanaId ? { ventanaId: finalVentanaId } : {}),
+                },
+              });
+              return updated;
+            } catch (updateError) {
+              // Si falla la actualización, retornar el existente de todas formas
+              logger.warn({
+                layer: 'repository',
+                action: 'ACCOUNT_STATEMENT_UPDATE_FAILED',
+                payload: {
+                  statementId: conflictingStatement.id,
+                  error: (updateError as Error).message,
+                },
+              });
+            }
+          }
+          
+          logger.info({
             layer: 'repository',
             action: 'ACCOUNT_STATEMENT_CONSTRAINT_PREVENTED',
             payload: {
@@ -272,7 +300,8 @@ export const AccountStatementRepository = {
               ventanaId: finalVentanaId,
               vendedorId: data.vendedorId,
               existingStatementId: conflictingStatement.id,
-              note: 'Prevented creation of duplicate statement due to unique constraint (date, ventanaId)',
+              updated: needsUpdate,
+              note: 'Prevented creation of duplicate statement, using existing one',
             },
           });
           return conflictingStatement;

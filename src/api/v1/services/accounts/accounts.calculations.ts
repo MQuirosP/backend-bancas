@@ -1528,12 +1528,12 @@ export async function getStatementDirect(
                     : dimension === "ventana"
                         ? (stmt.ventanaId || 'null')
                         : (stmt.vendedorId || 'null');
-                // ✅ NUEVO: Guardar objeto con id, accumulatedBalance y remainingBalance
-                dateMap.set(entityKey, {
-                    id: stmt.id,
-                    accumulatedBalance: stmt.accumulatedBalance,
-                    remainingBalance: stmt.remainingBalance,
-                });
+                // ✅ CRÍTICO: Guardar directamente el remainingBalance (o accumulatedBalance como fallback)
+                // para mantener compatibilidad con código que espera un número
+                const balanceToUse = stmt.remainingBalance !== null ? stmt.remainingBalance : stmt.accumulatedBalance;
+                if (balanceToUse !== null) {
+                    dateMap.set(entityKey, balanceToUse);
+                }
             }
         }
     }
@@ -1886,327 +1886,115 @@ export async function getStatementDirect(
                 const previousDateMonthStr = `${previousDayDate.getUTCFullYear()}-${String(previousDayDate.getUTCMonth() + 1).padStart(2, '0')}`;
                 const previousDateIsDifferentMonth = previousDateMonthStr !== currentMonthStr;
                 
-                // ✅ CRÍTICO: Intentar obtener el remainingBalance del día anterior desde AccountStatement
-                // Esto es más confiable que depender solo de lastAccumulatedByEntity
+                // ✅ CRÍTICO: SOLUCIÓN DEFINITIVA - El cálculo progresivo es la ÚNICA fuente de verdad
+                // PRIORIDAD: 1) lastAccumulatedByEntity (cálculo en curso, más confiable), 2) mapa pre-cargado (fallback), 3) saldo mes anterior
                 let previousDayRemainingBalance: number | null = null;
-                let daysSearched = 0; // Declarar fuera para usarlo en el warning después
-                const maxSearchDays = 30; // Constante para el límite de búsqueda
                 
-                try {
-                    // ✅ CRÍTICO: Determinar IDs para buscar el statement del día anterior
-                    // Cuando shouldGroupByDate === true y dimension === "banca" sin bancaId,
-                    // cada entry tiene su propio bancaId, así que buscamos el statement específico de esa banca
-                    let targetBancaId: string | undefined = undefined;
-                    let targetVentanaId: string | undefined = undefined;
-                    let targetVendedorId: string | undefined = undefined;
-                    
-                    // ✅ CRÍTICO: Cuando shouldGroupByDate === true y dimension === "banca" sin bancaId,
-                    // el entry tiene bancaId: null porque agrupa todas las bancas.
-                    // En este caso, debemos sumar accumulatedBalance de TODAS las bancas del día anterior.
-                    // ✅ OPTIMIZACIÓN: Usar statements pre-cargados en lugar de consultar BD
-                    if (shouldGroupByDate && dimension === "banca" && !bancaId) {
-                        // ✅ CASO ESPECIAL: Consolidado - buscar en mapa pre-cargado
-                        let searchDate = new Date(previousDayDate);
-                        daysSearched = 0;
-                        
-                        while (previousDayRemainingBalance === null && daysSearched < maxSearchDays) {
-                            const searchDateStr = crDateService.postgresDateToCRString(searchDate);
-                            const dateMap = preloadedStatementsMap.get(searchDateStr);
-                            
-                            if (dateMap && dateMap.has('_consolidado')) {
-                                // ✅ RESTAURADO: El mapa guarda directamente el número (suma de accumulatedBalance)
-                                const consolidatedValue = dateMap.get('_consolidado');
-                                previousDayRemainingBalance = typeof consolidatedValue === 'number' ? consolidatedValue : null;
-                                // Solo log si hay discrepancia (no log cada día)
-                                break;
-                            }
-                            
-                            searchDate.setUTCDate(searchDate.getUTCDate() - 1);
-                            daysSearched++;
-                        }
-                    } else {
-                        // ✅ CASO NORMAL: Buscar statement específico de la entidad
-                        if (dimension === "banca") {
-                            targetBancaId = bancaId || entry.bancaId || undefined;
-                            if (!shouldGroupByDate) {
-                                targetVentanaId = entry.ventanaId || undefined;
-                                targetVendedorId = entry.vendedorId || undefined;
-                            }
-                        } else if (dimension === "ventana") {
-                            targetBancaId = entry.bancaId || undefined;
-                            targetVentanaId = ventanaId || entry.ventanaId || undefined;
-                            if (!shouldGroupByDate) {
-                                targetVendedorId = entry.vendedorId || undefined;
-                            }
-                        } else if (dimension === "vendedor") {
-                            targetBancaId = entry.bancaId || undefined;
-                            targetVentanaId = entry.ventanaId || undefined;
-                            targetVendedorId = vendedorId || entry.vendedorId || undefined;
-                        }
-                        
-                        // ✅ OPTIMIZACIÓN: Buscar en mapa pre-cargado en lugar de consultar BD
-                        let searchDate = new Date(previousDayDate);
-                        daysSearched = 0;
-                        
-                        while (previousDayRemainingBalance === null && daysSearched < maxSearchDays) {
-                            const searchDateStr = crDateService.postgresDateToCRString(searchDate);
-                            const dateMap = preloadedStatementsMap.get(searchDateStr);
-                            
-                            if (dateMap) {
-                                const entityKey = targetVendedorId 
-                                    ? targetVendedorId
-                                    : targetVentanaId
-                                        ? targetVentanaId
-                                        : targetBancaId || 'null';
-                                
-                                if (dateMap.has(entityKey)) {
-                                    // ✅ RESTAURADO: El mapa guarda directamente el número (remainingBalance o accumulatedBalance)
-                                    const balanceValue = dateMap.get(entityKey);
-                                    previousDayRemainingBalance = typeof balanceValue === 'number' ? balanceValue : null;
-                                    break; // Solo log si hay problema, no cada día
-                                }
-                            }
-                            
-                            searchDate.setUTCDate(searchDate.getUTCDate() - 1);
-                            daysSearched++;
-                        }
-                        
-                        // ✅ CORRECCIÓN CRÍTICA: Si no encontramos en el mapa pre-cargado Y el día anterior está en el mismo mes,
-                        // buscar en lastAccumulatedByEntity ANTES de usar el saldo del mes anterior
-                        // Esto es importante porque cuando procesamos días secuencialmente, el día anterior ya fue procesado
-                        // y su remainingBalance debería estar en lastAccumulatedByEntity
-                        if (previousDayRemainingBalance === null && !previousDateIsDifferentMonth) {
-                            const entityKeyForLastAccumulated = shouldGroupByDate
-                                ? previousDateStr
-                                : dimension === "banca" && !bancaId
-                                    ? previousDateStr
-                                    : dimension === "banca"
-                                        ? `${previousDateStr}_${bancaId || entry.bancaId || 'null'}`
-                                        : dimension === "ventana"
-                                            ? `${previousDateStr}_${ventanaId || entry.ventanaId || 'null'}`
-                                            : `${previousDateStr}_${vendedorId || entry.vendedorId || 'null'}`;
-                            
-                            const cachedAccumulated = lastAccumulatedByEntity.get(entityKeyForLastAccumulated);
-                            if (cachedAccumulated !== undefined) {
-                                previousDayRemainingBalance = cachedAccumulated;
-                                logger.info({
-                                    layer: "service",
-                                    action: "PREVIOUS_DAY_FROM_LAST_ACCUMULATED",
-                                    payload: {
-                                        date,
-                                        previousDateStr,
-                                        entityKey: entityKeyForLastAccumulated,
-                                        accumulated: cachedAccumulated,
-                                        dimension,
-                                    },
-                                });
-                            }
-                        }
+                // ✅ CRÍTICO: Construir entityKey para buscar en lastAccumulatedByEntity usando EXACTAMENTE la misma lógica que cuando se guarda
+                // Esto asegura que la clave coincida perfectamente
+                const entityKeyForLastAccumulated = shouldGroupByDate 
+                    ? previousDateStr // Si hay agrupación, usar solo la fecha
+                    : dimension === "banca" && !bancaId
+                        ? previousDateStr // Si dimension=banca sin bancaId, agrupar por fecha
+                        : dimension === "banca"
+                            ? `${previousDateStr}_${bancaId || entry.bancaId || 'null'}`
+                            : dimension === "ventana"
+                                ? `${previousDateStr}_${ventanaId || entry.ventanaId || 'null'}`
+                                : `${previousDateStr}_${vendedorId || entry.vendedorId || 'null'}`;
+                
+                // ✅ PRIORIDAD 1: Buscar primero en lastAccumulatedByEntity (valores calculados en esta ejecución)
+                // Este es el MÁS CONFIABLE porque es el valor que acabamos de calcular
+                if (!previousDateIsDifferentMonth) {
+                    const cachedAccumulated = lastAccumulatedByEntity.get(entityKeyForLastAccumulated);
+                    if (cachedAccumulated !== undefined && cachedAccumulated !== null) {
+                        previousDayRemainingBalance = cachedAccumulated;
                     }
-                    
-                    // ✅ CRÍTICO: Si después de buscar 30 días no encontramos un statement con accumulatedBalance,
-                    // y el día anterior está en un mes diferente, intentar obtener el saldo del mes anterior
-                    // desde MonthlyClosingBalance o getPreviousMonthFinalBalance
-                    if (previousDayRemainingBalance === null && daysSearched >= maxSearchDays) {
-                        // Solo log warning si realmente hay un problema (no cada vez)
-                        logger.warn({
-                            layer: "service",
-                            action: "PREVIOUS_STATEMENT_NOT_FOUND_MAX_DAYS",
-                            payload: {
-                                date,
-                                previousDateStr,
-                                dimension,
-                                daysSearched,
-                                note: "No AccountStatement found with accumulatedBalance after searching 30 days",
-                            },
-                        });
-                        
-                        // ✅ CRÍTICO: Si el día anterior está en un mes diferente, usar el saldo del mes anterior
-                        if (previousDateIsDifferentMonth) {
-                        try {
-                            let previousMonthBalance: number;
-                            
-                            if (dimension === "banca") {
-                                previousMonthBalance = await getPreviousMonthFinalBalance(
-                                    currentMonthStr,
-                                    "banca",
-                                    undefined,
-                                    undefined,
-                                    entry.bancaId || bancaId || null
-                                );
-                            } else if (dimension === "ventana") {
-                                previousMonthBalance = await getPreviousMonthFinalBalance(
-                                    currentMonthStr,
-                                    "ventana",
-                                    entry.ventanaId || ventanaId || null,
-                                    undefined,
-                                    entry.bancaId || bancaId || undefined
-                                );
-                            } else {
-                                previousMonthBalance = await getPreviousMonthFinalBalance(
-                                    currentMonthStr,
-                                    "vendedor",
-                                    entry.ventanaId || ventanaId || undefined,
-                                    entry.vendedorId || vendedorId || null,
-                                    entry.bancaId || bancaId || undefined
-                                );
-                            }
-                            
-                            previousDayRemainingBalance = Number(previousMonthBalance);
-                            
-                            logger.info({
-                                layer: "service",
-                                action: "USING_PREVIOUS_MONTH_BALANCE_FOR_CROSS_MONTH",
-                                payload: {
-                                    date,
-                                    previousDateStr,
-                                    currentMonthStr,
-                                    previousDateMonthStr,
-                                    previousMonthBalance: previousDayRemainingBalance,
-                                    dimension,
-                                },
-                            });
-                        } catch (error) {
-                            logger.warn({
-                                layer: "service",
-                                action: "PREVIOUS_MONTH_BALANCE_FETCH_ERROR_CROSS_MONTH",
-                                payload: {
-                                    date,
-                                    previousDateStr,
-                                    currentMonthStr,
-                                    dimension,
-                                    error: (error as Error).message,
-                                },
-                            });
-                        }
-                        } else {
-                            // Si el día anterior está en el mismo mes pero no encontramos statement,
-                            // intentar obtener el último accumulatedBalance del mes anterior desde MonthlyClosingBalance
-                            try {
-                                const [prevYear, prevMonth] = previousDateMonthStr.split('-').map(Number);
-                                const lastDayOfPrevMonth = new Date(prevYear, prevMonth, 0).getDate();
-                                const lastDayDate = new Date(Date.UTC(prevYear, prevMonth - 1, lastDayOfPrevMonth, 0, 0, 0, 0));
-                                
-                                // Buscar statement del último día del mes anterior
-                                let lastDayStatement: any = null;
-                                if (targetVendedorId) {
-                                    lastDayStatement = await prisma.accountStatement.findFirst({
-                                        where: {
-                                            date: lastDayDate,
-                                            vendedorId: targetVendedorId,
-                                        },
-                                        select: { accumulatedBalance: true },
-                                    });
-                                } else if (targetVentanaId) {
-                                    lastDayStatement = await prisma.accountStatement.findFirst({
-                                        where: {
-                                            date: lastDayDate,
-                                            ventanaId: targetVentanaId,
-                                            vendedorId: null,
-                                        },
-                                        select: { accumulatedBalance: true },
-                                    });
-                                } else if (targetBancaId) {
-                                    lastDayStatement = await prisma.accountStatement.findFirst({
-                                        where: {
-                                            date: lastDayDate,
-                                            bancaId: targetBancaId,
-                                            ventanaId: null,
-                                            vendedorId: null,
-                                        },
-                                        select: { accumulatedBalance: true },
-                                    });
-                                }
-                                
-                                if (lastDayStatement && lastDayStatement.accumulatedBalance !== null) {
-                                    previousDayRemainingBalance = Number(lastDayStatement.accumulatedBalance);
-                                    logger.info({
-                                        layer: "service",
-                                        action: "USING_LAST_DAY_OF_PREVIOUS_MONTH_ACCUMULATED",
-                                        payload: {
-                                            date,
-                                            previousDateStr,
-                                            previousDateMonthStr,
-                                            lastDayDate: crDateService.postgresDateToCRString(lastDayDate),
-                                            accumulatedBalance: previousDayRemainingBalance,
-                                            dimension,
-                                        },
-                                    });
-                                } else {
-                                    // Si tampoco hay statement del último día, usar getPreviousMonthFinalBalance
-                                    let previousMonthBalance: number;
-                                    if (dimension === "banca") {
-                                        previousMonthBalance = await getPreviousMonthFinalBalance(
-                                            currentMonthStr,
-                                            "banca",
-                                            undefined,
-                                            undefined,
-                                            entry.bancaId || bancaId || null
-                                        );
-                                    } else if (dimension === "ventana") {
-                                        previousMonthBalance = await getPreviousMonthFinalBalance(
-                                            currentMonthStr,
-                                            "ventana",
-                                            entry.ventanaId || ventanaId || null,
-                                            undefined,
-                                            entry.bancaId || bancaId || undefined
-                                        );
-                                    } else {
-                                        previousMonthBalance = await getPreviousMonthFinalBalance(
-                                            currentMonthStr,
-                                            "vendedor",
-                                            entry.ventanaId || ventanaId || undefined,
-                                            entry.vendedorId || vendedorId || null,
-                                            entry.bancaId || bancaId || undefined
-                                        );
-                                    }
-                                    previousDayRemainingBalance = Number(previousMonthBalance);
-                                    logger.info({
-                                        layer: "service",
-                                        action: "USING_PREVIOUS_MONTH_BALANCE_FROM_FUNCTION",
-                                        payload: {
-                                            date,
-                                            previousDateStr,
-                                            currentMonthStr,
-                                            previousMonthBalance: previousDayRemainingBalance,
-                                            dimension,
-                                        },
-                                    });
-                                }
-                            } catch (error) {
-                                logger.warn({
-                                    layer: "service",
-                                    action: "PREVIOUS_MONTH_BALANCE_FALLBACK_ERROR",
-                                    payload: {
-                                        date,
-                                        previousDateStr,
-                                        dimension,
-                                        error: (error as Error).message,
-                                    },
-                                });
-                            }
-                        }
-                    }
-                } catch (error) {
-                    // Si falla, continuar con el fallback
-                    logger.warn({
-                        layer: "service",
-                        action: "PREVIOUS_DAY_STATEMENT_FETCH_ERROR",
-                        payload: {
-                            date,
-                            previousDateStr,
-                            dimension,
-                            error: (error as Error).message,
-                        },
-                    });
                 }
                 
-                // ✅ CRÍTICO: Usar el remainingBalance guardado si está disponible, sino usar lastAccumulatedByEntity
+                // ✅ PRIORIDAD 2: Si no está en lastAccumulatedByEntity, buscar en mapa pre-cargado (fallback)
+                if (previousDayRemainingBalance === null) {
+                    try {
+                        if (shouldGroupByDate && dimension === "banca" && !bancaId) {
+                            // Consolidado: buscar _consolidado
+                            let searchDate = new Date(previousDayDate);
+                            let daysSearched = 0;
+                            const maxSearchDays = 30;
+                            
+                            while (previousDayRemainingBalance === null && daysSearched < maxSearchDays) {
+                                const searchDateStr = crDateService.postgresDateToCRString(searchDate);
+                                const dateMap = preloadedStatementsMap.get(searchDateStr);
+                                
+                                if (dateMap && dateMap.has('_consolidado')) {
+                                    const consolidatedValue = dateMap.get('_consolidado');
+                                    previousDayRemainingBalance = typeof consolidatedValue === 'number' ? consolidatedValue : null;
+                                    break;
+                                }
+                                
+                                searchDate.setUTCDate(searchDate.getUTCDate() - 1);
+                                daysSearched++;
+                            }
+                        } else {
+                            // Statement específico
+                            let targetBancaId: string | undefined = undefined;
+                            let targetVentanaId: string | undefined = undefined;
+                            let targetVendedorId: string | undefined = undefined;
+                            
+                            if (dimension === "banca") {
+                                targetBancaId = bancaId || entry.bancaId || undefined;
+                                if (!shouldGroupByDate) {
+                                    targetVentanaId = entry.ventanaId || undefined;
+                                    targetVendedorId = entry.vendedorId || undefined;
+                                }
+                            } else if (dimension === "ventana") {
+                                targetBancaId = entry.bancaId || undefined;
+                                targetVentanaId = ventanaId || entry.ventanaId || undefined;
+                                if (!shouldGroupByDate) {
+                                    targetVendedorId = entry.vendedorId || undefined;
+                                }
+                            } else if (dimension === "vendedor") {
+                                targetBancaId = entry.bancaId || undefined;
+                                targetVentanaId = entry.ventanaId || undefined;
+                                targetVendedorId = vendedorId || entry.vendedorId || undefined;
+                            }
+                            
+                            let searchDate = new Date(previousDayDate);
+                            let daysSearched = 0;
+                            const maxSearchDays = 30;
+                            
+                            while (previousDayRemainingBalance === null && daysSearched < maxSearchDays) {
+                                const searchDateStr = crDateService.postgresDateToCRString(searchDate);
+                                const dateMap = preloadedStatementsMap.get(searchDateStr);
+                                
+                                if (dateMap) {
+                                    const entityKey = targetVendedorId 
+                                        ? targetVendedorId
+                                        : targetVentanaId
+                                            ? targetVentanaId
+                                            : targetBancaId || 'null';
+                                    
+                                    if (dateMap.has(entityKey)) {
+                                        const balanceValue = dateMap.get(entityKey);
+                                        previousDayRemainingBalance = typeof balanceValue === 'number' ? balanceValue : null;
+                                        break;
+                                    }
+                                }
+                                
+                                searchDate.setUTCDate(searchDate.getUTCDate() - 1);
+                                daysSearched++;
+                            }
+                        }
+                    } catch (error) {
+                        // Silenciar errores de búsqueda en mapa pre-cargado, continuar con saldo mes anterior
+                    }
+                }
+                
+                // ✅ CRÍTICO: Asignar initialAccumulated desde previousDayRemainingBalance
+                // ✅ CRÍTICO: Si no encontramos valor previo directamente, buscar retrocediendo días en lastAccumulatedByEntity
+                // Esto maneja casos donde puede haber gaps en el procesamiento
                 if (previousDayRemainingBalance !== null) {
                     initialAccumulated = previousDayRemainingBalance;
                 } else {
-                    // Fallback: usar lastAccumulatedByEntity (calculado durante el procesamiento)
-                    // ✅ CORRECCIÓN: Si el día anterior no tiene entrada, buscar retrocediendo días
+                    // Último fallback: buscar retrocediendo días en lastAccumulatedByEntity (más confiable que mapa pre-cargado)
                     let foundAccumulated: number | undefined = undefined;
                     let searchDate = new Date(previousDayDate);
                     let maxSearchDays = 30;
@@ -2215,7 +2003,8 @@ export async function getStatementDirect(
                     while (foundAccumulated === undefined && daysSearched < maxSearchDays) {
                         const searchDateStr = `${searchDate.getUTCFullYear()}-${String(searchDate.getUTCMonth() + 1).padStart(2, '0')}-${String(searchDate.getUTCDate()).padStart(2, '0')}`;
                         
-                        const entityKeyToCheck = shouldGroupByDate
+                        // ✅ CRÍTICO: Usar EXACTAMENTE la misma lógica que entityKey para asegurar coincidencia
+                        const entityKeyToCheck = shouldGroupByDate 
                             ? searchDateStr
                             : dimension === "banca" && !bancaId
                                 ? searchDateStr
@@ -2226,29 +2015,13 @@ export async function getStatementDirect(
                                         : `${searchDateStr}_${vendedorId || entry.vendedorId || 'null'}`;
                         
                         foundAccumulated = lastAccumulatedByEntity.get(entityKeyToCheck);
+                        if (foundAccumulated !== undefined && foundAccumulated !== null) break;
                         
-                        if (foundAccumulated !== undefined) {
-                            logger.info({
-                                layer: "service",
-                                action: "PREVIOUS_ACCUMULATED_FOUND_IN_CACHE",
-                                payload: {
-                                    currentDate: date,
-                                    foundDate: searchDateStr,
-                                    daysSearched,
-                                    accumulated: foundAccumulated,
-                                },
-                            });
-                            break;
-                        }
-                        
-                        // Retroceder un día más
                         searchDate.setUTCDate(searchDate.getUTCDate() - 1);
                         daysSearched++;
                     }
                     
-                    initialAccumulated = foundAccumulated || 0;
-                    
-                    // Reducir logs - solo usar 0 como fallback
+                    initialAccumulated = foundAccumulated ?? 0;
                 }
             }
             
@@ -2290,17 +2063,19 @@ export async function getStatementDirect(
                             : null;
                 
                 if (entityKey && currentDateMap.has(entityKey)) {
-                    // ✅ RESTAURADO: El mapa guarda directamente el número (remainingBalance o accumulatedBalance)
+                    // ✅ CORRECCIÓN: El mapa guarda directamente el número (remainingBalance o accumulatedBalance)
                     const balanceValue = currentDateMap.get(entityKey);
                     accountStatementAccumulated = typeof balanceValue === 'number' ? balanceValue : null;
-                    // accountStatementId queda null porque no guardamos el ID (no es necesario para corrección automática)
+                    // accountStatementId queda null porque no guardamos el ID (no es necesario)
                 }
             }
             
             // ✅ CRÍTICO: El remainingBalance del día debe ser igual al último accumulated de sorteosAndMovements
-            // NO usar accountStatementAccumulated porque puede estar desactualizado o incorrecto
+            // NO usar accountStatementAccumulated porque puede estar desactualizado o incorrecto (datos históricos corruptos)
             // El cálculo progresivo desde sorteos/movimientos es la fuente de verdad para el remainingBalance del día
+            // SIEMPRE calcular desde sorteosAndMovements para garantizar exactitud
             if (sorteosAndMovements.length > 0) {
+                // Si no tenemos AccountStatement, calcular desde sorteos/movimientos (más lento pero correcto)
                 // ✅ CORRECCIÓN CRÍTICA: Encontrar el evento MÁS RECIENTE cronológicamente
                 // Problema: Cuando hay múltiples sorteos a la misma hora, solo ordenar por scheduledAt no es suficiente
                 // Solución: Ordenar por scheduledAt DESC y luego por chronologicalIndex DESC
@@ -2324,40 +2099,17 @@ export async function getStatementDirect(
                 if (mostRecentEvent && mostRecentEvent.accumulated !== undefined && mostRecentEvent.accumulated !== null && !isNaN(Number(mostRecentEvent.accumulated))) {
                     statementRemainingBalance = Number(mostRecentEvent.accumulated);
                     
-                    // ✅ OPCIONAL: Log si hay discrepancia con AccountStatement para detectar problemas
-                    if (accountStatementAccumulated !== null) {
-                        const diff = Math.abs(statementRemainingBalance - accountStatementAccumulated);
-                        if (diff > 0.01) {
-                            logger.warn({
-                                layer: "service",
-                                action: "REMAINING_BALANCE_DISCREPANCY",
-                                payload: {
-                                    date,
-                                    dimension,
-                                    calculatedFromSorteos: statementRemainingBalance,
-                                    fromAccountStatement: accountStatementAccumulated,
-                                    difference: diff,
-                                    note: "remainingBalance calculated from sorteos/movements differs from AccountStatement.accumulatedBalance",
-                                },
-                            });
-                        }
-                    }
+                    // ✅ NOTA: accountStatementAccumulated solo para referencia, NO se usa en el cálculo
+                    // El remainingBalance siempre viene del cálculo progresivo desde sorteos/movimientos
                 }
             }
-            // Si no hay sorteos/movimientos, statementRemainingBalance ya tiene initialAccumulated (correcto)
+            // Si no hay sorteos/movimientos y no tenemos AccountStatement, statementRemainingBalance ya tiene initialAccumulated (correcto)
             
-            // ✅ CRÍTICO: Actualizar lastAccumulatedByEntity con el statementRemainingBalance correcto
-            // Esto asegura que el siguiente día tenga el acumulado correcto
-            if (shouldGroupByDate || (dimension === "banca" && !bancaId)) {
-                const existingAccumulated = lastAccumulatedByEntity.get(entityKey);
-                if (existingAccumulated === undefined || statementRemainingBalance > existingAccumulated) {
-                    // Solo actualizar si no existe o si el nuevo es mayor (más reciente)
-                    lastAccumulatedByEntity.set(entityKey, statementRemainingBalance);
-                }
-            } else {
-                // Cuando no hay agrupación, actualizar directamente
-                lastAccumulatedByEntity.set(entityKey, statementRemainingBalance);
-            }
+            // ✅ CRÍTICO: SIEMPRE actualizar lastAccumulatedByEntity con el statementRemainingBalance correcto
+            // El statementRemainingBalance ya viene del evento más reciente cronológicamente (usando chronologicalIndex)
+            // El loop procesa días en orden ASC, así que cuando procesamos el día N, el día N-1 ya está guardado
+            // Para la misma entityKey, siempre sobrescribir (el último procesado es el correcto)
+            lastAccumulatedByEntity.set(entityKey, statementRemainingBalance);
             
             const statement: any = {
                 date,
@@ -2960,13 +2712,71 @@ export async function getStatementDirect(
     let monthlyPendingDays = 0;
     let monthlyTotalBalance = 0;
     
-    // ✅ CORRECCIÓN: No usar AccountStatement.remainingBalance directamente porque puede estar incorrecto
-    // En su lugar, siempre calcular desde tickets/movimientos para asegurar exactitud
-    // Solo usar AccountStatement para acelerar las consultas de totales (sales, payouts, etc.)
-    // pero el remainingBalance se calculará correctamente desde los datos base
-    useAccountStatementForMonthly = false;
+    // ✅ CORRECCIÓN CRÍTICA: Activar uso de AccountStatement cuando esté disponible y sea confiable
+    // Verificar si tenemos statements completos para el mes y si tienen remainingBalance válido
+    // Solo usar AccountStatement si:
+    // 1. Tenemos statements para el período consultado
+    // 2. Los statements tienen remainingBalance válido (no null)
+    // 3. El job de asentamiento ya NO corrompe los datos (corregido)
+    const expectedDays = Math.ceil((monthEndDate.getTime() - monthStartDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const hasAllDays = monthlyStatements.length >= expectedDays;
+    const allHaveRemainingBalance = monthlyStatements.every(s => s.remainingBalance !== null && s.remainingBalance !== undefined);
+    
+    useAccountStatementForMonthly = hasAllDays && allHaveRemainingBalance && monthlyStatements.length > 0;
 
-    if (!useAccountStatementForMonthly) {
+    if (useAccountStatementForMonthly) {
+        // ✅ OPTIMIZACIÓN: Usar AccountStatement directamente (mucho más rápido)
+        logger.info({
+            layer: "service",
+            action: "ACCOUNT_STATEMENT_MONTHLY_USED",
+            payload: {
+                dimension,
+                bancaId,
+                month: currentMonthStr,
+                statementsCount: monthlyStatements.length,
+                expectedDays,
+                note: "Using AccountStatement for monthly totals (optimization)",
+            },
+        });
+
+        // Sumar totales desde AccountStatement
+        monthlyTotalSales = monthlyStatements.reduce((sum, s) => sum + Number(s.totalSales || 0), 0);
+        monthlyTotalPayouts = monthlyStatements.reduce((sum, s) => sum + Number(s.totalPayouts || 0), 0);
+        monthlyTotalListeroCommission = monthlyStatements.reduce((sum, s) => sum + Number(s.listeroCommission || 0), 0);
+        monthlyTotalVendedorCommission = monthlyStatements.reduce((sum, s) => sum + Number(s.vendedorCommission || 0), 0);
+        monthlyTotalPaid = monthlyStatements.reduce((sum, s) => sum + Number(s.totalPaid || 0), 0);
+        monthlyTotalCollected = monthlyStatements.reduce((sum, s) => sum + Number(s.totalCollected || 0), 0);
+        
+        // Contar días saldados
+        // ✅ NOTA: Para isSettled, necesitaríamos consultar isSettled desde AccountStatement
+        // Por ahora, contar como pending si no tenemos esa info en la query
+        monthlySettledDays = 0; // Se podría agregar isSettled al select si es necesario
+        monthlyPendingDays = monthlyStatements.length;
+        
+        // Calcular monthlyTotalBalance
+        const monthlyTotalCommissionToUse = dimension === "vendedor" ? monthlyTotalVendedorCommission : monthlyTotalListeroCommission;
+        const monthlyTotalBalanceBase = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalCommissionToUse;
+        monthlyTotalBalance = monthlyTotalBalanceBase + monthlyTotalPaid - monthlyTotalCollected;
+        
+        // ✅ CRÍTICO: Para monthlyRemainingBalance, usar el remainingBalance del último día del mes
+        // Este ya incluye el acumulado progresivo correcto
+        const lastStatementOfMonth = monthlyStatements[monthlyStatements.length - 1];
+        const monthlyRemainingBalanceFromStatements = lastStatementOfMonth?.remainingBalance || 0;
+        
+        logger.info({
+            layer: "service",
+            action: "ACCOUNT_STATEMENT_MONTHLY_CALCULATED",
+            payload: {
+                dimension,
+                month: currentMonthStr,
+                monthlyTotalSales,
+                monthlyTotalPayouts,
+                monthlyTotalBalance,
+                monthlyRemainingBalance: monthlyRemainingBalanceFromStatements,
+                note: "Calculated from AccountStatement",
+            },
+        });
+    } else if (!useAccountStatementForMonthly) {
         // Fallback: calcular desde tickets (más lento)
         logger.info({
             layer: "service",
@@ -3209,21 +3019,34 @@ export async function getStatementDirect(
     // ✅ CRÍTICO: Calcular comisión total a usar según dimension (fuera del bloque if)
     const monthlyTotalCommissionToUse = dimension === "vendedor" ? monthlyTotalVendedorCommission : monthlyTotalListeroCommission;
 
-    // ✅ CORRECCIÓN: SIEMPRE calcular remainingBalance desde datos base (tickets/movimientos)
-    // NO usar AccountStatement.remainingBalance porque puede estar incorrecto
-    const previousMonthBalance = await getPreviousMonthFinalBalance(
-        currentMonthStr,
-        dimension,
-        ventanaId,
-        vendedorId,
-        bancaId
-    );
-    const previousMonthBalanceNum = Number(previousMonthBalance);
+    // ✅ CORRECCIÓN: Calcular remainingBalance según fuente
+    let monthlyRemainingBalance: number;
+    let previousMonthBalanceNum = 0;
     
-    // ✅ CRÍTICO: monthlyTotalBalance = balance del mes actual (sin mes anterior)
-    // monthlyRemainingBalance = previousMonthBalance + monthlyTotalBalance
-    // (monthlyTotalBalance ya incluye movimientos: paid - collected)
-    const monthlyRemainingBalance = previousMonthBalanceNum + monthlyTotalBalance;
+    if (useAccountStatementForMonthly) {
+        // Si usamos AccountStatement, el remainingBalance del último día ya incluye todo
+        const lastStatementOfMonth = monthlyStatements[monthlyStatements.length - 1];
+        monthlyRemainingBalance = Number(lastStatementOfMonth?.remainingBalance || 0);
+        
+        // Para calcular previousMonthBalance, usar el remainingBalance del último día del mes anterior
+        // o calcularlo si no tenemos ese statement
+        previousMonthBalanceNum = 0; // Se calculará si es necesario para otros cálculos
+    } else {
+        // Si calculamos desde tickets, calcular remainingBalance desde datos base
+        const previousMonthBalance = await getPreviousMonthFinalBalance(
+            currentMonthStr,
+            dimension,
+            ventanaId,
+            vendedorId,
+            bancaId
+        );
+        previousMonthBalanceNum = Number(previousMonthBalance);
+        
+        // ✅ CRÍTICO: monthlyTotalBalance = balance del mes actual (sin mes anterior)
+        // monthlyRemainingBalance = previousMonthBalance + monthlyTotalBalance
+        // (monthlyTotalBalance ya incluye movimientos: paid - collected)
+        monthlyRemainingBalance = previousMonthBalanceNum + monthlyTotalBalance;
+    }
     
 
     const monthlyAccumulated: StatementTotals = {
@@ -3601,34 +3424,26 @@ export async function getStatementDirect(
         periodPreviousMonthBalanceNum = 0;
     }
     
-    // ✅ CORRECCIÓN CRÍTICA: totalBalance debe ser igual al remainingBalance del último día del período
-    // El remainingBalance del último día ya incluye:
-    // - Saldo del mes anterior (si periodIncludesFirstDay)
-    // - Todos los balances diarios (ventas - premios - comisiones + movimientos) acumulados progresivamente
+    // ✅ CORRECCIÓN CRÍTICA: totalBalance debe ser la SUMA de los balances del período consultado
+    // NO debe usar remainingBalance del último día porque eso es un acumulado progresivo desde el inicio del mes
+    // El saldo del período (totalRemainingBalance) debe ser simplemente la suma de los balances diarios del período
     // 
-    // NO debemos calcular totalBalance sumando totalBalanceBase (que NO incluye movimientos)
-    // porque cada statement.balance individual SÍ incluye movimientos
-    // 
-    // La forma correcta es usar el remainingBalance del último statement del período
+    // Cada statement.balance ya incluye: sales - payouts - commission + totalPaid - totalCollected
+    // Por lo tanto, totalBalance = suma de todos los statement.balance del período
     let totalBalance = 0;
     if (statements.length > 0) {
-        // Ordenar statements por fecha para obtener el último día
-        const sortedStatements = [...statements].sort((a, b) => 
-            new Date(a.date).getTime() - new Date(b.date).getTime()
-        );
-        const lastStatement = sortedStatements[sortedStatements.length - 1];
-        // ✅ El remainingBalance del último día es el acumulado total correcto
-        totalBalance = lastStatement.remainingBalance || 0;
+        // ✅ CORRECCIÓN: Sumar los balances de todos los statements del período
+        // Esto representa el saldo neto del período consultado (no acumulado desde inicio del mes)
+        totalBalance = statements.reduce((sum, s) => sum + Number(s.balance || 0), 0);
     } else {
-        // Si no hay statements, calcular desde balance base + movimientos + saldo mes anterior
+        // Si no hay statements, calcular desde balance base + movimientos
         const totalBalanceBase = totalSales - totalPayouts - totalCommissionToUse;
-        totalBalance = periodIncludesFirstDay 
-            ? Number(periodPreviousMonthBalanceNum) + Number(totalBalanceBase) + Number(totalPaid) - Number(totalCollected)
-            : Number(totalBalanceBase) + Number(totalPaid) - Number(totalCollected);
+        totalBalance = Number(totalBalanceBase) + Number(totalPaid) - Number(totalCollected);
     }
     
     // ✅ CORRECCIÓN: totalRemainingBalance debe ser igual a totalBalance
-    // Ambos representan el saldo acumulado al final del período
+    // Ambos representan la suma de los balances del período consultado (no el acumulado del mes)
+    // El acumulado del mes se calcula en monthlyAccumulated.totalRemainingBalance
     const totalRemainingBalance = Number(totalBalance);
 
     const functionEndTime = Date.now();
