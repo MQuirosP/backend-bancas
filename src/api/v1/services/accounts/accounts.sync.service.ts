@@ -409,129 +409,32 @@ export class AccountStatementSyncService {
             },
           });
         } else {
-          // Si no hay statement del día anterior, buscar retrocediendo
-          let foundAccumulated = false;
-          let searchDate = new Date(previousDayDate);
-          let daysSearched = 0;
-          const maxSearchDays = 30;
-
-          while (!foundAccumulated && daysSearched < maxSearchDays) {
-            const searchDateStrCR = crDateService.postgresDateToCRString(searchDate);
-            
-            // ⚠️ CRÍTICO: Buscar según dimensión (igual que búsqueda del día anterior)
-            let searchStatements: Array<{ accumulatedBalance: number | null; date: Date }> = [];
-            
-            if (vendedorId) {
-              searchStatements = await tx.accountStatement.findMany({
-                where: {
-                  date: { lte: searchDate },
-                  vendedorId: vendedorId,
-                },
-                orderBy: [
-                  { date: 'desc' },
-                  { createdAt: 'desc' },
-                ],
-                select: {
-                  accumulatedBalance: true,
-                  date: true,
-                },
-                take: 10,
-              });
-            } else if (ventanaId) {
-              searchStatements = await tx.accountStatement.findMany({
-                where: {
-                  date: { lte: searchDate },
-                  ventanaId: ventanaId,
-                  vendedorId: null,
-                },
-                orderBy: [
-                  { date: 'desc' },
-                  { createdAt: 'desc' },
-                ],
-                select: {
-                  accumulatedBalance: true,
-                  date: true,
-                },
-                take: 10,
-              });
-            } else if (bancaId) {
-              searchStatements = await tx.accountStatement.findMany({
-                where: {
-                  date: { lte: searchDate },
-                  bancaId: bancaId,
-                  ventanaId: null,
-                  vendedorId: null,
-                },
-                orderBy: [
-                  { date: 'desc' },
-                  { createdAt: 'desc' },
-                ],
-                select: {
-                  accumulatedBalance: true,
-                  date: true,
-                },
-                take: 10,
-              });
-            }
-
-            // Filtrar para encontrar el primero con accumulatedBalance válido
-            const searchStatement = searchStatements.find(
-              stmt => stmt.accumulatedBalance !== null && 
-                      stmt.accumulatedBalance !== undefined && 
-                      Number(stmt.accumulatedBalance) !== 0
-            );
-
-            if (searchStatement) {
-              accumulatedBalance = Number(searchStatement.accumulatedBalance) + balance;
-              foundAccumulated = true;
-              
-              logger.info({
-                layer: "service",
-                action: "SYNC_DAY_STATEMENT_FOUND_RETROACTIVE",
-                payload: {
-                  date: dateStrCR,
-                  foundDate: crDateService.postgresDateToCRString(searchStatement.date),
-                  daysSearched,
-                  dimension,
-                  entityId,
-                  previousAccumulatedBalance: Number(searchStatement.accumulatedBalance),
-                  balance,
-                  accumulatedBalance,
-                },
-              });
-              break;
-            }
-
-            searchDate.setUTCDate(searchDate.getUTCDate() - 1);
-            daysSearched++;
-          }
-
-          // Si aún no se encuentra, usar saldo del mes anterior (fallback)
-          // ✅ CRÍTICO: Para vendedores, NO pasar ventanaId (solo vendedorId)
-          if (!foundAccumulated) {
-            const previousMonthBalance = await getPreviousMonthFinalBalance(
-              monthStr,
+          // ✅ CRÍTICO: Si no hay statement del día anterior, usar saldo del mes anterior
+          // NO buscar retroactivamente porque puede encontrar valores de otros vendedores/ventanas
+          // El saldo del mes anterior es la fuente de verdad cuando no hay statement del día anterior
+          const previousMonthBalance = await getPreviousMonthFinalBalance(
+            monthStr,
+            dimension,
+            dimension === "vendedor" ? undefined : (ventanaId || undefined), // ✅ NO pasar ventanaId para vendedores
+            vendedorId || undefined,
+            bancaId || undefined
+          );
+          accumulatedBalance = Number(previousMonthBalance) + balance;
+          
+          logger.info({
+            layer: "service",
+            action: "SYNC_DAY_STATEMENT_NO_PREVIOUS_DAY_USE_MONTH_BALANCE",
+            payload: {
+              date: dateStrCR,
+              previousDate: previousDateStrCR,
               dimension,
-              dimension === "vendedor" ? undefined : (ventanaId || undefined), // ✅ NO pasar ventanaId para vendedores
-              vendedorId || undefined,
-              bancaId || undefined
-            );
-            accumulatedBalance = Number(previousMonthBalance) + balance;
-            
-            logger.warn({
-              layer: "service",
-              action: "SYNC_DAY_STATEMENT_FALLBACK_TO_MONTH",
-              payload: {
-                date: dateStrCR,
-                dimension,
-                entityId,
-                daysSearched,
-                previousMonthBalance: Number(previousMonthBalance),
-                balance,
-                accumulatedBalance,
-              },
-            });
-          }
+              entityId,
+              previousMonthBalance: Number(previousMonthBalance),
+              balance,
+              accumulatedBalance,
+              note: "No se encontró statement del día anterior, usando saldo del mes anterior",
+            },
+          });
         }
       }
 
@@ -602,43 +505,32 @@ export class AccountStatementSyncService {
         vendedorId: vendedorId,
       };
 
-      // Construir where único según dimensión (usando los constraints únicos del schema)
-      // Prisma usa el nombre del constraint compuesto como clave
-      let uniqueWhere: any;
-      
-      if (dimension === "vendedor" && vendedorId) {
-        // Constraint: @@unique([date, vendedorId], map: "account_statements_date_vendedor_unique")
-        uniqueWhere = {
-          account_statements_date_vendedor_unique: {
-            date: date,
-            vendedorId: vendedorId,
-          },
-        };
-      } else if (dimension === "ventana" && finalVentanaId) {
-        // Constraint: @@unique([date, ventanaId], map: "account_statements_date_ventana_unique")
-        uniqueWhere = {
-          account_statements_date_ventana_unique: {
-            date: date,
-            ventanaId: finalVentanaId,
-          },
-        };
-      } else {
-        // Si no hay constraint único disponible, usar el statement.id si existe
-        if (statement?.id) {
-          uniqueWhere = { id: statement.id };
-        } else {
-          throw new Error(`No se puede determinar constraint único para dimensión ${dimension} en fecha ${dateStrCR}`);
-        }
-      }
-
-      await tx.accountStatement.upsert({
-        where: uniqueWhere,
-        update: updateData,
-        create: {
-          ...updateData,
-          date: date,
-        },
+      // ✅ CORRECCIÓN: Usar findFirst + update/create en lugar de upsert
+      // porque Prisma no soporta upsert con constraints únicos compuestos directamente
+      // ✅ CRÍTICO: Para vendedor, buscar por date + vendedorId (puede tener o no ventanaId)
+      const existingStatement = await tx.accountStatement.findFirst({
+        where: dimension === "vendedor" && vendedorId
+          ? { date, vendedorId } // ✅ No filtrar por ventanaId, puede tener o no
+          : dimension === "ventana" && finalVentanaId
+            ? { date, ventanaId: finalVentanaId, vendedorId: null }
+            : dimension === "banca" && finalBancaId
+              ? { date, bancaId: finalBancaId, ventanaId: null, vendedorId: null }
+              : { date },
       });
+
+      if (existingStatement) {
+        await tx.accountStatement.update({
+          where: { id: existingStatement.id },
+          data: updateData,
+        });
+      } else {
+        await tx.accountStatement.create({
+          data: {
+            ...updateData,
+            date: date,
+          },
+        });
+      }
 
       logger.info({
         layer: "service",

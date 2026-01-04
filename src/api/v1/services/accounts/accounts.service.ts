@@ -1126,8 +1126,8 @@ export const AccountsService = {
                             },
                         });
                     }
-                    } // ✅ Cierre del bloque else que comienza en la línea 861 (después de sincronizar)
-                } // ✅ Cierre del bloque else que comienza en la línea 446
+                    } // ✅ Cierre del bloque else que comienza en la línea 938 (fallback getStatementDirect)
+                } // ✅ Cierre del bloque else que comienza en la línea 861 (si no hay dbStatement inicial)
             } catch (error) {
                 // Si hay error al obtener el día anterior (ej: no existe), usar 0
                 // Esto es normal para el primer día del mes o si no hay datos previos
