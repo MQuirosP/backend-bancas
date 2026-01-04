@@ -526,7 +526,7 @@ export class AccountStatementSyncService {
         // Para vendedores: NO incluir ventanaId al crear (aunque lo tenemos)
         // El constraint (date, vendedorId) permite crear el statement sin conflicto
         // aunque exista un statement consolidado de ventana
-        const createVentanaId = dimension === "vendedor" ? null : finalVentanaId;
+        const createVentanaId = dimension === "vendedor" ? undefined : finalVentanaId;
         
         try {
           // ✅ CORREGIDO: Usar findOrCreate del repositorio que maneja correctamente los constraints
