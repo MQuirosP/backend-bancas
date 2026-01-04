@@ -152,75 +152,89 @@ export async function getMonthlyRemainingBalancesBatch(
             });
             return result;
         }
+        if (!month || typeof month !== 'string' || !month.includes('-')) {
+            logger.error({
+                layer: "service",
+                action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_INVALID_MONTH_FORMAT",
+                payload: { month, dimension }
+            });
+            return result;
+        }
         const [year, monthNum] = month.split("-").map(Number);
         const daysInMonth = new Date(year, monthNum, 0).getDate();
 
-        // Calcular para cada entidad que necesita actualización (en paralelo para mejor rendimiento)
-        await Promise.all(entitiesNeedingTodayCalculation.map(async (entityId) => {
-            try {
-                const entityVentanaId = dimension === "ventana" ? entityId : undefined;
-                const entityVendedorId = dimension === "vendedor" ? entityId : undefined;
+        // ✅ OPTIMIZACIÓN: Procesar en bloques pequeños (chunks) para evitar saturar la base de datos
+        // y reducir el riesgo de errores de concurrencia al guardar statements simultáneamente.
+        const CHUNK_SIZE = 5;
+        for (let i = 0; i < entitiesNeedingTodayCalculation.length; i += CHUNK_SIZE) {
+            const chunk = entitiesNeedingTodayCalculation.slice(i, i + CHUNK_SIZE);
 
-                const calcResult = await getStatementDirect(
-                    {
-                        date: "range" as const,
-                        fromDate: startDateCRStr,
-                        toDate: endDateCRStr,
-                        dimension,
-                        ventanaId: entityVentanaId,
-                        vendedorId: entityVendedorId,
-                        bancaId,
-                        scope: "all",
-                        sort: "desc",
-                        userRole: "ADMIN",
-                    },
-                    monthStartDate,
-                    todayEndDate,
-                    daysInMonth,
-                    month,
-                    dimension,
-                    entityVentanaId,
-                    entityVendedorId,
-                    bancaId,
-                    "ADMIN",
-                    "desc"
-                );
+            await Promise.all(chunk.map(async (entityId) => {
+                try {
+                    const entityVentanaId = dimension === "ventana" ? entityId : undefined;
+                    const entityVendedorId = dimension === "vendedor" ? entityId : undefined;
 
-                if (calcResult.statements && calcResult.statements.length > 0) {
-                    // ✅ Obtener el remainingBalance del último día con datos hasta HOY
-                    const sortedStatements = [...calcResult.statements].sort((a, b) =>
-                        new Date(a.date).getTime() - new Date(b.date).getTime()
-                    );
-                    const lastStatement = sortedStatements[sortedStatements.length - 1];
-                    result.set(entityId, Number(lastStatement.remainingBalance || 0));
-                } else {
-                    // Si no hay statements, usar saldo del mes anterior
-                    const { getPreviousMonthFinalBalance } = await import('./accounts.calculations');
-                    const previousBalance = await getPreviousMonthFinalBalance(
+                    const calcResult = await getStatementDirect(
+                        {
+                            date: "range" as const,
+                            fromDate: startDateCRStr,
+                            toDate: endDateCRStr,
+                            dimension,
+                            ventanaId: entityVentanaId,
+                            vendedorId: entityVendedorId,
+                            bancaId,
+                            scope: "all",
+                            sort: "desc",
+                            userRole: "ADMIN",
+                        },
+                        monthStartDate,
+                        todayEndDate,
+                        daysInMonth,
                         month,
                         dimension,
                         entityVentanaId,
                         entityVendedorId,
-                        bancaId
+                        bancaId,
+                        "ADMIN",
+                        "desc"
                     );
-                    result.set(entityId, Number(previousBalance || 0));
+
+                    if (calcResult.statements && calcResult.statements.length > 0) {
+                        // ✅ Obtener el remainingBalance del último día con datos hasta HOY
+                        const sortedStatements = [...calcResult.statements].sort((a, b) =>
+                            new Date(a.date).getTime() - new Date(b.date).getTime()
+                        );
+                        const lastStatement = sortedStatements[sortedStatements.length - 1];
+                        result.set(entityId, Number(lastStatement.remainingBalance || 0));
+                    } else {
+                        // Si no hay statements, usar saldo del mes anterior
+                        const { getPreviousMonthFinalBalance } = await import('./accounts.calculations');
+                        const previousBalance = await getPreviousMonthFinalBalance(
+                            month,
+                            dimension,
+                            entityVentanaId,
+                            entityVendedorId,
+                            bancaId
+                        );
+                        result.set(entityId, Number(previousBalance || 0));
+                    }
+                } catch (error) {
+                    logger.error({
+                        layer: "service",
+                        action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_CALCULATION_ERROR",
+                        payload: {
+                            entityId,
+                            dimension,
+                            month,
+                            error: (error as Error).message,
+                        },
+                    });
+                    // Si falla, usar el AccountStatement disponible (si existe) o 0
+                    const latest = latestByEntity.get(entityId);
+                    result.set(entityId, latest ? latest.remainingBalance : 0);
                 }
-            } catch (error) {
-                logger.error({
-                    layer: "service",
-                    action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_CALCULATION_ERROR",
-                    payload: {
-                        entityId,
-                        dimension,
-                        month,
-                        error: (error as Error).message,
-                    },
-                });
-                // Si falla, usar el AccountStatement disponible (si existe) o 0
-                const latest = latestByEntity.get(entityId);
-                result.set(entityId, latest ? latest.remainingBalance : 0);
-            }
-        }));
+            }));
+        }
     }
 
     return result;

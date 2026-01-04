@@ -47,7 +47,7 @@ export class AccountStatementSyncService {
   ): Promise<void> {
     // ⚠️ CRÍTICO: Convertir date a string CR para operaciones
     const dateStrCR = crDateService.postgresDateToCRString(date);
-    
+
     // ✅ VALIDACIÓN CRÍTICA: No permitir crear AccountStatement para días futuros
     // EXCEPCIÓN: Si force=true, permitir procesar (puede ser necesario para correcciones)
     const todayCR = crDateService.dateUTCToCRString(new Date());
@@ -65,7 +65,7 @@ export class AccountStatementSyncService {
       });
       return; // No procesar días futuros (a menos que force=true)
     }
-    
+
     // ✅ Si es día futuro pero force=true, permitir procesar (para correcciones o sincronización de sorteos)
     if (dateStrCR > todayCR && options?.force) {
       logger.info({
@@ -80,7 +80,7 @@ export class AccountStatementSyncService {
         },
       });
     }
-    
+
     const [year, month, day] = dateStrCR.split('-').map(Number);
     const monthStr = `${year}-${String(month).padStart(2, '0')}`;
 
@@ -124,7 +124,7 @@ export class AccountStatementSyncService {
       // ⚠️ CRÍTICO: Para vendedores, buscar primero por vendedorId específicamente
       // porque el constraint único (date, ventanaId) puede tener conflicto con statement consolidado
       let statement: any = null;
-      
+
       if (vendedorId) {
         // Para vendedores: buscar por vendedorId (constraint único: date, vendedorId)
         statement = await tx.accountStatement.findFirst({
@@ -162,7 +162,7 @@ export class AccountStatementSyncService {
       // 3. Calcular balance del día desde tickets EVALUADOS y movimientos
       // ⚠️ CRÍTICO: Solo considerar sorteos EVALUADOS para payouts y comisiones
       const dateFilter = buildTicketDateFilter(date);
-      
+
       // ✅ Obtener tickets excluidos para esta fecha
       const excludedTicketIds = await getExcludedTicketIdsForDate(date);
 
@@ -277,11 +277,11 @@ export class AccountStatementSyncService {
       const totalSales = tickets.reduce((sum, t) => sum + Number(t.totalAmount || 0), 0);
       // ✅ CRÍTICO: totalPayouts solo de tickets que tienen jugadas ganadoras (como calculateDayStatement)
       const totalPayouts = ticketsWithWinningJugadas.reduce((sum, t) => sum + Number(t.totalPayout || 0), 0);
-      
+
       // Calcular comisiones desde TODAS las jugadas de tickets con sorteos EVALUADOS
       let listeroCommission = 0;
       let vendedorCommission = 0;
-      
+
       for (const ticket of ticketsForCommissions) {
         for (const jugada of ticket.jugadas) {
           listeroCommission += Number(jugada.listeroCommissionAmount || 0);
@@ -315,10 +315,10 @@ export class AccountStatementSyncService {
 
       // 4. Calcular accumulatedBalance
       let accumulatedBalance: number = 0; // Inicializar con valor por defecto
-      
+
       // Verificar si es el día 1 del mes
       const isFirstDayOfMonth = day === 1;
-      
+
       if (isFirstDayOfMonth) {
         // Usar saldo del mes anterior
         const previousMonthBalance = await getPreviousMonthFinalBalance(
@@ -329,7 +329,7 @@ export class AccountStatementSyncService {
           bancaId || undefined
         );
         accumulatedBalance = Number(previousMonthBalance) + balance;
-        
+
         logger.info({
           layer: "service",
           action: "SYNC_DAY_STATEMENT_FIRST_DAY",
@@ -346,11 +346,11 @@ export class AccountStatementSyncService {
         // Buscar statement del día anterior
         const previousDayDate = new Date(Date.UTC(year, month - 1, day - 1));
         const previousDateStrCR = crDateService.postgresDateToCRString(previousDayDate);
-        
+
         // ⚠️ CRÍTICO: Para vendedores, buscar SOLO por vendedorId (sin ventanaId)
         // porque los statements de vendedores pueden tener ventanaId: null para evitar conflictos
         let previousStatement: any = null;
-        
+
         if (vendedorId) {
           // Buscar por vendedorId (sin considerar ventanaId)
           previousStatement = await tx.accountStatement.findFirst({
@@ -394,7 +394,7 @@ export class AccountStatementSyncService {
           // El balance recalculado debe reflejar el estado actual de tickets y movimientos
           const previousAccumulated = Number(previousStatement.accumulatedBalance) || 0;
           accumulatedBalance = previousAccumulated + balance;
-          
+
           logger.info({
             layer: "service",
             action: "SYNC_DAY_STATEMENT_FROM_PREVIOUS",
@@ -420,7 +420,7 @@ export class AccountStatementSyncService {
             bancaId || undefined
           );
           accumulatedBalance = Number(previousMonthBalance) + balance;
-          
+
           logger.info({
             layer: "service",
             action: "SYNC_DAY_STATEMENT_NO_PREVIOUS_DAY_USE_MONTH_BALANCE",
@@ -548,7 +548,7 @@ export class AccountStatementSyncService {
         },
       });
     }, {
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
       timeout: 30000,
     });
   }
@@ -730,7 +730,7 @@ export class AccountStatementSyncService {
     // ✅ CORREGIDO: Si dimension="ventana" o "vendedor" sin entityId, iterar sobre todas las entidades
     if ((dimension === "ventana" || dimension === "vendedor") && !entityId) {
       let entities: Array<{ id: string }>;
-      
+
       if (dimension === "ventana") {
         entities = await prisma.ventana.findMany({
           where: { deletedAt: null },
