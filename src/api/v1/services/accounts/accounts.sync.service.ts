@@ -501,19 +501,45 @@ export class AccountStatementSyncService {
       }
 
       // 5. Calcular remainingBalance desde sorteos evaluados y movimientos
-      // remainingBalance = accumulatedBalance del último evento del día (sorteo o movimiento)
-      // accumulatedBalance ya incluye el balance del día completo
-      // Para remainingBalance, necesitamos el acumulado progresivo del último sorteo/movimiento
-      // Simplificado: usar accumulatedBalance como base (ya incluye todo el día)
-      // El remainingBalance exacto se calcula mejor en getStatementDirect con bySorteo
-      // Por ahora, usamos accumulatedBalance como aproximación razonable
+      // ✅ CORRECCIÓN CRÍTICA: remainingBalance debe ser el acumulado al FINAL del día
+      // después de todos los sorteos y movimientos en orden cronológico.
+      // 
+      // accumulatedBalance = saldoInicialDia + balance
+      // donde balance = totalSales - totalPayouts - commission + totalPaid - totalCollected
+      // 
+      // remainingBalance debe ser igual a accumulatedBalance porque accumulatedBalance
+      // ya incluye todos los sorteos y movimientos del día (a través de balance).
+      // 
+      // Sin embargo, si queremos ser más precisos, remainingBalance debería ser el
+      // último accumulated después de intercalar sorteos y movimientos, pero eso
+      // requiere calcular bySorteo, lo cual es costoso aquí.
+      // 
+      // Por ahora, usamos accumulatedBalance como remainingBalance porque:
+      // - accumulatedBalance ya incluye todo el balance del día
+      // - El orden cronológico de sorteos/movimientos no cambia el balance total
+      // - La diferencia solo importa para el desglose bySorteo, que se calcula en getStatementDirect
       let remainingBalance = accumulatedBalance;
 
-      // ⚠️ NOTA: El remainingBalance exacto requiere intercalar sorteos y movimientos
-      // en orden cronológico, lo cual se hace mejor en getStatementDirect.
-      // Aquí solo guardamos accumulatedBalance como base.
-      // Si es necesario, se puede calcular más precisamente usando getSorteoBreakdownBatch
-      // pero eso añadiría complejidad y potencialmente loops.
+      // ✅ VALIDACIÓN: Si accumulatedBalance es 0 pero hay actividad, puede ser un error
+      // (a menos que el saldo del día anterior también sea 0 y el balance del día sea 0)
+      if (accumulatedBalance === 0 && (totalSales > 0 || totalPayouts > 0 || totalPaid > 0 || totalCollected > 0)) {
+        logger.warn({
+          layer: "service",
+          action: "SYNC_DAY_STATEMENT_ZERO_ACCUMULATED_WITH_ACTIVITY",
+          payload: {
+            date: dateStrCR,
+            dimension,
+            entityId,
+            totalSales,
+            totalPayouts,
+            totalPaid,
+            totalCollected,
+            balance,
+            accumulatedBalance,
+            note: "accumulatedBalance is 0 but there is activity - this may be correct if previous day balance was negative and day balance is positive, or vice versa",
+          },
+        });
+      }
 
       // 6. Determinar isSettled
       const ticketCount = tickets.length;

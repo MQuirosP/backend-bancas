@@ -538,6 +538,23 @@ export async function getStatementDirect(
     // ✅ CORRECCIÓN: Usar servicio centralizado para conversión de fechas
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
 
+    // ✅ CRÍTICO: Validar que effectiveMonth sea un string válido
+    if (!effectiveMonth || typeof effectiveMonth !== 'string' || !effectiveMonth.includes('-')) {
+        logger.error({
+            layer: "service",
+            action: "GET_STATEMENT_DIRECT_INVALID_MONTH",
+            payload: {
+                effectiveMonth,
+                dimension,
+                ventanaId,
+                vendedorId,
+                bancaId,
+                note: "effectiveMonth is invalid, cannot proceed",
+            },
+        });
+        throw new Error(`effectiveMonth debe ser un string en formato YYYY-MM, recibido: ${effectiveMonth}`);
+    }
+
     // ✅ CRÍTICO: Calcular inicio del mes para siempre consultar desde ahí
     // Esto permite calcular el acumulado correcto incluso cuando se filtra por un día específico
     const [yearForMonth, monthForMonth] = effectiveMonth.split("-").map(Number);
@@ -3533,6 +3550,23 @@ async function calculatePreviousMonthBalanceFromSource(
     }
 ): Promise<number> {
     try {
+        // ✅ Validar que effectiveMonth sea un string válido
+        if (!effectiveMonth || typeof effectiveMonth !== 'string' || !effectiveMonth.includes('-')) {
+            logger.warn({
+                layer: "service",
+                action: "GET_PREVIOUS_MONTH_BALANCE_INVALID_MONTH",
+                payload: {
+                    effectiveMonth,
+                    dimension,
+                    ventanaId: filters.ventanaId,
+                    vendedorId: filters.vendedorId,
+                    bancaId: filters.bancaId,
+                    note: "effectiveMonth is invalid, returning 0",
+                },
+            });
+            return 0;
+        }
+        
         const [year, month] = effectiveMonth.split("-").map(Number);
         // Calcular primer y último día del mes anterior en CR
         // Mes anterior: month - 1 (si month = 1, mes anterior = 12 del año anterior)
@@ -3756,6 +3790,22 @@ export async function getPreviousMonthFinalBalancesBatch(
     }
 
     try {
+        // ✅ Validar que effectiveMonth sea un string válido
+        if (!effectiveMonth || typeof effectiveMonth !== 'string' || !effectiveMonth.includes('-')) {
+            logger.warn({
+                layer: "service",
+                action: "GET_PREVIOUS_MONTH_FINAL_BALANCES_BATCH_INVALID_MONTH",
+                payload: {
+                    effectiveMonth,
+                    dimension,
+                    entityIds,
+                    bancaId,
+                    note: "effectiveMonth is invalid, returning empty map",
+                },
+            });
+            return new Map();
+        }
+        
         // Calcular mes anterior
         const [year, month] = effectiveMonth.split("-").map(Number);
         const previousYear = month === 1 ? year - 1 : year;
@@ -4017,6 +4067,23 @@ export async function getPreviousMonthFinalBalance(
     bancaId?: string | null
 ): Promise<number> {
     try {
+        // ✅ Validar que effectiveMonth sea un string válido
+        if (!effectiveMonth || typeof effectiveMonth !== 'string' || !effectiveMonth.includes('-')) {
+            logger.warn({
+                layer: "service",
+                action: "GET_PREVIOUS_MONTH_FINAL_BALANCE_INVALID_MONTH",
+                payload: {
+                    effectiveMonth,
+                    dimension,
+                    ventanaId,
+                    vendedorId,
+                    bancaId,
+                    note: "effectiveMonth is invalid, returning 0",
+                },
+            });
+            return 0;
+        }
+        
         // Calcular mes anterior
         const [year, month] = effectiveMonth.split("-").map(Number);
         const previousYear = month === 1 ? year - 1 : year;
