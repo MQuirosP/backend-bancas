@@ -7,7 +7,7 @@ import { AccountPaymentRepository } from "../../../../repositories/accountPaymen
 import { calculateIsSettled } from "./accounts.commissions";
 import { buildTicketDateFilter } from "./accounts.dates.utils";
 import { crDateService } from "../../../../utils/crDateService";
-import { AccountsFilters, DayStatement, StatementTotals } from "./accounts.types";
+import { AccountsFilters, DayStatement, StatementTotals, StatementResponse } from "./accounts.types";
 import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
 import { resolveCommission } from "../../../../services/commission.resolver";
 import { getSorteoBreakdownBatch } from "./accounts.queries";
@@ -642,7 +642,7 @@ export async function getStatementDirect(
     bancaId?: string,
     userRole: "ADMIN" | "VENTANA" | "VENDEDOR" = "ADMIN",
     sort: "asc" | "desc" = "desc"
-) {
+): Promise<StatementResponse> {
     // ✅ CORRECCIÓN: Usar servicio centralizado para conversión de fechas
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
 
@@ -681,6 +681,10 @@ export async function getStatementDirect(
 
     // ✅ CRÍTICO: Calcular inicio del mes para siempre consultar desde ahí
     // Esto permite calcular el acumulado correcto incluso cuando se filtra por un día específico
+    // ✅ DEFENSIÓN: Validar que effectiveMonth sea válido
+    if (!effectiveMonth || !effectiveMonth.includes("-")) {
+        throw new Error(`effectiveMonth inválido para split: ${effectiveMonth}`);
+    }
     const [yearForMonth, monthForMonth] = effectiveMonth.split("-").map(Number);
     const monthStartDateForQuery = new Date(Date.UTC(yearForMonth, monthForMonth - 1, 1));
     const monthStartDateCRStrForQuery = crDateService.dateUTCToCRString(monthStartDateForQuery);
@@ -732,6 +736,7 @@ export async function getStatementDirect(
 
     // ✅ PROPUESTA 4: Detectar si el período cruza meses (para optimización híbrida)
     // Dividir el período en dos: días del mes anterior + días del mes actual
+    // ✅ DEFENSIÓN: Los strings ya fueron validados en línea 650
     const startDateMonth = parseInt(startDateCRStr.split('-')[1]);
     const endDateMonth = parseInt(endDateCRStr.split('-')[1]);
     const startDateYear = parseInt(startDateCRStr.split('-')[0]);

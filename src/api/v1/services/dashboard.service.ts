@@ -1196,13 +1196,11 @@ export const DashboardService = {
       ensureEntry(ventana.id, ventana.name, ventana.isActive);
     }
 
-    // ✅ NUEVO: Verificar si el período filtrado es el mes completo
-    // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
+    // ✅ NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
     const monthRangeCheck = resolveDateRange('month');
     const todayRangeCheck = resolveDateRange('today');
-    const isMonthComplete = 
-      filters.fromDate.getTime() === monthRangeCheck.fromAt.getTime() &&
-      filters.toDate.getTime() === todayRangeCheck.toAt.getTime();
+    const { startDateCRStr: monthStartCheckStr } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck.fromAt, todayRangeCheck.toAt);
+    const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === crDateService.dateUTCToCRString(new Date());
 
     // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada ventana
     const monthSaldoByVentana = new Map<string, number>();
@@ -1211,7 +1209,7 @@ export const DashboardService = {
       // Esto asegura consistencia entre local y producción (Render)
       const monthRange = resolveDateRange('month'); // Primer día del mes en CR
       const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
-      
+
       const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
@@ -1432,21 +1430,21 @@ export const DashboardService = {
       // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-      
+
       // ✅ CRÍTICO: Obtener TODAS las ventanas que están en aggregated (período filtrado)
       // no solo las que tienen datos en el mes actual, para incluir saldo del mes anterior
       const allVentanaIds = new Set([
         ...Array.from(aggregated.keys()),
         ...Array.from(monthAggregated.keys()),
       ]);
-      
+
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
         "ventana",
         Array.from(allVentanaIds),
         filters.bancaId
       );
-      
+
       // ✅ CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
       // Reutilizar getMonthlyRemainingBalancesBatch que calcula exactamente el mismo valor que en GET /accounts/statement
       try {
@@ -1456,13 +1454,13 @@ export const DashboardService = {
           Array.from(allVentanaIds),
           filters.bancaId
         );
-        
+
         // Mapear resultados del batch
         for (const ventanaId of allVentanaIds) {
           const saldoAHoy = balancesBatch.get(ventanaId) ?? 0;
           monthSaldoByVentana.set(ventanaId, saldoAHoy);
         }
-        
+
         logger.info({
           layer: 'service',
           action: 'MONTHLY_ACCUMULATED_FROM_BATCH',
@@ -1490,25 +1488,23 @@ export const DashboardService = {
           monthSaldoByVentana.set(ventanaId, 0);
         }
       }
-      
+
       // ✅ NOTA: getMonthlyRemainingBalancesBatch ya incluye todas las ventanas (retorna 0 si no hay datos)
       // No es necesario loop adicional porque el batch query ya procesó todas
     }
 
-    // ✅ NUEVO: Verificar si el período filtrado es el mes completo
-    // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
+    // ✅ NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
     const monthRangeCheck2 = resolveDateRange('month');
     const todayRangeCheck2 = resolveDateRange('today');
-    const isMonthComplete2 = 
-      filters.fromDate.getTime() === monthRangeCheck2.fromAt.getTime() &&
-      filters.toDate.getTime() === todayRangeCheck2.toAt.getTime();
+    const { startDateCRStr: monthStartCheck2Str } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck2.fromAt, todayRangeCheck2.toAt);
+    const isMonthComplete2 = fromDateStr === monthStartCheck2Str && toDateStr === crDateService.dateUTCToCRString(new Date());
 
     // ✅ NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
     // El saldo del mes anterior es un movimiento más, como un pago, que debe incluirse en el balance del período
     const periodPreviousMonthBalances = new Map<string, number>();
     const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
     const periodIncludesFirstDay = filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime();
-    
+
     if (periodIncludesFirstDay) {
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
@@ -1536,14 +1532,14 @@ export const DashboardService = {
         // Solo si el período incluye el día 1 del mes
         const previousMonthBalance = periodPreviousMonthBalances.get(entry.ventanaId) || 0;
         const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
-        
+
         // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
         // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
         const monthlyAccumulatedBalance = monthSaldoByVentana.get(entry.ventanaId) ?? 0;
         const recalculatedRemainingBalance = isMonthComplete2
-          ? monthlyAccumulatedBalance 
+          ? monthlyAccumulatedBalance
           : periodRemainingBalance;
-        
+
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado
         const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
 
@@ -1889,13 +1885,11 @@ export const DashboardService = {
       entry.totalPaidToCustomer += payment.amountPaid ?? 0;
     }
 
-    // ✅ NUEVO: Verificar si el período filtrado es el mes completo
-    // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
+    // ✅ NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
     const monthRangeCheck = resolveDateRange('month');
     const todayRangeCheck = resolveDateRange('today');
-    const isMonthComplete = 
-      filters.fromDate.getTime() === monthRangeCheck.fromAt.getTime() &&
-      filters.toDate.getTime() === todayRangeCheck.toAt.getTime();
+    const { startDateCRStr: monthStartCheckStr } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck.fromAt, todayRangeCheck.toAt);
+    const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === crDateService.dateUTCToCRString(new Date());
 
     // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
     const monthSaldoByVendedor = new Map<string, number>();
@@ -1904,7 +1898,7 @@ export const DashboardService = {
       // Esto asegura consistencia entre local y producción (Render)
       const monthRange = resolveDateRange('month'); // Primer día del mes en CR
       const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
-      
+
       const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
@@ -1921,7 +1915,7 @@ export const DashboardService = {
       );
 
       const monthVendedorData = await prisma.$queryRaw<Array<{ vendedor_id: string; total_sales: number; total_payouts: number; commission_user: number; commission_ventana_raw: number; listero_commission_snapshot: number }>>(
-        Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(DISTINCT t."totalPayout"), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
+        Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(j.payout), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
       );
 
       // ✅ Vendedores funcionan correctamente, mantener consulta original
@@ -1996,21 +1990,21 @@ export const DashboardService = {
       // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-      
+
       // ✅ CRÍTICO: Obtener TODOS los vendedores que están en aggregated (período filtrado)
       // no solo los que tienen datos en el mes actual, para incluir saldo del mes anterior
       const allVendedorIds = new Set([
         ...Array.from(aggregated.keys()),
         ...Array.from(monthAggregated.keys()),
       ]);
-      
+
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
         "vendedor",
         Array.from(allVendedorIds),
         filters.bancaId
       );
-      
+
       // ✅ CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
       // Reutilizar getMonthlyRemainingBalancesBatch que calcula exactamente el mismo valor que en GET /accounts/statement
       try {
@@ -2020,13 +2014,13 @@ export const DashboardService = {
           Array.from(allVendedorIds),
           filters.bancaId
         );
-        
+
         // Mapear resultados del batch
         for (const vendedorId of allVendedorIds) {
           const saldoAHoy = balancesBatch.get(vendedorId) ?? 0;
           monthSaldoByVendedor.set(vendedorId, saldoAHoy);
         }
-        
+
         logger.info({
           layer: 'service',
           action: 'MONTHLY_ACCUMULATED_FROM_BATCH_VENDEDOR',
@@ -2061,7 +2055,7 @@ export const DashboardService = {
     const periodPreviousMonthBalances = new Map<string, number>();
     const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
     const periodIncludesFirstDay = filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime();
-    
+
     if (periodIncludesFirstDay) {
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
@@ -2088,14 +2082,14 @@ export const DashboardService = {
         // Solo si el período incluye el día 1 del mes
         const previousMonthBalance = periodPreviousMonthBalances.get(entry.vendedorId) || 0;
         const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
-        
+
         // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
         // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
         const monthlyAccumulatedBalance = monthSaldoByVendedor.get(entry.vendedorId) ?? 0;
-        const recalculatedRemainingBalance = isMonthComplete 
-          ? monthlyAccumulatedBalance 
+        const recalculatedRemainingBalance = isMonthComplete
+          ? monthlyAccumulatedBalance
           : periodRemainingBalance;
-        
+
         const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
 
         return {
@@ -2448,9 +2442,8 @@ export const DashboardService = {
     // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
     const monthRangeCheck3 = resolveDateRange('month');
     const todayRangeCheck3 = resolveDateRange('today');
-    const isMonthComplete3 = 
-      filters.fromDate.getTime() === monthRangeCheck3.fromAt.getTime() &&
-      filters.toDate.getTime() === todayRangeCheck3.toAt.getTime();
+    const { startDateCRStr: monthStartCheck3Str } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck3.fromAt, todayRangeCheck3.toAt);
+    const isMonthComplete3 = fromDateStr === monthStartCheck3Str && toDateStr === crDateService.dateUTCToCRString(new Date());
 
     // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana en CxP
     const monthSaldoByVentana = new Map<string, number>();
@@ -2459,7 +2452,7 @@ export const DashboardService = {
       // Esto asegura consistencia entre local y producción (Render)
       const monthRange = resolveDateRange('month'); // Primer día del mes en CR
       const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
-      
+
       const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
@@ -2550,21 +2543,21 @@ export const DashboardService = {
       // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-      
+
       // ✅ CRÍTICO: Obtener TODAS las ventanas que están en aggregated (período filtrado)
       // no solo las que tienen datos en el mes actual, para incluir saldo del mes anterior
       const allVentanaIds = new Set([
         ...Array.from(aggregated.keys()),
         ...Array.from(monthAggregated.keys()),
       ]);
-      
+
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
         "ventana",
         Array.from(allVentanaIds),
         filters.bancaId
       );
-      
+
       // ✅ CORRECCIÓN CRÍTICA: Usar la misma función que estado de cuentas para garantizar valores idénticos
       // Reutilizar getMonthlyRemainingBalance que calcula exactamente el mismo valor que en GET /accounts/statement
       for (const ventanaId of allVentanaIds) {
@@ -2598,7 +2591,7 @@ export const DashboardService = {
     const periodPreviousMonthBalances = new Map<string, number>();
     const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
     const periodIncludesFirstDay = filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime();
-    
+
     if (periodIncludesFirstDay) {
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
@@ -2627,14 +2620,14 @@ export const DashboardService = {
         // Solo si el período incluye el día 1 del mes
         const previousMonthBalance = periodPreviousMonthBalances.get(entry.ventanaId) || 0;
         const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
-        
+
         // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
         // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
         const monthlyAccumulatedBalance = monthSaldoByVentana.get(entry.ventanaId) ?? 0;
-        const recalculatedRemainingBalance = isMonthComplete3 
-          ? monthlyAccumulatedBalance 
+        const recalculatedRemainingBalance = isMonthComplete3
+          ? monthlyAccumulatedBalance
           : periodRemainingBalance;
-        
+
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
         const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
 
@@ -2987,9 +2980,8 @@ export const DashboardService = {
     // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
     const monthRangeCheck = resolveDateRange('month');
     const todayRangeCheck = resolveDateRange('today');
-    const isMonthComplete = 
-      filters.fromDate.getTime() === monthRangeCheck.fromAt.getTime() &&
-      filters.toDate.getTime() === todayRangeCheck.toAt.getTime();
+    const { startDateCRStr: monthStartCheckStr } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck.fromAt, todayRangeCheck.toAt);
+    const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === crDateService.dateUTCToCRString(new Date());
 
     // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
     const monthSaldoByVendedor = new Map<string, number>();
@@ -2998,7 +2990,7 @@ export const DashboardService = {
       // Esto asegura consistencia entre local y producción (Render)
       const monthRange = resolveDateRange('month'); // Primer día del mes en CR
       const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
-      
+
       const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
@@ -3015,7 +3007,7 @@ export const DashboardService = {
       );
 
       const monthVendedorData = await prisma.$queryRaw<Array<{ vendedor_id: string; total_sales: number; total_payouts: number; commission_user: number; commission_ventana_raw: number; listero_commission_snapshot: number }>>(
-        Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(DISTINCT t."totalPayout"), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
+        Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(j.payout), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
       );
 
       // ✅ Vendedores funcionan correctamente, mantener consulta original
@@ -3091,7 +3083,7 @@ export const DashboardService = {
       // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-      
+
       // ✅ CRÍTICO: Obtener TODOS los vendedores activos, no solo los que tienen datos en el mes actual
       // Esto asegura que vendedores con saldo del mes anterior pero sin datos en el mes actual también aparezcan
       const allVendedorIds = await prisma.user.findMany({
@@ -3101,7 +3093,7 @@ export const DashboardService = {
           deletedAt: null,
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
           // ✅ CORRECCIÓN: User no tiene bancaId directo, se infiere a través de ventana.bancaId
-          ...(filters.bancaId ? { 
+          ...(filters.bancaId ? {
             ventana: {
               bancaId: filters.bancaId
             }
@@ -3109,14 +3101,14 @@ export const DashboardService = {
         },
         select: { id: true },
       }).then(users => users.map(u => u.id));
-      
+
       const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
         effectiveMonth,
         "vendedor",
         allVendedorIds,
         filters.bancaId
       );
-      
+
       // ✅ CRÍTICO: Asegurar que todos los vendedores con saldo del mes anterior estén en monthAggregated
       // Esto garantiza que el cálculo del saldo sea consistente
       for (const vendedorId of allVendedorIds) {
@@ -3131,7 +3123,7 @@ export const DashboardService = {
           });
         }
       }
-      
+
       // ✅ CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
       try {
         const balancesBatch = await getMonthlyRemainingBalancesBatch(
@@ -3140,7 +3132,7 @@ export const DashboardService = {
           Array.from(allVendedorIds),
           filters.bancaId
         );
-        
+
         for (const vendedorId of allVendedorIds) {
           const saldoAHoy = balancesBatch.get(vendedorId) ?? 0;
           monthSaldoByVendedor.set(vendedorId, saldoAHoy);
@@ -3238,14 +3230,14 @@ export const DashboardService = {
         // Balance: Ventas - Premios - Comisión Vendedor
         const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
         const periodRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
-        
+
         // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
         // Si el período es un día específico, usar solo el balance del período
         const monthlyAccumulatedBalance = monthSaldoByVendedor.get(entry.vendedorId) ?? 0;
-        const recalculatedRemainingBalance = isMonthComplete 
-          ? monthlyAccumulatedBalance 
+        const recalculatedRemainingBalance = isMonthComplete
+          ? monthlyAccumulatedBalance
           : periodRemainingBalance;
-        
+
         // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
         const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
 

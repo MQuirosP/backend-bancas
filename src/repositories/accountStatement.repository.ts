@@ -272,10 +272,10 @@ export const AccountStatementRepository = {
           // Ya existe un statement con esta combinación de date y ventanaId
           // ✅ CORREGIDO: Actualizar campos básicos si están desactualizados antes de retornar
           // Esto evita mantener valores antiguos incorrectos
-          const needsUpdate = 
+          const needsUpdate =
             (!conflictingStatement.bancaId && finalBancaId) ||
             (!conflictingStatement.ventanaId && finalVentanaId);
-          
+
           if (needsUpdate) {
             try {
               const updated = await tx.accountStatement.update({
@@ -298,7 +298,7 @@ export const AccountStatementRepository = {
               });
             }
           }
-          
+
           return conflictingStatement;
         }
       }
@@ -348,7 +348,7 @@ export const AccountStatementRepository = {
         throw error;
       }
     }, {
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // ✅ CRÍTICO: Usar nivel de aislamiento más estricto para evitar condiciones de carrera
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, // ✅ CAMBIADO: ReadCommitted es suficiente con SELECT FOR UPDATE y evita errores 40001 (Serializable)
       timeout: 10000, // 10 segundos de timeout
     });
   },
