@@ -226,16 +226,34 @@ export const AccountPaymentRepository = {
 
   /**
    * Obtiene total pagado (solo payments) de un statement
+   * ✅ CORREGIDO: Para ventanas, solo cuenta pagos propios (vendedorId = null), NO de vendedores
+   * Para vendedores, solo cuenta pagos del vendedor específico
+   * 
    * Fórmula correcta: remainingBalance = baseBalance - totalCollected + totalPaid
    * Este método retorna solo totalPaid (suma de payments)
    */
   async getTotalPaid(accountStatementId: string) {
+    // Obtener el statement para determinar si es de ventana o vendedor
+    const statement = await prisma.accountStatement.findUnique({
+      where: { id: accountStatementId },
+      select: { ventanaId: true, vendedorId: true },
+    });
+
+    const where: Prisma.AccountPaymentWhereInput = {
+      accountStatementId,
+      isReversed: false,
+      type: "payment", // Solo payments
+    };
+
+    // ✅ CRÍTICO: Si es statement de ventana (ventanaId presente, vendedorId = null)
+    // Solo contar pagos propios de la ventana (vendedorId = null), NO de vendedores
+    if (statement?.ventanaId && !statement.vendedorId) {
+      where.vendedorId = null; // Solo pagos consolidados de ventana
+    }
+    // Si es statement de vendedor, ya está filtrado por accountStatementId que tiene el vendedorId correcto
+
     const payments = await prisma.accountPayment.findMany({
-      where: {
-        accountStatementId,
-        isReversed: false,
-        type: "payment", // Solo payments
-      },
+      where,
       select: {
         amount: true,
       },
@@ -246,15 +264,33 @@ export const AccountPaymentRepository = {
 
   /**
    * Obtiene total cobrado (solo collections) de un statement
+   * ✅ CORREGIDO: Para ventanas, solo cuenta cobros propios (vendedorId = null), NO de vendedores
+   * Para vendedores, solo cuenta cobros del vendedor específico
+   * 
    * Fórmula correcta: remainingBalance = baseBalance - totalCollected + totalPaid
    */
   async getTotalCollected(accountStatementId: string) {
+    // Obtener el statement para determinar si es de ventana o vendedor
+    const statement = await prisma.accountStatement.findUnique({
+      where: { id: accountStatementId },
+      select: { ventanaId: true, vendedorId: true },
+    });
+
+    const where: Prisma.AccountPaymentWhereInput = {
+      accountStatementId,
+      isReversed: false,
+      type: "collection", // Solo collections
+    };
+
+    // ✅ CRÍTICO: Si es statement de ventana (ventanaId presente, vendedorId = null)
+    // Solo contar cobros propios de la ventana (vendedorId = null), NO de vendedores
+    if (statement?.ventanaId && !statement.vendedorId) {
+      where.vendedorId = null; // Solo cobros consolidados de ventana
+    }
+    // Si es statement de vendedor, ya está filtrado por accountStatementId que tiene el vendedorId correcto
+
     const collections = await prisma.accountPayment.findMany({
-      where: {
-        accountStatementId,
-        isReversed: false,
-        type: "collection", // Solo collections
-      },
+      where,
       select: {
         amount: true,
       },
@@ -396,28 +432,21 @@ export const AccountPaymentRepository = {
        * ========================================================================
        * FILTRADO DE MOVIMIENTOS POR VENTANA
        * ========================================================================
-       * 
-       * REGLA CRÍTICA DE RETROCOMPATIBILIDAD:
-       * Cuando dimension='ventana' y hay un ventanaId específico, DEBEMOS incluir
-       * TODOS los movimientos de esa ventana, incluyendo:
+       *
+       * REGLA CRÍTICA: Los pagos/cobros de vendedores NO deben afectar el estado de cuenta de la ventana
+       * Cuando dimension='ventana' y hay un ventanaId específico, SOLO incluir:
        * - Movimientos consolidados de ventana (vendedorId = null)
-       * - Movimientos de vendedores específicos dentro de esa ventana (vendedorId != null)
-       * 
-       * Esto es necesario para que los movimientos se intercalen correctamente
-       * con los sorteos en el historial del día.
-       * 
-       * Si NO incluimos movimientos de vendedores cuando hay un ventanaId específico,
-       * el historial del día no mostrará todos los movimientos y los resultados
-       * serán incorrectos.
-       * 
+       *
+       * NO incluir movimientos de vendedores específicos (vendedorId != null)
+       * porque esos afectan solo al estado de cuenta del vendedor, no de la ventana.
+       *
        * ========================================================================
        */
       if (ventanaId) {
-        // ✅ CRÍTICO: Cuando hay un ventanaId específico, incluir TODOS los movimientos de esa ventana
-        // (tanto consolidados de ventana como de vendedores específicos dentro de esa ventana)
+        // ✅ CRÍTICO: Cuando hay un ventanaId específico, SOLO incluir movimientos propios de la ventana
+        // (vendedorId = null), NO movimientos de vendedores
         where.ventanaId = ventanaId;
-        // NO filtrar por vendedorId = null, permitir movimientos de vendedores también
-        // Esto asegura que todos los movimientos de la ventana se incluyan en el historial
+        where.vendedorId = null; // ✅ CRÍTICO: Solo movimientos consolidados de ventana
       } else {
         // Sin ventanaId específico: solo movimientos consolidados de ventana (sin vendedorId)
         // Esto es para cuando se consulta todas las ventanas sin especificar una

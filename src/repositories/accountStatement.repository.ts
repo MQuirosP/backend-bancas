@@ -200,8 +200,9 @@ export const AccountStatementRepository = {
             return conflictingStatement;
           }
 
-          // También verificar si existe un statement con ventanaId y vendedorId (otro vendedor de la misma ventana)
-          // En este caso, no podemos crear/actualizar porque violaría el constraint (date, ventanaId)
+          // ✅ CRÍTICO: Verificar si existe un statement con ventanaId y vendedorId (otro vendedor de la misma ventana)
+          // En este caso, NO podemos actualizar porque violaría el constraint único (date, ventanaId)
+          // El constraint permite solo UN statement por (date, ventanaId), ya sea consolidado (vendedorId=null) o de un vendedor específico
           const anotherVendedorStatement = await tx.accountStatement.findFirst({
             where: {
               date: data.date,
@@ -212,21 +213,27 @@ export const AccountStatementRepository = {
 
           if (anotherVendedorStatement) {
             // Ya existe un statement de otro vendedor para esta ventana y fecha
-            // Por el constraint (date, ventanaId), no podemos tener múltiples
-            // Retornar el existente sin actualizar
+            // Por el constraint (date, ventanaId), no podemos tener múltiples statements de vendedores
+            // ✅ SOLUCIÓN: Eliminar el statement inconsistente (con ventanaId=null) ya que hay uno válido
+            // El statement con ventanaId es el correcto, el que tiene ventanaId=null es inconsistente
             logger.warn({
               layer: 'repository',
-              action: 'ACCOUNT_STATEMENT_CONSTRAINT_CONFLICT',
+              action: 'ACCOUNT_STATEMENT_CONSTRAINT_CONFLICT_DELETING_INCONSISTENT',
               payload: {
                 date: data.date,
                 vendedorId: data.vendedorId,
                 attemptedVentanaId: finalVentanaId,
                 existingStatementId: existing.id,
                 conflictingStatementId: anotherVendedorStatement.id,
-                note: 'Cannot update ventanaId: null to ventanaId because another vendedor statement exists for same ventana and date',
+                note: 'Deleting inconsistent statement (ventanaId=null) because valid statement exists for same ventana and date',
               },
             });
-            return existing;
+            // Eliminar el statement inconsistente (con ventanaId=null)
+            await tx.accountStatement.delete({
+              where: { id: existing.id },
+            });
+            // Retornar el statement válido existente
+            return anotherVendedorStatement;
           }
 
           updateData.ventanaId = finalVentanaId;

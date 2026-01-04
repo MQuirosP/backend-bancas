@@ -1540,11 +1540,26 @@ export async function getStatementDirect(
                     preloadedStatementsMap.set(dateStr, new Map());
                 }
                 const dateMap = preloadedStatementsMap.get(dateStr)!;
-                const entityKey = dimension === "banca" 
-                    ? (stmt.bancaId || 'null')
-                    : dimension === "ventana"
-                        ? (stmt.ventanaId || 'null')
-                        : (stmt.vendedorId || 'null');
+                // ✅ CRÍTICO: Construir entityKey según dimensión, pero asegurando que solo se guarde el statement correcto
+                // Cuando dimension="banca" con bancaId, SOLO guardar statements consolidados (ventanaId=null, vendedorId=null)
+                // NO guardar statements de ventanas/vendedores aunque tengan el mismo bancaId
+                let entityKey: string;
+                if (dimension === "banca") {
+                    // ✅ CRÍTICO: Solo guardar statements consolidados de banca (ventanaId=null, vendedorId=null)
+                    // Si el statement tiene ventanaId o vendedorId, NO guardarlo (es de una ventana/vendedor, no de la banca consolidada)
+                    if (stmt.ventanaId || stmt.vendedorId) {
+                        continue; // Saltar statements de ventanas/vendedores
+                    }
+                    entityKey = stmt.bancaId || 'null';
+                } else if (dimension === "ventana") {
+                    // ✅ CRÍTICO: Solo guardar statements consolidados de ventana (vendedorId=null)
+                    if (stmt.vendedorId) {
+                        continue; // Saltar statements de vendedores
+                    }
+                    entityKey = stmt.ventanaId || 'null';
+                } else {
+                    entityKey = stmt.vendedorId || 'null';
+                }
                 // ✅ CRÍTICO: Guardar directamente el remainingBalance (o accumulatedBalance como fallback)
                 // para mantener compatibilidad con código que espera un número
                 const balanceToUse = stmt.remainingBalance !== null ? stmt.remainingBalance : stmt.accumulatedBalance;
@@ -1781,11 +1796,34 @@ export async function getStatementDirect(
             // Calcular totales de pagos y cobros del DÍA (para el statement diario)
             // ✅ CRÍTICO: Excluir el movimiento especial "Saldo del mes anterior" de los totales del día
             // Solo debe afectar el acumulado, no los totales de pagos/cobros del día
-            const totalPaid = Number(movements
-                .filter((m: any) => m.type === "payment" && !m.isReversed && !m.id?.startsWith('previous-month-balance-'))
+            // ✅ CORRECCIÓN CRÍTICA: Para ventanas, solo contar movimientos propios (vendedorId = null), NO de vendedores
+            // Para vendedores, solo contar movimientos del vendedor específico
+            const filteredMovements = movements.filter((m: any) => {
+                // Excluir movimiento especial del mes anterior
+                if (m.id?.startsWith('previous-month-balance-')) return false;
+                // Excluir movimientos revertidos
+                if (m.isReversed) return false;
+                
+                // ✅ CRÍTICO: Para ventanas, solo incluir movimientos consolidados (vendedorId = null)
+                // NO incluir movimientos de vendedores específicos
+                if (dimension === "ventana" && ventanaId) {
+                    return m.vendedorId === null || m.vendedorId === undefined;
+                }
+                
+                // Para vendedores, solo incluir movimientos del vendedor específico
+                if (dimension === "vendedor" && vendedorId) {
+                    return m.vendedorId === vendedorId;
+                }
+                
+                // Para otros casos, incluir todos
+                return true;
+            });
+            
+            const totalPaid = Number(filteredMovements
+                .filter((m: any) => m.type === "payment")
                 .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0));
-            const totalCollected = Number(movements
-                .filter((m: any) => m.type === "collection" && !m.isReversed && !m.id?.startsWith('previous-month-balance-'))
+            const totalCollected = Number(filteredMovements
+                .filter((m: any) => m.type === "collection")
                 .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0));
 
             // ✅ CRÍTICO: Balance del día = ventas - premios - comisiones + movimientos
@@ -1808,15 +1846,20 @@ export async function getStatementDirect(
             // ✅ CORREGIDO: Calcular clave de entidad de forma consistente
             // Cuando dimension="banca" sin bancaId específico, agrupar por fecha (no por bancaId)
             // Esto asegura que el acumulado progresivo funcione correctamente cuando hay múltiples statements por día
-            const entityKey = shouldGroupByDate 
-                ? date // Si hay agrupación, usar solo la fecha
-                : dimension === "banca" && !bancaId
-                    ? date // ✅ CORREGIDO: Si dimension=banca sin bancaId, agrupar por fecha
-                    : dimension === "banca"
-                        ? `${date}_${bancaId || entry.bancaId || 'null'}`
-                        : dimension === "ventana"
-                            ? `${date}_${ventanaId || entry.ventanaId || 'null'}`
-                            : `${date}_${vendedorId || entry.vendedorId || 'null'}`;
+            // ✅ CRÍTICO: Construir entityKey considerando que cuando dimension="banca" con bancaId específico,
+            // aunque shouldGroupByDate=true, debemos incluir el bancaId para distinguir entre diferentes bancas
+            // Esto evita que múltiples entries (una por ventana) se sobrescriban entre sí
+            const entityKey = shouldGroupByDate && dimension === "banca" && bancaId
+                ? `${date}_${bancaId}` // ✅ CRÍTICO: Incluir bancaId aunque shouldGroupByDate=true
+                : shouldGroupByDate 
+                    ? date // Si hay agrupación sin bancaId específico, usar solo la fecha
+                    : dimension === "banca" && !bancaId
+                        ? date // ✅ CORREGIDO: Si dimension=banca sin bancaId, agrupar por fecha
+                        : dimension === "banca"
+                            ? `${date}_${bancaId || entry.bancaId || 'null'}`
+                            : dimension === "ventana"
+                                ? `${date}_${ventanaId || entry.ventanaId || 'null'}`
+                                : `${date}_${vendedorId || entry.vendedorId || 'null'}`;
             
             // ✅ CRÍTICO: Detectar si es el primer día del mes del día actual (no solo del mes de inicio del rango)
             // Esto es importante cuando el rango cruza meses (ej: semana del 29/12 al 04/01)
@@ -1957,11 +2000,14 @@ export async function getStatementDirect(
                             let targetVendedorId: string | undefined = undefined;
                             
                             if (dimension === "banca") {
+                                // ✅ CRÍTICO: Cuando dimension="banca" con bancaId específico,
+                                // SOLO buscar statements consolidados de banca (ventanaId=null, vendedorId=null)
+                                // NO incluir statements de ventanas/vendedores para evitar usar valores incorrectos
                                 targetBancaId = bancaId || entry.bancaId || undefined;
-                                if (!shouldGroupByDate) {
-                                    targetVentanaId = entry.ventanaId || undefined;
-                                    targetVendedorId = entry.vendedorId || undefined;
-                                }
+                                // ✅ CRÍTICO: NO incluir targetVentanaId ni targetVendedorId cuando dimension="banca"
+                                // porque queremos SOLO el statement consolidado de la banca
+                                targetVentanaId = undefined;
+                                targetVendedorId = undefined;
                             } else if (dimension === "ventana") {
                                 targetBancaId = entry.bancaId || undefined;
                                 targetVentanaId = ventanaId || entry.ventanaId || undefined;
@@ -1983,11 +2029,16 @@ export async function getStatementDirect(
                                 const dateMap = preloadedStatementsMap.get(searchDateStr);
                                 
                                 if (dateMap) {
-                                    const entityKey = targetVendedorId 
-                                        ? targetVendedorId
-                                        : targetVentanaId
-                                            ? targetVentanaId
-                                            : targetBancaId || 'null';
+                                    // ✅ CRÍTICO: Construir entityKey según dimensión
+                                    // Cuando dimension="banca" con bancaId, usar SOLO el bancaId (no ventanaId/vendedorId)
+                                    // Esto asegura que se use el statement consolidado de la banca, no el de una ventana/vendedor
+                                    const entityKey = dimension === "banca" && targetBancaId
+                                        ? targetBancaId // ✅ CRÍTICO: Solo bancaId cuando dimension="banca"
+                                        : targetVendedorId 
+                                            ? targetVendedorId
+                                            : targetVentanaId
+                                                ? targetVentanaId
+                                                : targetBancaId || 'null';
                                     
                                     if (dateMap.has(entityKey)) {
                                         const balanceValue = dateMap.get(entityKey);
@@ -2021,15 +2072,17 @@ export async function getStatementDirect(
                         const searchDateStr = `${searchDate.getUTCFullYear()}-${String(searchDate.getUTCMonth() + 1).padStart(2, '0')}-${String(searchDate.getUTCDate()).padStart(2, '0')}`;
                         
                         // ✅ CRÍTICO: Usar EXACTAMENTE la misma lógica que entityKey para asegurar coincidencia
-                        const entityKeyToCheck = shouldGroupByDate 
-                            ? searchDateStr
-                            : dimension === "banca" && !bancaId
+                        const entityKeyToCheck = shouldGroupByDate && dimension === "banca" && bancaId
+                            ? `${searchDateStr}_${bancaId}` // ✅ CRÍTICO: Incluir bancaId aunque shouldGroupByDate=true
+                            : shouldGroupByDate
                                 ? searchDateStr
-                                : dimension === "banca"
-                                    ? `${searchDateStr}_${bancaId || entry.bancaId || 'null'}`
-                                    : dimension === "ventana"
-                                        ? `${searchDateStr}_${ventanaId || entry.ventanaId || 'null'}`
-                                        : `${searchDateStr}_${vendedorId || entry.vendedorId || 'null'}`;
+                                : dimension === "banca" && !bancaId
+                                    ? searchDateStr
+                                    : dimension === "banca"
+                                        ? `${searchDateStr}_${bancaId || entry.bancaId || 'null'}`
+                                        : dimension === "ventana"
+                                            ? `${searchDateStr}_${ventanaId || entry.ventanaId || 'null'}`
+                                            : `${searchDateStr}_${vendedorId || entry.vendedorId || 'null'}`;
                         
                         foundAccumulated = lastAccumulatedByEntity.get(entityKeyToCheck);
                         if (foundAccumulated !== undefined && foundAccumulated !== null) break;
@@ -2691,6 +2744,8 @@ export async function getStatementDirect(
     const monthlyQueryStartTime = Date.now();
     
     // Verificar si tenemos AccountStatement para todos los días del mes actual
+    // ✅ CRÍTICO: Cuando dimension="ventana" sin ventanaId, solo traer statements consolidados de ventanas
+    // NO incluir statements de vendedores (vendedorId != null)
     const monthlyStatements = await prisma.accountStatement.findMany({
         where: {
             date: {
@@ -2699,11 +2754,15 @@ export async function getStatementDirect(
             },
             ...(dimension === "banca" && bancaId
                 ? { bancaId, ventanaId: null, vendedorId: null }
-                : dimension === "ventana" && ventanaId
-                    ? { ventanaId, vendedorId: null }
-                    : dimension === "vendedor" && vendedorId
-                        ? { vendedorId }
-                        : {}),
+                : dimension === "banca" && !bancaId
+                    ? { bancaId: { not: null }, ventanaId: null, vendedorId: null } // ✅ CRÍTICO: Solo statements consolidados de bancas
+                    : dimension === "ventana" && ventanaId
+                        ? { ventanaId, vendedorId: null }
+                    : dimension === "ventana" && !ventanaId
+                        ? { ventanaId: { not: null }, vendedorId: null, bancaId: null } // ✅ CRÍTICO: Solo statements consolidados de ventanas (NO bancas)
+                            : dimension === "vendedor" && vendedorId
+                                ? { vendedorId }
+                                : {}),
         },
         select: {
             date: true,
@@ -2714,6 +2773,9 @@ export async function getStatementDirect(
             totalPaid: true,
             totalCollected: true,
             remainingBalance: true,
+            ventanaId: true, // ✅ CRÍTICO: Necesario para agrupar por ventana cuando dimension="ventana" sin ventanaId
+            vendedorId: true, // ✅ CRÍTICO: Necesario para filtrar statements de vendedores
+            bancaId: true, // ✅ CRÍTICO: Necesario para agrupar por banca cuando dimension="banca" sin bancaId
         },
         orderBy: { date: 'asc' },
     });
@@ -2728,6 +2790,7 @@ export async function getStatementDirect(
     let monthlySettledDays = 0;
     let monthlyPendingDays = 0;
     let monthlyTotalBalance = 0;
+    let monthlyRemainingBalanceFromStatements: number | undefined = undefined; // ✅ CRÍTICO: Declarar aquí para usar más abajo
     
     // ✅ CORRECCIÓN CRÍTICA: Activar uso de AccountStatement cuando esté disponible y sea confiable
     // Verificar si tenemos statements completos para el mes y si tienen remainingBalance válido
@@ -2775,10 +2838,48 @@ export async function getStatementDirect(
         const monthlyTotalBalanceBase = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalCommissionToUse;
         monthlyTotalBalance = monthlyTotalBalanceBase + monthlyTotalPaid - monthlyTotalCollected;
         
-        // ✅ CRÍTICO: Para monthlyRemainingBalance, usar el remainingBalance del último día del mes
-        // Este ya incluye el acumulado progresivo correcto
-        const lastStatementOfMonth = monthlyStatements[monthlyStatements.length - 1];
-        const monthlyRemainingBalanceFromStatements = lastStatementOfMonth?.remainingBalance || 0;
+        // ✅ CRÍTICO: Para monthlyRemainingBalance, calcular según dimensión:
+        // - Si dimension="ventana" sin ventanaId (shouldGroupByDate=true): SUMAR remainingBalance de todas las ventanas
+        // - Si dimension="ventana" con ventanaId: usar remainingBalance del último día de esa ventana
+        // - Si dimension="vendedor": usar remainingBalance del último día de ese vendedor
+        // ✅ CRÍTICO: Declarar fuera del bloque para que esté disponible más abajo
+        monthlyRemainingBalanceFromStatements = 0;
+        
+        if (dimension === "banca" && !bancaId) {
+            // ✅ CRÍTICO: Sumar remainingBalance de TODAS las bancas (consolidado)
+            // Agrupar por bancaId y tomar el último remainingBalance de cada una, luego sumar
+            const bancasMap = new Map<string, number>();
+            for (const stmt of monthlyStatements) {
+                if (stmt.bancaId && !stmt.ventanaId && !stmt.vendedorId) {
+                    const existing = bancasMap.get(stmt.bancaId);
+                    // Tomar el remainingBalance más reciente de cada banca
+                    if (!existing || stmt.remainingBalance !== null) {
+                        bancasMap.set(stmt.bancaId, Number(stmt.remainingBalance || 0));
+                    }
+                }
+            }
+            monthlyRemainingBalanceFromStatements = Array.from(bancasMap.values()).reduce((sum, balance) => sum + balance, 0);
+        } else if (dimension === "ventana" && !ventanaId) {
+            // ✅ CRÍTICO: Sumar remainingBalance de TODAS las ventanas (consolidado)
+            // Agrupar por ventanaId y tomar el último remainingBalance de cada una, luego sumar
+            // ✅ CRÍTICO: Excluir statements de bancas (bancaId presente, ventanaId null)
+            const ventanasMap = new Map<string, number>();
+            for (const stmt of monthlyStatements) {
+                if (stmt.ventanaId && !stmt.vendedorId && !stmt.bancaId) {
+                    // ✅ CRÍTICO: Solo statements de ventanas (ventanaId presente, vendedorId null, bancaId null)
+                    const existing = ventanasMap.get(stmt.ventanaId);
+                    // Tomar el remainingBalance más reciente de cada ventana
+                    if (!existing || stmt.remainingBalance !== null) {
+                        ventanasMap.set(stmt.ventanaId, Number(stmt.remainingBalance || 0));
+                    }
+                }
+            }
+            monthlyRemainingBalanceFromStatements = Array.from(ventanasMap.values()).reduce((sum, balance) => sum + balance, 0);
+        } else {
+            // Para dimension específica, usar el remainingBalance del último día
+            const lastStatementOfMonth = monthlyStatements[monthlyStatements.length - 1];
+            monthlyRemainingBalanceFromStatements = Number(lastStatementOfMonth?.remainingBalance || 0);
+        }
         
         logger.info({
             layer: "service",
@@ -3014,7 +3115,10 @@ export async function getStatementDirect(
                 if (dimension === "banca" && bancaId) {
                     movements = allMovements.filter((m: any) => m.bancaId === bancaId);
                 } else if (dimension === "ventana") {
-                    movements = allMovements.filter((m: any) => m.ventanaId === entry.ventanaId);
+                    // ✅ CRÍTICO: Solo movimientos propios de la ventana (vendedorId = null)
+                    movements = allMovements.filter((m: any) => 
+                        m.ventanaId === entry.ventanaId && (m.vendedorId === null || m.vendedorId === undefined)
+                    );
                 } else {
                     movements = allMovements.filter((m: any) => m.vendedorId === entry.vendedorId);
                 }
@@ -3041,9 +3145,11 @@ export async function getStatementDirect(
     let previousMonthBalanceNum = 0;
     
     if (useAccountStatementForMonthly) {
-        // Si usamos AccountStatement, el remainingBalance del último día ya incluye todo
-        const lastStatementOfMonth = monthlyStatements[monthlyStatements.length - 1];
-        monthlyRemainingBalance = Number(lastStatementOfMonth?.remainingBalance || 0);
+        // ✅ CRÍTICO: monthlyRemainingBalance ya fue calculado arriba (línea ~2809-2828)
+        // cuando useAccountStatementForMonthly es true, se calcula monthlyRemainingBalanceFromStatements
+        // que ya tiene la lógica correcta para sumar ventanas cuando dimension="ventana" sin ventanaId
+        // Usar ese valor calculado
+        monthlyRemainingBalance = monthlyRemainingBalanceFromStatements ?? 0;
         
         // Para calcular previousMonthBalance, usar el remainingBalance del último día del mes anterior
         // o calcularlo si no tenemos ese statement
@@ -4092,15 +4198,59 @@ export async function getPreviousMonthFinalBalance(
 
         // ✅ PASO 1: Buscar en tabla de cierre mensual (FUENTE DE VERDAD)
         // Nota: Usamos findFirst porque Prisma no permite null en findUnique con constraint único
+        // ✅ CRÍTICO: Para vendedores, SOLO buscar por vendedorId (NO por ventanaId)
+        // Si incluimos ventanaId, puede encontrar el cierre consolidado de ventana en lugar del del vendedor
+        const closingWhere: any = {
+            closingMonth: previousMonthStr,
+            dimension,
+        };
+        
+        if (dimension === "vendedor" && vendedorId) {
+            // ✅ CRÍTICO: Para vendedores, SOLO filtrar por vendedorId
+            // NO incluir ventanaId - el cierre del vendedor tiene su propio registro único
+            closingWhere.vendedorId = vendedorId;
+        } else if (dimension === "ventana" && ventanaId) {
+            closingWhere.ventanaId = ventanaId;
+            closingWhere.vendedorId = null;
+        } else if (dimension === "ventana" && !ventanaId) {
+            // ✅ CRÍTICO: Cuando dimension="ventana" sin ventanaId, sumar todos los cierres de ventanas
+            const allVentanaClosings = await prisma.monthlyClosingBalance.findMany({
+                where: {
+                    closingMonth: previousMonthStr,
+                    dimension: "ventana",
+                    vendedorId: null,
+                },
+                select: {
+                    closingBalance: true,
+                },
+            });
+            
+            if (allVentanaClosings.length > 0) {
+                const totalBalance = allVentanaClosings.reduce((sum, c) => sum + parseFloat(c.closingBalance.toString()), 0);
+                logger.info({
+                    layer: "service",
+                    action: "PREVIOUS_MONTH_BALANCE_FROM_CLOSING_SUMMED",
+                    payload: {
+                        effectiveMonth,
+                        dimension,
+                        ventanaId: null,
+                        closingMonth: previousMonthStr,
+                        closingBalance: totalBalance,
+                        ventanasCount: allVentanaClosings.length,
+                        source: "monthly_closing_balance_summed",
+                    },
+                });
+                return totalBalance;
+            }
+            // Si no hay cierres, continuar con el fallback
+        } else if (dimension === "banca" && bancaId) {
+            closingWhere.bancaId = bancaId;
+            closingWhere.vendedorId = null;
+            closingWhere.ventanaId = null;
+        }
+        
         const closingBalance = await prisma.monthlyClosingBalance.findFirst({
-            where: {
-                closingMonth: previousMonthStr,
-                dimension,
-                ...(dimension === "vendedor" && vendedorId ? { vendedorId } : {}),
-                ...(dimension === "vendedor" && ventanaId ? { ventanaId } : {}),
-                ...(dimension === "ventana" && ventanaId ? { ventanaId, vendedorId: null } : {}),
-                ...(dimension === "banca" && bancaId ? { bancaId, vendedorId: null, ventanaId: null } : {}),
-            },
+            where: closingWhere,
             select: {
                 closingBalance: true,
             },
@@ -4154,12 +4304,12 @@ export async function getPreviousMonthFinalBalance(
         };
 
         if (dimension === "vendedor") {
+            // ✅ CRÍTICO: Para vendedores, SOLO filtrar por vendedorId (NO por ventanaId)
+            // Si incluimos ventanaId, puede encontrar el statement consolidado de ventana en lugar del del vendedor
             if (vendedorId) {
                 where.vendedorId = vendedorId;
             }
-            if (ventanaId) {
-                where.ventanaId = ventanaId;
-            }
+            // ❌ NO incluir ventanaId aquí - el statement del vendedor tiene su propio vendedorId único
         } else if (dimension === "ventana") {
             if (ventanaId) {
                 where.ventanaId = ventanaId;
@@ -4284,10 +4434,14 @@ export async function getPreviousMonthFinalBalance(
             },
         });
 
+        // ✅ CRÍTICO: Para vendedores, NO pasar ventanaId a calculatePreviousMonthBalanceFromSource
+        // Esto asegura que solo se calculen los tickets/pagos del vendedor específico, no de toda la ventana
         const balance = await calculatePreviousMonthBalanceFromSource(
             effectiveMonth,
             dimension,
-            { ventanaId, vendedorId, bancaId }
+            dimension === "vendedor"
+                ? { vendedorId, bancaId } // ✅ Solo vendedorId y bancaId, NO ventanaId
+                : { ventanaId, vendedorId, bancaId }
         );
 
         // Guardar en caché (TTL: 5 minutos)

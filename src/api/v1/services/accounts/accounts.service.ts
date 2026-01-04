@@ -79,33 +79,138 @@ export async function getMonthlyRemainingBalancesBatch(
         ],
     });
     
-    // Agrupar por entidad y tomar el más reciente de cada una
-    const latestByEntity = new Map<string, { remainingBalance: number; date: Date }>();
+    // ✅ OPTIMIZACIÓN CRÍTICA: Agrupar por entidad y tomar el más reciente de cada una
+    // Solo usar AccountStatement si la fecha es hasta HOY (no futura) y tiene remainingBalance válido
+    const latestByEntity = new Map<string, { remainingBalance: number; date: Date; isUpToDate: boolean }>();
+    const todayCR = crDateService.dateUTCToCRString(new Date());
+    
     for (const stmt of statements) {
         const entityId = dimension === "vendedor" ? stmt.vendedorId : stmt.ventanaId;
         if (!entityId) continue;
         
+        // ✅ CRÍTICO: Solo usar statements hasta HOY (no futuros) y con remainingBalance válido
+        const stmtDateCR = crDateService.postgresDateToCRString(stmt.date);
+        if (stmtDateCR > todayCR) continue; // Ignorar statements futuros
+        
         const existing = latestByEntity.get(entityId);
         if (!existing || stmt.date > existing.date) {
             if (stmt.remainingBalance !== null && stmt.remainingBalance !== undefined) {
+                const isUpToDate = stmtDateCR === todayCR; // Verificar si es del día de hoy
                 latestByEntity.set(entityId, {
                     remainingBalance: Number(stmt.remainingBalance),
                     date: stmt.date,
+                    isUpToDate,
                 });
             }
         }
     }
     
-    // Mapear resultados
+    // ✅ CRÍTICO: Identificar entidades que necesitan cálculo hasta HOY
+    // Si el AccountStatement no es del día de hoy, necesitamos calcular el saldo hasta hoy
+    const entitiesNeedingTodayCalculation = entityIds.filter(id => {
+        const latest = latestByEntity.get(id);
+        return !latest || !latest.isUpToDate; // No hay statement o no está actualizado hasta hoy
+    });
+    
+    // ✅ LOGGING: Para diagnosticar rendimiento
+    logger.info({
+        layer: "service",
+        action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_STATUS",
+        payload: {
+            dimension,
+            month,
+            totalEntities: entityIds.length,
+            entitiesWithUpToDateStatement: entityIds.length - entitiesNeedingTodayCalculation.length,
+            entitiesNeedingCalculation: entitiesNeedingTodayCalculation.length,
+            note: entitiesNeedingTodayCalculation.length > 0 
+                ? "Some entities need calculation (slower) - AccountStatement not up to date"
+                : "All entities have up-to-date AccountStatement (fast)",
+        },
+    });
+    
+    // ✅ OPTIMIZACIÓN: Si hay AccountStatement actualizado hasta hoy, usarlo directamente (MUY RÁPIDO)
     for (const entityId of entityIds) {
         const latest = latestByEntity.get(entityId);
-        if (latest) {
+        if (latest && latest.isUpToDate) {
+            // ✅ USAR remainingBalance de AccountStatement del día de hoy (rápido y confiable)
             result.set(entityId, latest.remainingBalance);
-        } else {
-            // Si no hay AccountStatement, usar saldo del mes anterior (fallback rápido)
-            // Solo calcular con getStatementDirect si realmente es necesario (muy lento)
-            result.set(entityId, 0); // Se calculará después si es necesario
         }
+    }
+    
+    // ✅ CRÍTICO: Para entidades sin AccountStatement o con AccountStatement desactualizado,
+    // calcular el saldo hasta HOY usando getStatementDirect (más lento pero preciso)
+    if (entitiesNeedingTodayCalculation.length > 0) {
+        const { getStatementDirect } = await import('./accounts.calculations');
+        const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(monthStartDate, todayEndDate);
+        const [year, monthNum] = month.split("-").map(Number);
+        const daysInMonth = new Date(year, monthNum, 0).getDate();
+        
+        // Calcular para cada entidad que necesita actualización (en paralelo para mejor rendimiento)
+        await Promise.all(entitiesNeedingTodayCalculation.map(async (entityId) => {
+            try {
+                const entityVentanaId = dimension === "ventana" ? entityId : undefined;
+                const entityVendedorId = dimension === "vendedor" ? entityId : undefined;
+                
+                const calcResult = await getStatementDirect(
+                    {
+                        date: "range" as const,
+                        fromDate: startDateCRStr,
+                        toDate: endDateCRStr,
+                        dimension,
+                        ventanaId: entityVentanaId,
+                        vendedorId: entityVendedorId,
+                        bancaId,
+                        scope: "all",
+                        sort: "desc",
+                        userRole: "ADMIN",
+                    },
+                    monthStartDate,
+                    todayEndDate,
+                    daysInMonth,
+                    month,
+                    dimension,
+                    entityVentanaId,
+                    entityVendedorId,
+                    bancaId,
+                    "ADMIN",
+                    "desc"
+                );
+                
+                if (calcResult.statements && calcResult.statements.length > 0) {
+                    // ✅ Obtener el remainingBalance del último día con datos hasta HOY
+                    const sortedStatements = [...calcResult.statements].sort((a, b) => 
+                        new Date(a.date).getTime() - new Date(b.date).getTime()
+                    );
+                    const lastStatement = sortedStatements[sortedStatements.length - 1];
+                    result.set(entityId, Number(lastStatement.remainingBalance || 0));
+                } else {
+                    // Si no hay statements, usar saldo del mes anterior
+                    const { getPreviousMonthFinalBalance } = await import('./accounts.calculations');
+                    const previousBalance = await getPreviousMonthFinalBalance(
+                        month,
+                        dimension,
+                        entityVentanaId,
+                        entityVendedorId,
+                        bancaId
+                    );
+                    result.set(entityId, Number(previousBalance || 0));
+                }
+            } catch (error) {
+                logger.error({
+                    layer: "service",
+                    action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_CALCULATION_ERROR",
+                    payload: {
+                        entityId,
+                        dimension,
+                        month,
+                        error: (error as Error).message,
+                    },
+                });
+                // Si falla, usar el AccountStatement disponible (si existe) o 0
+                const latest = latestByEntity.get(entityId);
+                result.set(entityId, latest ? latest.remainingBalance : 0);
+            }
+        }));
     }
     
     return result;
@@ -708,25 +813,24 @@ export const AccountsService = {
                         },
                     });
                 } else {
-                    // Usar findByDate para otras dimensiones
-                    dbStatement = await AccountStatementRepository.findByDate(previousDayDate, {
-                        ventanaId: targetVentanaId,
-                        vendedorId: targetVendedorId,
-                    });
-                    
-                    // ✅ Si dimension="banca" con bancaId, verificar que el statement tenga el bancaId correcto
-                    if (filters.dimension === "banca" && targetBancaId && dbStatement) {
-                        if (dbStatement.bancaId !== targetBancaId) {
-                            // Buscar específicamente por bancaId
-                            dbStatement = await prisma.accountStatement.findFirst({
-                                where: {
-                                    date: previousDayDate,
-                                    bancaId: targetBancaId,
-                                    ventanaId: null,
-                                    vendedorId: null,
-                                },
-                            });
-                        }
+                    // ✅ CRÍTICO: Si dimension="banca" con bancaId específico, buscar directamente el statement consolidado
+                    // NO usar findByDate porque no filtra por bancaId y puede devolver statements incorrectos
+                    if (filters.dimension === "banca" && targetBancaId) {
+                        // Buscar específicamente el statement consolidado de la banca (ventanaId=null, vendedorId=null)
+                        dbStatement = await prisma.accountStatement.findFirst({
+                            where: {
+                                date: previousDayDate,
+                                bancaId: targetBancaId,
+                                ventanaId: null,
+                                vendedorId: null,
+                            },
+                        });
+                    } else {
+                        // Para otras dimensiones (ventana, vendedor), usar findByDate
+                        dbStatement = await AccountStatementRepository.findByDate(previousDayDate, {
+                            ventanaId: targetVentanaId,
+                            vendedorId: targetVendedorId,
+                        });
                     }
                 }
                 
