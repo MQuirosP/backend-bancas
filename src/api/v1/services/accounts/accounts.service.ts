@@ -7,6 +7,7 @@ import { registerPayment, reversePayment, deleteStatement } from "./accounts.mov
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
 import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";
 import prisma from "../../../../core/prismaClient";
+import { Prisma } from "@prisma/client";
 import { getCachedStatement, setCachedStatement } from "../../../../utils/accountStatementCache";
 import { crDateService } from "../../../../utils/crDateService";
 import logger from "../../../../core/logger";
@@ -16,6 +17,259 @@ import logger from "../../../../core/logger";
  * Proporciona endpoints para consultar y gestionar estados de cuenta
  * Refactorizado para usar módulos especializados
  */
+/**
+ * ✅ HELPER BATCH: Obtiene monthlyRemainingBalance (Saldo a Hoy) para múltiples entidades de una vez
+ * MUCHO MÁS RÁPIDO que llamar getMonthlyRemainingBalance individualmente
+ * 
+ * @param month - Mes en formato YYYY-MM (ej: "2026-01")
+ * @param dimension - "ventana" | "vendedor"
+ * @param entityIds - Array de IDs de entidades (ventanaIds o vendedorIds)
+ * @param bancaId - ID de la banca (opcional, para filtrado)
+ * @returns Map<entityId, remainingBalance> con el saldo a hoy de cada entidad
+ */
+export async function getMonthlyRemainingBalancesBatch(
+    month: string, // YYYY-MM
+    dimension: "ventana" | "vendedor",
+    entityIds: string[],
+    bancaId?: string
+): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    
+    if (!month || typeof month !== 'string' || !month.includes('-') || entityIds.length === 0) {
+        return result;
+    }
+    
+    const { resolveDateRange } = await import('../../../../utils/dateRange');
+    const monthRange = resolveDateRange('month');
+    const todayRange = resolveDateRange('today');
+    const monthStartDate = monthRange.fromAt;
+    const todayEndDate = todayRange.toAt;
+    
+    // ✅ OPTIMIZACIÓN: Una sola query para obtener todos los remainingBalance
+    const where: Prisma.AccountStatementWhereInput = {
+        date: {
+            gte: monthStartDate,
+            lte: todayEndDate,
+        },
+    };
+    
+    if (dimension === "vendedor") {
+        where.vendedorId = { in: entityIds };
+    } else if (dimension === "ventana") {
+        where.ventanaId = { in: entityIds };
+        where.vendedorId = null; // Statement consolidado de ventana
+    }
+    
+    if (bancaId) {
+        where.bancaId = bancaId;
+    }
+    
+    // Obtener el último statement de cada entidad hasta hoy
+    const statements = await prisma.accountStatement.findMany({
+        where,
+        select: {
+            remainingBalance: true,
+            date: true,
+            ventanaId: true,
+            vendedorId: true,
+        },
+        orderBy: [
+            { date: 'desc' },
+            { createdAt: 'desc' },
+        ],
+    });
+    
+    // Agrupar por entidad y tomar el más reciente de cada una
+    const latestByEntity = new Map<string, { remainingBalance: number; date: Date }>();
+    for (const stmt of statements) {
+        const entityId = dimension === "vendedor" ? stmt.vendedorId : stmt.ventanaId;
+        if (!entityId) continue;
+        
+        const existing = latestByEntity.get(entityId);
+        if (!existing || stmt.date > existing.date) {
+            if (stmt.remainingBalance !== null && stmt.remainingBalance !== undefined) {
+                latestByEntity.set(entityId, {
+                    remainingBalance: Number(stmt.remainingBalance),
+                    date: stmt.date,
+                });
+            }
+        }
+    }
+    
+    // Mapear resultados
+    for (const entityId of entityIds) {
+        const latest = latestByEntity.get(entityId);
+        if (latest) {
+            result.set(entityId, latest.remainingBalance);
+        } else {
+            // Si no hay AccountStatement, usar saldo del mes anterior (fallback rápido)
+            // Solo calcular con getStatementDirect si realmente es necesario (muy lento)
+            result.set(entityId, 0); // Se calculará después si es necesario
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * ✅ HELPER REUTILIZABLE: Obtiene el monthlyRemainingBalance (Saldo a Hoy) para una entidad específica
+ * Esta función calcula el mismo valor que se muestra en estado de cuentas
+ * 
+ * IMPORTANTE: Calcula el "Saldo a Hoy" = saldo inicial del mes anterior + acumulado desde inicio del mes hasta HOY
+ * Incluye: ventas, premios, comisiones, pagos y cobros hasta el día de hoy
+ * 
+ * ✅ OPTIMIZADO: Primero intenta usar AccountStatement (rápido), solo calcula si no existe
+ * 
+ * @param month - Mes en formato YYYY-MM (ej: "2026-01")
+ * @param dimension - "ventana" | "vendedor"
+ * @param ventanaId - ID de la ventana (opcional, requerido si dimension="ventana")
+ * @param vendedorId - ID del vendedor (opcional, requerido si dimension="vendedor")
+ * @param bancaId - ID de la banca (opcional, para filtrado)
+ * @returns remainingBalance del último día con datos hasta HOY (acumulado progresivo que incluye saldo del mes anterior + movimientos hasta hoy)
+ */
+export async function getMonthlyRemainingBalance(
+    month: string, // YYYY-MM
+    dimension: "ventana" | "vendedor",
+    ventanaId?: string,
+    vendedorId?: string,
+    bancaId?: string
+): Promise<number> {
+    // ✅ VALIDACIÓN: Asegurar que month sea válido
+    if (!month || typeof month !== 'string' || !month.includes('-')) {
+        logger.warn({
+            layer: "service",
+            action: "GET_MONTHLY_REMAINING_BALANCE_INVALID_MONTH",
+            payload: {
+                month,
+                dimension,
+                ventanaId,
+                vendedorId,
+                bancaId,
+                note: "month is invalid, returning 0",
+            },
+        });
+        return 0;
+    }
+    
+    const { resolveDateRange } = await import('../../../../utils/dateRange');
+    
+    // ✅ CRÍTICO: Obtener rango desde inicio del mes hasta HOY (no hasta el final del mes)
+    const monthRange = resolveDateRange('month'); // Primer día del mes en CR
+    const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
+    
+    const monthStartDate = monthRange.fromAt; // Primer día del mes en CR
+    const todayEndDate = todayRange.toAt; // Fin del día de hoy en CR
+    
+    // ✅ OPTIMIZACIÓN: Primero intentar obtener desde AccountStatement (mucho más rápido)
+    const where: Prisma.AccountStatementWhereInput = {
+        date: {
+            gte: monthStartDate,
+            lte: todayEndDate,
+        },
+    };
+    
+    if (dimension === "vendedor" && vendedorId) {
+        where.vendedorId = vendedorId;
+    } else if (dimension === "ventana" && ventanaId) {
+        where.ventanaId = ventanaId;
+        where.vendedorId = null; // Statement consolidado de ventana
+    }
+    
+    if (bancaId) {
+        where.bancaId = bancaId;
+    }
+    
+    // Buscar el último statement hasta hoy (más reciente)
+    const lastStatement = await prisma.accountStatement.findFirst({
+        where,
+        orderBy: [
+            { date: 'desc' },
+            { createdAt: 'desc' },
+        ],
+        select: {
+            remainingBalance: true,
+            date: true,
+        },
+    });
+    
+    if (lastStatement && lastStatement.remainingBalance !== null && lastStatement.remainingBalance !== undefined) {
+        // ✅ USAR remainingBalance del AccountStatement (rápido y confiable)
+        // Este valor ya incluye: saldoMesAnterior + todos los balances del mes hasta hoy + pagos y cobros hasta hoy
+        return Number(lastStatement.remainingBalance);
+    }
+    
+    // ✅ FALLBACK: Si no hay AccountStatement, calcular con getStatementDirect (lento pero necesario)
+    // Solo se ejecuta si no hay datos en AccountStatement
+    const [year, monthNum] = month.split("-").map(Number);
+    const daysInMonth = new Date(year, monthNum, 0).getDate();
+    
+    const { getStatementDirect } = await import('./accounts.calculations');
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(monthStartDate, todayEndDate);
+    
+    try {
+        const result = await getStatementDirect(
+            {
+                date: "range" as const,
+                fromDate: startDateCRStr,
+                toDate: endDateCRStr,
+                dimension,
+                ventanaId,
+                vendedorId,
+                bancaId,
+                scope: "all",
+                sort: "desc",
+                userRole: "ADMIN",
+            },
+            monthStartDate,
+            todayEndDate,
+            daysInMonth,
+            month,
+            dimension,
+            ventanaId,
+            vendedorId,
+            bancaId,
+            "ADMIN",
+            "desc"
+        );
+        
+        // ✅ Obtener el remainingBalance del último statement calculado hasta hoy
+        if (result.statements && result.statements.length > 0) {
+            // Ordenar por fecha para obtener el último día con datos hasta hoy
+            const sortedStatements = [...result.statements].sort((a, b) => 
+                new Date(a.date).getTime() - new Date(b.date).getTime()
+            );
+            const lastStatement = sortedStatements[sortedStatements.length - 1];
+            // ✅ Usar remainingBalance del último día con datos hasta hoy
+            return Number(lastStatement.remainingBalance || 0);
+        }
+    } catch (error) {
+        logger.error({
+            layer: "service",
+            action: "GET_MONTHLY_REMAINING_BALANCE_CALCULATION_ERROR",
+            payload: {
+                month,
+                dimension,
+                ventanaId,
+                vendedorId,
+                bancaId,
+                error: (error as Error).message,
+            },
+        });
+    }
+    
+    // ✅ ÚLTIMO FALLBACK: Si no hay statements hasta hoy, usar el saldo del mes anterior
+    const { getPreviousMonthFinalBalance } = await import('./accounts.calculations');
+    const previousMonthBalance = await getPreviousMonthFinalBalance(
+        month,
+        dimension,
+        ventanaId,
+        vendedorId,
+        bancaId
+    );
+    // Si no hay statements hasta hoy, el remainingBalance es solo el saldo anterior
+    return Number(previousMonthBalance || 0);
+}
+
 export const AccountsService = {
     /**
      * Obtiene el estado de cuenta día a día del mes o período

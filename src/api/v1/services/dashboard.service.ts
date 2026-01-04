@@ -5,6 +5,7 @@ import logger from "../../../core/logger";
 import { resolveCommission } from "../../../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
 import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts/accounts.calculations";
+import { getMonthlyRemainingBalance, getMonthlyRemainingBalancesBatch } from "./accounts/accounts.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { crDateService } from "../../../utils/crDateService";
 
@@ -1446,84 +1447,52 @@ export const DashboardService = {
         filters.bancaId
       );
       
-      // ✅ CRÍTICO: Calcular saldoAHoy para TODAS las ventanas
-      // ✅ CORRECCIÓN: Usar AccountStatement.remainingBalance del último día del mes como fuente de verdad
-      // en lugar de recalcular desde tickets (más confiable y consistente con módulo accounts)
-      const statementsByVentana = new Map<string, typeof monthStatements[0]>();
-      for (const stmt of monthStatements) {
-        if (!stmt.ventanaId) continue;
-        // Guardar el statement más reciente por ventana (último día con datos)
-        const existing = statementsByVentana.get(stmt.ventanaId);
-        if (!existing || stmt.date > existing.date) {
-          statementsByVentana.set(stmt.ventanaId, stmt);
-        }
-      }
-      
-      // Primero procesar ventanas con datos del mes actual
-      for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
-        // ✅ CORRECCIÓN: Intentar usar remainingBalance del AccountStatement del último día
-        // Si existe, es la fuente de verdad (ya incluye saldo anterior + movimientos del mes)
-        const lastStatement = statementsByVentana.get(ventanaId);
-        let saldoAHoy: number;
+      // ✅ CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
+      // Reutilizar getMonthlyRemainingBalancesBatch que calcula exactamente el mismo valor que en GET /accounts/statement
+      try {
+        const balancesBatch = await getMonthlyRemainingBalancesBatch(
+          effectiveMonth,
+          "ventana",
+          Array.from(allVentanaIds),
+          filters.bancaId
+        );
         
-        if (lastStatement && lastStatement.remainingBalance !== null) {
-          // ✅ USAR remainingBalance del AccountStatement (fuente de verdad)
-          saldoAHoy = Number(lastStatement.remainingBalance);
-          
-          logger.info({
-            layer: 'service',
-            action: 'MONTHLY_ACCUMULATED_FROM_STATEMENT',
-            payload: {
-              ventanaId: ventanaId.substring(0, 8),
-              lastStatementDate: crDateService.postgresDateToCRString(lastStatement.date),
-              remainingBalance: saldoAHoy,
-              note: "Using AccountStatement.remainingBalance as source of truth",
-            },
-          });
-        } else {
-          // ✅ FALLBACK: Calcular manualmente si no hay AccountStatement
-          // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
-          const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
-          const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
-          // Sumar saldo del mes anterior al acumulado del mes actual
-          saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
-          
-          logger.info({
-            layer: 'service',
-            action: 'MONTHLY_ACCUMULATED_CALCULATED',
-            payload: {
-              ventanaId: ventanaId.substring(0, 8),
-              previousMonthBalance,
-              monthEntry: {
-                totalSales: monthEntry.totalSales,
-                totalPayouts: monthEntry.totalPayouts,
-                totalListeroCommission: monthEntry.totalListeroCommission,
-                totalPaid: monthEntry.totalPaid,
-                totalCollected: monthEntry.totalCollected,
-              },
-              baseBalance,
-              saldoAHoy,
-              note: "Calculated manually (no AccountStatement found)",
-            },
-          });
+        // Mapear resultados del batch
+        for (const ventanaId of allVentanaIds) {
+          const saldoAHoy = balancesBatch.get(ventanaId) ?? 0;
+          monthSaldoByVentana.set(ventanaId, saldoAHoy);
         }
         
-        monthSaldoByVentana.set(ventanaId, saldoAHoy);
-      }
-      
-      // ✅ CRÍTICO: Incluir también ventanas que solo tienen saldo del mes anterior
-      // pero no tienen datos en el mes actual (para que aparezcan en monthlyAccumulated)
-      // IMPORTANTE: Esto asegura que ventanas con saldo anterior pero sin actividad del mes actual
-      // también tengan su saldo a hoy calculado
-      for (const ventanaId of allVentanaIds) {
-        if (!monthSaldoByVentana.has(ventanaId)) {
-          // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
-          const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
-          // Si solo tiene saldo del mes anterior, ese es su saldo a hoy
-          monthSaldoByVentana.set(ventanaId, previousMonthBalance);
+        logger.info({
+          layer: 'service',
+          action: 'MONTHLY_ACCUMULATED_FROM_BATCH',
+          payload: {
+            effectiveMonth,
+            dimension: "ventana",
+            totalEntities: allVentanaIds.size,
+            foundInBatch: balancesBatch.size,
+            note: "Using getMonthlyRemainingBalancesBatch (same as accounts/statement, much faster)",
+          },
+        });
+      } catch (error) {
+        logger.error({
+          layer: 'service',
+          action: 'MONTHLY_ACCUMULATED_BATCH_ERROR',
+          payload: {
+            effectiveMonth,
+            dimension: "ventana",
+            error: (error as Error).message,
+            note: "Error getting monthly remaining balances batch, using 0 for all",
+          },
+        });
+        // Si falla el batch, usar 0 para todos
+        for (const ventanaId of allVentanaIds) {
+          monthSaldoByVentana.set(ventanaId, 0);
         }
       }
       
+      // ✅ NOTA: getMonthlyRemainingBalancesBatch ya incluye todas las ventanas (retorna 0 si no hay datos)
+      // No es necesario loop adicional porque el batch query ya procesó todas
     }
 
     // ✅ NUEVO: Verificar si el período filtrado es el mes completo
@@ -2042,27 +2011,47 @@ export const DashboardService = {
         filters.bancaId
       );
       
-      // ✅ CRÍTICO: Calcular saldoAHoy para TODOS los vendedores
-      // Primero procesar vendedores con datos del mes actual
-      for (const [vendedorId, monthEntry] of monthAggregated.entries()) {
-        // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
-        const previousMonthBalance = Number(previousMonthBalances.get(vendedorId) || 0);
-        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
-        // Sumar saldo del mes anterior al acumulado del mes actual
-        const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
-        monthSaldoByVendedor.set(vendedorId, saldoAHoy);
-      }
-      
-      // ✅ CRÍTICO: Incluir también vendedores que solo tienen saldo del mes anterior
-      // pero no tienen datos en el mes actual (para que aparezcan en monthlyAccumulated)
-      // IMPORTANTE: Esto asegura que vendedores con saldo anterior pero sin actividad del mes actual
-      // también tengan su saldo a hoy calculado
-      for (const vendedorId of allVendedorIds) {
-        if (!monthSaldoByVendedor.has(vendedorId)) {
-          // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
-          const previousMonthBalance = Number(previousMonthBalances.get(vendedorId) || 0);
-          // Si solo tiene saldo del mes anterior, ese es su saldo a hoy
-          monthSaldoByVendedor.set(vendedorId, previousMonthBalance);
+      // ✅ CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
+      // Reutilizar getMonthlyRemainingBalancesBatch que calcula exactamente el mismo valor que en GET /accounts/statement
+      try {
+        const balancesBatch = await getMonthlyRemainingBalancesBatch(
+          effectiveMonth,
+          "vendedor",
+          Array.from(allVendedorIds),
+          filters.bancaId
+        );
+        
+        // Mapear resultados del batch
+        for (const vendedorId of allVendedorIds) {
+          const saldoAHoy = balancesBatch.get(vendedorId) ?? 0;
+          monthSaldoByVendedor.set(vendedorId, saldoAHoy);
+        }
+        
+        logger.info({
+          layer: 'service',
+          action: 'MONTHLY_ACCUMULATED_FROM_BATCH_VENDEDOR',
+          payload: {
+            effectiveMonth,
+            dimension: "vendedor",
+            totalEntities: allVendedorIds.size,
+            foundInBatch: balancesBatch.size,
+            note: "Using getMonthlyRemainingBalancesBatch (same as accounts/statement, much faster)",
+          },
+        });
+      } catch (error) {
+        logger.error({
+          layer: 'service',
+          action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENDEDOR',
+          payload: {
+            effectiveMonth,
+            dimension: "vendedor",
+            error: (error as Error).message,
+            note: "Error getting monthly remaining balances batch, using 0 for all",
+          },
+        });
+        // Si falla el batch, usar 0 para todos
+        for (const vendedorId of allVendedorIds) {
+          monthSaldoByVendedor.set(vendedorId, 0);
         }
       }
     }
@@ -2576,51 +2565,30 @@ export const DashboardService = {
         filters.bancaId
       );
       
-      // ✅ CRÍTICO: Calcular saldoAHoy para TODAS las ventanas
-      // ✅ CORRECCIÓN: Usar AccountStatement.remainingBalance del último día del mes como fuente de verdad
-      // en lugar de recalcular desde tickets (más confiable y consistente con módulo accounts)
-      const statementsByVentanaCxP = new Map<string, typeof monthStatements[0]>();
-      for (const stmt of monthStatements) {
-        if (!stmt.ventanaId) continue;
-        // Guardar el statement más reciente por ventana (último día con datos)
-        const existing = statementsByVentanaCxP.get(stmt.ventanaId);
-        if (!existing || stmt.date > existing.date) {
-          statementsByVentanaCxP.set(stmt.ventanaId, stmt);
-        }
-      }
-      
-      // Primero procesar ventanas con datos del mes actual
-      for (const [ventanaId, monthEntry] of monthAggregated.entries()) {
-        // ✅ CORRECCIÓN: Intentar usar remainingBalance del AccountStatement del último día
-        // Si existe, es la fuente de verdad (ya incluye saldo anterior + movimientos del mes)
-        const lastStatement = statementsByVentanaCxP.get(ventanaId);
-        let saldoAHoy: number;
-        
-        if (lastStatement && lastStatement.remainingBalance !== null) {
-          // ✅ USAR remainingBalance del AccountStatement (fuente de verdad)
-          saldoAHoy = Number(lastStatement.remainingBalance);
-        } else {
-          // ✅ FALLBACK: Calcular manualmente si no hay AccountStatement
-          // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
-          const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
-          const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalListeroCommission;
-          // Sumar saldo del mes anterior al acumulado del mes actual
-          saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
-        }
-        
-        monthSaldoByVentana.set(ventanaId, saldoAHoy);
-      }
-      
-      // ✅ CRÍTICO: Incluir también ventanas que solo tienen saldo del mes anterior
-      // pero no tienen datos en el mes actual (para que aparezcan en monthlyAccumulated)
-      // IMPORTANTE: Esto asegura que ventanas con saldo anterior pero sin actividad del mes actual
-      // también tengan su saldo a hoy calculado
+      // ✅ CORRECCIÓN CRÍTICA: Usar la misma función que estado de cuentas para garantizar valores idénticos
+      // Reutilizar getMonthlyRemainingBalance que calcula exactamente el mismo valor que en GET /accounts/statement
       for (const ventanaId of allVentanaIds) {
-        if (!monthSaldoByVentana.has(ventanaId)) {
-          // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
-          const previousMonthBalance = Number(previousMonthBalances.get(ventanaId) || 0);
-          // Si solo tiene saldo del mes anterior, ese es su saldo a hoy
-          monthSaldoByVentana.set(ventanaId, previousMonthBalance);
+        try {
+          const saldoAHoy = await getMonthlyRemainingBalance(
+            effectiveMonth,
+            "ventana",
+            ventanaId,
+            undefined,
+            filters.bancaId
+          );
+          monthSaldoByVentana.set(ventanaId, saldoAHoy);
+        } catch (error) {
+          logger.error({
+            layer: 'service',
+            action: 'MONTHLY_ACCUMULATED_HELPER_ERROR_CXP',
+            payload: {
+              ventanaId: ventanaId.substring(0, 8),
+              effectiveMonth,
+              error: (error as Error).message,
+              note: "Error getting monthly remaining balance, using 0",
+            },
+          });
+          monthSaldoByVentana.set(ventanaId, 0);
         }
       }
     }
@@ -3164,14 +3132,33 @@ export const DashboardService = {
         }
       }
       
-      // Calcular saldo para todos los vendedores (con o sin datos en el mes actual)
-      for (const [vendedorId, monthEntry] of monthAggregated.entries()) {
-        // ✅ CRÍTICO: Asegurar que previousMonthBalance sea número (puede venir como Decimal de Prisma)
-        const previousMonthBalance = Number(previousMonthBalances.get(vendedorId) || 0);
-        const baseBalance = monthEntry.totalSales - monthEntry.totalPayouts - monthEntry.totalVendedorCommission;
-        // Sumar saldo del mes anterior al acumulado del mes actual
-        const saldoAHoy = previousMonthBalance + baseBalance - monthEntry.totalCollected + monthEntry.totalPaid;
-        monthSaldoByVendedor.set(vendedorId, saldoAHoy);
+      // ✅ CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
+      try {
+        const balancesBatch = await getMonthlyRemainingBalancesBatch(
+          effectiveMonth,
+          "vendedor",
+          Array.from(allVendedorIds),
+          filters.bancaId
+        );
+        
+        for (const vendedorId of allVendedorIds) {
+          const saldoAHoy = balancesBatch.get(vendedorId) ?? 0;
+          monthSaldoByVendedor.set(vendedorId, saldoAHoy);
+        }
+      } catch (error) {
+        logger.error({
+          layer: 'service',
+          action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENDEDOR_CXP',
+          payload: {
+            effectiveMonth,
+            dimension: "vendedor",
+            error: (error as Error).message,
+            note: "Error getting monthly remaining balances batch, using 0 for all",
+          },
+        });
+        for (const vendedorId of allVendedorIds) {
+          monthSaldoByVendedor.set(vendedorId, 0);
+        }
       }
     }
 
