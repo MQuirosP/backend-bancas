@@ -427,6 +427,8 @@ export const AccountsService = {
                 
                 if (filters.dimension === "banca") {
                     targetBancaId = filters.bancaId || undefined;
+                    // ✅ CRÍTICO: Si dimension="banca" sin bancaId, buscar statement consolidado
+                    // (sin ventanaId ni vendedorId)
                 } else if (filters.dimension === "ventana") {
                     targetBancaId = filters.bancaId || undefined;
                     targetVentanaId = filters.ventanaId || undefined;
@@ -436,16 +438,82 @@ export const AccountsService = {
                     targetVendedorId = filters.vendedorId || undefined;
                 }
                 
-                // Intentar leer directamente de AccountStatement
-                const dbStatement = await AccountStatementRepository.findByDate(previousDayDate, {
-                    ventanaId: targetVentanaId,
-                    vendedorId: targetVendedorId,
-                });
+                // ✅ CORRECCIÓN CRÍTICA: Buscar statement del día anterior según dimensión
+                // Si dimension="banca" sin bancaId, buscar statement consolidado (bancaId: null, ventanaId: null, vendedorId: null)
+                // Si dimension="banca" con bancaId, buscar por bancaId (bancaId: X, ventanaId: null, vendedorId: null)
+                let dbStatement: any = null;
                 
-                if (dbStatement && dbStatement.remainingBalance !== null) {
-                    // ✅ Usar el remainingBalance guardado directamente (mucho más rápido)
-                    lastDayAccumulated = Number(dbStatement.remainingBalance);
+                if (filters.dimension === "banca" && !targetBancaId) {
+                    // Buscar statement consolidado (sin ventanaId ni vendedorId)
+                    dbStatement = await prisma.accountStatement.findFirst({
+                        where: {
+                            date: previousDayDate,
+                            bancaId: null,
+                            ventanaId: null,
+                            vendedorId: null,
+                        },
+                    });
                 } else {
+                    // Usar findByDate para otras dimensiones
+                    dbStatement = await AccountStatementRepository.findByDate(previousDayDate, {
+                        ventanaId: targetVentanaId,
+                        vendedorId: targetVendedorId,
+                    });
+                    
+                    // ✅ Si dimension="banca" con bancaId, verificar que el statement tenga el bancaId correcto
+                    if (filters.dimension === "banca" && targetBancaId && dbStatement) {
+                        if (dbStatement.bancaId !== targetBancaId) {
+                            // Buscar específicamente por bancaId
+                            dbStatement = await prisma.accountStatement.findFirst({
+                                where: {
+                                    date: previousDayDate,
+                                    bancaId: targetBancaId,
+                                    ventanaId: null,
+                                    vendedorId: null,
+                                },
+                            });
+                        }
+                    }
+                }
+                
+                // ✅ CORRECCIÓN CRÍTICA: Para el acumulado progresivo de sorteos, necesitamos el
+                // remainingBalance del día anterior (que es el acumulado al final del día anterior)
+                // Este es el valor correcto para iniciar el acumulado del día actual
+                if (dbStatement && dbStatement.remainingBalance !== null && dbStatement.remainingBalance !== undefined) {
+                    // ✅ Usar remainingBalance del día anterior (acumulado al final del día anterior)
+                    // Incluso si es 0, es el valor correcto (día anterior sin saldo)
+                    lastDayAccumulated = Number(dbStatement.remainingBalance);
+                    
+                    logger.info({
+                        layer: "service",
+                        action: "GET_BY_SORTEO_USING_DB_STATEMENT",
+                        payload: {
+                            date,
+                            previousDate: previousDateStr,
+                            dimension: filters.dimension,
+                            bancaId: filters.bancaId,
+                            ventanaId: filters.ventanaId,
+                            vendedorId: filters.vendedorId,
+                            dbStatementId: dbStatement.id,
+                            remainingBalance: Number(dbStatement.remainingBalance),
+                            accumulatedBalance: dbStatement.accumulatedBalance ? Number(dbStatement.accumulatedBalance) : null,
+                            lastDayAccumulated,
+                        },
+                    });
+                } else {
+                    logger.warn({
+                        layer: "service",
+                        action: "GET_BY_SORTEO_DB_STATEMENT_NOT_FOUND",
+                        payload: {
+                            date,
+                            previousDate: previousDateStr,
+                            dimension: filters.dimension,
+                            bancaId: filters.bancaId,
+                            ventanaId: filters.ventanaId,
+                            vendedorId: filters.vendedorId,
+                            note: "No se encontró dbStatement del día anterior, calculando con getStatementDirect",
+                        },
+                    });
                     // ✅ Si no existe en la BD, calcular con getStatementDirect (fallback)
                     const [prevYear, prevMonth, prevDay] = previousDateStr.split('-').map(Number);
                     const monthStartDate = new Date(Date.UTC(prevYear, prevMonth - 1, 1));
@@ -536,92 +604,92 @@ export const AccountsService = {
                     // Si hay bySorteo, usar el último accumulated del bySorteo (ya calculado con accumulatedBalance como base)
                     // Si no hay bySorteo, buscar el accumulatedBalance directamente desde AccountStatement
                     
-                    // Primero intentar obtener accumulatedBalance desde AccountStatement del día anterior
-                    const previousDateUTC = new Date(Date.UTC(year, month - 1, day - 1, 0, 0, 0, 0));
-                    let accountStatementAccumulated: number | null = null;
+                    // ✅ CORRECCIÓN CRÍTICA: Para el acumulado progresivo de sorteos, necesitamos el
+                    // remainingBalance del día anterior (acumulado al FINAL del día anterior, después de todos los eventos)
+                    // NO accumulatedBalance (que es al inicio del día)
+                    // 
+                    // PRIORIDAD:
+                    // 1. Último accumulated del bySorteo del día anterior (más preciso)
+                    // 2. remainingBalance del AccountStatement del día anterior (fallback rápido)
+                    // 3. remainingBalance del statement calculado (fallback lento)
                     
-                    try {
-                        // Determinar IDs para buscar el statement del día anterior
-                        let targetBancaId: string | undefined = undefined;
-                        let targetVentanaId: string | undefined = undefined;
-                        let targetVendedorId: string | undefined = undefined;
+                    // PRIORIDAD 1: Si hay bySorteo del día anterior, usar el último accumulated
+                    if (previousDayStatement.bySorteo && previousDayStatement.bySorteo.length > 0) {
+                        // ✅ CRÍTICO: Ordenar por tiempo ASC para obtener el último evento (más reciente)
+                        const sortedBySorteo = [...previousDayStatement.bySorteo].sort((a: any, b: any) => {
+                            const timeA = new Date(a.scheduledAt).getTime();
+                            const timeB = new Date(b.scheduledAt).getTime();
+                            if (timeA !== timeB) {
+                                return timeA - timeB; // ASC por tiempo
+                            }
+                            // Si mismo tiempo, usar chronologicalIndex ASC (mayor índice = más reciente)
+                            const indexA = a.chronologicalIndex || 0;
+                            const indexB = b.chronologicalIndex || 0;
+                            return indexA - indexB; // ASC por índice
+                        });
                         
-                        if (filters.dimension === "banca") {
-                            targetBancaId = filters.bancaId || undefined;
-                        } else if (filters.dimension === "ventana") {
-                            targetVentanaId = filters.ventanaId || undefined;
-                        } else if (filters.dimension === "vendedor") {
-                            targetVendedorId = filters.vendedorId || undefined;
+                        // El último elemento es el más reciente (mayor tiempo, o si igual, mayor chronologicalIndex)
+                        const lastEvent = sortedBySorteo[sortedBySorteo.length - 1];
+                        if (lastEvent && lastEvent.accumulated !== undefined && lastEvent.accumulated !== null) {
+                            lastDayAccumulated = Number(lastEvent.accumulated);
+                            
+                            logger.debug({
+                                layer: "service",
+                                action: "GET_BY_SORTEO_USING_PREVIOUS_BYSORTEO",
+                                payload: {
+                                    date,
+                                    previousDate: previousDateStr,
+                                    lastEventAccumulated: Number(lastEvent.accumulated),
+                                    lastDayAccumulated,
+                                },
+                            });
+                        } else {
+                            // Fallback: usar remainingBalance del statement
+                            lastDayAccumulated = previousDayStatement.remainingBalance || 0;
+                            
+                            logger.debug({
+                                layer: "service",
+                                action: "GET_BY_SORTEO_USING_PREVIOUS_REMAINING_BALANCE",
+                                payload: {
+                                    date,
+                                    previousDate: previousDateStr,
+                                    remainingBalance: previousDayStatement.remainingBalance,
+                                    lastDayAccumulated,
+                                },
+                            });
                         }
+                    } else {
+                        // PRIORIDAD 2: Si no hay bySorteo, usar remainingBalance del día anterior
+                        // remainingBalance es el acumulado al final del día anterior (después de todos los eventos)
+                        lastDayAccumulated = previousDayStatement.remainingBalance || 0;
                         
-                        // Buscar statement del día anterior desde AccountStatement (fuente de verdad)
-                        let previousAccountStatement: any = null;
-                        if (targetVendedorId) {
-                            previousAccountStatement = await prisma.accountStatement.findFirst({
-                                where: {
-                                    date: previousDateUTC,
-                                    vendedorId: targetVendedorId,
-                                },
-                                select: { accumulatedBalance: true },
-                            });
-                        } else if (targetVentanaId) {
-                            previousAccountStatement = await prisma.accountStatement.findFirst({
-                                where: {
-                                    date: previousDateUTC,
-                                    ventanaId: targetVentanaId,
-                                    vendedorId: null,
-                                },
-                                select: { accumulatedBalance: true },
-                            });
-                        } else if (targetBancaId) {
-                            previousAccountStatement = await prisma.accountStatement.findFirst({
-                                where: {
-                                    date: previousDateUTC,
-                                    bancaId: targetBancaId,
-                                    ventanaId: null,
-                                    vendedorId: null,
-                                },
-                                select: { accumulatedBalance: true },
-                            });
-                        }
-                        
-                        if (previousAccountStatement && previousAccountStatement.accumulatedBalance !== null) {
-                            accountStatementAccumulated = Number(previousAccountStatement.accumulatedBalance);
-                        }
-                    } catch (error) {
-                        // Si falla, continuar con lógica alternativa
-                        logger.warn({
+                        logger.debug({
                             layer: "service",
-                            action: "GET_BY_SORTEO_ACCOUNT_STATEMENT_FETCH_ERROR",
+                            action: "GET_BY_SORTEO_USING_PREVIOUS_REMAINING_BALANCE_NO_BYSORTEO",
                             payload: {
-                                date: date, // date ya es string en formato YYYY-MM-DD
-                                previousDate: crDateService.postgresDateToCRString(previousDateUTC),
-                                dimension: filters.dimension,
-                                error: (error as Error).message,
+                                date,
+                                previousDate: previousDateStr,
+                                remainingBalance: previousDayStatement.remainingBalance,
+                                lastDayAccumulated,
                             },
                         });
                     }
-                    
-                    if (accountStatementAccumulated !== null) {
-                        // ✅ CRÍTICO: Usar accumulatedBalance desde AccountStatement (fuente de verdad)
-                        lastDayAccumulated = accountStatementAccumulated;
-                    } else if (previousDayStatement.bySorteo && previousDayStatement.bySorteo.length > 0) {
-                        // Fallback: Si no hay AccountStatement, usar el último accumulated del bySorteo
-                        const sortedStatement = [...previousDayStatement.bySorteo].sort((a: any, b: any) => {
-                            const timeA = new Date(a.scheduledAt).getTime();
-                            const timeB = new Date(b.scheduledAt).getTime();
-                            return timeA - timeB; // ASC
-                        });
-                        
-                        lastDayAccumulated = sortedStatement.length > 0 
-                            ? (sortedStatement[sortedStatement.length - 1].accumulated || 0)
-                            : 0;
-                    } else {
-                        // Último fallback: usar remainingBalance (no ideal, pero mejor que 0)
-                        lastDayAccumulated = previousDayStatement.remainingBalance || 0;
-                    }
                 } else {
                     // No se encontró statement del día anterior, usar 0
+                    logger.warn({
+                        layer: "service",
+                        action: "GET_BY_SORTEO_NO_PREVIOUS_STATEMENT",
+                        payload: {
+                            date,
+                            previousDate: previousDateStr,
+                            dimension: filters.dimension,
+                            bancaId: filters.bancaId,
+                            ventanaId: filters.ventanaId,
+                            vendedorId: filters.vendedorId,
+                            statementsFromMonthStartCount: statementsFromMonthStart?.statements?.length || 0,
+                            note: "No se encontró statement del día anterior, usando 0 como initialAccumulated",
+                        },
+                    });
                 }
                 } // ✅ Cierre del bloque else que comienza en la línea 446
             } catch (error) {
@@ -796,6 +864,29 @@ export const AccountsService = {
         // Para días siguientes, usar el acumulado del día anterior
         const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
         const initialAccumulated = isFirstDay ? previousMonthBalance : lastDayAccumulated;
+        
+        // ✅ LOGGING: Verificar que initialAccumulated tenga el valor correcto
+        logger.info({
+            layer: "service",
+            action: "GET_BY_SORTEO_INTERCALATING",
+            payload: {
+                date,
+                isFirstDay,
+                dimension: filters.dimension,
+                bancaId: filters.bancaId,
+                ventanaId: filters.ventanaId,
+                vendedorId: filters.vendedorId,
+                previousMonthBalance: isFirstDay ? previousMonthBalance : undefined,
+                lastDayAccumulated: !isFirstDay ? lastDayAccumulated : undefined,
+                initialAccumulated,
+                sorteosCount: bySorteo.length,
+                movementsCount: movements.length,
+                note: isFirstDay 
+                    ? "Primer día del mes: usando previousMonthBalance como initialAccumulated"
+                    : `Día siguiente: usando lastDayAccumulated (${lastDayAccumulated}) como initialAccumulated`,
+            },
+        });
+        
         const sorteosAndMovements = intercalateSorteosAndMovements(bySorteo, movements, date, initialAccumulated);
 
         return sorteosAndMovements;
