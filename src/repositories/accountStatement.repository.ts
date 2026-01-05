@@ -38,34 +38,135 @@ export const AccountStatementRepository = {
 
 
     /**
-     * 🚨 REGLA CLAVE
-     * Para estados consolidados por ventana:
-     *  - vendedorId SIEMPRE es null
-     *  - el unique constraint es (date, ventanaId)
+     * 🚨 REGLA DE BÚSQUEDA Y UNICIDAD
+     * Buscamos el statement según la dimensión más específica proporcionada
      */
-    if (!finalVentanaId) {
-      throw new Error("findOrCreate requiere ventanaId para evitar colisiones");
+    let where: any = {
+      date: data.date,
+    };
+
+    if (data.vendedorId) {
+      // Dimensión Vendedor: único por (date, vendedorId)
+      where.vendedorId = data.vendedorId;
+    } else if (data.ventanaId) {
+      // Dimensión Ventana: único por (date, ventanaId) Y vendedorId es NULL
+      where.ventanaId = data.ventanaId;
+      where.vendedorId = null;
+    } else if (data.bancaId) {
+      // Dimensión Banca: bancaId Y ventanaId/vendedorId son NULL
+      where.bancaId = data.bancaId;
+      where.ventanaId = null;
+      where.vendedorId = null;
+    } else {
+      throw new Error("findOrCreate requiere al menos bancaId, ventanaId o vendedorId");
     }
 
     // Buscar statement existente
     let statement = await prisma.accountStatement.findFirst({
-      where: {
-        date: data.date,
-        ventanaId: finalVentanaId,
-      },
+      where: where
     });
 
-    // Si no existe, crear
-    if (!statement) {
-      statement = await prisma.accountStatement.create({
-        data: {
-          date: data.date,
-          month: data.month,
-          bancaId: finalBancaId ?? null,
-          ventanaId: finalVentanaId,
-          vendedorId: null, // 🔒 CONSOLIDADO
-        },
+    // ✅ SI ENCONTRAMOS UN VENDEDOR: Asegurar que ventanaId sea null (limpieza de datos sucios)
+    // Esto evita que un record de vendedor bloquee el consolidado de la ventana
+    if (statement && data.vendedorId && statement.ventanaId !== null) {
+      statement = await prisma.accountStatement.update({
+        where: { id: statement.id },
+        data: { ventanaId: null }
       });
+    }
+
+    // Si no existe, intentar crear
+    if (!statement) {
+      try {
+        statement = await prisma.accountStatement.create({
+          data: {
+            date: data.date,
+            month: data.month,
+            bancaId: finalBancaId ?? null,
+            // Para vendedores: ventanaId debe ser null para evitar conflictos con el consolidado
+            // (ya que existe un unique constraint sobre [date, ventanaId])
+            ventanaId: data.vendedorId ? null : (data.ventanaId ?? null),
+            vendedorId: data.vendedorId ?? null,
+          },
+        });
+      } catch (error: any) {
+        // P2002 es el código de Prisma para Unique constraint failed
+        if (error.code === 'P2002') {
+          // Si falló por concurrencia, lo buscamos de nuevo (ya debería existir)
+          statement = await prisma.accountStatement.findFirst({
+            where: where
+          });
+          
+          if (statement) {
+            logger.info({
+              layer: "repository",
+              action: "ACCOUNT_STATEMENT_CONCURRENCY_RESOLVED",
+              payload: { date: data.date, dimension: data.vendedorId ? 'vendedor' : 'ventana' }
+            });
+          }
+
+          if (!statement) {
+            // 🚨 CASO CRÍTICO: Si aún no lo encuentra por 'where', es que existe uno "sucio"
+            // que está bloqueando el constraint pero no coincide con nuestro 'where'
+            if (data.ventanaId && !data.vendedorId) {
+              // Intentar encontrar el culpable (registro con misma date/ventanaId pero vendedorId NOT NULL)
+              const culprit = await prisma.accountStatement.findFirst({
+                where: {
+                  date: data.date,
+                  ventanaId: data.ventanaId
+                }
+              });
+
+              if (culprit) {
+                logger.warn({
+                  layer: "repository",
+                  action: "ACCOUNT_STATEMENT_CULPRIT_FOUND",
+                  payload: { id: culprit.id, date: data.date, ventanaId: data.ventanaId, originalVendedorId: culprit.vendedorId }
+                });
+
+                // Si encontramos el culpable, lo "limpiamos" quitándole la ventanaId
+                // para que deje de bloquear el consolidado
+                await prisma.accountStatement.update({
+                  where: { id: culprit.id },
+                  data: { ventanaId: null }
+                });
+
+                // Re-intentar crear el consolidado
+                statement = await prisma.accountStatement.create({
+                  data: {
+                    date: data.date,
+                    month: data.month,
+                    bancaId: finalBancaId ?? null,
+                    ventanaId: data.ventanaId,
+                    vendedorId: null,
+                  },
+                });
+
+                logger.info({
+                  layer: "repository",
+                  action: "ACCOUNT_STATEMENT_CULPRIT_RESOLVED",
+                  payload: { date: data.date, ventanaId: data.ventanaId }
+                });
+              }
+            }
+          }
+
+          if (!statement) {
+            logger.error({
+              layer: "repository",
+              action: "ACCOUNT_STATEMENT_CONCURRENCY_ERROR",
+              payload: {
+                where,
+                data,
+                error: error.message
+              }
+            });
+            throw new Error("Error de concurrencia crítico: no se pudo crear ni encontrar el statement");
+          }
+        } else {
+          throw error; // Si es otro error, lanzarlo
+        }
+      }
     } else if (finalBancaId && !statement.bancaId) {
       // Actualizar bancaId si faltaba
       statement = await prisma.accountStatement.update({
@@ -219,12 +320,14 @@ export const AccountStatementRepository = {
     // ✅ ACTUALIZADO: Permitir búsqueda con ambos campos presentes
     // El constraint _one_relation_check ha sido eliminado
     if (filters.vendedorId) {
+      // Si hay vendedorId, buscar específicamente por vendedorId (el (date, vendedorId) es único)
       where.vendedorId = filters.vendedorId;
-      if (filters.ventanaId) {
-        where.ventanaId = filters.ventanaId;
-      }
+      // NO filtrar por ventanaId para vendedores aquí, ya que el sync lo guarda como null
+      // para evitar conflictos con el unique constraint (date, ventanaId)
     } else if (filters.ventanaId) {
+      // Si solo hay ventanaId, buscar el consolidado de la ventana (vendedorId debe ser null)
       where.ventanaId = filters.ventanaId;
+      where.vendedorId = null;
     }
     // ✅ FIX: Si no se especifica ninguno, NO forzar ventanaId/vendedorId a null
     // Dejar que la query encuentre cualquier statement para esa fecha
