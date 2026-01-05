@@ -5,8 +5,8 @@ import logger from "../core/logger";
 export const AccountStatementRepository = {
   /**
    * Encuentra o crea un estado de cuenta para una fecha específica
-   * ✅ CRÍTICO: Usa transacciones con locking para evitar condiciones de carrera
-   * cuando múltiples pagos/cobros se registran simultáneamente
+   * ✅ CRÍTICO: No usa upsert() para evitar issues con constraint naming en Prisma
+   * En su lugar, busca primero y si no existe, crea
    */
   async findOrCreate(data: {
     date: Date;
@@ -47,25 +47,34 @@ export const AccountStatementRepository = {
       throw new Error("findOrCreate requiere ventanaId para evitar colisiones");
     }
 
-    return await prisma.accountStatement.upsert({
+    // Buscar statement existente
+    let statement = await prisma.accountStatement.findFirst({
       where: {
-        date_ventanaId: {
-          date: data.date,
-          ventanaId: finalVentanaId,
-        },
-      },
-      update: {
-        // Solo actualiza si faltan datos
-        bancaId: finalBancaId ?? undefined,
-      },
-      create: {
         date: data.date,
-        month: data.month,
-        bancaId: finalBancaId ?? null,
         ventanaId: finalVentanaId,
-        vendedorId: null, // 🔒 CONSOLIDADO
       },
     });
+
+    // Si no existe, crear
+    if (!statement) {
+      statement = await prisma.accountStatement.create({
+        data: {
+          date: data.date,
+          month: data.month,
+          bancaId: finalBancaId ?? null,
+          ventanaId: finalVentanaId,
+          vendedorId: null, // 🔒 CONSOLIDADO
+        },
+      });
+    } else if (finalBancaId && !statement.bancaId) {
+      // Actualizar bancaId si faltaba
+      statement = await prisma.accountStatement.update({
+        where: { id: statement.id },
+        data: { bancaId: finalBancaId },
+      });
+    }
+
+    return statement;
   },
 
 
