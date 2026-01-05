@@ -2990,6 +2990,13 @@ export async function getStatementDirect(
                 }
 
                 // Buscar o crear el statement en la BD
+                // ✅ CRÍTICO: Solo guardar si tenemos al menos un ID (bancaId, ventanaId o vendedorId)
+                // Si todos son undefined, es un consolidado global que no se guarda en AccountStatement
+                if (!targetBancaId && !targetVentanaId && !targetVendedorId) {
+                    saved = true;
+                    continue;
+                }
+
                 const dbStatement = await AccountStatementRepository.findOrCreate({
                     date: statementDate,
                     month: monthForStatement,
@@ -3794,6 +3801,11 @@ export async function getStatementDirect(
                 }
 
                 // Buscar o crear el statement consolidado en la BD
+                // ✅ CRÍTICO: Solo guardar si tenemos al menos un ID (bancaId, ventanaId o vendedorId)
+                if (!targetBancaId && !targetVentanaId && !targetVendedorId) {
+                    continue; // Skip global consolidated view
+                }
+
                 const dbStatement = await AccountStatementRepository.findOrCreate({
                     date: statementDate,
                     month: monthForStatement,
@@ -3861,6 +3873,11 @@ export async function getStatementDirect(
                     const monthForStatement = `${statementDate.getUTCFullYear()}-${String(statementDate.getUTCMonth() + 1).padStart(2, '0')}`;
 
                     // Buscar o crear el statement en la BD
+                    // ✅ CRÍTICO: Solo guardar si tenemos al menos un ID
+                    if (!targetBancaId && !targetVentanaId && !targetVendedorId) {
+                        return; // Skip if no IDs present
+                    }
+
                     const dbStatement = await AccountStatementRepository.findOrCreate({
                         date: statementDate,
                         month: monthForStatement,
