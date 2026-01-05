@@ -2859,55 +2859,63 @@ export async function getStatementDirect(
                     }
                     statement.byVentana = ventanaBreakdown.sort((a, b) => a.ventanaName.localeCompare(b.ventanaName));
                 } else {
-                    // Construir byVendedor desde breakdownByEntity
-                    const vendedorBreakdown: any[] = [];
-                    for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
-                        const breakdownDate = breakdownKey.split("_")[0];
-                        if (breakdownDate === date) {
-                            // ✅ CRÍTICO: Obtener sorteos específicos de este vendedor
-                            const vendedorSorteoKey = `${date}_${breakdownEntry.vendedorId || 'null'}`;
-                            const vendedorSorteos = sorteoBreakdownBatch.get(vendedorSorteoKey) || [];
+                    // Special case: when a VENTANA user requests dimension='vendedor' without a vendedorId
+                    // we should present aggregated by-sorteo totals across all vendors ("por sorteo").
+                    // To avoid the frontend showing a "por vendedor" breakdown, skip populating
+                    // the per-vendedor breakdown in that specific case and keep the aggregated bySorteo.
+                    if (dimension === "vendedor" && shouldGroupByDate && userRole === "VENTANA" && ventanaId && !vendedorId) {
+                        statement.byVendedor = [];
+                    } else {
+                        // Construir byVendedor desde breakdownByEntity
+                        const vendedorBreakdown: any[] = [];
+                        for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
+                            const breakdownDate = breakdownKey.split("_")[0];
+                            if (breakdownDate === date) {
+                                // ✅ CRÍTICO: Obtener sorteos específicos de este vendedor
+                                const vendedorSorteoKey = `${date}_${breakdownEntry.vendedorId || 'null'}`;
+                                const vendedorSorteos = sorteoBreakdownBatch.get(vendedorSorteoKey) || [];
 
-                            // ✅ CRÍTICO: Calcular totalPayouts sumando desde sorteos
-                            const vendedorTotalPayouts = vendedorSorteos.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
+                                // ✅ CRÍTICO: Calcular totalPayouts sumando desde sorteos
+                                const vendedorTotalPayouts = vendedorSorteos.reduce((sum: number, sorteo: any) => sum + (sorteo.payouts || 0), 0);
 
-                            // ✅ CORRECCIÓN: Balance de vendedor usando vendedorCommission
-                            const breakdownBalance = breakdownEntry.totalSales - vendedorTotalPayouts - breakdownEntry.commissionVendedor;
-                            // Calcular totalPaid y totalCollected para este vendedor en esta fecha
-                            const vendedorMovements = allMovementsForDate.filter((m: any) => m.vendedorId === breakdownEntry.vendedorId);
-                            const vendedorTotalPaid = vendedorMovements
-                                .filter((m: any) => m.type === "payment" && !m.isReversed)
-                                .reduce((sum: number, m: any) => sum + m.amount, 0);
-                            const vendedorTotalCollected = vendedorMovements
-                                .filter((m: any) => m.type === "collection" && !m.isReversed)
-                                .reduce((sum: number, m: any) => sum + m.amount, 0);
-                            const vendedorRemainingBalance = breakdownBalance - vendedorTotalCollected + vendedorTotalPaid;
+                                // ✅ CORRECCIÓN: Balance de vendedor usando vendedorCommission
+                                const breakdownBalance = breakdownEntry.totalSales - vendedorTotalPayouts - breakdownEntry.commissionVendedor;
+                                // Calcular totalPaid y totalCollected para este vendedor en esta fecha
+                                const vendedorMovements = allMovementsForDate.filter((m: any) => m.vendedorId === breakdownEntry.vendedorId);
+                                const vendedorTotalPaid = vendedorMovements
+                                    .filter((m: any) => m.type === "payment" && !m.isReversed)
+                                    .reduce((sum: number, m: any) => sum + m.amount, 0);
+                                const vendedorTotalCollected = vendedorMovements
+                                    .filter((m: any) => m.type === "collection" && !m.isReversed)
+                                    .reduce((sum: number, m: any) => sum + m.amount, 0);
+                                const vendedorRemainingBalance = breakdownBalance - vendedorTotalCollected + vendedorTotalPaid;
 
-                            // ✅ CRÍTICO: Obtener movimientos específicos de este vendedor
-                            const vendedorMovementsFiltered = allMovementsForDate.filter((m: any) => m.vendedorId === breakdownEntry.vendedorId);
+                                // ✅ CRÍTICO: Obtener movimientos específicos de este vendedor
+                                const vendedorMovementsFiltered = allMovementsForDate.filter((m: any) => m.vendedorId === breakdownEntry.vendedorId);
 
-                            vendedorBreakdown.push({
-                                vendedorId: breakdownEntry.vendedorId,
-                                vendedorName: breakdownEntry.vendedorName,
-                                ventanaId: breakdownEntry.ventanaId,
-                                ventanaName: breakdownEntry.ventanaName,
-                                totalSales: breakdownEntry.totalSales,
-                                totalPayouts: vendedorTotalPayouts,
-                                listeroCommission: breakdownEntry.commissionListero,
-                                vendedorCommission: breakdownEntry.commissionVendedor,
-                                balance: breakdownBalance,
-                                totalPaid: vendedorTotalPaid,
-                                totalCollected: vendedorTotalCollected,
-                                remainingBalance: vendedorRemainingBalance,
-                                ticketCount: breakdownEntry.totalTicketsCount,
-                                // ✅ CRÍTICO: Sorteos específicos de este vendedor (NO agrupados con otros vendedores)
-                                bySorteo: vendedorSorteos,
-                                // ✅ CRÍTICO: Movimientos específicos de este vendedor (NO agrupados con otros vendedores)
-                                movements: vendedorMovementsFiltered,
-                            });
+                                vendedorBreakdown.push({
+                                    vendedorId: breakdownEntry.vendedorId,
+                                    vendedorName: breakdownEntry.vendedorName,
+                                    ventanaId: breakdownEntry.ventanaId,
+                                    ventanaName: breakdownEntry.ventanaName,
+                                    totalSales: breakdownEntry.totalSales,
+                                    totalPayouts: vendedorTotalPayouts,
+                                    listeroCommission: breakdownEntry.commissionListero,
+                                    vendedorCommission: breakdownEntry.commissionVendedor,
+                                    balance: breakdownBalance,
+                                    totalPaid: vendedorTotalPaid,
+                                    totalCollected: vendedorTotalCollected,
+                                    remainingBalance: vendedorRemainingBalance,
+                                    ticketCount: breakdownEntry.totalTicketsCount,
+                                    // ✅ CRÍTICO: Sorteos específicos de este vendedor (NO agrupados con otros vendedores)
+                                    bySorteo: vendedorSorteos,
+                                    // ✅ CRÍTICO: Movimientos específicos de este vendedor (NO agrupados con otros vendors)
+                                    movements: vendedorMovementsFiltered,
+                                });
+                            }
                         }
+                        statement.byVendedor = vendedorBreakdown.sort((a, b) => a.vendedorName.localeCompare(b.vendedorName));
                     }
-                    statement.byVendedor = vendedorBreakdown.sort((a, b) => a.vendedorName.localeCompare(b.vendedorName));
                 }
                 // Cuando hay agrupación, bancaId/ventanaId/vendedorId son null según dimensión
                 if (dimension === "banca") {
