@@ -916,10 +916,14 @@ export const AccountsController = {
       effectiveDimension = "vendedor";
       effectiveVendedorId = user.id;
     } else if (user.role === Role.VENTANA) {
-      if (dimension !== "ventana") {
-        throw new AppError("Los usuarios VENTANA solo pueden ver bySorteo de su ventana", 403, "FORBIDDEN");
+      // ✅ Permitir AMBAS dimensiones: 'ventana' y 'vendedor'
+      if (!['ventana', 'vendedor'].includes(dimension)) {
+        throw new AppError("Los usuarios VENTANA solo pueden usar dimension='ventana' o 'vendedor'", 403, "FORBIDDEN");
       }
-      effectiveDimension = "ventana";
+      
+      effectiveDimension = dimension as "ventana" | "vendedor";
+      
+      // Obtener ventanaId del usuario
       if (!effectiveVentanaId) {
         const userWithVentana = await prisma.user.findUnique({
           where: { id: user.id },
@@ -927,9 +931,24 @@ export const AccountsController = {
         });
         effectiveVentanaId = userWithVentana?.ventanaId || null;
       }
+      
       if (!effectiveVentanaId) {
         throw new AppError("El usuario VENTANA no tiene una ventana asignada", 400, "NO_VENTANA");
       }
+      
+      // ✅ Si dimension='vendedor', validar vendedorId (si está presente)
+      if (effectiveDimension === "vendedor" && vendedorId) {
+        const vendedor = await prisma.user.findUnique({
+          where: { id: vendedorId },
+          select: { ventanaId: true, role: true },
+        });
+        if (!vendedor || vendedor.ventanaId !== effectiveVentanaId || vendedor.role !== Role.VENDEDOR) {
+          throw new AppError("El vendedor no pertenece a tu ventana", 403, "FORBIDDEN");
+        }
+        effectiveVendedorId = vendedorId;
+      }
+      
+      // ✅ Si dimension='vendedor' SIN vendedorId, getBySorteo() agrupará automáticamente
     }
 
     // Obtener bySorteo
