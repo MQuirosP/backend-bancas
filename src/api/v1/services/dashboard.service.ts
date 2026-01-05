@@ -2558,29 +2558,32 @@ export const DashboardService = {
         filters.bancaId
       );
 
-      // ✅ CORRECCIÓN CRÍTICA: Usar la misma función que estado de cuentas para garantizar valores idénticos
-      // Reutilizar getMonthlyRemainingBalance que calcula exactamente el mismo valor que en GET /accounts/statement
-      for (const ventanaId of allVentanaIds) {
-        try {
-          const saldoAHoy = await getMonthlyRemainingBalance(
-            effectiveMonth,
-            "ventana",
-            ventanaId,
-            undefined,
-            filters.bancaId
-          );
+      // ✅ OPTIMIZACIÓN CRÍTICA: Usar batch en lugar de loop serializado
+      // Procesar todas las ventanas en paralelo (en chunks de 5) en lugar de una por una
+      try {
+        const balancesBatch = await getMonthlyRemainingBalancesBatch(
+          effectiveMonth,
+          "ventana",
+          Array.from(allVentanaIds),
+          filters.bancaId
+        );
+
+        for (const ventanaId of allVentanaIds) {
+          const saldoAHoy = balancesBatch.get(ventanaId) ?? 0;
           monthSaldoByVentana.set(ventanaId, saldoAHoy);
-        } catch (error) {
-          logger.error({
-            layer: 'service',
-            action: 'MONTHLY_ACCUMULATED_HELPER_ERROR_CXP',
-            payload: {
-              ventanaId: ventanaId.substring(0, 8),
-              effectiveMonth,
-              error: (error as Error).message,
-              note: "Error getting monthly remaining balance, using 0",
-            },
-          });
+        }
+      } catch (error) {
+        logger.error({
+          layer: 'service',
+          action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENTANA_CXP',
+          payload: {
+            effectiveMonth,
+            dimension: "ventana",
+            error: (error as Error).message,
+            note: "Error getting monthly remaining balances batch, using 0 for all",
+          },
+        });
+        for (const ventanaId of allVentanaIds) {
           monthSaldoByVentana.set(ventanaId, 0);
         }
       }
