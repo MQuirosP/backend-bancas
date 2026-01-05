@@ -501,8 +501,8 @@ export class AccountStatementSyncService {
         ticketCount,
         month: monthStr,
         bancaId: finalBancaId,
-        ventanaId: dimension === "vendedor" ? undefined : finalVentanaId, // Para vendedores: NO incluir ventanaId
-        vendedorId: vendedorId,
+        ventanaId: dimension === "vendedor" ? null : (finalVentanaId || null), // ✅ CORREGIDO: Usar null explícito para vendedores
+        vendedorId: vendedorId || null,
       };
 
       // ✅ CORRECCIÓN: Usar findFirst + update/create en lugar de upsert
