@@ -82,8 +82,15 @@ export const UserController = {
       return success(res, data, meta);
     }
 
-    // Si es ADMIN: sin restricciones
-    const { data, meta } = await UserService.list({ page, pageSize, role, search, isActive });
+    // Si es ADMIN: devuelve TODOS sin filtrar isActive a menos que se especifique explícitamente
+    // No pasar isActive si no se envió en la query para traer activos e inactivos
+    const { data, meta } = await UserService.list({ 
+      page, 
+      pageSize, 
+      role, 
+      search, 
+      isActive: req.query.isActive !== undefined ? isActive : undefined 
+    });
     return success(res, data, meta);
   }
   ,
