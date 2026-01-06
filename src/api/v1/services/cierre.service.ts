@@ -20,6 +20,7 @@ import {
 import { CierreMetaExtras, BandsUsedMetadata } from '../types/cierre.types';
 import { createHash } from 'crypto';
 import logger from '../../../core/logger';
+import { crDateService } from '../../../utils/crDateService';
 
 /**
  * Servicio para Cierre Operativo
@@ -330,9 +331,10 @@ export class CierreService {
   private static buildWhereConditions(filters: CierreFilters): Prisma.Sql {
     const conditions: Prisma.Sql[] = [];
 
-    // Rango de fechas (obligatorio)
-    conditions.push(Prisma.sql`t."createdAt" >= ${filters.fromDate}`);
-    conditions.push(Prisma.sql`t."createdAt" <= ${filters.toDate}`);
+    // Rango de fechas (obligatorio) usando businessDate (prioridad) o createdAt->CR (fallback)
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
+    conditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`);
+    conditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`);
 
     // Filtro de ventana
     // Filtrar por banca activa (para ADMIN multibanca)
@@ -870,8 +872,9 @@ function hashConfig(bandsUsed: BandsUsedMetadata): string {
 async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult> {
   // Construir condiciones WHERE (repetimos lógica para uso fuera de la clase)
   const conditions: Prisma.Sql[] = [];
-  conditions.push(Prisma.sql`t."createdAt" >= ${filters.fromDate}`);
-  conditions.push(Prisma.sql`t."createdAt" <= ${filters.toDate}`);
+  const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
+  conditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`);
+  conditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`);
   // Filtrar por banca activa (para ADMIN multibanca)
   if (filters.bancaId) {
     conditions.push(Prisma.sql`EXISTS (
