@@ -1327,13 +1327,20 @@ export const AccountsService = {
             WHERE t."ventanaId" = ${ventanaId}::uuid
             AND t."deletedAt" IS NULL
             AND t."isActive" = true
-            AND t."status" != 'CANCELLED'
+            AND t."status" NOT IN ('CANCELLED', 'EXCLUDED')
             AND EXISTS (
                 SELECT 1 FROM "Sorteo" s
                 WHERE s.id = t."sorteoId"
                 AND s.status = 'EVALUATED'
             )
             AND j."deletedAt" IS NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM "SorteoListaExclusion" sle
+                WHERE sle."sorteoId" = t."sorteoId"
+                AND sle."ventanaId" = t."ventanaId"
+                AND (sle."vendedorId" IS NULL OR sle."vendedorId" = t."vendedorId")
+                AND sle."multiplierId" IS NULL
+            )
             AND COALESCE(
                 t."businessDate",
                 DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
@@ -1355,6 +1362,13 @@ export const AccountsService = {
                 SELECT 1 FROM "Sorteo" s
                 WHERE s.id = t."sorteoId"
                 AND s.status = 'EVALUATED'
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM "SorteoListaExclusion" sle
+                WHERE sle."sorteoId" = t."sorteoId"
+                AND sle."ventanaId" = t."ventanaId"
+                AND (sle."vendedorId" IS NULL OR sle."vendedorId" = t."vendedorId")
+                AND sle."multiplierId" IS NULL
             )
             AND COALESCE(
                 t."businessDate",

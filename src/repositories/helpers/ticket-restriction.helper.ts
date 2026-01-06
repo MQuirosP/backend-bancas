@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
 import { getCRLocalComponents } from "../../utils/businessDate";
+import { restrictionCacheV2 } from "../../utils/restrictionCacheV2";
 
 /**
  * Calcula los acumulados del sorteo para múltiples números y alcance en una sola query
@@ -499,5 +500,380 @@ export async function validateMaxTotalForNumber(
     dynamicLimit: params.dynamicLimit,
     multiplierFilter: params.multiplierFilter,
   });
+}
+
+/**
+ * 🚀 PARALLEL VALIDATION SYSTEM
+ *
+ * Valida múltiples reglas de restricción en paralelo para mejorar rendimiento.
+ * Las validaciones independientes se ejecutan concurrentemente mientras que
+ * las dependientes se ejecutan secuencialmente.
+ */
+
+interface ValidationTask {
+  ruleId: string;
+  rule: any;
+  numbersToValidate: string[];
+  dynamicLimit?: number | null;
+  priority: number;
+  dependencies: string[]; // IDs de reglas que deben ejecutarse antes
+}
+
+interface ValidationResult {
+  ruleId: string;
+  success: boolean;
+  error?: Error;
+  executionTime: number;
+  numbersValidated: number;
+}
+
+/**
+ * Determina si dos reglas pueden validarse en paralelo
+ * Reglas independientes pueden ejecutarse concurrentemente
+ */
+function canValidateInParallel(ruleA: any, ruleB: any): boolean {
+  // Reglas del mismo scope no pueden ser paralelas (comparten acumulados)
+  if (ruleA.userId === ruleB.userId && ruleA.ventanaId === ruleB.ventanaId && ruleA.bancaId === ruleB.bancaId) {
+    return false;
+  }
+
+  // Reglas con diferentes multiplicadores pueden ser paralelas
+  if (ruleA.multiplierId !== ruleB.multiplierId) {
+    return true;
+  }
+
+  // Reglas con números específicos diferentes pueden ser paralelas
+  const numbersA = resolveNumbersToValidate(ruleA, new Date());
+  const numbersB = resolveNumbersToValidate(ruleB, new Date());
+
+  if (numbersA.length > 0 && numbersB.length > 0) {
+    // Si no hay overlap en números, pueden ser paralelas
+    const overlap = numbersA.some(num => numbersB.includes(num));
+    if (!overlap) {
+      return true;
+    }
+  }
+
+  // Por defecto, asumir secuencial para seguridad
+  return false;
+}
+
+/**
+ * Organiza reglas en grupos paralelos y secuenciales
+ */
+function organizeValidationTasks(rules: any[]): {
+  parallelGroups: ValidationTask[][];
+  sequentialTasks: ValidationTask[];
+} {
+  const tasks: ValidationTask[] = rules.map((rule, index) => ({
+    ruleId: rule.id,
+    rule,
+    numbersToValidate: resolveNumbersToValidate(rule, new Date()),
+    priority: index, // Mantener orden original como fallback
+    dependencies: [],
+  }));
+
+  const parallelGroups: ValidationTask[][] = [];
+  const processed = new Set<string>();
+
+  // Algoritmo simple: agrupar reglas que no comparten scope
+  for (const task of tasks) {
+    if (processed.has(task.ruleId)) continue;
+
+    const group: ValidationTask[] = [task];
+    processed.add(task.ruleId);
+
+    // Buscar reglas compatibles para este grupo
+    for (const otherTask of tasks) {
+      if (processed.has(otherTask.ruleId)) continue;
+
+      // Verificar si puede unirse al grupo
+      const canJoin = group.every(existingTask =>
+        canValidateInParallel(existingTask.rule, otherTask.rule)
+      );
+
+      if (canJoin) {
+        group.push(otherTask);
+        processed.add(otherTask.ruleId);
+      }
+    }
+
+    parallelGroups.push(group);
+  }
+
+  return {
+    parallelGroups,
+    sequentialTasks: [], // Todas las reglas pueden ser paralelas en este caso
+  };
+}
+
+/**
+ * Ejecuta una tarea de validación individual
+ */
+async function executeValidationTask(
+  tx: Prisma.TransactionClient,
+  task: ValidationTask,
+  context: {
+    sorteoId: string;
+    numbers: Array<{ number: string; amountForNumber: number }>;
+  }
+): Promise<ValidationResult> {
+  const startTime = Date.now();
+
+  try {
+    const { rule, numbersToValidate } = task;
+
+    if (numbersToValidate.length > 0) {
+      // Case 1: Specific numbers in rule
+      let effectiveMaxAmount: number | null = null;
+      if (rule.maxAmount != null || task.dynamicLimit != null) {
+        const staticMaxAmount = rule.maxAmount ?? Infinity;
+        effectiveMaxAmount = task.dynamicLimit != null
+          ? Math.min(staticMaxAmount, task.dynamicLimit)
+          : staticMaxAmount;
+      }
+
+      if (effectiveMaxAmount != null) {
+        // Validar maxAmount por número
+        for (const num of numbersToValidate) {
+          const jugadasDelNumero = context.numbers.filter(n => n.number === num);
+          const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amountForNumber, 0);
+
+          if (sumForNumber > effectiveMaxAmount) {
+            const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
+            const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
+            const multiplierContext = rule.multiplierId ? ` (multiplicador: ${rule.multiplier?.name || '...'})` : '';
+            const available = Math.max(0, effectiveMaxAmount - sumForNumber);
+
+            throw new AppError(
+              `El número ${num}${multiplierContext}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
+              400,
+              {
+                code: "NUMBER_MAXAMOUNT_EXCEEDED",
+                number: num,
+                maxAmount: effectiveMaxAmount,
+                amountAttempted: sumForNumber,
+                scope: ruleScope,
+                isAutoDate: rule.isAutoDate,
+                isDynamic: task.dynamicLimit != null,
+                multiplierName: rule.multiplier?.name || undefined,
+                isPerNumber: true,
+                isPerTicket: true,
+                clarification: 'Límite calculado por número individual en este ticket, no acumulado ni por total del ticket',
+              }
+            );
+          }
+        }
+      }
+
+      if (rule.maxTotal != null || task.dynamicLimit != null) {
+        const staticMaxTotal = rule.maxTotal ?? Infinity;
+        const effectiveMaxTotal = task.dynamicLimit != null ? Math.min(staticMaxTotal, task.dynamicLimit) : staticMaxTotal;
+
+        const numbersToCheck = numbersToValidate.map(num => {
+          const amount = context.numbers.find(n => n.number === num)?.amountForNumber || 0;
+          return { number: num, amountForNumber: amount };
+        }).filter(n => n.amountForNumber > 0);
+
+        if (numbersToCheck.length > 0) {
+          const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
+          await validateMaxTotalForNumbers(tx, {
+            numbers: numbersToCheck,
+            rule: { ...rule, maxTotal: effectiveMaxTotal },
+            sorteoId: context.sorteoId,
+            dynamicLimit: task.dynamicLimit,
+            multiplierFilter
+          });
+        }
+      }
+    } else {
+      // Case 2: Global rule (no numbers)
+      const uniqueNumbers = [...new Set(context.numbers.map(n => n.number))];
+
+      let effectiveMaxAmount: number | null = null;
+      if (rule.maxAmount != null || task.dynamicLimit != null) {
+        const staticMaxAmount = rule.maxAmount ?? Infinity;
+        effectiveMaxAmount = task.dynamicLimit != null ? Math.min(staticMaxAmount, task.dynamicLimit) : staticMaxAmount;
+      }
+
+      if (effectiveMaxAmount != null) {
+        for (const num of uniqueNumbers) {
+          const jugadasDelNumero = context.numbers.filter(n => n.number === num);
+          const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amountForNumber, 0);
+
+          if (sumForNumber > effectiveMaxAmount) {
+            const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
+            const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
+            const available = Math.max(0, effectiveMaxAmount - sumForNumber);
+
+            throw new AppError(
+              `El número ${num}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
+              400,
+              {
+                code: "NUMBER_MAXAMOUNT_EXCEEDED",
+                number: num,
+                maxAmount: effectiveMaxAmount,
+                amountAttempted: sumForNumber,
+                scope: ruleScope,
+                isAutoDate: rule.isAutoDate,
+                isDynamic: task.dynamicLimit != null,
+                multiplierName: rule.multiplier?.name || undefined,
+                isPerNumber: true,
+                isPerTicket: true,
+                clarification: 'Límite calculado por número individual en este ticket, no acumulado ni por total del ticket',
+              }
+            );
+          }
+        }
+      }
+
+      if (rule.maxTotal != null || task.dynamicLimit != null) {
+        const staticMaxTotal = rule.maxTotal ?? Infinity;
+        const effectiveMaxTotal = task.dynamicLimit != null ? Math.min(staticMaxTotal, task.dynamicLimit) : staticMaxTotal;
+
+        const numbersToCheck = uniqueNumbers.map(num => {
+          const amount = context.numbers.find(n => n.number === num)?.amountForNumber || 0;
+          return { number: num, amountForNumber: amount };
+        }).filter(n => n.amountForNumber > 0);
+
+        if (numbersToCheck.length > 0) {
+          const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
+          await validateMaxTotalForNumbers(tx, {
+            numbers: numbersToCheck,
+            rule: { ...rule, maxTotal: effectiveMaxTotal },
+            sorteoId: context.sorteoId,
+            dynamicLimit: task.dynamicLimit,
+            multiplierFilter
+          });
+        }
+      }
+    }
+
+    const executionTime = Date.now() - startTime;
+    return {
+      ruleId: task.ruleId,
+      success: true,
+      executionTime,
+      numbersValidated: numbersToValidate.length || context.numbers.length,
+    };
+
+  } catch (error) {
+    const executionTime = Date.now() - startTime;
+    return {
+      ruleId: task.ruleId,
+      success: false,
+      error: error as Error,
+      executionTime,
+      numbersValidated: task.numbersToValidate.length || context.numbers.length,
+    };
+  }
+}
+
+/**
+ * 🚀 VALIDA MÚLTIPLES REGLAS EN PARALELO
+ *
+ * Esta función reemplaza el procesamiento secuencial de reglas con un sistema paralelo
+ * que puede mejorar significativamente el rendimiento en escenarios con muchas reglas.
+ *
+ * @param tx Transacción de Prisma
+ * @param params Parámetros de validación paralela
+ */
+export async function validateRulesInParallel(
+  tx: Prisma.TransactionClient,
+  params: {
+    rules: any[]; // Reglas aplicables con relaciones
+    numbers: Array<{ number: string; amountForNumber: number }>; // Números y montos del ticket
+    sorteoId: string;
+    dynamicLimits?: Map<string, number>; // Map de ruleId -> dynamicLimit
+  }
+): Promise<void> {
+  const { rules, numbers, sorteoId, dynamicLimits = new Map() } = params;
+
+  if (rules.length === 0) {
+    return; // Nada que validar
+  }
+
+  const startTime = Date.now();
+
+  // Organizar tareas de validación
+  const { parallelGroups } = organizeValidationTasks(rules);
+
+  logger.info({
+    layer: 'repository',
+    action: 'PARALLEL_VALIDATION_START',
+    payload: {
+      totalRules: rules.length,
+      parallelGroups: parallelGroups.length,
+      totalNumbers: numbers.length,
+      sorteoId,
+    },
+  });
+
+  const allResults: ValidationResult[] = [];
+  const errors: Error[] = [];
+
+  // Ejecutar grupos en paralelo
+  for (const group of parallelGroups) {
+    if (group.length === 1) {
+      // Grupo de una sola regla - ejecutar directamente
+      const task = {
+        ...group[0],
+        dynamicLimit: dynamicLimits.get(group[0].ruleId) || null,
+      };
+
+      const result = await executeValidationTask(tx, task, { sorteoId, numbers });
+      allResults.push(result);
+
+      if (!result.success && result.error) {
+        errors.push(result.error);
+      }
+    } else {
+      // Grupo paralelo - ejecutar todas las tareas concurrentemente
+      const groupPromises = group.map(task => {
+        const enhancedTask = {
+          ...task,
+          dynamicLimit: dynamicLimits.get(task.ruleId) || null,
+        };
+        return executeValidationTask(tx, enhancedTask, { sorteoId, numbers });
+      });
+
+      const groupResults = await Promise.all(groupPromises);
+      allResults.push(...groupResults);
+
+      // Recopilar errores
+      for (const result of groupResults) {
+        if (!result.success && result.error) {
+          errors.push(result.error);
+        }
+      }
+    }
+  }
+
+  const totalTime = Date.now() - startTime;
+  const successfulValidations = allResults.filter(r => r.success).length;
+  const failedValidations = allResults.filter(r => !r.success).length;
+  const totalValidatedNumbers = allResults.reduce((sum, r) => sum + r.numbersValidated, 0);
+  const avgExecutionTime = allResults.length > 0 ? allResults.reduce((sum, r) => sum + r.executionTime, 0) / allResults.length : 0;
+
+  logger.info({
+    layer: 'repository',
+    action: 'PARALLEL_VALIDATION_COMPLETE',
+    payload: {
+      totalRules: rules.length,
+      parallelGroups: parallelGroups.length,
+      successfulValidations,
+      failedValidations,
+      totalValidatedNumbers,
+      totalTime,
+      avgExecutionTime: Math.round(avgExecutionTime),
+      errorsCount: errors.length,
+      sorteoId,
+    },
+  });
+
+  // Si hay errores, lanzar el primero (comportamiento backward compatible)
+  if (errors.length > 0) {
+    throw errors[0];
+  }
 }
 

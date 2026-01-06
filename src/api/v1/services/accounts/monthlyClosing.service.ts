@@ -68,14 +68,20 @@ export async function calculateRealMonthBalance(
         // 1. Ventas (desde jugadas)
         const salesResult = await prisma.$queryRaw<Array<{ total_sales: number; ticket_count: bigint }>>(
             Prisma.sql`
-                SELECT 
+                SELECT
                     COALESCE(SUM(j.amount), 0) as total_sales,
                     COUNT(DISTINCT t.id)::bigint as ticket_count
                 FROM "Ticket" t
                 INNER JOIN "Jugada" j ON j."ticketId" = t.id
                 ${ticketWhereClause}
                 AND j."deletedAt" IS NULL
-                AND j."isExcluded" = false
+                AND NOT EXISTS (
+                    SELECT 1 FROM "sorteo_lista_exclusion" sle
+                    WHERE sle."sorteo_id" = t."sorteoId"
+                    AND sle."ventana_id" = t."ventanaId"
+                    AND (sle."vendedor_id" IS NULL OR sle."vendedor_id" = t."vendedorId")
+                    AND sle."multiplier_id" IS NULL
+                )
             `
         );
 
@@ -97,13 +103,19 @@ export async function calculateRealMonthBalance(
         const commissionField = dimension === "vendedor" ? "USER" : "VENTANA";
         const commissionResult = await prisma.$queryRaw<Array<{ total_commission: number }>>(
             Prisma.sql`
-                SELECT 
+                SELECT
                     COALESCE(SUM(CASE WHEN j."commissionOrigin" = ${commissionField} THEN j."commissionAmount" ELSE 0 END), 0) as total_commission
                 FROM "Ticket" t
                 INNER JOIN "Jugada" j ON j."ticketId" = t.id
                 ${ticketWhereClause}
                 AND j."deletedAt" IS NULL
-                AND j."isExcluded" = false
+                AND NOT EXISTS (
+                    SELECT 1 FROM "sorteo_lista_exclusion" sle
+                    WHERE sle."sorteo_id" = t."sorteoId"
+                    AND sle."ventana_id" = t."ventanaId"
+                    AND (sle."vendedor_id" IS NULL OR sle."vendedor_id" = t."vendedorId")
+                    AND sle."multiplier_id" IS NULL
+                )
             `
         );
 
