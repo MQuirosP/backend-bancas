@@ -131,12 +131,16 @@ export interface CierreSorteoGroup {
  */
 export interface CierreBandData {
   band: number; // 80, 85, 90, 92, 200, etc.
+  // Totales consolidados (compatibilidad hacia atrás)
   totalVendida: number;
   ganado: number;
   comisionTotal: number;
   netoDespuesComision: number;
   ticketsCount: number;
   refuerzos?: number;
+  // Desglose por tipo (opcional)
+  numero?: CeldaMetrics;
+  reventado?: CeldaMetrics;
 }
 
 /**
