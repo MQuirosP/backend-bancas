@@ -195,8 +195,7 @@ export const AccountStatementRepository = {
     isSettled?: boolean;
     canEdit?: boolean;
     ticketCount?: number;
-    ventanaId?: string | null;
-    vendedorId?: string | null;
+    // ventanaId and vendedorId are immutable after creation and should not be updated here
     settledAt?: Date | null;
     settledBy?: string | null;
   }) {

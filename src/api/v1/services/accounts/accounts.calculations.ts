@@ -495,16 +495,7 @@ export async function calculateDayStatement(
 
     // ✅ CRÍTICO: Si el statement encontrado tiene ventanaId: null pero debería tenerlo (corregido desde tickets),
     // actualizarlo para evitar que quede con datos incorrectos
-    if (statement.ventanaId === null && correctedVentanaId) {
-        await AccountStatementRepository.update(statement.id, {
-            ventanaId: correctedVentanaId,
-        });
-        // Refrescar el statement para tener los datos actualizados
-        const updatedStatement = await AccountStatementRepository.findById(statement.id);
-        if (updatedStatement) {
-            Object.assign(statement, updatedStatement);
-        }
-    }
+    // ventanaId is now immutable after creation; do not update it here
 
     // ✅ ACTUALIZADO: Ya no necesitamos verificar el tipo porque ambos campos pueden estar presentes
     // findOrCreate ya maneja correctamente la búsqueda y creación

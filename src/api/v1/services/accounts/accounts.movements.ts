@@ -74,16 +74,38 @@ export async function registerPayment(data: {
     if (data.idempotencyKey) {
         const existing = await AccountPaymentRepository.findByIdempotencyKey(data.idempotencyKey);
         if (existing) {
-            // Agregar propiedad temporal para indicar que es respuesta cacheada
             (existing as any).cached = true;
-            return existing;
+            // Obtener el statement actualizado para la respuesta
+            let statement: any = undefined;
+            if (existing.accountStatementId) {
+                statement = await AccountStatementRepository.findById(existing.accountStatementId);
+            }
+            // Formatear fechas para respuesta
+            const paymentForResponse: any = {
+                ...existing,
+                date: crDateService.postgresDateToCRString(existing.date),
+                createdAt: existing.createdAt.toISOString(),
+                updatedAt: existing.updatedAt.toISOString(),
+                reversedAt: existing.reversedAt ? existing.reversedAt.toISOString() : null,
+            };
+            if (paymentForResponse.paidBy) delete paymentForResponse.paidBy;
+            if (paymentForResponse.accountStatement) delete paymentForResponse.accountStatement;
+            if (paymentForResponse.reversedByUser) delete paymentForResponse.reversedByUser;
+            let statementForResponse: any = statement ? {
+                ...statement,
+                date: crDateService.postgresDateToCRString(statement.date),
+                createdAt: statement.createdAt.toISOString(),
+                updatedAt: statement.updatedAt.toISOString(),
+                settledAt: statement.settledAt ? statement.settledAt.toISOString() : null,
+            } : undefined;
+            return {
+                payment: paymentForResponse,
+                statement: statementForResponse,
+            };
         }
     }
 
-    // ✅ CRÍTICO: Inferir ventanaId desde vendedorId si no está presente
-    // y bancaId desde ventanaId para garantizar que siempre se persistan
-    // Esto debe hacerse ANTES de crear/buscar el AccountStatement para asegurar
-    // que el statement también tenga los campos correctos
+    // Inferir ventanaId y bancaId
     let finalVentanaId = data.ventanaId;
     let finalBancaId: string | undefined;
 
@@ -107,11 +129,105 @@ export async function registerPayment(data: {
         }
     }
 
-    // ✅ CRÍTICO: Recalcular el statement completo desde tickets ANTES de registrar el movimiento
-    // Esto asegura que ticketCount, totalSales, totalPayouts, comisiones, etc. estén siempre correctos
-    const dimension: "ventana" | "vendedor" = finalVentanaId ? "ventana" : "vendedor";
+    // Buscar o crear el AccountStatement de forma segura
+    let statement;
+    if (data.vendedorId) {
+        // Buscar por date y vendedorId (ventanaId debe ser null)
+        statement = await prisma.accountStatement.findFirst({
+            where: {
+                date: paymentDate,
+                vendedorId: data.vendedorId,
+                ventanaId: null,
+            },
+        });
+        if (!statement) {
+            try {
+                statement = await prisma.accountStatement.create({
+                    data: {
+                        date: paymentDate,
+                        month,
+                        ventanaId: null,
+                        vendedorId: data.vendedorId,
+                        bancaId: finalBancaId ?? null,
+                        ticketCount: 0,
+                        totalSales: 0,
+                        totalPayouts: 0,
+                        listeroCommission: 0,
+                        vendedorCommission: 0,
+                        balance: 0,
+                        totalPaid: 0,
+                        totalCollected: 0,
+                        remainingBalance: 0,
+                        isSettled: false,
+                        canEdit: true,
+                    },
+                });
+            } catch (err: any) {
+                if (err.code === 'P2002') {
+                    statement = await prisma.accountStatement.findFirst({
+                        where: {
+                            date: paymentDate,
+                            vendedorId: data.vendedorId,
+                            ventanaId: null,
+                        },
+                    });
+                } else {
+                    throw err;
+                }
+            }
+        }
+    } else if (finalVentanaId) {
+        // Buscar por date y ventanaId (vendedorId debe ser null)
+        statement = await prisma.accountStatement.findFirst({
+            where: {
+                date: paymentDate,
+                ventanaId: finalVentanaId,
+                vendedorId: null,
+            },
+        });
+        if (!statement) {
+            try {
+                statement = await prisma.accountStatement.create({
+                    data: {
+                        date: paymentDate,
+                        month,
+                        ventanaId: finalVentanaId,
+                        vendedorId: null,
+                        bancaId: finalBancaId ?? null,
+                        ticketCount: 0,
+                        totalSales: 0,
+                        totalPayouts: 0,
+                        listeroCommission: 0,
+                        vendedorCommission: 0,
+                        balance: 0,
+                        totalPaid: 0,
+                        totalCollected: 0,
+                        remainingBalance: 0,
+                        isSettled: false,
+                        canEdit: true,
+                    },
+                });
+            } catch (err: any) {
+                if (err.code === 'P2002') {
+                    statement = await prisma.accountStatement.findFirst({
+                        where: {
+                            date: paymentDate,
+                            ventanaId: finalVentanaId,
+                            vendedorId: null,
+                        },
+                    });
+                } else {
+                    throw err;
+                }
+            }
+        }
+    }
+    if (!statement) {
+        throw new AppError("No se pudo obtener o crear el estado de cuenta", 500, "STATEMENT_NOT_FOUND");
+    }
 
-    // Recalcular statement completo desde tickets para asegurar consistencia
+    // Recalcular el statement completo desde tickets para asegurar consistencia
+    const dimension: "ventana" | "vendedor" = finalVentanaId ? "ventana" : "vendedor";
     const recalculatedStatement = await calculateDayStatement(
         paymentDate,
         month,
@@ -119,18 +235,86 @@ export async function registerPayment(data: {
         finalVentanaId ?? undefined,
         data.vendedorId ?? undefined,
         finalBancaId,
-        "ADMIN" // Usar ADMIN para permitir ver todos los datos
+        "ADMIN"
     );
 
-    // ✅ FIX: Usar el ID del statement que ya retornó calculateDayStatement
-    // Esto evita problemas de búsqueda cuando hay conflictos de constraint único
-    // (por ejemplo, cuando findOrCreate retorna un statement consolidado de ventana
-    // pero findByDate busca con ventanaId + vendedorId)
-    const statement = await AccountStatementRepository.findById(recalculatedStatement.id);
+    // Envolver en transacción: crear pago y actualizar statement
+    let payment: any = undefined;
+    let processedTime: string = "00:00";
+    await prisma.$transaction(async (tx) => {
+        // Obtener totales actuales
+        const [currentTotalPaid, currentTotalCollected] = await Promise.all([
+            AccountPaymentRepository.getTotalPaid(statement.id),
+            AccountPaymentRepository.getTotalCollected(statement.id),
+        ]);
 
-    if (!statement) {
-        throw new AppError("No se pudo obtener el estado de cuenta", 500, "STATEMENT_NOT_FOUND");
-    }
+        const baseBalance = recalculatedStatement.balance;
+        const currentRemainingBalance = baseBalance - currentTotalCollected + currentTotalPaid;
+
+        // Validar monto
+        if (data.type === "payment" && data.amount <= 0) {
+            throw new AppError("El monto debe ser positivo", 400, "INVALID_AMOUNT");
+        }
+        if (data.type === "collection" && data.amount <= 0) {
+            throw new AppError("El monto debe ser positivo", 400, "INVALID_AMOUNT");
+        }
+
+        // Procesar time
+        try {
+            processedTime = processTime(data.time);
+        } catch (error: any) {
+            if (error instanceof AppError) throw error;
+            throw new AppError(`Error al procesar la hora: ${error.message}`, 400, "TIME_VALIDATION_ERROR");
+        }
+
+        // Crear pago
+        payment = await tx.accountPayment.create({
+            data: {
+                accountStatementId: statement.id,
+                date: paymentDate,
+                month,
+                time: processedTime,
+                ventanaId: finalVentanaId,
+                vendedorId: data.vendedorId,
+                bancaId: finalBancaId,
+                amount: data.amount,
+                type: data.type,
+                method: data.method,
+                notes: data.notes,
+                isFinal: data.isFinal || false,
+                idempotencyKey: data.idempotencyKey,
+                paidById: data.paidById,
+                paidByName: data.paidByName,
+            },
+        });
+
+        // Calcular nuevos totales
+        const newTotalPaid = data.type === "payment" ? currentTotalPaid + data.amount : currentTotalPaid;
+        const newTotalCollected = data.type === "collection" ? currentTotalCollected + data.amount : currentTotalCollected;
+        const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
+        const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
+
+        // Actualizar statement
+        await tx.accountStatement.update({
+            where: { id: statement.id },
+            data: {
+                ticketCount: recalculatedStatement.ticketCount,
+                totalSales: recalculatedStatement.totalSales,
+                totalPayouts: recalculatedStatement.totalPayouts,
+                listeroCommission: recalculatedStatement.listeroCommission,
+                vendedorCommission: recalculatedStatement.vendedorCommission,
+                balance: baseBalance,
+                totalPaid: newTotalPaid,
+                totalCollected: newTotalCollected,
+                remainingBalance: newRemainingBalance,
+                isSettled,
+                canEdit: !isSettled,
+            },
+        });
+    });
+    // ...existing code for post-save time-fix, sync, cache, response...
+
+    // ...existing code for post-save time-fix, sync, cache, response...
 
     // ✅ Obtener totales actuales de movimientos (antes de agregar el nuevo)
     const [currentTotalPaid, currentTotalCollected] = await Promise.all([
@@ -168,7 +352,7 @@ export async function registerPayment(data: {
     // ✅ CRÍTICO: Procesar el campo time según especificación del FE
     // El FE siempre envía formato válido HH:MM si está presente
     // Si no está presente, usar "00:00" como default
-    let processedTime: string;
+    // processedTime is already declared above
     try {
         processedTime = processTime(data.time);
     } catch (error: any) {
@@ -185,7 +369,7 @@ export async function registerPayment(data: {
     // El repository también inferirá si es necesario, pero aquí ya los tenemos correctos
     // de la inferencia previa que se hizo para el AccountStatement
     // ⚠️ IMPORTANTE: Pasar time explícitamente (nunca undefined) para asegurar que se guarde
-    const payment = await AccountPaymentRepository.create({
+    payment = await AccountPaymentRepository.create({
         accountStatementId: statement.id,
         date: paymentDate,
         month,
