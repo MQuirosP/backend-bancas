@@ -688,6 +688,8 @@ export async function getStatementDirect(
     const [yearForMonth, monthForMonth] = effectiveMonth.split("-").map(Number);
     const monthStartDateForQuery = new Date(Date.UTC(yearForMonth, monthForMonth - 1, 1));
     const monthStartDateCRStrForQuery = crDateService.dateUTCToCRString(monthStartDateForQuery);
+    // Helper: primer día del mes efectivo en formato YYYY-MM-DD
+    const firstDayOfMonthStr = `${yearForMonth}-${String(monthForMonth).padStart(2, '0')}-01`;
 
     /**
      * ========================================================================
@@ -1276,7 +1278,10 @@ export async function getStatementDirect(
 
     // ✅ NUEVO: Obtener saldos del mes anterior para agregarlos como movimiento especial al primer día
     // Esto permite que el saldo se intercale naturalmente con los sorteos, igual que los pagos/cobros
-    const firstDayOfMonthStr = `${yearForMonth}-${String(monthForMonth).padStart(2, '0')}-01`;
+    // Determinar el primer día del mes objetivo para inyectar el saldo de apertura
+    // Si el rango cruza de mes, el saldo de apertura debe ir en el 01 del mes nuevo dentro del rango
+    const [endY, endM] = endDateCRStr.split('-').map(Number);
+    const firstDayOfOpeningMonthStr = `${endY}-${String(endM).padStart(2, '0')}-01`;
     const previousMonthBalancesByEntity = new Map<string, number>();
 
     // ✅ OPTIMIZACIÓN: Cache para saldos del mes anterior cuando el rango cruza meses/años
@@ -1286,30 +1291,33 @@ export async function getStatementDirect(
     // ✅ CRÍTICO: Obtener saldo del mes anterior ANTES de procesar statements
     // Esto asegura que el movimiento especial esté disponible incluso si no hay ventas el primer día
     let previousMonthBalanceForMovement: number = 0;
+    // Calcular el string del mes objetivo (fin del rango)
+    const targetMonthStr = `${endY}-${String(endM).padStart(2, '0')}`;
+    // Calcular el mes anterior al mes objetivo
+    const prevMonthDateForTarget = new Date(Date.UTC(endY, endM - 1, 1));
+    prevMonthDateForTarget.setUTCMonth(prevMonthDateForTarget.getUTCMonth() - 1);
+    const previousMonthStrForTarget = `${prevMonthDateForTarget.getUTCFullYear()}-${String(prevMonthDateForTarget.getUTCMonth() + 1).padStart(2, '0')}`;
+
     if (dimension === "banca") {
         if (bancaId) {
             previousMonthBalanceForMovement = await getPreviousMonthFinalBalance(
-                effectiveMonth,
+                targetMonthStr,
                 "banca",
                 undefined,
                 undefined,
                 bancaId
             );
         } else {
-            // SCOPE=ALL (todas las bancas): sumar todos los cierres del mes anterior
-            const [y, m] = effectiveMonth.split("-").map(Number);
-            const prev = new Date(Date.UTC(y, m - 1, 1));
-            prev.setUTCMonth(prev.getUTCMonth() - 1);
-            const previousMonthStr = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`;
+            // SCOPE=ALL (todas las bancas): sumar todos los cierres del mes anterior al mes objetivo
             const closings = await prisma.monthlyClosingBalance.findMany({
-                where: { closingMonth: previousMonthStr, dimension: "banca" },
+                where: { closingMonth: previousMonthStrForTarget, dimension: "banca" },
                 select: { closingBalance: true },
             });
             previousMonthBalanceForMovement = closings.reduce((sum, c) => sum + Number((c as any).closingBalance || 0), 0);
         }
     } else if (dimension === "ventana") {
         previousMonthBalanceForMovement = await getPreviousMonthFinalBalance(
-            effectiveMonth,
+            targetMonthStr,
             "ventana",
             ventanaId || null,
             undefined,
@@ -1317,7 +1325,7 @@ export async function getStatementDirect(
         );
     } else {
         previousMonthBalanceForMovement = await getPreviousMonthFinalBalance(
-            effectiveMonth,
+            targetMonthStr,
             "vendedor",
             undefined,
             vendedorId || null,
@@ -1329,7 +1337,7 @@ export async function getStatementDirect(
     // SOLO si no existe ya (para evitar duplicación)
     // Insertar SIEMPRE el movimiento especial del primer día (aun si el monto es 0) para forzar visibilidad del día
     {
-        const firstDayMovements = movementsByDate.get(firstDayOfMonthStr) || [];
+        const firstDayMovements = movementsByDate.get(firstDayOfOpeningMonthStr) || [];
         const entityId = dimension === "banca"
             ? (bancaId || 'all-bancas')
             : dimension === "ventana"
@@ -1341,7 +1349,7 @@ export async function getStatementDirect(
         const alreadyExists = firstDayMovements.some(m => m.id === movementId);
 
         if (!alreadyExists) {
-            // Agregar movimiento especial al inicio del día
+            // Agregar movimiento especial al inicio del día del mes objetivo (primer día)
             firstDayMovements.unshift({
                 id: movementId,
                 type: "payment" as const,
@@ -1349,15 +1357,15 @@ export async function getStatementDirect(
                 method: "Saldo del mes anterior",
                 notes: `Saldo arrastrado del mes anterior`,
                 isReversed: false,
-                createdAt: new Date(`${firstDayOfMonthStr}T00:00:00.000Z`).toISOString(),
-                date: firstDayOfMonthStr,
+                createdAt: new Date(`${firstDayOfOpeningMonthStr}T00:00:00.000Z`).toISOString(),
+                date: firstDayOfOpeningMonthStr,
                 time: "00:00",
                 balance: 0,
                 bancaId: dimension === "banca" ? (bancaId || null) : null,
                 ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
                 vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
             });
-            movementsByDate.set(firstDayOfMonthStr, firstDayMovements);
+            movementsByDate.set(firstDayOfOpeningMonthStr, firstDayMovements);
         }
     }
 
@@ -1411,14 +1419,14 @@ export async function getStatementDirect(
     // ✅ CRÍTICO: Asegurar que el primer día tenga una entrada en byDateAndDimension si hay movimiento especial
     // ✅ CORRECCIÓN: Usar la misma clave groupKey que se usa para los tickets para evitar duplicación
     {
-        // Calcular la misma clave que se usaría para tickets en ese día
+        // Calcular la misma clave que se usaría para tickets en ese día (primer día del mes objetivo)
         const firstDayGroupKey = shouldGroupByDate
-            ? firstDayOfMonthStr // Solo fecha cuando hay agrupación
+            ? firstDayOfOpeningMonthStr // Solo fecha cuando hay agrupación
             : (dimension === "banca"
-                ? `${firstDayOfMonthStr}_${bancaId || 'null'}`
+                ? `${firstDayOfOpeningMonthStr}_${bancaId || 'null'}`
                 : dimension === "ventana"
-                    ? `${firstDayOfMonthStr}_${ventanaId || 'null'}`
-                    : `${firstDayOfMonthStr}_${vendedorId || 'null'}`);
+                    ? `${firstDayOfOpeningMonthStr}_${ventanaId || 'null'}`
+                    : `${firstDayOfOpeningMonthStr}_${vendedorId || 'null'}`);
 
         if (!byDateAndDimension.has(firstDayGroupKey)) {
             // Crear entrada vacía para el primer día si no existe (para que el movimiento especial se muestre)

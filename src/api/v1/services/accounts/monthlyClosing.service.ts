@@ -100,11 +100,29 @@ export async function calculateRealMonthBalance(
         const totalPayouts = Number(payoutsResult[0]?.total_payouts || 0);
 
         // 3. Comisiones
-        const commissionField = dimension === "vendedor" ? "USER" : "VENTANA";
+        // Para vendedor: solo comisiones originadas en USER
+        // Para ventana: solo comisiones originadas en VENTANA
+        // Para banca: TODAS las comisiones (USER y VENTANA) impactan la banca
         const commissionResult = await prisma.$queryRaw<Array<{ total_commission: number }>>(
-            Prisma.sql`
+            dimension === "banca"
+            ? Prisma.sql`
                 SELECT
-                    COALESCE(SUM(CASE WHEN j."commissionOrigin" = ${commissionField} THEN j."commissionAmount" ELSE 0 END), 0) as total_commission
+                  COALESCE(SUM(j."commissionAmount"), 0) as total_commission
+                FROM "Ticket" t
+                INNER JOIN "Jugada" j ON j."ticketId" = t.id
+                ${ticketWhereClause}
+                AND j."deletedAt" IS NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM "sorteo_lista_exclusion" sle
+                    WHERE sle."sorteo_id" = t."sorteoId"
+                    AND sle."ventana_id" = t."ventanaId"
+                    AND (sle."vendedor_id" IS NULL OR sle."vendedor_id" = t."vendedorId")
+                    AND sle."multiplier_id" IS NULL
+                )
+            `
+            : Prisma.sql`
+                SELECT
+                  COALESCE(SUM(CASE WHEN j."commissionOrigin" = ${dimension === "vendedor" ? Prisma.sql`'USER'` : Prisma.sql`'VENTANA'`} THEN j."commissionAmount" ELSE 0 END), 0) as total_commission
                 FROM "Ticket" t
                 INNER JOIN "Jugada" j ON j."ticketId" = t.id
                 ${ticketWhereClause}
@@ -141,9 +159,8 @@ export async function calculateRealMonthBalance(
             paymentsWhere.vendedorId = null;
         }
         if (dimension === "banca" && bancaId) {
+            // Incluir TODOS los pagos/cobros asociados a la banca, sin restringir por vendedor/ventana
             paymentsWhere.bancaId = bancaId;
-            paymentsWhere.vendedorId = null;
-            paymentsWhere.ventanaId = null;
         }
 
         const payments = await prisma.accountPayment.findMany({
