@@ -4809,6 +4809,22 @@ export async function getPreviousMonthFinalBalance(
             // ✅ CRÍTICO: Para vendedores, SOLO filtrar por vendedorId
             // NO incluir ventanaId - el cierre del vendedor tiene su propio registro único
             closingWhere.vendedorId = vendedorId;
+        } else if (dimension === "vendedor" && !vendedorId) {
+            // ✅ CRÍTICO: Cuando dimension="vendedor" sin vendedorId, sumar todos los cierres de vendedores
+            const allVendedorClosings = await prisma.monthlyClosingBalance.findMany({
+                where: {
+                    closingMonth: previousMonthStr,
+                    dimension: "vendedor",
+                },
+                select: {
+                    closingBalance: true,
+                },
+            });
+
+            if (allVendedorClosings.length > 0) {
+                const totalBalance = allVendedorClosings.reduce((sum, c) => sum + parseFloat(c.closingBalance.toString()), 0);
+                return totalBalance;
+            }
         } else if (dimension === "ventana" && ventanaId) {
             closingWhere.ventanaId = ventanaId;
             closingWhere.vendedorId = null;
@@ -4847,6 +4863,38 @@ export async function getPreviousMonthFinalBalance(
             closingWhere.bancaId = bancaId;
             closingWhere.vendedorId = null;
             closingWhere.ventanaId = null;
+        } else if (dimension === "banca" && !bancaId) {
+            // ✅ CRÍTICO: Cuando dimension="banca" sin bancaId, sumar todos los cierres de bancas (scope=all)
+            const allBancaClosings = await prisma.monthlyClosingBalance.findMany({
+                where: {
+                    closingMonth: previousMonthStr,
+                    dimension: "banca",
+                    vendedorId: null,
+                    ventanaId: null,
+                },
+                select: {
+                    closingBalance: true,
+                },
+            });
+
+            if (allBancaClosings.length > 0) {
+                const totalBalance = allBancaClosings.reduce((sum, c) => sum + parseFloat(c.closingBalance.toString()), 0);
+                logger.info({
+                    layer: "service",
+                    action: "PREVIOUS_MONTH_BALANCE_FROM_CLOSING_SUMMED_BANCA",
+                    payload: {
+                        effectiveMonth,
+                        dimension,
+                        bancaId: null,
+                        closingMonth: previousMonthStr,
+                        closingBalance: totalBalance,
+                        bancasCount: allBancaClosings.length,
+                        source: "monthly_closing_balance_summed_banca",
+                    },
+                });
+                return totalBalance;
+            }
+            // Si no hay cierres, continuar con el fallback
         }
 
         const closingBalance = await prisma.monthlyClosingBalance.findFirst({
@@ -4882,11 +4930,62 @@ export async function getPreviousMonthFinalBalance(
             // Si incluimos ventanaId, puede encontrar el statement consolidado de ventana en lugar del del vendedor
             if (vendedorId) {
                 where.vendedorId = vendedorId;
+            } else {
+                // ✅ CRÍTICO: Si no hay vendedorId, buscar todos los statements de vendedores
+                const allVendedorStatements = await prisma.accountStatement.findMany({
+                    where: {
+                        date: {
+                            gte: firstDayOfPreviousMonth,
+                            lte: lastDayOfPreviousMonth,
+                        },
+                        isSettled: true,
+                        vendedorId: { not: null },
+                    },
+                    orderBy: { date: "desc" },
+                    select: {
+                        date: true,
+                        remainingBalance: true,
+                    },
+                });
+
+                if (allVendedorStatements.length > 0) {
+                    const lastDate = allVendedorStatements[0].date;
+                    const totalBalance = allVendedorStatements
+                        .filter(s => s.date.getTime() === lastDate.getTime())
+                        .reduce((sum, s) => sum + (s.remainingBalance || 0), 0);
+                    return totalBalance;
+                }
             }
             // ❌ NO incluir ventanaId aquí - el statement del vendedor tiene su propio vendedorId único
         } else if (dimension === "ventana") {
             if (ventanaId) {
                 where.ventanaId = ventanaId;
+            } else {
+                // ✅ CRÍTICO: Si no hay ventanaId, buscar todos los statements consolidados de ventanas
+                const allVentanaStatements = await prisma.accountStatement.findMany({
+                    where: {
+                        date: {
+                            gte: firstDayOfPreviousMonth,
+                            lte: lastDayOfPreviousMonth,
+                        },
+                        isSettled: true,
+                        ventanaId: { not: null },
+                        vendedorId: null,
+                    },
+                    orderBy: { date: "desc" },
+                    select: {
+                        date: true,
+                        remainingBalance: true,
+                    },
+                });
+
+                if (allVentanaStatements.length > 0) {
+                    const lastDate = allVentanaStatements[0].date;
+                    const totalBalance = allVentanaStatements
+                        .filter(s => s.date.getTime() === lastDate.getTime())
+                        .reduce((sum, s) => sum + (s.remainingBalance || 0), 0);
+                    return totalBalance;
+                }
             }
             where.vendedorId = null; // Solo statements consolidados de ventana
         } else if (dimension === "banca") {
@@ -4894,6 +4993,49 @@ export async function getPreviousMonthFinalBalance(
             if (bancaId) {
                 // ✅ CRÍTICO: AccountStatement tiene bancaId directamente (no usar relación ventana)
                 where.bancaId = bancaId;
+            } else {
+                // ✅ CRÍTICO: Si no hay bancaId, buscar todos los statements de bancas de ese mes
+                const allBancaStatements = await prisma.accountStatement.findMany({
+                    where: {
+                        date: {
+                            gte: firstDayOfPreviousMonth,
+                            lte: lastDayOfPreviousMonth,
+                        },
+                        isSettled: true,
+                        bancaId: { not: null },
+                        ventanaId: null,
+                        vendedorId: null,
+                    },
+                    orderBy: { date: "desc" },
+                    select: {
+                        date: true,
+                        remainingBalance: true,
+                        ticketCount: true,
+                    },
+                });
+
+                if (allBancaStatements.length > 0) {
+                    // Obtener la última fecha disponible
+                    const lastDate = allBancaStatements[0].date;
+                    // Sumar todos los statements de esa fecha
+                    const totalBalance = allBancaStatements
+                        .filter(s => s.date.getTime() === lastDate.getTime())
+                        .reduce((sum, s) => sum + (s.remainingBalance || 0), 0);
+                    
+                    logger.info({
+                        layer: "service",
+                        action: "PREVIOUS_MONTH_BALANCE_FROM_SETTLED_SUMMED_BANCA",
+                        payload: {
+                            effectiveMonth,
+                            dimension,
+                            source: "settled_statements_summed",
+                            lastDate: lastDate.toISOString().split("T")[0],
+                            totalBalance,
+                            bancasCount: allBancaStatements.filter(s => s.date.getTime() === lastDate.getTime()).length,
+                        },
+                    });
+                    return totalBalance;
+                }
             }
         }
 
