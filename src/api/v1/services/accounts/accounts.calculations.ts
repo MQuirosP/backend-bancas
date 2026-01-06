@@ -1287,13 +1287,26 @@ export async function getStatementDirect(
     // Esto asegura que el movimiento especial esté disponible incluso si no hay ventas el primer día
     let previousMonthBalanceForMovement: number = 0;
     if (dimension === "banca") {
-        previousMonthBalanceForMovement = await getPreviousMonthFinalBalance(
-            effectiveMonth,
-            "banca",
-            undefined,
-            undefined,
-            bancaId || null
-        );
+        if (bancaId) {
+            previousMonthBalanceForMovement = await getPreviousMonthFinalBalance(
+                effectiveMonth,
+                "banca",
+                undefined,
+                undefined,
+                bancaId
+            );
+        } else {
+            // SCOPE=ALL (todas las bancas): sumar todos los cierres del mes anterior
+            const [y, m] = effectiveMonth.split("-").map(Number);
+            const prev = new Date(Date.UTC(y, m - 1, 1));
+            prev.setUTCMonth(prev.getUTCMonth() - 1);
+            const previousMonthStr = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`;
+            const closings = await prisma.monthlyClosingBalance.findMany({
+                where: { closingMonth: previousMonthStr, dimension: "banca" },
+                select: { closingBalance: true },
+            });
+            previousMonthBalanceForMovement = closings.reduce((sum, c) => sum + Number((c as any).closingBalance || 0), 0);
+        }
     } else if (dimension === "ventana") {
         previousMonthBalanceForMovement = await getPreviousMonthFinalBalance(
             effectiveMonth,
@@ -1314,10 +1327,11 @@ export async function getStatementDirect(
 
     // ✅ CRÍTICO: Agregar movimiento especial directamente a movementsByDate para el primer día
     // SOLO si no existe ya (para evitar duplicación)
-    if (previousMonthBalanceForMovement !== 0) {
+    // Insertar SIEMPRE el movimiento especial del primer día (aun si el monto es 0) para forzar visibilidad del día
+    {
         const firstDayMovements = movementsByDate.get(firstDayOfMonthStr) || [];
         const entityId = dimension === "banca"
-            ? (bancaId || 'null')
+            ? (bancaId || 'all-bancas')
             : dimension === "ventana"
                 ? (ventanaId || 'null')
                 : (vendedorId || 'null');
@@ -1338,7 +1352,7 @@ export async function getStatementDirect(
                 createdAt: new Date(`${firstDayOfMonthStr}T00:00:00.000Z`).toISOString(),
                 date: firstDayOfMonthStr,
                 time: "00:00",
-                balance: previousMonthBalanceForMovement,
+                balance: 0,
                 bancaId: dimension === "banca" ? (bancaId || null) : null,
                 ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
                 vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
@@ -1396,7 +1410,7 @@ export async function getStatementDirect(
     // ✅ NOTA: NO filtrar aquí - necesitamos todos los movimientos del mes para calcular acumulados correctos
     // ✅ CRÍTICO: Asegurar que el primer día tenga una entrada en byDateAndDimension si hay movimiento especial
     // ✅ CORRECCIÓN: Usar la misma clave groupKey que se usa para los tickets para evitar duplicación
-    if (previousMonthBalanceForMovement !== 0) {
+    {
         // Calcular la misma clave que se usaría para tickets en ese día
         const firstDayGroupKey = shouldGroupByDate
             ? firstDayOfMonthStr // Solo fecha cuando hay agrupación
