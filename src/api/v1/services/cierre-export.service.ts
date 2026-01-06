@@ -160,41 +160,37 @@ export class CierreExportService {
     for (const loteriaGroup of data.loterias) {
       let loteriaSubtotal = this.createEmptyMetrics();
 
-      // Iterar por cada sorteo de la lotería
+      // Iterar por cada sorteo de la lotería (ya separado por tipo en la vista)
       for (const sorteoGroup of loteriaGroup.sorteos) {
-        // ✅ NUEVO: Buscar la banda directamente (ya sumada NUMERO + REVENTADO)
         const bandaData = sorteoGroup.bands[String(banda)];
-        
-        if (bandaData) {
-          // ✅ NUEVO: Formatear sorteo con fecha si el periodo es extenso
-          let sorteoDisplay = sorteoGroup.sorteo.turno;
-          if (isExtendedPeriod && sorteoGroup.sorteo.scheduledAt) {
-            const sorteoDate = new Date(sorteoGroup.sorteo.scheduledAt);
-            // Formato: "YYYY-MM-DD HH:MM" (fecha en CR)
-            const dateStr = crDateService.dateUTCToCRString(sorteoDate);
-            const timeStr = sorteoGroup.sorteo.turno;
-            sorteoDisplay = `${dateStr} ${timeStr}`;
-          }
+        if (!bandaData) continue;
 
-          const row = sheet.addRow([
-            loteriaGroup.loteria.name,
-            sorteoDisplay,
-            bandaData.totalVendida,
-            bandaData.ganado,
-            bandaData.comisionTotal,
-            bandaData.netoDespuesComision,
-          ]);
-          this.styleDataRow(row);
-          this.accumulateMetrics(loteriaSubtotal, {
-            totalVendida: bandaData.totalVendida,
-            ganado: bandaData.ganado,
-            comisionTotal: bandaData.comisionTotal,
-            netoDespuesComision: bandaData.netoDespuesComision,
-            refuerzos: bandaData.refuerzos || 0,
-            ticketsCount: bandaData.ticketsCount,
-            jugadasCount: 0, // No disponible en CierreBandData
-          });
+        // Formatear turno (con fecha si es periodo extendido). sorteo.turno ya incluye 'Numero' o 'Reventado'
+        let turnoDisplay = sorteoGroup.sorteo.turno;
+        if (isExtendedPeriod && sorteoGroup.sorteo.scheduledAt) {
+          const sorteoDate = new Date(sorteoGroup.sorteo.scheduledAt);
+          const dateStr = crDateService.dateUTCToCRString(sorteoDate);
+          turnoDisplay = `${dateStr} ${turnoDisplay}`;
         }
+
+        const row = sheet.addRow([
+          loteriaGroup.loteria.name,
+          turnoDisplay,
+          bandaData.totalVendida,
+          bandaData.ganado,
+          bandaData.comisionTotal,
+          bandaData.netoDespuesComision,
+        ]);
+        this.styleDataRow(row);
+        this.accumulateMetrics(loteriaSubtotal, {
+          totalVendida: bandaData.totalVendida,
+          ganado: bandaData.ganado,
+          comisionTotal: bandaData.comisionTotal,
+          netoDespuesComision: bandaData.netoDespuesComision,
+          refuerzos: bandaData.refuerzos || 0,
+          ticketsCount: bandaData.ticketsCount,
+          jugadasCount: 0,
+        });
       }
 
       // Subtotal por lotería (si hay datos)

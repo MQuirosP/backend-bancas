@@ -399,6 +399,8 @@ export class CierreService {
     for (const row of rawData) {
       const loteriaId = row.loteriaId;
       const sorteoId = row.sorteoId;
+      const tipo = row.tipo;
+      const sorteoKey = `${sorteoId}|${tipo}`;
       const bandaKey = String(row.banda);
 
       // Obtener o crear lotería
@@ -416,42 +418,53 @@ export class CierreService {
       const loteriaGroup = loteriaMap.get(loteriaId)!;
 
       // Obtener o crear sorteo
-      if (!loteriaGroup.sorteos.has(sorteoId)) {
-        loteriaGroup.sorteos.set(sorteoId, {
+      if (!loteriaGroup.sorteos.has(sorteoKey)) {
+        loteriaGroup.sorteos.set(sorteoKey, {
           sorteo: {
             id: sorteoId,
-            turno: row.turno,
+            turno: `${row.turno} ${tipo === 'NUMERO' ? 'Numero' : 'Reventado'}`,
             scheduledAt: row.scheduledAt?.toISOString(),
           },
-          bands: new Map(), // ✅ Bands directamente (sin separar por tipo)
+          bands: new Map(),
           subtotal: this.createEmptyMetrics(),
         });
       }
 
-      const sorteoGroup = loteriaGroup.sorteos.get(sorteoId)!;
+      const sorteoGroup = loteriaGroup.sorteos.get(sorteoKey)!;
       const sorteoBands = sorteoGroup.bands;
 
-      // ✅ SUMAR NUMERO + REVENTADO: Crear o actualizar banda (acumula ambos tipos)
+      // ��� SUMAR NUMERO + REVENTADO (conservando consolidado) y acumular desglose por tipo
       const metrics = this.rowToMetrics(row);
       if (!sorteoBands.has(bandaKey)) {
         sorteoBands.set(bandaKey, {
           band: row.banda,
-          totalVendida: metrics.totalVendida,
-          ganado: metrics.ganado,
-          comisionTotal: metrics.comisionTotal,
-          netoDespuesComision: metrics.netoDespuesComision,
-          ticketsCount: metrics.ticketsCount,
-          refuerzos: metrics.refuerzos,
+          totalVendida: 0,
+          ganado: 0,
+          comisionTotal: 0,
+          netoDespuesComision: 0,
+          ticketsCount: 0,
+          refuerzos: 0,
+          numero: undefined,
+          reventado: undefined,
         });
-      } else {
-        // ✅ Acumular métricas en banda existente (suma NUMERO + REVENTADO)
-        const existingBand = sorteoBands.get(bandaKey)!;
-        existingBand.totalVendida += metrics.totalVendida;
-        existingBand.ganado += metrics.ganado;
-        existingBand.comisionTotal += metrics.comisionTotal;
-        existingBand.netoDespuesComision += metrics.netoDespuesComision;
-        existingBand.ticketsCount += metrics.ticketsCount;
-        existingBand.refuerzos = (existingBand.refuerzos || 0) + (metrics.refuerzos || 0);
+      }
+      const bandRef = sorteoBands.get(bandaKey)!;
+
+      // Acumular consolidado
+      bandRef.totalVendida += metrics.totalVendida;
+      bandRef.ganado += metrics.ganado;
+      bandRef.comisionTotal += metrics.comisionTotal;
+      bandRef.netoDespuesComision += metrics.netoDespuesComision;
+      bandRef.ticketsCount += metrics.ticketsCount;
+      bandRef.refuerzos = (bandRef.refuerzos || 0) + (metrics.refuerzos || 0);
+
+      // Acumular desglose por tipo
+      if (row.tipo === 'NUMERO') {
+        if (!bandRef.numero) bandRef.numero = this.createEmptyMetrics();
+        this.accumulateMetrics(bandRef.numero, metrics);
+      } else if (row.tipo === 'REVENTADO') {
+        if (!bandRef.reventado) bandRef.reventado = this.createEmptyMetrics();
+        this.accumulateMetrics(bandRef.reventado, metrics);
       }
 
       // Acumular en subtotal de sorteo
