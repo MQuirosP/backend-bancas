@@ -69,7 +69,7 @@ function getMillisecondsUntilNextClosing(): number {
 /**
  * Process monthly closing for all dimensions
  */
-export async function executeMonthlyClosing(userId?: string): Promise<{
+export async function executeMonthlyClosing(userId?: string, specificMonth?: string): Promise<{
     success: boolean;
     closingMonth: string;
     vendedores: { success: number; errors: number };
@@ -78,21 +78,31 @@ export async function executeMonthlyClosing(userId?: string): Promise<{
     executedAt: Date;
 }> {
     try {
-        // Calculate previous month (the month to close)
-        const now = new Date();
-        const nowCRStr = crDateService.dateUTCToCRString(now);
-        const [currentYear, currentMonth] = nowCRStr.split('-').map(Number);
-        
-        // Calculate previous month
-        let previousYear = currentYear;
-        let previousMonth = currentMonth - 1;
-        
-        if (previousMonth < 1) {
-            previousMonth = 12;
-            previousYear--;
+        // Calculate previous month (the month to close) or use specific month
+        let closingMonth: string;
+
+        if (specificMonth) {
+            // Validate specific month format (YYYY-MM)
+            if (!/^\d{4}-\d{2}$/.test(specificMonth)) {
+                throw new Error(`Invalid month format: ${specificMonth}. Expected YYYY-MM`);
+            }
+            closingMonth = specificMonth;
+        } else {
+            const now = new Date();
+            const nowCRStr = crDateService.dateUTCToCRString(now);
+            const [currentYear, currentMonth] = nowCRStr.split('-').map(Number);
+
+            // Calculate previous month
+            let previousYear = currentYear;
+            let previousMonth = currentMonth - 1;
+
+            if (previousMonth < 1) {
+                previousMonth = 12;
+                previousYear--;
+            }
+
+            closingMonth = `${previousYear}-${String(previousMonth).padStart(2, '0')}`;
         }
-        
-        const closingMonth = `${previousYear}-${String(previousMonth).padStart(2, '0')}`;
         
         logger.info({
             layer: 'job',

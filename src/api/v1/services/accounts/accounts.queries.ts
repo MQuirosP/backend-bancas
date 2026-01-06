@@ -186,7 +186,7 @@ export async function getSorteoBreakdownBatch(
     const where: any = {
         OR: dateFilters,
         deletedAt: null,
-        status: { not: "CANCELLED" },
+        status: { notIn: ["CANCELLED", "EXCLUDED"] },
         // ✅ CORRECCIÓN: Filtrar estrictamente solo sorteos EVALUADOS (no CERRADOS)
         sorteo: {
             status: "EVALUATED"
