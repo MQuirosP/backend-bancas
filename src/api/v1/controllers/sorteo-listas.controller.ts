@@ -14,7 +14,7 @@ export const SorteoListasController = {
             vendedorId,
             multiplierId
         );
-        // ✅ Retornar estructura completa (no envuelto en "data")
+        //  Retornar estructura completa (no envuelto en "data")
         res.json({ success: true, ...response });
     },
 

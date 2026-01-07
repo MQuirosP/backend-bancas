@@ -101,7 +101,7 @@ export const UserService = {
     const phone = dto.phone !== undefined ? normalizePhone(dto.phone) : null;
     const isActive = dto.isActive ?? true;
 
-    // Regla role ↔ ventanaId
+    // Regla role  ventanaId
     if (role === Role.ADMIN) {
       dto.ventanaId = null as any;
     } else {
@@ -223,7 +223,7 @@ export const UserService = {
       if (!editingSelf && current.ventanaId !== actorVentanaId) {
         throw new AppError('No puedes modificar usuarios de otra ventana', 403);
       }
-      // ✅ VENTANA puede actualizar settings (para configurar impresora, tema, etc.)
+      //  VENTANA puede actualizar settings (para configurar impresora, tema, etc.)
       const forbiddenForVentana: Array<keyof UpdateUserDTO> = ['role', 'ventanaId', 'code'];
       for (const field of forbiddenForVentana) {
         if ((dto as any)[field] !== undefined) {
@@ -262,7 +262,7 @@ export const UserService = {
       toUpdate.password = await hashPassword(dto.password);
     }
 
-    // role ↔ ventanaId
+    // role  ventanaId
     if (dto.role) {
       if (actingRole === Role.VENTANA) {
         throw new AppError('No puedes cambiar el rol', 403);
@@ -306,7 +306,7 @@ export const UserService = {
       }
     }
 
-    // ✅ settings: merge parcial con los settings existentes
+    //  settings: merge parcial con los settings existentes
     // VENTANA puede modificar settings de usuarios de su ventana (validación de ventana ya aplicada arriba)
     if (dto.settings !== undefined) {
       // Obtener settings actuales (pueden ser null)

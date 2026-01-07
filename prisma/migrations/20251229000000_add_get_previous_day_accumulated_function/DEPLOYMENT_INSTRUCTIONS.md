@@ -1,6 +1,6 @@
 # Instrucciones de Despliegue: get_previous_day_accumulated
 
-## ✅ Migración Segura
+##  Migración Segura
 
 Esta migración es **100% segura** porque:
 - Solo crea una función PostgreSQL (no modifica datos existentes)

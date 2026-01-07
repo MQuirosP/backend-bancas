@@ -7,7 +7,7 @@ datasource db {
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
   // shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
-  // ⚠️ Shadow database deshabilitado para Supabase/PgBouncer
+  // ️ Shadow database deshabilitado para Supabase/PgBouncer
   // Usar "prisma migrate deploy" en lugar de "prisma migrate dev"
 }
 
@@ -203,7 +203,7 @@ model Ticket {
   paymentNotes    String? // Notas del último pago
   paymentHistory  Json? // Historial completo de pagos
 
-  // ✅ NUEVO: Cascada de cierre de sorteo
+  //  NUEVO: Cascada de cierre de sorteo
   isSorteoClosed Boolean @default(false) // Marca si el sorteo fue cerrado (para exclusión de reportes)
 
   jugadas       Jugada[]
@@ -220,8 +220,8 @@ model Ticket {
   @@index([status, isWinner])
   @@index([paidById])
   @@index([createdBy])
-  @@index([isSorteoClosed]) // ✅ Índice para filtrados rápidos de sorteos cerrados
-  // ✅ OPTIMIZACIÓN: Índices para cálculo de límite dinámico (calculateDynamicLimit)
+  @@index([isSorteoClosed]) //  Índice para filtrados rápidos de sorteos cerrados
+  //  OPTIMIZACIÓN: Índices para cálculo de límite dinámico (calculateDynamicLimit)
   @@index([ventanaId, createdAt, deletedAt]) // Para aggregate por ventana
   @@index([vendedorId, createdAt, deletedAt]) // Para aggregate por vendedor
 }
@@ -283,9 +283,9 @@ model Jugada {
   commissionAmount        Float     @default(0) // Snapshot inmutable: monto calculado
   commissionOrigin        String? // Snapshot inmutable: "user"|"ventana"|"banca"
   commissionRuleId        String? // Snapshot inmutable: ID de la regla que aplicó
-  listeroCommissionAmount Float     @default(0) // ✅ Snapshot inmutable: comisión del listero (ventana) calculada desde políticas
+  listeroCommissionAmount Float     @default(0) //  Snapshot inmutable: comisión del listero (ventana) calculada desde políticas
 
-  // ✅ NUEVO: Campos de exclusión de listas
+  //  NUEVO: Campos de exclusión de listas
   isExcluded     Boolean   @default(false) // Marca si esta jugada fue excluida de reportes
   excludedAt     DateTime? // Fecha de exclusión
   excludedBy     String?   @db.Uuid // Usuario que excluyó
@@ -298,8 +298,8 @@ model Jugada {
   @@index([ticketId])
   @@index([type])
   @@index([reventadoNumber])
-  @@index([isActive, isExcluded]) // ✅ Para filtros rápidos
-  @@index([multiplierId, isExcluded]) // ✅ Para exclusión por multiplicador
+  @@index([isActive, isExcluded]) //  Para filtros rápidos
+  @@index([multiplierId, isExcluded]) //  Para exclusión por multiplicador
 }
 
 model Sorteo {
@@ -411,11 +411,11 @@ model RestrictionRule {
   @@index([multiplierId])
   @@index([isAutoDate, isActive])
   @@index([salesPercentage])
-  // ✅ OPTIMIZACIÓN: Índices para resolveSalesCutoff (líneas 408-428 de restrictionRule.repository.ts)
+  //  OPTIMIZACIÓN: Índices para resolveSalesCutoff (líneas 408-428 de restrictionRule.repository.ts)
   @@index([userId, isActive, salesCutoffMinutes, number])
   @@index([ventanaId, isActive, salesCutoffMinutes, number])
   @@index([bancaId, isActive, salesCutoffMinutes, number])
-  // ✅ OPTIMIZACIÓN: Índices para getEffectiveLimits (líneas 298-352 de restrictionRule.repository.ts)
+  //  OPTIMIZACIÓN: Índices para getEffectiveLimits (líneas 298-352 de restrictionRule.repository.ts)
   @@index([userId, isActive, number])
   @@index([ventanaId, isActive, number])
   @@index([bancaId, isActive, number])
@@ -643,7 +643,7 @@ model AccountStatement {
   id         String   @id @default(uuid()) @db.Uuid
   date       DateTime @db.Date
   month      String   @db.VarChar(7) // YYYY-MM
-  // ✅ CRÍTICO: bancaId, ventanaId y vendedorId deben persistirse directamente (no inferirse)
+  //  CRÍTICO: bancaId, ventanaId y vendedorId deben persistirse directamente (no inferirse)
   // para evitar problemas cuando un vendedor cambia de ventana o una ventana cambia de banca
   bancaId    String?  @db.Uuid
   ventanaId  String?  @db.Uuid
@@ -660,10 +660,10 @@ model AccountStatement {
   // Saldo y pagos
   balance          Float @default(0)
   totalPaid        Float @default(0)
-  totalCollected   Float @default(0) // ✅ NUEVO: Total de collections (cobros) del día
+  totalCollected   Float @default(0) //  NUEVO: Total de collections (cobros) del día
   remainingBalance Float @default(0)
   
-  // ✅ NUEVO: Saldo acumulado progresivo desde el día 1 del mes
+  //  NUEVO: Saldo acumulado progresivo desde el día 1 del mes
   // Este campo se actualiza cuando se asienta el día (isSettled = true)
   // Fórmula: accumulatedBalance = previousDayAccumulatedBalance + balance
   // Para el día 1: accumulatedBalance = saldoMesAnterior + balance
@@ -674,7 +674,7 @@ model AccountStatement {
   isSettled Boolean @default(false)
   canEdit   Boolean @default(true)
 
-  // ✅ NUEVO: Campos de auditoría para asentamiento
+  //  NUEVO: Campos de auditoría para asentamiento
   settledAt DateTime? // Cuándo se asentó
   settledBy String?   @db.Uuid // Quién lo asentó (userId o null para automático)
 
@@ -701,7 +701,7 @@ model AccountStatement {
   @@index([vendedorId])
   @@index([isSettled])
   @@index([isSettled, date]) // Para queries del cron job
-  @@index([month, isSettled, date]) // ✅ NUEVO: Para queries eficientes de accumulatedBalance
+  @@index([month, isSettled, date]) //  NUEVO: Para queries eficientes de accumulatedBalance
 }
 
 model AccountPayment {
@@ -713,10 +713,10 @@ model AccountPayment {
   // Identificación del día
   date  DateTime @db.Date
   month String   @db.VarChar(7) // YYYY-MM
-  time  String?  @db.VarChar(5) // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
+  time  String?  @db.VarChar(5) //  NUEVO: HH:MM (opcional, hora del movimiento en CR)
 
   // Relaciones
-  // ✅ CRÍTICO: bancaId y ventanaId deben persistirse directamente (no inferirse)
+  //  CRÍTICO: bancaId y ventanaId deben persistirse directamente (no inferirse)
   // para evitar problemas cuando un vendedor cambia de ventana o una ventana cambia de banca
   bancaId    String? @db.Uuid
   ventanaId  String? @db.Uuid
@@ -746,7 +746,7 @@ model AccountPayment {
   updatedAt DateTime @updatedAt
 
   // Relaciones
-  // ✅ CRÍTICO: onDelete: Restrict previene borrar AccountStatement si tiene AccountPayment asociados
+  //  CRÍTICO: onDelete: Restrict previene borrar AccountStatement si tiene AccountPayment asociados
   // Esto protege los datos críticos de pagos/cobros de producción
   accountStatement AccountStatement @relation(fields: [accountStatementId], references: [id], onDelete: Restrict)
   banca            Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
@@ -872,16 +872,16 @@ model SorteosAutoConfig {
   id                  String    @id @default(uuid()) @db.Uuid
   autoOpenEnabled     Boolean   @default(false)
   autoCreateEnabled   Boolean   @default(false)
-  autoCloseEnabled    Boolean   @default(false) // ✅ NUEVO: Auto-close de sorteos sin ventas
+  autoCloseEnabled    Boolean   @default(false) //  NUEVO: Auto-close de sorteos sin ventas
   openCronSchedule    String? // Ej: "0 7 * * *" (1 AM CR = 7 AM UTC)
   createCronSchedule  String? // Ej: "30 7 * * *" (1:30 AM CR = 7:30 AM UTC)
-  closeCronSchedule   String? // ✅ NUEVO: Ej: "*/10 * * * *" (cada 10 minutos)
+  closeCronSchedule   String? //  NUEVO: Ej: "*/10 * * * *" (cada 10 minutos)
   lastOpenExecution   DateTime?
   lastCreateExecution DateTime?
-  lastCloseExecution  DateTime? // ✅ NUEVO: Última ejecución del cierre automático
+  lastCloseExecution  DateTime? //  NUEVO: Última ejecución del cierre automático
   lastOpenCount       Int?
   lastCreateCount     Int?
-  lastCloseCount      Int? // ✅ NUEVO: Cantidad de sorteos cerrados en la última ejecución
+  lastCloseCount      Int? //  NUEVO: Cantidad de sorteos cerrados en la última ejecución
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   updatedBy           String?   @db.Uuid

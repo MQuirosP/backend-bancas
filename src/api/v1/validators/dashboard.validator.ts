@@ -52,7 +52,7 @@ export const DashboardQuerySchema = z
   })
   .strict()
   .superRefine((val, ctx) => {
-    // ✅ CRÍTICO: Validar que date=range cuando hay fromDate/toDate
+    //  CRÍTICO: Validar que date=range cuando hay fromDate/toDate
     if ((val.fromDate || val.toDate) && val.date !== 'range') {
       ctx.addIssue({
         code: "custom",
@@ -78,7 +78,7 @@ export const DashboardQuerySchema = z
         });
       }
       
-      // ✅ Validar fromDate ≤ toDate
+      //  Validar fromDate ≤ toDate
       if (val.fromDate && val.toDate && val.fromDate > val.toDate) {
         ctx.addIssue({
           code: "custom",

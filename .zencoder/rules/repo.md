@@ -235,19 +235,19 @@ Automated jobs managed in `src/jobs/`:
 
 ## Key Features
 
-- ✅ **Layered Architecture** — Controllers → Services → Repositories → Prisma
-- ✅ **Audit Trails** — Complete ActivityLog for all actions
-- ✅ **Role-Based Access Control** — ADMIN, VENTANA, VENDEDOR with fine-grained permissions
-- ✅ **Transaction Management** — Retry logic for deadlocks/timeouts
-- ✅ **Commission System** — Hierarchical JSON-based policies with snapshots
-- ✅ **Validation** — Zod schemas throughout API
-- ✅ **Structured Logging** — Pino with context (layer, action, requestId, userId)
-- ✅ **Rate Limiting** — express-rate-limit middleware
-- ✅ **Security** — Helmet, CORS, bcrypt passwords, JWT tokens
-- ✅ **Caching** — Redis support (optional) for restrictions, commissions, sorteos
-- ✅ **Timezone Handling** — Costa Rica (UTC-6) timezone conversion utilities
-- ✅ **Error Monitoring** — Sentry integration
-- ✅ **Graceful Shutdown** — Proper cleanup of connections and jobs on SIGTERM/SIGINT
+-  **Layered Architecture** — Controllers → Services → Repositories → Prisma
+-  **Audit Trails** — Complete ActivityLog for all actions
+-  **Role-Based Access Control** — ADMIN, VENTANA, VENDEDOR with fine-grained permissions
+-  **Transaction Management** — Retry logic for deadlocks/timeouts
+-  **Commission System** — Hierarchical JSON-based policies with snapshots
+-  **Validation** — Zod schemas throughout API
+-  **Structured Logging** — Pino with context (layer, action, requestId, userId)
+-  **Rate Limiting** — express-rate-limit middleware
+-  **Security** — Helmet, CORS, bcrypt passwords, JWT tokens
+-  **Caching** — Redis support (optional) for restrictions, commissions, sorteos
+-  **Timezone Handling** — Costa Rica (UTC-6) timezone conversion utilities
+-  **Error Monitoring** — Sentry integration
+-  **Graceful Shutdown** — Proper cleanup of connections and jobs on SIGTERM/SIGINT
 
 ## Scripts Summary
 

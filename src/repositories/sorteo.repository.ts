@@ -6,7 +6,7 @@ import { Prisma, SorteoStatus, TicketStatus } from "@prisma/client";
 import { CreateSorteoDTO, UpdateSorteoDTO } from "../api/v1/dto/sorteo.dto";
 import { formatIsoLocal, parseCostaRicaDateTime } from "../utils/datetime";
 
-// ⬇️ helper para validar y obtener X del multiplier extra
+// ️ helper para validar y obtener X del multiplier extra
 async function resolveExtraMultiplierX(
   extraMultiplierId: string,
   loteriaId: string,
@@ -47,24 +47,24 @@ async function resolveExtraMultiplierX(
 
 const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
   name: d.name,
-  // ✅ Confiar en la fecha ya normalizada por zodDateCR() en el validator
+  //  Confiar en la fecha ya normalizada por zodDateCR() en el validator
   scheduledAt: d.scheduledAt instanceof Date
     ? d.scheduledAt
     : parseCostaRicaDateTime(d.scheduledAt), // Fallback por si acaso
   loteria: { connect: { id: d.loteriaId } },
-  digits: d.digits ?? 2, // ✅ Mapear campo digits (default 2 si no viene, aunque debería venir del service)
+  digits: d.digits ?? 2, //  Mapear campo digits (default 2 si no viene, aunque debería venir del service)
   // extraOutcomeCode, extraMultiplierId/X se quedan nulos al crear
 });
 
 const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
-  // ✅ ÚNICAMENTE se permite reprogramar la fecha/hora (más name/isActive si lo quieres)
+  //  ÚNICAMENTE se permite reprogramar la fecha/hora (más name/isActive si lo quieres)
   scheduledAt: d.scheduledAt
     ? d.scheduledAt instanceof Date
       ? d.scheduledAt
       : parseCostaRicaDateTime(d.scheduledAt) // Fallback por si acaso
     : undefined,
   name: d.name ?? undefined,
-  digits: d.digits ?? undefined, // ✅ Mapear campo digits
+  digits: d.digits ?? undefined, //  Mapear campo digits
   ...(d.loteriaId ? { loteria: { connect: { id: d.loteriaId } } } : {}),
   ...(typeof d.isActive === "boolean" ? { isActive: d.isActive } : {}),
   // No se permite tocar status/winning/extraOutcome/extraMultiplier aquí
@@ -194,7 +194,7 @@ const SorteoRepository = {
         },
       });
 
-      // ✅ NUEVO: Revertir flag de cierre en tickets (desbloquear)
+      //  NUEVO: Revertir flag de cierre en tickets (desbloquear)
       const ticketsAffected = await tx.ticket.updateMany({
         where: { sorteoId: id },
         data: { isSorteoClosed: false },
@@ -255,7 +255,7 @@ const SorteoRepository = {
   },
 
   /**
-   * ✅ NUEVO: Cierra sorteo con cascada a tickets
+   *  NUEVO: Cierra sorteo con cascada a tickets
    *
    * Transacción atómica que:
    * 1. Marca sorteo como CLOSED
@@ -524,7 +524,7 @@ const SorteoRepository = {
     return sorteo;
   },
 
-  // ⬇️ evaluate ahora paga jugadas y asigna multiplierId a REVENTADO ganadores
+  // ️ evaluate ahora paga jugadas y asigna multiplierId a REVENTADO ganadores
   // Dentro de SorteoRepository
   async evaluate(
     id: string,
@@ -709,7 +709,7 @@ const SorteoRepository = {
       ...(loteriaId ? { loteriaId } : {}),
       ...(status ? { status } : {}),
       ...(typeof isActive === 'boolean' ? { isActive } : {}),
-      // 🔑 Filtro de fecha: si se proporciona, usarlo; si no, sin restricción de fecha
+      //  Filtro de fecha: si se proporciona, usarlo; si no, sin restricción de fecha
       ...(dateFrom || dateTo
         ? {
           scheduledAt: {
@@ -746,7 +746,7 @@ const SorteoRepository = {
 
     const skip = Math.max(0, (page - 1) * pageSize);
 
-    // ✅ Optimización: Usar SQL raw con subconsultas para hasSales y ticketCount
+    //  Optimización: Usar SQL raw con subconsultas para hasSales y ticketCount
     // Evita N+1 queries y calcula ambos campos en una sola query
     const whereConditions: Prisma.Sql[] = [
       Prisma.sql`s."deletedAt" IS NULL`,
@@ -756,7 +756,7 @@ const SorteoRepository = {
       whereConditions.push(Prisma.sql`s."loteriaId" = ${loteriaId}::uuid`);
     }
     if (status) {
-      // ✅ Convertir enum a string literal para PostgreSQL
+      //  Convertir enum a string literal para PostgreSQL
       // Prisma.sql necesita el valor como string literal, no como enum TypeScript
       // Usar Prisma.raw() para insertar el string literal directamente en SQL (escapar comillas simples)
       const statusStr = String(status);
@@ -806,7 +806,7 @@ const SorteoRepository = {
         s."deletedByCascade",
         s."deletedByCascadeFrom",
         s."deletedByCascadeId",
-        -- ✅ NUEVO: Campos de ventas
+        --  NUEVO: Campos de ventas
         EXISTS(
           SELECT 1 FROM "Ticket" t
           WHERE t."sorteoId" = s.id
@@ -903,7 +903,7 @@ const SorteoRepository = {
       deletedByCascade: row.deletedByCascade,
       deletedByCascadeFrom: row.deletedByCascadeFrom,
       deletedByCascadeId: row.deletedByCascadeId,
-      // ✅ NUEVO: Campos de ventas
+      //  NUEVO: Campos de ventas
       hasSales: row.hasSales,
       ticketCount: row.ticketCount,
       loteria: row.loteria,
@@ -917,7 +917,7 @@ const SorteoRepository = {
     const existing = await prisma.sorteo.findUnique({ where: { id } });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
 
-    // ✅ MEJORADO: Usar transacción para marcar sorteo Y tickets como eliminados
+    //  MEJORADO: Usar transacción para marcar sorteo Y tickets como eliminados
     const result = await prisma.$transaction(async (tx) => {
       // 1️⃣ Eliminar sorteo
       const s = await tx.sorteo.update({
@@ -947,7 +947,7 @@ const SorteoRepository = {
         },
       });
 
-      // 2️⃣ ✅ NUEVO: Marcar tickets como eliminados también
+      // 2️⃣  NUEVO: Marcar tickets como eliminados también
       const ticketsAffected = await tx.ticket.updateMany({
         where: {
           sorteoId: id,
@@ -972,7 +972,7 @@ const SorteoRepository = {
         byCascade,
         cascadeFrom,
         cascadeId,
-        ticketsAffected: result.ticketsAffected,  // ✅ NUEVO: Log cuántos tickets se marcaron
+        ticketsAffected: result.ticketsAffected,  //  NUEVO: Log cuántos tickets se marcaron
       },
     });
     return result.sorteo;
@@ -1358,7 +1358,7 @@ const SorteoRepository = {
             scheduledAt: new Date(it.ts),
             status: SorteoStatus.SCHEDULED,
             isActive: true,
-            digits, // ✅ Heredar digits de la lotería
+            digits, //  Heredar digits de la lotería
           })),
           skipDuplicates: true,
         });

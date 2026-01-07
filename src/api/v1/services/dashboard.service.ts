@@ -31,7 +31,7 @@ interface DashboardFilters {
   interval?: 'day' | 'hour' | 'week' | 'month'; // Para timeseries
   aging?: boolean; // Para CxC aging
   compare?: boolean; // Para comparación con período anterior
-  cxcDimension?: 'ventana' | 'vendedor'; // ✅ NUEVO: Dimensión para CxC/CxP (default: 'ventana')
+  cxcDimension?: 'ventana' | 'vendedor'; //  NUEVO: Dimensión para CxC/CxP (default: 'ventana')
 }
 
 interface GananciaResult {
@@ -57,7 +57,7 @@ interface GananciaResult {
     winners: number;
     winRate: number;
     isActive: boolean;
-    periodBalance: number; // ✅ NUEVO: Saldo del periodo filtrado
+    periodBalance: number; //  NUEVO: Saldo del periodo filtrado
   }>;
   byLoteria: Array<{
     loteriaId: string;
@@ -92,7 +92,7 @@ interface CxCResult {
     amount: number; // compatibilidad: saldo positivo (CxC)
     remainingBalance: number; // Período filtrado
     monthlyAccumulated: {
-      remainingBalance: number; // ✅ NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
+      remainingBalance: number; //  NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
     };
     isActive: boolean;
   }>;
@@ -113,7 +113,7 @@ interface CxCResult {
     amount: number; // compatibilidad: saldo positivo (CxC)
     remainingBalance: number; // Período filtrado
     monthlyAccumulated: {
-      remainingBalance: number; // ✅ NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
+      remainingBalance: number; //  NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
     };
     isActive: boolean;
   }>;
@@ -136,7 +136,7 @@ interface CxPResult {
     amount: number; // compatibilidad: saldo positivo (CxP)
     remainingBalance: number; // Período filtrado
     monthlyAccumulated: {
-      remainingBalance: number; // ✅ NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
+      remainingBalance: number; //  NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
     };
     isActive: boolean;
   }>;
@@ -158,7 +158,7 @@ interface CxPResult {
     amount: number; // compatibilidad: saldo positivo (CxP)
     remainingBalance: number; // Período filtrado
     monthlyAccumulated: {
-      remainingBalance: number; // ✅ NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
+      remainingBalance: number; //  NUEVO: Saldo a Hoy (acumulado del mes completo, inmutable respecto período)
     };
     isActive: boolean;
   }>;
@@ -171,13 +171,13 @@ interface DashboardSummary {
   commissionUser: number;
   commissionVentana: number;
   commissionVentanaTotal: number; // Alias para compatibilidad con frontend
-  gananciaListeros?: number; // ✅ NUEVO: Ganancia neta de listeros (commissionVentana - commissionUser)
-  gananciaBanca?: number; // ✅ NUEVO: Alias conceptual para net
+  gananciaListeros?: number; //  NUEVO: Ganancia neta de listeros (commissionVentana - commissionUser)
+  gananciaBanca?: number; //  NUEVO: Alias conceptual para net
   totalTickets: number;
   winningTickets: number;
   net: number;
-  margin: number; // ✅ PORCENTAJE: Margen neto con máximo 2 decimales (toFixed(2))
-  winRate: number; // ✅ PORCENTAJE: Tasa de ganancia con máximo 2 decimales (toFixed(2))
+  margin: number; //  PORCENTAJE: Margen neto con máximo 2 decimales (toFixed(2))
+  winRate: number; //  PORCENTAJE: Tasa de ganancia con máximo 2 decimales (toFixed(2))
 }
 
 const COSTA_RICA_OFFSET_HOURS = -6;
@@ -306,16 +306,16 @@ function buildTicketBaseFilters(
     Prisma.sql`${Prisma.raw(`${alias}."isActive"`)} = true`,
     Prisma.sql`${Prisma.raw(`${alias}."status"`)} IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
     ticketBusinessDateCondition(alias, fromDateStr, toDateStr),
-    // ✅ CAMBIO STRICT: Solo incluir sorteos EVALUATED (Global Filter)
+    //  CAMBIO STRICT: Solo incluir sorteos EVALUATED (Global Filter)
     Prisma.sql`EXISTS (
       SELECT 1 FROM "Sorteo" s
       WHERE s.id = ${Prisma.raw(`${alias}."sorteoId"`)}
       AND s.status = 'EVALUATED'
     )`,
-    // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
+    //  NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
     // NOTA: Debido al workaround del esquema, sle.ventana_id contiene el ID del USUARIO listero.
     // Debemos hacer JOIN con User para obtener el ID real de la ventana y compararlo con el ticket.
-    // ✅ FIX: Solo excluir el ticket completo si la exclusión es TOTAL (multiplier_id IS NULL).
+    //  FIX: Solo excluir el ticket completo si la exclusión es TOTAL (multiplier_id IS NULL).
     // Las exclusiones parciales (por multiplicador) se manejan en las consultas de agregación (Jugada).
     Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "sorteo_lista_exclusion" sle
@@ -372,7 +372,7 @@ function buildTicketWhereInput(
     deletedAt: null,
     isActive: true,
     status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
-    // ✅ CAMBIO STRICT: Solo incluir tickets de sorteos EVALUATED
+    //  CAMBIO STRICT: Solo incluir tickets de sorteos EVALUATED
     sorteo: {
       status: "EVALUATED",
     },
@@ -571,7 +571,7 @@ export const DashboardService = {
   async calculateGanancia(filters: DashboardFilters, role?: Role): Promise<GananciaResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
-    // ✅ CAMBIO: NO llamamos a computeVentanaCommissionFromPolicies()
+    //  CAMBIO: NO llamamos a computeVentanaCommissionFromPolicies()
     // Las comisiones ya vienen del SQL snapshot (SUM(listeroCommissionAmount))
 
     const byVentanaResult = await prisma.$queryRaw<
@@ -750,7 +750,7 @@ export const DashboardService = {
       `
     );
 
-    // ✅ NUEVO: Obtener pagos y cobros del periodo para calcular periodBalance
+    //  NUEVO: Obtener pagos y cobros del periodo para calcular periodBalance
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
 
@@ -798,11 +798,11 @@ export const DashboardService = {
     const totalSales = byVentanaResult.reduce((sum, v) => sum + Number(v.total_sales || 0), 0);
     const totalPayouts = byVentanaResult.reduce((sum, v) => sum + Number(v.total_payouts || 0), 0);
     const commissionUserTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_user || 0), 0);
-    // ✅ CAMBIO: Usar SOLO snapshot del SQL (listeroCommissionAmount), NO recalculado desde políticas
+    //  CAMBIO: Usar SOLO snapshot del SQL (listeroCommissionAmount), NO recalculado desde políticas
     const commissionVentanaTotal = byVentanaResult.reduce((sum, v) => sum + Number(v.commission_ventana || 0), 0);
     const totalAmount = commissionUserTotal + commissionVentanaTotal;
 
-    // ✅ CRÍTICO: Ganancia Global SIEMPRE usa commissionVentanaTotal (comisión del listero)
+    //  CRÍTICO: Ganancia Global SIEMPRE usa commissionVentanaTotal (comisión del listero)
     // Según especificaciones del cliente: la Ganancia Global de la Banca se calcula
     // restando las comisiones de los listeros (ventanas), NO las comisiones de usuarios
     const totalNet = totalSales - totalPayouts - commissionVentanaTotal;
@@ -822,17 +822,17 @@ export const DashboardService = {
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
         const commissionUser = Number(row.commission_user) || 0;
-        // ✅ CAMBIO: Usar SOLO snapshot del SQL (row.commission_ventana = SUM(listeroCommissionAmount))
+        //  CAMBIO: Usar SOLO snapshot del SQL (row.commission_ventana = SUM(listeroCommissionAmount))
         const commissionVentana = Number(row.commission_ventana) || 0;
         const commissions = commissionUser + commissionVentana;
-        // ✅ CRÍTICO: byVentana[].net SIEMPRE usa commissionVentana (comisión del listero)
+        //  CRÍTICO: byVentana[].net SIEMPRE usa commissionVentana (comisión del listero)
         // Según especificaciones del cliente: el desglose por ventanas debe usar
         // las comisiones de los listeros, NO las comisiones de usuarios
         const net = sales - payout - commissionVentana;
         const ventanaMargin = sales > 0 ? (net / sales) * 100 : 0;
         const winRate = tickets > 0 ? (winners / tickets) * 100 : 0;
 
-        // ✅ NUEVO: Calcular periodBalance (saldo del periodo filtrado)
+        //  NUEVO: Calcular periodBalance (saldo del periodo filtrado)
         // periodBalance = sales - payout - commissionVentana - paid + collected
         const paymentsInfo = paymentsByVentana.get(row.ventana_id) || { paid: 0, collected: 0 };
         const periodBalance = sales - payout - commissionVentana - paymentsInfo.collected + paymentsInfo.paid;
@@ -852,7 +852,7 @@ export const DashboardService = {
           winners,
           winRate: parseFloat(winRate.toFixed(2)),
           isActive: row.is_active,
-          periodBalance: parseFloat(periodBalance.toFixed(2)), // ✅ NUEVO: Saldo del periodo
+          periodBalance: parseFloat(periodBalance.toFixed(2)), //  NUEVO: Saldo del periodo
         };
       }),
       byLoteria: byLoteriaResult.map((row) => {
@@ -861,7 +861,7 @@ export const DashboardService = {
         const tickets = Number(row.total_tickets) || 0;
         const winners = Number(row.winning_tickets) || 0;
         const commissionUser = Number(row.commission_user) || 0;
-        // ✅ CAMBIO: Usar SOLO snapshot del SQL (row.commission_ventana = SUM(listeroCommissionAmount))
+        //  CAMBIO: Usar SOLO snapshot del SQL (row.commission_ventana = SUM(listeroCommissionAmount))
         const commissionVentana = Number(row.commission_ventana) || 0;
         const commissions = commissionUser + commissionVentana;
         // Calcular ganancia neta: Banca viendo loterías siempre resta solo commissionVentana
@@ -894,7 +894,7 @@ export const DashboardService = {
   async calculateCxC(filters: DashboardFilters, role?: Role): Promise<CxCResult> {
     const dimension = filters.cxcDimension || 'ventana';
 
-    // ✅ NUEVO: Si dimension='vendedor', ejecutar lógica específica para vendedores
+    //  NUEVO: Si dimension='vendedor', ejecutar lógica específica para vendedores
     if (dimension === 'vendedor') {
       return this.calculateCxCByVendedor(filters, role);
     }
@@ -904,10 +904,10 @@ export const DashboardService = {
     const rangeEnd = parseDateEnd(toDateStr);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
-    // ✅ NOTE: Commission already included in SQL snapshot (listero_commission_snapshot)
+    //  NOTE: Commission already included in SQL snapshot (listero_commission_snapshot)
     // No need to call computeVentanaCommissionFromPolicies here
 
-    // ✅ CRÍTICO: Obtener datos directamente desde tickets/jugadas (igual que calculateGanancia)
+    //  CRÍTICO: Obtener datos directamente desde tickets/jugadas (igual que calculateGanancia)
     const ventanaData = await prisma.$queryRaw<
       Array<{
         ventana_id: string;
@@ -1089,7 +1089,7 @@ export const DashboardService = {
       return entry;
     };
 
-    // ✅ CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
+    //  CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
     for (const ventanaRow of ventanaData) {
       const ventanaId = ventanaRow.ventana_id;
       const entry = ensureEntry(ventanaId);
@@ -1097,7 +1097,7 @@ export const DashboardService = {
       entry.totalSales = Number(ventanaRow.total_sales) || 0;
       entry.totalPayouts = Number(ventanaRow.total_payouts) || 0;
 
-      // ✅ CORREGIDO: Usar SIEMPRE el snapshot de comisión del listero
+      //  CORREGIDO: Usar SIEMPRE el snapshot de comisión del listero
       // Esto asegura consistencia entre período filtrado y mes completo
       // No recalcular desde políticas (causa discrepancias de 44 colones)
       entry.totalListeroCommission = Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0;
@@ -1133,7 +1133,7 @@ export const DashboardService = {
     }
     // Filtrar por banca activa si está disponible
     if (filters.bancaId) {
-      // ✅ CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
+      //  CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
       accountPaymentWhere.bancaId = filters.bancaId;
     }
 
@@ -1196,16 +1196,16 @@ export const DashboardService = {
       ensureEntry(ventana.id, ventana.name, ventana.isActive);
     }
 
-    // ✅ NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
+    //  NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
     const monthRangeCheck = resolveDateRange('month');
     const todayRangeCheck = resolveDateRange('today');
     const { startDateCRStr: monthStartCheckStr } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck.fromAt, todayRangeCheck.toAt);
     const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === crDateService.dateUTCToCRString(new Date());
 
-    // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada ventana
+    //  NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada ventana
     const monthSaldoByVentana = new Map<string, number>();
     {
-      // ✅ CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
+      //  CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
       // Esto asegura consistencia entre local y producción (Render)
       const monthRange = resolveDateRange('month'); // Primer día del mes en CR
       const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
@@ -1214,11 +1214,11 @@ export const DashboardService = {
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
       // Convertir a strings de fecha para filtros usando crDateService
-      // ✅ CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
+      //  CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
       // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
       const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
 
-      // ✅ CRÍTICO: Para consultas de Prisma con campos @db.Date, necesitamos crear Dates que representen
+      //  CRÍTICO: Para consultas de Prisma con campos @db.Date, necesitamos crear Dates que representen
       // el día completo como DATE (sin hora). monthEndStr ya es el día de hoy en formato YYYY-MM-DD
       const monthStartDate = new Date(`${monthStartStr}T00:00:00.000Z`);
       const monthEndDate = new Date(`${monthEndStr}T00:00:00.000Z`);
@@ -1312,7 +1312,7 @@ export const DashboardService = {
       );
 
       // Obtener statements del mes completo
-      // ✅ SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
+      //  SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
       // PostgreSQL interpreta los strings directamente como DATE sin conversión de timezone
       const monthStatements = await prisma.$queryRaw<Array<{
         id: string;
@@ -1340,7 +1340,7 @@ export const DashboardService = {
       `;
 
       // Obtener collections del mes
-      // ✅ SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
+      //  SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
       // PostgreSQL interpreta los strings directamente como DATE sin conversión de timezone
       const monthCollections = await prisma.$queryRaw<Array<{
         ventanaId: string | null;
@@ -1362,7 +1362,7 @@ export const DashboardService = {
       // Mapear datos del mes por ventana
       const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
 
-      // ✅ DEBUG: Log para verificar qué datos estamos obteniendo
+      //  DEBUG: Log para verificar qué datos estamos obteniendo
       logger.info({
         layer: 'service',
         action: 'MONTHLY_ACCUMULATED_DEBUG',
@@ -1426,12 +1426,12 @@ export const DashboardService = {
       // Calcular saldoAHoy para cada ventana
       // Balance: Ventas - Premios - Comisión Listero
       // Comisión Vendedor es SOLO informativa, no se resta del balance
-      // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
+      //  NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
+      //  CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
 
-      // ✅ CRÍTICO: Obtener TODAS las ventanas que están en aggregated (período filtrado)
+      //  CRÍTICO: Obtener TODAS las ventanas que están en aggregated (período filtrado)
       // no solo las que tienen datos en el mes actual, para incluir saldo del mes anterior
       const allVentanaIds = new Set([
         ...Array.from(aggregated.keys()),
@@ -1445,7 +1445,7 @@ export const DashboardService = {
         filters.bancaId
       );
 
-      // ✅ CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
+      //  CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
       // Reutilizar getMonthlyRemainingBalancesBatch que calcula exactamente el mismo valor que en GET /accounts/statement
       try {
         const balancesBatch = await getMonthlyRemainingBalancesBatch(
@@ -1489,17 +1489,17 @@ export const DashboardService = {
         }
       }
 
-      // ✅ NOTA: getMonthlyRemainingBalancesBatch ya incluye todas las ventanas (retorna 0 si no hay datos)
+      //  NOTA: getMonthlyRemainingBalancesBatch ya incluye todas las ventanas (retorna 0 si no hay datos)
       // No es necesario loop adicional porque el batch query ya procesó todas
     }
 
-    // ✅ NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
+    //  NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
     const monthRangeCheck2 = resolveDateRange('month');
     const todayRangeCheck2 = resolveDateRange('today');
     const { startDateCRStr: monthStartCheck2Str } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck2.fromAt, todayRangeCheck2.toAt);
     const isMonthComplete2 = fromDateStr === monthStartCheck2Str && toDateStr === crDateService.dateUTCToCRString(new Date());
 
-    // ✅ NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
+    //  NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
     // El saldo del mes anterior es un movimiento más, como un pago, que debe incluirse en el balance del período
     const periodPreviousMonthBalances = new Map<string, number>();
     const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
@@ -1528,19 +1528,19 @@ export const DashboardService = {
         // Balance: Ventas - Premios - Comisión Listero
         // Comisión Vendedor es SOLO informativa, no se resta del balance
         const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
-        // ✅ CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
+        //  CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
         // Solo si el período incluye el día 1 del mes
         const previousMonthBalance = periodPreviousMonthBalances.get(entry.ventanaId) || 0;
         const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
 
-        // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
+        //  CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
         // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
         const monthlyAccumulatedBalance = monthSaldoByVentana.get(entry.ventanaId) ?? 0;
         const recalculatedRemainingBalance = isMonthComplete2
           ? monthlyAccumulatedBalance
           : periodRemainingBalance;
 
-        // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado
+        //  CRÍTICO: amount debe usar el remainingBalance recalculado
         const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
 
         return {
@@ -1548,18 +1548,18 @@ export const DashboardService = {
           ventanaName: entry.ventanaName,
           totalSales: entry.totalSales,
           totalPayouts: entry.totalPayouts,
-          listeroCommission: entry.totalListeroCommission, // ✅ REQUERIDO: Campo individual
-          vendedorCommission: entry.totalVendedorCommission, // ✅ REQUERIDO: Campo individual
-          totalListeroCommission: entry.totalListeroCommission, // ✅ Mantener para compatibilidad
-          totalVendedorCommission: entry.totalVendedorCommission, // ✅ Mantener para compatibilidad
+          listeroCommission: entry.totalListeroCommission, //  REQUERIDO: Campo individual
+          vendedorCommission: entry.totalVendedorCommission, //  REQUERIDO: Campo individual
+          totalListeroCommission: entry.totalListeroCommission, //  Mantener para compatibilidad
+          totalVendedorCommission: entry.totalVendedorCommission, //  Mantener para compatibilidad
           totalPaid,
           totalPaidOut: totalPaid,
           totalCollected,
           totalPaidToCustomer,
-          amount, // ✅ Usa remainingBalance recalculado
-          remainingBalance: recalculatedRemainingBalance, // ✅ Recalculado según rol (período filtrado)
+          amount, //  Usa remainingBalance recalculado
+          remainingBalance: recalculatedRemainingBalance, //  Recalculado según rol (período filtrado)
           monthlyAccumulated: {
-            remainingBalance: monthSaldoByVentana.get(entry.ventanaId) ?? 0, // ✅ NUEVO: Saldo a Hoy (mes completo, inmutable)
+            remainingBalance: monthSaldoByVentana.get(entry.ventanaId) ?? 0, //  NUEVO: Saldo a Hoy (mes completo, inmutable)
           },
           isActive: entry.isActive,
         };
@@ -1584,7 +1584,7 @@ export const DashboardService = {
     const rangeEnd = parseDateEnd(toDateStr);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
-    // ✅ CRÍTICO: Obtener datos directamente desde tickets/jugadas agrupados por vendedor
+    //  CRÍTICO: Obtener datos directamente desde tickets/jugadas agrupados por vendedor
     const vendedorData = await prisma.$queryRaw<
       Array<{
         vendedor_id: string;
@@ -1779,7 +1779,7 @@ export const DashboardService = {
       return entry;
     };
 
-    // ✅ CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
+    //  CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
     for (const vendedorRow of vendedorData) {
       const vendedorId = vendedorRow.vendedor_id;
       const entry = ensureEntry(
@@ -1826,7 +1826,7 @@ export const DashboardService = {
       accountPaymentWhere.ventanaId = filters.ventanaId;
     }
     if (filters.bancaId) {
-      // ✅ CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
+      //  CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
       accountPaymentWhere.bancaId = filters.bancaId;
     }
 
@@ -1846,7 +1846,7 @@ export const DashboardService = {
 
     const ticketRelationFilter: Prisma.TicketWhereInput = {
       deletedAt: null,
-      // ✅ FIX: vendedorId es requerido en schema, no necesitamos filtrar por "not null"
+      //  FIX: vendedorId es requerido en schema, no necesitamos filtrar por "not null"
     };
     if (filters.ventanaId) {
       ticketRelationFilter.ventanaId = filters.ventanaId;
@@ -1885,16 +1885,16 @@ export const DashboardService = {
       entry.totalPaidToCustomer += payment.amountPaid ?? 0;
     }
 
-    // ✅ NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
+    //  NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
     const monthRangeCheck = resolveDateRange('month');
     const todayRangeCheck = resolveDateRange('today');
     const { startDateCRStr: monthStartCheckStr } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck.fromAt, todayRangeCheck.toAt);
     const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === crDateService.dateUTCToCRString(new Date());
 
-    // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
+    //  NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
     const monthSaldoByVendedor = new Map<string, number>();
     {
-      // ✅ CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
+      //  CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
       // Esto asegura consistencia entre local y producción (Render)
       const monthRange = resolveDateRange('month'); // Primer día del mes en CR
       const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
@@ -1903,7 +1903,7 @@ export const DashboardService = {
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
       // Convertir a strings de fecha para filtros usando crDateService
-      // ✅ CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
+      //  CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
       // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
       const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
 
@@ -1918,7 +1918,7 @@ export const DashboardService = {
         Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(j.payout), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
       );
 
-      // ✅ Vendedores funcionan correctamente, mantener consulta original
+      //  Vendedores funcionan correctamente, mantener consulta original
       const monthStatements = await prisma.accountStatement.findMany({
         where: {
           date: { gte: monthStart, lte: monthEnd },
@@ -1928,7 +1928,7 @@ export const DashboardService = {
         },
       });
 
-      // ✅ Vendedores funcionan correctamente, mantener consulta original
+      //  Vendedores funcionan correctamente, mantener consulta original
       const monthCollections = await prisma.accountPayment.findMany({
         where: {
           date: { gte: monthStart, lte: monthEnd },
@@ -1986,12 +1986,12 @@ export const DashboardService = {
         monthAggregated.set(collection.vendedorId, entry);
       }
 
-      // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
+      //  NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
+      //  CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
 
-      // ✅ CRÍTICO: Obtener TODOS los vendedores que están en aggregated (período filtrado)
+      //  CRÍTICO: Obtener TODOS los vendedores que están en aggregated (período filtrado)
       // no solo los que tienen datos en el mes actual, para incluir saldo del mes anterior
       const allVendedorIds = new Set([
         ...Array.from(aggregated.keys()),
@@ -2005,7 +2005,7 @@ export const DashboardService = {
         filters.bancaId
       );
 
-      // ✅ CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
+      //  CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
       // Reutilizar getMonthlyRemainingBalancesBatch que calcula exactamente el mismo valor que en GET /accounts/statement
       try {
         const balancesBatch = await getMonthlyRemainingBalancesBatch(
@@ -2050,7 +2050,7 @@ export const DashboardService = {
       }
     }
 
-    // ✅ NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
+    //  NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
     // El saldo del mes anterior es un movimiento más, como un pago, que debe incluirse en el balance del período
     const periodPreviousMonthBalances = new Map<string, number>();
     const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
@@ -2078,12 +2078,12 @@ export const DashboardService = {
         const totalPaidToCustomer = entry.totalPaidToCustomer;
         // Balance: Ventas - Premios - Comisión Vendedor
         const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
-        // ✅ CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
+        //  CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
         // Solo si el período incluye el día 1 del mes
         const previousMonthBalance = periodPreviousMonthBalances.get(entry.vendedorId) || 0;
         const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
 
-        // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
+        //  CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
         // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
         const monthlyAccumulatedBalance = monthSaldoByVendedor.get(entry.vendedorId) ?? 0;
         const recalculatedRemainingBalance = isMonthComplete
@@ -2133,7 +2133,7 @@ export const DashboardService = {
   async calculateCxP(filters: DashboardFilters, role?: Role): Promise<CxPResult> {
     const dimension = filters.cxcDimension || 'ventana';
 
-    // ✅ NUEVO: Si dimension='vendedor', ejecutar lógica específica para vendedores
+    //  NUEVO: Si dimension='vendedor', ejecutar lógica específica para vendedores
     if (dimension === 'vendedor') {
       return this.calculateCxPByVendedor(filters, role);
     }
@@ -2143,13 +2143,13 @@ export const DashboardService = {
     const rangeEnd = parseDateEnd(toDateStr);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
-    // ✅ CRÍTICO: Calcular comisiones desde políticas (igual que calculateGanancia)
+    //  CRÍTICO: Calcular comisiones desde políticas (igual que calculateGanancia)
     const {
       totalVentanaCommission,
       extrasByVentana,
     } = await computeVentanaCommissionFromPolicies(filters);
 
-    // ✅ CRÍTICO: Obtener datos directamente desde tickets/jugadas (igual que calculateGanancia)
+    //  CRÍTICO: Obtener datos directamente desde tickets/jugadas (igual que calculateGanancia)
     const ventanaData = await prisma.$queryRaw<
       Array<{
         ventana_id: string;
@@ -2331,7 +2331,7 @@ export const DashboardService = {
       return entry;
     };
 
-    // ✅ CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
+    //  CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
     for (const ventanaRow of ventanaData) {
       const ventanaId = ventanaRow.ventana_id;
       const entry = ensureEntry(ventanaId);
@@ -2339,7 +2339,7 @@ export const DashboardService = {
       entry.totalSales = Number(ventanaRow.total_sales) || 0;
       entry.totalPayouts = Number(ventanaRow.total_payouts) || 0;
 
-      // ✅ CORREGIDO: Usar SIEMPRE el snapshot de comisión del listero
+      //  CORREGIDO: Usar SIEMPRE el snapshot de comisión del listero
       // Esto asegura consistencia entre período filtrado y mes completo
       // No recalcular desde políticas (causa discrepancias de 44 colones)
       entry.totalListeroCommission = Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0;
@@ -2375,7 +2375,7 @@ export const DashboardService = {
     }
     // Filtrar por banca activa si está disponible
     if (filters.bancaId) {
-      // ✅ CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
+      //  CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
       accountPaymentWhere.bancaId = filters.bancaId;
     }
 
@@ -2438,17 +2438,17 @@ export const DashboardService = {
       ensureEntry(ventana.id, ventana.name, ventana.isActive);
     }
 
-    // ✅ NUEVO: Verificar si el período filtrado es el mes completo
+    //  NUEVO: Verificar si el período filtrado es el mes completo
     // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
     const monthRangeCheck3 = resolveDateRange('month');
     const todayRangeCheck3 = resolveDateRange('today');
     const { startDateCRStr: monthStartCheck3Str } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck3.fromAt, todayRangeCheck3.toAt);
     const isMonthComplete3 = fromDateStr === monthStartCheck3Str && toDateStr === crDateService.dateUTCToCRString(new Date());
 
-    // ✅ NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana en CxP
+    //  NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana en CxP
     const monthSaldoByVentana = new Map<string, number>();
     {
-      // ✅ CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
+      //  CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
       // Esto asegura consistencia entre local y producción (Render)
       const monthRange = resolveDateRange('month'); // Primer día del mes en CR
       const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
@@ -2457,7 +2457,7 @@ export const DashboardService = {
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
       // Convertir a strings de fecha para filtros usando crDateService
-      // ✅ CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
+      //  CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
       // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
       const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
 
@@ -2472,7 +2472,7 @@ export const DashboardService = {
         Prisma.sql`SELECT v.id AS ventana_id, v.name AS ventana_name, v."isActive" AS is_active, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "Ventana" v LEFT JOIN (SELECT t."ventanaId" AS ventana_id, COALESCE(SUM(t."totalAmount"), 0) AS total_sales, COALESCE(SUM(t."totalPayout"), 0) AS total_payouts FROM "Ticket" t WHERE ${monthBaseFilters} GROUP BY t."ventanaId") sp ON sp.ventana_id = v.id LEFT JOIN (SELECT t."ventanaId" AS ventana_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND j."deletedAt" IS NULL GROUP BY t."ventanaId") cp ON cp.ventana_id = v.id WHERE v."isActive" = true ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty} ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}`
       );
 
-      // ✅ SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
+      //  SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
       const monthStatements = await prisma.$queryRaw<Array<{
         id: string;
         date: Date;
@@ -2498,7 +2498,7 @@ export const DashboardService = {
           ${filters.bancaId ? Prisma.sql`AND "bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
       `;
 
-      // ✅ SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
+      //  SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
       const monthCollections = await prisma.$queryRaw<Array<{
         ventanaId: string | null;
         amount: number;
@@ -2539,12 +2539,12 @@ export const DashboardService = {
 
       // Balance: Ventas - Premios - Comisión Listero
       // Comisión Vendedor es SOLO informativa, no se resta del balance
-      // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
+      //  NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
+      //  CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
 
-      // ✅ CRÍTICO: Obtener TODAS las ventanas que están en aggregated (período filtrado)
+      //  CRÍTICO: Obtener TODAS las ventanas que están en aggregated (período filtrado)
       // no solo las que tienen datos en el mes actual, para incluir saldo del mes anterior
       const allVentanaIds = new Set([
         ...Array.from(aggregated.keys()),
@@ -2558,7 +2558,7 @@ export const DashboardService = {
         filters.bancaId
       );
 
-      // ✅ OPTIMIZACIÓN CRÍTICA: Usar batch en lugar de loop serializado
+      //  OPTIMIZACIÓN CRÍTICA: Usar batch en lugar de loop serializado
       // Procesar todas las ventanas en paralelo (en chunks de 5) en lugar de una por una
       try {
         const balancesBatch = await getMonthlyRemainingBalancesBatch(
@@ -2589,7 +2589,7 @@ export const DashboardService = {
       }
     }
 
-    // ✅ NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
+    //  NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
     // El saldo del mes anterior es un movimiento más, como un pago, que debe incluirse en el balance del período
     const periodPreviousMonthBalances = new Map<string, number>();
     const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
@@ -2619,19 +2619,19 @@ export const DashboardService = {
         // Balance: Ventas - Premios - Comisión Listero
         // Comisión Vendedor es SOLO informativa, no se resta del balance
         const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
-        // ✅ CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
+        //  CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
         // Solo si el período incluye el día 1 del mes
         const previousMonthBalance = periodPreviousMonthBalances.get(entry.ventanaId) || 0;
         const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
 
-        // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
+        //  CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
         // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
         const monthlyAccumulatedBalance = monthSaldoByVentana.get(entry.ventanaId) ?? 0;
         const recalculatedRemainingBalance = isMonthComplete3
           ? monthlyAccumulatedBalance
           : periodRemainingBalance;
 
-        // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
+        //  CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
         const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
 
         return {
@@ -2639,19 +2639,19 @@ export const DashboardService = {
           ventanaName: entry.ventanaName,
           totalSales: entry.totalSales,
           totalPayouts: entry.totalPayouts,
-          listeroCommission: entry.totalListeroCommission, // ✅ REQUERIDO: Campo individual
-          vendedorCommission: entry.totalVendedorCommission, // ✅ REQUERIDO: Campo individual
-          totalListeroCommission: entry.totalListeroCommission, // ✅ Mantener para compatibilidad
-          totalVendedorCommission: entry.totalVendedorCommission, // ✅ Mantener para compatibilidad
+          listeroCommission: entry.totalListeroCommission, //  REQUERIDO: Campo individual
+          vendedorCommission: entry.totalVendedorCommission, //  REQUERIDO: Campo individual
+          totalListeroCommission: entry.totalListeroCommission, //  Mantener para compatibilidad
+          totalVendedorCommission: entry.totalVendedorCommission, //  Mantener para compatibilidad
           totalPaid,
           totalPaidOut: totalPaid,
           totalCollected,
           totalPaidToCustomer,
           totalPaidToVentana,
-          amount, // ✅ Usa remainingBalance recalculado
-          remainingBalance: recalculatedRemainingBalance, // ✅ Recalculado según rol (período filtrado)
+          amount, //  Usa remainingBalance recalculado
+          remainingBalance: recalculatedRemainingBalance, //  Recalculado según rol (período filtrado)
           monthlyAccumulated: {
-            remainingBalance: monthSaldoByVentana.get(entry.ventanaId) ?? 0, // ✅ NUEVO: Saldo a Hoy (mes completo, inmutable)
+            remainingBalance: monthSaldoByVentana.get(entry.ventanaId) ?? 0, //  NUEVO: Saldo a Hoy (mes completo, inmutable)
           },
           isActive: entry.isActive,
         };
@@ -2676,7 +2676,7 @@ export const DashboardService = {
     const rangeEnd = parseDateEnd(toDateStr);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
-    // ✅ CRÍTICO: Obtener datos directamente desde tickets/jugadas agrupados por vendedor
+    //  CRÍTICO: Obtener datos directamente desde tickets/jugadas agrupados por vendedor
     const vendedorData = await prisma.$queryRaw<
       Array<{
         vendedor_id: string;
@@ -2873,7 +2873,7 @@ export const DashboardService = {
       return entry;
     };
 
-    // ✅ CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
+    //  CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
     for (const vendedorRow of vendedorData) {
       const vendedorId = vendedorRow.vendedor_id;
       const entry = ensureEntry(
@@ -2920,7 +2920,7 @@ export const DashboardService = {
       accountPaymentWhere.ventanaId = filters.ventanaId;
     }
     if (filters.bancaId) {
-      // ✅ CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
+      //  CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
       accountPaymentWhere.bancaId = filters.bancaId;
     }
 
@@ -2940,7 +2940,7 @@ export const DashboardService = {
 
     const ticketRelationFilter: Prisma.TicketWhereInput = {
       deletedAt: null,
-      // ✅ FIX: vendedorId es requerido en schema, no necesitamos filtrar por "not null"
+      //  FIX: vendedorId es requerido en schema, no necesitamos filtrar por "not null"
     };
     if (filters.ventanaId) {
       ticketRelationFilter.ventanaId = filters.ventanaId;
@@ -2979,17 +2979,17 @@ export const DashboardService = {
       entry.totalPaidToCustomer += payment.amountPaid ?? 0;
     }
 
-    // ✅ NUEVO: Verificar si el período filtrado es el mes completo
+    //  NUEVO: Verificar si el período filtrado es el mes completo
     // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
     const monthRangeCheck = resolveDateRange('month');
     const todayRangeCheck = resolveDateRange('today');
     const { startDateCRStr: monthStartCheckStr } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck.fromAt, todayRangeCheck.toAt);
     const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === crDateService.dateUTCToCRString(new Date());
 
-    // ✅ NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
+    //  NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
     const monthSaldoByVendedor = new Map<string, number>();
     {
-      // ✅ CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
+      //  CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
       // Esto asegura consistencia entre local y producción (Render)
       const monthRange = resolveDateRange('month'); // Primer día del mes en CR
       const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
@@ -2998,7 +2998,7 @@ export const DashboardService = {
       const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
 
       // Convertir a strings de fecha para filtros usando crDateService
-      // ✅ CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
+      //  CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
       // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
       const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
 
@@ -3013,7 +3013,7 @@ export const DashboardService = {
         Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(j.payout), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
       );
 
-      // ✅ Vendedores funcionan correctamente, mantener consulta original
+      //  Vendedores funcionan correctamente, mantener consulta original
       const monthStatements = await prisma.accountStatement.findMany({
         where: {
           date: { gte: monthStart, lte: monthEnd },
@@ -3023,7 +3023,7 @@ export const DashboardService = {
         },
       });
 
-      // ✅ Vendedores funcionan correctamente, mantener consulta original
+      //  Vendedores funcionan correctamente, mantener consulta original
       const monthCollections = await prisma.accountPayment.findMany({
         where: {
           date: { gte: monthStart, lte: monthEnd },
@@ -3082,12 +3082,12 @@ export const DashboardService = {
       }
 
       // Balance: Ventas - Premios - Comisión Vendedor
-      // ✅ NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      // ✅ CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
+      //  NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
+      //  CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
       const nowCRStr = crDateService.dateUTCToCRString(new Date());
       const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
 
-      // ✅ CRÍTICO: Obtener TODOS los vendedores activos, no solo los que tienen datos en el mes actual
+      //  CRÍTICO: Obtener TODOS los vendedores activos, no solo los que tienen datos en el mes actual
       // Esto asegura que vendedores con saldo del mes anterior pero sin datos en el mes actual también aparezcan
       const allVendedorIds = await prisma.user.findMany({
         where: {
@@ -3095,7 +3095,7 @@ export const DashboardService = {
           isActive: true,
           deletedAt: null,
           ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          // ✅ CORRECCIÓN: User no tiene bancaId directo, se infiere a través de ventana.bancaId
+          //  CORRECCIÓN: User no tiene bancaId directo, se infiere a través de ventana.bancaId
           ...(filters.bancaId ? {
             ventana: {
               bancaId: filters.bancaId
@@ -3112,7 +3112,7 @@ export const DashboardService = {
         filters.bancaId
       );
 
-      // ✅ CRÍTICO: Asegurar que todos los vendedores con saldo del mes anterior estén en monthAggregated
+      //  CRÍTICO: Asegurar que todos los vendedores con saldo del mes anterior estén en monthAggregated
       // Esto garantiza que el cálculo del saldo sea consistente
       for (const vendedorId of allVendedorIds) {
         if (!monthAggregated.has(vendedorId)) {
@@ -3127,7 +3127,7 @@ export const DashboardService = {
         }
       }
 
-      // ✅ CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
+      //  CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
       try {
         const balancesBatch = await getMonthlyRemainingBalancesBatch(
           effectiveMonth,
@@ -3157,7 +3157,7 @@ export const DashboardService = {
       }
     }
 
-    // ✅ CRÍTICO: Incluir TODOS los vendedores con saldo, no solo los que tienen datos en el período filtrado
+    //  CRÍTICO: Incluir TODOS los vendedores con saldo, no solo los que tienen datos en el período filtrado
     // Esto asegura que vendedores con saldo del mes anterior pero sin datos en el período aparezcan
     const allVendedorIdsWithSaldo = new Set([
       ...Array.from(aggregated.keys()),
@@ -3234,14 +3234,14 @@ export const DashboardService = {
         const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
         const periodRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
 
-        // ✅ CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
+        //  CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
         // Si el período es un día específico, usar solo el balance del período
         const monthlyAccumulatedBalance = monthSaldoByVendedor.get(entry.vendedorId) ?? 0;
         const recalculatedRemainingBalance = isMonthComplete
           ? monthlyAccumulatedBalance
           : periodRemainingBalance;
 
-        // ✅ CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
+        //  CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
         const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
 
         return {
@@ -3294,7 +3294,7 @@ export const DashboardService = {
   async getSummary(filters: DashboardFilters, role?: Role): Promise<DashboardSummary> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
-    // ✅ NOTE: Commission already included in SQL snapshot
+    //  NOTE: Commission already included in SQL snapshot
     // No need to call computeVentanaCommissionFromPolicies
 
     const summaryRows = await prisma.$queryRaw<
@@ -3366,11 +3366,11 @@ export const DashboardService = {
     const totalTickets = Number(summary.total_tickets) || 0;
     const winningTickets = Number(summary.winning_tickets) || 0;
     const commissionUser = Number(summary.commission_user) || 0;
-    // ✅ FIX: Use ONLY snapshot from database, NOT totalVentanaCommission
+    //  FIX: Use ONLY snapshot from database, NOT totalVentanaCommission
     // totalVentanaCommission is already included in summary.commission_ventana
     const commissionVentana = Number(summary.commission_ventana) || 0;
     const totalCommissions = commissionUser + commissionVentana;
-    // ✅ CORRECCIÓN: Calcular ganancia neta según rol
+    //  CORRECCIÓN: Calcular ganancia neta según rol
     // Para ADMIN: resta commissionVentana (comisión del listero)
     // Para VENTANA/VENDEDOR: resta commissionUser (comisión del vendedor)
     const net = role === Role.ADMIN
@@ -3379,9 +3379,9 @@ export const DashboardService = {
     const margin = totalSales > 0 ? (net / totalSales) * 100 : 0;
     const winRate = totalTickets > 0 ? (winningTickets / totalTickets) * 100 : 0;
 
-    // ✅ NUEVO: Ganancia neta de listeros = comisión ventana - comisión usuario
+    //  NUEVO: Ganancia neta de listeros = comisión ventana - comisión usuario
     const gananciaListeros = commissionVentana - commissionUser;
-    // ✅ NUEVO: Alias conceptual para claridad
+    //  NUEVO: Alias conceptual para claridad
     const gananciaBanca = net;
 
     return {
@@ -3391,12 +3391,12 @@ export const DashboardService = {
       commissionUser,
       commissionVentana,
       commissionVentanaTotal: commissionVentana, // Alias para compatibilidad con frontend
-      gananciaListeros, // ✅ NUEVO
-      gananciaBanca, // ✅ NUEVO
+      gananciaListeros, //  NUEVO
+      gananciaBanca, //  NUEVO
       totalTickets,
       winningTickets,
       net,
-      margin: parseFloat(margin.toFixed(2)), // ✅ NUEVO: Margen neto
+      margin: parseFloat(margin.toFixed(2)), //  NUEVO: Margen neto
       winRate: parseFloat(winRate.toFixed(2)),
     };
   },
@@ -3614,17 +3614,17 @@ export const DashboardService = {
         return {
           date, // YYYY-MM-DD (fecha en CR)
           timestamp, // YYYY-MM-DDTHH:mm:ss-06:00 (timestamp en CR)
-          label, // ✅ NUEVO: Etiqueta formateada según granularity
+          label, //  NUEVO: Etiqueta formateada según granularity
           sales: Number(row.total_sales) || 0,
           commissions: Number(row.total_commissions) || 0,
           tickets: Number(row.total_tickets) || 0,
         };
       }),
-      comparison: filters.compare ? comparisonData : undefined, // ✅ NUEVO: Datos del período anterior
+      comparison: filters.compare ? comparisonData : undefined, //  NUEVO: Datos del período anterior
       meta: {
         interval,
-        granularity, // ✅ NUEVO: Incluir granularity en meta
-        timezone: 'America/Costa_Rica', // ✅ Indicar zona horaria usada
+        granularity, //  NUEVO: Incluir granularity en meta
+        timezone: 'America/Costa_Rica', //  Indicar zona horaria usada
         dataPoints: result.length,
         comparisonDataPoints: filters.compare ? comparisonData.length : 0,
       },
@@ -4000,7 +4000,7 @@ export const DashboardService = {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(previousFilters);
     const baseFilters = buildTicketBaseFilters("t", previousFilters, fromDateStr, toDateStr);
 
-    // ✅ NOTE: Commission already included in SQL snapshot for previous period
+    //  NOTE: Commission already included in SQL snapshot for previous period
     // No need to call computeVentanaCommissionFromPolicies
 
     const previousRows = await prisma.$queryRaw<
@@ -4064,12 +4064,12 @@ export const DashboardService = {
     const sales = Number(row.total_sales) || 0;
     const payouts = Number(row.total_payouts) || 0;
     const commissionUser = Number(row.commission_user) || 0;
-    // ✅ FIX: Use ONLY snapshot from database, NOT totalVentanaCommission
+    //  FIX: Use ONLY snapshot from database, NOT totalVentanaCommission
     // totalVentanaCommission is already included in row.commission_ventana
     const commissionVentana = Number(row.commission_ventana) || 0;
     const totalCommissions = commissionUser + commissionVentana;
 
-    // ✅ CORRECCIÓN: Calcular ganancia neta según rol
+    //  CORRECCIÓN: Calcular ganancia neta según rol
     // Para ADMIN: resta commissionVentana (comisión del listero)
     // Para VENTANA/VENDEDOR: resta commissionUser (comisión del vendedor)
     const net = role === Role.ADMIN
@@ -4080,8 +4080,8 @@ export const DashboardService = {
     return {
       sales,
       payouts,
-      net, // ✅ NUEVO: Ganancia neta del período anterior
-      margin: parseFloat(margin.toFixed(2)), // ✅ NUEVO: Margen neto del período anterior
+      net, //  NUEVO: Ganancia neta del período anterior
+      margin: parseFloat(margin.toFixed(2)), //  NUEVO: Margen neto del período anterior
       tickets: Number(row.total_tickets) || 0,
       winners: Number(row.winning_tickets) || 0,
       commissions: totalCommissions,

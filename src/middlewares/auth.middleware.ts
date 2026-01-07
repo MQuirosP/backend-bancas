@@ -11,10 +11,10 @@ export const protect = async (
   _res: Response,
   next: NextFunction
 ) => {
-  // 🔧 Opción temporal: permitir solicitudes sin token si está habilitado en .env
+  //  Opción temporal: permitir solicitudes sin token si está habilitado en .env
   if (process.env.DISABLE_AUTH === "true") {
     req.user = { id: "DEV_USER_ID", role: Role.ADMIN }; // simulamos un usuario
-    console.warn("⚠️ [AUTH DISABLED] Autenticación temporalmente deshabilitada.");
+    console.warn("️ [AUTH DISABLED] Autenticación temporalmente deshabilitada.");
     return next();
   }
 
@@ -31,10 +31,10 @@ export const protect = async (
       throw new AppError("Invalid token", 401);
     }
     
-    // ✅ Extraer ventanaId del JWT si está presente
+    //  Extraer ventanaId del JWT si está presente
     let ventanaId: string | null | undefined = decoded.ventanaId ?? null;
     
-    // ✅ Para VENDEDOR: Verificar si ventanaId en JWT coincide con BD
+    //  Para VENDEDOR: Verificar si ventanaId en JWT coincide con BD
     // Si no coincide o no está en JWT, obtenerlo de la BD (maneja cambio de ventana sin logout/login)
     if (role === Role.VENDEDOR) {
       const user = await prisma.user.findUnique({

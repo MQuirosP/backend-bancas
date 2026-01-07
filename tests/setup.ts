@@ -8,11 +8,11 @@ dotenv.config({ path: path.resolve(__dirname, '../.env.test') });
 const dbUrl = process.env.DATABASE_URL || '';
 const nodeEnv = process.env.NODE_ENV;
 
-console.log('\n🔧 Configuring test environment...\n');
+console.log('\n Configuring test environment...\n');
 
 // 1. Verificar NODE_ENV
 if (nodeEnv !== 'test') {
-  console.error('❌ FATAL ERROR: NODE_ENV debe ser "test"');
+  console.error(' FATAL ERROR: NODE_ENV debe ser "test"');
   console.error(`   Actual: NODE_ENV="${nodeEnv}"`);
   console.error('\n   Ejecuta los tests con: npm test\n');
   process.exit(1);
@@ -27,9 +27,9 @@ const isDangerousEnvironment =
   dbUrl.includes('amazonaws.com');
 
 if (isDangerousEnvironment) {
-  console.error('\n❌ FATAL ERROR: Tests configurados contra base de datos de producción!\n');
+  console.error('\n FATAL ERROR: Tests configurados contra base de datos de producción!\n');
   console.error('   DATABASE_URL:', dbUrl);
-  console.error('\n   ⚠️  POR SEGURIDAD, LOS TESTS NO SE EJECUTARÁN\n');
+  console.error('\n   ️  POR SEGURIDAD, LOS TESTS NO SE EJECUTARÁN\n');
   console.error('   Solución:');
   console.error('   1. Crear archivo .env.test con DATABASE_URL de PostgreSQL local');
   console.error('   2. Ejemplo: DATABASE_URL=postgresql://postgres:test@localhost:5433/bancas_test');
@@ -41,7 +41,7 @@ if (isDangerousEnvironment) {
 const isLocalDatabase = dbUrl.includes('localhost') || dbUrl.includes('127.0.0.1');
 
 if (!isLocalDatabase) {
-  console.error('\n❌ FATAL ERROR: Tests deben ejecutarse contra base de datos local (localhost)');
+  console.error('\n FATAL ERROR: Tests deben ejecutarse contra base de datos local (localhost)');
   console.error('   DATABASE_URL:', dbUrl);
   console.error('\n   Esperado: postgresql://...@localhost:5432/bancas');
   console.error('   Por seguridad, los tests NO se ejecutarán.\n');
@@ -49,7 +49,7 @@ if (!isLocalDatabase) {
 }
 
 // 4. Todo OK
-console.log('✅ Test environment configured successfully');
+console.log(' Test environment configured successfully');
 console.log(`   NODE_ENV: ${nodeEnv}`);
 console.log(`   DATABASE: ${dbUrl.replace(/:[^:@]+@/, ':***@')}`);
 console.log('');

@@ -67,7 +67,7 @@ const VendedorRepository = {
   },
 
   async update(id: string, data: VendedorUpdateParams) {
-    // ✅ Obtener ventanaId actual para comparar si cambió
+    //  Obtener ventanaId actual para comparar si cambió
     const current = await prisma.user.findUnique({
       where: { id },
       select: { ventanaId: true },
@@ -84,7 +84,7 @@ const VendedorRepository = {
         : {}),
     };
 
-    // ✅ Manejar cambio de ventana explícitamente
+    //  Manejar cambio de ventana explícitamente
     if (data.ventanaId !== undefined) {
       if (data.ventanaId) {
         // Conectar a nueva ventana (Prisma maneja automáticamente el disconnect de la anterior)
@@ -215,7 +215,7 @@ const VendedorRepository = {
             { email: { contains: s, mode: "insensitive" } },
             { username: { contains: s, mode: "insensitive" } },
             { code: { contains: s, mode: "insensitive" } },
-            // ⚠️ Relational filter correcto en Prisma:
+            // ️ Relational filter correcto en Prisma:
             { ventana: { is: { name: { contains: s, mode: "insensitive" } } } },
           ],
         },

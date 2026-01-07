@@ -17,7 +17,7 @@ export class CommissionsExportPdfService {
           size: 'LETTER',
           layout: 'landscape',
           margins: { top: 50, bottom: 50, left: 50, right: 50 },
-          autoFirstPage: false, // ✅ CRÍTICO: Evitar página en blanco inicial
+          autoFirstPage: false, //  CRÍTICO: Evitar página en blanco inicial
         });
 
         // Registrar fuentes personalizadas para soportar ₡
@@ -137,12 +137,12 @@ export class CommissionsExportPdfService {
     for (const item of payload.summary) {
       const date = this.formatDate(item.date);
       
-      // ✅ NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
+      //  NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
       const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
                           (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
       if (hasGrouping) {
-        // ✅ NUEVO: Fila de total consolidado con "TODOS" y formato destacado
+        //  NUEVO: Fila de total consolidado con "TODOS" y formato destacado
         const totalEntity = 'TODOS';
         
         const totalValues = isDimensionVentana
@@ -183,7 +183,7 @@ export class CommissionsExportPdfService {
           doc.fontSize(8).font('Helvetica');
         }
 
-        // ✅ NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
+        //  NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
         doc.fillColor('#D3D3D3').rect(startX, y, pageWidth, rowHeight).fill();
         doc.fillColor('black');
         doc.font('Helvetica-Bold');
@@ -208,7 +208,7 @@ export class CommissionsExportPdfService {
         y += rowHeight;
         rowIndex++;
 
-        // ✅ NUEVO: Filas de desglose por entidad con indentación visual
+        //  NUEVO: Filas de desglose por entidad con indentación visual
         if (isDimensionVentana && item.byVentana) {
           for (const breakdown of item.byVentana) {
             const breakdownEntity = `  - ${breakdown.ventanaName}`;
@@ -325,7 +325,7 @@ export class CommissionsExportPdfService {
           }
         }
       } else {
-        // ✅ Comportamiento normal cuando NO hay agrupación
+        //  Comportamiento normal cuando NO hay agrupación
         const entity = isDimensionVentana ? item.ventanaName || '-' : item.vendedorName || '-';
 
         const values = isDimensionVentana
@@ -348,7 +348,7 @@ export class CommissionsExportPdfService {
             this.formatCurrency(item.net || 0),
           ];
 
-        // ✅ CRÍTICO: Calcular altura dinámica basada en TODAS las columnas
+        //  CRÍTICO: Calcular altura dinámica basada en TODAS las columnas
         let maxCellHeight = 0;
         values.forEach((val, i) => {
           const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
@@ -480,7 +480,7 @@ export class CommissionsExportPdfService {
       const sorteo = item.sorteoTime;
       const multiplier = item.multiplierName.substring(0, 18);
 
-      // ✅ CRÍTICO: Calcular altura dinámica
+      //  CRÍTICO: Calcular altura dinámica
       // Considerar columnas de texto largo: Entity (1), Loteria (2), Multiplier (4)
       const h1 = doc.heightOfString(entity, { width: colWidths[1] - 6 });
       const h2 = doc.heightOfString(loteria, { width: colWidths[2] - 6 });
@@ -629,7 +629,7 @@ export class CommissionsExportPdfService {
         const entity = policy.entityName;
         const loteria = rule.loteriaName;
 
-        // ✅ CRÍTICO: Calcular altura dinámica
+        //  CRÍTICO: Calcular altura dinámica
         const h1 = doc.heightOfString(entity, { width: colWidths[0] - 10 });
         const h2 = doc.heightOfString(loteria, { width: colWidths[1] - 10 });
         const rowHeight = Math.max(18, h1 + 8, h2 + 8);
@@ -697,7 +697,7 @@ export class CommissionsExportPdfService {
       const pageIndex = pages.start + i;
       doc.switchToPage(pageIndex);
 
-      // ✅ CRÍTICO: Desactivar márgenes temporalmente para escribir en el pie de página sin generar nueva hoja
+      //  CRÍTICO: Desactivar márgenes temporalmente para escribir en el pie de página sin generar nueva hoja
       const oldMargins = doc.page.margins;
       doc.page.margins = { top: 0, bottom: 0, left: 0, right: 0 };
 

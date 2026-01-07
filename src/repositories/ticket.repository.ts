@@ -15,7 +15,7 @@ import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInPa
  * Calcula el límite dinámico basado en baseAmount y salesPercentage
  * Obtiene las ventas del SORTEO dentro de la transacción
  * 
- * ⚠️ IMPORTANTE: Este cálculo se hace sobre ventas BRUTAS del sorteo.
+ * ️ IMPORTANTE: Este cálculo se hace sobre ventas BRUTAS del sorteo.
  * - Excluye tickets CANCELLED y EXCLUDED del cálculo
  * - NO excluye jugadas individuales con isExcluded=true (aún no procesadas en este momento)
  * - Los límites dinámicos NO se recalculan automáticamente cuando se excluyen jugadas después
@@ -32,7 +32,7 @@ import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInPa
  *   2. Validación retroactiva de tickets ya creados
  *   3. Complejidad adicional sin beneficio claro
  * 
- * ✅ CRÍTICO: Calcula sobre ventas del sorteo específico, no del día completo
+ *  CRÍTICO: Calcula sobre ventas del sorteo específico, no del día completo
  * 
  * @param tx Transacción de Prisma
  * @param rule Regla con baseAmount y/o salesPercentage
@@ -50,13 +50,13 @@ async function calculateDynamicLimit(
     userId: string;
     ventanaId: string;
     bancaId: string;
-    sorteoId: string;  // ✅ NUEVO: sorteoId requerido para calcular sobre el sorteo
+    sorteoId: string;  //  NUEVO: sorteoId requerido para calcular sobre el sorteo
     at: Date;
   }
 ): Promise<number> {
   let dynamicLimit = 0;
 
-  // ✅ VALIDACIÓN: baseAmount no puede ser negativo
+  //  VALIDACIÓN: baseAmount no puede ser negativo
   if (rule.baseAmount != null && rule.baseAmount < 0) {
     logger.warn({
       layer: 'repository',
@@ -74,7 +74,7 @@ async function calculateDynamicLimit(
     dynamicLimit += rule.baseAmount;
   }
 
-  // ✅ VALIDACIÓN: salesPercentage debe estar entre 0 y 100
+  //  VALIDACIÓN: salesPercentage debe estar entre 0 y 100
   if (rule.salesPercentage != null && (rule.salesPercentage < 0 || rule.salesPercentage > 100)) {
     logger.warn({
       layer: 'repository',
@@ -89,12 +89,12 @@ async function calculateDynamicLimit(
 
   // Porcentaje de ventas (solo si salesPercentage es válido)
   if (rule.salesPercentage != null && rule.salesPercentage > 0 && rule.salesPercentage <= 100) {
-    // ✅ CRÍTICO: Calcular sobre ventas DEL SORTEO, no del día completo
+    //  CRÍTICO: Calcular sobre ventas DEL SORTEO, no del día completo
     const where: Prisma.TicketWhereInput = {
       deletedAt: null,
       isActive: true,
       status: { notIn: [TicketStatus.CANCELLED, TicketStatus.EXCLUDED] },
-      sorteoId: context.sorteoId,  // ✅ CRÍTICO: Filtrar por sorteo específico
+      sorteoId: context.sorteoId,  //  CRÍTICO: Filtrar por sorteo específico
     };
 
     if (rule.appliesToVendedor) {
@@ -126,14 +126,14 @@ async function calculateDynamicLimit(
         percentageAmount,
         dynamicLimit,
         appliesToVendedor: rule.appliesToVendedor,
-        // ✅ AGREGAR: Información sobre exclusión de tickets
+        //  AGREGAR: Información sobre exclusión de tickets
         excludedTicketStatuses: ['CANCELLED', 'EXCLUDED'],
         calculationNote: 'Calculated on gross sales (before individual jugada exclusions)',
       },
     });
   }
 
-  // ✅ VALIDACIÓN: Asegurar que el límite dinámico nunca sea negativo
+  //  VALIDACIÓN: Asegurar que el límite dinámico nunca sea negativo
   return Math.max(0, dynamicLimit);
 }
 
@@ -208,7 +208,7 @@ async function resolveBaseMultiplierX(
 ): Promise<{ valueX: number; source: string }> {
   const { bancaId, loteriaId, userId, ventanaId } = args;
 
-  // ✅ OPTIMIZACIÓN: Ejecutar TODAS las consultas en paralelo
+  //  OPTIMIZACIÓN: Ejecutar TODAS las consultas en paralelo
   // Reducción de tiempo: 150-300ms → 50-80ms
   const [userOverride, ventanaOverride, bls, lmBase, lmNumero, lot] = await Promise.all([
     // 0) Override por usuario (directo en X) - HIGHEST PRIORITY
@@ -370,7 +370,7 @@ export const TicketRepository = {
                   commissionPolicyJson: true,
                 },
               },
-              // ✅ OPTIMIZACIÓN: Incluir usuario ventana (listero) en consulta inicial
+              //  OPTIMIZACIÓN: Incluir usuario ventana (listero) en consulta inicial
               // Elimina consulta separada posterior (50-100ms ahorrados)
               users: {
                 where: {
@@ -426,7 +426,7 @@ export const TicketRepository = {
         let seqForLog: number | null = null;
 
         try {
-          // ✅ Incrementar contador atómicamente con reintento automático en caso de colisión
+          //  Incrementar contador atómicamente con reintento automático en caso de colisión
           // Usar loop de reintento máximo 5 veces para manejar race conditions
           let seq: number = 0;
           let attempts = 0;
@@ -457,7 +457,7 @@ export const TicketRepository = {
             });
 
             if (!existing) {
-              // ✅ Número disponible - usar este
+              //  Número disponible - usar este
               nextNumber = candidateNumber;
               seqForLog = seq;
               break;
@@ -565,7 +565,7 @@ export const TicketRepository = {
               { userId },
               { ventanaId },
               { bancaId },
-              // ✅ Incluir reglas globales (sin scope específico) que aplican a lotería/multiplicador
+              //  Incluir reglas globales (sin scope específico) que aplican a lotería/multiplicador
               { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] }
             ],
           },
@@ -777,7 +777,7 @@ export const TicketRepository = {
               amount: j.amount,
               finalMultiplierX: 0,
               multiplierId: null,
-              isActive: (j as any).isActive !== false, // ✅ Preservar isActive (default true)
+              isActive: (j as any).isActive !== false, //  Preservar isActive (default true)
             };
           }
           // NUMERO
@@ -833,7 +833,7 @@ export const TicketRepository = {
           );
 
           if (matchingRule) {
-            // ✅ NUEVO LÓGICA: Solo bloquear si NO tiene límites configurados
+            //  NUEVO LÓGICA: Solo bloquear si NO tiene límites configurados
             // Si tiene maxAmount O maxTotal, se permite la venta (validación de límites posterior)
             const isBlockingRule = matchingRule.maxAmount == null && matchingRule.maxTotal == null;
 
@@ -946,11 +946,11 @@ export const TicketRepository = {
           0
         );
 
-        // 7) ❌ ELIMINADO: Validación de límite diario TOTAL del vendedor
+        // 7)  ELIMINADO: Validación de límite diario TOTAL del vendedor
         // Los límites deben aplicarse POR NÚMERO, no por total diario del vendedor.
         // La validación correcta está más abajo (validateMaxTotalForNumbers)
 
-        // ✅ LOGGING: Registrar todas las reglas aplicables para trazabilidad (después de preparar jugadas)
+        //  LOGGING: Registrar todas las reglas aplicables para trazabilidad (después de preparar jugadas)
         logger.info({
           layer: 'repository',
           action: 'RESTRICTION_RULES_EVALUATION_START',
@@ -981,11 +981,11 @@ export const TicketRepository = {
           },
         });
 
-        // 8) 🚀 OPTIMIZACIÓN: Aplicar TODAS las reglas aplicables en PARALELO
-        // ✅ CRÍTICO: Todas las reglas aplicables se validan, no solo la de mayor prioridad
-        // ✅ CRÍTICO: maxAmount se valida por número individual por ticket
-        // ✅ CRÍTICO: maxTotal se valida por número individual acumulado en el sorteo
-        // ⚠️ NUNCA se valida sobre total del ticket ni sobre total diario
+        // 8)  OPTIMIZACIÓN: Aplicar TODAS las reglas aplicables en PARALELO
+        //  CRÍTICO: Todas las reglas aplicables se validan, no solo la de mayor prioridad
+        //  CRÍTICO: maxAmount se valida por número individual por ticket
+        //  CRÍTICO: maxTotal se valida por número individual acumulado en el sorteo
+        // ️ NUNCA se valida sobre total del ticket ni sobre total diario
 
         // Preparar números del ticket para validación paralela
         const ticketNumbers: Array<{ number: string; amountForNumber: number }> = [];
@@ -1060,7 +1060,7 @@ export const TicketRepository = {
           }
         }
 
-        // ✅ LOGGING: Registrar reglas aplicables antes de validación paralela
+        //  LOGGING: Registrar reglas aplicables antes de validación paralela
         logger.info({
           layer: 'repository',
           action: 'PARALLEL_VALIDATION_START',
@@ -1100,7 +1100,7 @@ export const TicketRepository = {
           dynamicLimits,
         });
 
-        // ✅ LOGGING: Registrar finalización de validación paralela
+        //  LOGGING: Registrar finalización de validación paralela
         logger.info({
           layer: 'repository',
           action: 'PARALLEL_VALIDATION_COMPLETE',
@@ -1259,7 +1259,7 @@ export const TicketRepository = {
             totalAmount: ticket.totalAmount,
             jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
             commissions: commissionsDetailsForLog,
-            jugadasDetails: jugadasDetailsForLog, // ✅ NUEVO: Lista de jugadas con número, tipo y monto
+            jugadasDetails: jugadasDetailsForLog, //  NUEVO: Lista de jugadas con número, tipo y monto
           },
         },
       })
@@ -1299,7 +1299,7 @@ export const TicketRepository = {
     delete (ticket as any).__jugadasCount;
     delete (ticket as any).__businessDateInfo;
 
-    // ✅ NOTA: AccountStatement se actualiza cuando se evalúan los sorteos, no al crear tickets
+    //  NOTA: AccountStatement se actualiza cuando se evalúan los sorteos, no al crear tickets
     // Los sorteos se evalúan conforme van sucediendo, y es ahí cuando los tickets se toman en cuenta
     // Esto permite consolidar toda la información (ventas, premios, comisiones) en AccountStatement
     // para eficiencia al servir datos al FE sin recalcular días enteros
@@ -1409,7 +1409,7 @@ export const TicketRepository = {
         let seqForLog: number | null = null;
 
         try {
-          // ✅ Incrementar contador atómicamente con reintento automático en caso de colisión
+          //  Incrementar contador atómicamente con reintento automático en caso de colisión
           // Usar loop de reintento máximo 5 veces para manejar race conditions
           let seq: number = 0;
           let attempts = 0;
@@ -1439,7 +1439,7 @@ export const TicketRepository = {
             });
 
             if (!existing) {
-              // ✅ Número disponible - usar este
+              //  Número disponible - usar este
               nextNumber = candidateNumber;
               seqForLog = seq;
               break;
@@ -1741,21 +1741,21 @@ export const TicketRepository = {
             amount: j.amount,
             finalMultiplierX: multiplierX,
             multiplierId: j.multiplierId,
-            isActive: (j as any).isActive !== false, // ✅ Preservar isActive (default true)
+            isActive: (j as any).isActive !== false, //  Preservar isActive (default true)
           };
         });
 
         const totalAmountTx = preparedJugadas.reduce((acc, j) => acc + j.amount, 0);
 
-        // 9) ❌ ELIMINADO: Validación de límite diario TOTAL del vendedor
+        // 9)  ELIMINADO: Validación de límite diario TOTAL del vendedor
         // Los límites deben aplicarse POR NÚMERO, no por total diario del vendedor.
         // La validación correcta está en las líneas 1966-2034 (validateMaxTotalForNumbers)
 
-        // 10) 🚀 OPTIMIZACIÓN: Aplicar TODAS las reglas aplicables en PARALELO
-        // ✅ CRÍTICO: Todas las reglas aplicables se validan, no solo la de mayor prioridad
-        // ✅ CRÍTICO: maxAmount se valida por número individual por ticket
-        // ✅ CRÍTICO: maxTotal se valida por número individual acumulado en el sorteo
-        // ⚠️ NUNCA se valida sobre total del ticket ni sobre total diario
+        // 10)  OPTIMIZACIÓN: Aplicar TODAS las reglas aplicables en PARALELO
+        //  CRÍTICO: Todas las reglas aplicables se validan, no solo la de mayor prioridad
+        //  CRÍTICO: maxAmount se valida por número individual por ticket
+        //  CRÍTICO: maxTotal se valida por número individual acumulado en el sorteo
+        // ️ NUNCA se valida sobre total del ticket ni sobre total diario
 
         // Preparar números del ticket para validación paralela
         const ticketNumbers: Array<{ number: string; amountForNumber: number }> = [];
@@ -1805,7 +1805,7 @@ export const TicketRepository = {
                 userId,
                 ventanaId,
                 bancaId,
-                sorteoId,  // ✅ CRÍTICO: Pasar sorteoId para calcular sobre el sorteo
+                sorteoId,  //  CRÍTICO: Pasar sorteoId para calcular sobre el sorteo
                 at: now,
               });
               return { ruleId: rule.id, limit };
@@ -1830,7 +1830,7 @@ export const TicketRepository = {
           }
         }
 
-        // ✅ LOGGING: Registrar reglas aplicables antes de validación paralela
+        //  LOGGING: Registrar reglas aplicables antes de validación paralela
         logger.info({
           layer: 'repository',
           action: 'PARALLEL_VALIDATION_START_OPTIMIZED',
@@ -1870,7 +1870,7 @@ export const TicketRepository = {
           dynamicLimits,
         });
 
-        // ✅ LOGGING: Registrar finalización de validación paralela
+        //  LOGGING: Registrar finalización de validación paralela
         logger.info({
           layer: 'repository',
           action: 'PARALLEL_VALIDATION_COMPLETE_OPTIMIZED',
@@ -1888,7 +1888,7 @@ export const TicketRepository = {
           },
         });
 
-        // 11) 🚀 OPTIMIZACIÓN: Calcular comisiones usando contexto cacheado
+        // 11)  OPTIMIZACIÓN: Calcular comisiones usando contexto cacheado
         const commissionsDetails: any[] = [];
         let jugadasWithCommissions: Array<{
           type: "NUMERO" | "REVENTADO";
@@ -1900,7 +1900,7 @@ export const TicketRepository = {
           commissionAmount: number;
           commissionOrigin: "USER" | "VENTANA" | "BANCA" | null;
           commissionRuleId: string | null;
-          listeroCommissionAmount: number; // ✅ CRÍTICO: Comisión del listero (VENTANA/BANCA)
+          listeroCommissionAmount: number; //  CRÍTICO: Comisión del listero (VENTANA/BANCA)
           multiplierId: string | null;
         }>;
 
@@ -1920,10 +1920,10 @@ export const TicketRepository = {
             }
           }
 
-          // ✅ CRÍTICO: Calcular listeroCommissionAmount desde políticas VENTANA o BANCA
+          //  CRÍTICO: Calcular listeroCommissionAmount desde políticas VENTANA o BANCA
           const ventanaPolicy = ventana?.commissionPolicyJson ?? null;
           const bancaPolicy = ventana?.banca?.commissionPolicyJson ?? null;
-          // ✅ Use listeroPolicy from context if available
+          //  Use listeroPolicy from context if available
           const listeroPolicy = commissionContext.listeroPolicy ?? null;
 
           jugadasWithCommissions = preCalculated.map((j) => {
@@ -1973,7 +1973,7 @@ export const TicketRepository = {
               ...j,
               reventadoNumber: j.type === "REVENTADO" ? j.number : null,
               multiplierId: j.type === "NUMERO" ? (numeroMultiplierMap.get(j.number) ?? null) : null,
-              listeroCommissionAmount, // ✅ PERSISTIR en DB
+              listeroCommissionAmount, //  PERSISTIR en DB
             };
           });
 
@@ -1984,7 +1984,7 @@ export const TicketRepository = {
               ruleId: j.commissionRuleId ?? null,
               percent: j.commissionPercent,
               amount: j.commissionAmount,
-              listeroAmount: j.listeroCommissionAmount, // ✅ Incluir en logs
+              listeroAmount: j.listeroCommissionAmount, //  Incluir en logs
               loteriaId,
               betType: j.type,
               multiplierX: j.finalMultiplierX,
@@ -2010,7 +2010,7 @@ export const TicketRepository = {
               bancaPolicy
             );
 
-            // ✅ CRÍTICO: Calcular listeroCommissionAmount desde políticas VENTANA o BANCA
+            //  CRÍTICO: Calcular listeroCommissionAmount desde políticas VENTANA o BANCA
             const listeroResult = commissionService.calculateListeroCommission(
               {
                 loteriaId,
@@ -2029,7 +2029,7 @@ export const TicketRepository = {
               ruleId: res.commissionRuleId ?? null,
               percent: res.commissionPercent,
               amount: res.commissionAmount,
-              listeroAmount: listeroCommissionAmount, // ✅ Incluir en logs
+              listeroAmount: listeroCommissionAmount, //  Incluir en logs
               loteriaId,
               betType: j.type,
               multiplierX: j.finalMultiplierX,
@@ -2046,7 +2046,7 @@ export const TicketRepository = {
               commissionAmount: res.commissionAmount,
               commissionOrigin: res.commissionOrigin,
               commissionRuleId: res.commissionRuleId ?? null,
-              listeroCommissionAmount, // ✅ PERSISTIR en DB
+              listeroCommissionAmount, //  PERSISTIR en DB
               multiplierId: j.multiplierId ?? null,
             };
           });
@@ -2077,7 +2077,7 @@ export const TicketRepository = {
           },
         });
 
-        // 13) 🚀 OPTIMIZACIÓN: Crear jugadas en batches
+        // 13)  OPTIMIZACIÓN: Crear jugadas en batches
         const BATCH_SIZE = 20;
         for (let i = 0; i < jugadasWithCommissions.length; i += BATCH_SIZE) {
           const batch = jugadasWithCommissions.slice(i, i + BATCH_SIZE);
@@ -2093,7 +2093,7 @@ export const TicketRepository = {
               commissionAmount: j.commissionAmount,
               commissionOrigin: j.commissionOrigin,
               commissionRuleId: (j as any).commissionRuleId,
-              listeroCommissionAmount: (j as any).listeroCommissionAmount, // ✅ PERSISTIR en DB
+              listeroCommissionAmount: (j as any).listeroCommissionAmount, //  PERSISTIR en DB
               multiplierId: (j as any).multiplierId,
             })),
           });
@@ -2178,7 +2178,7 @@ export const TicketRepository = {
             totalAmount: ticket.totalAmount,
             jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
             commissions: commissionsDetailsForLog,
-            jugadasDetails: jugadasDetailsForLog, // ✅ NUEVO: Lista de jugadas con número, tipo y monto
+            jugadasDetails: jugadasDetailsForLog, //  NUEVO: Lista de jugadas con número, tipo y monto
             optimized: true,
           },
         },
@@ -2242,7 +2242,7 @@ export const TicketRepository = {
       dateFrom?: Date;
       dateTo?: Date;
       winnersOnly?: boolean;
-      number?: string; // ✅ NUEVO: Búsqueda por número de jugada (1-2 dígitos)
+      number?: string; //  NUEVO: Búsqueda por número de jugada (1-2 dígitos)
     } = {}
   ) {
     const skip = (page - 1) * pageSize;
@@ -2268,13 +2268,13 @@ export const TicketRepository = {
         ? {
           createdAt: {
             ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
-            ...(filters.dateTo ? { lt: filters.dateTo } : {}), // ✅ medio-abierto
+            ...(filters.dateTo ? { lt: filters.dateTo } : {}), //  medio-abierto
           },
         }
         : {}),
     };
 
-    // ✅ NUEVO: Búsqueda exacta por número de jugada
+    //  NUEVO: Búsqueda exacta por número de jugada
     // Busca en jugada.number (para NUMERO) y jugada.reventadoNumber (para REVENTADO)
     // La búsqueda es exacta: si se busca "12", encuentra "12" pero no "123" o "012"
     if (filters.number) {
@@ -2530,7 +2530,7 @@ export const TicketRepository = {
       },
     });
 
-    // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se cancela un ticket
+    //  NUEVO: Invalidar caché de estados de cuenta cuando se cancela un ticket
     // El ticket cancelado afecta el balance (totalSales) del statement del día
     const { invalidateCacheForTicket } = await import('../utils/accountStatementCache');
     invalidateCacheForTicket({
@@ -2657,7 +2657,7 @@ export const TicketRepository = {
       },
     });
 
-    // ✅ NUEVO: Invalidar caché de estados de cuenta cuando se restaura un ticket
+    //  NUEVO: Invalidar caché de estados de cuenta cuando se restaura un ticket
     // El ticket restaurado afecta el balance (totalSales) del statement del día
     const { invalidateCacheForTicket } = await import('../utils/accountStatementCache');
     invalidateCacheForTicket({

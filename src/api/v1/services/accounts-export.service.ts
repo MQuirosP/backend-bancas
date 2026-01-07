@@ -42,15 +42,15 @@ export class AccountsExportService {
       const { statements, totals, monthlyAccumulated, meta } = statementResponse;
 
       // 4. Resolver nombres de entidades para metadata
-      let bancaName: string | undefined = undefined; // ✅ NUEVO: Nombre de banca
-      let bancaCode: string | null = null; // ✅ NUEVO: Código de banca
+      let bancaName: string | undefined = undefined; //  NUEVO: Nombre de banca
+      let bancaCode: string | null = null; //  NUEVO: Código de banca
       let ventanaName: string | undefined = undefined;
       let vendedorName: string | undefined = undefined;
       let ventanaCode: string | null = null;
       let vendedorCode: string | null = null;
 
       if (filters.bancaId) {
-        // ✅ NUEVO: Resolver información de banca
+        //  NUEVO: Resolver información de banca
         const banca = await prisma.banca.findUnique({
           where: { id: filters.bancaId },
           select: { name: true, code: true },
@@ -143,7 +143,7 @@ export class AccountsExportService {
             scope: filters.scope,
             dimension: filters.dimension,
             bancaId: filters.bancaId,
-            bancaName, // ✅ NUEVO
+            bancaName, //  NUEVO
             ventanaId: filters.ventanaId,
             ventanaName,
             vendedorId: filters.vendedorId,
@@ -180,8 +180,8 @@ export class AccountsExportService {
         filters,
         meta.startDate,
         meta.endDate,
-        bancaName, // ✅ NUEVO: Pasar nombre de banca
-        bancaCode, // ✅ NUEVO: Pasar código de banca
+        bancaName, //  NUEVO: Pasar nombre de banca
+        bancaCode, //  NUEVO: Pasar código de banca
         ventanaName,
         ventanaCode,
         vendedorName,
@@ -215,12 +215,12 @@ export class AccountsExportService {
 
   /**
    * Transforma statements de DayStatement[] a AccountStatementExportItem[]
-   * ✅ OPTIMIZADO: Evita queries cuando los nombres ya están disponibles
-   * ✅ NUEVO: Incluye bySorteo y movements cuando no hay agrupación
+   *  OPTIMIZADO: Evita queries cuando los nombres ya están disponibles
+   *  NUEVO: Incluye bySorteo y movements cuando no hay agrupación
    */
   private static async transformStatements(
     statements: DayStatement[],
-    dimension: 'banca' | 'ventana' | 'vendedor', // ✅ NUEVO: Agregado 'banca'
+    dimension: 'banca' | 'ventana' | 'vendedor', //  NUEVO: Agregado 'banca'
     breakdown?: AccountStatementSorteoItem[],
     movements?: AccountMovementItem[]
   ): Promise<AccountStatementExportItem[]> {
@@ -229,21 +229,21 @@ export class AccountsExportService {
       return [];
     }
 
-    // ✅ OPTIMIZACIÓN: Primero recopilar TODOS los IDs únicos (principales + breakdowns)
-    const allBancaIds = new Set<string>(); // ✅ NUEVO: IDs de bancas
+    //  OPTIMIZACIÓN: Primero recopilar TODOS los IDs únicos (principales + breakdowns)
+    const allBancaIds = new Set<string>(); //  NUEVO: IDs de bancas
     const allVentanaIds = new Set<string>();
     const allVendedorIds = new Set<string>();
 
     // IDs de statements principales
     statements.forEach((s) => {
-      if (s.bancaId) allBancaIds.add(s.bancaId); // ✅ NUEVO
+      if (s.bancaId) allBancaIds.add(s.bancaId); //  NUEVO
       if (s.ventanaId) allVentanaIds.add(s.ventanaId);
       if (s.vendedorId) allVendedorIds.add(s.vendedorId);
     });
 
     // IDs de breakdowns anidados
     statements.forEach((s) => {
-      // ✅ NUEVO: IDs de byBanca
+      //  NUEVO: IDs de byBanca
       s.byBanca?.forEach((bb) => {
         if (bb.bancaId) allBancaIds.add(bb.bancaId);
         bb.byVentana?.forEach((bv) => {
@@ -263,11 +263,11 @@ export class AccountsExportService {
       });
     });
 
-    const bancaMap = new Map<string, { name: string; code: string | null }>(); // ✅ NUEVO: Mapa de bancas
+    const bancaMap = new Map<string, { name: string; code: string | null }>(); //  NUEVO: Mapa de bancas
     const ventanaMap = new Map<string, { name: string; code: string | null }>();
     const vendedorMap = new Map<string, { name: string; code: string | null }>();
 
-    // ✅ OPTIMIZACIÓN: Una sola query batch para todos los IDs de bancas
+    //  OPTIMIZACIÓN: Una sola query batch para todos los IDs de bancas
     if (allBancaIds.size > 0) {
       const bancas = await prisma.banca.findMany({
         where: { id: { in: Array.from(allBancaIds) } },
@@ -276,7 +276,7 @@ export class AccountsExportService {
       bancas.forEach((b) => bancaMap.set(b.id, { name: b.name, code: b.code }));
     }
 
-    // ✅ OPTIMIZACIÓN: Una sola query batch para todos los IDs
+    //  OPTIMIZACIÓN: Una sola query batch para todos los IDs
     if (allVentanaIds.size > 0) {
       const ventanas = await prisma.ventana.findMany({
         where: { id: { in: Array.from(allVentanaIds) } },
@@ -295,7 +295,7 @@ export class AccountsExportService {
 
     // Transformar statements
     return statements.map((s) => {
-      const bancaInfo = s.bancaId ? bancaMap.get(s.bancaId) : null; // ✅ NUEVO: Información de banca
+      const bancaInfo = s.bancaId ? bancaMap.get(s.bancaId) : null; //  NUEVO: Información de banca
       const ventanaInfo = s.ventanaId ? ventanaMap.get(s.ventanaId) : null;
       const vendedorInfo = s.vendedorId ? vendedorMap.get(s.vendedorId) : null;
 
@@ -303,9 +303,9 @@ export class AccountsExportService {
         id: s.id,
         date: this.formatDate(s.date),
         month: s.month,
-        bancaId: s.bancaId || null, // ✅ NUEVO: ID de banca
-        bancaName: bancaInfo?.name || null, // ✅ NUEVO: Nombre de banca
-        bancaCode: bancaInfo?.code || null, // ✅ NUEVO: Código de banca
+        bancaId: s.bancaId || null, //  NUEVO: ID de banca
+        bancaName: bancaInfo?.name || null, //  NUEVO: Nombre de banca
+        bancaCode: bancaInfo?.code || null, //  NUEVO: Código de banca
         ventanaId: s.ventanaId,
         ventanaName: ventanaInfo?.name || null,
         ventanaCode: ventanaInfo?.code || null,
@@ -328,7 +328,7 @@ export class AccountsExportService {
         updatedAt: s.updatedAt ? (s.updatedAt instanceof Date ? s.updatedAt.toISOString() : new Date(s.updatedAt).toISOString()) : new Date().toISOString(),
       };
 
-      // ✅ NUEVO: Transformar byVentana si existe (con bySorteo y movements)
+      //  NUEVO: Transformar byVentana si existe (con bySorteo y movements)
       if (s.byVentana && s.byVentana.length > 0) {
         item.byVentana = s.byVentana.map((bv) => {
           const ventanaInfo = ventanaMap.get(bv.ventanaId);
@@ -348,12 +348,12 @@ export class AccountsExportService {
             ticketCount: bv.ticketCount || 0,
           };
           
-          // ✅ NUEVO: Incluir bySorteo del breakdown si existe
+          //  NUEVO: Incluir bySorteo del breakdown si existe
           if (bv.bySorteo && bv.bySorteo.length > 0) {
             breakdown.bySorteo = bv.bySorteo.map((sorteo) => this.transformSorteoItem(sorteo, this.formatDate(s.date), bv.ventanaName, null, ventanaInfo?.code || null, null, null));
           }
           
-          // ✅ NUEVO: Incluir movements del breakdown si existen
+          //  NUEVO: Incluir movements del breakdown si existen
           if (bv.movements && bv.movements.length > 0) {
             breakdown.movements = bv.movements.map((mov) => this.transformMovementItem(mov, this.formatDate(s.date), bv.ventanaName, null, ventanaInfo?.code || null, null, null));
           }
@@ -362,7 +362,7 @@ export class AccountsExportService {
         });
       }
 
-      // ✅ NUEVO: Transformar byVendedor si existe (con bySorteo y movements)
+      //  NUEVO: Transformar byVendedor si existe (con bySorteo y movements)
       if (s.byVendedor && s.byVendedor.length > 0) {
         item.byVendedor = s.byVendedor.map((bv) => {
           const vendedorInfo = vendedorMap.get(bv.vendedorId);
@@ -386,12 +386,12 @@ export class AccountsExportService {
             ticketCount: bv.ticketCount || 0,
           };
           
-          // ✅ NUEVO: Incluir bySorteo del breakdown si existe
+          //  NUEVO: Incluir bySorteo del breakdown si existe
           if (bv.bySorteo && bv.bySorteo.length > 0) {
             breakdown.bySorteo = bv.bySorteo.map((sorteo) => this.transformSorteoItem(sorteo, this.formatDate(s.date), bv.ventanaName, bv.vendedorName, ventanaInfo?.code || null, bv.vendedorId, vendedorInfo?.code || null));
           }
           
-          // ✅ NUEVO: Incluir movements del breakdown si existen
+          //  NUEVO: Incluir movements del breakdown si existen
           if (bv.movements && bv.movements.length > 0) {
             breakdown.movements = bv.movements.map((mov) => this.transformMovementItem(mov, this.formatDate(s.date), bv.ventanaName, bv.vendedorName, ventanaInfo?.code || null, bv.vendedorId, vendedorInfo?.code || null));
           }
@@ -400,7 +400,7 @@ export class AccountsExportService {
         });
       }
 
-      // ✅ NUEVO: Si NO hay agrupación, incluir bySorteo y movements del statement principal
+      //  NUEVO: Si NO hay agrupación, incluir bySorteo y movements del statement principal
       const hasGrouping = (dimension === 'banca' && s.byBanca && s.byBanca.length > 0) ||
                           (dimension === 'ventana' && s.byVentana && s.byVentana.length > 0) ||
                           (dimension === 'vendedor' && s.byVendedor && s.byVendedor.length > 0);
@@ -431,7 +431,7 @@ export class AccountsExportService {
 
   /**
    * Obtiene breakdown detallado por sorteo para todos los días
-   * ✅ OPTIMIZADO: Usa datos de bySorteo cuando están disponibles en statements agrupados
+   *  OPTIMIZADO: Usa datos de bySorteo cuando están disponibles en statements agrupados
    */
   private static async getBreakdown(
     statements: DayStatement[],
@@ -446,13 +446,13 @@ export class AccountsExportService {
              (!isDimensionVentana && !isDimensionBanca && s.byVendedor && s.byVendedor.length > 0)
     );
 
-    // ✅ OPTIMIZACIÓN: Si hay agrupación, usar bySorteo de los breakdowns anidados
+    //  OPTIMIZACIÓN: Si hay agrupación, usar bySorteo de los breakdowns anidados
     if (hasGrouping) {
       for (const statement of statements) {
         const dateKey = this.formatDate(statement.date);
 
         if (isDimensionBanca && statement.byBanca) {
-          // ✅ NUEVO: Manejar byBanca
+          //  NUEVO: Manejar byBanca
           for (const bancaBreakdown of statement.byBanca) {
             // Incluir sorteos de byVentana dentro de esta banca
             if (bancaBreakdown.byVentana) {
@@ -546,7 +546,7 @@ export class AccountsExportService {
         }
       }
     } else {
-      // ✅ Comportamiento original cuando NO hay agrupación
+      //  Comportamiento original cuando NO hay agrupación
       const dates = statements.map((s) => new Date(s.date));
       const breakdownMap = await getSorteoBreakdownBatch(
         dates,
@@ -592,7 +592,7 @@ export class AccountsExportService {
         vendedores.forEach((v) => vendedorMap.set(v.id, v.name));
       }
 
-      // ✅ OPTIMIZACIÓN: Obtener códigos en batch antes del loop
+      //  OPTIMIZACIÓN: Obtener códigos en batch antes del loop
       const ventanaCodesMap = new Map<string, string | null>();
       const vendedorCodesMap = new Map<string, string | null>();
       
@@ -644,11 +644,11 @@ export class AccountsExportService {
 
   /**
    * Obtiene movimientos (pagos/cobros) para todos los días
-   * ✅ OPTIMIZADO: Usa datos de movements cuando están disponibles en statements agrupados
+   *  OPTIMIZADO: Usa datos de movements cuando están disponibles en statements agrupados
    */
   private static async getMovements(
     statements: DayStatement[],
-    dimension: 'banca' | 'ventana' | 'vendedor' // ✅ NUEVO: Agregado 'banca'
+    dimension: 'banca' | 'ventana' | 'vendedor' //  NUEVO: Agregado 'banca'
   ): Promise<AccountMovementItem[]> {
     const result: AccountMovementItem[] = [];
     const isDimensionBanca = dimension === 'banca';
@@ -659,13 +659,13 @@ export class AccountsExportService {
              (!isDimensionVentana && s.byVendedor && s.byVendedor.length > 0)
     );
 
-    // ✅ OPTIMIZACIÓN: Si hay agrupación, usar movements de los breakdowns anidados
+    //  OPTIMIZACIÓN: Si hay agrupación, usar movements de los breakdowns anidados
     if (hasGrouping) {
       for (const statement of statements) {
         const dateKey = this.formatDate(statement.date);
 
         if (isDimensionBanca && statement.byBanca) {
-          // ✅ NUEVO: Manejar byBanca
+          //  NUEVO: Manejar byBanca
           for (const bancaBreakdown of statement.byBanca) {
             if (bancaBreakdown.movements && bancaBreakdown.movements.length > 0) {
               for (const movement of bancaBreakdown.movements) {
@@ -751,7 +751,7 @@ export class AccountsExportService {
         }
       }
     } else {
-      // ✅ Comportamiento original cuando NO hay agrupación
+      //  Comportamiento original cuando NO hay agrupación
       const statementIds = statements.map((s) => s.id).filter((id) => id);
 
       if (statementIds.length === 0) {
@@ -891,8 +891,8 @@ export class AccountsExportService {
     filters: AccountsFilters,
     startDate: string,
     endDate: string,
-    bancaName?: string, // ✅ NUEVO: Nombre de banca
-    bancaCode?: string | null, // ✅ NUEVO: Código de banca
+    bancaName?: string, //  NUEVO: Nombre de banca
+    bancaCode?: string | null, //  NUEVO: Código de banca
     ventanaName?: string,
     ventanaCode?: string | null,
     vendedorName?: string,
@@ -904,7 +904,7 @@ export class AccountsExportService {
     // Determinar filtro
     let filterPart = 'todos';
     if (bancaName) {
-      // ✅ NUEVO: Prioridad a banca
+      //  NUEVO: Prioridad a banca
       filterPart = bancaCode ? `${bancaCode}` : this.slugify(bancaName);
     } else if (ventanaName) {
       filterPart = ventanaCode ? `${ventanaCode}` : this.slugify(ventanaName);

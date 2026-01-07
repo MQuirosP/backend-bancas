@@ -53,7 +53,7 @@ async function executeAutoOpen(): Promise<void> {
       payload: { timestamp: new Date().toISOString() },
     });
 
-    // ✅ Pasar null para jobs cron (sin usuario autenticado)
+    //  Pasar null para jobs cron (sin usuario autenticado)
     // La actividad se registrará con userId: null
     const result = await SorteosAutoService.executeAutoOpen(null as any);
 
@@ -100,7 +100,7 @@ async function executeAutoCreate(): Promise<void> {
       payload: { timestamp: new Date().toISOString() },
     });
 
-    // ✅ Pasar null para jobs cron (sin usuario autenticado)
+    //  Pasar null para jobs cron (sin usuario autenticado)
     const result = await SorteosAutoService.executeAutoCreate(7, null as any); // 7 días por defecto
 
     logger.info({
@@ -269,7 +269,7 @@ async function executeAutoClose(): Promise<void> {
       payload: { timestamp: new Date().toISOString() },
     });
 
-    // ✅ Pasar null para jobs cron (sin usuario autenticado)
+    //  Pasar null para jobs cron (sin usuario autenticado)
     const result = await SorteosAutoService.executeAutoClose(null as any);
 
     logger.info({

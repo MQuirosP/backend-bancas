@@ -24,7 +24,7 @@ export async function computeListeroCommissionsForWhere(
 ): Promise<Map<string, number>> {
     const result = new Map<string, number>();
 
-    // ✅ OPTIMIZACIÓN: Obtener tickets que cumplen el WHERE para luego leer snapshots
+    //  OPTIMIZACIÓN: Obtener tickets que cumplen el WHERE para luego leer snapshots
     const tickets = await prisma.ticket.findMany({
         where: ticketWhere,
         select: { id: true },
@@ -36,7 +36,7 @@ export async function computeListeroCommissionsForWhere(
 
     const ticketIds = tickets.map((t) => t.id);
 
-    // ✅ USAR SNAPSHOTS: Leer snapshots directamente de BD en lugar de recalcular
+    //  USAR SNAPSHOTS: Leer snapshots directamente de BD en lugar de recalcular
     const snapshotsByTicket = await commissionSnapshotService.getSnapshotsForTickets(ticketIds);
 
     // Agregar por ventana usando snapshots
@@ -61,7 +61,7 @@ export async function computeListeroCommissionsForWhere(
 
 /**
  * Calcula comisiones para un ticket usando snapshots guardados en BD
- * ✅ OPTIMIZADO: Usa snapshots en lugar de recalcular desde políticas
+ *  OPTIMIZADO: Usa snapshots en lugar de recalcular desde políticas
  * 
  * Lógica:
  * - Si dimension='ventana': Usa listeroCommissionAmount del snapshot
@@ -73,7 +73,7 @@ export async function calculateCommissionsForTicket(
 ): Promise<{ listeroCommission: number; vendedorCommission: number }> {
     const ticketId = ticket.id;
     
-    // ✅ USAR SNAPSHOTS: Leer snapshots directamente de BD
+    //  USAR SNAPSHOTS: Leer snapshots directamente de BD
     const snapshotsByTicket = await commissionSnapshotService.getSnapshotsForTickets([ticketId]);
     const snapshots = snapshotsByTicket.get(ticketId) || [];
 

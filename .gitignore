@@ -15,7 +15,7 @@ node_modules/
 **/.env.staging
 **/.env.production
 
-# ✅ Mantener el template de ejemplo
+#  Mantener el template de ejemplo
 !.env.example
 
 # IDE

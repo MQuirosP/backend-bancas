@@ -68,7 +68,7 @@ export const VendedoresReportService = {
     const fromDateStr = dateRange.fromString; // YYYY-MM-DD
     const toDateStr = dateRange.toString; // YYYY-MM-DD
 
-    // ✅ FIX: Query optimizada con CTEs para evitar multiplicación de filas
+    //  FIX: Query optimizada con CTEs para evitar multiplicación de filas
     // Problema anterior: LEFT JOIN con Jugada multiplicaba t."totalAmount" por número de jugadas
     // Solución: Separar agregación de tickets y jugadas en CTEs independientes
     const chartQuery = Prisma.sql`

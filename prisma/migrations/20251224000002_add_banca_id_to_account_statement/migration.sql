@@ -1,4 +1,4 @@
--- ✅ CRÍTICO: Agregar bancaId a AccountStatement para persistir la banca directamente
+--  CRÍTICO: Agregar bancaId a AccountStatement para persistir la banca directamente
 -- Esto evita problemas cuando un vendedor cambia de ventana o una ventana cambia de banca
 -- Los estados de cuenta históricos deben mantener la banca/ventana original
 -- 
@@ -30,7 +30,7 @@ BEGIN
   END IF;
 END $$;
 
--- ✅ NOTA: Los datos existentes se actualizarán con el script de migración de datos
+--  NOTA: Los datos existentes se actualizarán con el script de migración de datos
 -- (inferir bancaId desde ventanaId cuando ventanaId esté presente)
 -- 
 -- Esta migración es segura y puede ejecutarse múltiples veces sin problemas

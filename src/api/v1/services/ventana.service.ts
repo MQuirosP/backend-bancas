@@ -54,7 +54,7 @@ export const VentanaService = {
       if (existing) throw new AppError("El código de la ventana ya existe", 400);
     }
 
-    // ✅ Validar username único antes de iniciar transacción
+    //  Validar username único antes de iniciar transacción
     const existingUser = await prisma.user.findUnique({
       where: { username: data.username.trim() },
       select: { id: true },
@@ -63,7 +63,7 @@ export const VentanaService = {
       throw new AppError("El usuario ya existe", 409, "USERNAME_EXISTS");
     }
 
-    // ✅ Crear ventana y usuario en la misma transacción
+    //  Crear ventana y usuario en la misma transacción
     const result = await prisma.$transaction(async (tx) => {
       // 1. Crear ventana
       const ventanaData = {
@@ -134,7 +134,7 @@ export const VentanaService = {
       },
     });
 
-    // ✅ Retornar ventana con metadata del usuario creado
+    //  Retornar ventana con metadata del usuario creado
     return {
       ...result.ventana,
       _meta: {
@@ -158,7 +158,7 @@ export const VentanaService = {
     const toUpdate: any = { ...data };
     delete toUpdate.bancaId;
     
-    // ✅ Manejar actualización de usuario asociado
+    //  Manejar actualización de usuario asociado
     let passwordToUpdate: string | undefined;
     let usernameToUpdate: string | undefined;
     if (data.password) {
@@ -191,7 +191,7 @@ export const VentanaService = {
 
     const ventana = await VentanaRepository.update(id, toUpdate);
 
-    // ✅ Actualizar o crear usuario asociado a la ventana (rol VENTANA)
+    //  Actualizar o crear usuario asociado a la ventana (rol VENTANA)
     if (passwordToUpdate || usernameToUpdate) {
       const ventanaUser = await prisma.user.findFirst({
         where: {

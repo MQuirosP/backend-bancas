@@ -45,7 +45,7 @@ function processTime(time: string | undefined | null): string {
         );
     }
     
-    // ✅ CRÍTICO: Persistir exactamente como se recibe (no modificar)
+    //  CRÍTICO: Persistir exactamente como se recibe (no modificar)
     // El FE siempre envía en formato correcto HH:MM
     return trimmed;
 }
@@ -55,7 +55,7 @@ function processTime(time: string | undefined | null): string {
  */
 export async function registerPayment(data: {
     date: string; // YYYY-MM-DD
-    time?: string; // ✅ OPCIONAL: HH:MM (si no está presente, se usa "00:00" como default según especificación FE)
+    time?: string; //  OPCIONAL: HH:MM (si no está presente, se usa "00:00" como default según especificación FE)
     ventanaId?: string;
     vendedorId?: string;
     amount: number;
@@ -316,7 +316,7 @@ export async function registerPayment(data: {
 
     // ...existing code for post-save time-fix, sync, cache, response...
 
-    // ✅ Obtener totales actuales de movimientos (antes de agregar el nuevo)
+    //  Obtener totales actuales de movimientos (antes de agregar el nuevo)
     const [currentTotalPaid, currentTotalCollected] = await Promise.all([
         AccountPaymentRepository.getTotalPaid(statement.id),
         AccountPaymentRepository.getTotalCollected(statement.id),
@@ -349,7 +349,7 @@ export async function registerPayment(data: {
         }
     }
 
-    // ✅ CRÍTICO: Procesar el campo time según especificación del FE
+    //  CRÍTICO: Procesar el campo time según especificación del FE
     // El FE siempre envía formato válido HH:MM si está presente
     // Si no está presente, usar "00:00" como default
     // processedTime is already declared above
@@ -365,15 +365,15 @@ export async function registerPayment(data: {
         );
     }
 
-    // ✅ CRÍTICO: Crear pago con ventanaId, vendedorId y bancaId correctos
+    //  CRÍTICO: Crear pago con ventanaId, vendedorId y bancaId correctos
     // El repository también inferirá si es necesario, pero aquí ya los tenemos correctos
     // de la inferencia previa que se hizo para el AccountStatement
-    // ⚠️ IMPORTANTE: Pasar time explícitamente (nunca undefined) para asegurar que se guarde
+    // ️ IMPORTANTE: Pasar time explícitamente (nunca undefined) para asegurar que se guarde
     payment = await AccountPaymentRepository.create({
         accountStatementId: statement.id,
         date: paymentDate,
         month,
-        time: processedTime, // ✅ CRÍTICO: Siempre string (HH:MM), nunca undefined/null según especificación FE
+        time: processedTime, //  CRÍTICO: Siempre string (HH:MM), nunca undefined/null según especificación FE
         ventanaId: finalVentanaId,
         vendedorId: data.vendedorId,
         bancaId: finalBancaId,
@@ -387,7 +387,7 @@ export async function registerPayment(data: {
         paidByName: data.paidByName,
     });
 
-    // ✅ CRÍTICO: Si se registró un pago/cobro en un mes que ya tiene cierre mensual,
+    //  CRÍTICO: Si se registró un pago/cobro en un mes que ya tiene cierre mensual,
     // recalcular automáticamente el cierre para mantener los saldos actualizados
     // Esto se hace de forma asíncrona para no bloquear la creación del pago
     const paymentMonth = month; // month ya está en formato "YYYY-MM"
@@ -443,7 +443,7 @@ export async function registerPayment(data: {
         });
     }
 
-    // ✅ CRÍTICO: Verificar post-guardado que time se guardó correctamente
+    //  CRÍTICO: Verificar post-guardado que time se guardó correctamente
     // El FE siempre envía time (o no lo envía, en cuyo caso usamos "00:00")
     // Si no se guardó, actualizar inmediatamente (no lanzar error, el usuario no tiene la culpa)
     if (payment.time !== processedTime) {
@@ -458,7 +458,7 @@ export async function registerPayment(data: {
             },
         });
         
-        // ⚠️ CRÍTICO: Si el time no se guardó, actualizar inmediatamente
+        // ️ CRÍTICO: Si el time no se guardó, actualizar inmediatamente
         // El FE siempre envía time válido o no lo envía (usamos "00:00"), así que debe guardarse SIEMPRE
         // No lanzamos error porque el usuario no tiene la culpa, es un bug del sistema
         try {
@@ -490,11 +490,11 @@ export async function registerPayment(data: {
                     error: updateError.message,
                 },
             });
-            // ⚠️ No lanzamos error al usuario, pero loggeamos para investigar el bug
+            // ️ No lanzamos error al usuario, pero loggeamos para investigar el bug
         }
     }
 
-    // ✅ OPTIMIZACIÓN: Calcular nuevos totales directamente sin consultar la BD nuevamente
+    //  OPTIMIZACIÓN: Calcular nuevos totales directamente sin consultar la BD nuevamente
     // Ya sabemos los totales actuales, solo sumamos el nuevo pago/cobro
     const newTotalPaid = data.type === "payment" 
         ? currentTotalPaid + data.amount 
@@ -510,7 +510,7 @@ export async function registerPayment(data: {
     // Usar ticketCount del statement recalculado para asegurar consistencia
     const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
-    // ✅ CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
+    //  CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
     // NOTA: accumulatedBalance se actualizará después mediante syncDayStatement para mantener consistencia
     const updatedStatement = await AccountStatementRepository.update(statement.id, {
         // Valores de tickets (recalculados desde tickets/jugadas)
@@ -524,12 +524,12 @@ export async function registerPayment(data: {
         totalPaid: newTotalPaid,
         totalCollected: newTotalCollected,
         remainingBalance: newRemainingBalance,
-        // ⚠️ NOTA: accumulatedBalance se actualizará después mediante syncDayStatement
+        // ️ NOTA: accumulatedBalance se actualizará después mediante syncDayStatement
         isSettled,
         canEdit: !isSettled,
     });
 
-    // ✅ CRÍTICO: Sincronizar accumulatedBalance después de registrar el pago
+    //  CRÍTICO: Sincronizar accumulatedBalance después de registrar el pago
     // Esto asegura que accumulatedBalance se mantenga correcto y actualizado
     try {
       const { AccountStatementSyncService } = await import('./accounts.sync.service');
@@ -615,7 +615,7 @@ export async function registerPayment(data: {
       });
     }
 
-    // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
+    //  OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
     const dateStr = data.date; // Ya está en formato YYYY-MM-DD
     Promise.all([
         invalidateAccountStatementCache({
@@ -633,11 +633,11 @@ export async function registerPayment(data: {
         // Ignorar errores de invalidación de caché
     });
 
-    // ✅ OPTIMIZACIÓN: Construir statement para respuesta (evita query adicional)
+    //  OPTIMIZACIÓN: Construir statement para respuesta (evita query adicional)
     // Ya tenemos todos los datos actualizados en updatedStatement
     // Las relaciones (ventana, vendedor) no son críticas para la respuesta, el FE puede obtenerlas del statement completo si las necesita
     
-    // ✅ CRÍTICO: Formatear fechas a strings YYYY-MM-DD para el frontend
+    //  CRÍTICO: Formatear fechas a strings YYYY-MM-DD para el frontend
     const statementForResponse: any = {
         ...updatedStatement,
         date: crDateService.postgresDateToCRString(updatedStatement.date), // Convertir Date a YYYY-MM-DD
@@ -648,7 +648,7 @@ export async function registerPayment(data: {
         settledAt: updatedStatement.settledAt ? updatedStatement.settledAt.toISOString() : null,
     };
 
-    // ✅ CRÍTICO: Formatear payment para respuesta (fechas a strings)
+    //  CRÍTICO: Formatear payment para respuesta (fechas a strings)
     const paymentForResponse: any = {
         ...payment,
         date: crDateService.postgresDateToCRString(payment.date), // Convertir Date a YYYY-MM-DD
@@ -698,7 +698,7 @@ export async function reversePayment(
         throw new AppError("El motivo de reversión debe tener al menos 5 caracteres", 400, "INVALID_REASON");
     }
 
-    // ✅ OPTIMIZACIÓN: Usar el statement ya incluido en el payment en lugar de findOrCreate
+    //  OPTIMIZACIÓN: Usar el statement ya incluido en el payment en lugar de findOrCreate
     // El payment siempre tiene accountStatement porque viene de findById con include
     if (!payment.accountStatement) {
         throw new AppError("Estado de cuenta no encontrado para este pago", 404, "STATEMENT_NOT_FOUND");
@@ -706,7 +706,7 @@ export async function reversePayment(
     
     const statement = payment.accountStatement;
 
-    // ✅ CRÍTICO: Recalcular el statement completo desde tickets ANTES de revertir el movimiento
+    //  CRÍTICO: Recalcular el statement completo desde tickets ANTES de revertir el movimiento
     // Esto asegura que ticketCount, totalSales, totalPayouts, comisiones, etc. estén siempre correctos
     const dimension: "ventana" | "vendedor" = statement.ventanaId ? "ventana" : "vendedor";
     const paymentDate = new Date(payment.date);
@@ -726,7 +726,7 @@ export async function reversePayment(
     // Usar balance recalculado desde tickets (ya incluye totalSales, totalPayouts, comisiones)
     const baseBalance = recalculatedStatement.balance;
 
-    // ✅ OPTIMIZACIÓN: Obtener totales actuales en paralelo
+    //  OPTIMIZACIÓN: Obtener totales actuales en paralelo
     const [currentTotalPaid, currentTotalCollected] = await Promise.all([
         AccountPaymentRepository.getTotalPaid(statement.id),
         AccountPaymentRepository.getTotalCollected(statement.id),
@@ -767,7 +767,7 @@ export async function reversePayment(
     // Revertir pago
     const reversed = await AccountPaymentRepository.reverse(payment.id, userId);
 
-    // ✅ OPTIMIZACIÓN: Calcular nuevos totales directamente sin consultar la BD nuevamente
+    //  OPTIMIZACIÓN: Calcular nuevos totales directamente sin consultar la BD nuevamente
     // Ya sabemos los totales actuales, solo restamos el pago/cobro revertido
     const newTotalPaid = payment.type === "payment"
         ? currentTotalPaid - payment.amount
@@ -783,7 +783,7 @@ export async function reversePayment(
     // Usar ticketCount del statement recalculado para asegurar consistencia
     const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
-    // ✅ CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
+    //  CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
     const updatedStatement = await AccountStatementRepository.update(statement.id, {
         // Valores de tickets (recalculados desde tickets/jugadas)
         ticketCount: recalculatedStatement.ticketCount,
@@ -800,7 +800,7 @@ export async function reversePayment(
         canEdit: !isSettled,
     });
 
-    // ✅ CRÍTICO: Sincronizar accumulatedBalance después de revertir el pago
+    //  CRÍTICO: Sincronizar accumulatedBalance después de revertir el pago
     // Esto asegura que accumulatedBalance se mantenga correcto y actualizado
     try {
       const { AccountStatementSyncService } = await import('./accounts.sync.service');
@@ -881,7 +881,7 @@ export async function reversePayment(
       });
     }
 
-    // ✅ OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
+    //  OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
     const dateStr = crDateService.postgresDateToCRString(payment.date);
     Promise.all([
         invalidateAccountStatementCache({
@@ -899,12 +899,12 @@ export async function reversePayment(
         // Ignorar errores de invalidación de caché
     });
 
-    // ✅ OPTIMIZACIÓN: Construir statement completo para respuesta (evita query adicional)
+    //  OPTIMIZACIÓN: Construir statement completo para respuesta (evita query adicional)
     // Ya tenemos todos los datos, solo combinamos con las relaciones del statement original
     // El statement viene de payment.accountStatement que no incluye relaciones, así que las omitimos
     // El FE puede obtenerlas del statement original si las necesita
     
-    // ✅ CRÍTICO: Formatear fechas a strings YYYY-MM-DD para el frontend
+    //  CRÍTICO: Formatear fechas a strings YYYY-MM-DD para el frontend
     const statementForResponse: any = {
         ...updatedStatement,
         date: crDateService.postgresDateToCRString(updatedStatement.date), // Convertir Date a YYYY-MM-DD
@@ -915,7 +915,7 @@ export async function reversePayment(
         settledAt: updatedStatement.settledAt ? updatedStatement.settledAt.toISOString() : null,
     };
 
-    // ✅ CRÍTICO: Formatear payment para respuesta (fechas a strings)
+    //  CRÍTICO: Formatear payment para respuesta (fechas a strings)
     const reversedForResponse: any = {
         ...reversed,
         date: crDateService.postgresDateToCRString(reversed.date), // Convertir Date a YYYY-MM-DD

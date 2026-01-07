@@ -93,7 +93,7 @@ export interface VendedorMetrics extends CeldaMetrics {
 
 /**
  * Datos retornados por el servicio weekly (solo datos, sin meta)
- * ✅ NUEVA ESTRUCTURA: Agrupado por Lotería → Sorteo → Tipo → Banda
+ *  NUEVA ESTRUCTURA: Agrupado por Lotería → Sorteo → Tipo → Banda
  */
 export interface CierreWeeklyData {
   loterias: CierreLoteriaGroup[];
@@ -114,7 +114,7 @@ export interface CierreLoteriaGroup {
 
 /**
  * Grupo de datos por Sorteo (Nivel 2)
- * ✅ ACTUALIZADO: Bandas directamente (suma de NUMERO + REVENTADO)
+ *  ACTUALIZADO: Bandas directamente (suma de NUMERO + REVENTADO)
  */
 export interface CierreSorteoGroup {
   sorteo: {
@@ -178,7 +178,7 @@ export interface AnomalyExample {
 export interface CierreAnomalies {
   outOfBandCount: number;
   examples: AnomalyExample[];
-  orphanedDataCount?: number; // ✅ NUEVO: Datos huérfanos (discrepancia entre totals y Σ(loterias[].subtotal))
+  orphanedDataCount?: number; //  NUEVO: Datos huérfanos (discrepancia entre totals y Σ(loterias[].subtotal))
 }
 
 /**
@@ -235,7 +235,7 @@ export type JugadaTipo = 'NUMERO' | 'REVENTADO';
 
 /**
  * Datos agregados por banda, lotería, sorteo, tipo (query raw)
- * ✅ NUEVO: Incluye sorteoId y scheduledAt para agrupar por sorteo
+ *  NUEVO: Incluye sorteoId y scheduledAt para agrupar por sorteo
  */
 export interface CierreAggregateRow {
   banda: number; // Banda heredada (80, 85, 90, 92) - reventados heredan banda del número asociado
@@ -243,9 +243,9 @@ export interface CierreAggregateRow {
   fecha: string; // YYYY-MM-DD
   loteriaId: string;
   loteriaNombre: string;
-  sorteoId: string; // ✅ NUEVO: ID del sorteo
+  sorteoId: string; //  NUEVO: ID del sorteo
   turno: string; // "19:30"
-  scheduledAt: Date; // ✅ NUEVO: Fecha/hora programada del sorteo
+  scheduledAt: Date; //  NUEVO: Fecha/hora programada del sorteo
   totalVendida: number;
   ganado: number;
   comisionTotal: number;

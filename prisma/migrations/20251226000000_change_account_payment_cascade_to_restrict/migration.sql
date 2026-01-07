@@ -1,5 +1,5 @@
 -- Migration: Cambiar onDelete de Cascade a Restrict en AccountPayment -> AccountStatement
--- ⚠️ CRÍTICO: Este cambio previene que se borren AccountPayment cuando se borre un AccountStatement
+-- ️ CRÍTICO: Este cambio previene que se borren AccountPayment cuando se borre un AccountStatement
 -- Esto protege los datos críticos de producción (pagos/cobros)
 --
 -- IMPORTANTE: Esta migración debe aplicarse manualmente en producción con cuidado

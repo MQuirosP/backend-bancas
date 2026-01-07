@@ -21,7 +21,7 @@ const app = express()
 // Trust proxy: configuración segura para rate limiting
 // Número de proxies confiables (0 = deshabilitado, 1 = un proxy como Render/Heroku, 2 = nginx + load balancer)
 // Por defecto: 1 (común en Render, Heroku, etc.)
-// ⚠️ NO usar `true` ya que permite eludir el rate limiting basado en IP
+// ️ NO usar `true` ya que permite eludir el rate limiting basado en IP
 app.set('trust proxy', config.trustProxy)
 
 // middlewares (order matters)
@@ -29,7 +29,7 @@ app.use(requestIdMiddleware)
 app.use(attachRequestLogger)
 app.use(helmet())
 
-// ⚠️ CORS antes de parsers / rateLimit / requireJson
+// ️ CORS antes de parsers / rateLimit / requireJson
 app.use(corsMiddleware)
 app.use('/public', express.static(path.join(process.cwd(), 'public')));
 

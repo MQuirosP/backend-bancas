@@ -1,187 +1,71 @@
-[2025-11-16T22:06:49.730Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:06:49.730Z]  Controller - bancaContext recibido
 
-[2025-11-16T22:06:49.762Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:06:49.762Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {}
 
-[2025-11-16T22:06:49.838Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:06:49.838Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:06:49.860Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:06:49.860Z]  Controller - bancaContext recibido
 
-[2025-11-16T22:06:49.864Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:06:49.864Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {}
 
-[2025-11-16T22:06:49.866Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:06:49.866Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:06:49.877Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:06:49.877Z]  Controller - bancaContext recibido
 
-[2025-11-16T22:06:49.879Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:06:49.879Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {}
 
-[2025-11-16T22:06:49.892Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:06:49.892Z]  Controller - bancaContext recibido
 
-[2025-11-16T22:06:49.894Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:06:49.894Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {}
 
-[2025-11-16T22:06:49.933Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:06:49.933Z]  Controller - bancaContext recibido
 
-[2025-11-16T22:06:49.949Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:06:49.949Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {}
 
-[2025-11-16T22:06:49.959Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:06:49.959Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "NINGUNA (ver todas)",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:06:49.962Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:06:49.962Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:06:49.979Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:06:49.979Z]  Controller - bancaContext recibido
 
-[2025-11-16T22:06:49.985Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:06:49.985Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {}
 
-[2025-11-16T22:06:49.994Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:06:49.994Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "NINGUNA (ver todas)",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:06:50.000Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:06:50.000Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:06:54.704Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:06:54.704Z]  Controller - bancaContext recibido
 
-[2025-11-16T22:06:54.708Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:06:54.708Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {}
 
-[2025-11-16T22:06:54.713Z] 📊 Dashboard - Filtros aplicados
-{
-  "ventanaId": "NINGUNA",
-  "bancaId": "NINGUNA (ver todas)",
-  "userRole": "ADMIN",
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:06:54.720Z] 💰 Service - calculateGanancia recibió filtros
-{
-  "bancaId": "NINGUNA (ver todas)",
-  "ventanaId": "NINGUNA"
-}
-
-[2025-11-16T22:06:54.725Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
-{
-  "alias": "t"
-}
-
-[2025-11-16T22:06:54.727Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
-{
-  "alias": "t"
-}
-
-[2025-11-16T22:06:54.730Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
-{
-  "alias": "t"
-}
-
-[2025-11-16T22:06:54.735Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
-{
-  "alias": "t"
-}
-
-[2025-11-16T22:06:54.740Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
-{
-  "alias": "t"
-}
-
-[2025-11-16T22:06:54.815Z] 🔍 Controller - bancaContext recibido
-
-[2025-11-16T22:06:54.818Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
-{}
-
-[2025-11-16T22:06:54.821Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
-{
-  "alias": "t"
-}
-
-[2025-11-16T22:07:05.357Z] 🔍 Controller - bancaContext recibido
-
-[2025-11-16T22:07:05.364Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
-{}
-
-[2025-11-16T22:07:05.368Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
-{
-  "alias": "t"
-}
-
-[2025-11-16T22:07:05.390Z] 🔍 Controller - bancaContext recibido
-
-[2025-11-16T22:07:05.397Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
-{}
-
-[2025-11-16T22:07:05.412Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
-{
-  "alias": "t"
-}
-
-[2025-11-16T22:07:05.514Z] 🔍 Controller - bancaContext recibido
-
-[2025-11-16T22:07:05.542Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
-{}
-
-[2025-11-16T22:07:05.557Z] 🔍 Controller - bancaContext recibido
-
-[2025-11-16T22:07:05.559Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
-{}
-
-[2025-11-16T22:07:05.568Z] 🔍 Controller - bancaContext recibido
-
-[2025-11-16T22:07:05.569Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
-{}
-
-[2025-11-16T22:07:05.574Z] 💰 Service - calculateGanancia recibió filtros
-{
-  "bancaId": "NINGUNA (ver todas)",
-  "ventanaId": "NINGUNA"
-}
-
-[2025-11-16T22:07:05.579Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
-{
-  "alias": "t"
-}
-
-[2025-11-16T22:07:05.614Z] 🔍 Controller - bancaContext recibido
-
-[2025-11-16T22:07:05.658Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
-{}
-
-[2025-11-16T22:07:05.660Z] 💰 Service - calculateGanancia recibió filtros
-{
-  "bancaId": "NINGUNA (ver todas)",
-  "ventanaId": "NINGUNA"
-}
-
-[2025-11-16T22:07:05.661Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
-{
-  "alias": "t"
-}
-
-[2025-11-16T22:07:06.643Z] 🔍 Controller - bancaContext recibido
-
-[2025-11-16T22:07:06.645Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
-{}
-
-[2025-11-16T22:07:06.647Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:06:54.713Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "NINGUNA (ver todas)",
@@ -189,48 +73,164 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:07:06.648Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:06:54.720Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "NINGUNA (ver todas)",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:07:06.652Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:06:54.725Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:07:06.662Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:06:54.727Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:07:06.666Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:06:54.730Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:07:06.668Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:06:54.735Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:07:06.674Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:06:54.740Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:07:07.556Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:06:54.815Z]  Controller - bancaContext recibido
 
-[2025-11-16T22:07:07.563Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:06:54.818Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {}
 
-[2025-11-16T22:07:07.566Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:06:54.821Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:08:20.244Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:07:05.357Z]  Controller - bancaContext recibido
+
+[2025-11-16T22:07:05.364Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
+{}
+
+[2025-11-16T22:07:05.368Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+{
+  "alias": "t"
+}
+
+[2025-11-16T22:07:05.390Z]  Controller - bancaContext recibido
+
+[2025-11-16T22:07:05.397Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
+{}
+
+[2025-11-16T22:07:05.412Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+{
+  "alias": "t"
+}
+
+[2025-11-16T22:07:05.514Z]  Controller - bancaContext recibido
+
+[2025-11-16T22:07:05.542Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
+{}
+
+[2025-11-16T22:07:05.557Z]  Controller - bancaContext recibido
+
+[2025-11-16T22:07:05.559Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
+{}
+
+[2025-11-16T22:07:05.568Z]  Controller - bancaContext recibido
+
+[2025-11-16T22:07:05.569Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
+{}
+
+[2025-11-16T22:07:05.574Z]  Service - calculateGanancia recibió filtros
+{
+  "bancaId": "NINGUNA (ver todas)",
+  "ventanaId": "NINGUNA"
+}
+
+[2025-11-16T22:07:05.579Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+{
+  "alias": "t"
+}
+
+[2025-11-16T22:07:05.614Z]  Controller - bancaContext recibido
+
+[2025-11-16T22:07:05.658Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
+{}
+
+[2025-11-16T22:07:05.660Z]  Service - calculateGanancia recibió filtros
+{
+  "bancaId": "NINGUNA (ver todas)",
+  "ventanaId": "NINGUNA"
+}
+
+[2025-11-16T22:07:05.661Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+{
+  "alias": "t"
+}
+
+[2025-11-16T22:07:06.643Z]  Controller - bancaContext recibido
+
+[2025-11-16T22:07:06.645Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
+{}
+
+[2025-11-16T22:07:06.647Z]  Dashboard - Filtros aplicados
+{
+  "ventanaId": "NINGUNA",
+  "bancaId": "NINGUNA (ver todas)",
+  "userRole": "ADMIN",
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:07:06.648Z]  Service - calculateGanancia recibió filtros
+{
+  "bancaId": "NINGUNA (ver todas)",
+  "ventanaId": "NINGUNA"
+}
+
+[2025-11-16T22:07:06.652Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+{
+  "alias": "t"
+}
+
+[2025-11-16T22:07:06.662Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+{
+  "alias": "t"
+}
+
+[2025-11-16T22:07:06.666Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+{
+  "alias": "t"
+}
+
+[2025-11-16T22:07:06.668Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+{
+  "alias": "t"
+}
+
+[2025-11-16T22:07:06.674Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+{
+  "alias": "t"
+}
+
+[2025-11-16T22:07:07.556Z]  Controller - bancaContext recibido
+
+[2025-11-16T22:07:07.563Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
+{}
+
+[2025-11-16T22:07:07.566Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+{
+  "alias": "t"
+}
+
+[2025-11-16T22:08:20.244Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -238,7 +238,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:20.251Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:20.251Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -246,7 +246,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:20.262Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:20.262Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -254,7 +254,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:20.267Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:20.267Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -262,7 +262,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:20.272Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:20.272Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -270,7 +270,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:20.276Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:20.276Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -278,193 +278,193 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:20.841Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:20.841Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:20.845Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:20.845Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:20.851Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:20.851Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:20.853Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:20.853Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:20.856Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:20.856Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:21.581Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:21.581Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:21.582Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:21.582Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:21.584Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:21.584Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:21.585Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:21.585Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:21.731Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:21.731Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:21.732Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:21.732Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:21.734Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:21.734Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:21.735Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:21.735Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:21.737Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:21.737Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:21.739Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:21.739Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:21.741Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:21.741Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:21.742Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:21.742Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:21.743Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:21.743Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:21.745Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:21.745Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:21.747Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:21.747Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:21.748Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:21.748Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:21.749Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:21.749Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:21.751Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:21.751Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:21.752Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:21.752Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:21.755Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:21.755Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:21.756Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:21.756Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:21.758Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:21.758Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:21.760Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:21.760Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:21.762Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:21.762Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:21.763Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:21.763Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:22.975Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:22.975Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -472,7 +472,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:22.981Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:22.981Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -480,57 +480,57 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:23.609Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:23.609Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:23.613Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:23.613Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:23.615Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:23.615Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:23.616Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:23.616Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:23.619Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:23.619Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:23.621Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:23.621Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:23.623Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:23.623Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:23.624Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:23.624Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:23.625Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:08:23.625Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -538,43 +538,43 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:23.627Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:23.627Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:23.628Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:23.628Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:23.630Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:23.630Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:23.632Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:23.632Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:23.633Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:23.633Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:23.635Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:23.635Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:24.352Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:24.352Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -582,7 +582,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:24.701Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:24.701Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -590,38 +590,38 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:24.936Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:24.936Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:24.937Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:24.937Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:24.940Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:24.940Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:24.941Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:24.941Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:24.944Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:24.944Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:25.132Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:25.132Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -629,7 +629,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:25.138Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:25.138Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -637,32 +637,32 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:25.325Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:25.325Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:25.326Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:25.326Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:25.328Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:25.328Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:25.328Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:25.328Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:25.330Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:08:25.330Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -670,43 +670,43 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:25.330Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:25.330Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:25.331Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:25.331Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:25.333Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:25.333Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:25.334Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:25.334Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:25.335Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:25.335Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:25.335Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:25.335Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:25.516Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:25.516Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -714,69 +714,69 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:25.740Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:25.740Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:25.742Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:25.742Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:25.744Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:25.744Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:25.745Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:25.745Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:25.746Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:25.746Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:25.747Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:25.747Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:25.749Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:25.749Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:25.750Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:25.750Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:25.751Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:25.751Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:25.753Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:25.753Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:26.565Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:26.565Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -784,38 +784,38 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:26.618Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:26.618Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:26.620Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:26.620Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:26.622Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:26.622Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:26.623Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:26.623Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:26.625Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:26.625Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:26.787Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:26.787Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -823,32 +823,32 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:27.212Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:27.212Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:27.214Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:27.214Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:27.216Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:27.216Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:27.217Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:27.217Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:27.311Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:27.311Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -856,81 +856,81 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:27.403Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:27.403Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:27.404Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:27.404Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:27.405Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:27.405Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:27.406Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:27.406Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:27.409Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:27.409Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:27.410Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:27.410Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:27.901Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:27.901Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:27.921Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:27.921Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:27.927Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:27.927Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:27.932Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:27.932Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:27.934Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:27.934Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:27.936Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:27.936Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:39.866Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:39.866Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -938,7 +938,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:39.870Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:39.870Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -946,7 +946,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:39.876Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:39.876Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -954,7 +954,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:39.881Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:39.881Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -962,7 +962,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:39.884Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:39.884Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -970,7 +970,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:39.888Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:39.888Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -978,193 +978,193 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:40.524Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:40.524Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.525Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:40.525Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.528Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:40.528Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:40.530Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:40.530Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:40.531Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:40.531Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:40.571Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:40.571Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.572Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:40.572Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.573Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:40.573Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:40.574Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:40.574Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:40.576Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:40.576Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.578Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:40.578Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.580Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:40.580Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:40.581Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:40.581Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:40.581Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:40.581Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:40.583Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:40.583Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:40.612Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:40.612Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.614Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:40.614Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.615Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:40.615Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:40.616Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:40.616Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:40.617Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:40.617Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:40.619Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:40.619Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:40.629Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:40.629Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.630Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:40.630Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.631Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:40.631Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:40.632Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:40.632Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:40.645Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:40.645Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.646Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:40.646Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:40.649Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:40.649Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:40.651Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:40.651Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:40.652Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:40.652Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:41.632Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:41.632Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1172,32 +1172,32 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:42.207Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:42.207Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:42.210Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:42.210Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:42.211Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:42.211Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:42.212Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:42.212Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:42.213Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:08:42.213Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1205,43 +1205,43 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:42.214Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:42.214Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:42.215Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:42.215Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:42.217Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:42.217Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:42.219Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:42.219Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:42.219Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:42.219Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:42.220Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:42.220Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:42.731Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:42.731Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1249,7 +1249,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:43.267Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:43.267Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1257,38 +1257,38 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:43.337Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:43.337Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:43.338Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:43.338Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:43.340Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:43.340Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:43.340Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:43.340Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:43.342Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:43.342Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:43.603Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:43.603Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1296,7 +1296,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:43.622Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:43.622Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1304,38 +1304,38 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:43.859Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:43.859Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:43.861Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:43.861Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:43.863Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:43.863Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:43.864Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:43.864Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:43.867Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:43.867Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:43.931Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:43.931Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1343,7 +1343,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:43.981Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:43.981Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1351,32 +1351,32 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:44.175Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:44.175Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:44.176Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:44.176Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:44.180Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:44.180Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:44.181Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:44.181Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:44.182Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:08:44.182Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1384,130 +1384,130 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:44.184Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:44.184Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:44.188Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:44.188Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:44.193Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:44.193Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:44.194Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:44.194Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:44.196Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:44.196Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:44.197Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:44.197Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:44.219Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:44.219Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:44.220Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:44.220Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:44.229Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:44.229Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:44.234Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:44.234Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:44.569Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:44.569Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:44.570Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:44.570Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:44.572Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:44.572Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:44.573Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:44.573Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:44.575Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:44.575Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:44.586Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:44.586Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:44.588Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:44.588Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:44.594Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:44.594Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:44.595Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:44.595Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:44.596Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:44.596Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:45.070Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:45.070Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1515,7 +1515,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:45.477Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:45.477Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1523,69 +1523,69 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:45.706Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:45.706Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:45.708Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:45.708Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:45.709Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:45.709Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:45.710Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:45.710Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:46.016Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:46.016Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:46.017Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:46.017Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:46.019Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:46.019Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:46.020Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:46.020Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:46.021Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:46.021Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:46.022Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:46.022Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:46.416Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:46.416Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -1593,44 +1593,44 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:47.042Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:47.042Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:47.043Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:47.043Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:47.044Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:47.044Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:47.045Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:47.045Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:08:47.046Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:47.046Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:47.047Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:47.047Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:08:47.857Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:47.857Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -1638,7 +1638,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:47.861Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:47.861Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -1646,7 +1646,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:47.865Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:47.865Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -1654,94 +1654,94 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:48.478Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:48.478Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:48.480Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:48.480Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:48.482Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:48.482Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:48.483Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:48.483Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:48.485Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:48.485Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:48.487Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:48.487Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:48.488Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:48.488Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:48.490Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:48.490Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:48.491Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:48.491Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:48.493Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:48.493Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:48.495Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:48.495Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:48.497Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:48.497Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:48.499Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:48.499Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:48.500Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:48.500Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:48.719Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:48.719Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -1749,7 +1749,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:49.100Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:49.100Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -1757,69 +1757,69 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:49.329Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:49.329Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:49.331Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:49.331Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:49.332Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:49.332Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:49.334Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:49.334Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:49.716Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:49.716Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:49.717Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:49.717Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:49.722Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:49.722Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:49.724Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:49.724Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:49.727Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:49.727Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:49.729Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:49.729Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:49.741Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:49.741Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -1827,44 +1827,44 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:50.336Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:50.336Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:50.337Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:50.337Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:50.339Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:50.339Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:50.341Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:50.341Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:50.343Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:50.343Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:50.344Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:50.344Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:50.439Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:50.439Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -1872,7 +1872,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:50.595Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:50.595Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -1880,32 +1880,32 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:51.074Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:51.074Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:51.076Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:51.076Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:51.080Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:51.080Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:51.089Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:51.089Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:51.091Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:08:51.091Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -1913,68 +1913,68 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:51.094Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:51.094Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:51.096Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:51.096Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:51.102Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:51.102Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:51.105Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:51.105Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:51.107Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:51.107Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:51.111Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:51.111Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:51.252Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:51.252Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:51.255Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:51.255Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:51.257Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:51.257Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:51.260Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:51.260Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:51.261Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:08:51.261Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -1982,43 +1982,43 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:51.262Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:51.262Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:51.263Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:51.263Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:51.265Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:51.265Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:51.267Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:51.267Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:51.268Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:51.268Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:51.270Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:51.270Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:51.430Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:51.430Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -2026,38 +2026,38 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:52.391Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:52.391Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:52.392Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:52.392Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:52.393Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:52.393Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:52.394Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:52.394Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:52.395Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:52.395Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:52.669Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:52.669Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -2065,7 +2065,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:53.045Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:53.045Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -2073,38 +2073,38 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:53.487Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:53.487Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:53.488Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:53.488Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:53.490Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:53.490Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:53.491Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:53.491Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:53.492Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:53.492Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:53.537Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:53.537Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -2112,38 +2112,38 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:53.732Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:53.732Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:53.734Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:53.734Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:53.736Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:53.736Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:53.740Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:53.740Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:53.742Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:53.742Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:53.790Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:53.790Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -2151,38 +2151,38 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:54.121Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:54.121Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:54.122Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:54.122Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:54.124Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:54.124Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:54.125Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:54.125Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:54.127Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:54.127Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:54.213Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:54.213Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -2190,32 +2190,32 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:54.329Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:54.329Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:54.332Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:54.332Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:54.334Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:54.334Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:54.336Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:54.336Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:54.619Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:54.619Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -2223,7 +2223,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:54.702Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:08:54.702Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -2231,106 +2231,106 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:08:54.889Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:54.889Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:54.890Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:54.890Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:54.892Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:54.892Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:54.892Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:54.892Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:55.261Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:55.261Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:55.268Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:55.268Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:55.269Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:55.269Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:55.270Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:55.270Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:55.273Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:55.273Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:55.274Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:55.274Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:08:55.276Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:08:55.276Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:55.278Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:08:55.278Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:08:55.279Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:08:55.279Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:08:55.281Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:08:55.281Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:08:55.282Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:08:55.282Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:08:55.283Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:08:55.283Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:09:09.751Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:09.751Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2338,7 +2338,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:09.758Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:09.758Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2346,7 +2346,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:09.764Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:09.764Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2354,7 +2354,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:09.768Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:09.768Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2362,7 +2362,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:09.772Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:09.772Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2370,7 +2370,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:09.775Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:09.775Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2378,150 +2378,150 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:10.336Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:10.336Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.337Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:10.337Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.366Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:10.366Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:10.367Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:10.367Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:10.368Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.368Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.369Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:10.369Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.370Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:10.370Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.371Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:10.371Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:10.373Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:10.373Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:10.374Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.374Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.375Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:10.375Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.376Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:10.376Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.377Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:10.377Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:10.378Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:10.378Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:10.379Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.379Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.383Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:10.383Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.384Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:10.384Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.386Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:10.386Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:10.386Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:10.386Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:10.460Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:10.460Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.493Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:10.493Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.495Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:10.495Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:10.495Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:10.495Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:10.496Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:09:10.496Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2529,68 +2529,68 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.498Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:09:10.498Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:09:10.499Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.499Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.500Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.500Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.502Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.502Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.502Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.502Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.504Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.504Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.506Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:10.506Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.507Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:10.507Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.509Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:10.509Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:10.510Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:10.510Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:10.510Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:09:10.510Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2598,43 +2598,43 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:10.511Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:09:10.511Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:09:10.512Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.512Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.514Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.514Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.517Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.517Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.519Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.519Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:10.520Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:10.520Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:11.844Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:11.844Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2642,7 +2642,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:11.926Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:11.926Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2650,63 +2650,63 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:12.529Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:12.529Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:12.530Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:12.530Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:12.531Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:12.531Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:12.532Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:12.532Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:12.533Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:12.533Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:12.740Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:12.740Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:12.743Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:12.743Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:12.744Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:12.744Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:12.745Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:12.745Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:12.778Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:12.778Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2714,38 +2714,38 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:13.524Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:13.524Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:13.525Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:13.525Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:13.526Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:13.526Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:13.551Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:13.551Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:13.553Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:13.553Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:13.659Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:13.659Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2753,7 +2753,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:14.155Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:14.155Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2761,7 +2761,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:14.173Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:14.173Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2769,32 +2769,32 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:14.280Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:14.280Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:14.281Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:14.281Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:14.282Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:14.282Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:14.283Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:14.283Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:14.400Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:14.400Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2802,112 +2802,112 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:14.744Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:14.744Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:14.745Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:14.745Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:14.746Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:14.746Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:14.747Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:14.747Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:14.749Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:14.749Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:14.788Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:14.788Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:14.789Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:14.789Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:14.791Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:14.791Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:14.792Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:14.792Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:14.792Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:09:14.792Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:09:14.793Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:14.793Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:15.028Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:15.028Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:15.029Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:15.029Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:15.030Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:15.030Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:15.031Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:15.031Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:15.032Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:09:15.032Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:09:15.033Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:15.033Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:43.844Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:09:43.844Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2915,32 +2915,32 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:09:44.420Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:09:44.420Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:44.421Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:09:44.421Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:44.423Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:09:44.423Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:09:44.424Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:09:44.424Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:09:44.425Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:09:44.425Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2948,43 +2948,43 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:09:44.425Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:09:44.425Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:09:44.426Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:44.426Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:44.428Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:44.428Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:44.429Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:44.429Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:44.430Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:44.430Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:09:44.431Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:09:44.431Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:11:15.187Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:11:15.187Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -2992,7 +2992,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:11:15.698Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:11:15.698Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -3000,7 +3000,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:11:15.711Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:11:15.711Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -3008,7 +3008,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:11:15.733Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:11:15.733Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -3016,7 +3016,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:11:15.750Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:11:15.750Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -3024,7 +3024,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:11:15.788Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:11:15.788Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -3032,63 +3032,63 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:11:16.288Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:11:16.288Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.292Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:11:16.292Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.312Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:11:16.312Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:11:16.313Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:11:16.313Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:11:16.318Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:11:16.318Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:11:16.503Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:11:16.503Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.504Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:11:16.504Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.510Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:11:16.510Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:11:16.512Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:11:16.512Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:11:16.515Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:11:16.515Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -3096,155 +3096,155 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.517Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:11:16.517Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:11:16.518Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:11:16.518Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:11:16.525Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:11:16.525Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:11:16.528Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:11:16.528Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:11:16.531Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:11:16.531Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:11:16.534Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:11:16.534Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:11:16.546Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:11:16.546Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.548Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:11:16.548Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.551Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:11:16.551Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:11:16.553Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:11:16.553Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:11:16.555Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:11:16.555Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:11:16.574Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:11:16.574Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.576Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:11:16.576Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.579Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:11:16.579Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:11:16.580Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:11:16.580Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:11:16.583Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:11:16.583Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.587Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:11:16.587Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.593Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:11:16.593Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:11:16.595Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:11:16.595Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:11:16.599Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:11:16.599Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:11:16.602Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:11:16.602Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.604Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:11:16.604Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:16.609Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:11:16.609Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:11:16.611Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:11:16.611Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:11:17.368Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:11:17.368Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -3252,44 +3252,44 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:11:17.940Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:11:17.940Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:17.943Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:11:17.943Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:17.945Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:11:17.945Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:11:17.947Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:11:17.947Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:11:17.948Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:11:17.948Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:11:17.950Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:11:17.950Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:11:18.007Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:11:18.007Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "78004325-cd89-4095-9407-f7139a799ffe",
   "requestedBancaId": "78004325-cd89-4095-9407-f7139a799ffe",
@@ -3297,64 +3297,64 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:11:18.624Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:11:18.624Z]  Middleware - Banca válida establecida
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:18.726Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:11:18.726Z]  Middleware - Contexto final establecido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:11:18.760Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:11:18.760Z]  Controller - bancaContext recibido
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:11:18.876Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:11:18.876Z]  Controller - Usando bancaId
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe"
 }
 
-[2025-11-16T22:11:18.877Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:11:18.877Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:11:18.878Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:11:18.878Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "78004325-cd89-4095-9407-f7139a799ffe",
   "alias": "t"
 }
 
-[2025-11-16T22:20:19.757Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:19.757Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:19.759Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:19.759Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:19.763Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:19.763Z]  Controller - bancaContext recibido
 {
   "bancaId": null,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:19.764Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:20:19.764Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {
   "bancaContext": {
     "bancaId": null,
@@ -3363,32 +3363,32 @@
   }
 }
 
-[2025-11-16T22:20:19.766Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:19.766Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:19.777Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:19.777Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:19.778Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:19.778Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:19.781Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:19.781Z]  Controller - bancaContext recibido
 {
   "bancaId": null,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:19.782Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:20:19.782Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {
   "bancaContext": {
     "bancaId": null,
@@ -3397,27 +3397,27 @@
   }
 }
 
-[2025-11-16T22:20:19.794Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:19.794Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:19.796Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:19.796Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:19.799Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:19.799Z]  Controller - bancaContext recibido
 {
   "bancaId": null,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:19.804Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:20:19.804Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {
   "bancaContext": {
     "bancaId": null,
@@ -3426,32 +3426,32 @@
   }
 }
 
-[2025-11-16T22:20:19.807Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:19.807Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:19.811Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:19.811Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:19.812Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:19.812Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:19.814Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:19.814Z]  Controller - bancaContext recibido
 {
   "bancaId": null,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:19.815Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:20:19.815Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {
   "bancaContext": {
     "bancaId": null,
@@ -3460,27 +3460,27 @@
   }
 }
 
-[2025-11-16T22:20:19.822Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:19.822Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:19.824Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:19.824Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:19.825Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:19.825Z]  Controller - bancaContext recibido
 {
   "bancaId": null,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:19.826Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:20:19.826Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {
   "bancaContext": {
     "bancaId": null,
@@ -3489,38 +3489,38 @@
   }
 }
 
-[2025-11-16T22:20:19.828Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:20:19.828Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "NINGUNA (ver todas)",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:20:19.829Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:19.829Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:19.833Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:19.833Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:19.835Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:19.835Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:19.839Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:19.839Z]  Controller - bancaContext recibido
 {
   "bancaId": null,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:19.840Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:20:19.840Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {
   "bancaContext": {
     "bancaId": null,
@@ -3529,38 +3529,38 @@
   }
 }
 
-[2025-11-16T22:20:19.842Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:20:19.842Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "NINGUNA (ver todas)",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:20:19.844Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:19.844Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:22.888Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:22.888Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:22.891Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:22.891Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:22.894Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:22.894Z]  Controller - bancaContext recibido
 {
   "bancaId": null,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:22.896Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:20:22.896Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {
   "bancaContext": {
     "bancaId": null,
@@ -3569,7 +3569,7 @@
   }
 }
 
-[2025-11-16T22:20:22.907Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:20:22.907Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "NINGUNA (ver todas)",
@@ -3577,58 +3577,58 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:22.910Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:20:22.910Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "NINGUNA (ver todas)",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:20:22.911Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:22.911Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:22.913Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:22.913Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:22.919Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:22.919Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:22.921Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:22.921Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:22.923Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:22.923Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:22.934Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:22.934Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:22.940Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:22.940Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:22.947Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:22.947Z]  Controller - bancaContext recibido
 {
   "bancaId": null,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:22.952Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:20:22.952Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {
   "bancaContext": {
     "bancaId": null,
@@ -3637,162 +3637,162 @@
   }
 }
 
-[2025-11-16T22:20:22.954Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:22.954Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:24.495Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:24.495Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:24.499Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:24.499Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:24.524Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:24.524Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:24.528Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:24.528Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:24.558Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:24.558Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:24.576Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:24.576Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:25.044Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:25.044Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:25.048Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:25.048Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:25.338Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:25.338Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:25.340Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:25.340Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:25.722Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:25.722Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:25.728Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:25.728Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:25.762Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:25.762Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:25.771Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:25.771Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:25.940Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:25.940Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:25.942Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:25.942Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:26.518Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:26.518Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:26.519Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:26.519Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:36.882Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:36.882Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:36.903Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:36.903Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:52.471Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:52.471Z]  Middleware - Headers recibidos
 {
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:52.481Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:52.481Z]  Middleware - Contexto final establecido
 {
   "bancaId": "NULL (ver todas)",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:52.484Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:52.484Z]  Controller - bancaContext recibido
 {
   "bancaId": null,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:52.586Z] ⚠️  Controller - NO hay bancaId, mostrando TODAS las bancas
+[2025-11-16T22:20:52.586Z] ️  Controller - NO hay bancaId, mostrando TODAS las bancas
 {
   "bancaContext": {
     "bancaId": null,
@@ -3801,7 +3801,7 @@
   }
 }
 
-[2025-11-16T22:20:52.591Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:20:52.591Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "NINGUNA (ver todas)",
@@ -3809,38 +3809,38 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:52.596Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:20:52.596Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "NINGUNA (ver todas)",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:20:52.600Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:52.600Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:52.609Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:52.609Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:52.611Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:52.611Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:52.613Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:52.613Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:52.615Z] ⚠️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
+[2025-11-16T22:20:52.615Z] ️  Query - NO hay filtro de banca en buildTicketBaseFilters (ver todas)
 {
   "alias": "t"
 }
 
-[2025-11-16T22:20:57.063Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:57.063Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -3848,7 +3848,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:57.071Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:57.071Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -3856,7 +3856,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:57.078Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:57.078Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -3864,7 +3864,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:57.086Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:57.086Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -3872,7 +3872,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:57.092Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:57.092Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -3880,7 +3880,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:57.098Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:57.098Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -3888,193 +3888,193 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:57.670Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:20:57.670Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.673Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:57.673Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.675Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:57.675Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:57.676Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:20:57.676Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:20:57.678Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:20:57.678Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:20:57.679Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:20:57.679Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.681Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:57.681Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.684Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:57.684Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:57.685Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:20:57.685Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:20:57.686Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:20:57.686Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:20:57.687Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:20:57.687Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:20:57.688Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:20:57.688Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.690Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:57.690Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.691Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:57.691Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:57.693Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:20:57.693Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:20:57.694Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:20:57.694Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.695Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:57.695Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.700Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:57.700Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:57.703Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:20:57.703Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:20:57.705Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:20:57.705Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.707Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:57.707Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.708Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:57.708Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:57.710Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:20:57.710Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:20:57.712Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:20:57.712Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:20:57.718Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:20:57.718Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:20:57.721Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:20:57.721Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.722Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:57.722Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:57.724Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:57.724Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:57.725Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:20:57.725Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:20:57.726Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:20:57.726Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:20:59.051Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:59.051Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4082,32 +4082,32 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:20:59.634Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:20:59.634Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:59.635Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:20:59.635Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:59.637Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:20:59.637Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:20:59.638Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:20:59.638Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:20:59.639Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:20:59.639Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4115,43 +4115,43 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:20:59.640Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:20:59.640Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:20:59.641Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:20:59.641Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:20:59.642Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:20:59.642Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:20:59.643Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:20:59.643Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:20:59.644Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:20:59.644Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:20:59.646Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:20:59.646Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:20:59.820Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:20:59.820Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4159,38 +4159,38 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:00.440Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:00.440Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:00.442Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:00.442Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:00.444Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:21:00.444Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:21:00.446Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:21:00.446Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:21:00.447Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:21:00.447Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:21:00.453Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:00.453Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4198,7 +4198,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:00.468Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:00.468Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4206,7 +4206,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:00.800Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:00.800Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4214,20 +4214,20 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:01.001Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:01.001Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:01.002Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:01.002Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:01.009Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:01.009Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4235,20 +4235,20 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:01.062Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:01.062Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:01.064Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:01.064Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:01.118Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:01.118Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4256,46 +4256,46 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:01.377Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:01.377Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:01.379Z] 📌 Middleware - Contexto final establecido
-{
-  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
-  "hasAccess": true,
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:21:01.581Z] ✅ Middleware - Banca válida establecida
-{
-  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:21:01.582Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:01.379Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:01.774Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:01.581Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:01.777Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:01.582Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:02.182Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:01.774Z]  Middleware - Banca válida establecida
+{
+  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:21:01.777Z]  Middleware - Contexto final establecido
+{
+  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
+  "hasAccess": true,
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:21:02.182Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4303,7 +4303,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:02.297Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:02.297Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4311,7 +4311,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:02.402Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:02.402Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4319,20 +4319,20 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:02.768Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:02.768Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:02.782Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:02.782Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:02.934Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:02.934Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4340,33 +4340,33 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:02.944Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:02.944Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:02.945Z] 📌 Middleware - Contexto final establecido
-{
-  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
-  "hasAccess": true,
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:21:03.068Z] ✅ Middleware - Banca válida establecida
-{
-  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:21:03.069Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:02.945Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:03.417Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:03.068Z]  Middleware - Banca válida establecida
+{
+  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:21:03.069Z]  Middleware - Contexto final establecido
+{
+  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
+  "hasAccess": true,
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:21:03.417Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4374,33 +4374,33 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:03.499Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:03.499Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:03.500Z] 📌 Middleware - Contexto final establecido
-{
-  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
-  "hasAccess": true,
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:21:03.975Z] ✅ Middleware - Banca válida establecida
-{
-  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:21:03.977Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:03.500Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:23.308Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:03.975Z]  Middleware - Banca válida establecida
+{
+  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:21:03.977Z]  Middleware - Contexto final establecido
+{
+  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
+  "hasAccess": true,
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:21:23.308Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4408,7 +4408,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:23.374Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:23.374Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4416,7 +4416,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:23.380Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:23.380Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4424,7 +4424,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:23.406Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:23.406Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4432,7 +4432,7 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:23.412Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:23.412Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4440,72 +4440,72 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:23.965Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:23.965Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:23.966Z] 📌 Middleware - Contexto final establecido
-{
-  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
-  "hasAccess": true,
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:21:23.972Z] ✅ Middleware - Banca válida establecida
-{
-  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:21:23.974Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:23.966Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:24.025Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:23.972Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:24.027Z] 📌 Middleware - Contexto final establecido
-{
-  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
-  "hasAccess": true,
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:21:24.133Z] ✅ Middleware - Banca válida establecida
-{
-  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
-  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
-}
-
-[2025-11-16T22:21:24.135Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:23.974Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:24.141Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:24.025Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:24.144Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:24.027Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:28.164Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:24.133Z]  Middleware - Banca válida establecida
+{
+  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:21:24.135Z]  Middleware - Contexto final establecido
+{
+  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
+  "hasAccess": true,
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:21:24.141Z]  Middleware - Banca válida establecida
+{
+  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:21:24.144Z]  Middleware - Contexto final establecido
+{
+  "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
+  "hasAccess": true,
+  "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
+}
+
+[2025-11-16T22:21:28.164Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4513,20 +4513,20 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:28.761Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:28.761Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:28.763Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:28.763Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:36.567Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:36.567Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4534,20 +4534,20 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:37.166Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:37.166Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:37.167Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:37.167Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:49.286Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:49.286Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4555,20 +4555,20 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:49.973Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:49.973Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:49.974Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:49.974Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:53.407Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:21:53.407Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4576,20 +4576,20 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:21:54.031Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:21:54.031Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:21:54.032Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:21:54.032Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:22:09.621Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:22:09.621Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4597,32 +4597,32 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:22:10.369Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:22:10.369Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:22:10.371Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:22:10.371Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:22:10.372Z] 🔍 Controller - bancaContext recibido
+[2025-11-16T22:22:10.372Z]  Controller - bancaContext recibido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c",
   "hasAccess": true
 }
 
-[2025-11-16T22:22:10.373Z] ✅ Controller - Usando bancaId
+[2025-11-16T22:22:10.373Z]  Controller - Usando bancaId
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d"
 }
 
-[2025-11-16T22:22:10.374Z] 📊 Dashboard - Filtros aplicados
+[2025-11-16T22:22:10.374Z]  Dashboard - Filtros aplicados
 {
   "ventanaId": "NINGUNA",
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4630,43 +4630,43 @@
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:22:10.375Z] 💰 Service - calculateGanancia recibió filtros
+[2025-11-16T22:22:10.375Z]  Service - calculateGanancia recibió filtros
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "ventanaId": "NINGUNA"
 }
 
-[2025-11-16T22:22:10.376Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:22:10.376Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:22:10.377Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:22:10.377Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:22:10.378Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:22:10.378Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:22:10.379Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:22:10.379Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:22:10.380Z] ✅ Query - Aplicando filtro de banca en buildTicketBaseFilters
+[2025-11-16T22:22:10.380Z]  Query - Aplicando filtro de banca en buildTicketBaseFilters
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "alias": "t"
 }
 
-[2025-11-16T22:22:12.273Z] 🔍 Middleware - Headers recibidos
+[2025-11-16T22:22:12.273Z]  Middleware - Headers recibidos
 {
   "x-active-banca-id": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "requestedBancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
@@ -4674,13 +4674,13 @@
   "userRole": "ADMIN"
 }
 
-[2025-11-16T22:22:12.836Z] ✅ Middleware - Banca válida establecida
+[2025-11-16T22:22:12.836Z]  Middleware - Banca válida establecida
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "userId": "8d1c7ca3-8a64-4d22-b015-b4eca2a2431c"
 }
 
-[2025-11-16T22:22:12.840Z] 📌 Middleware - Contexto final establecido
+[2025-11-16T22:22:12.840Z]  Middleware - Contexto final establecido
 {
   "bancaId": "ea4ebdcc-2deb-4854-93fd-47d0fdf08f4d",
   "hasAccess": true,

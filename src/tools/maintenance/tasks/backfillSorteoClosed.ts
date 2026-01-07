@@ -90,9 +90,9 @@ export async function backfillSorteoClosed(opts: BackfillSorteoClosedOptions = {
     console.log('');
     console.log('════════════════════════════════════════════════════════════════');
     success(`Backfill completado en ${duration}s`);
-    console.log(`  📊 Sorteos procesados: ${closedSorteos.length}`);
-    console.log(`  ✅ Tickets marcados: ${totalTicketsUpdated}`);
-    console.log(`  🔍 Modo: ${opts.dryRun ? 'DRY RUN (sin cambios)' : 'EJECUTADO'}`);
+    console.log(`   Sorteos procesados: ${closedSorteos.length}`);
+    console.log(`   Tickets marcados: ${totalTicketsUpdated}`);
+    console.log(`   Modo: ${opts.dryRun ? 'DRY RUN (sin cambios)' : 'EJECUTADO'}`);
     console.log('════════════════════════════════════════════════════════════════');
   } catch (err) {
     error(`Error en backfill: ${err instanceof Error ? err.message : String(err)}`);

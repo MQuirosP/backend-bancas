@@ -52,7 +52,7 @@ export interface SorteoOrMovement {
   sorteoAccumulated?: number;
 
   // Campos específicos de movimientos (undefined en sorteos)
-  type?: "payment" | "collection" | "initial_balance"; // ✅ NUEVO: "initial_balance" para saldo del mes anterior
+  type?: "payment" | "collection" | "initial_balance"; //  NUEVO: "initial_balance" para saldo del mes anterior
   amount?: number;
   method?: string;
   notes?: string | null;
@@ -99,34 +99,34 @@ export function intercalateSorteosAndMovements(
     isReversed: boolean;
     createdAt: string;
     date: string;
-    time?: string | null; // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
+    time?: string | null; //  NUEVO: HH:MM (opcional, hora del movimiento en CR)
   }>,
   dateStr: string,
-  initialAccumulated: number = 0 // ✅ NUEVO: Acumulado inicial (para arrastrar saldo del día anterior)
+  initialAccumulated: number = 0 //  NUEVO: Acumulado inicial (para arrastrar saldo del día anterior)
 ): SorteoOrMovement[] {
 
   // PASO 1: Convertir movimientos a formato unificado
   const movementItems: SorteoOrMovement[] = [];
 
   for (const movement of movements) {
-    // ✅ INCLUIR TODOS los movimientos (activos y reversados)
+    //  INCLUIR TODOS los movimientos (activos y reversados)
     // Los movimientos reversados se muestran en el frontend con estilo diferente
     // pero NO afectan el balance acumulado (balance: 0 si isReversed)
 
-    // ✅ CRÍTICO: Detectar si es el movimiento especial "Saldo del mes anterior"
+    //  CRÍTICO: Detectar si es el movimiento especial "Saldo del mes anterior"
     const isPreviousMonthBalance = movement.id?.startsWith('previous-month-balance-');
 
-    // ✅ CRÍTICO: Usar time si está disponible y es válido, sino usar createdAt
+    //  CRÍTICO: Usar time si está disponible y es válido, sino usar createdAt
     // Si movement.time existe, combinar date + time en CR y convertir a UTC para scheduledAt
     // Esto permite que el usuario especifique la hora del movimiento y se intercale correctamente con sorteos
     let scheduledAt: Date;
     let timeToDisplay: string;
 
-    // ✅ CRÍTICO: Validar que time existe y no es una cadena vacía
+    //  CRÍTICO: Validar que time existe y no es una cadena vacía
     const timeValue = movement.time;
     const hasTime = timeValue != null && typeof timeValue === 'string' && timeValue.trim().length > 0;
 
-    // ✅ CRÍTICO: Si el usuario especificó manualmente el time, SIEMPRE usarlo
+    //  CRÍTICO: Si el usuario especificó manualmente el time, SIEMPRE usarlo
     // El time puede estar lejos de createdAt si el usuario registró el movimiento después
     // (ej: registró a las 01:17 un movimiento que ocurrió a las 18:00)
     // Solo validamos que el formato sea correcto (HH:MM válido)
@@ -137,7 +137,7 @@ export function intercalateSorteosAndMovements(
       const timeStr = timeValue.trim();
       const [hours, minutes] = timeStr.split(':').map(Number);
 
-      // ✅ VALIDACIÓN: Solo verificar que el formato sea válido (0-23 horas, 0-59 minutos)
+      //  VALIDACIÓN: Solo verificar que el formato sea válido (0-23 horas, 0-59 minutos)
       // Si el usuario especificó manualmente la hora, siempre debemos respetarla
       // incluso si está lejos de createdAt (el usuario puede registrar movimientos después)
       if (!isNaN(hours) && !isNaN(minutes) && hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
@@ -154,7 +154,7 @@ export function intercalateSorteosAndMovements(
       const [year, month, day] = movement.date.split('-').map(Number);
       const timeStr = timeValue.trim();
       const [hours, minutes] = timeStr.split(':').map(Number);
-      // ✅ CRÍTICO: Convertir hora CR a UTC correctamente
+      //  CRÍTICO: Convertir hora CR a UTC correctamente
       // CR está en UTC-6, así que para convertir CR a UTC: SUMAR 6 horas
       // Ejemplo: 18:00 CR = 00:00 UTC del día siguiente
       // Si hours + 6 >= 24, entonces es el día siguiente
@@ -178,18 +178,18 @@ export function intercalateSorteosAndMovements(
       timeToDisplay = formatTime24hTo12h(timeStr);
     } else {
       // Si no hay time válido, usar createdAt (que ya está en UTC)
-      // ✅ CRÍTICO: createdAt es un timestamp real generado por la BD, no podemos "corregirlo"
+      //  CRÍTICO: createdAt es un timestamp real generado por la BD, no podemos "corregirlo"
       // Si el time está mal guardado, simplemente usamos createdAt convertido a CR
       scheduledAt = createdAtDate;
       timeToDisplay = formatTime12h(createdAtDate);
     }
 
-    // ✅ CRÍTICO: Convertir amount a Number (puede venir como Decimal de Prisma)
+    //  CRÍTICO: Convertir amount a Number (puede venir como Decimal de Prisma)
     const amountNum = Number(movement.amount || 0);
 
-    // ✅ CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
+    //  CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
     // Si no está reversado, usar el monto normal
-    // ✅ CAMBIO: Permitir que "Saldo del mes anterior" tenga balance real para que se muestre en el historial
+    //  CAMBIO: Permitir que "Saldo del mes anterior" tenga balance real para que se muestre en el historial
     // y participe en el cálculo acumulado (siempre y cuando initialAccumulated se ajuste a 0 externally)
     const effectiveBalance = movement.isReversed
       ? 0
@@ -200,8 +200,8 @@ export function intercalateSorteosAndMovements(
       sorteoName: isPreviousMonthBalance ? 'Saldo inicial' : (movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado'),
       scheduledAt: scheduledAt.toISOString(),
       date: movement.date,
-      time: timeToDisplay, // ✅ Usar time validado o createdAt convertido a CR
-      balance: effectiveBalance, // ✅ 0 si reversado, monto normal si activo
+      time: timeToDisplay, //  Usar time validado o createdAt convertido a CR
+      balance: effectiveBalance, //  0 si reversado, monto normal si activo
       accumulated: 0,
       chronologicalIndex: 0,
       totalChronological: 0,
@@ -216,17 +216,17 @@ export function intercalateSorteosAndMovements(
       ticketCount: 0,
 
       // Campos específicos de movimiento
-      type: isPreviousMonthBalance ? 'initial_balance' : movement.type, // ✅ NUEVO: Tipo especial para saldo inicial
-      amount: amountNum, // ✅ CRÍTICO: Convertir a Number (puede venir como Decimal de Prisma)
+      type: isPreviousMonthBalance ? 'initial_balance' : movement.type, //  NUEVO: Tipo especial para saldo inicial
+      amount: amountNum, //  CRÍTICO: Convertir a Number (puede venir como Decimal de Prisma)
       method: movement.method,
       notes: movement.notes,
-      isReversed: movement.isReversed, // ✅ Frontend usa esto para aplicar estilo diferente
+      isReversed: movement.isReversed, //  Frontend usa esto para aplicar estilo diferente
       createdAt: movement.createdAt,
     });
   }
 
   // PASO 2: Convertir sorteos a formato unificado
-  // ✅ CRÍTICO: scheduledAt de sorteos viene como string ISO desde la BD
+  //  CRÍTICO: scheduledAt de sorteos viene como string ISO desde la BD
   // Según la documentación, se guarda como hora local CR (sin 'Z')
   // Pero cuando Prisma lo lee y convierte a string con toISOString(), ya está en UTC
   // Necesitamos normalizar ambos (sorteos y movimientos) a UTC para comparar correctamente
@@ -235,28 +235,28 @@ export function intercalateSorteosAndMovements(
     // Por lo tanto, ya está en UTC y podemos usarlo directamente
     const sorteoScheduledAt = new Date(sorteo.scheduledAt);
 
-    // ✅ CRÍTICO: Convertir balance a Number (puede venir como Decimal de Prisma)
+    //  CRÍTICO: Convertir balance a Number (puede venir como Decimal de Prisma)
     const balanceNum = Number(sorteo.balance || 0);
 
     return {
       sorteoId: sorteo.sorteoId,
       sorteoName: sorteo.sorteoName,
-      scheduledAt: sorteoScheduledAt.toISOString(), // ✅ Ya está en UTC
+      scheduledAt: sorteoScheduledAt.toISOString(), //  Ya está en UTC
       date: dateStr,
       time: formatTime12h(sorteoScheduledAt),
-      balance: balanceNum, // ✅ CRÍTICO: Asegurar que balance sea Number
+      balance: balanceNum, //  CRÍTICO: Asegurar que balance sea Number
       accumulated: 0,
       chronologicalIndex: 0,
       totalChronological: 0,
 
       loteriaId: sorteo.loteriaId,
       loteriaName: sorteo.loteriaName,
-      sales: Number(sorteo.sales || 0), // ✅ CRÍTICO: Convertir a Number
-      payouts: Number(sorteo.payouts || 0), // ✅ CRÍTICO: Convertir a Number
-      listeroCommission: Number(sorteo.listeroCommission || 0), // ✅ CRÍTICO: Convertir a Number
-      vendedorCommission: Number(sorteo.vendedorCommission || 0), // ✅ CRÍTICO: Convertir a Number
+      sales: Number(sorteo.sales || 0), //  CRÍTICO: Convertir a Number
+      payouts: Number(sorteo.payouts || 0), //  CRÍTICO: Convertir a Number
+      listeroCommission: Number(sorteo.listeroCommission || 0), //  CRÍTICO: Convertir a Number
+      vendedorCommission: Number(sorteo.vendedorCommission || 0), //  CRÍTICO: Convertir a Number
       ticketCount: sorteo.ticketCount,
-      sorteoAccumulated: Number(sorteo.sorteoAccumulated || 0), // ✅ CRÍTICO: Convertir a Number
+      sorteoAccumulated: Number(sorteo.sorteoAccumulated || 0), //  CRÍTICO: Convertir a Number
     };
   });
 
@@ -266,7 +266,7 @@ export function intercalateSorteosAndMovements(
     const timeA = new Date(a.scheduledAt).getTime();
     const timeB = new Date(b.scheduledAt).getTime();
 
-    // ✅ CRÍTICO: Si tiempos son iguales, priorizar "initial_balance"
+    //  CRÍTICO: Si tiempos son iguales, priorizar "initial_balance"
     if (timeA === timeB) {
       if (a.type === 'initial_balance') return -1;
       if (b.type === 'initial_balance') return 1;
@@ -276,30 +276,30 @@ export function intercalateSorteosAndMovements(
   });
 
   // PASO 4: Calcular accumulated y chronologicalIndex
-  // ✅ CRÍTICO: Iniciar con el acumulado inicial (saldo del día anterior desde AccountStatement.accumulatedBalance
+  //  CRÍTICO: Iniciar con el acumulado inicial (saldo del día anterior desde AccountStatement.accumulatedBalance
   // o saldo del mes anterior para el primer día del mes)
   // Este initialAccumulated DEBE venir desde AccountStatement.accumulatedBalance del día anterior
   // para asegurar que el acumulado progresivo por sorteo sea correcto
   let eventAccumulated = Number(initialAccumulated || 0);
   const totalEvents = allEvents.length;
   const eventsWithAccumulated = allEvents.map((event, index) => {
-    // ✅ CRÍTICO: Convertir balance a Number (puede venir como Decimal de Prisma)
+    //  CRÍTICO: Convertir balance a Number (puede venir como Decimal de Prisma)
     const balanceNum = Number(event.balance || 0);
-    // ✅ CRÍTICO: Acumular progresivamente: cada evento suma su balance al acumulado anterior
+    //  CRÍTICO: Acumular progresivamente: cada evento suma su balance al acumulado anterior
     // El accumulated representa el saldo acumulado DESPUÉS de este evento
     eventAccumulated += balanceNum;
     return {
       ...event,
-      balance: balanceNum, // ✅ CRÍTICO: Asegurar que balance sea Number
-      accumulated: parseFloat(eventAccumulated.toFixed(2)), // ✅ Redondear a 2 decimales para consistencia
-      sorteoAccumulated: parseFloat(eventAccumulated.toFixed(2)), // ✅ NUEVO: También asignar a sorteoAccumulated para movimientos
+      balance: balanceNum, //  CRÍTICO: Asegurar que balance sea Number
+      accumulated: parseFloat(eventAccumulated.toFixed(2)), //  Redondear a 2 decimales para consistencia
+      sorteoAccumulated: parseFloat(eventAccumulated.toFixed(2)), //  NUEVO: También asignar a sorteoAccumulated para movimientos
       chronologicalIndex: index + 1,
       totalChronological: totalEvents,
     };
   });
 
   // PASO 5: Ordenar DESC para presentación (más reciente primero)
-  // ✅ CRÍTICO: Si hay múltiples eventos con el mismo scheduledAt, ordenar por chronologicalIndex DESC
+  //  CRÍTICO: Si hay múltiples eventos con el mismo scheduledAt, ordenar por chronologicalIndex DESC
   // Esto asegura que cuando hay sorteos a la misma hora, el último procesado (mayor índice) aparezca primero
   eventsWithAccumulated.sort((a, b) => {
     const timeA = new Date(a.scheduledAt).getTime();
@@ -308,7 +308,7 @@ export function intercalateSorteosAndMovements(
       return timeB - timeA; // DESC por tiempo
     }
     // Si mismo tiempo, usar chronologicalIndex DESC (mayor índice = procesado después = más reciente)
-    // ✅ MEJORADO: Agregar sorteoId como criterio secundario para estabilidad
+    //  MEJORADO: Agregar sorteoId como criterio secundario para estabilidad
     const sorteoIdA = a.sorteoId || '';
     const sorteoIdB = b.sorteoId || '';
     if (sorteoIdA !== sorteoIdB) {

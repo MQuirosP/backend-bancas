@@ -23,12 +23,12 @@ Notas:
 <!-- markdownlint-disable MD024 -->
 <!-- markdownlint-disable MD047 -->
 
-# 🏦 Banca Management Backend
+#  Banca Management Backend
 
 > **Backend modular y escalable** para la gestión integral de bancas de lotería.  
 > Desarrollado con **TypeScript, Express y Prisma ORM**, bajo arquitectura por capas, validaciones estrictas (`Zod`) y trazabilidad total con `ActivityLog`.
 
-## ⚠️ ESTÁNDAR CRÍTICO: ZONA HORARIA
+## ️ ESTÁNDAR CRÍTICO: ZONA HORARIA
 
 **TODAS las fechas en este proyecto se manejan en hora LOCAL de Costa Rica (UTC-6).**
 
@@ -38,7 +38,7 @@ Ver documentación completa en: [`docs/ESTANDAR_ZONA_HORARIA_COSTA_RICA.md`](doc
 
 ---
 
-## 🚀 Tecnologías Base
+##  Tecnologías Base
 
 | Componente | Tecnología |
 |-----------|------------|
@@ -54,7 +54,7 @@ Ver documentación completa en: [`docs/ESTANDAR_ZONA_HORARIA_COSTA_RICA.md`](doc
 
 ---
 
-## 🧩 Estructura del Proyecto
+##  Estructura del Proyecto
 
 ```bash
 src/
@@ -86,7 +86,7 @@ src/
 
 ---
 
-## 🔐 Autenticación y Roles
+##  Autenticación y Roles
 
 - **Tokens JWT**:
   - `Access Token` de corta duración.
@@ -104,7 +104,7 @@ src/
 
 ---
 
-## 🏢 Bancas y 🪟 Ventanas
+##  Bancas y  Ventanas
 
 - **Banca:** define límites globales (`defaultMinBet`, `globalMaxPerNumber`, `salesCutoffMinutes` por defecto vía `RestrictionRule`).  
 - **Ventana:** comisiones (`commissionMarginX`), soft-delete, trazabilidad.  
@@ -113,7 +113,7 @@ src/
 
 ---
 
-## 🎲 Loterías y 🧭 Sorteos
+##  Loterías y  Sorteos
 
 - `Loteria` (configuración general + `rulesJson` + multiplicadores).
 - `Sorteo` con ciclo controlado:
@@ -131,12 +131,12 @@ src/
 
 ```http
 POST   /api/v1/sorteos                  # Crear sorteo
-PUT    /api/v1/sorteos/:id              # Reprogramar (name/scheduledAt/isActive) ⬅️ rc5
-PATCH  /api/v1/sorteos/:id              # Reprogramar (name/scheduledAt/isActive) ⬅️ rc5
+PUT    /api/v1/sorteos/:id              # Reprogramar (name/scheduledAt/isActive) ️ rc5
+PATCH  /api/v1/sorteos/:id              # Reprogramar (name/scheduledAt/isActive) ️ rc5
 PATCH  /api/v1/sorteos/:id/open         # Abrir sorteo (SCHEDULED -> OPEN)    (sin body)
 PATCH  /api/v1/sorteos/:id/close        # Cerrar sorteo (OPEN/EVALUATED -> CLOSED) (sin body)
 PATCH  /api/v1/sorteos/:id/evaluate     # Evaluar sorteo (ganador + REVENTADO opcional)
-GET    /api/v1/sorteos                  # Listar (con búsqueda por nombre/ganador/lotería) ⬅️ rc5
+GET    /api/v1/sorteos                  # Listar (con búsqueda por nombre/ganador/lotería) ️ rc5
 GET    /api/v1/sorteos/:id              # Obtener por id
 DELETE /api/v1/sorteos/:id              # Soft-delete
 ```
@@ -164,7 +164,7 @@ DELETE /api/v1/sorteos/:id              # Soft-delete
 
 ---
 
-## 📐 `rulesJson` de Lotería (servidor)
+##  `rulesJson` de Lotería (servidor)
 
 Archivo helper: `src/utils/loteriaRules.ts`
 
@@ -227,7 +227,7 @@ El servicio de tickets registra un diagnóstico (`TICKET_CUTOFF_DIAG`) con `sour
 
 ---
 
-## 🧭 Generación y *Preview* de Sorteos desde Reglas
+##  Generación y *Preview* de Sorteos desde Reglas
 
 ### Endpoints Lotería (v1)
 
@@ -255,7 +255,7 @@ Body opcional: { "dryRun": false }
 
 ---
 
-## 🎫 Tickets
+##  Tickets
 
 - Secuencia segura `ticket_number_seq` o `TicketCounter` atómico.
 - Creación protegida por `withTransactionRetry` (manejo de *deadlocks* y *timeouts*).
@@ -292,19 +292,19 @@ Body opcional: { "dryRun": false }
 
 ---
 
-## 💰 Sistema de Comisiones
+##  Sistema de Comisiones
 
 Sistema jerárquico de comisiones con políticas JSON configurables por **User**, **Ventana** y **Banca**.
 
 ### Características principales
 
-- ✅ **Políticas JSON** (versión 1) con porcentajes 0-100
-- ✅ **Prioridad jerárquica**: USER → VENTANA → BANCA
-- ✅ **Primera regla gana** (first match wins)
-- ✅ **Snapshot inmutable** por jugada al momento de venta
-- ✅ **Vigencia temporal** con `effectiveFrom`/`effectiveTo`
-- ✅ **UUID auto-generado** para reglas sin ID
-- ✅ **Sin bloqueo**: JSON malformado → 0% comisión (WARN)
+-  **Políticas JSON** (versión 1) con porcentajes 0-100
+-  **Prioridad jerárquica**: USER → VENTANA → BANCA
+-  **Primera regla gana** (first match wins)
+-  **Snapshot inmutable** por jugada al momento de venta
+-  **Vigencia temporal** con `effectiveFrom`/`effectiveTo`
+-  **UUID auto-generado** para reglas sin ID
+-  **Sin bloqueo**: JSON malformado → 0% comisión (WARN)
 
 ### Estructura de política
 
@@ -377,11 +377,11 @@ GET /api/v1/ventas/timeseries?granularity=day
 # Cada punto incluye: commissionTotal
 ```
 
-> 📖 Ver documentación completa en [`docs/COMMISSION_SYSTEM.md`](docs/COMMISSION_SYSTEM.md)
+>  Ver documentación completa en [`docs/COMMISSION_SYSTEM.md`](docs/COMMISSION_SYSTEM.md)
 
 ---
 
-## 📊 Dashboard API & Analytics
+##  Dashboard API & Analytics
 
 Sistema completo de análisis de ventas y métricas operacionales.
 
@@ -397,12 +397,12 @@ GET /api/v1/admin/dashboard/export       # Exportación (placeholder)
 
 ### Características principales
 
-- ✅ **Filtros universales**: `fromDate`, `toDate`, `ventanaId`, `loteriaId`, `betType`
-- ✅ **RBAC automático**: Filtrado por rol (ADMIN/VENTANA/VENDEDOR)
-- ✅ **Intervalos temporales**: day/hour con validación (hour solo si ≤7 días)
-- ✅ **Alertas automáticas**: CXC alto, ventas bajas, exposición alta, sobrepago
-- ✅ **Comparación periódica**: `compare=true` para métricas vs periodo anterior
-- ✅ **Performance tracking**: `queryExecutionTime` y `totalQueries` en metadata
+-  **Filtros universales**: `fromDate`, `toDate`, `ventanaId`, `loteriaId`, `betType`
+-  **RBAC automático**: Filtrado por rol (ADMIN/VENTANA/VENDEDOR)
+-  **Intervalos temporales**: day/hour con validación (hour solo si ≤7 días)
+-  **Alertas automáticas**: CXC alto, ventas bajas, exposición alta, sobrepago
+-  **Comparación periódica**: `compare=true` para métricas vs periodo anterior
+-  **Performance tracking**: `queryExecutionTime` y `totalQueries` en metadata
 
 ### Métricas incluidas
 
@@ -414,11 +414,11 @@ GET /api/v1/admin/dashboard/export       # Exportación (placeholder)
 | **CXC** | `totalAmount`, `overdueAmount`, `oldestDays` |
 | **Pagos** | `totalPaid`, `remainingAmount`, `paidCount`, `unpaidCount` |
 
-> 📖 Ver documentación completa en [`docs/DASHBOARD_API.md`](docs/DASHBOARD_API.md)
+>  Ver documentación completa en [`docs/DASHBOARD_API.md`](docs/DASHBOARD_API.md)
 
 ---
 
-## 💳 Payment Tracking
+##  Payment Tracking
 
 Sistema de seguimiento de pagos a tickets ganadores.
 
@@ -447,20 +447,20 @@ POST /api/v1/tickets/:id/reverse-payment  # Revertir último pago
 POST /api/v1/tickets/:id/finalize-payment # Marcar pago como final
 ```
 
-> 📖 Ver documentación completa en [`docs/VENTAS_SUMMARY_API.md`](docs/VENTAS_SUMMARY_API.md)
+>  Ver documentación completa en [`docs/VENTAS_SUMMARY_API.md`](docs/VENTAS_SUMMARY_API.md)
 
 ---
 
-## 🔒 RBAC Security
+##  RBAC Security
 
 Sistema de control de acceso basado en roles con validación jerárquica.
 
 ### Características de seguridad
 
-- ✅ **JWT Transition Support**: Fetch de `ventanaId` desde DB si falta en token
-- ✅ **Permissive Mode**: Permite transición gradual sin romper sesiones activas
-- ✅ **Logging completo**: Warnings para tokens antiguos, info para fetches desde DB
-- ✅ **Validación estricta**: Solo acceso a recursos propios según jerarquía
+-  **JWT Transition Support**: Fetch de `ventanaId` desde DB si falta en token
+-  **Permissive Mode**: Permite transición gradual sin romper sesiones activas
+-  **Logging completo**: Warnings para tokens antiguos, info para fetches desde DB
+-  **Validación estricta**: Solo acceso a recursos propios según jerarquía
 
 ### Flujo de validación
 
@@ -475,16 +475,16 @@ Sistema de control de acceso basado en roles con validación jerárquica.
 
 ### Endpoints protegidos
 
-- ✅ `GET /tickets` - Filtrado por ventanaId (VENTANA) o vendedorId (VENDEDOR)
-- ✅ `GET /ventas/summary` - RBAC con DB lookup
-- ✅ `GET /ventas/breakdown` - RBAC con DB lookup
-- ✅ `GET /ventas/timeseries` - RBAC con DB lookup
+-  `GET /tickets` - Filtrado por ventanaId (VENTANA) o vendedorId (VENDEDOR)
+-  `GET /ventas/summary` - RBAC con DB lookup
+-  `GET /ventas/breakdown` - RBAC con DB lookup
+-  `GET /ventas/timeseries` - RBAC con DB lookup
 
-> 📖 Ver documentación completa en [`docs/BUG_FIX_RBAC_SCOPE_MINE.md`](docs/BUG_FIX_RBAC_SCOPE_MINE.md)
+>  Ver documentación completa en [`docs/BUG_FIX_RBAC_SCOPE_MINE.md`](docs/BUG_FIX_RBAC_SCOPE_MINE.md)
 
 ---
 
-## 🔢 Multipliers y RestrictionRules
+##  Multipliers y RestrictionRules
 
 ### **LoteriaMultiplier**
 
@@ -510,7 +510,7 @@ Sistema de control de acceso basado en roles con validación jerárquica.
 
 ---
 
-## ⚙️ Concurrencia y Transacciones Seguras
+## ️ Concurrencia y Transacciones Seguras
 
 - Wrapper `withTransactionRetry`:
   - Maneja *deadlocks* (`P2034`) con backoff exponencial.
@@ -520,18 +520,18 @@ Sistema de control de acceso basado en roles con validación jerárquica.
 
 ---
 
-## 🧪 Pruebas Unitarias
+##  Pruebas Unitarias
 
 | Suite | Objetivo | Estado |
 |------|----------|--------|
-| `tickets/concurrency.test.ts` | Prevención de overselling | ✅ |
-| `tickets/restrictionRules.test.ts` | Validación jerárquica de límites | ✅ |
-| `auth` y `users` | CRUD + roles | ✅ |
-| `payments` | Integración (fase 2) | ⏳ |
+| `tickets/concurrency.test.ts` | Prevención de overselling |  |
+| `tickets/restrictionRules.test.ts` | Validación jerárquica de límites |  |
+| `auth` y `users` | CRUD + roles |  |
+| `payments` | Integración (fase 2) |  |
 
 ---
 
-## 🧾 Auditoría Centralizada
+##  Auditoría Centralizada
 
 Ejemplo:
 
@@ -551,7 +551,7 @@ Se auditan: `SORTEO_CREATE`, `SORTEO_UPDATE`, `SORTEO_OPEN`, `SORTEO_CLOSE`, `SO
 
 ---
 
-## ⚙️ Scripts útiles
+## ️ Scripts útiles
 
 ```bash
 npm run dev              # Desarrollo
@@ -563,7 +563,7 @@ npm run prisma:deploy    # Migraciones
 
 ---
 
-## 📦 Variables de entorno (.env)
+##  Variables de entorno (.env)
 
 ```bash
 PORT=4000
@@ -580,20 +580,20 @@ MULTIPLIER_BASE_DEFAULT_X=95
 
 ---
 
-## 👨‍💻 Autor
+## ‍ Autor
 
 **Mario Quirós P.**  
-📧 [mquirosp78@gmail.com](mailto:mquirosp78@gmail.com)  
-🌐 [github.com/MQuirosP](https://github.com/MQuirosP)
+ [mquirosp78@gmail.com](mailto:mquirosp78@gmail.com)  
+ [github.com/MQuirosP](https://github.com/MQuirosP)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/MQuirosP/backend-bancas)
 
 ---
 
-## 🧭 Licencia
+##  Licencia
 
 Proyecto bajo licencia **MIT** (ver `LICENSE`).
 
 ---
 
-> 💡 *Versión actual:* `v1.2.0`
+>  *Versión actual:* `v1.2.0`
 > **Notas v1.2.0**: Endpoint `evaluated-summary` para sorteos evaluados; filtros avanzados en tickets (`loteriaId`, `sorteoId`, `multiplierId`, `winnersOnly`); agrupación de sorteos por hora (`groupBy`); correcciones de comisiones de listero; fix de timezone en timeseries; correcciones de AccountStatement; búsqueda en activity-logs.

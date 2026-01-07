@@ -255,7 +255,7 @@ export const TicketController = {
     } else if (me.role === Role.VENTANA) {
       // VENTANA siempre usa scope='mine' (su ventana)
       effectiveScope = 'mine';
-      // ✅ FIX: Para dimension='listero', forzar el ventanaId del usuario VENTANA
+      //  FIX: Para dimension='listero', forzar el ventanaId del usuario VENTANA
       if (dimension === 'listero') {
         // Usar el ventanaId del effectiveFilters (que viene de RBAC)
         // Esto evita que el frontend envíe el userId en lugar del ventanaId
@@ -274,7 +274,7 @@ export const TicketController = {
       });
     }
 
-    // ✅ FIX: Regla especial - cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha
+    //  FIX: Regla especial - cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha
     // (igual que en endpoint /tickets/list)
     const hasSorteoId = effectiveFilters.sorteoId;
     const hasExplicitDateRange = fromDate || toDate;
@@ -315,10 +315,10 @@ export const TicketController = {
         vendedorId: effectiveFilters.vendedorId,
         loteriaId: effectiveFilters.loteriaId,
         sorteoId: effectiveFilters.sorteoId,
-        multiplierId, // ✅ NUEVO
-        status, // ✅ NUEVO
-        page, // ✅ FIX: Paginación para MONAZOS
-        pageSize, // ✅ FIX: Paginación para MONAZOS
+        multiplierId, //  NUEVO
+        status, //  NUEVO
+        page, //  FIX: Paginación para MONAZOS
+        pageSize, //  FIX: Paginación para MONAZOS
       },
       me.role,
       me.id
@@ -398,7 +398,7 @@ export const TicketController = {
         payload: { effectiveFilters, effectiveScope },
       });
 
-      // ✅ Para PDF/PNG, NO usar paginación - siempre obtener TODOS los números
+      //  Para PDF/PNG, NO usar paginación - siempre obtener TODOS los números
       // La paginación solo se usa para la API de consulta, no para generación de archivos
       const result = await TicketService.numbersSummary(
         {
@@ -455,7 +455,7 @@ export const TicketController = {
         },
       });
 
-      // ✅ Convertir a PNG si se solicita
+      //  Convertir a PNG si se solicita
       if (format === 'png') {
         const sorteoDigits = result.meta.sorteoDigits ?? 2;
         const shouldFilterBySales = onlyWithSales === true && sorteoDigits === 3;
@@ -475,7 +475,7 @@ export const TicketController = {
         const { pdfToPng } = await import('pdf-to-png-converter');
         const pdfUint8Array = new Uint8Array(pdfBuffer);
 
-        // ✅ NUEVO: Si onlyWithSales === true y es monazos (3 dígitos), generar PNG único filtrado
+        //  NUEVO: Si onlyWithSales === true y es monazos (3 dígitos), generar PNG único filtrado
         if (shouldFilterBySales) {
           const numbersWithBets = result.meta.numbersWithBets || [];
           
@@ -520,7 +520,7 @@ export const TicketController = {
             return res.send(finalBuffer);
           }
           
-          // ✅ Filtrar números para incluir solo los que tienen ventas
+          //  Filtrar números para incluir solo los que tienen ventas
           const sorteoDigits = result.meta.sorteoDigits ?? 3;
           const filteredNumbers = result.data.filter((item: any) => 
             numbersWithBets.includes(item.number.padStart(sorteoDigits, '0'))
@@ -537,14 +537,14 @@ export const TicketController = {
             },
           });
           
-          // ✅ Generar PDF con solo números filtrados
+          //  Generar PDF con solo números filtrados
           const { generateNumbersSummaryPDF } = await import('../services/pdf-generator.service');
           const filteredPdfBuffer = await generateNumbersSummaryPDF({
             meta: result.meta,
             numbers: filteredNumbers,
           });
           
-          // ✅ Convertir a PNG único (primera página)
+          //  Convertir a PNG único (primera página)
           const filteredPngPages = await pdfToPng(new Uint8Array(filteredPdfBuffer).buffer, {
             pagesToProcess: [1],
           });
@@ -580,7 +580,7 @@ export const TicketController = {
         }
 
         if (sorteoDigits === 2) {
-          // ✅ Tiempos (2 dígitos): 1 PNG con todos los números (00-99)
+          //  Tiempos (2 dígitos): 1 PNG con todos los números (00-99)
           const pngPages = await pdfToPng(pdfUint8Array.buffer, {
             pagesToProcess: [1], // Solo la primera página
           });
@@ -614,7 +614,7 @@ export const TicketController = {
           return res.send(finalBuffer);
 
         } else if (sorteoDigits === 3) {
-          // ✅ Monazos (3 dígitos): 5 PNGs paginados (000-199, 200-399, ..., 800-999)
+          //  Monazos (3 dígitos): 5 PNGs paginados (000-199, 200-399, ..., 800-999)
           // El PDF tiene exactamente 5 páginas para monazos (una por cada bloque de 200 números)
           // Generar array de números de página [1, 2, 3, 4, 5]
           const maxPages = 5;
@@ -651,7 +651,7 @@ export const TicketController = {
             },
           });
 
-          // ✅ Generar JSON con estructura requerida
+          //  Generar JSON con estructura requerida
           // Filtrar páginas sin contenido y mapear a formato requerido
           const pages = allPngPages
             .filter((pngPage) => pngPage && pngPage.content !== undefined && pngPage.content !== null)
@@ -666,7 +666,7 @@ export const TicketController = {
                 return null;
               }
               
-              // ✅ Convertir Buffer a base64 puro (sin prefijo data URL)
+              //  Convertir Buffer a base64 puro (sin prefijo data URL)
               // El frontend agregará el prefijo si lo necesita para Web Share API
               const base64String = buffer.toString('base64');
               
@@ -702,7 +702,7 @@ export const TicketController = {
             },
           });
 
-          // ✅ Retornar JSON con páginas y números con apuestas
+          //  Retornar JSON con páginas y números con apuestas
           return res.json({
             pages,
             numbersWithBets: result.meta.numbersWithBets || [], // Números que tienen apuestas
@@ -731,7 +731,7 @@ export const TicketController = {
           return res.send(finalBuffer);
         }
       } else {
-        // ✅ Devolver PDF
+        //  Devolver PDF
         const timestamp = Date.now();
         const filename = `lista-numeros-${timestamp}.pdf`;
 

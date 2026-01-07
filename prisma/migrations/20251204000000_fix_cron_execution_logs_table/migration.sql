@@ -53,7 +53,7 @@ INSERT INTO cron_execution_logs (
 -- Log de éxito
 DO $$
 BEGIN
-  RAISE NOTICE '✅ Tabla cron_execution_logs creada exitosamente';
-  RAISE NOTICE '✅ Registro inicial insertado';
-  RAISE NOTICE '✅ Migración de reparación completada';
+  RAISE NOTICE ' Tabla cron_execution_logs creada exitosamente';
+  RAISE NOTICE ' Registro inicial insertado';
+  RAISE NOTICE ' Migración de reparación completada';
 END $$;

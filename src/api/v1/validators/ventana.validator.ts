@@ -85,7 +85,7 @@ export const CreateVentanaSchema = z
       .nullable()
       .transform((v) => (v === "" ? null : (v ?? null))),
     settings: VentanaSettingsSchema.nullable().optional(),
-    // ✅ NUEVOS CAMPOS requeridos para creación de usuario
+    //  NUEVOS CAMPOS requeridos para creación de usuario
     username: z
       .string()
       .trim()
@@ -100,7 +100,7 @@ export const CreateVentanaSchema = z
 
 export const UpdateVentanaSchema = CreateVentanaSchema.partial()
   .extend({
-    // ✅ Campos opcionales para actualizar usuario asociado
+    //  Campos opcionales para actualizar usuario asociado
     username: z
       .string()
       .trim()

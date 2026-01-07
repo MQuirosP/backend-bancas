@@ -1,4 +1,4 @@
--- ✅ CRÍTICO: Actualizar vista materializada para usar snapshot de comisión del listero
+--  CRÍTICO: Actualizar vista materializada para usar snapshot de comisión del listero
 -- Esto es más preciso y rápido que calcular desde commissionOrigin
 
 -- Primero, eliminar la vista materializada existente
@@ -14,7 +14,7 @@ SELECT
   COALESCE(SUM(t."totalAmount"), 0) as total_sales,
   COALESCE(SUM(CASE WHEN j."isWinner" THEN j.payout ELSE 0 END), 0) as total_payouts,
   COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as vendedor_commission,
-  -- ✅ CRÍTICO: Usar snapshot de comisión del listero directamente
+  --  CRÍTICO: Usar snapshot de comisión del listero directamente
   COALESCE(SUM(j."listeroCommissionAmount"), 0) as listero_commission,
   -- Calcular balance: sales - payouts - listero_commission - vendedor_commission
   -- Nota: El balance se recalcula según el rol del usuario en el código

@@ -87,10 +87,10 @@ DROP INDEX CONCURRENTLY IF EXISTS "idx_account_payment_date_banca";
 -- Eliminar índices es seguro y no afecta los datos, solo el rendimiento.
 
 -- ============================================================================
--- ⚠️ INSTRUCCIONES CRÍTICAS DE DESPLIEGUE EN PRODUCCIÓN
+-- ️ INSTRUCCIONES CRÍTICAS DE DESPLIEGUE EN PRODUCCIÓN
 -- ============================================================================
 
--- ⚠️ IMPORTANTE: CREATE INDEX CONCURRENTLY NO puede ejecutarse dentro de una transacción
+-- ️ IMPORTANTE: CREATE INDEX CONCURRENTLY NO puede ejecutarse dentro de una transacción
 -- Por lo tanto, NO usar: npx prisma migrate deploy (ejecuta en transacción)
 -- 
 -- SOLUCIÓN: Ejecutar este SQL directamente en Supabase SQL Editor
@@ -105,7 +105,7 @@ DROP INDEX CONCURRENTLY IF EXISTS "idx_account_payment_date_banca";
 --    a) Ir a Supabase Dashboard > SQL Editor
 --    b) Copiar TODO el contenido de este archivo (desde la primera línea CREATE INDEX)
 --    c) Pegar en SQL Editor
---    d) Click en "Run" (▶️)
+--    d) Click en "Run" (️)
 --    e) ESPERAR a que complete (puede tomar 5-15 minutos, NO interrumpir)
 --    f) Verificar que todos los índices se crearon (usar query de verificación arriba)
 --    g) Marcar migración como aplicada: npx prisma migrate resolve --applied 20250130000000_add_missing_performance_indexes

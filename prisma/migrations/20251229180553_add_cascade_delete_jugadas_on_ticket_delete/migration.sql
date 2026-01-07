@@ -1,5 +1,5 @@
 -- Migration: Agregar ON DELETE CASCADE a Jugada -> Ticket
--- ⚠️ IMPORTANTE: Este cambio permite que al eliminar un Ticket se eliminen automáticamente sus Jugadas relacionadas
+-- ️ IMPORTANTE: Este cambio permite que al eliminar un Ticket se eliminen automáticamente sus Jugadas relacionadas
 -- Esto es necesario para poder eliminar tickets directamente desde el editor SQL de Supabase
 --
 -- IMPORTANTE: Esta migración debe aplicarse con cuidado en producción

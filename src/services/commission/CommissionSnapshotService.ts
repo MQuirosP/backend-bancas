@@ -265,7 +265,7 @@ export class CommissionSnapshotService {
   /**
    * Recalcula snapshots para tickets específicos (solo para casos especiales)
    * Útil para migración o corrección de datos
-   * ⚠️ ADVERTENCIA: Esto puede cambiar valores históricos
+   * ️ ADVERTENCIA: Esto puede cambiar valores históricos
    */
   async recalculateSnapshots(
     ticketIds: string[],

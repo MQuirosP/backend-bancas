@@ -15,8 +15,8 @@ interface NumbersSummaryData {
     totalAmount: number;
     totalAmountByNumber: number;
     totalAmountByReventado: number;
-    sorteoDigits?: number; // ✅ NUEVO: Número de dígitos (2 o 3)
-    maxNumber?: number;    // ✅ NUEVO: Número máximo (99 o 999)
+    sorteoDigits?: number; //  NUEVO: Número de dígitos (2 o 3)
+    maxNumber?: number;    //  NUEVO: Número máximo (99 o 999)
   };
   numbers: Array<{
     number: string;
@@ -60,9 +60,9 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
       // Configuración de fuente (Courier = monoespaciada)
       doc.font('Courier');
 
-      // ✅ El encabezado se renderizará en cada página usando la función renderHeader
+      //  El encabezado se renderizará en cada página usando la función renderHeader
 
-      // ✅ Detectar número de dígitos dinámicamente
+      //  Detectar número de dígitos dinámicamente
       const sorteoDigits = data.meta.sorteoDigits ?? 2;
       const padLength = sorteoDigits;
 
@@ -75,13 +75,13 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
         });
       });
 
-      // ✅ Determinar si debemos generar todos los números o solo los filtrados
+      //  Determinar si debemos generar todos los números o solo los filtrados
       // Si data.numbers está vacío o tiene menos números que el rango completo, asumimos que está filtrado
       const maxNumber = sorteoDigits === 3 ? 999 : 99;
       const isFiltered = data.numbers.length < maxNumber + 1;
       
       if (isFiltered) {
-        // ✅ Modo filtrado: solo generar los números que están en la lista
+        //  Modo filtrado: solo generar los números que están en la lista
         // No agregar números faltantes, solo usar los que están presentes
         logger.info({
           layer: 'service',
@@ -93,7 +93,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
           },
         });
       } else {
-        // ✅ Modo completo: generar todos los números del rango
+        //  Modo completo: generar todos los números del rango
         // Asegurar que todos los números existan (rango completo)
         for (let i = 0; i <= maxNumber; i++) {
           const num = i.toString().padStart(padLength, '0');
@@ -103,7 +103,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
         }
       }
 
-      // ✅ Configuración de columnas dinámica
+      //  Configuración de columnas dinámica
       const columnWidth = sorteoDigits === 3 ? 140 : 180; // Más ancho para 2 dígitos (3 columnas)
       const leftMargin = doc.page.margins.left;
       
@@ -116,7 +116,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
       // Altura de línea
       const lineHeight = sorteoDigits === 3 ? 11 : 15; // Más alto para 2 dígitos
       
-      // ✅ Función helper para renderizar encabezado en cada página
+      //  Función helper para renderizar encabezado en cada página
       const renderHeader = () => {
         const userName = data.meta.vendedorName || data.meta.ventanaName || 'Usuario';
         const userCode = data.meta.vendedorCode ? ` (${data.meta.vendedorCode})` : '';
@@ -135,7 +135,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
         doc.fontSize(9);
         doc.text(`Fecha y hora de generación: ${generatedAt}`, { align: 'left' });
 
-        // ✅ NUEVO: Mostrar información de lotería, sorteo y multiplicador
+        //  NUEVO: Mostrar información de lotería, sorteo y multiplicador
         if (data.meta.loteriaName) {
           doc.text(`Lotería: ${data.meta.loteriaName}`, { align: 'left' });
         }
@@ -170,9 +170,9 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
         doc.moveDown(1);
       };
 
-      // ✅ Renderizar números según el modo (filtrado o completo)
+      //  Renderizar números según el modo (filtrado o completo)
       if (isFiltered) {
-        // ✅ Modo filtrado: solo generar los números que están en numbersMap
+        //  Modo filtrado: solo generar los números que están en numbersMap
         // Obtener lista ordenada de números
         const sortedNumbers = Array.from(numbersMap.keys())
           .map(num => parseInt(num, 10))
@@ -189,7 +189,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
           
           // Posición Y inicial después del encabezado
           let currentY = doc.y;
-          doc.fontSize(sorteoDigits === 3 ? 13 : 15).font('Courier-Bold'); // ✅ Más grande para 2 dígitos
+          doc.fontSize(sorteoDigits === 3 ? 13 : 15).font('Courier-Bold'); //  Más grande para 2 dígitos
           
           // Calcular cuántas filas caben en una página
           const availableHeight = doc.page.height - doc.page.margins.top - doc.page.margins.bottom - 200; // 200px para encabezado
@@ -245,7 +245,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
           }
         }
       } else {
-        // ✅ Modo completo: generar todos los números por bloques de 100
+        //  Modo completo: generar todos los números por bloques de 100
         let currentPageStart = 0;
         let isFirstPage = true;
 
@@ -267,7 +267,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
 
           // Posición Y inicial después del encabezado
           let currentY = doc.y;
-          doc.fontSize(sorteoDigits === 3 ? 13 : 15).font('Courier-Bold'); // ✅ Más grande para 2 dígitos
+          doc.fontSize(sorteoDigits === 3 ? 13 : 15).font('Courier-Bold'); //  Más grande para 2 dígitos
 
           // Configurar columnas dinámicamente según el número de dígitos
           const columns = [];
@@ -317,7 +317,7 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
         }
       }
 
-      // ✅ FIX: Eliminado pie de página que causaba página en blanco extra
+      //  FIX: Eliminado pie de página que causaba página en blanco extra
 
       doc.end();
 

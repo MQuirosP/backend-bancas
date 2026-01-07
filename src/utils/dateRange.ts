@@ -85,7 +85,7 @@ export interface DateRangeResolution {
  * 1. Semantic tokens: 'today', 'yesterday', 'week', 'month', 'year'
  * 2. Custom range: date='range' con fromDate/toDate en YYYY-MM-DD
  *
- * ⚠️ REGLAS CRÍTICAS:
+ * ️ REGLAS CRÍTICAS:
  * - Si se proporciona fromDate o toDate, date DEBE ser 'range'
  * - Si date='range', fromDate y toDate son REQUERIDOS
  * - fromDate debe ser ≤ toDate
@@ -108,7 +108,7 @@ export function resolveDateRange(
   toDate?: string,
   serverNow: Date = new Date()
 ): DateRangeResolution {
-  // ✅ CRÍTICO: Validar que si hay fromDate/toDate, date debe ser 'range'
+  //  CRÍTICO: Validar que si hay fromDate/toDate, date debe ser 'range'
   if ((fromDate || toDate) && date !== 'range') {
     throw new AppError('date must be "range" when fromDate or toDate are provided', 400, {
       code: 'SLS_2001',
@@ -398,7 +398,7 @@ export function resolveDateRangeAllowFuture(
       });
     }
 
-    // ✅ NO VALIDAMOS QUE toDate NO SEA FUTURO (a diferencia de resolveDateRange)
+    //  NO VALIDAMOS QUE toDate NO SEA FUTURO (a diferencia de resolveDateRange)
     // Los sorteos pueden estar programados para el futuro
 
     fromDateStr = fromDate;

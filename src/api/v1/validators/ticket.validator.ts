@@ -68,7 +68,7 @@ export const ListTicketsQuerySchema = z
     scope: z.enum(["mine", "all"]).optional().default("mine"),
     winnersOnly: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"),
 
-    // ✅ NUEVO: Búsqueda por número de jugada (1-3 dígitos, búsqueda exacta)
+    //  NUEVO: Búsqueda por número de jugada (1-3 dígitos, búsqueda exacta)
     number: z.string().regex(/^\d{1,3}$/, "El número debe ser de 1-3 dígitos (0-999)").optional(),
 
     // Filtros de fecha (STANDARDIZADO - mismo patrón que Venta/Dashboard)
@@ -121,15 +121,15 @@ export const NumbersSummaryQuerySchema = z
     dimension: z.enum(["listero", "vendedor", "ventana"]).optional(), // Filtro por dimensión (ventana/listero = ventana, vendedor = vendedor)
     ventanaId: z.uuid().optional(), // Filtro por ventana (cuando dimension='listero'/'ventana' o scope='all')
     vendedorId: z.uuid().optional(), // Filtro por vendedor (cuando dimension='vendedor' o scope='all')
-    bancaId: z.uuid().optional(), // ✅ Agregado: Permitir bancaId opcional
+    bancaId: z.uuid().optional(), //  Agregado: Permitir bancaId opcional
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
     loteriaId: z.uuid().optional(),
     sorteoId: z.uuid().optional(),
-    multiplierId: z.uuid().optional(), // ✅ NUEVO: Filtrar por multiplicador específico
-    status: z.enum(["ACTIVE", "EVALUATED", "PAID", "CANCELLED"]).optional(), // ✅ NUEVO: Filtrar por estado de ticket
-    // ✅ NUEVO: Paginación para MONAZOS (1000 números)
+    multiplierId: z.uuid().optional(), //  NUEVO: Filtrar por multiplicador específico
+    status: z.enum(["ACTIVE", "EVALUATED", "PAID", "CANCELLED"]).optional(), //  NUEVO: Filtrar por estado de ticket
+    //  NUEVO: Paginación para MONAZOS (1000 números)
     page: z.coerce.number().int().min(0).max(9).optional(), // 0-9 para 10 centenas (0=000-099, 1=100-199, ..., 9=900-999)
     pageSize: z.coerce.number().int().min(1).max(1000).optional().default(100), // Tamaño de página (default: 100)
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
@@ -175,7 +175,7 @@ export const NumbersSummaryQuerySchema = z
         message: "vendedorId no puede usarse cuando dimension='listero' o 'ventana'",
       });
     }
-    // ✅ CORREGIDO: Permitir ventanaId cuando dimension='vendedor'
+    //  CORREGIDO: Permitir ventanaId cuando dimension='vendedor'
     // Es válido filtrar por vendedor Y ventana (vendedor pertenece a ventana)
     // Solo rechazar si se pasa vendedorId sin ventanaId cuando dimension='vendedor'
     if (val.dimension === "vendedor" && val.vendedorId && !val.ventanaId) {

@@ -7,13 +7,13 @@
 
 ---
 
-## 📋 Resumen
+##  Resumen
 
 Esta migración agrega el campo `time` (VARCHAR(5)) opcional a la tabla `AccountPayment` para permitir que los usuarios especifiquen la hora del movimiento (pago/cobro). Esto permite intercalar correctamente los movimientos con los sorteos en el desglose día/sorteo.
 
 ---
 
-## ✅ Cambios
+##  Cambios
 
 ### Schema Prisma
 - **Tabla**: `AccountPayment`
@@ -28,7 +28,7 @@ ALTER TABLE "AccountPayment" ADD COLUMN "time" VARCHAR(5);
 
 ---
 
-## 🚀 Deployment en Producción
+##  Deployment en Producción
 
 ### Opción 1: Usar Prisma Migrate Deploy (Recomendado)
 
@@ -70,7 +70,7 @@ npx prisma migrate resolve --applied 20250127000002_add_time_to_account_payment
 
 ---
 
-## 🔄 Backfill Opcional: Extraer Hora de Registros Existentes
+##  Backfill Opcional: Extraer Hora de Registros Existentes
 
 ### ¿Por qué hacer backfill?
 
@@ -120,7 +120,7 @@ npx dotenv-cli -e .env.local -- ts-node src/scripts/backfill-account-payment-tim
 
 ---
 
-## ✅ Verificación Post-Deployment
+##  Verificación Post-Deployment
 
 ### 1. Verificar que la columna existe
 ```sql
@@ -174,20 +174,20 @@ LIMIT 1;
 
 ---
 
-## ⚠️ Consideraciones
+## ️ Consideraciones
 
 ### Compatibilidad
-- ✅ **Retrocompatible**: Los registros antiguos tienen `time = NULL` y funcionan igual que antes
-- ✅ **Opcional**: El campo es opcional, no rompe código existente
-- ✅ **Sin migración de datos**: No necesitamos migrar `createdAt` a `time` porque representan cosas diferentes
+-  **Retrocompatible**: Los registros antiguos tienen `time = NULL` y funcionan igual que antes
+-  **Opcional**: El campo es opcional, no rompe código existente
+-  **Sin migración de datos**: No necesitamos migrar `createdAt` a `time` porque representan cosas diferentes
 
 ### Rendimiento
-- ✅ **Sin impacto**: Agregar una columna VARCHAR(5) nullable no afecta el rendimiento
-- ✅ **Sin índices**: No necesitamos índices en `time` porque se usa principalmente para ordenar dentro del mismo día
+-  **Sin impacto**: Agregar una columna VARCHAR(5) nullable no afecta el rendimiento
+-  **Sin índices**: No necesitamos índices en `time` porque se usa principalmente para ordenar dentro del mismo día
 
 ### Rollback (Si es necesario)
 ```sql
--- ⚠️ SOLO si es absolutamente necesario hacer rollback
+-- ️ SOLO si es absolutamente necesario hacer rollback
 ALTER TABLE "AccountPayment" DROP COLUMN "time";
 ```
 
@@ -195,7 +195,7 @@ ALTER TABLE "AccountPayment" DROP COLUMN "time";
 
 ---
 
-## 📝 Checklist de Deployment
+##  Checklist de Deployment
 
 - [ ] Backup de la base de datos (opcional pero recomendado)
 - [ ] Ejecutar migración (`npx prisma migrate deploy` o SQL manual)
@@ -210,7 +210,7 @@ ALTER TABLE "AccountPayment" DROP COLUMN "time";
 
 ---
 
-## 🔗 Referencias
+##  Referencias
 
 - Documento de respuesta al FE: `docs/RESPUESTA_BE_HORA_PAGOS_COBROS.md`
 - Schema Prisma: `prisma/schema.prisma` (modelo `AccountPayment`)
@@ -219,7 +219,7 @@ ALTER TABLE "AccountPayment" DROP COLUMN "time";
 
 ---
 
-## ✅ Estado
+##  Estado
 
 - [x] Migración creada
 - [x] Instrucciones de deployment creadas

@@ -180,7 +180,7 @@ export async function applyRbacFilters(
       effective.vendedorId = requestFilters.vendedorId;
     }
 
-    // ✅ FIX: Para usuarios VENTANA, ignorar el ventanaId del request y usar siempre el suyo
+    //  FIX: Para usuarios VENTANA, ignorar el ventanaId del request y usar siempre el suyo
     // Esto previene errores cuando el FE envía el userId en lugar del ventanaId
     // El ventanaId del request se ignora completamente para este rol
     if (requestFilters.ventanaId && requestFilters.ventanaId !== ventanaId) {
@@ -199,7 +199,7 @@ export async function applyRbacFilters(
   } else if (context.role === Role.ADMIN) {
     // ADMIN: si tiene banca activa (filtro de vista), filtrar por banca
     // Si no tiene banca activa, ve todas las bancas
-    // ✅ CRÍTICO: Priorizar bancaId del request sobre bancaId del context
+    //  CRÍTICO: Priorizar bancaId del request sobre bancaId del context
     const effectiveBancaId = requestFilters.bancaId || context.bancaId;
     if (effectiveBancaId) {
       effective.bancaId = effectiveBancaId;

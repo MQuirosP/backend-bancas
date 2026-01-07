@@ -2,7 +2,7 @@ import { CacheService } from '../core/cache.service';
 import logger from '../core/logger';
 
 /**
- * ✅ OPTIMIZACIÓN: Caché de estados de cuenta
+ *  OPTIMIZACIÓN: Caché de estados de cuenta
  * 
  * TTL configurables por variable de entorno:
  * - CACHE_TTL_ACCOUNT_STATEMENT (default: 300s = 5 min)
@@ -124,7 +124,7 @@ export async function getCachedStatement<T>(params: {
     const key = getStatementCacheKey(params);
     const result = await CacheService.get<T>(key);
     
-    // ✅ OPTIMIZACIÓN: Validación simplificada (solo verificar estructura básica)
+    //  OPTIMIZACIÓN: Validación simplificada (solo verificar estructura básica)
     // La normalización de fechas se hace solo cuando es necesario (lazy)
     if (!result || typeof result !== 'object') {
         return null;
@@ -140,7 +140,7 @@ export async function getCachedStatement<T>(params: {
         return null;
     }
     
-    // ✅ OPTIMIZACIÓN: Normalización lazy de fechas (solo cuando se accede a ellas)
+    //  OPTIMIZACIÓN: Normalización lazy de fechas (solo cuando se accede a ellas)
     // Esto reduce el tiempo de procesamiento en cache hits de 50-100ms a <10ms
     // Las fechas se normalizan automáticamente cuando se serializan a JSON en la respuesta
     // Si el frontend necesita Date objects, puede hacer la conversión allí
@@ -212,7 +212,7 @@ export async function setCachedDayStatement<T>(
  * Invalidar cachés de estados de cuenta para un día específico
  * Se llama cuando se registra o revierte un pago/cobro
  * 
- * ✅ OPTIMIZACIÓN: Invalidación más específica para evitar borrar todo el caché
+ *  OPTIMIZACIÓN: Invalidación más específica para evitar borrar todo el caché
  * Solo invalida statements del mes y statements con períodos que incluyan esta fecha
  */
 export async function invalidateAccountStatementCache(params: {
@@ -230,7 +230,7 @@ export async function invalidateAccountStatementCache(params: {
         const dayKeys = await CacheService.delPattern(dayPattern);
         totalKeysDeleted += dayKeys?.length || 0;
 
-        // 2. ✅ OPTIMIZACIÓN: Invalidar solo statements del mes que contiene esta fecha
+        // 2.  OPTIMIZACIÓN: Invalidar solo statements del mes que contiene esta fecha
         // Esto es más específico que invalidar todos los statements
         const monthPattern = `account:statement:${month}:*`;
         const monthKeys = await CacheService.delPattern(monthPattern);
@@ -303,7 +303,7 @@ export async function invalidateAllAccountStatementCache(): Promise<void> {
 }
 
 /**
- * ✅ NUEVO: Invalidar caché basándose en un ticket
+ *  NUEVO: Invalidar caché basándose en un ticket
  * Útil para invalidar caché cuando se crea, cancela o restaura un ticket
  * 
  * @param ticket - Ticket con businessDate, ventanaId, vendedorId
@@ -350,7 +350,7 @@ export async function invalidateCacheForTicket(ticket: {
 }
 
 /**
- * ✅ NUEVO: Invalidar caché basándose en un sorteo
+ *  NUEVO: Invalidar caché basándose en un sorteo
  * Útil para invalidar caché cuando se evalúa un sorteo (marca jugadas como ganadoras)
  * 
  * @param sorteo - Sorteo con scheduledAt
@@ -436,7 +436,7 @@ export async function invalidateCacheForSorteo(
 }
 
 /**
- * ✅ OPTIMIZACIÓN: Obtener bySorteo del caché
+ *  OPTIMIZACIÓN: Obtener bySorteo del caché
  * Cachea bySorteo por separado con TTL más largo (1 hora) ya que cambia menos frecuentemente
  * @returns bySorteo cacheado o null si no existe/Redis no disponible
  */
@@ -459,7 +459,7 @@ export async function getCachedBySorteo(params: {
 }
 
 /**
- * ✅ OPTIMIZACIÓN: Guardar bySorteo en caché
+ *  OPTIMIZACIÓN: Guardar bySorteo en caché
  * Usa TTL más largo (1 hora) porque bySorteo cambia menos frecuentemente que el statement completo
  */
 export async function setCachedBySorteo(
@@ -479,7 +479,7 @@ export async function setCachedBySorteo(
 }
 
 /**
- * ✅ OPTIMIZACIÓN: Invalidar caché de bySorteo para un día específico
+ *  OPTIMIZACIÓN: Invalidar caché de bySorteo para un día específico
  * Se llama cuando se registra o revierte un pago/cobro, o cuando se evalúa un sorteo
  */
 export async function invalidateBySorteoCache(params: {
@@ -514,7 +514,7 @@ export async function invalidateBySorteoCache(params: {
 }
 
 /**
- * ✅ NUEVO: Generar clave de caché para saldo del mes anterior
+ *  NUEVO: Generar clave de caché para saldo del mes anterior
  */
 function getPreviousMonthBalanceCacheKey(params: {
     effectiveMonth: string; // YYYY-MM
@@ -535,7 +535,7 @@ function getPreviousMonthBalanceCacheKey(params: {
 }
 
 /**
- * ✅ NUEVO: Obtener saldo del mes anterior del caché
+ *  NUEVO: Obtener saldo del mes anterior del caché
  * TTL: 5 minutos (balance entre frescura y rendimiento)
  * Si se asientan statements durante el cache, se detectarán en la próxima consulta
  */
@@ -552,7 +552,7 @@ export async function getCachedPreviousMonthBalance(params: {
 }
 
 /**
- * ✅ NUEVO: Guardar saldo del mes anterior en caché
+ *  NUEVO: Guardar saldo del mes anterior en caché
  * TTL: 5 minutos (300 segundos)
  * Se invalida automáticamente cuando se asientan statements
  */
@@ -572,7 +572,7 @@ export async function setCachedPreviousMonthBalance(
 }
 
 /**
- * ✅ NUEVO: Invalidar caché de saldos del mes anterior
+ *  NUEVO: Invalidar caché de saldos del mes anterior
  * Se llama cuando se asientan statements del mes anterior
  */
 export async function invalidatePreviousMonthBalanceCache(params: {

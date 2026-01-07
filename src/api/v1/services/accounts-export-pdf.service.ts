@@ -17,7 +17,7 @@ export class AccountsExportPdfService {
           size: 'LETTER',
           layout: 'landscape',
           margins: { top: 50, bottom: 50, left: 50, right: 50 },
-          autoFirstPage: false, // ✅ CRÍTICO: Evitar página en blanco inicial
+          autoFirstPage: false, //  CRÍTICO: Evitar página en blanco inicial
         });
 
         // Registrar fuentes personalizadas para soportar ₡
@@ -123,12 +123,12 @@ export class AccountsExportPdfService {
     for (const item of payload.statements) {
       const date = this.formatDate(item.date);
       
-      // ✅ NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
+      //  NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
       const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
                           (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
       if (hasGrouping) {
-        // ✅ NUEVO: Fila de total consolidado con "TODOS" y formato destacado
+        //  NUEVO: Fila de total consolidado con "TODOS" y formato destacado
         const totalEntity = 'TODOS';
         
         const totalValues = isDimensionVentana
@@ -171,7 +171,7 @@ export class AccountsExportPdfService {
           doc.fontSize(8).font('Helvetica');
         }
 
-        // ✅ NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
+        //  NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
         doc.fillColor('#D3D3D3').rect(startX, y, pageWidth, rowHeight).fill();
         doc.fillColor('black');
         doc.font('Helvetica-Bold');
@@ -196,7 +196,7 @@ export class AccountsExportPdfService {
         y += rowHeight;
         rowIndex++;
 
-        // ✅ NUEVO: Filas de desglose por entidad con indentación visual
+        //  NUEVO: Filas de desglose por entidad con indentación visual
         if (isDimensionVentana && item.byVentana) {
           for (const breakdown of item.byVentana) {
             const breakdownEntity = `  - ${breakdown.ventanaName}`;
@@ -315,7 +315,7 @@ export class AccountsExportPdfService {
           }
         }
       } else {
-        // ✅ Comportamiento normal cuando NO hay agrupación
+        //  Comportamiento normal cuando NO hay agrupación
         const entity = isDimensionVentana
           ? (item.ventanaName || '-')
           : (item.vendedorName || '-');
@@ -342,7 +342,7 @@ export class AccountsExportPdfService {
             this.formatCurrency(item.remainingBalance),
           ];
 
-        // ✅ CRÍTICO: Calcular altura dinámica basada en TODAS las columnas
+        //  CRÍTICO: Calcular altura dinámica basada en TODAS las columnas
         let maxCellHeight = 0;
         values.forEach((val, i) => {
           const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
@@ -375,7 +375,7 @@ export class AccountsExportPdfService {
           const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
           const topPadding = (rowHeight - cellHeight) / 2;
 
-          // ✅ CRÍTICO: Números negativos en rojo
+          //  CRÍTICO: Números negativos en rojo
           if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
             doc.fillColor('red');
             doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
@@ -439,7 +439,7 @@ export class AccountsExportPdfService {
       const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
       const topPadding = (totalRowHeight - cellHeight) / 2;
 
-      // ✅ CRÍTICO: Números negativos en rojo (aunque font es blanco, usar paréntesis)
+      //  CRÍTICO: Números negativos en rojo (aunque font es blanco, usar paréntesis)
       if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
         // Para totales con fondo oscuro y texto blanco, usar paréntesis
         const absValue = value.substring(1); // Quitar el signo menos
@@ -504,7 +504,7 @@ export class AccountsExportPdfService {
         const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
         const topPadding = (accRowHeight - cellHeight) / 2;
 
-        // ✅ CRÍTICO: Números negativos en rojo
+        //  CRÍTICO: Números negativos en rojo
         if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
           doc.fillColor('red');
           doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
@@ -531,7 +531,7 @@ export class AccountsExportPdfService {
       const pageIndex = pages.start + i;
       doc.switchToPage(pageIndex);
 
-      // ✅ CRÍTICO: Desactivar márgenes temporalmente para escribir en el pie de página sin generar nueva hoja
+      //  CRÍTICO: Desactivar márgenes temporalmente para escribir en el pie de página sin generar nueva hoja
       const oldMargins = doc.page.margins;
       doc.page.margins = { top: 0, bottom: 0, left: 0, right: 0 };
 
@@ -580,7 +580,7 @@ export class AccountsExportPdfService {
 
   /**
    * Formatea número como moneda
-   * ✅ CRÍTICO: Números negativos con paréntesis y signo de menos
+   *  CRÍTICO: Números negativos con paréntesis y signo de menos
    */
   /**
    * Redibuja el encabezado de la tabla en una nueva página

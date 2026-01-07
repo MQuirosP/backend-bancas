@@ -59,7 +59,7 @@ export interface ExcludeIncludeResponse {
   updatedAt: string;
 }
 
-// ✅ NUEVO: Estructura agrupada por ventana
+//  NUEVO: Estructura agrupada por ventana
 export interface VendedorSummary {
   vendedorId: string | null;
   vendedorName: string | null;
@@ -67,7 +67,7 @@ export interface VendedorSummary {
   totalSales: number;
   totalTickets: number;
   totalCommission: number;
-  // ✅ NUEVO: Commission breakdown por tipo de jugada
+  //  NUEVO: Commission breakdown por tipo de jugada
   commissionByNumber: number;
   commissionByReventado: number;
   isExcluded: boolean;
@@ -76,7 +76,7 @@ export interface VendedorSummary {
   excludedAt: string | null;
   excludedBy: string | null;
   excludedByName: string | null;
-  // ✅ NUEVO: Multiplier info if specific exclusion exists
+  //  NUEVO: Multiplier info if specific exclusion exists
   multiplierId?: string | null;
   multiplierName?: string | null;
   multiplierValue?: number | null; // Renamed from multiplierValueX for FE compatibility
@@ -89,7 +89,7 @@ export interface ListeroSummary {
   totalSales: number;
   totalTickets: number;
   totalCommission: number;
-  // ✅ NUEVO: Commission breakdown por tipo de jugada
+  //  NUEVO: Commission breakdown por tipo de jugada
   commissionByNumber: number;
   commissionByReventado: number;
   isExcluded: boolean;
@@ -125,7 +125,7 @@ export interface ListasResponse {
   };
 }
 
-// ✅ LEGACY: Mantener para compatibilidad (deprecated)
+//  LEGACY: Mantener para compatibilidad (deprecated)
 export interface ListaSummaryItem {
   ventanaId: string;
   ventanaName: string;

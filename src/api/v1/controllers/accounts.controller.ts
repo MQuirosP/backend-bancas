@@ -65,7 +65,7 @@ export const AccountsController = {
   async getStatement(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
     
-    // ✅ NUEVO: Agregar filtros de período
+    //  NUEVO: Agregar filtros de período
     const { month, date, fromDate, toDate, scope, dimension, bancaId, ventanaId, vendedorId, sort } = req.query as any;
     const user = req.user;
 
@@ -77,18 +77,18 @@ export const AccountsController = {
       // Forzar vendedorId al usuario actual
         const filters = {
           month,
-          date, // ✅ NUEVO
-          fromDate, // ✅ NUEVO
-          toDate, // ✅ NUEVO
+          date, //  NUEVO
+          fromDate, //  NUEVO
+          toDate, //  NUEVO
           scope: "mine" as const,
           dimension: "vendedor" as const,
           vendedorId: user.id,
           sort: sort || "desc",
-          userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario
+          userRole: user.role, //  CRÍTICO: Pasar rol del usuario
         };
       const result = await AccountsService.getStatement(filters) as StatementResponse;
       
-      // ✅ ETags: Calcular y verificar antes de procesar
+      //  ETags: Calcular y verificar antes de procesar
       const etagVal = calculateStatementETag(
         month,
         date,
@@ -139,18 +139,18 @@ export const AccountsController = {
         }
         const filters = {
           month,
-          date, // ✅ NUEVO
-          fromDate, // ✅ NUEVO
-          toDate, // ✅ NUEVO
+          date, //  NUEVO
+          fromDate, //  NUEVO
+          toDate, //  NUEVO
           scope: "mine" as const,
           dimension: "ventana" as const,
           ventanaId: effectiveVentanaId,
           sort: sort || "desc",
-          userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario
+          userRole: user.role, //  CRÍTICO: Pasar rol del usuario
         };
         const result = await AccountsService.getStatement(filters) as StatementResponse;
         
-        // ✅ ETags: Calcular y verificar antes de procesar
+        //  ETags: Calcular y verificar antes de procesar
         const etagVal = calculateStatementETag(
           month,
           date,
@@ -180,7 +180,7 @@ export const AccountsController = {
         if (dimension !== "vendedor") {
           throw new AppError("Los usuarios VENTANA con scope='ventana' deben usar dimension='vendedor'", 400, "INVALID_DIMENSION");
         }
-        // ✅ NUEVO: Permitir vendedorId opcional para agrupamiento por "Todos"
+        //  NUEVO: Permitir vendedorId opcional para agrupamiento por "Todos"
         if (vendedorId) {
           // Validar que el vendedor pertenece a la ventana del usuario
           const vendedor = await prisma.user.findUnique({
@@ -194,19 +194,19 @@ export const AccountsController = {
         // Si no hay vendedorId, se agrupará automáticamente por fecha con byVendedor[]
         const filters = {
           month,
-          date, // ✅ NUEVO
-          fromDate, // ✅ NUEVO
-          toDate, // ✅ NUEVO
+          date, //  NUEVO
+          fromDate, //  NUEVO
+          toDate, //  NUEVO
           scope: "ventana" as const,
           dimension: "vendedor" as const,
           ventanaId: effectiveVentanaId,
           vendedorId,
           sort: sort || "desc",
-          userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario
+          userRole: user.role, //  CRÍTICO: Pasar rol del usuario
         };
         const result = await AccountsService.getStatement(filters) as StatementResponse;
         
-        // ✅ ETags: Calcular y verificar antes de procesar
+        //  ETags: Calcular y verificar antes de procesar
         const etagVal = calculateStatementETag(
           month,
           date,
@@ -245,21 +245,21 @@ export const AccountsController = {
       const effectiveFilters = await applyRbacFilters(context, {
         ventanaId,
         vendedorId,
-        bancaId, // ✅ CRÍTICO: Pasar bancaId del query para que se incluya en los filtros efectivos
+        bancaId, //  CRÍTICO: Pasar bancaId del query para que se incluya en los filtros efectivos
       });
       
       const filters: any = {
         month,
-        date, // ✅ NUEVO
-        fromDate, // ✅ NUEVO
-        toDate, // ✅ NUEVO
+        date, //  NUEVO
+        fromDate, //  NUEVO
+        toDate, //  NUEVO
         scope: scope || "all",
         dimension: dimension || "ventana",
         ventanaId: effectiveFilters.ventanaId,
         vendedorId: effectiveFilters.vendedorId,
-        bancaId: effectiveFilters.bancaId || bancaId || null, // ✅ CRÍTICO: Usar bancaId del query si no está en effectiveFilters
+        bancaId: effectiveFilters.bancaId || bancaId || null, //  CRÍTICO: Usar bancaId del query si no está en effectiveFilters
         sort: sort || "desc",
-        userRole: user.role, // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
+        userRole: user.role, //  CRÍTICO: Pasar rol del usuario para calcular balance correctamente
       };
       
       const result = await AccountsService.getStatement(filters) as StatementResponse;
@@ -289,7 +289,7 @@ export const AccountsController = {
         payload: { month, scope, dimension },
       });
       
-      // ✅ ETags: Calcular y verificar antes de procesar
+      //  ETags: Calcular y verificar antes de procesar
       const etagVal = calculateStatementETag(
         month,
         date,
@@ -331,7 +331,7 @@ export const AccountsController = {
       throw new AppError("Los vendedores no pueden registrar pagos/cobros", 403, "FORBIDDEN");
     }
 
-    // ✅ CRÍTICO: Validar formato de hora según especificación del FE
+    //  CRÍTICO: Validar formato de hora según especificación del FE
     // El FE siempre envía formato válido HH:MM si está presente
     // Patrón: ^([01][0-9]|2[0-3]):[0-5][0-9]$
     // Si no está presente, el service usará "00:00" como default
@@ -350,7 +350,7 @@ export const AccountsController = {
       throw new AppError("La fecha no puede ser futura", 400, "FUTURE_DATE");
     }
 
-    // ✅ NUEVO: Validar que hora no sea futura si fecha es hoy
+    //  NUEVO: Validar que hora no sea futura si fecha es hoy
     if (time) {
       const today = new Date();
       const todayCR = new Date(today.getTime() + 6 * 60 * 60 * 1000); // Convertir a CR
@@ -411,7 +411,7 @@ export const AccountsController = {
       if (!ventanaId && !vendedorId) {
         throw new AppError("Debe proporcionar ventanaId o vendedorId", 400, "MISSING_DIMENSION");
       }
-      // ✅ ACTUALIZADO: Permitir que ambos estén presentes (ventanaId se inferirá/persistirá cuando hay vendedorId)
+      //  ACTUALIZADO: Permitir que ambos estén presentes (ventanaId se inferirá/persistirá cuando hay vendedorId)
       // El constraint _one_relation_check ha sido eliminado
     }
 
@@ -420,13 +420,13 @@ export const AccountsController = {
       throw new AppError("Debe proporcionar ventanaId o vendedorId", 400, "MISSING_DIMENSION");
     }
 
-    // ✅ OPTIMIZACIÓN: Usar nombre del usuario del token si está disponible, sino buscar en BD
+    //  OPTIMIZACIÓN: Usar nombre del usuario del token si está disponible, sino buscar en BD
     // Nota: Si el token incluye el nombre del usuario, podemos evitar esta query
     const paidByName = (user as any).name || "Usuario";
 
     const result = await AccountsService.createPayment({
       date,
-      time: time, // ✅ CRÍTICO: Pasar time tal cual (el service procesará y usará "00:00" si no está presente)
+      time: time, //  CRÍTICO: Pasar time tal cual (el service procesará y usará "00:00" si no está presente)
       ventanaId: effectiveVentanaId,
       vendedorId: effectiveVendedorId,
       amount,
@@ -439,7 +439,7 @@ export const AccountsController = {
       paidByName,
     }) as { payment: any; statement: any };
 
-    // ✅ NUEVO: La respuesta ahora incluye { payment, statement }
+    //  NUEVO: La respuesta ahora incluye { payment, statement }
     const { payment, statement } = result;
 
     // Verificar si es una respuesta cacheada (pago duplicado con idempotencyKey)
@@ -485,13 +485,13 @@ export const AccountsController = {
     const paymentResponse = { ...payment };
     delete (paymentResponse as any).cached;
 
-    // ✅ OPTIMIZACIÓN: Incluir statement actualizado en la respuesta para sincronía total con FE
+    //  OPTIMIZACIÓN: Incluir statement actualizado en la respuesta para sincronía total con FE
     // Esto evita que el FE tenga que hacer un GET adicional y mejora los tiempos de actualización
     return res.status(statusCode).json({
       success: true,
       data: {
         payment: paymentResponse,
-        statement, // ✅ Statement actualizado con totalPaid, totalCollected, remainingBalance, etc.
+        statement, //  Statement actualizado con totalPaid, totalCollected, remainingBalance, etc.
       },
       ...(isCached ? { meta: { cached: true } } : {}),
     });
@@ -672,19 +672,19 @@ export const AccountsController = {
     const user = req.user;
     const { paymentId, reason } = req.body;
 
-    // ✅ OPTIMIZACIÓN: Obtener el pago una sola vez (incluye accountStatement)
+    //  OPTIMIZACIÓN: Obtener el pago una sola vez (incluye accountStatement)
     const payment = await AccountPaymentRepository.findById(paymentId);
 
     if (!payment) {
       throw new AppError("Pago no encontrado", 404, "PAYMENT_NOT_FOUND");
     }
 
-    // ✅ NUEVO: Validar permisos según rol
+    //  NUEVO: Validar permisos según rol
     if (user.role === Role.ADMIN) {
       // ADMIN puede revertir cualquier pago
     } else if (user.role === Role.VENTANA) {
-      // ✅ VENTANA solo puede revertir pagos de sus propios vendedores
-      // ✅ OPTIMIZACIÓN: Obtener ventanaId del usuario solo si no está en el token
+      //  VENTANA solo puede revertir pagos de sus propios vendedores
+      //  OPTIMIZACIÓN: Obtener ventanaId del usuario solo si no está en el token
       let userVentanaId: string | null = user.ventanaId || null;
       
       if (!userVentanaId) {
@@ -699,7 +699,7 @@ export const AccountsController = {
         throw new AppError("Usuario VENTANA debe tener ventanaId asignado", 403, "FORBIDDEN");
       }
 
-      // ✅ OPTIMIZACIÓN: Validar permisos según el tipo de pago
+      //  OPTIMIZACIÓN: Validar permisos según el tipo de pago
       if (payment.vendedorId) {
         // Si el pago tiene vendedorId, verificar que el vendedor pertenece a su ventana
         const vendedor = await prisma.user.findUnique({
@@ -724,14 +724,14 @@ export const AccountsController = {
       throw new AppError("Solo usuarios con rol ADMIN o VENTANA pueden revertir pagos/cobros", 403, "FORBIDDEN");
     }
 
-    // ✅ OPTIMIZACIÓN: Pasar el payment ya obtenido en lugar de solo el ID
+    //  OPTIMIZACIÓN: Pasar el payment ya obtenido en lugar de solo el ID
     // Esto evita buscar el pago dos veces
     const result = await AccountsService.reversePayment(payment, user.id, reason) as { payment: any; statement: any };
 
-    // ✅ NUEVO: La respuesta ahora incluye { payment, statement }
+    //  NUEVO: La respuesta ahora incluye { payment, statement }
     const { payment: reversed, statement } = result;
 
-    // ✅ OPTIMIZACIÓN: Obtener nombre del usuario solo una vez (necesario para la respuesta)
+    //  OPTIMIZACIÓN: Obtener nombre del usuario solo una vez (necesario para la respuesta)
     // AuthUser no incluye name, así que necesitamos buscarlo
     const reversedByUser = await prisma.user.findUnique({
       where: { id: user.id },
@@ -766,7 +766,7 @@ export const AccountsController = {
       },
     });
 
-    // ✅ OPTIMIZACIÓN: Incluir statement actualizado en la respuesta para sincronía total con FE
+    //  OPTIMIZACIÓN: Incluir statement actualizado en la respuesta para sincronía total con FE
     // El servicio ya retorna el payment formateado correctamente (con reversedAt como string)
     return success(res, {
       payment: {
@@ -778,7 +778,7 @@ export const AccountsController = {
             }
           : null,
       },
-      statement, // ✅ Statement actualizado con totalPaid, totalCollected, remainingBalance, etc.
+      statement, //  Statement actualizado con totalPaid, totalCollected, remainingBalance, etc.
     }, 200);
   },
 
@@ -882,7 +882,7 @@ export const AccountsController = {
   },
 
   /**
-   * ✅ NUEVO: GET /api/v1/accounts/statement/:date/bySorteo
+   *  NUEVO: GET /api/v1/accounts/statement/:date/bySorteo
    * Obtiene bySorteo (sorteos intercalados con movimientos) para un día específico
    * Usado para lazy loading desde el frontend
    */
@@ -916,7 +916,7 @@ export const AccountsController = {
       effectiveDimension = "vendedor";
       effectiveVendedorId = user.id;
     } else if (user.role === Role.VENTANA) {
-      // ✅ Permitir AMBAS dimensiones: 'ventana' y 'vendedor'
+      //  Permitir AMBAS dimensiones: 'ventana' y 'vendedor'
       if (!['ventana', 'vendedor'].includes(dimension)) {
         throw new AppError("Los usuarios VENTANA solo pueden usar dimension='ventana' o 'vendedor'", 403, "FORBIDDEN");
       }
@@ -936,7 +936,7 @@ export const AccountsController = {
         throw new AppError("El usuario VENTANA no tiene una ventana asignada", 400, "NO_VENTANA");
       }
       
-      // ✅ Si dimension='vendedor', validar vendedorId (si está presente)
+      //  Si dimension='vendedor', validar vendedorId (si está presente)
       if (effectiveDimension === "vendedor" && vendedorId) {
         const vendedor = await prisma.user.findUnique({
           where: { id: vendedorId },
@@ -948,7 +948,7 @@ export const AccountsController = {
         effectiveVendedorId = vendedorId;
       }
       
-      // ✅ Si dimension='vendedor' SIN vendedorId, getBySorteo() agrupará automáticamente
+      //  Si dimension='vendedor' SIN vendedorId, getBySorteo() agrupará automáticamente
     }
 
     // Obtener bySorteo
@@ -960,7 +960,7 @@ export const AccountsController = {
       userRole: user.role,
     });
 
-    // ✅ CRÍTICO: Verificar que bySorteo sea un array antes de acceder a .length
+    //  CRÍTICO: Verificar que bySorteo sea un array antes de acceder a .length
     const bySorteoArray = Array.isArray(bySorteo) ? bySorteo : [];
 
     req.logger?.info({
@@ -1054,7 +1054,7 @@ export const AccountsController = {
         if (dimension !== "vendedor") {
           throw new AppError("Los usuarios VENTANA con scope='ventana' deben usar dimension='vendedor'", 400, "INVALID_DIMENSION");
         }
-        // ✅ NUEVO: Permitir vendedorId opcional para agrupamiento por "Todos"
+        //  NUEVO: Permitir vendedorId opcional para agrupamiento por "Todos"
         if (vendedorId) {
           // Validar que el vendedor pertenece a la ventana
           const vendedor = await prisma.user.findUnique({

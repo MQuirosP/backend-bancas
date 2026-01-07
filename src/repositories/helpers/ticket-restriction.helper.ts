@@ -7,9 +7,9 @@ import { restrictionCacheV2 } from "../../utils/restrictionCacheV2";
 
 /**
  * Calcula los acumulados del sorteo para múltiples números y alcance en una sola query
- * ⚠️ IMPORTANTE: El acumulado es independiente por sorteo, no se mezcla entre sorteos diferentes
+ * ️ IMPORTANTE: El acumulado es independiente por sorteo, no se mezcla entre sorteos diferentes
  * 
- * ⚡ OPTIMIZACIÓN: Calcula todos los acumulados en una sola query para mejor rendimiento
+ *  OPTIMIZACIÓN: Calcula todos los acumulados en una sola query para mejor rendimiento
  * 
  * Incluye:
  * - Jugadas tipo NUMERO con el número específico
@@ -25,8 +25,8 @@ export async function calculateAccumulatedByNumbersAndScope(
     numbers: string[];          // Array de números (ej: ["15", "20"])
     scopeType: 'USER' | 'VENTANA' | 'BANCA';
     scopeId: string;            // userId, ventanaId, o bancaId
-    sorteoId: string;           // ⚠️ CRÍTICO: Acumulado es por sorteo
-    multiplierFilter?: {        // ✅ NUEVO: Filtro por multiplicador
+    sorteoId: string;           // ️ CRÍTICO: Acumulado es por sorteo
+    multiplierFilter?: {        //  NUEVO: Filtro por multiplicador
       id: string;
       kind: 'NUMERO' | 'REVENTADO';
     } | null;
@@ -53,7 +53,7 @@ export async function calculateAccumulatedByNumbersAndScope(
       throw new Error(`Invalid scopeType: ${scopeType}`);
     }
 
-    // ✅ Construir condición de multiplicador
+    //  Construir condición de multiplicador
     let multiplierCondition = Prisma.sql``;
     if (multiplierFilter) {
       if (multiplierFilter.kind === 'REVENTADO') {
@@ -65,8 +65,8 @@ export async function calculateAccumulatedByNumbersAndScope(
       }
     }
 
-    // ⚡ OPTIMIZACIÓN: Query SQL que calcula todos los acumulados en una sola consulta
-    // ✅ SEGURIDAD: Validar números antes de usar (ya validados por resolveNumbersToValidate)
+    //  OPTIMIZACIÓN: Query SQL que calcula todos los acumulados en una sola consulta
+    //  SEGURIDAD: Validar números antes de usar (ya validados por resolveNumbersToValidate)
     // Construir condiciones OR para cada número (más seguro que ANY con raw)
     const numberConditions: Prisma.Sql[] = [];
     for (const num of numbers) {
@@ -108,11 +108,11 @@ export async function calculateAccumulatedByNumbersAndScope(
           ${scopeCondition}
           AND t."sorteoId" = ${sorteoId}::uuid
           AND t."status" != 'CANCELLED'
-          AND t."isActive" = true  -- ✅ Exclusivo activos
+          AND t."isActive" = true  --  Exclusivo activos
           AND t."deletedAt" IS NULL
-          AND j."isActive" = true  -- ✅ Exclusivo activas
+          AND j."isActive" = true  --  Exclusivo activas
           AND j."deletedAt" IS NULL
-          ${multiplierCondition}   -- ✅ Inyectar filtro de multiplicador
+          ${multiplierCondition}   --  Inyectar filtro de multiplicador
           AND (${Prisma.join(numberConditions, ' OR ')})
         GROUP BY COALESCE(j."number", j."reventadoNumber")
       `
@@ -165,9 +165,9 @@ export async function calculateAccumulatedByNumbersAndScope(
 
 /**
  * Calcula el acumulado del sorteo para un número específico y alcance
- * ⚠️ IMPORTANTE: El acumulado es independiente por sorteo, no se mezcla entre sorteos diferentes
+ * ️ IMPORTANTE: El acumulado es independiente por sorteo, no se mezcla entre sorteos diferentes
  * 
- * ⚡ OPTIMIZACIÓN: Usa calculateAccumulatedByNumbersAndScope internamente para mejor rendimiento
+ *  OPTIMIZACIÓN: Usa calculateAccumulatedByNumbersAndScope internamente para mejor rendimiento
  * 
  * Incluye:
  * - Jugadas tipo NUMERO con el número específico
@@ -183,14 +183,14 @@ export async function calculateAccumulatedByNumberAndScope(
     number: string;              // Número específico (ej: "15")
     scopeType: 'USER' | 'VENTANA' | 'BANCA';
     scopeId: string;            // userId, ventanaId, o bancaId
-    sorteoId: string;           // ⚠️ CRÍTICO: Acumulado es por sorteo
-    multiplierFilter?: {        // ✅ NUEVO: Filtro por multiplicador
+    sorteoId: string;           // ️ CRÍTICO: Acumulado es por sorteo
+    multiplierFilter?: {        //  NUEVO: Filtro por multiplicador
       id: string;
       kind: 'NUMERO' | 'REVENTADO';
     } | null;
   }
 ): Promise<number> {
-  // ⚡ OPTIMIZACIÓN: Usar función optimizada que calcula múltiples números en una query
+  //  OPTIMIZACIÓN: Usar función optimizada que calcula múltiples números en una query
   const accumulatedMap = await calculateAccumulatedByNumbersAndScope(tx, {
     numbers: [params.number],
     scopeType: params.scopeType,
@@ -273,9 +273,9 @@ export function resolveNumbersToValidate(
 
 /**
  * Valida maxTotal para múltiples números contra el acumulado del sorteo
- * ⚡ OPTIMIZACIÓN: Calcula todos los acumulados en una sola query
+ *  OPTIMIZACIÓN: Calcula todos los acumulados en una sola query
  * 
- * ⚠️ CRÍTICO: 
+ * ️ CRÍTICO: 
  * - maxTotal es acumulado por número INDIVIDUAL en el sorteo
  * - NO se valida sobre total del ticket
  * - NO se valida sobre total diario
@@ -298,7 +298,7 @@ export async function validateMaxTotalForNumbers(
     };
     sorteoId: string;
     dynamicLimit?: number | null; // Límite dinámico calculado (opcional)
-    multiplierFilter?: {          // ✅ NUEVO: Filtro por multiplicador
+    multiplierFilter?: {          //  NUEVO: Filtro por multiplicador
       id: string;
       kind: 'NUMERO' | 'REVENTADO';
     } | null;
@@ -335,19 +335,19 @@ export async function validateMaxTotalForNumbers(
     ? Math.min(staticMaxTotal, dynamicLimit)
     : staticMaxTotal;
 
-  // ⚡ OPTIMIZACIÓN: Calcular todos los acumulados en una sola query
+  //  OPTIMIZACIÓN: Calcular todos los acumulados en una sola query
   const numberStrings = numbers.map(n => n.number);
   const accumulatedMap = await calculateAccumulatedByNumbersAndScope(tx, {
     numbers: numberStrings,
     scopeType,
     scopeId,
     sorteoId,
-    multiplierFilter, // ✅ Pasar filtro al cálculo
+    multiplierFilter, //  Pasar filtro al cálculo
   });
 
-  // ✅ CRÍTICO: Validar cada número INDIVIDUALMENTE (no por total del ticket)
+  //  CRÍTICO: Validar cada número INDIVIDUALMENTE (no por total del ticket)
   for (const { number, amountForNumber } of numbers) {
-    // ✅ ROBUSTEZ: Validar que amountForNumber sea un número válido
+    //  ROBUSTEZ: Validar que amountForNumber sea un número válido
     if (!Number.isFinite(amountForNumber) || amountForNumber <= 0) {
       logger.warn({
         layer: 'repository',
@@ -357,10 +357,10 @@ export async function validateMaxTotalForNumbers(
       continue; // Saltar números con montos inválidos
     }
 
-    // ✅ CRÍTICO: accumulatedInSorteo es el acumulado SOLO de este número específico en el sorteo
+    //  CRÍTICO: accumulatedInSorteo es el acumulado SOLO de este número específico en el sorteo
     const accumulatedInSorteo = accumulatedMap.get(number) ?? 0;
     
-    // ✅ ROBUSTEZ: Validar que accumulatedInSorteo sea un número válido
+    //  ROBUSTEZ: Validar que accumulatedInSorteo sea un número válido
     if (!Number.isFinite(accumulatedInSorteo) || accumulatedInSorteo < 0) {
       logger.error({
         layer: 'repository',
@@ -374,7 +374,7 @@ export async function validateMaxTotalForNumbers(
       );
     }
 
-    // ✅ ROBUSTEZ: Validar que effectiveMaxTotal sea un número válido
+    //  ROBUSTEZ: Validar que effectiveMaxTotal sea un número válido
     if (!Number.isFinite(effectiveMaxTotal) || effectiveMaxTotal <= 0) {
       logger.error({
         layer: 'repository',
@@ -409,20 +409,20 @@ export async function validateMaxTotalForNumbers(
           scopeLabel,
           sorteoId,
           multiplierFilter,
-          accumulatedInSorteo, // ✅ Acumulado SOLO de este número
-          amountForNumber, // ✅ Monto SOLO de este número en el ticket
-          newAccumulated, // ✅ Nuevo acumulado SOLO de este número
-          effectiveMaxTotal, // ✅ Límite SOLO para este número
+          accumulatedInSorteo, //  Acumulado SOLO de este número
+          amountForNumber, //  Monto SOLO de este número en el ticket
+          newAccumulated, //  Nuevo acumulado SOLO de este número
+          effectiveMaxTotal, //  Límite SOLO para este número
           staticMaxTotal,
           dynamicLimit,
           available,
           isAutoDate: rule.isAutoDate,
-          // ✅ CRÍTICO: Aclarar que estos valores son por número individual, no por total del ticket
+          //  CRÍTICO: Aclarar que estos valores son por número individual, no por total del ticket
           clarification: 'Todos los valores son por número individual, no por total del ticket',
         },
       });
 
-      // ✅ CRÍTICO: Mensaje claro - maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
+      //  CRÍTICO: Mensaje claro - maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
       throw new AppError(
         `El número ${number}${isAutoDateLabel}: Límite máximo: ₡${effectiveMaxTotal.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
         400,
@@ -430,18 +430,18 @@ export async function validateMaxTotalForNumbers(
           code: "NUMBER_MAXTOTAL_EXCEEDED",
           number,
           scopeType,
-          scope: scopeLabel, // ✅ Frontend espera 'scope' además de 'scopeLabel'
+          scope: scopeLabel, //  Frontend espera 'scope' además de 'scopeLabel'
           scopeLabel,
           sorteoId,
-          accumulatedInSorteo, // ✅ "usado" = acumulado previo SOLO de este número en el sorteo
-          amountForNumber, // ✅ "intento" = monto SOLO de este número en el ticket actual
-          newAccumulated, // ✅ Nuevo acumulado SOLO de este número
-          effectiveMaxTotal, // ✅ "tope" = límite máximo SOLO para este número
+          accumulatedInSorteo, //  "usado" = acumulado previo SOLO de este número en el sorteo
+          amountForNumber, //  "intento" = monto SOLO de este número en el ticket actual
+          newAccumulated, //  Nuevo acumulado SOLO de este número
+          effectiveMaxTotal, //  "tope" = límite máximo SOLO para este número
           available,
           isAutoDate: rule.isAutoDate,
-          // ✅ CRÍTICO: Aclarar en el meta que es por número individual, NO por total del ticket
+          //  CRÍTICO: Aclarar en el meta que es por número individual, NO por total del ticket
           isPerNumber: true,
-          isAccumulated: true, // ✅ Aclarar que es acumulado (maxTotal), no por ticket (maxAmount)
+          isAccumulated: true, //  Aclarar que es acumulado (maxTotal), no por ticket (maxAmount)
           clarification: 'Límite acumulado calculado por número individual en el sorteo, NO por total del ticket',
         }
       );
@@ -467,7 +467,7 @@ export async function validateMaxTotalForNumbers(
 
 /**
  * Valida maxTotal para un número específico contra el acumulado del sorteo
- * ⚡ OPTIMIZACIÓN: Usa validateMaxTotalForNumbers internamente
+ *  OPTIMIZACIÓN: Usa validateMaxTotalForNumbers internamente
  * 
  * @param tx Transacción de Prisma
  * @param params Parámetros de validación
@@ -487,7 +487,7 @@ export async function validateMaxTotalForNumber(
     };
     sorteoId: string;
     dynamicLimit?: number | null; // Límite dinámico calculado (opcional)
-    multiplierFilter?: {          // ✅ NUEVO: Filtro por multiplicador
+    multiplierFilter?: {          //  NUEVO: Filtro por multiplicador
       id: string;
       kind: 'NUMERO' | 'REVENTADO';
     } | null;
@@ -503,7 +503,7 @@ export async function validateMaxTotalForNumber(
 }
 
 /**
- * 🚀 PARALLEL VALIDATION SYSTEM
+ *  PARALLEL VALIDATION SYSTEM
  *
  * Valida múltiples reglas de restricción en paralelo para mejorar rendimiento.
  * Las validaciones independientes se ejecutan concurrentemente mientras que
@@ -770,7 +770,7 @@ async function executeValidationTask(
 }
 
 /**
- * 🚀 VALIDA MÚLTIPLES REGLAS EN PARALELO
+ *  VALIDA MÚLTIPLES REGLAS EN PARALELO
  *
  * Esta función reemplaza el procesamiento secuencial de reglas con un sistema paralelo
  * que puede mejorar significativamente el rendimiento en escenarios con muchas reglas.

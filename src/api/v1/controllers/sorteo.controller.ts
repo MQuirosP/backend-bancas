@@ -128,7 +128,7 @@ export const SorteoController = {
       ? (req.query.groupBy as "hour" | "loteria-hour" | undefined)
       : undefined;
 
-    // ✅ Pasar información del usuario para filtrado por política de comisiones (solo VENDEDOR)
+    //  Pasar información del usuario para filtrado por política de comisiones (solo VENDEDOR)
     const result = await SorteoService.list({
       loteriaId,
       page,
@@ -139,7 +139,7 @@ export const SorteoController = {
       dateFrom: dateFromResolved,
       dateTo: dateToResolved,
       groupBy,
-      // ✅ NUEVO: Información del usuario para filtrado por política de comisiones
+      //  NUEVO: Información del usuario para filtrado por política de comisiones
       userId: req.user?.id,
       role: req.user?.role,
       ventanaId: req.user?.ventanaId,

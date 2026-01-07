@@ -338,7 +338,7 @@ export const CierreController = {
       result = await CierreService.aggregateBySeller(filters, top, orderBy);
     } else {
       result = await CierreService.aggregateWeekly(filters);
-      // ✅ NUEVO: También obtener datos por vendedor para incluir en el export
+      //  NUEVO: También obtener datos por vendedor para incluir en el export
       const top = query.top ? parseInt(query.top, 10) : undefined;
       const orderBy = query.orderBy || 'totalVendida';
       sellerResult = await CierreService.aggregateBySeller(filters, top, orderBy);

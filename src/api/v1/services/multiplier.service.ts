@@ -32,7 +32,7 @@ const MultiplierService = {
         appliesToSorteoId: data.appliesToSorteoId ?? null,
         isActive: data.isActive ?? true,
       },
-      // 👉 devuelve también la lotería al crear (opcional pero útil para front)
+      //  devuelve también la lotería al crear (opcional pero útil para front)
       include: { loteria: { select: { id: true, name: true } } },
     });
 
@@ -85,7 +85,7 @@ const MultiplierService = {
             : data.appliesToSorteoId,
         isActive: data.isActive ?? existing.isActive,
       },
-      // 👉 devuelve también la lotería al actualizar
+      //  devuelve también la lotería al actualizar
       include: { loteria: { select: { id: true, name: true } } },
     });
 
@@ -156,7 +156,7 @@ const MultiplierService = {
     return restored;
   },
 
-  // ✅ incluye lotería para detalle
+  //  incluye lotería para detalle
   async getById(id: string) {
     const r = await prisma.loteriaMultiplier.findUnique({
       where: { id },
@@ -169,7 +169,7 @@ const MultiplierService = {
   async list(query: ListMultiplierQueryInput) {
     const q = query;
 
-    // 👉 construir where con búsqueda por name y por nombre de lotería
+    //  construir where con búsqueda por name y por nombre de lotería
     const and: any[] = [];
     if (q.q?.trim()) {
       const s = q.q.trim();

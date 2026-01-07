@@ -50,7 +50,7 @@ async function executeCleanup(): Promise<void> {
 
     const result = await ActivityLogService.cleanupOldLogs(RETENTION_DAYS);
 
-    console.log(`[Activity Log Cleanup] ✅ Cleanup completed successfully`);
+    console.log(`[Activity Log Cleanup]  Cleanup completed successfully`);
     console.log(`[Activity Log Cleanup] Deleted ${result.deletedCount} activity log records`);
 
     // Log to monitoring system if available
@@ -71,7 +71,7 @@ async function executeCleanup(): Promise<void> {
       }
     }
   } catch (error) {
-    console.error('[Activity Log Cleanup] ❌ Cleanup job failed:', error);
+    console.error('[Activity Log Cleanup]  Cleanup job failed:', error);
 
     // Notify on error if webhook is configured
     if (process.env.CLEANUP_WEBHOOK_URL) {

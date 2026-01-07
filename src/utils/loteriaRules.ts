@@ -25,7 +25,7 @@ export type RulesJson = {
     featured?: boolean
   }
   baseMultiplierX?: number
-  digits?: number              // ✅ Número de dígitos del sorteo (2 para tiempos, 3 para monazos). Default: 2
+  digits?: number              //  Número de dígitos del sorteo (2 para tiempos, 3 para monazos). Default: 2
   salesHours?: {
     sunday?: { start?: string; end?: string }
     monday?: { start?: string; end?: string }

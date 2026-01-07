@@ -1,19 +1,19 @@
 # Instrucciones de Despliegue - Índices de Rendimiento Accounts (Prioridad 1)
 
-## 📋 Resumen
+##  Resumen
 
 Esta migración agrega índices críticos para optimizar el rendimiento del módulo de accounts:
 - Índice en `Jugada.listeroCommissionAmount` (agregaciones de comisiones)
 - Índice compuesto en `AccountPayment(date, ventanaId)` (búsquedas de movimientos)
 - Índice compuesto en `AccountPayment(date, vendedorId)` (búsquedas de movimientos por vendedor)
 
-## ⚠️ Seguridad
+## ️ Seguridad
 
-- ✅ **Segura para producción**: Usa `CREATE INDEX CONCURRENTLY` (no bloquea tablas)
-- ✅ **Reversible**: Los índices se pueden eliminar sin pérdida de datos
-- ✅ **Sin downtime**: No requiere ventana de mantenimiento
+-  **Segura para producción**: Usa `CREATE INDEX CONCURRENTLY` (no bloquea tablas)
+-  **Reversible**: Los índices se pueden eliminar sin pérdida de datos
+-  **Sin downtime**: No requiere ventana de mantenimiento
 
-## 🚀 Pasos de Despliegue
+##  Pasos de Despliegue
 
 ### 1. Pre-verificación
 
@@ -69,7 +69,7 @@ ORDER BY tablename, indexname;
    - Comparar tiempos antes/después de la migración
    - Verificar que las queries usan los nuevos índices
 
-## 🔄 Rollback (Si es Necesario)
+##  Rollback (Si es Necesario)
 
 Si necesitas revertir la migración:
 
@@ -81,18 +81,18 @@ DROP INDEX CONCURRENTLY IF EXISTS "idx_account_payment_date_vendedor";
 
 **Nota**: El rollback es seguro y no afecta los datos, solo el rendimiento.
 
-## 📊 Impacto Esperado
+##  Impacto Esperado
 
 - **Tiempo de respuesta**: 30-50% mejora en queries de accounts
 - **Agregaciones de comisiones**: 40-50% más rápidas
 - **Búsquedas de movimientos**: 50-60% más rápidas
 
-## ⏱️ Tiempo Estimado
+## ️ Tiempo Estimado
 
 - **Creación de índices**: 2-10 minutos (depende del tamaño de las tablas)
 - **Downtime**: 0 minutos (CONCURRENTLY no bloquea)
 
-## 🆘 Troubleshooting
+##  Troubleshooting
 
 ### Error: "index already exists"
 - **Causa**: El índice ya fue creado en una migración anterior
@@ -106,7 +106,7 @@ DROP INDEX CONCURRENTLY IF EXISTS "idx_account_payment_date_vendedor";
 - **Causa**: Tabla muy grande
 - **Solución**: Normal, puede tomar hasta 10-15 minutos. No interrumpir.
 
-## 📝 Notas Adicionales
+##  Notas Adicionales
 
 - Los índices se crean con `CONCURRENTLY` para evitar bloqueos
 - Los índices parciales (con WHERE) son más eficientes y ocupan menos espacio

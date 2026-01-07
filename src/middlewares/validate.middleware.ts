@@ -90,7 +90,7 @@ export const validateParams = (schema: ZodType<any>) => validateWith(schema, "pa
 export const validateQuery = (schema: ZodType<any>) => validateWith(schema, "query");
 
 // ============================================================================
-// 🛡️ SCHEMA ZOD PERSONALIZADO PARA FECHAS CR
+// ️ SCHEMA ZOD PERSONALIZADO PARA FECHAS CR
 // ============================================================================
 
 /**

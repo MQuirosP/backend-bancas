@@ -96,12 +96,12 @@ export class AccountsExportExcelService {
     for (const item of payload.statements) {
       const date = this.formatDate(item.date);
       
-      // ✅ NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
+      //  NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
       const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
                           (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
       if (hasGrouping) {
-        // ✅ NUEVO: Fila de total consolidado con "TODOS" y formato destacado
+        //  NUEVO: Fila de total consolidado con "TODOS" y formato destacado
         const totalEntity = 'TODOS';
         
         const totalRow = isDimensionVentana
@@ -132,10 +132,10 @@ export class AccountsExportExcelService {
               item.ticketCount,
             ]);
 
-        // ✅ NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
+        //  NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
         this.styleTotalRow(totalRow, [3, 4, 5, 6, 7, 8, 9, 10], [11]);
 
-        // ✅ NUEVO: Filas de desglose por entidad con indentación visual
+        //  NUEVO: Filas de desglose por entidad con indentación visual
         if (isDimensionVentana && item.byVentana) {
           for (const breakdown of item.byVentana) {
             const breakdownEntity = `  - ${breakdown.ventanaName}`;
@@ -174,7 +174,7 @@ export class AccountsExportExcelService {
           }
         }
       } else {
-        // ✅ Comportamiento normal cuando NO hay agrupación
+        //  Comportamiento normal cuando NO hay agrupación
         const entity = isDimensionVentana
           ? item.ventanaName || '-'
           : item.vendedorName || '-';
@@ -325,7 +325,7 @@ export class AccountsExportExcelService {
 
     this.styleHeaderRow(headerRow);
 
-    // ✅ OPTIMIZACIÓN: Agregar todas las filas primero, luego aplicar estilos en batch
+    //  OPTIMIZACIÓN: Agregar todas las filas primero, luego aplicar estilos en batch
     const rows: ExcelJS.Row[] = [];
     for (const item of payload.breakdown || []) {
       const date = this.formatDate(item.date);
@@ -415,7 +415,7 @@ export class AccountsExportExcelService {
 
     this.styleHeaderRow(headerRow);
 
-    // ✅ OPTIMIZACIÓN: Agregar todas las filas primero, luego aplicar estilos en batch
+    //  OPTIMIZACIÓN: Agregar todas las filas primero, luego aplicar estilos en batch
     const rows: ExcelJS.Row[] = [];
     const revertidoRows: ExcelJS.Row[] = [];
     
@@ -493,7 +493,7 @@ export class AccountsExportExcelService {
     for (const col of currencyCols) {
       const cell = row.getCell(col);
       if (typeof cell.value === 'number') {
-        // ✅ CRÍTICO: Formato con negativos en rojo, paréntesis y signo de menos
+        //  CRÍTICO: Formato con negativos en rojo, paréntesis y signo de menos
         if (cell.value < 0) {
           cell.numFmt = '₡#,##0.00_);[Red](₡#,##0.00)';
           cell.font = { color: { argb: 'FFFF0000' } }; // Rojo
@@ -529,7 +529,7 @@ export class AccountsExportExcelService {
     for (const col of currencyCols) {
       const cell = row.getCell(col);
       if (typeof cell.value === 'number') {
-        // ✅ CRÍTICO: Formato con negativos en rojo, paréntesis y signo de menos
+        //  CRÍTICO: Formato con negativos en rojo, paréntesis y signo de menos
         if (cell.value < 0) {
           cell.numFmt = '₡#,##0.00_);[Red](₡#,##0.00)';
           // No cambiar font.color aquí porque ya es blanco por styleTotalRow
@@ -557,7 +557,7 @@ export class AccountsExportExcelService {
     for (const col of currencyCols) {
       const cell = row.getCell(col);
       if (typeof cell.value === 'number') {
-        // ✅ CRÍTICO: Formato con negativos en rojo, paréntesis y signo de menos
+        //  CRÍTICO: Formato con negativos en rojo, paréntesis y signo de menos
         if (cell.value < 0) {
           cell.numFmt = '₡#,##0.00_);[Red](₡#,##0.00)';
           cell.font = { bold: true, color: { argb: 'FFFF0000' } }; // Rojo
@@ -570,7 +570,7 @@ export class AccountsExportExcelService {
 
   /**
    * Ajusta automáticamente el ancho de las columnas
-   * ✅ OPTIMIZADO: Limita el número de filas procesadas para mejorar rendimiento
+   *  OPTIMIZADO: Limita el número de filas procesadas para mejorar rendimiento
    */
   private static autoSizeColumns(sheet: ExcelJS.Worksheet): void {
     const MAX_ROWS_TO_CHECK = 1000; // Limitar para mejorar rendimiento

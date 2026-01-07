@@ -42,7 +42,7 @@ const exportLimiter = rateLimit({
 // GET /accounts/statement
 router.get("/statement", validateGetStatementQuery, AccountsController.getStatement);
 
-// ✅ NUEVO: Endpoint para lazy loading de bySorteo
+//  NUEVO: Endpoint para lazy loading de bySorteo
 router.get("/statement/:date/bySorteo", AccountsController.getBySorteo);
 
 // 2) Registrar pago o cobro

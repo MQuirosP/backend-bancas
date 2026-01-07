@@ -6,7 +6,7 @@ export const RestrictionRuleIdParamSchema = z.object({
   id: z.uuid("id inválido (UUID)"),
 }).strict();
 
-// ✅ Validación para número individual (0-999 para soportar TICA y MONAZOS)
+//  Validación para número individual (0-999 para soportar TICA y MONAZOS)
 const NUMBER_0_999 = z
   .string()
   .trim()
@@ -19,7 +19,7 @@ const NUMBER_0_999 = z
 // Validación para number: acepta string (legacy) o array de strings
 const NUMBER_VALIDATOR = z.union([
   NUMBER_0_999, // string legacy
-  z.array(NUMBER_0_999).min(1).max(1000), // ✅ array de strings (max 1000 para MONAZOS)
+  z.array(NUMBER_0_999).min(1).max(1000), //  array de strings (max 1000 para MONAZOS)
 ]).refine(
   (val) => {
     // Si es array, validar que no haya duplicados
@@ -205,7 +205,7 @@ export const UpdateRestrictionRuleSchema = z.object({
 
   isActive: z.coerce.boolean().optional(), // Estado activo/inactivo
   isAutoDate: z.coerce.boolean().optional(), // Si true, number se actualiza automáticamente al día del mes
-  number: NUMBER_0_999.optional(), // ✅ Solo string en PATCH, no array (soporta 0-999)
+  number: NUMBER_0_999.optional(), //  Solo string en PATCH, no array (soporta 0-999)
   maxAmount: z.coerce.number().positive().optional(),
   maxTotal: z.coerce.number().positive().optional(),
   baseAmount: z.coerce.number().nonnegative().optional(), // Monto base (>= 0)
@@ -294,7 +294,7 @@ export const UpdateRestrictionRuleSchema = z.object({
   });
 
 
-// LIST (query)  ✅ acepta hasAmount / hasCutoff / hasAutoDate y usa isActive
+// LIST (query)   acepta hasAmount / hasCutoff / hasAutoDate y usa isActive
 export const ListRestrictionRuleQuerySchema = z.object({
   bancaId: z.uuid().optional(),
   ventanaId: z.uuid().optional(),

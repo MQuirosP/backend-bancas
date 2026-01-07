@@ -1,9 +1,9 @@
-## 🚀 v1.2.0 - Evaluated Summary, Advanced Filters & Timezone Fixes
+##  v1.2.0 - Evaluated Summary, Advanced Filters & Timezone Fixes
 
-📅 **Fecha:** 2025-01-15
-🔖 **Rama:** `master`
+ **Fecha:** 2025-01-15
+ **Rama:** `master`
 
-### ✳️ Nuevas funcionalidades
+### ️ Nuevas funcionalidades
 
 - **Endpoint `GET /api/v1/sorteos/evaluated-summary`**
   - Resumen financiero de sorteos evaluados con datos agregados
@@ -35,7 +35,7 @@
   - Parámetro `search` para buscar en `action`, `targetType`, `targetId`, `user.name`, `user.username`
   - Búsqueda case-insensitive con `OR` entre campos
 
-### 🐛 Bug Fixes (CRÍTICOS)
+###  Bug Fixes (CRÍTICOS)
 
 - **Cálculo incorrecto de `totalPrizes` en `evaluated-summary`**
   - Antes: Sumaba `totalPayout` de todos los tickets (incluyendo no ganadores con `totalPayout = 0`)
@@ -81,7 +81,7 @@
   - Campo `timezone: 'America/Costa_Rica'` en `meta`
   - Impacto: El frontend muestra correctamente el día al interpretar timestamps
 
-### ⚙️ Mejoras
+### ️ Mejoras
 
 - **Optimización de queries SQL**
   - Uso de CTEs (Common Table Expressions) para subqueries complejas
@@ -100,7 +100,7 @@
   - Múltiples documentos creados para frontend con ejemplos y guías de implementación
   - Documentación de estructura de respuesta y cómo interpretar campos
 
-### 📦 Archivos modificados
+###  Archivos modificados
 
 - `src/api/v1/services/sorteo.service.ts` - Endpoint `evaluated-summary`, agrupación por hora
 - `src/api/v1/services/dashboard.service.ts` - Fix timezone en timeseries, `commissionVentanaTotal`
@@ -116,38 +116,38 @@
 - `src/api/v1/validators/sorteo.validator.ts` - Validación de `groupBy`
 - `src/api/v1/validators/activityLog.validator.ts` - Validación de `search`
 
-### 🧪 Checklist de validación
+###  Checklist de validación
 
-- ✅ `evaluated-summary` devuelve datos financieros correctos
-- ✅ `totalPrizes` solo incluye tickets ganadores
-- ✅ `accumulated` se calcula correctamente del más antiguo al más reciente
-- ✅ Filtros de tickets funcionan correctamente (`loteriaId`, `sorteoId`, `multiplierId`, `winnersOnly`)
-- ✅ Regla especial para `sorteoId` (no aplicar fechas) funciona
-- ✅ Agrupación por hora devuelve grupos correctos
-- ✅ Comisiones de listero se calculan correctamente desde políticas
-- ✅ `commissionVentanaTotal` presente en dashboard
-- ✅ `totalCommission` correcto según dimensión en `/api/v1/commissions`
-- ✅ AccountStatement no genera constraint violations
-- ✅ Timestamps en timeseries muestran día correcto en frontend
-- ✅ Búsqueda en activity-logs funciona correctamente
+-  `evaluated-summary` devuelve datos financieros correctos
+-  `totalPrizes` solo incluye tickets ganadores
+-  `accumulated` se calcula correctamente del más antiguo al más reciente
+-  Filtros de tickets funcionan correctamente (`loteriaId`, `sorteoId`, `multiplierId`, `winnersOnly`)
+-  Regla especial para `sorteoId` (no aplicar fechas) funciona
+-  Agrupación por hora devuelve grupos correctos
+-  Comisiones de listero se calculan correctamente desde políticas
+-  `commissionVentanaTotal` presente en dashboard
+-  `totalCommission` correcto según dimensión en `/api/v1/commissions`
+-  AccountStatement no genera constraint violations
+-  Timestamps en timeseries muestran día correcto en frontend
+-  Búsqueda en activity-logs funciona correctamente
 
-### 🎯 Resultado
+###  Resultado
 
-✅ **Endpoint `evaluated-summary` funcional** - Resumen financiero completo de sorteos evaluados
-✅ **Filtros avanzados en tickets** - 4 nuevos filtros para búsqueda precisa
-✅ **Agrupación de sorteos por hora** - Optimizada con SQL GROUP BY
-✅ **7 bugs críticos corregidos** - Comisiones, constraints, timezone, cálculos
-✅ **Documentación completa** - Múltiples guías para frontend
-✅ **TypeScript compilation 100%** - Sin errores
+ **Endpoint `evaluated-summary` funcional** - Resumen financiero completo de sorteos evaluados
+ **Filtros avanzados en tickets** - 4 nuevos filtros para búsqueda precisa
+ **Agrupación de sorteos por hora** - Optimizada con SQL GROUP BY
+ **7 bugs críticos corregidos** - Comisiones, constraints, timezone, cálculos
+ **Documentación completa** - Múltiples guías para frontend
+ **TypeScript compilation 100%** - Sin errores
 
 ---
 
-## 🚀 v1.1.1 - Accounts Statement Fixes & Restrictions Array Support
+##  v1.1.1 - Accounts Statement Fixes & Restrictions Array Support
 
-📅 **Fecha:** 2025-11-06
-🔖 **Rama:** `master`
+ **Fecha:** 2025-11-06
+ **Rama:** `master`
 
-### 🐛 Bug Fixes (CRÍTICOS)
+###  Bug Fixes (CRÍTICOS)
 
 - **Cálculo incorrecto de `totalPayouts` en accounts statement**
   - Antes: Usaba `totalPaid` de tickets (lo pagado, no lo ganado)
@@ -175,7 +175,7 @@
   - Impacto: Los montos de comisiones ahora coinciden con el dashboard (`admin/reportes/cuentas`)
   - Afecta: `/api/v1/accounts/statement`
 
-### ✳️ Nuevas funcionalidades
+### ️ Nuevas funcionalidades
 
 - **Soporte para array de números en restricciones**
   - Endpoint `POST /api/v1/restrictions` ahora acepta `number` como `string | string[]`
@@ -185,7 +185,7 @@
   - Endpoint `PATCH /api/v1/restrictions/:id` solo acepta `string` (no array) según recomendación
   - Documentación: `docs/BACKEND_RESTRICTIONS_NUMBERS_ARRAY.md`
 
-### ⚙️ Mejoras
+### ️ Mejoras
 
 - **Optimización de cálculo de comisiones**
   - Usa `commissionOrigin` para evitar recálculos innecesarios
@@ -197,31 +197,31 @@
   - Evita confusión cuando no hay movimientos registrados
   - Mejora la experiencia del usuario al ver estados de cuenta
 
-### 📦 Archivos modificados
+###  Archivos modificados
 
 - `src/api/v1/services/accounts.service.ts` - Correcciones en cálculo de comisiones y `isSettled`
 - `src/api/v1/validators/restrictionRule.validator.ts` - Soporte para array de números
 - `src/api/v1/dto/restrictionRule.dto.ts` - Actualización de tipos
 - `src/api/v1/services/restrictionRule.service.ts` - Lógica para crear múltiples restricciones
 
-### 🧪 Checklist de validación
+###  Checklist de validación
 
-- ✅ `totalPayouts` calculado correctamente (payout de jugadas ganadoras)
-- ✅ `isSettled` solo `true` cuando hay pagos registrados
-- ✅ Comisiones del listero correctas cuando `dimension=ventana`
-- ✅ Comisiones incluyen todas las jugadas (no solo ganadoras)
-- ✅ Montos de comisiones coinciden con dashboard
-- ✅ Soporte para array de números en restricciones funciona correctamente
-- ✅ Compatibilidad legacy mantenida (string sigue funcionando)
+-  `totalPayouts` calculado correctamente (payout de jugadas ganadoras)
+-  `isSettled` solo `true` cuando hay pagos registrados
+-  Comisiones del listero correctas cuando `dimension=ventana`
+-  Comisiones incluyen todas las jugadas (no solo ganadoras)
+-  Montos de comisiones coinciden con dashboard
+-  Soporte para array de números en restricciones funciona correctamente
+-  Compatibilidad legacy mantenida (string sigue funcionando)
 
 ---
 
-## 🚀 v1.1.0 - Dashboard API, Payment Tracking & RBAC Security Fixes
+##  v1.1.0 - Dashboard API, Payment Tracking & RBAC Security Fixes
 
-📅 **Fecha:** 2025-10-29
-🔖 **Rama:** `master`
+ **Fecha:** 2025-10-29
+ **Rama:** `master`
 
-### ✳️ Nuevas funcionalidades
+### ️ Nuevas funcionalidades
 
 - **Dashboard API v1.0.0 completo**
   - 4 nuevos endpoints de analytics: timeseries, exposure, vendedores, export
@@ -240,7 +240,7 @@
   - Lógica inteligente: cuenta tickets con `status='PAID'` O `remainingAmount=0`
   - Documentación completa en `docs/VENTAS_SUMMARY_API.md`
 
-### 🔒 Security Fixes (CRÍTICOS)
+###  Security Fixes (CRÍTICOS)
 
 - **RBAC Bug Fix #1**: `/ventas/breakdown` para usuarios VENTANA
   - Usuarios VENTANA veían vendedores de TODAS las ventanas
@@ -256,7 +256,7 @@
   - Fix: Mapeo de `vendedorId` → `userId` para compatibilidad con repository
   - Logging de mapeo para debug
 
-### 🐛 Bug Fixes
+###  Bug Fixes
 
 - **Tickets PAID excluidos de reportes**
   - `/ventas/summary` tenía filtro hardcodeado `status IN ['ACTIVE', 'EVALUATED']`
@@ -273,7 +273,7 @@
   - Query usaba `j."betType"` pero Jugada usa columna `type`
   - Fix: Cambiado a `j.type` en todas las queries de exposure
 
-### ⚙️ Mejoras
+### ️ Mejoras
 
 - **RBAC centralizado con `applyRbacFilters()`**
   - Función unificada para aplicar filtros por rol
@@ -294,7 +294,7 @@
   - `docs/JWT_TRANSITION_PLAN.md` - Plan de transición de JWTs
   - `README-DASHBOARD.md` - Guía del Dashboard API
 
-### 📦 Archivos creados/modificados
+###  Archivos creados/modificados
 
 **Nuevos:**
 - `src/api/v1/services/dashboard.service.ts` - Lógica de dashboard
@@ -313,34 +313,34 @@
 - `src/api/v1/services/venta.service.ts` - Payment tracking y fix status filter
 - `README.md` - 3 nuevas secciones: Dashboard, Payment Tracking, RBAC Security
 
-### 🧪 Checklist de validación
+###  Checklist de validación
 
-- ✅ Usuario VENTANA en `/tickets?scope=mine` solo ve tickets de su ventana
-- ✅ Usuario VENDEDOR en `/tickets?scope=mine` solo ve sus propios tickets
-- ✅ `/ventas/summary` incluye tickets PAID en totales
-- ✅ Payment tracking devuelve valores correctos (totalPaid, remainingAmount, counts)
-- ✅ Dashboard timeseries retorna series temporales correctas
-- ✅ Dashboard exposure calcula exposición financiera
-- ✅ Alertas se generan correctamente según umbrales
-- ✅ Logs RBAC muestran fetches desde DB para JWTs antiguos
+-  Usuario VENTANA en `/tickets?scope=mine` solo ve tickets de su ventana
+-  Usuario VENDEDOR en `/tickets?scope=mine` solo ve sus propios tickets
+-  `/ventas/summary` incluye tickets PAID en totales
+-  Payment tracking devuelve valores correctos (totalPaid, remainingAmount, counts)
+-  Dashboard timeseries retorna series temporales correctas
+-  Dashboard exposure calcula exposición financiera
+-  Alertas se generan correctamente según umbrales
+-  Logs RBAC muestran fetches desde DB para JWTs antiguos
 
-### 🎯 Resultado
+###  Resultado
 
-✅ **Dashboard API v1.0.0 completo** - 4 endpoints + 1 principal
-✅ **Payment tracking funcional** - 4 nuevos campos en summary
-✅ **3 bugs RBAC críticos corregidos** - Seguridad restaurada
-✅ **1 bug de reportes corregido** - Tickets PAID ahora incluidos
-✅ **Documentación completa** - 5 nuevos docs + README actualizado
-✅ **TypeScript compilation 100%** - Sin errores
+ **Dashboard API v1.0.0 completo** - 4 endpoints + 1 principal
+ **Payment tracking funcional** - 4 nuevos campos en summary
+ **3 bugs RBAC críticos corregidos** - Seguridad restaurada
+ **1 bug de reportes corregido** - Tickets PAID ahora incluidos
+ **Documentación completa** - 5 nuevos docs + README actualizado
+ **TypeScript compilation 100%** - Sin errores
 
 ---
 
-## 🚀 v1.0.0-rc8 - Idempotencia de Sorteos y UTC
+##  v1.0.0-rc8 - Idempotencia de Sorteos y UTC
 
 Fecha: 2025-10-26
 Rama: master
 
-### ✅ Nuevas/Ajustes clave
+###  Nuevas/Ajustes clave
 
 - Restricción única en Sorteo: @@unique([loteriaId, scheduledAt]) (evita duplicados por lotería-fecha-hora).
 - computeOccurrences migra a UTC (entradas iguales ⇒ salidas iguales).
@@ -355,7 +355,7 @@ Rama: master
   - Verificación post-inserción para contar creados reales bajo concurrencia.
 - Creación de tickets: `vendedorId` opcional en body para ADMIN/VENTANA con validación de pertenencia a Ventana y rol VENDEDOR.
 
-### 🧩 Migración
+###  Migración
 
 20251026215000_add_unique_sorteo_loteria_scheduledAt
 
@@ -366,12 +366,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS "Sorteo_loteriaId_scheduledAt_key"
 
 Requiere limpiar duplicados existentes antes de deploy:db.
 
-### 📚 Documentación
+###  Documentación
 
 - README: sección "Idempotencia y UTC en Sorteos (rc8)".
 - docs/architecture/Sorteos_Idempotencia_UTC.md con detalles técnicos y contratos.
 
-### 🧪 Checklist de validación
+###  Checklist de validación
 
 - Medianoche: preview/seed antes y después de 00:00 ⇒ segunda corrida sin created (solo skipped/alreadyExists).
 - Concurrencia: dos seeds simultáneos ⇒ sin duplicados; contaje correcto de created.
@@ -380,19 +380,19 @@ Requiere limpiar duplicados existentes antes de deploy:db.
 
 ---<!-- markdownlint-disable MD024 -->
 
-# 📘 CHANGELOG – Banca Management Backend
+#  CHANGELOG – Banca Management Backend
 
 > Proyecto backend modular y escalable para la gestión integral de bancas de lotería.
 > Desarrollado con **TypeScript**, **Express**, **Prisma ORM** y **PostgreSQL**, bajo arquitectura modular, con trazabilidad total mediante `ActivityLog`.
 
 ---
 
-## 🏷️ v1.0.0 — Commission System & Sales Analytics
+## ️ v1.0.0 — Commission System & Sales Analytics
 
-📅 **Fecha:** 2025-10-26
-🔖 **Rama:** `master`
+ **Fecha:** 2025-10-26
+ **Rama:** `master`
 
-### ✳️ Nuevas funcionalidades
+### ️ Nuevas funcionalidades
 
 - **Sistema de Comisiones Jerárquico**
   - Políticas de comisión en JSON (version 1) con `percent` en escala 0-100.
@@ -427,7 +427,7 @@ Requiere limpiar duplicados existentes antes de deploy:db.
   - `GET /api/v1/ventas/breakdown` (5 dimensiones) incluye `commissionTotal` por grupo.
   - `GET /api/v1/ventas/timeseries` incluye `commissionTotal` por periodo temporal.
 
-### ⚙️ Mejoras y endurecimientos
+### ️ Mejoras y endurecimientos
 
 - **Manejo de errores graceful**
   - JSON malformado o políticas expiradas → `commissionPercent = 0`, WARN en logs, **no bloquea ventas**.
@@ -443,7 +443,7 @@ Requiere limpiar duplicados existentes antes de deploy:db.
   - Fetch de políticas en paralelo (`Promise.all`) junto con otras validaciones.
   - Cálculo de `commissionAmount` con redondeo a 2 decimales (`round2`).
 
-### 📦 Migraciones
+###  Migraciones
 
 **Migration:** `20251026050708_add_commission_system`
 
@@ -458,7 +458,7 @@ ALTER TABLE "Jugada" ADD COLUMN "commissionOrigin" TEXT;
 ALTER TABLE "Jugada" ADD COLUMN "commissionRuleId" TEXT;
 ```
 
-### 🧪 Checklist de pruebas
+###  Checklist de pruebas
 
 - Crear política de comisión en Banca/Ventana/User.
 - Verificar prioridad USER > VENTANA > BANCA al crear ticket.
@@ -467,7 +467,7 @@ ALTER TABLE "Jugada" ADD COLUMN "commissionRuleId" TEXT;
 - Verificar JSON malformado → 0% sin bloquear venta.
 - Analítica: `commissionTotal` y `netoDespuesComision` correctos.
 
-### 📚 Documentación
+###  Documentación
 
 - **Documentación completa:** [`docs/COMMISSION_SYSTEM.md`](docs/COMMISSION_SYSTEM.md)
   - Estructura de JSON schema version 1
@@ -476,9 +476,9 @@ ALTER TABLE "Jugada" ADD COLUMN "commissionRuleId" TEXT;
   - Endpoints CRUD y analytics
   - Fórmulas de cálculo
 
-- **README actualizado:** Sección "💰 Sistema de Comisiones" con características y endpoints.
+- **README actualizado:** Sección " Sistema de Comisiones" con características y endpoints.
 
-### 🔌 Archivos creados/modificados
+###  Archivos creados/modificados
 
 **Nuevos:**
 - `src/services/commission.resolver.ts` — Motor de resolución de comisiones
@@ -493,7 +493,7 @@ ALTER TABLE "Jugada" ADD COLUMN "commissionRuleId" TEXT;
 - `src/prisma/schema.prisma` — 7 campos nuevos (3 JSONB, 4 en Jugada)
 - `README.md` — Documentación principal actualizada
 
-### 🧭 Guía de actualización
+###  Guía de actualización
 
 1. **Ejecutar migración:**
    ```bash
@@ -526,23 +526,23 @@ ALTER TABLE "Jugada" ADD COLUMN "commissionRuleId" TEXT;
 4. **Verificar analítica:**
    - `GET /api/v1/ventas/summary` ahora incluye `commissionTotal` y `netoDespuesComision`.
 
-### 🎯 Resultado
+###  Resultado
 
-✅ **Sistema de comisiones completo y funcional**
-✅ **7 nuevos campos en base de datos**
-✅ **6 endpoints CRUD + 3 endpoints analytics extendidos**
-✅ **Documentación completa con ejemplos**
-✅ **Integración transaccional y logging detallado**
-✅ **Manejo graceful de errores (no bloquea ventas)**
+ **Sistema de comisiones completo y funcional**
+ **7 nuevos campos en base de datos**
+ **6 endpoints CRUD + 3 endpoints analytics extendidos**
+ **Documentación completa con ejemplos**
+ **Integración transaccional y logging detallado**
+ **Manejo graceful de errores (no bloquea ventas)**
 
 ---
 
-## 🏷️ v1.0.0-rc6 — Draw schedule preview & auto-seed, cutoff & multipliers
+## ️ v1.0.0-rc6 — Draw schedule preview & auto-seed, cutoff & multipliers
 
-📅 **Fecha:** 2025-10-24
-🔖 **Rama:** `master`
+ **Fecha:** 2025-10-24
+ **Rama:** `master`
 
-### ✳️ Nuevas funcionalidades
+### ️ Nuevas funcionalidades
 
 - **Preview de calendario de sorteos desde reglas**
   - `GET /api/v1/loterias/:id/preview_schedule?days=7&start=ISO&limit=200`
@@ -567,7 +567,7 @@ ALTER TABLE "Jugada" ADD COLUMN "commissionRuleId" TEXT;
   5) `env MULTIPLIER_BASE_DEFAULT_X`
   Además, se **asegura** la fila `LoteriaMultiplier` "Base" si no existe.
 
-### ⚙️ Mejoras y endurecimientos
+### ️ Mejoras y endurecimientos
 
 - **Validaciones estrictas en tickets**
   - Sorteo debe estar `OPEN`.
@@ -587,14 +587,14 @@ ALTER TABLE "Jugada" ADD COLUMN "commissionRuleId" TEXT;
   - Listado con filtros: `hasCutoff`, `hasAmount`, `isActive`, paginado.
   - Devolución con etiquetas (`banca`, `ventana`, `user`).
 
-### 🧪 Pruebas recomendadas (checklist rápida)
+###  Pruebas recomendadas (checklist rápida)
 
 - Preview devuelve ocurrencias esperadas según `rulesJson.drawSchedule`.
 - Seed crea `SCHEDULED` sin duplicar.
 - Crear ticket: bloquea por cutoff si corresponde; valida `REVENTADO` vinculado.
 - Evaluar sorteo con/ sin `extraMultiplierId` según casos.
 
-### 🔌 Nuevos endpoints (rc6)
+###  Nuevos endpoints (rc6)
 
 ```http
 GET   /api/v1/loterias/:id/preview_schedule?days&start&limit
@@ -603,11 +603,11 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
 
 > **Nota:** `preview_schedule` es **GET**; `seed_sorteos` es **POST**.
 
-### 📦 Migraciones
+###  Migraciones
 
 - No se requieren migraciones para rc6 (se apoyan en modelos existentes).
 
-### 🧭 Guía de actualización
+###  Guía de actualización
 
 - Asegurar que `rulesJson.drawSchedule` esté poblado (ejemplo):
 
@@ -627,12 +627,12 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
 
 ---
 
-## 🏷️ v1.0.0-rc5 — Sorteos hardening & search
+## ️ v1.0.0-rc5 — Sorteos hardening & search
 
-📅 **Fecha:** 2025-10-22
-🔖 **Rama:** `master`
+ **Fecha:** 2025-10-22
+ **Rama:** `master`
 
-### ✳️ Nuevas/ajustes clave
+### ️ Nuevas/ajustes clave
 
 - **Update de Sorteos endurecido (solo reprogramación)**
   - `UpdateSorteoSchema` con `.strict()` y campos opcionales.
@@ -657,24 +657,24 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
   - `ActivityLog` para `SORTEO_CREATE`, `SORTEO_UPDATE`, `SORTEO_OPEN`, `SORTEO_CLOSE`, `SORTEO_EVALUATE`.
   - Logs estructurados en repositorio/servicio para operaciones críticas.
 
-### 🛠️ Fixes
+### ️ Fixes
 
 - **400 por "claves no permitidas"** en `PUT /sorteos/:id` al enviar `extraOutcomeCode/extraMultiplierId`.
   ➜ Validación estricta y contrato documentado: esos campos **van solo** en `/evaluate`.
 
-### ⚠️ Breaking changes (contrato)
+### ️ Breaking changes (contrato)
 
 - No enviar `extraMultiplierId` ni `extraOutcomeCode` a `PUT/PATCH /sorteos/:id`. Usar `PATCH /sorteos/:id/evaluate`.
 - No se permite cambiar la lotería de un sorteo vía update; únicamente reprogramar `scheduledAt`.
 
 ---
 
-## 🏷️ v1.0.0-rc4 — Stable MVP Backend
+## ️ v1.0.0-rc4 — Stable MVP Backend
 
-📅 **Fecha:** 2025-10-08
-🔖 **Rama:** `master`
+ **Fecha:** 2025-10-08
+ **Rama:** `master`
 
-### ✳️ Nuevas funcionalidades
+### ️ Nuevas funcionalidades
 
 - **Pipeline de RestrictionRule (User → Ventana → Banca)**
   - Reglas jerárquicas dinámicas.
@@ -685,7 +685,7 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
   - Manejo automático de *deadlocks* y conflictos de aislamiento.
   - Reintentos controlados con backoff exponencial y logging por intento.
 
-### ⚙️ Mejoras de robustez
+### ️ Mejoras de robustez
 
 - Refactor de `TicketRepository.create`:
   - Secuencia numérica estable `ticket_number_seq` o fallback `TicketCounter`.
@@ -694,28 +694,28 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
 - Integración de `ActivityLog` asincrónica y no bloqueante.
 - Logging estructurado con `layer`, `action`, `userId`, `requestId`, `payload`.
 
-### 🧪 Pruebas unitarias
+###  Pruebas unitarias
 
-- ✅ `tests/tickets/restrictionRules.test.ts`
+-  `tests/tickets/restrictionRules.test.ts`
   Verifica rechazo por reglas de límite jerárquico.
-- ✅ `tests/tickets/concurrency.test.ts`
+-  `tests/tickets/concurrency.test.ts`
   Simula concurrencia masiva en venta de tickets sin overselling.
 
-### 📈 Resultado
+###  Resultado
 
 | Suite | Estado | Tiempo |
 |-------|---------|--------|
-| 🎯 RestrictionRule pipeline | ✅ Passed | 2.48s |
-| 🧵 TicketRepository Concurrency | ✅ Passed | 3.10s |
-| **Total suites:** 2 | **✅ All passed** | **~9.4s** |
+|  RestrictionRule pipeline |  Passed | 2.48s |
+|  TicketRepository Concurrency |  Passed | 3.10s |
+| **Total suites:** 2 | ** All passed** | **~9.4s** |
 
 ---
 
-## 🏷️ v1.0.0-rc3 — Multiplier & Evaluation Integration
+## ️ v1.0.0-rc3 — Multiplier & Evaluation Integration
 
-📅 **Fecha:** 2025-10-06
+ **Fecha:** 2025-10-06
 
-### ✳️ Nuevas funcionalidades
+### ️ Nuevas funcionalidades
 
 - **Módulo `UserMultiplierOverride`**
   - Permite definir multiplicadores personalizados por usuario y lotería.
@@ -727,7 +727,7 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
   - Calcula payout por `jugada.amount * finalMultiplierX`.
   - Actualiza estado global del sorteo y tickets (`EVALUATED`).
 
-### ⚙️ Mejoras
+### ️ Mejoras
 
 - Estabilización del `SorteoStatus` (ciclo: `SCHEDULED → OPEN → CLOSED → EVALUATED`).
 - Validaciones transaccionales de consistencia.
@@ -735,11 +735,11 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
 
 ---
 
-## 🏷️ v1.0.0-rc2 — Role-based Access & Audit
+## ️ v1.0.0-rc2 — Role-based Access & Audit
 
-📅 **Fecha:** 2025-10-04
+ **Fecha:** 2025-10-04
 
-### ✳️ Nuevas funcionalidades
+### ️ Nuevas funcionalidades
 
 - Sistema completo de **roles y permisos** (`ADMIN`, `VENTANA`, `VENDEDOR`).
 - Middleware `protect` y validación de rol por ruta.
@@ -747,7 +747,7 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
   - Operaciones `CREATE`, `UPDATE`, `DELETE`, `RESTORE`.
   - Nivel de detalle por `targetType`, `targetId` y `details`.
 
-### ⚙️ Mejoras
+### ️ Mejoras
 
 - Módulo `UserService` con CRUD y validación estricta (`Zod` DTOs).
 - Módulo `Ventana` y `Banca` con políticas jerárquicas (`ADMIN > VENTANA > VENDEDOR`).
@@ -755,11 +755,11 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
 
 ---
 
-## 🏷️ v1.0.0-rc1 — Core & Infrastructure Foundation
+## ️ v1.0.0-rc1 — Core & Infrastructure Foundation
 
-📅 **Fecha:** 2025-09-28
+ **Fecha:** 2025-09-28
 
-### ✳️ Componentes base
+### ️ Componentes base
 
 - Arquitectura modular inicial:
   - `Auth`, `User`, `Ticket`, `Lotería`, `Sorteo`.
@@ -770,7 +770,7 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
 - Configuración de entorno segura (`dotenv-safe`).
 - Logger estructurado y middleware de auditoría.
 
-### ⚙️ Infraestructura
+### ️ Infraestructura
 
 - **Paginación genérica** (`utils/pagination.ts`).
 - **Manejo de Soft Deletes** consistente en todas las entidades.
@@ -778,24 +778,24 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
 
 ---
 
-## 📊 Estado actual del MVP
+##  Estado actual del MVP
 
 | Módulo | Estado | Cobertura |
 |--------|---------|------------|
-| **Auth** | ✅ Completo | Login, Refresh, Protect |
-| **Users** | ✅ Completo | CRUD + Role-based |
-| **Bancas / Ventanas** | ✅ Completo | CRUD + Jerarquía |
-| **Tickets** | ✅ Completo | Transacciones + Restricciones |
-| **Sorteos** | ✅ Completo | Ciclo completo + Evaluación |
-| **Multipliers** | ✅ Completo | Overrides + Políticas |
-| **RestrictionRules** | ✅ Completo | Jerarquía dinámica |
-| **ActivityLog** | ✅ Completo | Auditoría total |
-| **TicketPayments** | 🟡 En progreso | Flujo estructurado pendiente de integración |
-| **Reportes** | ✅ Completo | Dashboard + Analytics + Payment Tracking |
+| **Auth** |  Completo | Login, Refresh, Protect |
+| **Users** |  Completo | CRUD + Role-based |
+| **Bancas / Ventanas** |  Completo | CRUD + Jerarquía |
+| **Tickets** |  Completo | Transacciones + Restricciones |
+| **Sorteos** |  Completo | Ciclo completo + Evaluación |
+| **Multipliers** |  Completo | Overrides + Políticas |
+| **RestrictionRules** |  Completo | Jerarquía dinámica |
+| **ActivityLog** |  Completo | Auditoría total |
+| **TicketPayments** |  En progreso | Flujo estructurado pendiente de integración |
+| **Reportes** |  Completo | Dashboard + Analytics + Payment Tracking |
 
 ---
 
-## 📦 Próximos pasos
+##  Próximos pasos
 
 1. **Mejorar módulo `TicketPayments`**
    - Integración completa con flujo de pagos múltiples
@@ -804,17 +804,17 @@ POST  /api/v1/loterias/:id/seed_sorteos?days&start&limit     # body opcional { d
 
 ---
 
-## 🧭 Equipo y gestión
+##  Equipo y gestión
 
 **Desarrollador responsable:**
-👤 *Mario Quirós Pizarro* (`@MQuirosP`)
-📧 `mquirosp78@gmail.com`
-📍 Costa Rica
+ *Mario Quirós Pizarro* (`@MQuirosP`)
+ `mquirosp78@gmail.com`
+ Costa Rica
 
 **Stack técnico:**
 TypeScript · Express.js · Prisma ORM · PostgreSQL · JWT · Zod · Pino
 
 ---
 
-> 💡 *Este release (v1.1.0) completa el Dashboard API, Payment Tracking y corrige bugs críticos de seguridad RBAC.*
+>  *Este release (v1.1.0) completa el Dashboard API, Payment Tracking y corrige bugs críticos de seguridad RBAC.*
 > La próxima iteración se enfocará en mejoras del sistema de pagos y documentación OpenAPI completa.

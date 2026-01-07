@@ -25,7 +25,7 @@ interface CommissionsFilters {
 /**
  * Convierte business_date desde resultados SQL a fecha CR (YYYY-MM-DD)
  * 
- * ⚠️ CRÍTICO: Cuando PostgreSQL devuelve DATE(... AT TIME ZONE 'America/Costa_Rica'),
+ * ️ CRÍTICO: Cuando PostgreSQL devuelve DATE(... AT TIME ZONE 'America/Costa_Rica'),
  * devuelve un DATE (sin hora) que representa el día calendario en CR.
  * 
  * Cuando Prisma recibe un DATE de PostgreSQL, lo convierte a un Date JavaScript
@@ -39,7 +39,7 @@ interface CommissionsFilters {
  * 
  * Solución: Extraer directamente año, mes, día sin ajustar zona horaria
  */
-// ⚠️ DEPRECATED: Usar crDateService.postgresDateToCRString() en su lugar
+// ️ DEPRECATED: Usar crDateService.postgresDateToCRString() en su lugar
 
 /**
  * Commissions Service
@@ -75,8 +75,8 @@ export const CommissionsService = {
     totalPayouts: number;
     commissionListero?: number;
     commissionVendedor?: number;
-    net?: number; // ✅ NUEVO: Ganancia neta (totalSales - totalPayouts - commissionVendedor)
-    // ✅ NUEVO: Desglose por entidad (cuando hay agrupación)
+    net?: number; //  NUEVO: Ganancia neta (totalSales - totalPayouts - commissionVendedor)
+    //  NUEVO: Desglose por entidad (cuando hay agrupación)
     byVentana?: Array<{
       ventanaId: string;
       ventanaName: string;
@@ -105,20 +105,20 @@ export const CommissionsService = {
     try {
       // Resolver rango de fechas
       const dateRange = resolveDateRange(date, fromDate, toDate);
-      // ✅ CORRECCIÓN CRÍTICA: Usar servicio centralizado para conversión de fechas
+      //  CORRECCIÓN CRÍTICA: Usar servicio centralizado para conversión de fechas
       const { startDateCRStr, endDateCRStr } = dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
       const fromDateStr = startDateCRStr;
       const toDateStr = endDateCRStr;
 
-      // ✅ NUEVO: Detectar si debemos agrupar por fecha solamente (sin separar por entidad)
+      //  NUEVO: Detectar si debemos agrupar por fecha solamente (sin separar por entidad)
       // Agrupamos cuando dimension=ventana y ventanaId NO está especificado
       // o cuando dimension=vendedor y vendedorId NO está especificado
-      // ✅ CRÍTICO: Verificar tanto undefined como null y cadena vacía
+      //  CRÍTICO: Verificar tanto undefined como null y cadena vacía
       const shouldGroupByDate =
         (filters.dimension === "ventana" && (!filters.ventanaId || filters.ventanaId === "" || filters.ventanaId === null)) ||
         (filters.dimension === "vendedor" && (!filters.vendedorId || filters.vendedorId === "" || filters.vendedorId === null));
 
-      // ✅ DEBUG: Log para verificar agrupación
+      //  DEBUG: Log para verificar agrupación
       logger.info({
         layer: "service",
         action: "COMMISSIONS_GROUPING_CHECK",
@@ -134,7 +134,7 @@ export const CommissionsService = {
       const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        // ✅ CAMBIO: Filtrar EXCLUSIVAMENTE sorteos EVALUATED para comisiones
+        //  CAMBIO: Filtrar EXCLUSIVAMENTE sorteos EVALUATED para comisiones
         Prisma.sql`t."status" != 'CANCELLED'`,
         Prisma.sql`EXISTS (
           SELECT 1 FROM "Sorteo" s
@@ -143,7 +143,7 @@ export const CommissionsService = {
         )`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
-        // ✅ NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
+        //  NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
         Prisma.sql`NOT EXISTS (
           SELECT 1 FROM "sorteo_lista_exclusion" sle
           JOIN "User" u ON u.id = sle.ventana_id
@@ -227,13 +227,13 @@ export const CommissionsService = {
           ORDER BY business_date DESC, v.name ASC
         `;
 
-        // ✅ CRÍTICO: Filtrar resultados SQL que puedan estar fuera del período
+        //  CRÍTICO: Filtrar resultados SQL que puedan estar fuera del período
         // Aunque el WHERE clause filtra, puede haber casos edge donde PostgreSQL incluya datos del día siguiente
         const filteredResult = result.filter((r) => {
           const dateKey = postgresDateToCRString(r.business_date);
           const isInRange = isDateInCRRange(dateKey, startDateCRStr, endDateCRStr);
 
-          // ✅ DEBUG: Log detallado para identificar problemas
+          //  DEBUG: Log detallado para identificar problemas
           if (!isInRange) {
             logger.debug({
               layer: "service",
@@ -333,7 +333,7 @@ export const CommissionsService = {
             )
           `;
 
-          // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
+          //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
           // Si no, agrupar por fecha + ventana (comportamiento original)
           const byDateAndVentana = new Map<
             string,
@@ -349,7 +349,7 @@ export const CommissionsService = {
             }
           >();
 
-          // ✅ NUEVO: Mapa para desglose por entidad (byVentana) cuando hay agrupación
+          //  NUEVO: Mapa para desglose por entidad (byVentana) cuando hay agrupación
           const breakdownByEntity = new Map<
             string, // `${dateKey}_${ventanaId}`
             {
@@ -364,7 +364,7 @@ export const CommissionsService = {
             }
           >();
 
-          // ✅ DEBUG: Log para entender qué jugadas se están procesando
+          //  DEBUG: Log para entender qué jugadas se están procesando
           const ventanasSeen = new Set<string>();
           let jugadasFiltered = 0;
           let jugadasProcessed = 0;
@@ -387,7 +387,7 @@ export const CommissionsService = {
             const commissionListero = Number(jugada.listero_commission_amount || 0);
 
             const dateKey = postgresDateToCRString(jugada.business_date);
-            // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+            //  CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
             if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
               jugadasFiltered++;
               logger.debug({
@@ -405,7 +405,7 @@ export const CommissionsService = {
             }
             jugadasProcessed++;
 
-            // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + ventana
+            //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + ventana
             const groupKey = shouldGroupByDate
               ? dateKey // Solo fecha cuando hay agrupación
               : `${dateKey}_${jugada.ventana_id}`;
@@ -430,7 +430,7 @@ export const CommissionsService = {
               byDateAndVentana.set(groupKey, entry);
             }
 
-            // ✅ NUEVO: Mantener desglose por entidad cuando hay agrupación
+            //  NUEVO: Mantener desglose por entidad cuando hay agrupación
             if (shouldGroupByDate) {
               let breakdownEntry = breakdownByEntity.get(breakdownKey);
               if (!breakdownEntry) {
@@ -485,9 +485,9 @@ export const CommissionsService = {
           // Convertir a formato de respuesta
           const items = Array.from(byDateAndVentana.entries())
             .map(([key, entry]) => {
-              // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_ventana
+              //  NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_ventana
               const date = shouldGroupByDate ? key : key.split("_")[0];
-              // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado (doble verificación)
+              //  CRÍTICO: Filtrar fechas fuera del período solicitado (doble verificación)
               if (date < startDateCRStr || date > endDateCRStr) {
                 return null; // Marcar para filtrar después
               }
@@ -511,7 +511,7 @@ export const CommissionsService = {
                 net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
               };
 
-              // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
+              //  NUEVO: Agregar desglose por entidad cuando hay agrupación
               if (shouldGroupByDate) {
                 const ventanaBreakdown: any[] = [];
                 for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
@@ -598,7 +598,7 @@ export const CommissionsService = {
             )
           `;
 
-          // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
+          //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
           // Si no, agrupar por fecha + ventana (comportamiento original)
           const byDateAndVentana = new Map<
             string,
@@ -614,7 +614,7 @@ export const CommissionsService = {
             }
           >();
 
-          // ✅ NUEVO: Mapa para desglose por entidad (byVentana) cuando hay agrupación
+          //  NUEVO: Mapa para desglose por entidad (byVentana) cuando hay agrupación
           const breakdownByEntity = new Map<
             string, // `${dateKey}_${ventanaId}`
             {
@@ -629,7 +629,7 @@ export const CommissionsService = {
             }
           >();
 
-          // ✅ DEBUG: Log para entender qué jugadas se están procesando
+          //  DEBUG: Log para entender qué jugadas se están procesando
           const ventanasSeen = new Set<string>();
           let jugadasFiltered = 0;
           let jugadasProcessed = 0;
@@ -652,7 +652,7 @@ export const CommissionsService = {
             const commissionListero = Number(jugada.listero_commission_amount || 0);
 
             const dateKey = postgresDateToCRString(jugada.business_date);
-            // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+            //  CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
             if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
               jugadasFiltered++;
               logger.debug({
@@ -670,7 +670,7 @@ export const CommissionsService = {
             }
             jugadasProcessed++;
 
-            // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + ventana
+            //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + ventana
             const groupKey = shouldGroupByDate
               ? dateKey // Solo fecha cuando hay agrupación
               : `${dateKey}_${jugada.ventana_id}`;
@@ -695,7 +695,7 @@ export const CommissionsService = {
               byDateAndVentana.set(groupKey, entry);
             }
 
-            // ✅ NUEVO: Mantener desglose por entidad cuando hay agrupación
+            //  NUEVO: Mantener desglose por entidad cuando hay agrupación
             if (shouldGroupByDate) {
               let breakdownEntry = breakdownByEntity.get(breakdownKey);
               if (!breakdownEntry) {
@@ -750,9 +750,9 @@ export const CommissionsService = {
           // Convertir a formato de respuesta
           const items = Array.from(byDateAndVentana.entries())
             .map(([key, entry]) => {
-              // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_ventana
+              //  NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_ventana
               const date = shouldGroupByDate ? key : key.split("_")[0];
-              // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado (doble verificación)
+              //  CRÍTICO: Filtrar fechas fuera del período solicitado (doble verificación)
               if (date < startDateCRStr || date > endDateCRStr) {
                 return null; // Marcar para filtrar después
               }
@@ -776,7 +776,7 @@ export const CommissionsService = {
                 net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
               };
 
-              // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
+              //  NUEVO: Agregar desglose por entidad cuando hay agrupación
               if (shouldGroupByDate) {
                 const ventanaBreakdown: any[] = [];
                 for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
@@ -821,7 +821,7 @@ export const CommissionsService = {
         return filteredResult
           .map((r) => {
             const dateKey = postgresDateToCRString(r.business_date);
-            // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+            //  CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
             if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
               return null; // Marcar para filtrar después
             }
@@ -887,7 +887,7 @@ export const CommissionsService = {
           )
         `;
 
-        // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
+        //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
         // Si no, agrupar por fecha + vendedor (comportamiento original)
         const byDateAndVendedor = new Map<
           string,
@@ -905,7 +905,7 @@ export const CommissionsService = {
           }
         >();
 
-        // ✅ NUEVO: Mapa para desglose por entidad (byVendedor) cuando hay agrupación
+        //  NUEVO: Mapa para desglose por entidad (byVendedor) cuando hay agrupación
         const breakdownByEntity = new Map<
           string, // `${dateKey}_${vendedorId}`
           {
@@ -924,12 +924,12 @@ export const CommissionsService = {
 
         for (const jugada of jugadas) {
           const dateKey = postgresDateToCRString(jugada.business_date);
-          // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+          //  CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
           if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
             continue; // Saltar jugadas fuera del período
           }
 
-          // ✅ NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + vendedor
+          //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + vendedor
           const groupKey = shouldGroupByDate
             ? dateKey // Solo fecha cuando hay agrupación
             : `${dateKey}_${jugada.vendedor_id}`;
@@ -955,7 +955,7 @@ export const CommissionsService = {
             byDateAndVendedor.set(groupKey, entry);
           }
 
-          // ✅ NUEVO: Mantener desglose por entidad cuando hay agrupación
+          //  NUEVO: Mantener desglose por entidad cuando hay agrupación
           if (shouldGroupByDate) {
             let breakdownEntry = breakdownByEntity.get(breakdownKey);
             if (!breakdownEntry) {
@@ -1012,7 +1012,7 @@ export const CommissionsService = {
 
         // Convertir a formato de respuesta
         const items = Array.from(byDateAndVendedor.entries()).map(([key, entry]) => {
-          // ✅ NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_vendedor
+          //  NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_vendedor
           const date = shouldGroupByDate ? key : key.split("_")[0];
 
           const item: any = {
@@ -1034,7 +1034,7 @@ export const CommissionsService = {
             net: entry.totalSales - entry.totalPayouts - entry.commissionListero, // Alias
           };
 
-          // ✅ NUEVO: Agregar desglose por entidad cuando hay agrupación
+          //  NUEVO: Agregar desglose por entidad cuando hay agrupación
           if (shouldGroupByDate) {
             const vendedorBreakdown: any[] = [];
             for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
@@ -1114,7 +1114,7 @@ export const CommissionsService = {
         return result
           .map((r) => {
             const dateKey = postgresDateToCRString(r.business_date);
-            // ✅ CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
+            //  CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
             if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
               return null; // Marcar para filtrar después
             }
@@ -1175,7 +1175,7 @@ export const CommissionsService = {
     try {
       // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
-      // ✅ CORRECCIÓN: Usar servicio centralizado para conversión de fechas
+      //  CORRECCIÓN: Usar servicio centralizado para conversión de fechas
       const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
       const fromDateStr = startDateCRStr;
       const toDateStr = endDateCRStr;
@@ -1192,7 +1192,7 @@ export const CommissionsService = {
         )`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
         Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
-        // ✅ NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
+        //  NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
         Prisma.sql`NOT EXISTS (
           SELECT 1 FROM "sorteo_lista_exclusion" sle
           JOIN "User" u ON u.id = sle.ventana_id
@@ -1784,7 +1784,7 @@ export const CommissionsService = {
 
       // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
-      // ✅ CORRECCIÓN: Usar servicio centralizado para conversión de fechas
+      //  CORRECCIÓN: Usar servicio centralizado para conversión de fechas
       const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
       const fromDateStr = startDateCRStr;
       const toDateStr = endDateCRStr;

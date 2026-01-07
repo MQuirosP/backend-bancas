@@ -1,5 +1,5 @@
 -- CreateTable: AccountStatement
--- Estado de cuenta por día (Banca ↔ Listero ↔ Vendedor)
+-- Estado de cuenta por día (Banca  Listero  Vendedor)
 -- Safe migration: verifica que la tabla no exista antes de crearla
 
 CREATE TABLE IF NOT EXISTS "AccountStatement" (
