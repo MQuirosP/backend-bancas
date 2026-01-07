@@ -125,11 +125,11 @@ async function calculatePreviousMonthBalanceFromSource(
             isReversed: false,
         };
 
-        if (dimension === "vendedor" && filters.vendedorId) {
+        if (filters.vendedorId) {
             paymentsWhere.vendedorId = filters.vendedorId;
-        } else if (dimension === "ventana" && filters.ventanaId) {
+        } else if (filters.ventanaId) {
             paymentsWhere.ventanaId = filters.ventanaId;
-        } else if (dimension === "banca" && filters.bancaId) {
+        } else if (filters.bancaId) {
             paymentsWhere.bancaId = filters.bancaId;
         }
 
@@ -186,55 +186,86 @@ export async function getPreviousMonthFinalBalance(
 
         // PASO 1: Cierre mensual
         const closingWhere: any = { closingMonth: previousMonthStr, dimension };
-        if (dimension === "vendedor" && vendedorId) {
-            closingWhere.vendedorId = vendedorId;
-        } else if (dimension === "ventana" && ventanaId) {
-            closingWhere.ventanaId = ventanaId;
+        let isConsolidated = false;
+
+        if (dimension === "vendedor") {
+            if (vendedorId) {
+                closingWhere.vendedorId = vendedorId;
+            } else {
+                isConsolidated = true;
+                if (ventanaId) closingWhere.ventanaId = ventanaId;
+                if (bancaId) closingWhere.bancaId = bancaId;
+            }
+        } else if (dimension === "ventana") {
             closingWhere.vendedorId = null;
-        } else if (dimension === "banca" && bancaId) {
-            closingWhere.bancaId = bancaId;
+            if (ventanaId) {
+                closingWhere.ventanaId = ventanaId;
+            } else {
+                isConsolidated = true;
+                if (bancaId) closingWhere.bancaId = bancaId;
+            }
+        } else if (dimension === "banca") {
             closingWhere.vendedorId = null;
             closingWhere.ventanaId = null;
+            if (bancaId) {
+                closingWhere.bancaId = bancaId;
+            } else {
+                isConsolidated = true;
+            }
         }
 
-        const closingBalance = await prisma.monthlyClosingBalance.findFirst({
-            where: closingWhere,
-            select: { closingBalance: true },
-        });
+        if (isConsolidated) {
+            // Si es consolidado (ej: todas las bancas), sumamos los cierres de todas las entidades que apliquen
+            const aggregation = await prisma.monthlyClosingBalance.aggregate({
+                where: closingWhere,
+                _sum: { closingBalance: true }
+            });
+            if (aggregation._sum.closingBalance !== null) {
+                return Number(aggregation._sum.closingBalance);
+            }
+        } else {
+            const closingBalance = await prisma.monthlyClosingBalance.findFirst({
+                where: closingWhere,
+                select: { closingBalance: true },
+            });
 
-        if (closingBalance) {
-            return parseFloat(closingBalance.closingBalance.toString());
+            if (closingBalance) {
+                return Number(closingBalance.closingBalance);
+            }
         }
 
-        // PASO 2: Intentar con statements asentados
-        const lastDayNum = new Date(previousYear, previousMonth, 0).getDate();
-        const firstDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, 1, 6, 0, 0, 0));
-        const lastDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, lastDayNum + 1, 5, 59, 59, 999));
+        // PASO 2: Intentar con statements asentados (SOLO si no es consolidado)
+        // Para consolidados es mejor saltar a PASO 4 (cálculo desde fuente) que es más preciso
+        if (!isConsolidated) {
+            const lastDayNum = new Date(previousYear, previousMonth, 0).getDate();
+            const firstDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, 1, 6, 0, 0, 0));
+            const lastDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, lastDayNum + 1, 5, 59, 59, 999));
 
-        const where: Prisma.AccountStatementWhereInput = {
-            date: { gte: firstDayOfPreviousMonth, lte: lastDayOfPreviousMonth },
-            isSettled: true,
-        };
+            const where: Prisma.AccountStatementWhereInput = {
+                date: { gte: firstDayOfPreviousMonth, lte: lastDayOfPreviousMonth },
+                isSettled: true,
+            };
 
-        if (dimension === "vendedor" && vendedorId) {
-            where.vendedorId = vendedorId;
-        } else if (dimension === "ventana" && ventanaId) {
-            where.ventanaId = ventanaId;
-            where.vendedorId = null;
-        } else if (dimension === "banca" && bancaId) {
-            where.bancaId = bancaId;
-            where.ventanaId = null;
-            where.vendedorId = null;
-        }
+            if (dimension === "vendedor" && vendedorId) {
+                where.vendedorId = vendedorId;
+            } else if (dimension === "ventana" && ventanaId) {
+                where.ventanaId = ventanaId;
+                where.vendedorId = null;
+            } else if (dimension === "banca" && bancaId) {
+                where.bancaId = bancaId;
+                where.ventanaId = null;
+                where.vendedorId = null;
+            }
 
-        const lastSettledStatement = await prisma.accountStatement.findFirst({
-            where,
-            orderBy: { date: "desc" },
-            select: { remainingBalance: true, date: true, ticketCount: true },
-        });
+            const lastSettledStatement = await prisma.accountStatement.findFirst({
+                where,
+                orderBy: { date: "desc" },
+                select: { remainingBalance: true },
+            });
 
-        if (lastSettledStatement) {
-            return Number(lastSettledStatement.remainingBalance || 0);
+            if (lastSettledStatement) {
+                return Number(lastSettledStatement.remainingBalance || 0);
+            }
         }
 
         // PASO 3: Caché
