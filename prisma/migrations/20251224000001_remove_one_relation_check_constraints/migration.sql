@@ -1,4 +1,4 @@
--- ✅ CRÍTICO: Eliminar constraints _one_relation_check de AccountPayment y AccountStatement
+--  CRÍTICO: Eliminar constraints _one_relation_check de AccountPayment y AccountStatement
 -- 
 -- Estos constraints impedían que ambos ventanaId y vendedorId estuvieran presentes simultáneamente.
 -- Al eliminarlos, permitimos que:
@@ -44,7 +44,7 @@ BEGIN
   END IF;
 END $$;
 
--- ✅ NOTA: Los constraints únicos parciales existentes ya protegen la integridad:
+--  NOTA: Los constraints únicos parciales existentes ya protegen la integridad:
 -- - account_statements_date_ventana_unique: (date, ventanaId) WHERE ventanaId IS NOT NULL
 -- - account_statements_date_vendedor_unique: (date, vendedorId) WHERE vendedorId IS NOT NULL
 -- 

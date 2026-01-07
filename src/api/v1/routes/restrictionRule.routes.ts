@@ -15,10 +15,10 @@ import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middle
 
 const router = Router();
 
-// 🔐 todos los endpoints requieren estar autenticado
+//  todos los endpoints requieren estar autenticado
 router.use(protect);
 
-// 🔐 aplicar contexto de banca (resuelve bancaId para VENDEDOR/VENTANA)
+//  aplicar contexto de banca (resuelve bancaId para VENDEDOR/VENTANA)
 router.use(bancaContextMiddleware);
 
 /**
@@ -34,7 +34,7 @@ router.get(
 );
 
 /**
- * 🔒 ADMIN: Endpoint de monitoreo del cron job
+ *  ADMIN: Endpoint de monitoreo del cron job
  * DEBE ir ANTES de /:id para evitar conflictos de rutas
  * GET /api/v1/restrictions/cron-health
  */
@@ -45,7 +45,7 @@ router.get(
 );
 
 /**
- * 🔒 ADMIN: Ejecutar cron manualmente desde el frontend
+ *  ADMIN: Ejecutar cron manualmente desde el frontend
  * POST /api/v1/restrictions/cron-health/execute
  */
 router.post(
@@ -55,7 +55,7 @@ router.post(
 );
 
 /**
- * 🔒 VENDEDOR: Obtener mis restricciones (generales + específicas)
+ *  VENDEDOR: Obtener mis restricciones (generales + específicas)
  * GET /api/v1/restrictions/me
  */
 router.get(
@@ -72,7 +72,7 @@ router.get(
 );
 
 /**
- * 🔒 ADMIN (CRUD)
+ *  ADMIN (CRUD)
  */
 router.post(
   "/",

@@ -6,7 +6,7 @@ import prisma from "../../../core/prismaClient";
  * Soporta exclusión por multiplierId
  */
 export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string>> {
-    // ✅ OPTIMIZED: Single query with include to get ventana relation
+    //  OPTIMIZED: Single query with include to get ventana relation
     const exclusions = await prisma.sorteoListaExclusion.findMany({
         where: { sorteoId },
         select: {
@@ -72,7 +72,7 @@ export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string
  * Soporta exclusión por multiplierId
  */
 export async function getExclusionWhereCondition(sorteoId: string): Promise<any> {
-    // ✅ OPTIMIZED: Single query with include to get ventana relation
+    //  OPTIMIZED: Single query with include to get ventana relation
     const exclusions = await prisma.sorteoListaExclusion.findMany({
         where: { sorteoId },
         select: {

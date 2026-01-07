@@ -84,7 +84,7 @@ export const RestrictionRuleController = {
    * GET /api/v1/restrictions/me
    * Obtiene restricciones del usuario autenticado o del vendedor especificado (impersonalización)
    * 
-   * ✅ NUEVO: Soporte para impersonalización con parámetro vendedorId
+   *  NUEVO: Soporte para impersonalización con parámetro vendedorId
    * - Solo ADMIN y VENTANA pueden usar vendedorId
    * - VENDEDOR ignora vendedorId (comportamiento actual se mantiene)
    * - Validaciones de permisos mediante applyRbacFilters()
@@ -112,19 +112,19 @@ export const RestrictionRuleController = {
       bancaId: req.bancaContext?.bancaId || null,
     };
 
-    // ✅ NUEVO: Aplicar RBAC filters para validar permisos de vendedorId
+    //  NUEVO: Aplicar RBAC filters para validar permisos de vendedorId
     const requestFilters: RequestFilters = {
       ...(vendedorId ? { vendedorId } : {}),
     };
 
     const effectiveFilters = await applyRbacFilters(context, requestFilters);
 
-    // ✅ NUEVO: Determinar el vendedorId efectivo
+    //  NUEVO: Determinar el vendedorId efectivo
     // Si hay vendedorId en effectiveFilters (y tiene permisos), usarlo
     // Si no, usar el userId del usuario autenticado (comportamiento actual)
     const effectiveVendorId = effectiveFilters.vendedorId || me.id;
 
-    // ✅ NUEVO: Obtener ventanaId y bancaId del vendedor seleccionado
+    //  NUEVO: Obtener ventanaId y bancaId del vendedor seleccionado
     // Si estamos usando un vendedorId diferente, necesitamos su contexto
     let effectiveBancaId = req.bancaContext?.bancaId || null;
     let effectiveVentanaId = me.ventanaId || null;
@@ -204,7 +204,7 @@ export const RestrictionRuleController = {
       });
     }
 
-    // ✅ MODIFICADO: Usar effectiveVendorId, effectiveBancaId, effectiveVentanaId
+    //  MODIFICADO: Usar effectiveVendorId, effectiveBancaId, effectiveVentanaId
     const result = await RestrictionRuleService.forVendor(
       effectiveVendorId,
       effectiveBancaId,

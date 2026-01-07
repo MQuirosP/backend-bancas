@@ -50,7 +50,7 @@ export class CierreExportService {
     // Para vistas weekly: generar todas las pestañas automáticamente
     const weeklyData = data as CierreWeeklyData;
 
-    // ✅ NUEVO: Detectar bandas presentes en los datos (extraer de la nueva estructura)
+    //  NUEVO: Detectar bandas presentes en los datos (extraer de la nueva estructura)
     const bandasPresentes = this.extractBandsFromLoterias(weeklyData.loterias)
       .sort((a, b) => a - b);
 
@@ -62,7 +62,7 @@ export class CierreExportService {
     // Crear pestaña "Cierre Total" al final
     this.addTotalSheet(workbook, weeklyData);
 
-    // ✅ NUEVO: Agregar pestaña por vendedor si está disponible
+    //  NUEVO: Agregar pestaña por vendedor si está disponible
     if (sellerData) {
       this.addSellerSheet(workbook, sellerData);
     }
@@ -93,7 +93,7 @@ export class CierreExportService {
 
     this.styleHeaderRow(headerRow);
 
-    // ✅ NUEVO: Calcular totales por banda desde la nueva estructura
+    //  NUEVO: Calcular totales por banda desde la nueva estructura
     const totalsByBanda = this.calculateTotalsByBanda(data.loterias);
     const bandaKeys = Array.from(totalsByBanda.keys())
       .sort((a, b) => a - b);
@@ -130,7 +130,7 @@ export class CierreExportService {
 
   /**
    * Agrega hoja para una banda específica
-   * ✅ NUEVO: Jerarquía: Lotería → Sorteo → Tipo (NUMERO/REVENTADO)
+   *  NUEVO: Jerarquía: Lotería → Sorteo → Tipo (NUMERO/REVENTADO)
    * @param isExtendedPeriod Si es true, incluye fechas en los sorteos
    */
   private static addBandSheet(
@@ -227,14 +227,14 @@ export class CierreExportService {
   }
 
   /**
-   * ✅ Helper: Extrae todas las bandas únicas de la estructura de loterías
+   *  Helper: Extrae todas las bandas únicas de la estructura de loterías
    */
   private static extractBandsFromLoterias(loterias: CierreLoteriaGroup[]): number[] {
     const bandsSet = new Set<number>();
 
     for (const loteriaGroup of loterias) {
       for (const sorteoGroup of loteriaGroup.sorteos) {
-        // ✅ NUEVO: Extraer bandas directamente (ya sumadas NUMERO + REVENTADO)
+        //  NUEVO: Extraer bandas directamente (ya sumadas NUMERO + REVENTADO)
         for (const bandaKey of Object.keys(sorteoGroup.bands)) {
           bandsSet.add(Number(bandaKey));
         }
@@ -245,14 +245,14 @@ export class CierreExportService {
   }
 
   /**
-   * ✅ Helper: Calcula totales por banda desde la estructura de loterías
+   *  Helper: Calcula totales por banda desde la estructura de loterías
    */
   private static calculateTotalsByBanda(loterias: CierreLoteriaGroup[]): Map<number, CeldaMetrics> {
     const totalsByBanda = new Map<number, CeldaMetrics>();
 
     for (const loteriaGroup of loterias) {
       for (const sorteoGroup of loteriaGroup.sorteos) {
-        // ✅ NUEVO: Procesar bandas directamente (ya sumadas NUMERO + REVENTADO)
+        //  NUEVO: Procesar bandas directamente (ya sumadas NUMERO + REVENTADO)
         for (const [bandaKey, bandaData] of Object.entries(sorteoGroup.bands)) {
           const banda = Number(bandaKey);
           if (!totalsByBanda.has(banda)) {
@@ -273,7 +273,7 @@ export class CierreExportService {
   }
 
   /**
-   * ✅ Helper: Crea métricas vacías
+   *  Helper: Crea métricas vacías
    */
   private static createEmptyMetrics(): CeldaMetrics {
     return {
@@ -288,7 +288,7 @@ export class CierreExportService {
   }
 
   /**
-   * ✅ Helper: Acumula métricas
+   *  Helper: Acumula métricas
    */
   private static accumulateMetrics(target: CeldaMetrics, source: CeldaMetrics): void {
     target.totalVendida += source.totalVendida;
@@ -380,7 +380,7 @@ export class CierreExportService {
     row.alignment = { horizontal: 'left', vertical: 'middle' };
 
     // Formato de moneda para columnas numéricas (columnas 3-6)
-    // ✅ ACTUALIZADO: Columnas: Lotería, Turno, [Total Vendido, Premios, Comisión, Neto]
+    //  ACTUALIZADO: Columnas: Lotería, Turno, [Total Vendido, Premios, Comisión, Neto]
     for (let i = 3; i <= 6; i++) {
       const cell = row.getCell(i);
       if (typeof cell.value === 'number') {

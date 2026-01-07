@@ -1,5 +1,5 @@
 /**
- * ⚠️ ESTÁNDAR CRÍTICO: ZONA HORARIA COSTA RICA
+ * ️ ESTÁNDAR CRÍTICO: ZONA HORARIA COSTA RICA
  * 
  * TODAS las fechas en este proyecto se manejan en hora LOCAL de Costa Rica (UTC-6).
  * NUNCA usar toISOString().split('T')[0] directamente en fechas UTC sin convertir primero a CR.
@@ -16,7 +16,7 @@ export const COSTA_RICA_UTC_OFFSET_MS = COSTA_RICA_UTC_OFFSET_HOURS * 60 * 60 * 
 /**
  * Convierte un Date UTC a fecha calendario en CR (YYYY-MM-DD)
  * 
- * ⚠️ CRÍTICO: Usar esta función cuando necesites extraer la fecha CR de un Date UTC
+ * ️ CRÍTICO: Usar esta función cuando necesites extraer la fecha CR de un Date UTC
  * 
  * @param date Date en UTC que representa un instante en CR
  * @returns String YYYY-MM-DD representando el día calendario en CR
@@ -74,7 +74,7 @@ export function getMonthDateRange(month: string): { startDate: Date; endDate: Da
 }
 
 /**
- * ✅ OPTIMIZACIÓN: Obtiene el rango de fechas para el estado de cuenta
+ *  OPTIMIZACIÓN: Obtiene el rango de fechas para el estado de cuenta
  * Desde el inicio del mes hasta el final del día de hoy (en CR)
  */
 export function getStatementDateRange(monthStr?: string): { startDate: Date; endDate: Date } {
@@ -127,7 +127,7 @@ export function buildTicketDateFilter(date: Date): any {
     // createdAt está en UTC, pero representa horas en CR
     // 00:00 CR = 06:00 UTC del mismo día calendario
     // 23:59:59.999 CR = 05:59:59.999 UTC del día siguiente
-    // ⚠️ CRÍTICO: Usar límite exclusivo para excluir el inicio del día siguiente
+    // ️ CRÍTICO: Usar límite exclusivo para excluir el inicio del día siguiente
     // Para un día específico: desde 06:00 UTC hasta (pero no incluyendo) 06:00 UTC del día siguiente
     const createdAtStart = new Date(Date.UTC(year, month, day, 6, 0, 0, 0)); // 00:00 CR
     const createdAtEndExclusive = new Date(Date.UTC(year, month, day + 1, 6, 0, 0, 0)); // 00:00 CR del día siguiente (exclusivo)
@@ -137,14 +137,14 @@ export function buildTicketDateFilter(date: Date): any {
             // Prioridad: businessDate (fecha de negocio correcta)
             { businessDate: businessDateStart },
             // Fallback: createdAt para tickets antiguos sin businessDate
-            // ⚠️ CRÍTICO: Usar `lt` (less than) en lugar de `lte` para excluir el inicio del día siguiente
+            // ️ CRÍTICO: Usar `lt` (less than) en lugar de `lte` para excluir el inicio del día siguiente
             // Convertir rango de CR a UTC: 00:00 CR hasta (pero no incluyendo) 00:00 CR del día siguiente
             // = 06:00 UTC hasta (pero no incluyendo) 06:00 UTC del día siguiente
             {
                 businessDate: null,
                 createdAt: {
                     gte: createdAtStart,
-                    lt: createdAtEndExclusive, // ⚠️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
+                    lt: createdAtEndExclusive, // ️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
                 },
             },
         ],

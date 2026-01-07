@@ -10,10 +10,10 @@ import { withConnectionRetry } from '../../../core/withConnectionRetry';
 
 /**
  * Obtiene o crea la configuración de automatización (singleton)
- * ✅ MEJORADO: Con reintentos automáticos ante errores de conexión con Supabase
+ *  MEJORADO: Con reintentos automáticos ante errores de conexión con Supabase
  */
 async function getOrCreateConfig() {
-  // ✅ NUEVO: Reintentos automáticos para errores de conexión (P1001, P1017, etc.)
+  //  NUEVO: Reintentos automáticos para errores de conexión (P1001, P1017, etc.)
   // El pooler de Supabase puede tener problemas intermitentes de conectividad
   let config = await withConnectionRetry(
     () => prisma.sorteosAutoConfig.findFirst(),
@@ -193,7 +193,7 @@ export const SorteosAutoService = {
 
     for (const sorteo of sorteos) {
       try {
-        // ✅ Usar userId del admin autenticado
+        //  Usar userId del admin autenticado
         await SorteoService.open(sorteo.id, userId);
         openedCount++;
         
@@ -562,7 +562,7 @@ export const SorteosAutoService = {
     const now = new Date();
     const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
 
-    // ✅ MEJORADO: Buscar sorteos candidatos con reintentos ante errores de conexión
+    //  MEJORADO: Buscar sorteos candidatos con reintentos ante errores de conexión
     // Buscar sorteos candidatos: SCHEDULED u OPEN hace más de 5 minutos
     const candidates = await withConnectionRetry(
       () =>
@@ -624,10 +624,10 @@ export const SorteosAutoService = {
 
     for (const sorteo of sorteosToClose) {
       try {
-        // ✅ Para sorteos SCHEDULED, cambiar directamente a CLOSED sin usar SorteoService.close()
+        //  Para sorteos SCHEDULED, cambiar directamente a CLOSED sin usar SorteoService.close()
         // (que solo acepta OPEN/EVALUATED)
         if (sorteo.status === SorteoStatus.SCHEDULED) {
-          // ✅ MEJORADO: Reintentos ante errores de conexión
+          //  MEJORADO: Reintentos ante errores de conexión
           await withConnectionRetry(
             () =>
               prisma.sorteo.update({
@@ -694,7 +694,7 @@ export const SorteosAutoService = {
       }
     }
 
-    // ✅ MEJORADO: Actualizar configuración con última ejecución (con reintentos)
+    //  MEJORADO: Actualizar configuración con última ejecución (con reintentos)
     await withConnectionRetry(
       () =>
         prisma.sorteosAutoConfig.update({
@@ -843,7 +843,7 @@ export const SorteosAutoService = {
       };
     }
 
-    // ✅ NUEVO: Obtener status de auto-close
+    //  NUEVO: Obtener status de auto-close
     let closeStatus: any = null;
 
     try {

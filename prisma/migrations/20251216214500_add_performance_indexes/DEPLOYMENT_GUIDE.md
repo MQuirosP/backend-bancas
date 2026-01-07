@@ -1,6 +1,6 @@
 # Guía de Despliegue: Índices de Rendimiento
 
-## 📋 Resumen
+##  Resumen
 
 **Migración:** `20251216214500_add_performance_indexes`
 **Propósito:** Optimizar rendimiento de creación de tickets y reportes
@@ -8,22 +8,22 @@
 **Tiempo estimado:** 5-15 minutos (según tamaño de BD)
 **Reversible:** Sí (100% seguro)
 
-## 🎯 Beneficios Esperados
+##  Beneficios Esperados
 
-- ✅ Creación de tickets 70% más rápida
-- ✅ Validación de restricciones 80% más rápida
-- ✅ Reportes 60% más rápidos
-- ✅ Queries de sorteos 90% más rápidas
-- ✅ Sin bloqueo de tablas durante despliegue
+-  Creación de tickets 70% más rápida
+-  Validación de restricciones 80% más rápida
+-  Reportes 60% más rápidos
+-  Queries de sorteos 90% más rápidas
+-  Sin bloqueo de tablas durante despliegue
 
-## ⚠️ Precauciones
+## ️ Precauciones
 
-1. ✅ Usa `CREATE INDEX CONCURRENTLY` - NO bloquea tablas
-2. ✅ Todos los índices tienen `IF NOT EXISTS` - Seguro re-ejecutar
-3. ✅ Índices parciales con `WHERE` - Menor tamaño, mayor velocidad
-4. ✅ Rollback disponible y probado
+1.  Usa `CREATE INDEX CONCURRENTLY` - NO bloquea tablas
+2.  Todos los índices tienen `IF NOT EXISTS` - Seguro re-ejecutar
+3.  Índices parciales con `WHERE` - Menor tamaño, mayor velocidad
+4.  Rollback disponible y probado
 
-## 📝 Checklist Pre-Despliegue
+##  Checklist Pre-Despliegue
 
 ### Paso 1: Verificación Local (OBLIGATORIO)
 
@@ -71,7 +71,7 @@ Inicio: [HORA]
 Fin estimado: [HORA + 15 min]
 ```
 
-## 🚀 Despliegue en Supabase
+##  Despliegue en Supabase
 
 ### Paso 4: Ejecución de la Migración
 
@@ -81,7 +81,7 @@ Fin estimado: [HORA + 15 min]
 # 2. Abrir archivo: prisma/migrations/20251216214500_add_performance_indexes/migration.sql
 # 3. Copiar TODO el contenido
 # 4. Pegar en SQL Editor
-# 5. Click en "Run" (▶️)
+# 5. Click en "Run" (️)
 # 6. ESPERAR a que complete (NO interrumpir)
 
 # Opción B: Desde línea de comandos
@@ -166,13 +166,13 @@ curl -X POST https://tu-api.com/api/v1/tickets \
 # 4. Verificar tiempos de respuesta (deben ser más rápidos)
 ```
 
-## 🔄 Rollback (Si es Necesario)
+##  Rollback (Si es Necesario)
 
 ### Situaciones que Requieren Rollback
 
-- ❌ Índices causan queries más lentas (poco probable)
-- ❌ Errores inesperados en producción
-- ❌ Problemas de espacio en disco (muy poco probable)
+-  Índices causan queries más lentas (poco probable)
+-  Errores inesperados en producción
+-  Problemas de espacio en disco (muy poco probable)
 
 ### Proceso de Rollback
 
@@ -190,7 +190,7 @@ psql $DATABASE_URL_SUPABASE -c "SELECT indexname FROM pg_indexes WHERE indexname
 
 **IMPORTANTE:** El rollback es completamente seguro y no afecta datos.
 
-## 📊 Métricas de Éxito
+##  Métricas de Éxito
 
 ### Antes vs Después
 
@@ -229,7 +229,7 @@ ORDER BY mean_exec_time DESC
 LIMIT 10;
 ```
 
-## 🆘 Troubleshooting
+##  Troubleshooting
 
 ### Problema: Índice no se crea (falla CONCURRENTLY)
 
@@ -276,13 +276,13 @@ SELECT * FROM pg_locks WHERE NOT granted;
 -- 4. Reintentar migración
 ```
 
-## 📞 Contactos de Soporte
+##  Contactos de Soporte
 
 - **Desarrollo:** [Tu equipo]
 - **Supabase Support:** support@supabase.io
 - **Backup del DBA:** [Contacto de emergencia]
 
-## 📝 Registro de Despliegue
+##  Registro de Despliegue
 
 ```
 Fecha de despliegue: _______________________
@@ -296,7 +296,7 @@ Métricas post-despliegue: _________________
 Notas adicionales: ________________________
 ```
 
-## ✅ Conclusión
+##  Conclusión
 
 Esta migración es **segura, reversible y no requiere downtime**. Los índices se crean de manera concurrente sin bloquear las operaciones normales de la aplicación.
 

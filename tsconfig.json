@@ -14,7 +14,7 @@
     "declaration": true,
     "noImplicitAny": true,
 
-    // 👇 Agregamos esto
+    //  Agregamos esto
     "typeRoots": ["./src/core", "./node_modules/@types"],
     "types": ["node", "express"]
   },

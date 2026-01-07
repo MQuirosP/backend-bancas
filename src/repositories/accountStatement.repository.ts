@@ -5,7 +5,7 @@ import logger from "../core/logger";
 export const AccountStatementRepository = {
   /**
    * Encuentra o crea un estado de cuenta para una fecha específica
-   * ✅ CRÍTICO: No usa upsert() para evitar issues con constraint naming en Prisma
+   *  CRÍTICO: No usa upsert() para evitar issues con constraint naming en Prisma
    * En su lugar, busca primero y si no existe, crea
    */
   async findOrCreate(data: {
@@ -24,7 +24,7 @@ export const AccountStatementRepository = {
         where: { id: data.vendedorId },
         select: { ventanaId: true },
       });
-      finalVentanaId = vendedor?.ventanaId ?? undefined; // ✅ sin null
+      finalVentanaId = vendedor?.ventanaId ?? undefined; //  sin null
     }
 
     // Inferir banca desde ventana
@@ -33,12 +33,12 @@ export const AccountStatementRepository = {
         where: { id: finalVentanaId },
         select: { bancaId: true },
       });
-      finalBancaId = ventana?.bancaId; // ✅ sin null
+      finalBancaId = ventana?.bancaId; //  sin null
     }
 
 
     /**
-     * 🚨 REGLA DE BÚSQUEDA Y UNICIDAD
+     *  REGLA DE BÚSQUEDA Y UNICIDAD
      * Buscamos el statement según la dimensión más específica proporcionada
      */
     let where: any = {
@@ -66,7 +66,7 @@ export const AccountStatementRepository = {
       where: where
     });
 
-    // ✅ SI ENCONTRAMOS UN VENDEDOR: Asegurar que ventanaId sea null (limpieza de datos sucios)
+    //  SI ENCONTRAMOS UN VENDEDOR: Asegurar que ventanaId sea null (limpieza de datos sucios)
     // Esto evita que un record de vendedor bloquee el consolidado de la ventana
     if (statement && data.vendedorId && statement.ventanaId !== null) {
       statement = await prisma.accountStatement.update({
@@ -106,7 +106,7 @@ export const AccountStatementRepository = {
           }
 
           if (!statement) {
-            // 🚨 CASO CRÍTICO: Si aún no lo encuentra por 'where', es que existe uno "sucio"
+            //  CASO CRÍTICO: Si aún no lo encuentra por 'where', es que existe uno "sucio"
             // que está bloqueando el constraint pero no coincide con nuestro 'where'
             if (data.ventanaId && !data.vendedorId) {
               // Intentar encontrar el culpable (registro con misma date/ventanaId pero vendedorId NOT NULL)
@@ -189,9 +189,9 @@ export const AccountStatementRepository = {
     vendedorCommission?: number;
     balance?: number;
     totalPaid?: number;
-    totalCollected?: number; // ✅ Campo para totales de collections
+    totalCollected?: number; //  Campo para totales de collections
     remainingBalance?: number;
-    accumulatedBalance?: number; // ✅ NUEVO: Campo para balance acumulado
+    accumulatedBalance?: number; //  NUEVO: Campo para balance acumulado
     isSettled?: boolean;
     canEdit?: boolean;
     ticketCount?: number;
@@ -223,7 +223,7 @@ export const AccountStatementRepository = {
       month,
     };
 
-    // ✅ ACTUALIZADO: Permitir búsqueda con ambos campos presentes
+    //  ACTUALIZADO: Permitir búsqueda con ambos campos presentes
     // El constraint _one_relation_check ha sido eliminado
     if (filters.vendedorId) {
       // Si hay vendedorId, buscar por vendedorId (puede tener o no ventanaId)
@@ -316,7 +316,7 @@ export const AccountStatementRepository = {
       date,
     };
 
-    // ✅ ACTUALIZADO: Permitir búsqueda con ambos campos presentes
+    //  ACTUALIZADO: Permitir búsqueda con ambos campos presentes
     // El constraint _one_relation_check ha sido eliminado
     if (filters.vendedorId) {
       // Si hay vendedorId, buscar específicamente por vendedorId (el (date, vendedorId) es único)
@@ -328,7 +328,7 @@ export const AccountStatementRepository = {
       where.ventanaId = filters.ventanaId;
       where.vendedorId = null;
     }
-    // ✅ FIX: Si no se especifica ninguno, NO forzar ventanaId/vendedorId a null
+    //  FIX: Si no se especifica ninguno, NO forzar ventanaId/vendedorId a null
     // Dejar que la query encuentre cualquier statement para esa fecha
     // (sin restricción de dimension)
 

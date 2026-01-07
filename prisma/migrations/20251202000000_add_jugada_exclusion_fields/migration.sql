@@ -19,7 +19,7 @@ CREATE INDEX IF NOT EXISTS "Jugada_isActive_isExcluded_idx" ON "Jugada"("isActiv
 CREATE INDEX IF NOT EXISTS "Jugada_multiplierId_isExcluded_idx" ON "Jugada"("multiplierId", "isExcluded");
 
 -- Step 4: Migrate existing exclusions from sorteo_lista_exclusion to Jugada
--- ⚠️ IMPORTANTE: Esta migración marca jugadas como excluidas basándose en exclusiones existentes
+-- ️ IMPORTANTE: Esta migración marca jugadas como excluidas basándose en exclusiones existentes
 -- La tabla sorteo_lista_exclusion NO se elimina por seguridad (se eliminará en migración futura)
 
 DO $$

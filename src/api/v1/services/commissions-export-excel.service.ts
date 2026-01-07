@@ -71,12 +71,12 @@ export class CommissionsExportExcelService {
     for (const item of payload.summary) {
       const date = this.formatDate(item.date);
       
-      // ✅ NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
+      //  NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
       const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
                           (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
       if (hasGrouping) {
-        // ✅ NUEVO: Fila de total consolidado con "TODOS" y formato destacado
+        //  NUEVO: Fila de total consolidado con "TODOS" y formato destacado
         const totalEntity = 'TODOS';
         
         const totalRow = isDimensionVentana
@@ -99,10 +99,10 @@ export class CommissionsExportExcelService {
               item.net || 0,
             ]);
 
-        // ✅ NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
+        //  NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
         this.styleTotalRow(totalRow);
 
-        // ✅ NUEVO: Filas de desglose por entidad con indentación visual
+        //  NUEVO: Filas de desglose por entidad con indentación visual
         if (isDimensionVentana && item.byVentana) {
           for (const breakdown of item.byVentana) {
             const breakdownEntity = `  - ${breakdown.ventanaName}`;
@@ -133,7 +133,7 @@ export class CommissionsExportExcelService {
           }
         }
       } else {
-        // ✅ Comportamiento normal cuando NO hay agrupación
+        //  Comportamiento normal cuando NO hay agrupación
         const entity = isDimensionVentana ? item.ventanaName || '-' : item.vendedorName || '-';
 
         const row = isDimensionVentana

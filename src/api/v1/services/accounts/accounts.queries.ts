@@ -29,7 +29,7 @@ export interface AggregatedTicketRow {
 }
 
 /**
- * ✅ OPTIMIZACIÓN: Obtiene datos agregados de tickets directamente desde SQL
+ *  OPTIMIZACIÓN: Obtiene datos agregados de tickets directamente desde SQL
  * Centraliza la lógica de filtrado y agrupación para el estado de cuenta directo
  */
 export async function getAggregatedTicketsData(params: {
@@ -184,16 +184,16 @@ export async function getAggregatedTicketsData(params: {
 }
 
 /**
- * ✅ OPTIMIZACIÓN: Lee resúmenes diarios de la vista materializada
+ *  OPTIMIZACIÓN: Lee resúmenes diarios de la vista materializada
  * Retorna un Map<dateKey, { ventanaId, vendedorId, ticket_count, total_sales, ... }>
  */
 export async function getDailySummariesFromMaterializedView(
     startDate: Date,
     endDate: Date,
-    dimension: "banca" | "ventana" | "vendedor", // ✅ NUEVO: Agregado 'banca'
+    dimension: "banca" | "ventana" | "vendedor", //  NUEVO: Agregado 'banca'
     ventanaId: string | undefined,
     vendedorId: string | undefined,
-    bancaId?: string, // ✅ NUEVO: Filtro opcional por banca
+    bancaId?: string, //  NUEVO: Filtro opcional por banca
     sort: "asc" | "desc" = "desc"
 ): Promise<Map<string, {
     date: Date;
@@ -207,12 +207,12 @@ export async function getDailySummariesFromMaterializedView(
     balance: number;
 }>> {
     try {
-        // ⚠️ CRÍTICO: Convertir fechas UTC a fechas CR antes de usar en SQL
+        // ️ CRÍTICO: Convertir fechas UTC a fechas CR antes de usar en SQL
         // startDate y endDate son instantes UTC que representan días en CR
         // Usar servicio centralizado para conversión de fechas
         const { startDateCRStr: startDateCR, endDateCRStr: endDateCR } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
 
-        // ⚠️ CRÍTICO: Usar límite exclusivo para excluir el inicio del día siguiente
+        // ️ CRÍTICO: Usar límite exclusivo para excluir el inicio del día siguiente
         // endDate representa el fin del último día incluido (ej: 2025-11-20T05:59:59.999Z = fin del 19 en CR)
         // Para excluir datos del día siguiente, usar el día siguiente (exclusivo) en SQL
         // Si endDateCR es '2025-11-19', queremos excluir '2025-11-20', entonces usamos date < '2025-11-20'::date
@@ -224,10 +224,10 @@ export async function getDailySummariesFromMaterializedView(
         // Construir condiciones WHERE dinámicamente
         const conditions: string[] = [
             `date >= '${startDateCR}'::date`,
-            `date < '${endDateNextDayCR}'::date`, // ⚠️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
+            `date < '${endDateNextDayCR}'::date`, // ️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
         ];
 
-        // ✅ NUEVO: Filtros para dimension='banca'
+        //  NUEVO: Filtros para dimension='banca'
         // Nota: La vista materializada no tiene bancaId directamente, así que filtramos por ventanas de esa banca
         if (dimension === "banca") {
             if (bancaId) {
@@ -299,7 +299,7 @@ export async function getDailySummariesFromMaterializedView(
         }>();
 
         for (const summary of summaries) {
-            // ⚠️ CRÍTICO: summary.date viene de la BD como DATE (sin hora), representando un día calendario en CR
+            // ️ CRÍTICO: summary.date viene de la BD como DATE (sin hora), representando un día calendario en CR
             // Usar servicio centralizado para obtener la fecha CR correcta
             // summary.date viene de PostgreSQL DATE, usar postgresDateToCRString
             const dateKey = crDateService.postgresDateToCRString(summary.date);
@@ -330,16 +330,16 @@ export async function getDailySummariesFromMaterializedView(
 }
 
 /**
- * ✅ OPTIMIZACIÓN: Obtiene el desglose por sorteo para múltiples días en batch
+ *  OPTIMIZACIÓN: Obtiene el desglose por sorteo para múltiples días en batch
  * Retorna un Map<dateKey, Array<{...}>>
  */
 export async function getSorteoBreakdownBatch(
     dates: Date[],
-    dimension: "banca" | "ventana" | "vendedor", // ✅ NUEVO: Agregado 'banca'
+    dimension: "banca" | "ventana" | "vendedor", //  NUEVO: Agregado 'banca'
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string,
-    userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" // ✅ CRÍTICO: Rol del usuario para calcular balance
+    userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" //  CRÍTICO: Rol del usuario para calcular balance
 ): Promise<Map<string, Array<{
     sorteoId: string;
     sorteoName: string;
@@ -363,7 +363,7 @@ export async function getSorteoBreakdownBatch(
         OR: dateFilters,
         deletedAt: null,
         status: { notIn: ["CANCELLED", "EXCLUDED"] },
-        // ✅ CORRECCIÓN: Filtrar estrictamente solo sorteos EVALUADOS (no CERRADOS)
+        //  CORRECCIÓN: Filtrar estrictamente solo sorteos EVALUADOS (no CERRADOS)
         sorteo: {
             status: "EVALUATED"
         },
@@ -382,14 +382,14 @@ export async function getSorteoBreakdownBatch(
         if (vendedorId) {
             where.vendedorId = vendedorId;
         }
-        // ✅ NUEVO: Filtrar por ventanaId cuando está presente (para agrupamiento por "Todos")
+        //  NUEVO: Filtrar por ventanaId cuando está presente (para agrupamiento por "Todos")
         if (ventanaId) {
             where.ventanaId = ventanaId;
         }
     }
 
-    // ✅ OPTIMIZACIÓN: Una sola query para todos los días
-    // ✅ CRÍTICO: Agregar límite para prevenir picos de memoria (512 MB en producción)
+    //  OPTIMIZACIÓN: Una sola query para todos los días
+    //  CRÍTICO: Agregar límite para prevenir picos de memoria (512 MB en producción)
     // Límite razonable: 10000 tickets. Si se alcanza, agregar log para monitoreo
     const MAX_TICKETS_FOR_BREAKDOWN = 10000;
     const tickets = await prisma.ticket.findMany({
@@ -404,7 +404,7 @@ export async function getSorteoBreakdownBatch(
             ventanaId: true,
             vendedorId: true,
             loteriaId: true,
-            ventana: { // ✅ NUEVO: Incluir relación con ventana para obtener bancaId y políticas
+            ventana: { //  NUEVO: Incluir relación con ventana para obtener bancaId y políticas
                 select: {
                     bancaId: true,
                     commissionPolicyJson: true,
@@ -438,13 +438,13 @@ export async function getSorteoBreakdownBatch(
                     finalMultiplierX: true,
                     commissionAmount: true,
                     commissionOrigin: true,
-                    listeroCommissionAmount: true, // ✅ Snapshot (puede ser 0)
+                    listeroCommissionAmount: true, //  Snapshot (puede ser 0)
                 },
             },
         },
     });
 
-    // ✅ CRÍTICO: Log si se alcanza el límite (para monitoreo)
+    //  CRÍTICO: Log si se alcanza el límite (para monitoreo)
     if (tickets.length >= MAX_TICKETS_FOR_BREAKDOWN) {
         logger.warn({
             layer: "service",
@@ -462,7 +462,7 @@ export async function getSorteoBreakdownBatch(
         });
     }
 
-    // ✅ CRÍTICO: Obtener usuarios VENTANA con sus políticas (igual que getSorteoBreakdown)
+    //  CRÍTICO: Obtener usuarios VENTANA con sus políticas (igual que getSorteoBreakdown)
     const ventanaIds = Array.from(new Set(tickets.map(t => t.ventanaId).filter((id): id is string => id !== null)));
     const ventanaUsers = ventanaIds.length > 0
         ? await prisma.user.findMany({
@@ -493,7 +493,7 @@ export async function getSorteoBreakdownBatch(
         }
     }
 
-    // ✅ CRÍTICO: Crear Map por fecha Y dimensión (ventanaId/vendedorId)
+    //  CRÍTICO: Crear Map por fecha Y dimensión (ventanaId/vendedorId)
     // Clave: `${dateKey}_${ventanaId}` o `${dateKey}_${vendedorId}`
     const resultMap = new Map<string, Map<string, {
         sorteoId: string;
@@ -513,7 +513,7 @@ export async function getSorteoBreakdownBatch(
         const dateKey = date.toISOString().split("T")[0];
         // Si hay filtro específico, crear solo una entrada
         if (dimension === "banca" && bancaId) {
-            // ✅ NUEVO: Crear entrada para banca específica
+            //  NUEVO: Crear entrada para banca específica
             resultMap.set(`${dateKey}_${bancaId}`, new Map());
         } else if (dimension === "ventana" && ventanaId) {
             resultMap.set(`${dateKey}_${ventanaId}`, new Map());
@@ -521,7 +521,7 @@ export async function getSorteoBreakdownBatch(
             if (vendedorId) {
                 resultMap.set(`${dateKey}_${vendedorId}`, new Map());
             } else if (ventanaId) {
-                // ✅ NUEVO: Cuando hay ventanaId pero no vendedorId, crear entradas por vendedor dentro de esa ventana
+                //  NUEVO: Cuando hay ventanaId pero no vendedorId, crear entradas por vendedor dentro de esa ventana
                 // Se crearán dinámicamente cuando se procesen los tickets
             } else {
                 // Sin filtros específicos
@@ -532,7 +532,7 @@ export async function getSorteoBreakdownBatch(
         }
     }
 
-    // ✅ OPTIMIZACIÓN: Fetch exclusions for the relevant sorteos to prevent "choque" with logic
+    //  OPTIMIZACIÓN: Fetch exclusions for the relevant sorteos to prevent "choque" with logic
     const uniqueSorteoIds = Array.from(new Set(tickets.map(t => t.sorteoId)));
     const exclusions = uniqueSorteoIds.length > 0
         ? await prisma.sorteoListaExclusion.findMany({
@@ -562,7 +562,7 @@ export async function getSorteoBreakdownBatch(
     for (const ticket of tickets) {
         if (!ticket.sorteoId || !ticket.sorteo) continue;
 
-        // ✅ NUEVO: Verificar exclusión
+        //  NUEVO: Verificar exclusión
         if (isExcluded(ticket)) continue;
 
         // Determinar la fecha del ticket
@@ -572,10 +572,10 @@ export async function getSorteoBreakdownBatch(
         ticketDate.setUTCHours(0, 0, 0, 0);
         const dateKey = ticketDate.toISOString().split("T")[0];
 
-        // ✅ CRÍTICO: Determinar la clave según dimensión
+        //  CRÍTICO: Determinar la clave según dimensión
         let mapKey: string;
         if (dimension === "banca") {
-            // ✅ NUEVO: Agrupar por banca
+            //  NUEVO: Agrupar por banca
             const targetBancaId = bancaId || (ticket.ventana as any)?.bancaId;
             if (!targetBancaId) continue;
             mapKey = `${dateKey}_${targetBancaId}`;
@@ -618,7 +618,7 @@ export async function getSorteoBreakdownBatch(
         entry.sales += ticket.totalAmount || 0;
         entry.ticketCount += 1;
 
-        // ✅ CRÍTICO: Calcular comisiones usando el snapshot inmutable en Jugada
+        //  CRÍTICO: Calcular comisiones usando el snapshot inmutable en Jugada
         for (const jugada of ticket.jugadas) {
             // Payouts
             if (jugada.isWinner) {
@@ -636,7 +636,7 @@ export async function getSorteoBreakdownBatch(
     }
 
     // Convertir a formato de respuesta
-    // ✅ CRÍTICO: Mantener clave `${dateKey}_${ventanaId}` o `${dateKey}_${vendedorId}`
+    //  CRÍTICO: Mantener clave `${dateKey}_${ventanaId}` o `${dateKey}_${vendedorId}`
     const finalMap = new Map<string, Array<{
         sorteoId: string;
         sorteoName: string;
@@ -663,7 +663,7 @@ export async function getSorteoBreakdownBatch(
                 payouts: entry.payouts,
                 listeroCommission: entry.listeroCommission,
                 vendedorCommission: entry.vendedorCommission,
-                // ✅ CORRECCIÓN: Calcular balance según vendedorId en query params, NO según userRole
+                //  CORRECCIÓN: Calcular balance según vendedorId en query params, NO según userRole
                 // Si vendedorId está presente → usar vendedorCommission
                 // Si vendedorId NO está presente → usar listeroCommission
                 balance: vendedorId
@@ -671,7 +671,7 @@ export async function getSorteoBreakdownBatch(
                     : entry.sales - entry.payouts - entry.listeroCommission,
                 ticketCount: entry.ticketCount,
             }))
-            .sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt)); // ✅ DESC para consistencia con sorteo module
+            .sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt)); //  DESC para consistencia con sorteo module
 
         finalMap.set(mapKey, result);
     }
@@ -684,11 +684,11 @@ export async function getSorteoBreakdownBatch(
  */
 export async function getSorteoBreakdown(
     date: Date,
-    dimension: "banca" | "ventana" | "vendedor", // ✅ NUEVO: Agregado 'banca'
+    dimension: "banca" | "ventana" | "vendedor", //  NUEVO: Agregado 'banca'
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string,
-    userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" // ✅ CRÍTICO: Rol del usuario para calcular balance
+    userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" //  CRÍTICO: Rol del usuario para calcular balance
 ): Promise<Array<{
     sorteoId: string;
     sorteoName: string;
@@ -707,7 +707,7 @@ export async function getSorteoBreakdown(
         ...dateFilter,
         deletedAt: null,
         status: { not: "CANCELLED" },
-        // ✅ CORRECCIÓN: Filtrar estrictamente solo sorteos EVALUADOS (no CERRADOS)
+        //  CORRECCIÓN: Filtrar estrictamente solo sorteos EVALUADOS (no CERRADOS)
         sorteo: {
             status: "EVALUATED"
         },
@@ -726,7 +726,7 @@ export async function getSorteoBreakdown(
         if (vendedorId) {
             where.vendedorId = vendedorId;
         }
-        // ✅ NUEVO: Filtrar por ventanaId cuando está presente (para agrupamiento por "Todos")
+        //  NUEVO: Filtrar por ventanaId cuando está presente (para agrupamiento por "Todos")
         if (ventanaId) {
             where.ventanaId = ventanaId;
         }
@@ -739,7 +739,7 @@ export async function getSorteoBreakdown(
             id: true,
             totalAmount: true,
             sorteoId: true,
-            // ✅ FIX: Agregar vendedorId para la verificación de exclusiones
+            //  FIX: Agregar vendedorId para la verificación de exclusiones
             vendedorId: true,
             ventanaId: true,
             loteriaId: true,
@@ -766,7 +766,7 @@ export async function getSorteoBreakdown(
                     finalMultiplierX: true,
                     commissionAmount: true,
                     commissionOrigin: true,
-                    listeroCommissionAmount: true, // ✅ Snapshot (puede ser 0)
+                    listeroCommissionAmount: true, //  Snapshot (puede ser 0)
                 },
             },
             ventana: {
@@ -782,7 +782,7 @@ export async function getSorteoBreakdown(
         },
     });
 
-    // ✅ CRÍTICO: Obtener usuarios VENTANA con sus políticas (igual que commissions.service.ts)
+    //  CRÍTICO: Obtener usuarios VENTANA con sus políticas (igual que commissions.service.ts)
     const ventanaIds = Array.from(new Set(tickets.map(t => t.ventanaId).filter((id): id is string => id !== null)));
     const ventanaUsers = ventanaIds.length > 0
         ? await prisma.user.findMany({
@@ -827,7 +827,7 @@ export async function getSorteoBreakdown(
         ticketCount: number;
     }>();
 
-    // ✅ OPTIMIZACIÓN: Fetch exclusions for the relevant sorteos
+    //  OPTIMIZACIÓN: Fetch exclusions for the relevant sorteos
     const uniqueSorteoIds = Array.from(new Set(tickets.map(t => t.sorteoId)));
     const exclusions = uniqueSorteoIds.length > 0
         ? await prisma.sorteoListaExclusion.findMany({
@@ -850,7 +850,7 @@ export async function getSorteoBreakdown(
     for (const ticket of tickets) {
         if (!ticket.sorteoId || !ticket.sorteo) continue;
 
-        // ✅ NUEVO: Verificar exclusión
+        //  NUEVO: Verificar exclusión
         if (isExcluded(ticket)) continue;
 
         const sorteoId = ticket.sorteo.id;
@@ -875,7 +875,7 @@ export async function getSorteoBreakdown(
         entry.sales += ticket.totalAmount || 0;
         entry.ticketCount += 1;
 
-        // ✅ CRÍTICO: Calcular comisiones usando el snapshot inmutable en Jugada
+        //  CRÍTICO: Calcular comisiones usando el snapshot inmutable en Jugada
         for (const jugada of ticket.jugadas) {
             // Payouts
             if (jugada.isWinner) {
@@ -904,7 +904,7 @@ export async function getSorteoBreakdown(
             payouts: entry.payouts,
             listeroCommission: entry.listeroCommission,
             vendedorCommission: entry.vendedorCommission,
-            // ✅ CORRECCIÓN: Calcular balance según vendedorId en query params, NO según userRole
+            //  CORRECCIÓN: Calcular balance según vendedorId en query params, NO según userRole
             // Si vendedorId está presente → usar vendedorCommission
             // Si vendedorId NO está presente → usar listeroCommission
             balance: vendedorId
@@ -912,7 +912,7 @@ export async function getSorteoBreakdown(
                 : entry.sales - entry.payouts - entry.listeroCommission,
             ticketCount: entry.ticketCount,
         }))
-        .sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime()); // ✅ DESC para consistencia con sorteo module
+        .sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime()); //  DESC para consistencia con sorteo module
 
     return result;
 }
@@ -928,14 +928,14 @@ export async function getMovementsForDay(
     id: string;
     accountStatementId: string;
     date: string;
-    time: string | null; // ✅ NUEVO: HH:MM (opcional, hora del movimiento en CR)
+    time: string | null; //  NUEVO: HH:MM (opcional, hora del movimiento en CR)
     amount: number;
     type: "payment" | "collection";
     method: "cash" | "transfer" | "check" | "other";
     notes: string | null;
     isFinal: boolean;
     isReversed: boolean;
-    reversedAt: string | null; // ✅ Cambiado a string para serialización ISO
+    reversedAt: string | null; //  Cambiado a string para serialización ISO
     reversedBy: string | null;
     paidById: string;
     paidByName: string;
@@ -945,21 +945,21 @@ export async function getMovementsForDay(
     const payments = await AccountPaymentRepository.findByStatementId(statementId);
 
     return payments
-        // ✅ CORREGIDO: Retornar TODOS los movimientos (activos y reversados)
+        //  CORREGIDO: Retornar TODOS los movimientos (activos y reversados)
         // El FE los separa en "Activos" y "Revertidos" para mostrar en historial de auditoria
         // Los cálculos en el backend filtran !isReversed cuando es necesario
         .map((p) => ({
             id: p.id,
             accountStatementId: p.accountStatementId,
             date: p.date.toISOString().split("T")[0],
-            time: p.time || null, // ✅ NUEVO: Hora del movimiento si está disponible
+            time: p.time || null, //  NUEVO: Hora del movimiento si está disponible
             amount: p.amount,
             type: p.type as "payment" | "collection",
             method: p.method as "cash" | "transfer" | "check" | "other",
             notes: p.notes,
             isFinal: p.isFinal,
             isReversed: p.isReversed,
-            // ✅ CRÍTICO: Serializar reversedAt como ISO string para consistencia con la API
+            //  CRÍTICO: Serializar reversedAt como ISO string para consistencia con la API
             reversedAt: p.reversedAt ? p.reversedAt.toISOString() : null,
             reversedBy: p.reversedBy,
             paidById: p.paidById,

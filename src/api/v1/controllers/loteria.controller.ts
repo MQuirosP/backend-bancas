@@ -51,7 +51,7 @@ export const LoteriaController = {
         : undefined;
 
     const search =
-      typeof req.query.search === "string" ? req.query.search : undefined; // ✅ nuevo
+      typeof req.query.search === "string" ? req.query.search : undefined; //  nuevo
 
     const { data, meta } = await LoteriaService.list({
       page,
@@ -187,7 +187,7 @@ export const LoteriaController = {
     const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : now;
     const days = req.query.days ? Number(req.query.days) : 1;
     const limit = req.query.limit ? Number(req.query.limit) : 200;
-    const allowPast = req.query.allowPast === "true"; // ✅ NUEVO: permitir fechas pasadas
+    const allowPast = req.query.allowPast === "true"; //  NUEVO: permitir fechas pasadas
 
     if (isNaN(start.getTime())) {
       return res.status(400).json({ success: false, message: "start inválido" });
@@ -196,7 +196,7 @@ export const LoteriaController = {
     const loteria = await LoteriaService.getById(loteriaId);
     const rules = (loteria.rulesJson ?? {}) as any;
 
-    // ✅ Calcular rango de fechas usando el parámetro 'start' (no 'now')
+    //  Calcular rango de fechas usando el parámetro 'start' (no 'now')
     const startOfDay = startOfLocalDay(start);
     const endOfDays = endOfLocalDay(addLocalDays(startOfDay, days - 1));
 
@@ -212,7 +212,7 @@ export const LoteriaController = {
       limit,
     });
 
-    // ✅ Filtrar por rango calculado (no por "ahora")
+    //  Filtrar por rango calculado (no por "ahora")
     // Si allowPast=true, mostrar todos; si false, solo futuros respecto a now
     let filteredOccurrences = occurrences;
     if (!allowPast) {
@@ -253,7 +253,7 @@ export const LoteriaController = {
       count: data.length,
       from: formatIsoLocal(startOfDay),
       to: formatIsoLocal(endOfDays),
-      allowPast, // ✅ NUEVO: indicar al cliente si se permitieron fechas pasadas
+      allowPast, //  NUEVO: indicar al cliente si se permitieron fechas pasadas
     });
   },
 

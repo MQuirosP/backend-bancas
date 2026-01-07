@@ -7,14 +7,14 @@ import { validateQuery, validateBody } from "../../../middlewares/validate.middl
  */
 export const GetStatementQuerySchema = z
   .object({
-    month: z.string().regex(/^\d{4}-\d{2}$/, "El mes debe ser en formato YYYY-MM").optional(), // ✅ Opcional si se usa date
-    // ✅ NUEVO: Filtros de período
+    month: z.string().regex(/^\d{4}-\d{2}$/, "El mes debe ser en formato YYYY-MM").optional(), //  Opcional si se usa date
+    //  NUEVO: Filtros de período
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional(),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
     scope: z.enum(["mine", "ventana", "all"]),
-    dimension: z.enum(["banca", "ventana", "vendedor"]), // ✅ NUEVO: Agregado 'banca'
-    bancaId: z.string().uuid().optional(), // ✅ NUEVO: Filtro opcional por banca
+    dimension: z.enum(["banca", "ventana", "vendedor"]), //  NUEVO: Agregado 'banca'
+    bancaId: z.string().uuid().optional(), //  NUEVO: Filtro opcional por banca
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
     sort: z.enum(["asc", "desc"]).optional().default("desc"),
@@ -22,7 +22,7 @@ export const GetStatementQuerySchema = z
   })
   .strict()
   .superRefine((val, ctx) => {
-    // ✅ CRÍTICO: Validar que date=range cuando hay fromDate/toDate
+    //  CRÍTICO: Validar que date=range cuando hay fromDate/toDate
     if ((val.fromDate || val.toDate) && val.date !== 'range') {
       ctx.addIssue({
         code: "custom",
@@ -67,10 +67,10 @@ export const GetStatementQuerySchema = z
 export const CreatePaymentBodySchema = z
   .object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD"),
-    time: z.string().regex(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/, "La hora debe ser en formato HH:MM (24 horas)").optional().nullable(), // ✅ NUEVO: Hora opcional del movimiento
+    time: z.string().regex(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/, "La hora debe ser en formato HH:MM (24 horas)").optional().nullable(), //  NUEVO: Hora opcional del movimiento
     ventanaId: z.string().uuid().optional().nullable(),
     vendedorId: z.string().uuid().optional().nullable(),
-    bancaId: z.string().uuid().optional(), // ✅ Agregado: Permitir bancaId opcional
+    bancaId: z.string().uuid().optional(), //  Agregado: Permitir bancaId opcional
     amount: z.number().positive("El monto debe ser positivo"),
     type: z.enum(["payment", "collection"]),
     method: z.enum(["cash", "transfer", "check", "other"]),
@@ -79,7 +79,7 @@ export const CreatePaymentBodySchema = z
     idempotencyKey: z.string().min(8, "idempotencyKey debe tener al menos 8 caracteres").max(100, "idempotencyKey máximo 100 caracteres").optional().nullable(),
   })
   .strict()
-  // ✅ ACTUALIZADO: Permitir que ambos campos estén presentes simultáneamente
+  //  ACTUALIZADO: Permitir que ambos campos estén presentes simultáneamente
   // Cuando hay vendedorId, también se persistirá ventanaId para mantener integridad histórica
   // El constraint _one_relation_check ha sido eliminado para permitir esta flexibilidad
 
@@ -166,10 +166,10 @@ export const AccountStatementExportQuerySchema = z
 
     // Scope y dimension
     scope: z.enum(["mine", "ventana", "all"]),
-    dimension: z.enum(["banca", "ventana", "vendedor"]), // ✅ NUEVO: Agregado 'banca'
+    dimension: z.enum(["banca", "ventana", "vendedor"]), //  NUEVO: Agregado 'banca'
 
     // Filtros opcionales (según rol)
-    bancaId: z.string().uuid().optional(), // ✅ NUEVO: Filtro opcional por banca
+    bancaId: z.string().uuid().optional(), //  NUEVO: Filtro opcional por banca
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
 
@@ -191,7 +191,7 @@ export const AccountStatementExportQuerySchema = z
       });
     }
 
-    // ✅ CRÍTICO: Validar que date=range cuando hay fromDate/toDate
+    //  CRÍTICO: Validar que date=range cuando hay fromDate/toDate
     if ((val.fromDate || val.toDate) && val.date !== 'range') {
       ctx.addIssue({
         code: "custom",

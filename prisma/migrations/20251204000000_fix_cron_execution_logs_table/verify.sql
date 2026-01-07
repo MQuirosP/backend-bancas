@@ -9,16 +9,16 @@
 SELECT 
   CASE 
     WHEN EXISTS (SELECT FROM pg_tables WHERE tablename = 'cron_execution_logs')
-    THEN '✅ Tabla cron_execution_logs existe'
-    ELSE '❌ Tabla cron_execution_logs NO existe'
+    THEN ' Tabla cron_execution_logs existe'
+    ELSE ' Tabla cron_execution_logs NO existe'
   END as tabla_status;
 
 -- 2. Verificar índices
 SELECT 
   indexname,
   CASE 
-    WHEN indexname IS NOT NULL THEN '✅ Existe'
-    ELSE '❌ No existe'
+    WHEN indexname IS NOT NULL THEN ' Existe'
+    ELSE ' No existe'
   END as status
 FROM (
   VALUES 
@@ -43,8 +43,8 @@ SELECT
   schedule,
   active,
   CASE 
-    WHEN active THEN '✅ Activo'
-    ELSE '⚠️ Inactivo'
+    WHEN active THEN ' Activo'
+    ELSE '️ Inactivo'
   END as status
 FROM cron.job
 WHERE jobname LIKE '%auto_restrictions%';
@@ -53,8 +53,8 @@ WHERE jobname LIKE '%auto_restrictions%';
 SELECT 
   proname,
   CASE 
-    WHEN proname IS NOT NULL THEN '✅ Existe'
-    ELSE '❌ No existe'
+    WHEN proname IS NOT NULL THEN ' Existe'
+    ELSE ' No existe'
   END as status
 FROM (
   VALUES 
@@ -82,7 +82,7 @@ BEGIN
       LIMIT 5
     ) AS recent_logs;
   ELSE
-    RAISE NOTICE '⚠️ Tabla cron_execution_logs no existe, no se pueden ver logs';
+    RAISE NOTICE '️ Tabla cron_execution_logs no existe, no se pueden ver logs';
   END IF;
 END $$;
 
@@ -93,11 +93,11 @@ BEGIN
     RAISE NOTICE '--- Salud del sistema de cron ---';
     PERFORM * FROM check_cron_health();
   ELSE
-    RAISE NOTICE '⚠️ No se puede verificar salud sin tabla cron_execution_logs';
+    RAISE NOTICE '️ No se puede verificar salud sin tabla cron_execution_logs';
   END IF;
 END $$;
 
 -- 8. Resumen final
 SELECT 
-  '✅ VERIFICACIÓN COMPLETA' as status,
+  ' VERIFICACIÓN COMPLETA' as status,
   NOW() as timestamp;

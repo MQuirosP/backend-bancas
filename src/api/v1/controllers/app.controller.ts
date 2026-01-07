@@ -21,7 +21,7 @@ let cachedApkMetadata: {
 
 /**
  * Caché en memoria para latest.json
- * ✅ FIX CRÍTICO: Evita fs.readFileSync en cada request → reduce GC pressure
+ *  FIX CRÍTICO: Evita fs.readFileSync en cada request → reduce GC pressure
  * Se invalida automáticamente cuando el archivo cambia (por mtime)
  */
 let cachedLatest: any | null = null;
@@ -33,14 +33,14 @@ let cachedLatestMtime = 0;
  */
 export const getVersionInfo = async (req: Request, res: Response): Promise<void> => {
   try {
-    // ✅ MEJORADO: Calcular ruta desde __dirname para ser más robusto
+    //  MEJORADO: Calcular ruta desde __dirname para ser más robusto
     // __dirname apunta a dist/api/v1/controllers/ en producción
     // Necesitamos subir 4 niveles para llegar a la raíz del proyecto
     const projectRoot = path.join(__dirname, '../../../../');
     const latestPath = path.join(projectRoot, 'public', 'latest.json');
     const apkPath = path.join(projectRoot, 'public', 'apk', 'app-release-latest.apk');
 
-    // ✅ FIX: Cachear latest.json en memoria - solo recargar si cambió
+    //  FIX: Cachear latest.json en memoria - solo recargar si cambió
     // Evita fs.readFileSync + JSON.parse en cada request → reduce GC pressure
     if (!fs.existsSync(latestPath)) {
       logger.error({
@@ -100,7 +100,7 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
     }
 
 
-    // ✅ MEJORADO: buildNumber como número con fallback a versionCode
+    //  MEJORADO: buildNumber como número con fallback a versionCode
     // Previene errores si buildNumber es null/undefined y mantiene consistencia
     const buildNumber = latest.buildNumber ?? latest.versionCode ?? 0
 
@@ -167,12 +167,12 @@ const parseRange = (range: string, fileSize: number): { start: number; end: numb
 /**
  * GET /api/v1/app/download
  * Descarga directa del archivo APK más reciente usando streaming
- * ✅ OPTIMIZADO: Usa streams para evitar cargar 77MB en memoria
- * ✅ MEJORADO: Soporte para Range requests (HTTP 206) para descargas resumibles y más rápidas
+ *  OPTIMIZADO: Usa streams para evitar cargar 77MB en memoria
+ *  MEJORADO: Soporte para Range requests (HTTP 206) para descargas resumibles y más rápidas
  */
 export const downloadApk = async (req: Request, res: Response): Promise<void> => {
   try {
-    // ✅ MEJORADO: Calcular ruta desde __dirname para ser más robusto
+    //  MEJORADO: Calcular ruta desde __dirname para ser más robusto
     const projectRoot = path.join(__dirname, '../../../../');
     const apkPath = path.join(projectRoot, 'public', 'apk', 'app-release-latest.apk');
 
@@ -198,30 +198,30 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
     // Headers base
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
     
-    // ✅ CRÍTICO: Establecer Content-Disposition ANTES de otros headers para evitar sobrescritura
-    // ✅ FIX: Nombre del archivo debe ser exactamente 'app-release-latest.apk'
+    //  CRÍTICO: Establecer Content-Disposition ANTES de otros headers para evitar sobrescritura
+    //  FIX: Nombre del archivo debe ser exactamente 'app-release-latest.apk'
     const filename = 'app-release-latest.apk';
     const contentDisposition = `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
     
-    // ✅ CRÍTICO: Usar writeHead o setHeader múltiples veces para asegurar que se establece
+    //  CRÍTICO: Usar writeHead o setHeader múltiples veces para asegurar que se establece
     res.setHeader('Content-Disposition', contentDisposition);
     
-    // ✅ FORZAR: Establecer de nuevo después de otros headers para asegurar que no se sobrescribe
+    //  FORZAR: Establecer de nuevo después de otros headers para asegurar que no se sobrescribe
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('X-No-Compression', '1'); // Evita compresión adicional (APK ya está comprimido)
     
-    // ✅ MEJORADO: Cache-Control con no-cache para forzar validación cuando cambia el nombre
+    //  MEJORADO: Cache-Control con no-cache para forzar validación cuando cambia el nombre
     // Usar no-cache en lugar de immutable para permitir validación del nuevo nombre
     res.setHeader('Cache-Control', 'public, max-age=86400, must-revalidate'); // 24 horas, pero validar cambios
     res.setHeader('X-Content-Type-Options', 'nosniff');
     
-    // ✅ FORZAR: Establecer Content-Disposition de nuevo después de todos los headers
+    //  FORZAR: Establecer Content-Disposition de nuevo después de todos los headers
     res.setHeader('Content-Disposition', contentDisposition);
     
-    // ✅ VERIFICACIÓN: Confirmar que el header se estableció correctamente
+    //  VERIFICACIÓN: Confirmar que el header se estableció correctamente
     const actualHeader = res.getHeader('Content-Disposition');
     
-    // ✅ DEBUG: Log del header que se está enviando (siempre, no solo en debug)
+    //  DEBUG: Log del header que se está enviando (siempre, no solo en debug)
     logger.info({
       layer: 'controller',
       action: 'APK_DOWNLOAD_HEADERS',
@@ -235,7 +235,7 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       },
     });
     
-    // ✅ WARNING: Si el header no coincide, loguear advertencia
+    //  WARNING: Si el header no coincide, loguear advertencia
     if (actualHeader !== contentDisposition) {
       logger.warn({
         layer: 'controller',
@@ -249,7 +249,7 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
     }
 
     // ETag para validación de caché
-    // ✅ MEJORADO: Incluir nombre del archivo en el ETag para invalidar caché cuando cambia el nombre
+    //  MEJORADO: Incluir nombre del archivo en el ETag para invalidar caché cuando cambia el nombre
     if (etag) {
       // Agregar hash del nombre del archivo al ETag para forzar actualización cuando cambia
       const filenameHash = crypto.createHash('md5').update('app-release-latest.apk').digest('hex').substring(0, 8);
@@ -264,7 +264,7 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       }
     }
 
-    // ✅ NUEVO: Soporte para Range requests (HTTP 206 Partial Content)
+    //  NUEVO: Soporte para Range requests (HTTP 206 Partial Content)
     // Permite descargas resumibles y mejor rendimiento en conexiones lentas
     const rangeHeader = req.headers.range;
     
@@ -279,7 +279,7 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
         res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
         res.setHeader('Content-Length', chunkSize.toString());
 
-        // ✅ STREAMING OPTIMIZADO: Buffer más grande para mejor rendimiento
+        //  STREAMING OPTIMIZADO: Buffer más grande para mejor rendimiento
         const stream = fs.createReadStream(apkPath, {
           start,
           end,
@@ -326,7 +326,7 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
     // Descarga completa (sin Range request)
     res.setHeader('Content-Length', fileSize.toString());
 
-    // ✅ STREAMING OPTIMIZADO: Buffer más grande (256KB vs 64KB) para mejor rendimiento
+    //  STREAMING OPTIMIZADO: Buffer más grande (256KB vs 64KB) para mejor rendimiento
     // En conexiones rápidas, chunks más grandes reducen overhead de red
     const stream = fs.createReadStream(apkPath, {
       highWaterMark: 256 * 1024 // 256KB chunks (4x más grande que antes)
@@ -352,7 +352,7 @@ export const downloadApk = async (req: Request, res: Response): Promise<void> =>
       }
     });
 
-    // ✅ FIX: NO loguear cada descarga en producción → reduce memory pressure
+    //  FIX: NO loguear cada descarga en producción → reduce memory pressure
     // En producción cada log = objeto en memoria → con múltiples descargas = OOM
     // Solo loguear en development o usar sampling (1 de cada 100)
     stream.on('end', () => {

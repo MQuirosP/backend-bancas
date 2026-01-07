@@ -76,7 +76,7 @@ export const RestrictionRuleRepository = {
       include: includeLabels,
     });
 
-    // ✅ OPTIMIZACIÓN: Invalidar caché cuando se crea una restricción
+    //  OPTIMIZACIÓN: Invalidar caché cuando se crea una restricción
     await invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
@@ -93,7 +93,7 @@ export const RestrictionRuleRepository = {
       include: includeLabels,
     });
 
-    // ✅ OPTIMIZACIÓN: Invalidar caché cuando se actualiza una restricción
+    //  OPTIMIZACIÓN: Invalidar caché cuando se actualiza una restricción
     await invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
@@ -111,7 +111,7 @@ export const RestrictionRuleRepository = {
       include: includeLabels,
     });
 
-    // ✅ OPTIMIZACIÓN: Invalidar caché cuando se elimina (inactiva) una restricción
+    //  OPTIMIZACIÓN: Invalidar caché cuando se elimina (inactiva) una restricción
     await invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
@@ -128,7 +128,7 @@ export const RestrictionRuleRepository = {
       include: includeLabels,
     });
 
-    // ✅ OPTIMIZACIÓN: Invalidar caché cuando se restaura una restricción
+    //  OPTIMIZACIÓN: Invalidar caché cuando se restaura una restricción
     await invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
@@ -169,7 +169,7 @@ export const RestrictionRuleRepository = {
     const skip = (_page - 1) * _pageSize;
     const take = _pageSize;
 
-    // ✅ Zod ya parsea correctamente los booleanos con enum + transform
+    //  Zod ya parsea correctamente los booleanos con enum + transform
     // Si no viene isActive, usar true por defecto (solo activas)
     const _isActive = isActive !== undefined ? isActive : true;
 
@@ -182,7 +182,7 @@ export const RestrictionRuleRepository = {
     // Aplicar filtro isActive siempre (por defecto true si no se especifica)
     where.isActive = _isActive;
     
-    // ✅ CORRECCIÓN: Inferir bancaId cuando se consulta por bancaId pero las restricciones solo tienen ventanaId/vendedorId
+    //  CORRECCIÓN: Inferir bancaId cuando se consulta por bancaId pero las restricciones solo tienen ventanaId/vendedorId
     if (bancaId) {
         // Obtener ventanas y vendedores de esta banca para incluir sus restricciones
         const ventanas = await prisma.ventana.findMany({
@@ -239,7 +239,7 @@ export const RestrictionRuleRepository = {
       if (loteriaId) where.loteriaId = loteriaId;
       if (multiplierId) where.multiplierId = multiplierId;
 
-      // ✅ CRÍTICO: Combinar filtros de tipo con filtros de banca/ventana existentes
+      //  CRÍTICO: Combinar filtros de tipo con filtros de banca/ventana existentes
       // Si ya hay un OR de bancaId, necesitamos combinar con AND
       const typeFilterConditions: any[] = [];
       
@@ -357,7 +357,7 @@ export const RestrictionRuleRepository = {
    * Límites de montos efectivos (USER > VENTANA > BANCA), con soporte de number y ventana temporal.
    * Solo considera reglas activas.
    * Ahora incluye soporte para isAutoDate y límites dinámicos (baseAmount + salesPercentage).
-   * ✅ ACTUALIZADO: Soporte para restricciones de lotería y multiplicador usando sistema de puntaje.
+   *  ACTUALIZADO: Soporte para restricciones de lotería y multiplicador usando sistema de puntaje.
    */
   async getEffectiveLimits(params: {
     bancaId: string;

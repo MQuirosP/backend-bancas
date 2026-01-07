@@ -433,7 +433,7 @@
 [33m055cb8d[m[33m ([m[1;33mtag: [m[1;33mv1.0.0-rc6[m[33m)[m HEAD@{2025-10-24 00:50:55 -0600}: checkout: moving from master to master
 [33m055cb8d[m[33m ([m[1;33mtag: [m[1;33mv1.0.0-rc6[m[33m)[m HEAD@{2025-10-24 00:48:28 -0600}: commit: docs(readme,changelog): update docs for rc6
 [33mc1a22a4[m HEAD@{2025-10-23 23:25:42 -0600}: commit: feat(backend): rules-driven schedules, auto-seeded sorteos, cutoff & multiplier cascade, and ticket validations
-[33ma2fd467[m HEAD@{2025-10-23 20:52:27 -0600}: commit: feat(tickets): enforce Loteria.rulesJson on ticket creation and guard sorteo↔loteria consistency
+[33ma2fd467[m HEAD@{2025-10-23 20:52:27 -0600}: commit: feat(tickets): enforce Loteria.rulesJson on ticket creation and guard sorteoloteria consistency
 [33m32db4c7[m HEAD@{2025-10-23 20:44:29 -0600}: commit: feat(sorteos): add isActive filter pipeline (controller→service→repository) and clarify appliesToSorteoId validation
 [33m0eb46c2[m HEAD@{2025-10-23 02:36:42 -0600}: commit: feat(vmo): add VentanaMultiplierOverride module (schema + CRUD + permissions)
 [33me4b83a5[m HEAD@{2025-10-23 00:24:33 -0600}: commit: fix(schema): unique constraint sorteo name removed. Loteria name added
@@ -476,7 +476,7 @@
 [33m84e6163[m HEAD@{2025-10-18 14:51:47 -0600}: commit: feat(tickets, rules): enforce hierarchical sales cutoff with diagnostics; add list filters and grace window
 [33m7ea82af[m HEAD@{2025-10-18 14:14:03 -0600}: commit: chore(multiplier.service): renamed bad file name
 [33m13b19f5[m HEAD@{2025-10-18 13:54:20 -0600}: commit: feat(vendedores): unify search, fix Prisma relation filter, enforce immutability (username/code/role), add uniqueness checks (username/email/code), normalize email, tighten update validation, and add repo helpers (findByEmail/findByCode); no route changes needed
-[33m8e2e459[m HEAD@{2025-10-18 13:37:17 -0600}: commit: feat(users): enforce role↔ventanaId rules, add username/email uniqueness on create/update, normalize email, include username in update response, align DTOs/validators (search tolerant), and improve list search (ventana.is.name)
+[33m8e2e459[m HEAD@{2025-10-18 13:37:17 -0600}: commit: feat(users): enforce roleventanaId rules, add username/email uniqueness on create/update, normalize email, include username in update response, align DTOs/validators (search tolerant), and improve list search (ventana.is.name)
 [33m0e24345[m HEAD@{2025-10-18 13:27:53 -0600}: commit: chore(server.ts) comments removed
 [33m0773159[m HEAD@{2025-10-17 21:29:31 -0600}: commit: fix(cors/app): default export app and wire CORS preflight
 [33m6560d4f[m HEAD@{2025-10-17 21:20:39 -0600}: commit: fix(cors): handle preflight and reflect allowed origins
@@ -565,7 +565,7 @@
 [33mfec8df7[m HEAD@{2025-10-06 14:01:19 -0600}: commit: chore(auth): install bcrypt and types, ensure tsconfig interop
 [33me1477be[m HEAD@{2025-10-06 13:54:23 -0600}: commit: fix(auth): type Express req.user with Prisma Role and attach ventanaId in protect middleware
 [33m20df33b[m HEAD@{2025-10-06 13:48:37 -0600}: commit: router.use("/vendedores", vendedorRoutes);
-[33mab8c749[m HEAD@{2025-10-06 13:28:54 -0600}: commit: // 👇 Restore
+[33mab8c749[m HEAD@{2025-10-06 13:28:54 -0600}: commit: //  Restore
 [33m9b7df7c[m HEAD@{2025-10-06 12:54:16 -0600}: commit: feat(banca): add Banca module (DTO/validator/service/controller/routes + repository)
 [33mfa9a9f4[m HEAD@{2025-10-05 16:48:43 -0600}: commit: feat(ventana): add Ventanas module aligned with project architecture
 [33m51e60a6[m HEAD@{2025-10-05 16:08:31 -0600}: commit: feat(ventana): add Ventanas module aligned with project architecture

@@ -7,9 +7,9 @@ const winningNumberSchema = z.string().regex(/^\d{1,3}$/, "winningNumber debe se
 
 export const CreateSorteoSchema = z.object({
   loteriaId: z.uuid("loteriaId inválido"),
-  scheduledAt: zodDateCR(), // ✅ Normaliza automáticamente a CR timezone
+  scheduledAt: zodDateCR(), //  Normaliza automáticamente a CR timezone
   name: z.string().trim().min(1).max(100),
-  digits: z.number().int().min(2).max(3).optional(), // ✅ Opcional: se hereda de la lotería si no se proporciona
+  digits: z.number().int().min(2).max(3).optional(), //  Opcional: se hereda de la lotería si no se proporciona
   isActive: z.coerce.boolean().optional(),
 }).strict();
 
@@ -17,7 +17,7 @@ export const UpdateSorteoSchema = z.object({
   loteriaId: z.uuid("loteriaId inválido").optional(),
   name: z.string().trim().min(1).max(100).optional(),
   digits: z.number().int().min(2).max(3).optional(),
-  scheduledAt: zodDateCR().optional(), // ✅ Normaliza automáticamente a CR timezone
+  scheduledAt: zodDateCR().optional(), //  Normaliza automáticamente a CR timezone
   isActive: z.coerce.boolean().optional(),
 }).strict();
 
@@ -35,7 +35,7 @@ export const SetActiveSorteoSchema = z.object({
   isActive: z.coerce.boolean(),
 }).strict();
 
-// ✅ NUEVO: query para listar
+//  NUEVO: query para listar
 export const ListSorteosQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
@@ -64,11 +64,11 @@ export const validateRevertSorteo = (req: Request, res: Response, next: NextFunc
 export const validateSetActiveSorteo = (req: Request, res: Response, next: NextFunction) =>
   validateBody(SetActiveSorteoSchema)(req, res, next);
 
-// ✅ export helper para rutas
+//  export helper para rutas
 export const validateListSorteosQuery = (req: Request, res: Response, next: NextFunction) =>
   validateQuery(ListSorteosQuerySchema)(req, res, next);
 
-// ✅ Query schema para evaluated-summary
+//  Query schema para evaluated-summary
 export const EvaluatedSummaryQuerySchema = z.object({
   date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),

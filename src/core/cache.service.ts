@@ -2,7 +2,7 @@ import { getRedisClient, isRedisAvailable } from './redisClient';
 import logger from './logger';
 
 /**
- * ✅ OPTIMIZACIÓN: Servicio de caché genérico con graceful degradation
+ *  OPTIMIZACIÓN: Servicio de caché genérico con graceful degradation
  * 
  * - Si Redis no está disponible → retorna null (sin caché)
  * - Si Redis falla → retorna null (sin caché)

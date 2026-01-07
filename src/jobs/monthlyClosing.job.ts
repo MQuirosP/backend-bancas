@@ -338,7 +338,7 @@ export function startMonthlyClosingJob(): void {
     });
 
     // Schedule first run
-    // ✅ CRÍTICO: Limitar delay a máximo 32 bits (2147483647 ms = ~24.8 días)
+    //  CRÍTICO: Limitar delay a máximo 32 bits (2147483647 ms = ~24.8 días)
     // Si el delay es mayor, usar el máximo y recalcular después
     const maxDelay = 2147483647; // Máximo para setTimeout (32 bits signed)
     const actualDelay = Math.min(delayMs, maxDelay);

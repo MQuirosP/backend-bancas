@@ -19,7 +19,7 @@ export const UserRepository = {
       select: { id: true, role: true, ventanaId: true, isActive: true },
     }),
 
-  // ✅ admitir code e isActive en create
+  //  admitir code e isActive en create
   create: (data: {
     name: string;
     email: string | null;

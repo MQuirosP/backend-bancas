@@ -50,7 +50,7 @@ function serializeSorteo<T extends { scheduledAt?: Date | null; loteria?: any; h
     ...sorteo,
     scheduledAt: sorteo.scheduledAt ? formatIsoLocal(sorteo.scheduledAt) : null,
     reventadoEnabled,
-    // ✅ NUEVO: Campos de ventas (opcionales para compatibilidad)
+    //  NUEVO: Campos de ventas (opcionales para compatibilidad)
     ...(sorteo.hasSales !== undefined ? { hasSales: sorteo.hasSales } : {}),
     ...(sorteo.ticketCount !== undefined ? { ticketCount: sorteo.ticketCount } : {}),
   };
@@ -69,7 +69,7 @@ function serializeSorteos<T extends { scheduledAt?: Date | null }>(sorteos: T[])
  * Ejemplo: "14:30" → "2:30PM", "09:15" → "9:15AM"
  */
 function formatTime12h(date: Date): string {
-  const { hour, minute } = getCRLocalComponents(date); // ✅ Usar utilidad CR
+  const { hour, minute } = getCRLocalComponents(date); //  Usar utilidad CR
   const ampm = hour >= 12 ? 'PM' : 'AM';
   let hours12 = hour % 12;
   hours12 = hours12 ? hours12 : 12; // 0 debe ser 12
@@ -81,7 +81,7 @@ function formatTime12h(date: Date): string {
  * Extrae la fecha en formato YYYY-MM-DD de un Date
  */
 function formatDateOnly(date: Date): string {
-  const { year, month, day } = getCRLocalComponents(date); // ✅ Usar utilidad CR
+  const { year, month, day } = getCRLocalComponents(date); //  Usar utilidad CR
   const mm = String(month).padStart(2, '0');
   const dd = String(day).padStart(2, '0');
   return `${year}-${mm}-${dd}`;
@@ -89,7 +89,7 @@ function formatDateOnly(date: Date): string {
 
 export const SorteoService = {
   async create(data: CreateSorteoDTO, userId: string) {
-    // ✅ Obtener lotería con rulesJson para heredar digits
+    //  Obtener lotería con rulesJson para heredar digits
     const loteria = await prisma.loteria.findUnique({
       where: { id: data.loteriaId },
       select: { id: true, isActive: true, rulesJson: true },
@@ -97,7 +97,7 @@ export const SorteoService = {
     if (!loteria || !loteria.isActive)
       throw new AppError("Lotería no encontrada", 404);
 
-    // ✅ Heredar digits de la lotería si no se proporciona explícitamente
+    //  Heredar digits de la lotería si no se proporciona explícitamente
     const loteriaRules = loteria.rulesJson as any;
     const inheritedDigits = resolveDigits(loteriaRules);
     const finalDigits = data.digits ?? inheritedDigits;
@@ -114,7 +114,7 @@ export const SorteoService = {
 
     const details: Prisma.InputJsonObject = {
       loteriaId: data.loteriaId,
-      scheduledAt: formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')), // ✅ Normalizar y formatear con timezone
+      scheduledAt: formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')), //  Normalizar y formatear con timezone
       digits: finalDigits,
       digitsSource: data.digits ? 'explicit' : 'inherited',
     };
@@ -150,7 +150,7 @@ export const SorteoService = {
       name: data.name,
       loteriaId: data.loteriaId,
       scheduledAt: data.scheduledAt,
-      digits: data.digits, // ✅ Allow updating digits
+      digits: data.digits, //  Allow updating digits
       isActive: data.isActive,
     } as UpdateSorteoDTO);
 
@@ -162,7 +162,7 @@ export const SorteoService = {
     if (data.name && data.name !== existing.name) details.name = data.name;
     if (data.loteriaId && data.loteriaId !== existing.loteriaId) details.loteriaId = data.loteriaId;
     if (data.scheduledAt) {
-      details.scheduledAt = formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')); // ✅ Normalizar y formatear con timezone
+      details.scheduledAt = formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')); //  Normalizar y formatear con timezone
     }
     if (data.digits && data.digits !== (existing as any).digits) {
       details.digits = data.digits;
@@ -309,7 +309,7 @@ export const SorteoService = {
     const existing = await SorteoRepository.findById(id);
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
 
-    // ✅ NUEVA VALIDACIÓN: Permitir reset desde SCHEDULED, OPEN, CLOSED, EVALUATED
+    //  NUEVA VALIDACIÓN: Permitir reset desde SCHEDULED, OPEN, CLOSED, EVALUATED
     // (cualquier estado excepto aquellos que requieren pasos previos)
     const allowedStatuses = [
       SorteoStatus.SCHEDULED,
@@ -407,7 +407,7 @@ export const SorteoService = {
       throw new AppError("Solo se puede cerrar desde OPEN o EVALUATED", 409);
     }
 
-    // ✅ NUEVA: Usar closeWithCascade() para marcar tickets también
+    //  NUEVA: Usar closeWithCascade() para marcar tickets también
     const { sorteo: s, ticketsAffected } = await SorteoRepository.closeWithCascade(id);
 
     // Invalidar cache de sorteos
@@ -417,7 +417,7 @@ export const SorteoService = {
     const details: Prisma.InputJsonObject = {
       from: existing.status,
       to: SorteoStatus.CLOSED,
-      ticketsClosed: ticketsAffected,  // ✅ NUEVO: Registrar cuántos tickets se marcaron
+      ticketsClosed: ticketsAffected,  //  NUEVO: Registrar cuántos tickets se marcaron
     };
 
     await ActivityService.log({
@@ -495,7 +495,7 @@ export const SorteoService = {
       extraOutcomeCode = (extraOutcomeCodeInput ?? mul.name ?? null) || null;
     }
 
-    // ✅ NUEVO: Obtener tickets excluidos ANTES de evaluar
+    //  NUEVO: Obtener tickets excluidos ANTES de evaluar
     const excludedTicketIds = await getExcludedTicketIds(id);
 
     // 3) Transacción
@@ -523,7 +523,7 @@ export const SorteoService = {
             status: { not: "CANCELLED" }, // Excluir tickets cancelados
             isActive: true, // Solo tickets activos
             deletedAt: null, // Solo tickets no eliminados
-            id: { notIn: Array.from(excludedTicketIds) }, // ✅ NUEVO: Excluir tickets de listas bloqueadas
+            id: { notIn: Array.from(excludedTicketIds) }, //  NUEVO: Excluir tickets de listas bloqueadas
           },
           type: "NUMERO",
           number: winningNumber,
@@ -558,7 +558,7 @@ export const SorteoService = {
               status: { not: "CANCELLED" }, // Excluir tickets cancelados
               isActive: true, // Solo tickets activos
               deletedAt: null, // Solo tickets no eliminados
-              id: { notIn: Array.from(excludedTicketIds) }, // ✅ NUEVO: Excluir tickets de listas bloqueadas
+              id: { notIn: Array.from(excludedTicketIds) }, //  NUEVO: Excluir tickets de listas bloqueadas
             },
             type: "REVENTADO",
             reventadoNumber: winningNumber,
@@ -596,7 +596,7 @@ export const SorteoService = {
           status: { not: "CANCELLED" }, // Excluir tickets cancelados
           isActive: true, // Solo tickets activos
           deletedAt: null, // Solo tickets no eliminados
-          id: { notIn: Array.from(excludedTicketIds) }, // ✅ NUEVO: Excluir tickets de listas bloqueadas
+          id: { notIn: Array.from(excludedTicketIds) }, //  NUEVO: Excluir tickets de listas bloqueadas
         },
         select: { id: true },
       });
@@ -678,14 +678,14 @@ export const SorteoService = {
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
 
-    // ✅ CRÍTICO: Sincronizar AccountStatement de todos los días afectados cuando se evalúa un sorteo
+    //  CRÍTICO: Sincronizar AccountStatement de todos los días afectados cuando se evalúa un sorteo
     // La evaluación marca jugadas como ganadoras, afectando totalPayouts del statement
     // Los sorteos se evalúan conforme van sucediendo, y es ahí cuando los tickets se toman en cuenta
-    // ⚠️ IMPORTANTE: Usar el nuevo servicio de sincronización que actualiza accumulatedBalance
+    // ️ IMPORTANTE: Usar el nuevo servicio de sincronización que actualiza accumulatedBalance
     try {
       const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
       
-      // ⚠️ CRÍTICO: Convertir scheduledAt a fecha CR antes de sincronizar
+      // ️ CRÍTICO: Convertir scheduledAt a fecha CR antes de sincronizar
       // existing.scheduledAt está en UTC, convertirlo a fecha CR
       const { crDateService } = await import('../../../utils/crDateService');
       const sorteoDateCR = crDateService.dateUTCToCRString(existing.scheduledAt);
@@ -791,7 +791,7 @@ export const SorteoService = {
   },
 
   /**
-   * ✅ Helper: Obtener multiplicadores activos tipo NUMERO de una lotería
+   *  Helper: Obtener multiplicadores activos tipo NUMERO de una lotería
    */
   async getActiveMultipliers(loteriaId: string): Promise<Array<{ id: string; valueX: number }>> {
     const multipliers = await prisma.loteriaMultiplier.findMany({
@@ -809,7 +809,7 @@ export const SorteoService = {
   },
 
   /**
-   * ✅ Helper: Obtener política de comisiones (USER → VENTANA fallback)
+   *  Helper: Obtener política de comisiones (USER → VENTANA fallback)
    */
   async getCommissionPolicy(userId: string, ventanaId: string | null | undefined): Promise<CommissionPolicy | null> {
     if (!ventanaId) {
@@ -838,7 +838,7 @@ export const SorteoService = {
   },
 
   /**
-   * ✅ Helper: Verificar si un sorteo debe mostrarse según política de comisiones
+   *  Helper: Verificar si un sorteo debe mostrarse según política de comisiones
    * Solo muestra si hay reglas específicas que cubran al menos un multiplicador activo
    * NO considera defaultPercent - solo reglas explícitas
    */
@@ -891,7 +891,7 @@ export const SorteoService = {
   },
 
   /**
-   * ✅ Helper: Filtrar sorteos por política de comisiones
+   *  Helper: Filtrar sorteos por política de comisiones
    * Solo aplica para VENDEDOR - otros roles ven todos los sorteos
    */
   async filterSorteosByCommissionPolicy(
@@ -934,7 +934,7 @@ export const SorteoService = {
     // Filtrar sorteos según política
     const filteredSorteos: Array<{ id: string; loteriaId: string }> = [];
 
-    // ✅ OPTIMIZACIÓN: Agrupar sorteos por loteriaId para evitar queries duplicadas
+    //  OPTIMIZACIÓN: Agrupar sorteos por loteriaId para evitar queries duplicadas
     const loteriaIds = [...new Set(sorteos.map(s => s.loteriaId))];
     const multipliersByLoteria = new Map<string, Array<{ id: string; valueX: number }>>();
 
@@ -984,7 +984,7 @@ export const SorteoService = {
     dateFrom?: Date;
     dateTo?: Date;
     groupBy?: "hour" | "loteria-hour";
-    // ✅ NUEVO: Información del usuario para filtrado por política de comisiones
+    //  NUEVO: Información del usuario para filtrado por política de comisiones
     userId?: string;
     role?: Role;
     ventanaId?: string | null;
@@ -994,7 +994,7 @@ export const SorteoService = {
       const p = params.page && params.page > 0 ? params.page : 1;
       const ps = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
 
-      // ✅ Para VENDEDOR, no usar caché (cada vendedor tiene políticas diferentes)
+      //  Para VENDEDOR, no usar caché (cada vendedor tiene políticas diferentes)
       // Para otros roles, usar caché normalmente
       const isVendedor = params.role === Role.VENDEDOR;
 
@@ -1028,7 +1028,7 @@ export const SorteoService = {
         dateTo: params.dateTo,
       });
 
-      // ✅ Aplicar filtrado por política de comisiones solo para VENDEDOR
+      //  Aplicar filtrado por política de comisiones solo para VENDEDOR
       let filteredData = data;
       let filteredTotal = total;
 
@@ -1444,7 +1444,7 @@ gs."hour24" ASC
         params.toDate
       );
 
-      // ✅ CAMBIO: Forzar status EVALUATED (Global Filter)
+      //  CAMBIO: Forzar status EVALUATED (Global Filter)
       // Ya no permitimos que el cliente solicite otros estados para este reporte
       const allowedStatuses: SorteoStatus[] = [SorteoStatus.EVALUATED];
 
@@ -1544,7 +1544,7 @@ gs."hour24" ASC
           commissionAmount: true,
           payout: true,
           isWinner: true,
-          type: true, // ✅ NUEVO: Tipo de jugada (NUMERO o REVENTADO) para desglose de comisión
+          type: true, //  NUEVO: Tipo de jugada (NUMERO o REVENTADO) para desglose de comisión
         },
       });
 
@@ -1684,7 +1684,7 @@ gs."hour24" ASC
         ticketsBySorteo.get(sorteoId)!.add(ticketId);
       }
 
-      // ✅ PASO 1: Obtener movimientos de pago/cobro del vendedor ANTES de calcular accumulated
+      //  PASO 1: Obtener movimientos de pago/cobro del vendedor ANTES de calcular accumulated
       const movementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
         dateRange.fromAt,
         dateRange.toAt,
@@ -1693,7 +1693,7 @@ gs."hour24" ASC
         vendedorId
       );
 
-      // ✅ PASO 2: Construir datos de sorteos SIN calcular accumulated aún
+      //  PASO 2: Construir datos de sorteos SIN calcular accumulated aún
       const sorteoData = sorteos.map((sorteo, index) => {
         const financial = financialMap.get(sorteo.id) || {
           totalSales: 0,
@@ -1720,7 +1720,7 @@ gs."hour24" ASC
         const paidCount = paidMap.get(sorteo.id) || 0;
         const unpaidCount = winningCount - paidCount;
 
-        // ✅ NUEVO: Calcular comisiones por tipo (NUMERO vs REVENTADO) a nivel de sorteo
+        //  NUEVO: Calcular comisiones por tipo (NUMERO vs REVENTADO) a nivel de sorteo
         const jugadasDelSorteo = jugadas.filter(j => j.ticket.sorteoId === sorteo.id);
         const commissionByNumber = jugadasDelSorteo
           .filter(j => j.type === 'NUMERO')
@@ -1738,8 +1738,8 @@ gs."hour24" ASC
           multiplierValue: number;
           totalSales: number;
           totalCommission: number;
-          commissionByNumber: number; // ✅ NUEVO
-          commissionByReventado: number; // ✅ NUEVO
+          commissionByNumber: number; //  NUEVO
+          commissionByReventado: number; //  NUEVO
           totalPrizes: number;
           ticketCount: number;
           subtotal: number;
@@ -1755,7 +1755,7 @@ gs."hour24" ASC
           const multTotalSales = jugadasGroup.reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.amount || 0), 0);
           const multTotalCommission = jugadasGroup.reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
 
-          // ✅ NUEVO: Calcular comisiones por tipo a nivel de multiplicador
+          //  NUEVO: Calcular comisiones por tipo a nivel de multiplicador
           const multCommissionByNumber = jugadasGroup
             .filter((j: JugadaWithMultiplier) => j.type === 'NUMERO')
             .reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
@@ -1811,8 +1811,8 @@ gs."hour24" ASC
             multiplierValue,
             totalSales: multTotalSales,
             totalCommission: multTotalCommission,
-            commissionByNumber: multCommissionByNumber, // ✅ NUEVO
-            commissionByReventado: multCommissionByReventado, // ✅ NUEVO
+            commissionByNumber: multCommissionByNumber, //  NUEVO
+            commissionByReventado: multCommissionByReventado, //  NUEVO
             totalPrizes: multTotalPrizes,
             ticketCount: multTicketCount,
             subtotal: multSubtotal,
@@ -1837,8 +1837,8 @@ gs."hour24" ASC
           isReventado,
           totalSales: financial.totalSales,
           totalCommission: financial.totalCommission,
-          commissionByNumber, // ✅ NUEVO: Comisión por jugadas tipo NÚMERO
-          commissionByReventado, // ✅ NUEVO: Comisión por jugadas tipo REVENTADO
+          commissionByNumber, //  NUEVO: Comisión por jugadas tipo NÚMERO
+          commissionByReventado, //  NUEVO: Comisión por jugadas tipo REVENTADO
           totalPrizes: financial.totalPrizes,
           ticketCount: financial.ticketCount,
           subtotal,
@@ -1848,11 +1848,11 @@ gs."hour24" ASC
           winningTicketsCount: winningCount,
           paidTicketsCount: paidCount,
           unpaidTicketsCount: unpaidCount,
-          byMultiplier, // ✅ NUEVO: Desglose por multiplicador
+          byMultiplier, //  NUEVO: Desglose por multiplicador
         };
       });
 
-      // ✅ PASO 3: Convertir movimientos a items con la misma estructura que sorteos
+      //  PASO 3: Convertir movimientos a items con la misma estructura que sorteos
       const movementItems: any[] = [];
       for (const [dateStr, movements] of movementsByDate.entries()) {
         for (const movement of movements) {
@@ -1870,8 +1870,8 @@ gs."hour24" ASC
             movementItems.push({
               sorteoId: `mov-${movement.id}`,
               sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
-              scheduledAt, // ✅ Fecha del usuario + hora de creación
-              date: movement.date, // ✅ Fecha que el usuario indicó
+              scheduledAt, //  Fecha del usuario + hora de creación
+              date: movement.date, //  Fecha que el usuario indicó
               time: formatTime12h(scheduledAt),
               loteriaId: null,
               loteriaName: null,
@@ -1901,7 +1901,7 @@ gs."hour24" ASC
         }
       }
 
-      // ✅ PASO 4: Combinar sorteos y movimientos y ordenar cronológicamente
+      //  PASO 4: Combinar sorteos y movimientos y ordenar cronológicamente
       const allEvents = [...sorteoData, ...movementItems];
       allEvents.sort((a, b) => {
         const timeA = new Date(a.scheduledAt).getTime();
@@ -1909,7 +1909,7 @@ gs."hour24" ASC
         return timeA - timeB;
       });
 
-      // ✅ PASO 5: Calcular acumulado y chronologicalIndex por evento (sorteo/movimiento)
+      //  PASO 5: Calcular acumulado y chronologicalIndex por evento (sorteo/movimiento)
       let eventAccumulated = 0;
       const totalEvents = allEvents.length;
       const dataWithAccumulated = allEvents.map((event, index) => {
@@ -1922,14 +1922,14 @@ gs."hour24" ASC
         };
       });
 
-      // ✅ NUEVO: Calcular rango de fechas para monthlyAccumulated (desde inicio del mes hasta hoy)
+      //  NUEVO: Calcular rango de fechas para monthlyAccumulated (desde inicio del mes hasta hoy)
       const today = new Date();
       const monthlyStartDate = new Date(today.getFullYear(), today.getMonth(), 1);
-      // ✅ FIX: monthlyEndDate debe ser el FINAL del día de hoy (23:59:59.999)
+      //  FIX: monthlyEndDate debe ser el FINAL del día de hoy (23:59:59.999)
       // para incluir sorteos programados más tarde en el día actual
       const monthlyEndDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
 
-      // ✅ NUEVO: Obtener movimientos del mes completo para monthlyAccumulated
+      //  NUEVO: Obtener movimientos del mes completo para monthlyAccumulated
       const monthlyMovementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
         monthlyStartDate,
         monthlyEndDate,
@@ -1938,8 +1938,8 @@ gs."hour24" ASC
         vendedorId
       );
 
-      // ✅ ACTUALIZADO: Agrupar todos los eventos (sorteos + movimientos) por día
-      // ✅ CRÍTICO: Usar dataWithAccumulated (no allEvents) para que tengan el accumulated calculado
+      //  ACTUALIZADO: Agrupar todos los eventos (sorteos + movimientos) por día
+      //  CRÍTICO: Usar dataWithAccumulated (no allEvents) para que tengan el accumulated calculado
       const eventsByDate = new Map<string, any[]>();
 
       for (const event of dataWithAccumulated) {
@@ -1950,7 +1950,7 @@ gs."hour24" ASC
         eventsByDate.get(date)!.push(event);
       }
 
-      // ✅ ACTUALIZADO: Ordenar eventos dentro de cada día por scheduledAt DESC (más reciente primero)
+      //  ACTUALIZADO: Ordenar eventos dentro de cada día por scheduledAt DESC (más reciente primero)
       for (const [date, eventsDelDia] of eventsByDate.entries()) {
         eventsDelDia.sort((a, b) => {
           const dateA = new Date(a.scheduledAt).getTime();
@@ -1977,7 +1977,7 @@ gs."hour24" ASC
         });
       }
 
-      // ✅ ACTUALIZADO: Construir respuesta agrupada por día (incluye sorteos + movimientos)
+      //  ACTUALIZADO: Construir respuesta agrupada por día (incluye sorteos + movimientos)
       const daysArray = Array.from(eventsByDate.entries())
         .map(([date, eventsDelDia]) => {
           // Separar sorteos y movimientos para calcular totales
@@ -2019,7 +2019,7 @@ gs."hour24" ASC
             accumulated: 0, // Se calculará después basado en totalRemainingBalance histórico
           };
 
-          // ✅ ACTUALIZADO: Formatear todos los eventos (sorteos + movimientos)
+          //  ACTUALIZADO: Formatear todos los eventos (sorteos + movimientos)
           const eventsFormatted = eventsDelDia.map((e) => ({
             ...e,
             scheduledAt: formatIsoLocal(e.scheduledAt),
@@ -2036,7 +2036,7 @@ gs."hour24" ASC
           return b.date.localeCompare(a.date);
         });
 
-      // ✅ CRÍTICO: Calcular acumulado histórico por día basado en totalRemainingBalance
+      //  CRÍTICO: Calcular acumulado histórico por día basado en totalRemainingBalance
       // Ordenar días ASC para calcular acumulado progresivo
       const daysSortedAsc = [...daysArray].sort((a, b) => a.date.localeCompare(b.date));
 
@@ -2064,10 +2064,10 @@ gs."hour24" ASC
         totalCollected: daysArray.reduce((sum, d) => sum + d.dayTotals.totalCollected, 0),
         totalBalance: daysArray.reduce((sum, d) => sum + d.dayTotals.totalBalance, 0),
         totalRemainingBalance: daysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
-        totalSubtotal: daysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0), // ✅ DEPRECATED: igual a totalRemainingBalance
+        totalSubtotal: daysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0), //  DEPRECATED: igual a totalRemainingBalance
       };
 
-      // ✅ NUEVO: Calcular monthlyAccumulated (acumulado del mes completo hasta hoy)
+      //  NUEVO: Calcular monthlyAccumulated (acumulado del mes completo hasta hoy)
       // Obtener todos los sorteos evaluados del mes completo
       const monthlySorteoWhere: Prisma.SorteoWhereInput = {
         status: {
@@ -2135,7 +2135,7 @@ gs."hour24" ASC
       const monthlyTotalPrizes = monthlyPrizesData.reduce((sum, p) => sum + (p._sum.totalPayout || 0), 0);
       const monthlyTotalTickets = monthlyFinancialData.reduce((sum, f) => sum + f._count.id, 0);
 
-      // ✅ NUEVO: Calcular totalPaid y totalCollected del mes completo desde movimientos
+      //  NUEVO: Calcular totalPaid y totalCollected del mes completo desde movimientos
       let monthlyTotalPaid = 0;
       let monthlyTotalCollected = 0;
       for (const movements of monthlyMovementsByDate.values()) {
@@ -2147,7 +2147,7 @@ gs."hour24" ASC
           .reduce((sum: number, m: any) => sum + m.amount, 0);
       }
 
-      // ✅ NUEVO: Calcular comisiones por tipo del mes completo
+      //  NUEVO: Calcular comisiones por tipo del mes completo
       const monthlyJugadas = await prisma.jugada.findMany({
         where: {
           ticket: {
@@ -2175,7 +2175,7 @@ gs."hour24" ASC
       const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPrizes - monthlyTotalCommission;
       const monthlyTotalRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
 
-      // ✅ NUEVO: Obtener saldo final del mes anterior para este vendedor
+      //  NUEVO: Obtener saldo final del mes anterior para este vendedor
       const effectiveMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
       const previousMonthBalance = await getPreviousMonthFinalBalance(
         effectiveMonth,
@@ -2197,13 +2197,13 @@ gs."hour24" ASC
         totalCollected: monthlyTotalCollected,
         totalBalance: previousMonthBalance + monthlyTotalBalance,
         totalRemainingBalance: previousMonthBalance + monthlyTotalRemainingBalance,
-        totalSubtotal: previousMonthBalance + monthlyTotalRemainingBalance, // ✅ DEPRECATED: igual a totalRemainingBalance
+        totalSubtotal: previousMonthBalance + monthlyTotalRemainingBalance, //  DEPRECATED: igual a totalRemainingBalance
       };
       const result = {
         data: daysArray,
         meta: {
           totals,
-          monthlyAccumulated, // ✅ NUEVO: Acumulado del mes completo
+          monthlyAccumulated, //  NUEVO: Acumulado del mes completo
           dateFilter: params.date || "today",
           ...(params.fromDate ? { fromDate: params.fromDate } : {}),
           ...(params.toDate ? { toDate: params.toDate } : {}),

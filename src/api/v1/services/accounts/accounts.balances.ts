@@ -15,7 +15,7 @@ interface BalanceFromSourceParams {
 
 /**
  * Calcula el saldo del mes anterior desde la fuente de verdad (tickets + pagos)
- * ✅ CONTABLEMENTE ROBUSTO: Siempre correcto porque calcula desde datos fuente
+ *  CONTABLEMENTE ROBUSTO: Siempre correcto porque calcula desde datos fuente
  * @param effectiveMonth - Mes actual en formato YYYY-MM
  * @param dimension - 'banca' | 'ventana' | 'vendedor'
  * @param filters - Filtros de dimensión
@@ -27,7 +27,7 @@ async function calculatePreviousMonthBalanceFromSource(
     filters: BalanceFromSourceParams
 ): Promise<number> {
     try {
-        // ✅ Validar que effectiveMonth sea un string válido
+        //  Validar que effectiveMonth sea un string válido
         if (!effectiveMonth || typeof effectiveMonth !== 'string' || !effectiveMonth.includes('-')) {
             logger.warn({
                 layer: "service",

@@ -2,7 +2,7 @@ import { CacheService } from '../core/cache.service';
 import logger from '../core/logger';
 
 /**
- * 🚀 ENHANCED RESTRICTION CACHE V2
+ *  ENHANCED RESTRICTION CACHE V2
  *
  * Multi-level caching system with intelligent invalidation, TTL management, and cache warming.
  * Provides significant performance improvements over the basic V1 cache.

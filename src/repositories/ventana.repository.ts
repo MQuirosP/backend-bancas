@@ -101,7 +101,7 @@ const VentanaRepository = {
     return ventana;
   },
 
-  // ⚠️ Deja de marcar isDeleted: sólo inactiva
+  // ️ Deja de marcar isDeleted: sólo inactiva
   async softDelete(id: string, userId: string, reason?: string) {
     const existing = await prisma.ventana.findUnique({ where: { id } });
     if (!existing) throw new AppError("Ventana not found", 404);

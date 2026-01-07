@@ -1,4 +1,4 @@
--- ✅ OPTIMIZACIÓN: Agregar índices críticos para mejorar performance de queries de accounts
+--  OPTIMIZACIÓN: Agregar índices críticos para mejorar performance de queries de accounts
 
 -- Índice en businessDate para filtros por fecha (muy usado en accounts)
 CREATE INDEX IF NOT EXISTS "idx_ticket_business_date" ON "Ticket"("businessDate") WHERE "deletedAt" IS NULL AND "status" != 'CANCELLED';

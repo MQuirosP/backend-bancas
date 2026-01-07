@@ -333,7 +333,7 @@ export const LoteriaService = {
     if (!loteria.isActive) throw new Error("Lotería inactiva")
 
     const rules = (loteria.rulesJson ?? {}) as any
-    // ✅ Obtener digits de la lotería para heredar a los sorteos
+    //  Obtener digits de la lotería para heredar a los sorteos
     const loteriaDigits = resolveDigits(rules)
     
     // Si forceCreate=true (llamada manual desde endpoint), ignorar la bandera autoCreateSorteos
@@ -352,7 +352,7 @@ export const LoteriaService = {
       return { created: 0, skipped: 0, alreadyExists: [], processed: [], note: "autoCreateSorteos=false (usa forceCreate para crear manualmente)" }
     }
 
-    // ✅ IMPORTANTE: Si vienen scheduledDates específicas, usarlas DIRECTAMENTE sin filtrar por occurrences
+    //  IMPORTANTE: Si vienen scheduledDates específicas, usarlas DIRECTAMENTE sin filtrar por occurrences
     // Esto permite crear sorteos de cualquier fecha (pasada, presente o futura)
     let subset: any[] = [];
 
@@ -441,7 +441,7 @@ export const LoteriaService = {
       };
     }
 
-    // ✅ Pasar digits de la lotería para que los sorteos lo hereden
+    //  Pasar digits de la lotería para que los sorteos lo hereden
     const result = await SorteoRepository.bulkCreateIfMissing(loteriaId, subset, loteriaDigits)
     
     // Invalidar cache de sorteos si se crearon nuevos

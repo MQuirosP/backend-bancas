@@ -1,4 +1,4 @@
--- ✅ OPTIMIZACIÓN: Materialized View para resúmenes diarios de accounts
+--  OPTIMIZACIÓN: Materialized View para resúmenes diarios de accounts
 -- Esta vista pre-calcula agregaciones diarias para mejorar performance drásticamente
 
 -- Vista materializada para resumen diario por ventana/vendedor

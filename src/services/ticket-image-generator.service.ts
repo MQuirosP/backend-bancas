@@ -187,7 +187,7 @@ export async function generateTicketImage(
   y += 14 * scale + 4 * scale; // fontSize + gap
 
   const loteriaName = (ticketData.ticket.sorteo.loteria.name ?? 'TICA').toUpperCase();
-  // ✅ CRÍTICO: Usar formatTime12h para obtener hora correcta en Costa Rica
+  //  CRÍTICO: Usar formatTime12h para obtener hora correcta en Costa Rica
   const horaFormateada = ticketData.ticket.sorteo.scheduledAt
     ? formatTime12h(ticketData.ticket.sorteo.scheduledAt).toUpperCase()
     : '12:00 AM';
@@ -220,7 +220,7 @@ export async function generateTicketImage(
     y += 13 * scale + lineGap;
   }
 
-  // ✅ CRÍTICO: Usar getCRLocalComponents para obtener fecha/hora correcta en Costa Rica
+  //  CRÍTICO: Usar getCRLocalComponents para obtener fecha/hora correcta en Costa Rica
   const fechaFormateada = ticketData.ticket.sorteo.scheduledAt
     ? (() => {
         const { year, month, day } = getCRLocalComponents(ticketData.ticket.sorteo.scheduledAt);
@@ -232,7 +232,7 @@ export async function generateTicketImage(
   ctx.fillText(`SORTEO: ${fechaFormateada}`, padding, y);
   y += 13 * scale + lineGap;
 
-  // ✅ CRÍTICO: Usar getCRLocalComponents para obtener hora correcta en Costa Rica
+  //  CRÍTICO: Usar getCRLocalComponents para obtener hora correcta en Costa Rica
   const horaFormateada24 = ticketData.ticket.sorteo.scheduledAt
     ? (() => {
         const { hour, minute } = getCRLocalComponents(ticketData.ticket.sorteo.scheduledAt);

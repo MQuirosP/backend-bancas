@@ -52,7 +52,7 @@ export const DashboardController = {
     const query = req.query as any;
 
     // Resolver rango de fechas
-    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // ️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
     // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
@@ -86,7 +86,7 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // ️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
     // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
@@ -116,7 +116,7 @@ export const DashboardController = {
   /**
    * GET /api/v1/admin/dashboard/ganancia/month-to-date
    * Ganancia global acumulada del mes actual (desde día 1 hasta hoy)
-   * ⚠️ IMPORTANTE: Calcula automáticamente el periodo del mes actual en hora de Costa Rica
+   * ️ IMPORTANTE: Calcula automáticamente el periodo del mes actual en hora de Costa Rica
    */
   async getGananciaMonthToDate(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
@@ -127,20 +127,20 @@ export const DashboardController = {
 
     const query = req.query as any;
 
-    // ✅ Validar que dimension sea 'ventana'
+    //  Validar que dimension sea 'ventana'
     if (query.dimension !== 'ventana') {
       throw new AppError("El parámetro 'dimension' debe ser 'ventana'", 400);
     }
 
-    // ✅ Usar resolveDateRange existente para calcular correctamente el mes actual en CR timezone
+    //  Usar resolveDateRange existente para calcular correctamente el mes actual en CR timezone
     // Para "month-to-date", necesitamos desde el primer día del mes hasta HOY (no hasta el último día)
     const monthRange = resolveDateRange('month'); // Primer día del mes
     const todayRange = resolveDateRange('today'); // Hoy
 
-    // ✅ Aplicar RBAC para obtener ventanaId y bancaId según el usuario
+    //  Aplicar RBAC para obtener ventanaId y bancaId según el usuario
     const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
 
-    // ✅ Llamar al servicio existente con el rango calculado (desde primer día del mes hasta hoy)
+    //  Llamar al servicio existente con el rango calculado (desde primer día del mes hasta hoy)
     const result = await DashboardService.calculateGanancia({
       fromDate: monthRange.fromAt, // Primer día del mes en CR (06:00:00 UTC)
       toDate: todayRange.toAt, // Fin del día de hoy en CR
@@ -149,14 +149,14 @@ export const DashboardController = {
       dimension: 'ventana',
     }, req.user!.role);
 
-    // ✅ Obtener nombre del mes en español desde la fecha actual en CR
+    //  Obtener nombre del mes en español desde la fecha actual en CR
     const nowCRStr = crDateService.dateUTCToCRString(new Date());
     const [year, month] = nowCRStr.split('-').map(Number);
     const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
                         'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
     const monthName = monthNames[month - 1];
 
-    // ✅ Mapear resultado a estructura esperada por el frontend
+    //  Mapear resultado a estructura esperada por el frontend
     return success(res, {
       dimension: 'ventana',
       items: [],
@@ -191,7 +191,7 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // ️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
     // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
@@ -203,8 +203,8 @@ export const DashboardController = {
       toDate: dateRange.toAt,
       ventanaId,
       bancaId,
-      cxcDimension: query.dimension === 'vendedor' ? 'vendedor' : 'ventana', // ✅ NUEVO: Soporte para dimension=vendedor
-    }, req.user!.role); // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
+      cxcDimension: query.dimension === 'vendedor' ? 'vendedor' : 'ventana', //  NUEVO: Soporte para dimension=vendedor
+    }, req.user!.role); //  CRÍTICO: Pasar rol del usuario para calcular balance correctamente
     return success(res, {
       data: result,
       meta: {
@@ -229,7 +229,7 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // ️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
     // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
@@ -241,8 +241,8 @@ export const DashboardController = {
       toDate: dateRange.toAt,
       ventanaId,
       bancaId,
-      cxcDimension: query.dimension === 'vendedor' ? 'vendedor' : 'ventana', // ✅ NUEVO: Soporte para dimension=vendedor
-    }, req.user!.role); // ✅ CRÍTICO: Pasar rol del usuario para calcular balance correctamente
+      cxcDimension: query.dimension === 'vendedor' ? 'vendedor' : 'ventana', //  NUEVO: Soporte para dimension=vendedor
+    }, req.user!.role); //  CRÍTICO: Pasar rol del usuario para calcular balance correctamente
 
     return success(res, {
       data: result,
@@ -268,7 +268,7 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // ️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
     // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
@@ -314,7 +314,7 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // ️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
     // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
@@ -355,7 +355,7 @@ export const DashboardController = {
     }
 
     const query = req.query as any;
-    // ⚠️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
+    // ️ CRÍTICO: date debe ser 'range' explícitamente cuando hay fromDate/toDate
     // resolveDateRange() ahora rechazará si hay fromDate/toDate sin date=range
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);

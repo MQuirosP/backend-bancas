@@ -1,5 +1,5 @@
 // src/services/commission/commission.resolver.ts
-// ⚠️ DEPRECATED: Este archivo está deprecado. Usar CommissionResolver de src/services/commission/CommissionResolver.ts
+// ️ DEPRECATED: Este archivo está deprecado. Usar CommissionResolver de src/services/commission/CommissionResolver.ts
 // Se mantiene por compatibilidad durante la migración
 
 import prisma from "../../core/prismaClient";

@@ -4,7 +4,7 @@ import logger from "../../../../core/logger";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
 
 /**
- * ✅ CRÍTICO: Helper para leer AccountStatement del día anterior
+ *  CRÍTICO: Helper para leer AccountStatement del día anterior
  * Esto permite validar y usar datos guardados en lugar de recalcular
  */
 export async function getPreviousDayAccountStatement(
@@ -60,7 +60,7 @@ export async function getPreviousDayAccountStatement(
 }
 
 /**
- * ✅ CRÍTICO: Validar que el remainingBalance de un statement sea correcto
+ *  CRÍTICO: Validar que el remainingBalance de un statement sea correcto
  * Esto asegura que podemos confiar en los datos guardados
  */
 export function isValidRemainingBalance(
@@ -123,7 +123,7 @@ export function isValidRemainingBalance(
 }
 
 /**
- * ✅ CRÍTICO: Leer statement de AccountStatement si existe y es válido
+ *  CRÍTICO: Leer statement de AccountStatement si existe y es válido
  * Esto evita recalcular cuando los datos ya están guardados
  */
 export async function getAccountStatementIfValid(
@@ -167,7 +167,7 @@ export async function getAccountStatementIfValid(
             return null; // No existe, hay que calcularlo
         }
         
-        // ✅ VALIDAR que el remainingBalance sea correcto
+        //  VALIDAR que el remainingBalance sea correcto
         const dateStr = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
         const [year, month] = dateStr.split('-').map(Number);
         const firstDayOfMonthStr = `${year}-${String(month).padStart(2, '0')}-01`;
@@ -210,11 +210,11 @@ export async function getAccountStatementIfValid(
         
         // Validar
         if (isValidRemainingBalance(statement, previousDayStatement, previousMonthBalanceValue, isFirstDay)) {
-            // ✅ VÁLIDO: Usar el statement guardado
+            //  VÁLIDO: Usar el statement guardado
             return statement;
         }
         
-        // ❌ NO VÁLIDO: Retornar null para que se recalcule
+        //  NO VÁLIDO: Retornar null para que se recalcule
         return null;
     } catch (error) {
         logger.error({

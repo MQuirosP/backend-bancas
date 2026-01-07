@@ -216,7 +216,7 @@ export async function saveMonthlyClosingBalance(
     bancaId?: string | null
 ): Promise<void> {
     try {
-        // ✅ CRÍTICO: Prisma no permite null en constraint único del where del upsert
+        //  CRÍTICO: Prisma no permite null en constraint único del where del upsert
         // Usar findFirst + create/update en su lugar
         const existing = await prisma.monthlyClosingBalance.findFirst({
             where: {

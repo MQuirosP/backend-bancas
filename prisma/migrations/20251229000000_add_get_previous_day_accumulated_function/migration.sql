@@ -1,4 +1,4 @@
--- ✅ MIGRACIÓN SEGURA: Función para obtener acumulado progresivo del día anterior
+--  MIGRACIÓN SEGURA: Función para obtener acumulado progresivo del día anterior
 -- Esta función es idempotente (CREATE OR REPLACE) y no modifica datos existentes
 -- Solo crea una función PostgreSQL que puede ser usada por el backend
 
@@ -34,7 +34,7 @@ BEGIN
         RETURN 0;
     END IF;
     
-    -- ✅ CRÍTICO: Calcular acumulado progresivo hasta día anterior (sin incluir día anterior)
+    --  CRÍTICO: Calcular acumulado progresivo hasta día anterior (sin incluir día anterior)
     -- Usamos balance (que ya incluye movimientos: balanceBase + totalPaid - totalCollected)
     -- El backend sumará el accumulated interno del día anterior (sorteos + movimientos dentro del día)
     -- para obtener el acumulado total progresivo del día anterior
@@ -51,9 +51,9 @@ BEGIN
                 ) as accumulated_balance
             FROM "AccountStatement" ast
             WHERE ast."date" >= v_month_start
-            AND ast."date" < v_previous_date  -- ⚠️ CRÍTICO: < en lugar de <= para NO incluir el día anterior
+            AND ast."date" < v_previous_date  -- ️ CRÍTICO: < en lugar de <= para NO incluir el día anterior
             AND ast."vendedorId" = p_vendedor_id
-            -- ⚠️ NO filtrar por isSettled: necesitamos todos los statements para calcular el acumulado correcto
+            -- ️ NO filtrar por isSettled: necesitamos todos los statements para calcular el acumulado correcto
         )
         -- Obtener el último acumulado (del último día antes del día anterior)
         SELECT COALESCE(MAX(accumulated_balance), 0)
@@ -71,10 +71,10 @@ BEGIN
                 ) as accumulated_balance
             FROM "AccountStatement" ast
             WHERE ast."date" >= v_month_start
-            AND ast."date" < v_previous_date  -- ⚠️ CRÍTICO: < en lugar de <= para NO incluir el día anterior
+            AND ast."date" < v_previous_date  -- ️ CRÍTICO: < en lugar de <= para NO incluir el día anterior
             AND ast."ventanaId" = p_ventana_id
             AND ast."vendedorId" IS NULL
-            -- ⚠️ NO filtrar por isSettled: necesitamos todos los statements para calcular el acumulado correcto
+            -- ️ NO filtrar por isSettled: necesitamos todos los statements para calcular el acumulado correcto
         )
         -- Obtener el último acumulado (del último día antes del día anterior)
         SELECT COALESCE(MAX(accumulated_balance), 0)
@@ -89,7 +89,7 @@ BEGIN
                 SUM(ast.balance) as daily_balance
             FROM "AccountStatement" ast
             WHERE ast."date" >= v_month_start
-            AND ast."date" < v_previous_date  -- ⚠️ CRÍTICO: < en lugar de <= para NO incluir el día anterior
+            AND ast."date" < v_previous_date  -- ️ CRÍTICO: < en lugar de <= para NO incluir el día anterior
             AND (
                 ast."bancaId" = p_banca_id
                 OR (ast."bancaId" IS NULL AND EXISTS (
@@ -99,7 +99,7 @@ BEGIN
                 ))
             )
             AND ast."vendedorId" IS NULL  -- Solo statements consolidados de ventana
-            -- ⚠️ NO filtrar por isSettled: necesitamos todos los statements para calcular el acumulado correcto
+            -- ️ NO filtrar por isSettled: necesitamos todos los statements para calcular el acumulado correcto
             GROUP BY ast."date"
         ),
         daily_balances AS (
@@ -125,7 +125,7 @@ BEGIN
                 SUM(ast.balance) as daily_balance
             FROM "AccountStatement" ast
             WHERE ast."date" >= v_month_start
-            AND ast."date" < v_previous_date  -- ⚠️ CRÍTICO: < en lugar de <= para NO incluir el día anterior
+            AND ast."date" < v_previous_date  -- ️ CRÍTICO: < en lugar de <= para NO incluir el día anterior
             AND (
                 -- Para banca: incluir todos los statements de ventana (vendedorId IS NULL) con o sin bancaId
                 (p_dimension = 'banca' AND ast."vendedorId" IS NULL)
@@ -134,7 +134,7 @@ BEGIN
                 -- Para vendedor: incluir todos los statements de vendedor
                 OR (p_dimension = 'vendedor' AND ast."vendedorId" IS NOT NULL)
             )
-            -- ⚠️ NO filtrar por isSettled: necesitamos todos los statements para calcular el acumulado correcto
+            -- ️ NO filtrar por isSettled: necesitamos todos los statements para calcular el acumulado correcto
             GROUP BY ast."date"
         ),
         daily_balances AS (

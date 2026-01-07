@@ -1,7 +1,7 @@
 import { CacheService } from '../core/cache.service';
 
 /**
- * ✅ OPTIMIZACIÓN: Caché de restricciones y cutoff
+ *  OPTIMIZACIÓN: Caché de restricciones y cutoff
  * 
  * TTL configurables por variable de entorno:
  * - CACHE_TTL_CUTOFF (default: 300s = 5 min)

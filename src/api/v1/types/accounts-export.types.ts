@@ -22,9 +22,9 @@ export interface AccountStatementVentanaBreakdownExport {
   totalPaymentsCollections: number;
   remainingBalance: number;
   ticketCount: number;
-  // ✅ NUEVO: Desglose por sorteo de esta ventana
+  //  NUEVO: Desglose por sorteo de esta ventana
   bySorteo?: AccountStatementSorteoItem[];
-  // ✅ NUEVO: Movimientos de esta ventana
+  //  NUEVO: Movimientos de esta ventana
   movements?: AccountMovementItem[];
 }
 
@@ -48,9 +48,9 @@ export interface AccountStatementVendedorBreakdownExport {
   totalPaymentsCollections: number;
   remainingBalance: number;
   ticketCount: number;
-  // ✅ NUEVO: Desglose por sorteo de este vendedor
+  //  NUEVO: Desglose por sorteo de este vendedor
   bySorteo?: AccountStatementSorteoItem[];
-  // ✅ NUEVO: Movimientos de este vendedor
+  //  NUEVO: Movimientos de este vendedor
   movements?: AccountMovementItem[];
 }
 
@@ -78,7 +78,7 @@ export interface AccountStatementExportItem {
   balance: number; // Puede ser negativo
   totalPaid: number;
   totalCollected: number;
-  totalPaymentsCollections: number; // ✅ NUEVO: totalPaid + totalCollected
+  totalPaymentsCollections: number; //  NUEVO: totalPaid + totalCollected
   remainingBalance: number; // Puede ser negativo
 
   // Estado y metadata
@@ -88,14 +88,14 @@ export interface AccountStatementExportItem {
   createdAt: string; // ISO 8601
   updatedAt: string; // ISO 8601
 
-  // ✅ NUEVO: Desglose por entidad (cuando hay agrupación)
+  //  NUEVO: Desglose por entidad (cuando hay agrupación)
   byVentana?: AccountStatementVentanaBreakdownExport[];
   byVendedor?: AccountStatementVendedorBreakdownExport[];
   
-  // ✅ NUEVO: Desglose por sorteo del statement principal (cuando NO hay agrupación)
+  //  NUEVO: Desglose por sorteo del statement principal (cuando NO hay agrupación)
   bySorteo?: AccountStatementSorteoItem[];
   
-  // ✅ NUEVO: Movimientos del statement principal (cuando NO hay agrupación)
+  //  NUEVO: Movimientos del statement principal (cuando NO hay agrupación)
   movements?: AccountMovementItem[];
 }
 
@@ -104,18 +104,18 @@ export interface AccountStatementExportItem {
  */
 export interface AccountStatementSorteoItem {
   date: string; // YYYY-MM-DD
-  sorteoId: string; // ✅ NUEVO
-  sorteoName: string; // ✅ NUEVO
-  loteriaId: string; // ✅ NUEVO
+  sorteoId: string; //  NUEVO
+  sorteoName: string; //  NUEVO
+  loteriaId: string; //  NUEVO
   loteriaName: string;
-  scheduledAt: string; // ✅ NUEVO: ISO 8601 completo
+  scheduledAt: string; //  NUEVO: ISO 8601 completo
   sorteoTime: string; // HH:MM AM/PM
-  ventanaId?: string | null; // ✅ NUEVO
+  ventanaId?: string | null; //  NUEVO
   ventanaName?: string | null;
-  ventanaCode?: string | null; // ✅ NUEVO
-  vendedorId?: string | null; // ✅ NUEVO
+  ventanaCode?: string | null; //  NUEVO
+  vendedorId?: string | null; //  NUEVO
   vendedorName?: string | null;
-  vendedorCode?: string | null; // ✅ NUEVO
+  vendedorCode?: string | null; //  NUEVO
   totalSales: number;
   totalPayouts: number;
   listeroCommission: number;
@@ -128,30 +128,30 @@ export interface AccountStatementSorteoItem {
  * Item de movimiento de pago/cobro
  */
 export interface AccountMovementItem {
-  id: string; // ✅ NUEVO
+  id: string; //  NUEVO
   movementDate: Date; // Fecha del movimiento
   statementDate: string; // YYYY-MM-DD - Fecha a la que se aplicó
-  accountStatementId: string; // ✅ NUEVO
-  ventanaId?: string | null; // ✅ NUEVO
+  accountStatementId: string; //  NUEVO
+  ventanaId?: string | null; //  NUEVO
   ventanaName?: string | null;
-  ventanaCode?: string | null; // ✅ NUEVO
-  vendedorId?: string | null; // ✅ NUEVO
+  ventanaCode?: string | null; //  NUEVO
+  vendedorId?: string | null; //  NUEVO
   vendedorName?: string | null;
-  vendedorCode?: string | null; // ✅ NUEVO
+  vendedorCode?: string | null; //  NUEVO
   type: 'PAGO' | 'COBRO';
   amount: number;
   method: string; // "Efectivo", "Transferencia", etc.
   notes?: string | null;
   registeredBy: string; // Nombre del usuario
-  registeredById?: string | null; // ✅ NUEVO
+  registeredById?: string | null; //  NUEVO
   status: 'ACTIVO' | 'REVERTIDO';
-  isFinal: boolean; // ✅ NUEVO
-  isReversed: boolean; // ✅ NUEVO
-  reversedAt?: Date | null; // ✅ NUEVO
-  reversedBy?: string | null; // ✅ NUEVO: Nombre del usuario que revirtió
-  reversedById?: string | null; // ✅ NUEVO
-  createdAt: Date; // ✅ NUEVO
-  updatedAt: Date; // ✅ NUEVO
+  isFinal: boolean; //  NUEVO
+  isReversed: boolean; //  NUEVO
+  reversedAt?: Date | null; //  NUEVO
+  reversedBy?: string | null; //  NUEVO: Nombre del usuario que revirtió
+  reversedById?: string | null; //  NUEVO
+  createdAt: Date; //  NUEVO
+  updatedAt: Date; //  NUEVO
 }
 
 /**

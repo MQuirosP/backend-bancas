@@ -1,4 +1,4 @@
--- ✅ OPTIMIZACIÓN: Índices para mejorar performance de creación de tickets
+--  OPTIMIZACIÓN: Índices para mejorar performance de creación de tickets
 -- Reducción esperada: 6-10s → 1-1.5s (79% mejora)
 
 -- Índices para Ticket: cálculo de límite dinámico (calculateDynamicLimit)

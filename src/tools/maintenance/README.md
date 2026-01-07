@@ -2,7 +2,7 @@
 
 Este módulo agrupa utilidades internas (CLI + scripts) para clonar políticas, normalizar jugadas, purgar tickets y recalcular comisiones/estados de cuenta. Se ejecuta con `npm run maintenance -- <comando> [opciones]` o con scripts directos vía `npx ts-node --transpile-only`.
 
-> ⚠️ Todas las tareas operan sobre la base en curso (incluida producción). Asegúrate de tener un `.env.local` válido y usa `--dry-run` siempre que el comando lo permita.
+> ️ Todas las tareas operan sobre la base en curso (incluida producción). Asegúrate de tener un `.env.local` válido y usa `--dry-run` siempre que el comando lo permita.
 
 ## Preparación rápida
 

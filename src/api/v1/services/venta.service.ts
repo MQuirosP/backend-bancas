@@ -57,7 +57,7 @@ function buildWhereClause(filters: VentasFilters): Prisma.TicketWhereInput {
     status: filters.status
       ? (filters.status as any)
       : { not: "CANCELLED" }, // Excluir CANCELLED si no se especifica status
-    // ✅ NUEVO: Solo incluir datos de sorteos EVALUATED (Global Filter)
+    //  NUEVO: Solo incluir datos de sorteos EVALUATED (Global Filter)
     sorteo: {
       status: "EVALUATED",
       deletedAt: null,
@@ -376,8 +376,8 @@ export const VentasService = {
     commissionVendedorTotal?: number;  // Suma de comisiones de todos los vendedores
     commissionListeroTotal?: number;    // Comisión propia del listero (ventana)
     gananciaNeta?: number;              // BACKWARD COMPAT: Ventas - Premios - Comisión Listero
-    balanceDueToBanca?: number;         // ✅ NUEVO: Deuda a la banca (Ventas - Premios - Comisión Listero)
-    myGain?: number;                    // ✅ NUEVO: Ganancia personal (Comisión Listero - Comisión Vendedor)
+    balanceDueToBanca?: number;         //  NUEVO: Deuda a la banca (Ventas - Premios - Comisión Listero)
+    myGain?: number;                    //  NUEVO: Ganancia personal (Comisión Listero - Comisión Vendedor)
   }> {
     try {
       const baseWhere = buildWhereClause(filters);
@@ -478,7 +478,7 @@ export const VentasService = {
         pendingPayment = evaluatedStats._sum.remainingAmount ?? 0;
       }
 
-      // ✅ NUEVO: Calcular comisiones separadas para VENTANA con scope='mine'
+      //  NUEVO: Calcular comisiones separadas para VENTANA con scope='mine'
       let commissionVendedorTotal: number | undefined = undefined;
       let commissionListeroTotal: number | undefined = undefined;
       let gananciaNeta: number | undefined = undefined;
@@ -501,7 +501,7 @@ export const VentasService = {
               ticket: {
                 ...where,
                 ventanaId: ventanaUser.ventanaId,
-                // ✅ No incluimos filtro vendedorId porque commissionOrigin='USER' ya garantiza que existe
+                //  No incluimos filtro vendedorId porque commissionOrigin='USER' ya garantiza que existe
               },
               commissionOrigin: 'USER', // Comisiones de vendedores (esto ya garantiza que el ticket tiene vendedorId)
             },
@@ -509,11 +509,11 @@ export const VentasService = {
               commissionAmount: true,
             },
           });
-          // ✅ Verificar que _sum existe antes de acceder
+          //  Verificar que _sum existe antes de acceder
           commissionVendedorTotal = parseFloat((vendedorCommissionsAgg._sum?.commissionAmount ?? 0).toFixed(2));
 
           // 2. Calcular commissionListeroTotal: Comisión propia del listero (ventana)
-          // ✅ CAMBIO: Usar snapshot de comisión del listero guardado en BD, NO recalcular
+          //  CAMBIO: Usar snapshot de comisión del listero guardado en BD, NO recalcular
           // Las comisiones están guardadas en jugada.listeroCommissionAmount (snapshot del momento de creación)
           const listeroCommissionsAgg = await prisma.jugada.aggregate({
             where: {
@@ -526,15 +526,15 @@ export const VentasService = {
               listeroCommissionAmount: true,
             },
           });
-          // ✅ Verificar que _sum existe antes de acceder
+          //  Verificar que _sum existe antes de acceder
           commissionListeroTotal = parseFloat((listeroCommissionsAgg._sum?.listeroCommissionAmount ?? 0).toFixed(2));
 
           // 3. Calcular balanceDueToBanca: ventasTotal - payoutTotal - commissionListeroTotal
-          // ✅ NUEVO: Lo que se debe pagar a la banca
+          //  NUEVO: Lo que se debe pagar a la banca
           balanceDueToBanca = parseFloat((ventasTotal - payoutTotal - commissionListeroTotal).toFixed(2));
 
           // 4. Calcular myGain: commissionListeroTotal - commissionVendedorTotal
-          // ✅ NUEVO: Lo que gana personalmente el listero
+          //  NUEVO: Lo que gana personalmente el listero
           myGain = parseFloat((commissionListeroTotal - commissionVendedorTotal).toFixed(2));
 
           // BACKWARD COMPAT: gananciaNeta sigue siendo lo mismo que balanceDueToBanca
@@ -580,7 +580,7 @@ export const VentasService = {
         result.pendingPayment = pendingPayment;
       }
 
-      // ✅ NUEVO: Agregar campos adicionales solo para VENTANA con scope='mine'
+      //  NUEVO: Agregar campos adicionales solo para VENTANA con scope='mine'
       if (options?.role === 'VENTANA' && options?.scope === 'mine') {
         result.commissionVendedorTotal = commissionVendedorTotal ?? 0;
         result.commissionListeroTotal = commissionListeroTotal ?? 0;
@@ -946,7 +946,7 @@ export const VentasService = {
               ventasTotal,
               ticketsCount,
               payoutTotal,
-              neto, // ✅ CORREGIDO: ventasTotal - payoutTotal - commissionTotal
+              neto, //  CORREGIDO: ventasTotal - payoutTotal - commissionTotal
               commissionTotal,
               totalWinningTickets: winningTicketsCount,
               totalPaidTickets: paidTicketsCount,
@@ -959,7 +959,7 @@ export const VentasService = {
               avgTicketAmount: Math.round(avgTicketAmount * 100) / 100, // Redondear a 2 decimales
               winRate: Math.round(winRate * 100) / 100, // Redondear a 2 decimales
               payoutRate: Math.round(payoutRate * 100) / 100, // Redondear a 2 decimales
-              commissionAmount: commissionTotal, // ✅ Comisión del vendedor (ya estaba presente)
+              commissionAmount: commissionTotal, //  Comisión del vendedor (ya estaba presente)
               lastTicketAt: lastTicketAt ? lastTicketAt.toISOString() : undefined,
               firstTicketAt: firstTicketAt ? firstTicketAt.toISOString() : undefined,
               activityDays,

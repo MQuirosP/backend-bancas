@@ -16,7 +16,7 @@ export const SorteosAutoController = {
   },
 
   async executeAutoOpen(req: AuthenticatedRequest, res: Response) {
-    // ✅ Pasar userId del JWT autenticado al servicio
+    //  Pasar userId del JWT autenticado al servicio
     const result = await SorteosAutoService.executeAutoOpen(req.user!.id);
     return success(res, result);
   },
@@ -25,13 +25,13 @@ export const SorteosAutoController = {
     const daysAhead = req.query.daysAhead
       ? Number(req.query.daysAhead)
       : 7;
-    // ✅ Pasar userId del JWT autenticado al servicio
+    //  Pasar userId del JWT autenticado al servicio
     const result = await SorteosAutoService.executeAutoCreate(daysAhead, req.user!.id);
     return success(res, result);
   },
 
   async executeAutoClose(req: AuthenticatedRequest, res: Response) {
-    // ✅ Pasar userId del JWT autenticado al servicio
+    //  Pasar userId del JWT autenticado al servicio
     const result = await SorteosAutoService.executeAutoClose(req.user!.id);
     return success(res, result);
   },

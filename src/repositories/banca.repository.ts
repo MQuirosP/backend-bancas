@@ -38,7 +38,7 @@ const toPrismaUpdate = (d: UpdateBancaInput): Prisma.BancaUpdateInput => ({
   phone: d.phone,
   email: d.email,
 
-  // ✅ INCLUIR EN UPDATE
+  //  INCLUIR EN UPDATE
   ...(typeof d.salesCutoffMinutes === 'number'
     ? { salesCutoffMinutes: Math.trunc(d.salesCutoffMinutes) }
     : {}),
@@ -71,7 +71,7 @@ const BancaRepository = {
   },
 
   async update(id: string, data: UpdateBancaInput) {
-    // ✅ CORRECCIÓN: Actualizar RestrictionRule cuando se actualiza salesCutoffMinutes
+    //  CORRECCIÓN: Actualizar RestrictionRule cuando se actualiza salesCutoffMinutes
     // La resolución del cutoff busca en RestrictionRule, no en el campo de la tabla Banca
     if (typeof data.salesCutoffMinutes === 'number') {
       const cutoffMinutes = Math.trunc(data.salesCutoffMinutes);

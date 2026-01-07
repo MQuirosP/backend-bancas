@@ -19,8 +19,8 @@ export const SorteoListasService = {
     /**
      * Obtiene el resumen de listas (ventanas/vendedores) con su estado de exclusión
      * GET /api/v1/sorteos/:id/listas
-     * ✅ NUEVA ESTRUCTURA: Agrupado por ventana con array de vendedores
-     * ✅ FILTROS: vendedorId, multiplierId
+     *  NUEVA ESTRUCTURA: Agrupado por ventana con array de vendedores
+     *  FILTROS: vendedorId, multiplierId
      */
     async getListas(
         sorteoId: string,
@@ -51,7 +51,7 @@ export const SorteoListasService = {
         }
 
         // 2. Obtener todos los tickets del sorteo con comisiones y jugadas
-        // ✅ NUEVO: Filtrar jugadas por isExcluded según includeExcluded
+        //  NUEVO: Filtrar jugadas por isExcluded según includeExcluded
         const jugadaWhere: any = {
             deletedAt: null,
             isActive: true,
@@ -101,13 +101,13 @@ export const SorteoListasService = {
                         code: true,
                     },
                 },
-                // ✅ NUEVO: Incluir jugadas con filtros de exclusión
+                //  NUEVO: Incluir jugadas con filtros de exclusión
                 jugadas: {
                     where: jugadaWhere,
                     select: {
                         id: true,
                         type: true,  // NUMERO o REVENTADO
-                        number: true,  // ✅ CRÍTICO: Número base (para REVENTADO, apunta al número base)
+                        number: true,  //  CRÍTICO: Número base (para REVENTADO, apunta al número base)
                         amount: true,
                         listeroCommissionAmount: true,  // Comisión del listero
                         multiplierId: true,
@@ -116,10 +116,10 @@ export const SorteoListasService = {
                                 id: true,
                                 name: true,
                                 valueX: true,
-                                kind: true,  // ✅ CRÍTICO: 'NUMERO' o 'REVENTADO'
+                                kind: true,  //  CRÍTICO: 'NUMERO' o 'REVENTADO'
                             }
                         },
-                        // ✅ NUEVO: Campos de exclusión
+                        //  NUEVO: Campos de exclusión
                         isExcluded: true,
                         excludedAt: true,
                         excludedBy: true,
@@ -135,7 +135,7 @@ export const SorteoListasService = {
         });
 
         // 3. Agrupar tickets por ventana, vendedor y multiplicador
-        // ✅ NUEVO: La exclusión ahora viene a nivel de jugada, no hay tabla separada
+        //  NUEVO: La exclusión ahora viene a nivel de jugada, no hay tabla separada
         const ventanasMap = new Map<string, {
             ventanaId: string;
             ventanaName: string;
@@ -152,7 +152,7 @@ export const SorteoListasService = {
                 totalCommission: number;
                 commissionByNumber: number;
                 commissionByReventado: number;
-                // ✅ NUEVO: Campos de exclusión
+                //  NUEVO: Campos de exclusión
                 isExcluded: boolean;
                 excludedAt: Date | null;
                 excludedBy: string | null;
@@ -174,7 +174,7 @@ export const SorteoListasService = {
 
             const ventanaEntry = ventanasMap.get(ticket.ventanaId)!;
 
-            // ✅ CRÍTICO: Separar jugadas NUMERO y REVENTADO para encontrar el multiplicador base
+            //  CRÍTICO: Separar jugadas NUMERO y REVENTADO para encontrar el multiplicador base
             const jugadasNumero = ticket.jugadas.filter(j => j.type === 'NUMERO');
             const jugadasReventado = ticket.jugadas.filter(j => j.type === 'REVENTADO');
 
@@ -200,7 +200,7 @@ export const SorteoListasService = {
                 const vendedorId = ticket.vendedorId;
                 const vendedorKey = vendedorId || "null";
                 
-                // ✅ CRÍTICO: Determinar multiplicador base según tipo de jugada
+                //  CRÍTICO: Determinar multiplicador base según tipo de jugada
                 let multiplierId: string | null = null;
                 let multiplierName: string | null = null;
                 let multiplierValue: number | null = null;
@@ -211,7 +211,7 @@ export const SorteoListasService = {
                     multiplierName = jugada.multiplier?.name || null;
                     multiplierValue = jugada.multiplier?.valueX || null;
                 } else if (jugada.type === 'REVENTADO') {
-                    // ✅ CRÍTICO: Para REVENTADO, buscar el multiplicador base (NUMERO) del número base
+                    //  CRÍTICO: Para REVENTADO, buscar el multiplicador base (NUMERO) del número base
                     // El campo jugada.number en REVENTADO apunta al número base
                     const baseMultiplier = jugada.number ? numeroBaseMultiplierMap.get(jugada.number) : null;
                     if (baseMultiplier) {
@@ -244,7 +244,7 @@ export const SorteoListasService = {
                         totalCommission: 0,
                         commissionByNumber: 0,
                         commissionByReventado: 0,
-                        // ✅ NUEVO: Campos de exclusión desde jugadas
+                        //  NUEVO: Campos de exclusión desde jugadas
                         isExcluded: jugada.isExcluded,
                         excludedAt: jugada.excludedAt,
                         excludedBy: jugada.excludedBy,
@@ -276,7 +276,7 @@ export const SorteoListasService = {
         let totalExcluded = 0;
 
         for (const [ventanaId, ventanaData] of ventanasMap.entries()) {
-            // ✅ NUEVO: La exclusión ya está filtrada en las jugadas, solo necesitamos agrupar
+            //  NUEVO: La exclusión ya está filtrada en las jugadas, solo necesitamos agrupar
             // Construir array de vendedores (agrupados por multiplicador) para esta ventana
             const vendedores: VendedorSummary[] = [];
             let ventanaTotalSales = 0;
@@ -599,7 +599,7 @@ export const SorteoListasService = {
             }
         }
 
-        // ✅ NUEVO: Actualizar jugadas Y tickets para marcarlos como excluidos
+        //  NUEVO: Actualizar jugadas Y tickets para marcarlos como excluidos
         // Construir el where para buscar las jugadas/tickets a excluir
         const ticketWhere: any = {
             sorteoId,
@@ -611,7 +611,7 @@ export const SorteoListasService = {
             ticketWhere.vendedorId = data.vendedorId;
         }
 
-        // ✅ CRÍTICO: Si hay filtro de multiplicador, NO marcamos tickets como EXCLUDED automáticamente
+        //  CRÍTICO: Si hay filtro de multiplicador, NO marcamos tickets como EXCLUDED automáticamente
         // porque solo algunas jugadas se excluyen. Los tickets se actualizarán después si todas sus jugadas quedan excluidas.
         // Si NO hay filtro de multiplicador, excluimos todos los tickets del scope.
         let ticketResult = { count: 0 };
@@ -632,7 +632,7 @@ export const SorteoListasService = {
         // Si hay multiplierId, no actualizamos tickets aquí, se hará después si todas las jugadas quedan excluidas
 
         // 2. Luego actualizar las jugadas
-        // ✅ CRÍTICO: Si se especifica multiplierId, debemos excluir:
+        //  CRÍTICO: Si se especifica multiplierId, debemos excluir:
         // - Jugadas NUMERO con ese multiplierId directamente
         // - Jugadas REVENTADO con ese multiplierId directamente (si el sorteo ya fue evaluado)
         // - Jugadas REVENTADO que heredan el multiplicador base (número base con jugada NUMERO del mismo ticket con ese multiplierId)
@@ -710,7 +710,7 @@ export const SorteoListasService = {
                     },
                 });
 
-                // ✅ CRÍTICO: Si hay filtro de multiplicador, verificar tickets que quedaron con todas sus jugadas excluidas
+                //  CRÍTICO: Si hay filtro de multiplicador, verificar tickets que quedaron con todas sus jugadas excluidas
                 // y marcarlos como EXCLUDED
                 const ticketIdsToCheck = new Set(affectedTickets.map(t => t.id));
                 if (ticketIdsToCheck.size > 0) {
@@ -833,7 +833,7 @@ export const SorteoListasService = {
             );
         }
 
-        // ✅ NUEVO: Actualizar jugadas Y tickets para desmarcarlos como excluidos
+        //  NUEVO: Actualizar jugadas Y tickets para desmarcarlos como excluidos
         const ticketWhere: any = {
             sorteoId,
             ventanaId: data.ventanaId,
@@ -844,7 +844,7 @@ export const SorteoListasService = {
             ticketWhere.vendedorId = data.vendedorId;
         }
 
-        // ✅ CRÍTICO: Si se especifica multiplierId, debemos incluir (revertir exclusión):
+        //  CRÍTICO: Si se especifica multiplierId, debemos incluir (revertir exclusión):
         // - Jugadas NUMERO con ese multiplierId directamente
         // - Jugadas REVENTADO con ese multiplierId directamente (si el sorteo ya fue evaluado)
         // - Jugadas REVENTADO que heredan el multiplicador base (número base con jugada NUMERO del mismo ticket con ese multiplierId)
@@ -1012,7 +1012,7 @@ export const SorteoListasService = {
     /**
      * Obtiene todas las listas excluidas con filtros
      * GET /api/v1/listas-excluidas
-     * ✅ NUEVO: Consulta jugadas excluidas agrupadas con información completa
+     *  NUEVO: Consulta jugadas excluidas agrupadas con información completa
      */
     async getExcludedListas(filters: {
         sorteoId?: string;

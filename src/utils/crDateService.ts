@@ -1,7 +1,7 @@
 /**
- * ⚠️ ESTÁNDAR CRÍTICO: ZONA HORARIA COSTA RICA
+ * ️ ESTÁNDAR CRÍTICO: ZONA HORARIA COSTA RICA
  * 
- * ⚠️ ÚNICA FUENTE DE VERDAD PARA CONVERSIONES DE FECHAS EN COSTA RICA
+ * ️ ÚNICA FUENTE DE VERDAD PARA CONVERSIONES DE FECHAS EN COSTA RICA
  * 
  * Este servicio es la ÚNICA fuente autorizada para todas las conversiones de fechas.
  * NUNCA crear constantes nuevas o funciones de conversión fuera de este archivo.
@@ -12,7 +12,7 @@
  * 3. Date UTC siempre representa instantes UTC que pueden corresponder a días diferentes en CR
  * 4. DATE de PostgreSQL (sin hora) representa días calendario en CR directamente
  * 
- * ⚠️ CONSTANTE ÚNICA: Esta es la ÚNICA constante para el offset de CR en todo el codebase
+ * ️ CONSTANTE ÚNICA: Esta es la ÚNICA constante para el offset de CR en todo el codebase
  * 
  * Costa Rica está en UTC-6 (sin horario de verano).
  * Para convertir un instante UTC a fecha calendario CR:
@@ -27,7 +27,7 @@
 export const CR_TIMEZONE_OFFSET_HOURS = 6; // UTC-6 (Costa Rica)
 export const CR_TIMEZONE_OFFSET_MS = CR_TIMEZONE_OFFSET_HOURS * 60 * 60 * 1000;
 
-// ⚠️ DEPRECATED: Usar CR_TIMEZONE_OFFSET_HOURS en su lugar
+// ️ DEPRECATED: Usar CR_TIMEZONE_OFFSET_HOURS en su lugar
 /** @deprecated Usar CR_TIMEZONE_OFFSET_HOURS */
 export const CR_DATE_OFFSET_HOURS = CR_TIMEZONE_OFFSET_HOURS;
 /** @deprecated Usar CR_TIMEZONE_OFFSET_MS */
@@ -36,7 +36,7 @@ export const CR_DATE_OFFSET_MS = CR_TIMEZONE_OFFSET_MS;
 /**
  * Convierte un instante UTC a fecha calendario CR (YYYY-MM-DD).
  * 
- * ⚠️ USAR SOLO PARA: Date objects que representan instantes UTC
+ * ️ USAR SOLO PARA: Date objects que representan instantes UTC
  * - Date objects de resolveDateRange() (fromAt, toAt)
  * - Date objects de createdAt, updatedAt (timestamps UTC)
  * - Cualquier Date que represente un instante UTC
@@ -46,7 +46,7 @@ export const CR_DATE_OFFSET_MS = CR_TIMEZONE_OFFSET_MS;
  * 
  * Ejemplo:
  * - Input: Date('2025-12-07T05:59:59.999Z') (fin del día 6 en CR)
- * - Output: '2025-12-06' ✅
+ * - Output: '2025-12-06' 
  */
 export function dateUTCToCRString(dateUTC: Date): string {
   // Sumar 6 horas para obtener la fecha en CR
@@ -82,7 +82,7 @@ export function postgresDateToCRString(date: Date): string {
 /**
  * Convierte un rango de fechas UTC a strings CR
  * 
- * ⚠️ CRÍTICO: Para endDate, extrae la fecha CR correctamente considerando que
+ * ️ CRÍTICO: Para endDate, extrae la fecha CR correctamente considerando que
  * puede ser 05:59:59.999 UTC del día siguiente (fin del día anterior en CR)
  * 
  * @param startDate Date UTC que representa inicio del período
@@ -99,7 +99,7 @@ export function dateRangeUTCToCRStrings(startDate: Date, endDate: Date): {
 } {
   const startDateCRStr = dateUTCToCRString(startDate);
   
-  // ⚠️ CRÍTICO: endDate representa el fin del día en CR
+  // ️ CRÍTICO: endDate representa el fin del día en CR
   // Ejemplo: endDate = 2026-01-02T05:59:59.999Z representa fin del día 1 en CR (23:59:59.999 del día 1)
   // Para obtener la fecha CR correcta:
   // - endDate está en UTC y representa 23:59:59.999 CR del día anterior al día siguiente en UTC
@@ -123,7 +123,7 @@ export function dateRangeUTCToCRStrings(startDate: Date, endDate: Date): {
 /**
  * Valida que una fecha CR está dentro de un rango CR (inclusivo).
  * 
- * ⚠️ USAR PARA: Validar si una fecha CR está dentro de un rango CR
+ * ️ USAR PARA: Validar si una fecha CR está dentro de un rango CR
  * - Filtrar arrays de datos por fecha
  * - Validar parámetros de entrada
  * 
@@ -134,7 +134,7 @@ export function dateRangeUTCToCRStrings(startDate: Date, endDate: Date): {
  * 
  * Ejemplo:
  * - Input: dateStr = '2025-12-06', startDateCRStr = '2025-12-06', endDateCRStr = '2025-12-06'
- * - Output: true ✅
+ * - Output: true 
  */
 export function isDateInCRRange(
   dateStr: string,
@@ -145,7 +145,7 @@ export function isDateInCRRange(
 }
 
 /**
- * ⚠️ SERVICIO CENTRALIZADO: Exportar todas las funciones como objeto
+ * ️ SERVICIO CENTRALIZADO: Exportar todas las funciones como objeto
  * 
  * Uso recomendado:
  * ```typescript

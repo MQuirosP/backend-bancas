@@ -145,7 +145,7 @@ export class CierreService {
           s."scheduledAt"     AS "scheduledAt",
           CASE
             -- Jugadas NUMERO: usar su multiplicador como banda
-            -- ✅ VALIDACIÓN DE RANGOS: Verifica que el multiplicador esté activo y aplicable al momento/ticket
+            --  VALIDACIÓN DE RANGOS: Verifica que el multiplicador esté activo y aplicable al momento/ticket
             -- - appliesToDate: Si está definido, el ticket debe haberse creado DESPUÉS de esa fecha
             -- - appliesToSorteoId: Si está definido, debe coincidir exactamente con el sorteo del ticket
             WHEN j.type = 'NUMERO' AND EXISTS (
@@ -191,9 +191,9 @@ export class CierreService {
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'YYYY-MM-DD') as fecha,
         l.id as "loteriaId",
         l.name as "loteriaNombre",
-        base."sorteoId" as "sorteoId", -- ✅ NUEVO: ID del sorteo para agrupar
+        base."sorteoId" as "sorteoId", --  NUEVO: ID del sorteo para agrupar
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') as turno,
-        MIN(base."scheduledAt") as "scheduledAt", -- ✅ NUEVO: Fecha/hora programada del sorteo (MIN porque es el mismo sorteo)
+        MIN(base."scheduledAt") as "scheduledAt", --  NUEVO: Fecha/hora programada del sorteo (MIN porque es el mismo sorteo)
         COALESCE(SUM(base.amount), 0)::FLOAT as "totalVendida",
         COALESCE(SUM(base.payout), 0)::FLOAT as ganado,
         COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT as "comisionTotal",
@@ -209,7 +209,7 @@ export class CierreService {
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'YYYY-MM-DD'),
         l.id,
         l.name,
-        base."sorteoId", -- ✅ NUEVO: Agrupar por sorteoId
+        base."sorteoId", --  NUEVO: Agrupar por sorteoId
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI')
       ORDER BY
         l.name ASC,
@@ -356,7 +356,7 @@ export class CierreService {
       conditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
     }
 
-    // ✅ NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
+    //  NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
     conditions.push(Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "sorteo_lista_exclusion" sle
       WHERE sle.sorteo_id = t."sorteoId"
@@ -373,7 +373,7 @@ export class CierreService {
   }
 
   /**
-   * ✅ NUEVA: Transforma datos raw en estructura jerárquica weekly
+   *  NUEVA: Transforma datos raw en estructura jerárquica weekly
    * Organiza por: Lotería → Sorteo → Tipo → Banda
    * Estructura solicitada por el frontend
    */
@@ -382,12 +382,12 @@ export class CierreService {
     totals: CeldaMetrics;
     orphanedDataCount?: number;
   } {
-    // ✅ NUEVA ESTRUCTURA: Mapas para agrupar datos (sin separar por tipo)
+    //  NUEVA ESTRUCTURA: Mapas para agrupar datos (sin separar por tipo)
     const loteriaMap = new Map<string, {
       loteria: { id: string; name: string };
       sorteos: Map<string, {
         sorteo: { id: string; turno: string; scheduledAt?: string };
-        bands: Map<string, CierreBandData>; // ✅ Bands directamente (suma de NUMERO + REVENTADO)
+        bands: Map<string, CierreBandData>; //  Bands directamente (suma de NUMERO + REVENTADO)
         subtotal: CeldaMetrics;
       }>;
       subtotal: CeldaMetrics;
@@ -480,12 +480,12 @@ export class CierreService {
     // Convertir Maps a arrays
     const loterias: CierreLoteriaGroup[] = [];
 
-    // ✅ Usar Array.from() para evitar errores de iteración en TypeScript
+    //  Usar Array.from() para evitar errores de iteración en TypeScript
     for (const [loteriaId, loteriaGroup] of Array.from(loteriaMap.entries())) {
       const sorteos: CierreSorteoGroup[] = [];
 
       for (const [sorteoId, sorteoGroup] of Array.from(loteriaGroup.sorteos.entries())) {
-        // ✅ Convertir Map de bandas a Record (ya sumadas NUMERO + REVENTADO)
+        //  Convertir Map de bandas a Record (ya sumadas NUMERO + REVENTADO)
         const bands: Record<string, CierreBandData> = {};
         for (const [bandaKey, bandData] of Array.from(sorteoGroup.bands.entries())) {
           bands[bandaKey] = bandData;
@@ -493,12 +493,12 @@ export class CierreService {
 
         sorteos.push({
           sorteo: sorteoGroup.sorteo,
-          bands, // ✅ Bands directamente (sin tipos)
+          bands, //  Bands directamente (sin tipos)
           subtotal: sorteoGroup.subtotal,
         });
       }
 
-      // ✅ NUEVO: Ordenar sorteos por fecha (si está disponible) y luego por hora
+      //  NUEVO: Ordenar sorteos por fecha (si está disponible) y luego por hora
       sorteos.sort((a, b) => {
         // Si ambos tienen scheduledAt, ordenar por fecha primero
         if (a.sorteo.scheduledAt && b.sorteo.scheduledAt) {
@@ -524,7 +524,7 @@ export class CierreService {
     // Ordenar loterías alfabéticamente
     loterias.sort((a, b) => a.loteria.name.localeCompare(b.loteria.name));
 
-    // ✅ VALIDACIÓN CRÍTICA: Verificar que totals = Σ(loterias[].subtotal)
+    //  VALIDACIÓN CRÍTICA: Verificar que totals = Σ(loterias[].subtotal)
     const sumLoterias = loterias.reduce((acc, l) => {
       acc.totalVendida += l.subtotal.totalVendida;
       acc.ganado += l.subtotal.ganado;
@@ -812,7 +812,7 @@ export interface AnomaliesResult {
     createdAt: string;
     amount: number;
   }[];
-  orphanedDataCount?: number; // ✅ Datos huérfanos (discrepancia entre totals y Σ(loterias[].subtotal))
+  orphanedDataCount?: number; //  Datos huérfanos (discrepancia entre totals y Σ(loterias[].subtotal))
 }
 
 // Construye bandsUsed a partir de la estructura resultado

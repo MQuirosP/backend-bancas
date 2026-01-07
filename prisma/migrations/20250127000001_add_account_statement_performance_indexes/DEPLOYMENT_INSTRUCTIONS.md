@@ -1,10 +1,10 @@
 # Instrucciones de Despliegue: Índices de Rendimiento para Estados de Cuenta
 
-## ⚠️ IMPORTANTE: No usar `migrate deploy`
+## ️ IMPORTANTE: No usar `migrate deploy`
 
 **Razón:** `CREATE INDEX CONCURRENTLY` no puede ejecutarse dentro de una transacción, y `prisma migrate deploy` ejecuta las migraciones en transacciones.
 
-## ✅ Solución: Ejecutar SQL Manualmente
+##  Solución: Ejecutar SQL Manualmente
 
 ### Paso 1: Ejecutar SQL en Supabase
 
@@ -12,7 +12,7 @@
 2. Abrir el archivo: `prisma/migrations/20250127000001_add_account_statement_performance_indexes/migration.sql`
 3. Copiar **TODO el contenido** (desde la primera línea `CREATE INDEX CONCURRENTLY`)
 4. Pegar en SQL Editor
-5. Click en **"Run"** (▶️)
+5. Click en **"Run"** (️)
 6. **ESPERAR** a que complete (puede tomar 5-15 minutos, **NO interrumpir**)
 
 ### Paso 2: Verificar que los Índices se Crearon
@@ -46,7 +46,7 @@ npx prisma migrate resolve --applied 20250127000001_add_account_statement_perfor
 
 Esto marca la migración como aplicada sin intentar ejecutarla nuevamente.
 
-## 🔍 Monitoreo Durante Ejecución
+##  Monitoreo Durante Ejecución
 
 Si quieres ver el progreso de la creación de índices:
 
@@ -60,14 +60,14 @@ SELECT
 FROM pg_stat_progress_create_index;
 ```
 
-## ✅ Verificación Post-Despliegue
+##  Verificación Post-Despliegue
 
 1. Verificar que los 7 índices aparecen en la query de verificación
 2. Probar endpoint: `GET /api/v1/accounts/statement?date=today`
 3. Verificar que el tiempo de respuesta es <1s
 4. Verificar logs de aplicación (no deben haber errores)
 
-## 🔄 Si Algo Sale Mal
+##  Si Algo Sale Mal
 
 Si algún índice falla:
 
@@ -85,7 +85,7 @@ DROP INDEX CONCURRENTLY IF EXISTS nombre_indice_ccold;
 
 4. Si todo falla, contactar al equipo de desarrollo
 
-## 📝 Notas
+##  Notas
 
 - Los índices se crean con `IF NOT EXISTS`, por lo que es seguro re-ejecutar
 - `CREATE INDEX CONCURRENTLY` no bloquea las tablas durante la creación

@@ -7,7 +7,7 @@
  *   - La tabla es un resumen para optimizar consultas, puede tener tickets, movimientos, o ambos
  * - Not already settled (isSettled = false)
  *
- * ⚠️ CRÍTICO: NO usa remainingBalance ≈ 0 como criterio.
+ * ️ CRÍTICO: NO usa remainingBalance ≈ 0 como criterio.
  * Los estados de cuenta siempre tendrán saldo (a favor o en contra).
  *
  * Schedule: Runs daily at 3:00 AM UTC (configurable via cronSchedule)
@@ -61,7 +61,7 @@ export async function executeSettlement(userId?: string): Promise<{
   errors?: Array<{ statementId: string; error: string }>;
 }> {
   try {
-    // ✅ CRÍTICO: Leer configuración desde BD (según especificación actualizada)
+    //  CRÍTICO: Leer configuración desde BD (según especificación actualizada)
     let config = await prisma.accountStatementSettlementConfig.findFirst();
     
     if (!config) {
@@ -75,7 +75,7 @@ export async function executeSettlement(userId?: string): Promise<{
       });
     }
 
-    // ✅ CRÍTICO: Ejecución manual NO requiere que enabled sea true (según especificación)
+    //  CRÍTICO: Ejecución manual NO requiere que enabled sea true (según especificación)
     // Solo verificar enabled para ejecuciones automáticas (cuando userId es undefined)
     if (!userId && !config.enabled) {
       logger.info({
@@ -92,7 +92,7 @@ export async function executeSettlement(userId?: string): Promise<{
       };
     }
 
-    // ✅ CRÍTICO: Calcular fecha límite usando zona horaria de CR
+    //  CRÍTICO: Calcular fecha límite usando zona horaria de CR
     // date < (today - settlementAgeDays días) en zona horaria de CR
     const { crDateService } = await import('../utils/crDateService');
     
@@ -108,7 +108,7 @@ export async function executeSettlement(userId?: string): Promise<{
     const cutoffDateCR = new Date(todayCR);
     cutoffDateCR.setUTCDate(cutoffDateCR.getUTCDate() - config.settlementAgeDays);
 
-    // ✅ DIAGNÓSTICO: Contar estados para entender qué está pasando
+    //  DIAGNÓSTICO: Contar estados para entender qué está pasando
     const totalStatements = await prisma.accountStatement.count();
     const settledStatementsCount = await prisma.accountStatement.count({
       where: { isSettled: true }
@@ -140,11 +140,11 @@ export async function executeSettlement(userId?: string): Promise<{
       }
     });
 
-    // ✅ CRÍTICO: Buscar todos los statements antiguos (con o sin actividad)
+    //  CRÍTICO: Buscar todos los statements antiguos (con o sin actividad)
     // Criterios actualizados para Universal Settlement:
-    // 1. date < (today - settlementAgeDays días) ✅
-    // 2. isSettled = false ✅
-    // 3. NO requiere actividad (permite cerrar días vacíos del historial) ✅
+    // 1. date < (today - settlementAgeDays días) 
+    // 2. isSettled = false 
+    // 3. NO requiere actividad (permite cerrar días vacíos del historial) 
     const statementsToSettle = await prisma.accountStatement.findMany({
       where: {
         isSettled: false,
@@ -171,7 +171,7 @@ export async function executeSettlement(userId?: string): Promise<{
 
     for (const statement of statementsToSettle) {
       try {
-        // ✅ CRÍTICO: Recalcular totalPaid y totalCollected desde movimientos activos
+        //  CRÍTICO: Recalcular totalPaid y totalCollected desde movimientos activos
         // Esto asegura que los totales estén actualizados si hubo cambios en los movimientos
         const totalPaid = statement.payments
           .filter(p => p.type === 'payment' && !p.isReversed)
@@ -181,7 +181,7 @@ export async function executeSettlement(userId?: string): Promise<{
           .filter(p => p.type === 'collection' && !p.isReversed)
           .reduce((sum, p) => sum + p.amount, 0);
 
-        // ✅ CORRECCIÓN CRÍTICA: NO recalcular remainingBalance
+        //  CORRECCIÓN CRÍTICA: NO recalcular remainingBalance
         // El remainingBalance ya está calculado correctamente cuando se creó/actualizó el statement
         // Recalcularlo aquí causa errores porque:
         // - statement.balance ya incluye movimientos: balance = sales - payouts - commission + totalPaid - totalCollected
@@ -194,7 +194,7 @@ export async function executeSettlement(userId?: string): Promise<{
         // Solo actualizamos totalPaid y totalCollected para asegurar que estén sincronizados con los movimientos
         // El remainingBalance se mantiene como está (fue calculado correctamente cuando se creó el statement)
 
-        // ✅ CRÍTICO: NO usar calculateIsSettled (requiere remainingBalance ≈ 0)
+        //  CRÍTICO: NO usar calculateIsSettled (requiere remainingBalance ≈ 0)
         // Si llegó aquí, ya cumple los criterios:
         // - date < (today - settlementAgeDays)
         // - ticketCount > 0
@@ -202,7 +202,7 @@ export async function executeSettlement(userId?: string): Promise<{
         // Por lo tanto, debe asentarse directamente
         
         // Actualizar statement como asentado
-        // ✅ IMPORTANTE: NO actualizar remainingBalance, mantener el valor existente que es correcto
+        //  IMPORTANTE: NO actualizar remainingBalance, mantener el valor existente que es correcto
         await AccountStatementRepository.update(statement.id, {
           isSettled: true,
           canEdit: false,

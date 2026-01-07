@@ -1,4 +1,4 @@
--- ✅ Agregar campo listeroCommissionAmount a Jugada para snapshot de comisión del listero
+--  Agregar campo listeroCommissionAmount a Jugada para snapshot de comisión del listero
 -- Este campo almacena la comisión del listero (ventana) calculada desde políticas VENTANA/BANCA
 -- al momento de crear el ticket, permitiendo cálculos rápidos sin recalcular desde políticas
 

@@ -65,12 +65,12 @@ export class AccountsExportCsvService {
     for (const item of payload.statements) {
       const date = this.formatDate(item.date);
       
-      // ✅ NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
+      //  NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
       const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
                           (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
       if (hasGrouping) {
-        // ✅ NUEVO: Fila de total consolidado con "TODOS"
+        //  NUEVO: Fila de total consolidado con "TODOS"
         const totalEntity = isDimensionVentana ? 'TODOS' : 'TODOS';
         
         if (isDimensionVentana) {
@@ -101,7 +101,7 @@ export class AccountsExportCsvService {
           );
         }
 
-        // ✅ NUEVO: Filas de desglose por entidad con prefijo visual
+        //  NUEVO: Filas de desglose por entidad con prefijo visual
         if (isDimensionVentana && item.byVentana) {
           for (const breakdown of item.byVentana) {
             const breakdownEntity = `  - ${breakdown.ventanaName}`;
@@ -136,7 +136,7 @@ export class AccountsExportCsvService {
           }
         }
       } else {
-        // ✅ Comportamiento normal cuando NO hay agrupación
+        //  Comportamiento normal cuando NO hay agrupación
         const entity = isDimensionVentana
           ? this.escapeCsv(item.ventanaName || '-')
           : this.escapeCsv(item.vendedorName || '-');
@@ -286,7 +286,7 @@ export class AccountsExportCsvService {
 
   /**
    * Formatea número como moneda (sin símbolo para CSV)
-   * ✅ CRÍTICO: Números negativos con paréntesis y signo de menos
+   *  CRÍTICO: Números negativos con paréntesis y signo de menos
    */
   private static formatCurrency(value: number): string {
     if (value < 0) {

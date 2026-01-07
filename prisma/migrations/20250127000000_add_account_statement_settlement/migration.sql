@@ -1,10 +1,10 @@
 -- AlterTable
--- ✅ SEGURO: Agregar campos nullable a AccountStatement (no afecta datos existentes)
+--  SEGURO: Agregar campos nullable a AccountStatement (no afecta datos existentes)
 ALTER TABLE "AccountStatement" ADD COLUMN "settledAt" TIMESTAMP(3);
 ALTER TABLE "AccountStatement" ADD COLUMN "settledBy" UUID;
 
 -- CreateTable
--- ✅ SEGURO: Nueva tabla AccountStatementSettlementConfig (no afecta datos existentes)
+--  SEGURO: Nueva tabla AccountStatementSettlementConfig (no afecta datos existentes)
 CREATE TABLE "AccountStatementSettlementConfig" (
     "id" UUID NOT NULL,
     "enabled" BOOLEAN NOT NULL DEFAULT false,
@@ -24,12 +24,12 @@ CREATE TABLE "AccountStatementSettlementConfig" (
 );
 
 -- CreateIndex
--- ✅ SEGURO: Índices para optimizar queries (no afecta datos)
+--  SEGURO: Índices para optimizar queries (no afecta datos)
 CREATE INDEX "AccountStatement_isSettled_date_idx" ON "AccountStatement"("isSettled", "date");
 CREATE INDEX "AccountStatementSettlementConfig_enabled_idx" ON "AccountStatementSettlementConfig"("enabled");
 
 -- AddForeignKey
--- ✅ SEGURO: Foreign keys (no modifica datos existentes)
+--  SEGURO: Foreign keys (no modifica datos existentes)
 ALTER TABLE "AccountStatement" ADD CONSTRAINT "AccountStatement_settledBy_fkey" FOREIGN KEY ("settledBy") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey

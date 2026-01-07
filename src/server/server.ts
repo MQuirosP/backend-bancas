@@ -18,7 +18,7 @@ server.listen(config.port, async () => {
     payload: { port: config.port },
   })
 
-  // ✅ OPTIMIZACIÓN: Inicializar Redis (opcional, no bloquea el servidor)
+  //  OPTIMIZACIÓN: Inicializar Redis (opcional, no bloquea el servidor)
   try {
     await initRedisClient()
   } catch (error: any) {
@@ -125,7 +125,7 @@ const gracefulShutdown = async (signal: string) => {
     })
   }
 
-  // ✅ OPTIMIZACIÓN: Cerrar conexión Redis
+  //  OPTIMIZACIÓN: Cerrar conexión Redis
   try {
     await closeRedisClient()
   } catch (error: any) {

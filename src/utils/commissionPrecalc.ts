@@ -1,5 +1,5 @@
 // src/utils/commissionPrecalc.ts
-// ⚠️ DEPRECATED: Este archivo está deprecado. Usar CommissionService de src/services/commission/CommissionService.ts
+// ️ DEPRECATED: Este archivo está deprecado. Usar CommissionService de src/services/commission/CommissionService.ts
 // Se mantiene por compatibilidad durante la migración
 
 import { commissionService } from '../services/commission/CommissionService';

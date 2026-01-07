@@ -141,7 +141,7 @@ export const TicketService = {
         where: { id: sorteoId },
         select: {
           id: true,
-          name: true, // ✅ Incluir name para formatear con hora
+          name: true, //  Incluir name para formatear con hora
           scheduledAt: true,
           status: true,
           loteriaId: true,
@@ -150,7 +150,7 @@ export const TicketService = {
       });
       if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
 
-      // ✅ NUEVA VALIDACIÓN: Verificar que el sorteo no esté cerrado
+      //  NUEVA VALIDACIÓN: Verificar que el sorteo no esté cerrado
       if (sorteo.status === "CLOSED") {
         throw new AppError(
           "No se pueden crear tickets en un sorteo cerrado",
@@ -166,7 +166,7 @@ export const TicketService = {
         );
       }
 
-      // ✅ VALIDACIÓN DEFENSIVA: Verificar que scheduledAt sea válido ANTES de calcular fechas
+      //  VALIDACIÓN DEFENSIVA: Verificar que scheduledAt sea válido ANTES de calcular fechas
       try {
         validateDate(sorteo.scheduledAt, 'sorteo.scheduledAt');
       } catch (err: any) {
@@ -188,17 +188,17 @@ export const TicketService = {
         );
       }
 
-      // ⏱ cutoff efectivo (rules → RestrictionRuleRepository)
+      //  cutoff efectivo (rules → RestrictionRuleRepository)
       const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
         bancaId: ventana.bancaId,
         ventanaId,
-        userId: effectiveVendedorId, // ✅ CORRECCIÓN: Usar el vendedor efectivo para respetar sus reglas
+        userId: effectiveVendedorId, //  CORRECCIÓN: Usar el vendedor efectivo para respetar sus reglas
         defaultCutoff: 1,
       });
 
-      const now = nowCR(); // ✅ Usar nowCR() en lugar de new Date()
+      const now = nowCR(); //  Usar nowCR() en lugar de new Date()
 
-      // ✅ VALIDACIÓN DEFENSIVA: Asegurar que minutes sea un número válido
+      //  VALIDACIÓN DEFENSIVA: Asegurar que minutes sea un número válido
       const safeMinutes = (typeof cutoff.minutes === 'number' && !isNaN(cutoff.minutes))
         ? cutoff.minutes
         : 1; // Fallback seguro a 5 min si viene corrupto
@@ -226,7 +226,7 @@ export const TicketService = {
         },
       });
 
-      // ⚠️ ALERTA: Si se usa DEFAULT fallback, loggear warning
+      // ️ ALERTA: Si se usa DEFAULT fallback, loggear warning
       if (cutoff.source === "DEFAULT") {
         logger.warn({
           layer: "service",
@@ -251,7 +251,7 @@ export const TicketService = {
         );
       }
 
-      // 🎯 Jugadas (el validador ya corrió)
+      //  Jugadas (el validador ya corrió)
       const jugadasIn: Array<{
         type?: "NUMERO" | "REVENTADO";
         number?: string;
@@ -280,7 +280,7 @@ export const TicketService = {
         }
       }
 
-      // 🔒 Validaciones por rulesJson de la Lotería (horarios + reglas de jugadas)
+      //  Validaciones por rulesJson de la Lotería (horarios + reglas de jugadas)
       // Nota: loteria ya fue obtenida del sorteo arriba
       const rules = (sorteo.loteria?.rulesJson ?? {}) as any;
 
@@ -303,7 +303,7 @@ export const TicketService = {
         throw new AppError(rulesCheck.reason, 400);
       }
 
-      // 🚀 OPTIMIZACIÓN: Pre-calcular comisiones fuera de la transacción
+      //  OPTIMIZACIÓN: Pre-calcular comisiones fuera de la transacción
       // Obtener políticas de comisión (una sola vez)
       const [user, ventanaWithBanca, listeroUser] = await Promise.all([
         prisma.user.findUnique({
@@ -321,7 +321,7 @@ export const TicketService = {
             },
           },
         }),
-        // ✅ Fetch listero user (Role.VENTANA) for this ventana
+        //  Fetch listero user (Role.VENTANA) for this ventana
         prisma.user.findFirst({
           where: {
             role: Role.VENTANA,
@@ -342,10 +342,10 @@ export const TicketService = {
         user?.commissionPolicyJson ?? null,
         ventanaWithBanca?.commissionPolicyJson ?? null,
         ventanaWithBanca?.banca?.commissionPolicyJson ?? null,
-        listeroUser?.commissionPolicyJson ?? null // ✅ Pass listero policy
+        listeroUser?.commissionPolicyJson ?? null //  Pass listero policy
       );
 
-      // 🧩 Normalizar jugadas para repo (sin comisiones aún)
+      //  Normalizar jugadas para repo (sin comisiones aún)
       const normalizedJugadas = jugadasIn.map((j) => {
         const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
         const isNumero = type === "NUMERO";
@@ -360,7 +360,7 @@ export const TicketService = {
         };
       });
 
-      // 🧩 Determinar campos de auditoría (createdBy y createdByRole)
+      //  Determinar campos de auditoría (createdBy y createdByRole)
       // Si el vendedor efectivo es diferente al actor autenticado, fue creado por otro
       let createdBy: string | undefined;
       let createdByRole: Role | undefined;
@@ -375,7 +375,7 @@ export const TicketService = {
         createdByRole = actor.role;
       }
 
-      // 🧩 Crear ticket con método optimizado
+      //  Crear ticket con método optimizado
       const { ticket, warnings } = await TicketRepository.createOptimized(
         {
           loteriaId,
@@ -394,7 +394,7 @@ export const TicketService = {
         }
       );
 
-      // 🖨️ Obtener configuraciones de impresión del vendedor y ventana
+      // ️ Obtener configuraciones de impresión del vendedor y ventana
       const vendedor = await prisma.user.findUnique({
         where: { id: effectiveVendedorId },
         select: { name: true, phone: true, settings: true },
@@ -404,7 +404,7 @@ export const TicketService = {
         select: { name: true, phone: true, settings: true },
       });
 
-      // ✅ Formatear sorteo.name concatenando la hora (requerido por frontend)
+      //  Formatear sorteo.name concatenando la hora (requerido por frontend)
       // El ticket de createOptimized no incluye sorteo, así que lo obtenemos por separado
       const sorteoWithFormattedName = {
         ...sorteo,
@@ -484,7 +484,7 @@ export const TicketService = {
       throw new AppError("Ticket no encontrado", 404);
     }
 
-    // ✅ Validar que sorteo existe y tiene name (requerido por frontend)
+    //  Validar que sorteo existe y tiene name (requerido por frontend)
     if (!ticket.sorteo) {
       logger.error({
         layer: "service",
@@ -517,7 +517,7 @@ export const TicketService = {
       throw new AppError("El sorteo asociado no tiene nombre válido", 500);
     }
 
-    // 🖨️ Obtener configuraciones de impresión del vendedor y ventana
+    // ️ Obtener configuraciones de impresión del vendedor y ventana
     const vendedor = await prisma.user.findUnique({
       where: { id: ticket.vendedorId },
       select: { name: true, phone: true, settings: true },
@@ -527,7 +527,7 @@ export const TicketService = {
       select: { name: true, phone: true, settings: true },
     });
 
-    // ✅ Formatear sorteo.name concatenando la hora (requerido por frontend)
+    //  Formatear sorteo.name concatenando la hora (requerido por frontend)
     const sorteoWithFormattedName = {
       ...ticket.sorteo,
       name: formatSorteoNameWithTime(ticket.sorteo.name, ticket.sorteo.scheduledAt),
@@ -622,7 +622,7 @@ export const TicketService = {
       if (!ticket) throw new AppError("Ticket no encontrado", 404);
       if (!ticket.isWinner) throw new AppError("El ticket no es ganador", 409);
 
-      // ✅ NUEVA VALIDACIÓN: Verificar que el sorteo no esté cerrado
+      //  NUEVA VALIDACIÓN: Verificar que el sorteo no esté cerrado
       if (ticket.sorteo?.status === "CLOSED") {
         throw new AppError(
           "No se pueden registrar pagos para tickets de sorteos cerrados",
@@ -684,7 +684,7 @@ export const TicketService = {
       const historyEntry: PaymentHistoryEntry = {
         id: crypto.randomUUID(),
         amountPaid: data.amountPaid,
-        paidAt: formatDateCRWithTZ(nowCR()), // ✅ Usar formatDateCRWithTZ para timezone explícito
+        paidAt: formatDateCRWithTZ(nowCR()), //  Usar formatDateCRWithTZ para timezone explícito
         paidById: userId,
         paidByName: user?.name ?? "Unknown",
         method: data.method ?? "cash",
@@ -1040,16 +1040,16 @@ export const TicketService = {
       vendedorId?: string | null;
       loteriaId?: string;
       sorteoId?: string;
-      multiplierId?: string; // ✅ NUEVO
-      status?: string; // ✅ NUEVO
-      page?: number; // ✅ NUEVO: Paginación (0-9 para MONAZOS)
-      pageSize?: number; // ✅ NUEVO: Tamaño de página (default: 100)
+      multiplierId?: string; //  NUEVO
+      status?: string; //  NUEVO
+      page?: number; //  NUEVO: Paginación (0-9 para MONAZOS)
+      pageSize?: number; //  NUEVO: Tamaño de página (default: 100)
     },
     role: string,
     userId: string
   ) {
     try {
-      // ✅ FIX: Regla especial - cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha
+      //  FIX: Regla especial - cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha
       const hasSorteoId = !!params.sorteoId;
       const hasExplicitDateRange = !!(params.fromDate || params.toDate);
 
@@ -1070,7 +1070,7 @@ export const TicketService = {
       // Construir filtro para tickets según dimension y scope
       const ticketWhere: any = {
         deletedAt: null,
-        // ✅ FIX: Solo aplicar filtro de fecha si dateRange no es null
+        //  FIX: Solo aplicar filtro de fecha si dateRange no es null
         ...(dateRange ? {
           createdAt: {
             gte: dateRange.fromAt,
@@ -1087,13 +1087,13 @@ export const TicketService = {
         ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
       };
 
-      // ✅ NUEVO: Aplicar exclusión de listas si hay sorteoId
+      //  NUEVO: Aplicar exclusión de listas si hay sorteoId
       if (params.sorteoId) {
         const exclusionCondition = await getExclusionWhereCondition(params.sorteoId);
         Object.assign(ticketWhere, exclusionCondition);
       }
 
-      // ✅ FIX: Si hay multiplierId, filtrar tickets que tengan al menos una jugada NUMERO con ese multiplierId
+      //  FIX: Si hay multiplierId, filtrar tickets que tengan al menos una jugada NUMERO con ese multiplierId
       // Esto asegura que los REVENTADO incluidos estén en los mismos tickets que los NUMERO filtrados
       if (params.multiplierId) {
         ticketWhere.jugadas = {
@@ -1149,13 +1149,13 @@ export const TicketService = {
       }
       // Si scope='all' y no hay filtros específicos ni dimension, no agregar filtros de ventanaId/vendedorId
 
-      // ✅ NUEVO: Obtener sorteo/lotería para detectar digits y reventadoEnabled
+      //  NUEVO: Obtener sorteo/lotería para detectar digits y reventadoEnabled
       let sorteoDigits = 2; // Default
       let sorteoName = '';
       let reventadoEnabled = true; // Default (asumir habilitado si no se puede determinar)
       let multiplierName = '';
 
-      // ✅ NUEVO: Obtener nombre del multiplicador si está presente
+      //  NUEVO: Obtener nombre del multiplicador si está presente
       if (params.multiplierId) {
         const multiplier = await prisma.loteriaMultiplier.findUnique({
           where: { id: params.multiplierId },
@@ -1164,7 +1164,7 @@ export const TicketService = {
         multiplierName = multiplier?.name || '';
       }
 
-      // ✅ NUEVO: Variable para almacenar información de números ganadores
+      //  NUEVO: Variable para almacenar información de números ganadores
       let winningNumbersInfo: {
         sorteoId: string;
         sorteoName: string;
@@ -1185,7 +1185,7 @@ export const TicketService = {
             id: true,
             name: true,
             status: true,
-            winningNumber: true, // ✅ NUEVO: Obtener número ganador
+            winningNumber: true, //  NUEVO: Obtener número ganador
             loteria: {
               select: { rulesJson: true }
             }
@@ -1197,11 +1197,11 @@ export const TicketService = {
         const loteriaRules = sorteo?.loteria?.rulesJson as any;
         reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
 
-        // ✅ Usar resolveDigits para obtener digits desde rulesJson
+        //  Usar resolveDigits para obtener digits desde rulesJson
         const { resolveDigits } = await import('../../../utils/loteriaRules');
         sorteoDigits = resolveDigits(loteriaRules, 2);
 
-        // ✅ NUEVO: Si el sorteo está evaluado y tiene número ganador, preparar info
+        //  NUEVO: Si el sorteo está evaluado y tiene número ganador, preparar info
         if (sorteo && sorteo.status === 'EVALUATED' && sorteo.winningNumber) {
           winningNumbersInfo = {
             sorteoId: sorteo.id,
@@ -1239,23 +1239,23 @@ export const TicketService = {
         const loteriaRules = loteria?.rulesJson as any;
         reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
         
-        // ✅ Usar resolveDigits para obtener digits desde rulesJson
+        //  Usar resolveDigits para obtener digits desde rulesJson
         const { resolveDigits } = await import('../../../utils/loteriaRules');
         sorteoDigits = resolveDigits(loteriaRules, 2);
       }
 
-      // ✅ Calcular rango dinámico basado en digits
+      //  Calcular rango dinámico basado en digits
       const maxNumber = Math.pow(10, sorteoDigits) - 1; // 2 digits -> 99, 3 digits -> 999
 
-      // ✅ OPTIMIZED: Fetch tickets with jugadas and metadata in a single query
+      //  OPTIMIZED: Fetch tickets with jugadas and metadata in a single query
       // Build jugada filter for nested query
-      // ✅ CRÍTICO: NO filtrar por multiplierId aquí, ya que el filtro se aplica a nivel de ticket
+      //  CRÍTICO: NO filtrar por multiplierId aquí, ya que el filtro se aplica a nivel de ticket
       // Esto permite incluir TANTO las jugadas NUMERO con el multiplierId especificado
       // COMO las jugadas REVENTADO que van automáticamente con ellas en el mismo ticket
       const jugadaFilter: any = {
         deletedAt: null,
         isActive: true,
-        isExcluded: false, // ✅ FIX: Excluir jugadas marcadas como excluidas
+        isExcluded: false, //  FIX: Excluir jugadas marcadas como excluidas
       };
 
       const tickets = await prisma.ticket.findMany({
@@ -1272,7 +1272,7 @@ export const TicketService = {
               reventadoNumber: true,
               type: true,
               amount: true,
-              multiplierId: true, // ✅ CRÍTICO: Necesario para filtrar por multiplierId
+              multiplierId: true, //  CRÍTICO: Necesario para filtrar por multiplierId
               commissionAmount: true,
               listeroCommissionAmount: true,
             },
@@ -1314,7 +1314,7 @@ export const TicketService = {
       // Flatten jugadas from all tickets
       let jugadas = tickets.flatMap(t => t.jugadas);
 
-      // ✅ CRÍTICO: Si hay filtro por multiplierId, filtrar jugadas en memoria
+      //  CRÍTICO: Si hay filtro por multiplierId, filtrar jugadas en memoria
       // Los tickets ya están filtrados (solo tickets con al menos una jugada con ese multiplierId)
       // PERO necesitamos filtrar las jugadas para incluir solo:
       // - Jugadas NUMERO con ese multiplierId
@@ -1359,8 +1359,8 @@ export const TicketService = {
       const sorteoDate = tickets[0]?.sorteo?.scheduledAt;
 
       // Agrupar por número base
-      // ✅ CRÍTICO: Para NUMERO: usar jugada.number
-      // ✅ CRÍTICO: Para REVENTADO: usar jugada.number (número base) - los reventados se agrupan con su número base
+      //  CRÍTICO: Para NUMERO: usar jugada.number
+      //  CRÍTICO: Para REVENTADO: usar jugada.number (número base) - los reventados se agrupan con su número base
       const numbersMap = new Map<string, {
         amountByNumber: number;
         amountByReventado: number;
@@ -1368,11 +1368,11 @@ export const TicketService = {
         ticketIdsByReventado: Set<string>;
       }>();
 
-      // ✅ Inicialización dinámica: solo crear entradas para números con ventas (lazy)
+      //  Inicialización dinámica: solo crear entradas para números con ventas (lazy)
       // No inicializamos aquí - se crearán bajo demanda en el loop de jugadas
 
       // Procesar jugadas
-      // ✅ CRÍTICO: Los REVENTADOS deben agruparse por el número base (jugada.number), no por reventadoNumber
+      //  CRÍTICO: Los REVENTADOS deben agruparse por el número base (jugada.number), no por reventadoNumber
       // Un REVENTADO siempre está asociado a un número base (NUMERO) del mismo ticket
       for (const jugada of jugadas) {
         let numberToUse: string;
@@ -1381,7 +1381,7 @@ export const TicketService = {
           // Para NUMERO, usar el número directamente
           numberToUse = jugada.number.padStart(sorteoDigits, '0');
         } else if (jugada.type === 'REVENTADO') {
-          // ✅ CRÍTICO: Para REVENTADO, usar jugada.number (número base) como clave
+          //  CRÍTICO: Para REVENTADO, usar jugada.number (número base) como clave
           // El reventadoNumber es solo informativo, pero la agrupación debe ser por el número base
           numberToUse = jugada.number.padStart(sorteoDigits, '0');
         } else {
@@ -1389,7 +1389,7 @@ export const TicketService = {
           numberToUse = jugada.number.padStart(sorteoDigits, '0');
         }
 
-        // ✅ Validar que el número esté en el rango dinámico (0 a maxNumber)
+        //  Validar que el número esté en el rango dinámico (0 a maxNumber)
         const numValue = parseInt(numberToUse, 10);
         if (numValue < 0 || numValue > maxNumber) {
           continue; // Saltar números inválidos
@@ -1411,7 +1411,7 @@ export const TicketService = {
           numData.amountByNumber += jugada.amount || 0;
           numData.ticketIdsByNumber.add(jugada.ticketId);
         } else if (jugada.type === 'REVENTADO') {
-          // ✅ CRÍTICO: Los REVENTADOS se agregan al número base
+          //  CRÍTICO: Los REVENTADOS se agregan al número base
           numData.amountByReventado += jugada.amount || 0;
           numData.ticketIdsByReventado.add(jugada.ticketId);
         } else {
@@ -1421,7 +1421,7 @@ export const TicketService = {
         }
       }
 
-      // ✅ Determinar rango de números a retornar (paginación)
+      //  Determinar rango de números a retornar (paginación)
       const pageSize = params.pageSize || 100;
       const page = params.page;
 
@@ -1434,7 +1434,7 @@ export const TicketService = {
         endNumber = Math.min(startNumber + pageSize - 1, maxNumber);
       }
 
-      // ✅ Construir array de respuesta ordenado dinámicamente
+      //  Construir array de respuesta ordenado dinámicamente
       const data = Array.from({ length: endNumber - startNumber + 1 }, (_, i) => {
         const numValue = startNumber + i;
         const numStr = String(numValue).padStart(sorteoDigits, '0');
@@ -1462,7 +1462,7 @@ export const TicketService = {
         };
       });
 
-      // ✅ Calcular totales GLOBALES (de todos los números, no solo la página actual)
+      //  Calcular totales GLOBALES (de todos los números, no solo la página actual)
       let totalAmountByNumber = 0;
       let totalAmountByReventado = 0;
       const allUniqueTicketIds = new Set<string>();
@@ -1477,7 +1477,7 @@ export const TicketService = {
       const totalAmount = totalAmountByNumber + totalAmountByReventado;
       const totalTickets = allUniqueTicketIds.size;
 
-      // ✅ NUEVO: Calcular commission breakdown por tipo de jugada
+      //  NUEVO: Calcular commission breakdown por tipo de jugada
       let commissionByNumber = 0;
       let commissionByReventado = 0;
 
@@ -1506,7 +1506,7 @@ export const TicketService = {
 
       const totalCommission = commissionByNumber + commissionByReventado;
 
-      // ✅ NUEVO: Obtener solo los números que tienen apuestas (amountByNumber > 0 o amountByReventado > 0)
+      //  NUEVO: Obtener solo los números que tienen apuestas (amountByNumber > 0 o amountByReventado > 0)
       const numbersWithBets = Array.from(numbersMap.entries())
         .filter(([_, numData]) => numData.amountByNumber > 0 || numData.amountByReventado > 0)
         .map(([number, _]) => number)
@@ -1518,14 +1518,14 @@ export const TicketService = {
           dateFilter: params.date || "today",
           ...(params.fromDate ? { fromDate: params.fromDate } : {}),
           ...(params.toDate ? { toDate: params.toDate } : {}),
-          // ✅ NUEVO: Metadatos dinámicos basados en sorteo.digits
+          //  NUEVO: Metadatos dinámicos basados en sorteo.digits
           totalNumbers: maxNumber + 1,
           sorteoDigits,
           maxNumber,
-          reventadoEnabled, // ✅ NUEVO: Indica si reventado está habilitado (para mostrar/ocultar columnas en FE)
+          reventadoEnabled, //  NUEVO: Indica si reventado está habilitado (para mostrar/ocultar columnas en FE)
           ...(sorteoName ? { sorteoName } : {}),
           ...(multiplierName ? { multiplierName } : {}),
-          // ✅ NUEVO: Metadatos de paginación
+          //  NUEVO: Metadatos de paginación
           ...(page !== undefined ? {
             pagination: {
               page,
@@ -1540,13 +1540,13 @@ export const TicketService = {
           totalAmountByReventado,
           totalAmount,
           totalTickets,
-          // ✅ NUEVO: Commission breakdown
+          //  NUEVO: Commission breakdown
           commissionByNumber,
           commissionByReventado,
           totalCommission,
-          // ✅ NUEVO: Números que tienen apuestas
+          //  NUEVO: Números que tienen apuestas
           numbersWithBets,
-          // ✅ NUEVO: Información de números ganadores (si el sorteo está evaluado)
+          //  NUEVO: Información de números ganadores (si el sorteo está evaluado)
           ...(winningNumbersInfo ? { winningNumbers: winningNumbersInfo } : {}),
           ...(params.dimension ? { dimension: params.dimension } : {}),
           ...(params.ventanaId ? { ventanaId: params.ventanaId } : {}),
@@ -2063,7 +2063,7 @@ export const TicketService = {
             valueX: m.valueX,
             loteriaId: m.loteriaId,
             loteriaName: m.loteria?.name || '',
-            ticketCount, // ✅ Ahora cuenta tickets únicos, no jugadas
+            ticketCount, //  Ahora cuenta tickets únicos, no jugadas
           };
         })
         .sort((a, b) => a.valueX - b.valueX);
@@ -2216,7 +2216,7 @@ export const TicketService = {
           loteriaId: true,
           sorteoId: true,
           vendedorId: true,
-          ventanaId: true, // ✅ Necesario para agrupar por ventana
+          ventanaId: true, //  Necesario para agrupar por ventana
           status: true,
           jugadas: {
             where: jugadaWhere,
@@ -2510,7 +2510,7 @@ export const TicketService = {
             valueX: m.valueX,
             loteriaId: m.loteriaId,
             loteriaName: m.loteria?.name || '',
-            ticketCount, // ✅ Cuenta tickets únicos, no jugadas
+            ticketCount, //  Cuenta tickets únicos, no jugadas
           };
         })
         .sort((a, b) => a.valueX - b.valueX);
@@ -2539,7 +2539,7 @@ export const TicketService = {
         sorteos,
         multipliers: multipliersFiltered,
         vendedores,
-        ventanas, // ✅ NUEVO: Ventanas para filtro de Admin
+        ventanas, //  NUEVO: Ventanas para filtro de Admin
         meta: {
           totalTickets,
         },

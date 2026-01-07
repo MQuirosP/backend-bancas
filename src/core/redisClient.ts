@@ -1,6 +1,6 @@
 import logger from './logger';
 
-// ✅ OPTIMIZACIÓN: Cliente Redis opcional con graceful degradation
+//  OPTIMIZACIÓN: Cliente Redis opcional con graceful degradation
 // Si Redis no está disponible o falla, el sistema funciona normalmente sin caché
 
 let redisClient: any = null;
@@ -23,7 +23,7 @@ export async function initRedisClient(): Promise<void> {
     }
 
     try {
-        // ✅ OPTIMIZACIÓN: Detectar si es Upstash REST API (URL empieza con https://)
+        //  OPTIMIZACIÓN: Detectar si es Upstash REST API (URL empieza con https://)
         const isUpstashRest = process.env.REDIS_URL?.startsWith('https://');
 
         if (isUpstashRest) {

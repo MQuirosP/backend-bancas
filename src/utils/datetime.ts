@@ -26,7 +26,7 @@ function shiftFromCostaRica(date: Date): Date {
 }
 
 // ============================================================================
-// 🛡️ UTILIDADES DEFENSIVAS - Previenen errores "Invalid time value"
+// ️ UTILIDADES DEFENSIVAS - Previenen errores "Invalid time value"
 // ============================================================================
 
 /**
