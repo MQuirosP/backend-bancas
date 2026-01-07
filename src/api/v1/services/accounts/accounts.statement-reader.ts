@@ -1,7 +1,7 @@
 import prisma from "../../../../core/prismaClient";
 import { AccountStatement } from "@prisma/client";
 import logger from "../../../../core/logger";
-import { getPreviousMonthFinalBalance } from "./accounts.calculations";
+import { getPreviousMonthFinalBalance } from "./accounts.balances";
 
 /**
  * ✅ CRÍTICO: Helper para leer AccountStatement del día anterior

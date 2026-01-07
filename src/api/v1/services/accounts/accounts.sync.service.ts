@@ -17,7 +17,8 @@ import { AccountPaymentRepository } from "../../../../repositories/accountPaymen
 import { calculateIsSettled } from "./accounts.commissions";
 import { buildTicketDateFilter } from "./accounts.dates.utils";
 import { crDateService } from "../../../../utils/crDateService";
-import { getPreviousMonthFinalBalance, getExcludedTicketIdsForDate } from "./accounts.calculations";
+import { getPreviousMonthFinalBalance } from "./accounts.balances";
+import { getExcludedTicketIdsForDate } from "./accounts.calculations";
 
 /**
  * Servicio de sincronización de AccountStatement

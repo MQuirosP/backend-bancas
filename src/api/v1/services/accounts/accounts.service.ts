@@ -1,6 +1,6 @@
 import { AccountsFilters, DayStatement, StatementResponse } from "./accounts.types";
+import { getMonthDateRange, toCRDateString, getStatementDateRange } from "./accounts.dates.utils";
 import { resolveDateRange } from "../../../../utils/dateRange";
-import { getMonthDateRange, toCRDateString } from "./accounts.dates.utils";
 import { getMovementsForDay, getSorteoBreakdownBatch } from "./accounts.queries";
 import { getStatementDirect, calculateDayStatement, getSettledStatements, getDatesNotSettled } from "./accounts.calculations";
 import { registerPayment, reversePayment, deleteStatement } from "./accounts.movements";
@@ -39,17 +39,14 @@ export async function getMonthlyRemainingBalancesBatch(
         return result;
     }
 
-    const { resolveDateRange } = await import('../../../../utils/dateRange');
-    const monthRange = resolveDateRange('month');
-    const todayRange = resolveDateRange('today');
-    const monthStartDate = monthRange.fromAt;
-    const todayEndDate = todayRange.toAt;
+    // ✅ OPTIMIZACIÓN: Usar utilidad centralizada para rango de fechas
+    const { startDate, endDate } = getStatementDateRange(month);
 
     // ✅ OPTIMIZACIÓN: Una sola query para obtener todos los remainingBalance
     const where: Prisma.AccountStatementWhereInput = {
         date: {
-            gte: monthStartDate,
-            lte: todayEndDate,
+            gte: startDate,
+            lte: endDate,
         },
     };
 
@@ -141,7 +138,7 @@ export async function getMonthlyRemainingBalancesBatch(
     // calcular el saldo hasta HOY usando getStatementDirect (más lento pero preciso)
     if (entitiesNeedingTodayCalculation.length > 0) {
         const { getStatementDirect } = await import('./accounts.calculations');
-        const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(monthStartDate, todayEndDate);
+        const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
 
         // ✅ VALIDACIÓN: Asegurar que month sea válido antes de split
         if (!month || typeof month !== 'string') {
@@ -189,8 +186,8 @@ export async function getMonthlyRemainingBalancesBatch(
                             sort: "desc",
                             userRole: "ADMIN",
                         },
-                        monthStartDate,
-                        todayEndDate,
+                        startDate,
+                        endDate,
                         daysInMonth,
                         month,
                         dimension,
@@ -210,7 +207,7 @@ export async function getMonthlyRemainingBalancesBatch(
                         result.set(entityId, Number(lastStatement.remainingBalance || 0));
                     } else {
                         // Si no hay statements, usar saldo del mes anterior
-                        const { getPreviousMonthFinalBalance } = await import('./accounts.calculations');
+                        const { getPreviousMonthFinalBalance } = await import('./accounts.balances');
                         const previousBalance = await getPreviousMonthFinalBalance(
                             month,
                             dimension,
@@ -282,20 +279,14 @@ export async function getMonthlyRemainingBalance(
         return 0;
     }
 
-    const { resolveDateRange } = await import('../../../../utils/dateRange');
-
-    // ✅ CRÍTICO: Obtener rango desde inicio del mes hasta HOY (no hasta el final del mes)
-    const monthRange = resolveDateRange('month'); // Primer día del mes en CR
-    const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
-
-    const monthStartDate = monthRange.fromAt; // Primer día del mes en CR
-    const todayEndDate = todayRange.toAt; // Fin del día de hoy en CR
+    // ✅ OPTIMIZACIÓN: Usar utilidad centralizada para rango de fechas
+    const { startDate, endDate } = getStatementDateRange(month);
 
     // ✅ OPTIMIZACIÓN: Primero intentar obtener desde AccountStatement (mucho más rápido)
     const where: Prisma.AccountStatementWhereInput = {
         date: {
-            gte: monthStartDate,
-            lte: todayEndDate,
+            gte: startDate,
+            lte: endDate,
         },
     };
 
@@ -344,7 +335,7 @@ export async function getMonthlyRemainingBalance(
     const daysInMonth = new Date(year, monthNum, 0).getDate();
 
     const { getStatementDirect } = await import('./accounts.calculations');
-    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(monthStartDate, todayEndDate);
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
 
     try {
         const result = await getStatementDirect(
@@ -360,8 +351,8 @@ export async function getMonthlyRemainingBalance(
                 sort: "desc",
                 userRole: "ADMIN",
             },
-            monthStartDate,
-            todayEndDate,
+            startDate,
+            endDate,
             daysInMonth,
             month,
             dimension,
@@ -398,7 +389,7 @@ export async function getMonthlyRemainingBalance(
     }
 
     // ✅ ÚLTIMO FALLBACK: Si no hay statements hasta hoy, usar el saldo del mes anterior
-    const { getPreviousMonthFinalBalance } = await import('./accounts.calculations');
+    const { getPreviousMonthFinalBalance } = await import('./accounts.balances');
     const previousMonthBalance = await getPreviousMonthFinalBalance(
         month,
         dimension,
@@ -1115,7 +1106,7 @@ export const AccountsService = {
         // ✅ NOTA: isFirstDay y firstDayOfMonthStr ya están definidos arriba (líneas 402-403)
         let previousMonthBalance = 0;
         if (isFirstDay) {
-            const { getPreviousMonthFinalBalance } = await import('./accounts.calculations');
+            const { getPreviousMonthFinalBalance } = await import('./accounts.balances');
             const effectiveMonth = `${year}-${String(month).padStart(2, '0')}`;
 
             if (filters.dimension === "banca") {

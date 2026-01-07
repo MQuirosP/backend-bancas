@@ -113,25 +113,13 @@ export async function executeSettlement(userId?: string): Promise<{
     const settledStatementsCount = await prisma.accountStatement.count({
       where: { isSettled: true }
     });
-    const notSettledWithActivityCount = await prisma.accountStatement.count({
-      where: {
-        isSettled: false,
-        OR: [
-          { ticketCount: { gt: 0 } },
-          { totalPaid: { gt: 0 } },
-          { totalCollected: { gt: 0 } }
-        ]
-      }
+    const notSettledCount = await prisma.accountStatement.count({
+      where: { isSettled: false }
     });
     const notSettledOldEnoughCount = await prisma.accountStatement.count({
       where: {
         isSettled: false,
-        date: { lt: cutoffDateCR },
-        OR: [
-          { ticketCount: { gt: 0 } },
-          { totalPaid: { gt: 0 } },
-          { totalCollected: { gt: 0 } }
-        ]
+        date: { lt: cutoffDateCR }
       }
     });
 
@@ -146,32 +134,23 @@ export async function executeSettlement(userId?: string): Promise<{
         diagnostics: {
           totalStatements,
           settledStatementsCount,
-          notSettledWithActivityCount,
+          notSettledCount,
           notSettledOldEnoughCount
         }
       }
     });
 
-    // ✅ CRÍTICO: Buscar statements según criterios correctos
-    // Criterios:
+    // ✅ CRÍTICO: Buscar todos los statements antiguos (con o sin actividad)
+    // Criterios actualizados para Universal Settlement:
     // 1. date < (today - settlementAgeDays días) ✅
-    // 2. Tiene actividad: ticketCount > 0 OR totalPaid > 0 OR totalCollected > 0 ✅
-    //    - La tabla AccountStatement es un resumen para optimizar consultas
-    //    - Puede tener tickets (ventas), movimientos (pagos/cobros), o ambos
-    //    - Si tiene algún tipo de actividad, puede asentarse si es antiguo
-    // 3. isSettled = false ✅
-    // 4. NO requiere remainingBalance ≈ 0
+    // 2. isSettled = false ✅
+    // 3. NO requiere actividad (permite cerrar días vacíos del historial) ✅
     const statementsToSettle = await prisma.accountStatement.findMany({
       where: {
         isSettled: false,
         date: {
           lt: cutoffDateCR
-        },
-        OR: [
-          { ticketCount: { gt: 0 } },
-          { totalPaid: { gt: 0 } },
-          { totalCollected: { gt: 0 } }
-        ]
+        }
       },
       include: {
         payments: {

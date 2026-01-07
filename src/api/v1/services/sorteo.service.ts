@@ -18,7 +18,7 @@ import { resolveDigits } from "../../../utils/loteriaRules";
 import { parseCommissionPolicy, CommissionPolicy, CommissionRule } from "../../../services/commission.resolver";
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { crDateService } from "../../../utils/crDateService";
-import { getPreviousMonthFinalBalance } from "./accounts/accounts.calculations";
+import { getPreviousMonthFinalBalance } from "./accounts/accounts.balances";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,

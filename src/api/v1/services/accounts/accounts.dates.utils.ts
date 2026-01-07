@@ -74,6 +74,27 @@ export function getMonthDateRange(month: string): { startDate: Date; endDate: Da
 }
 
 /**
+ * ✅ OPTIMIZACIÓN: Obtiene el rango de fechas para el estado de cuenta
+ * Desde el inicio del mes hasta el final del día de hoy (en CR)
+ */
+export function getStatementDateRange(monthStr?: string): { startDate: Date; endDate: Date } {
+    const now = new Date();
+    
+    // Si no se provee mes, usar el mes actual
+    const effectiveMonth = monthStr || `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const [year, monthNum] = effectiveMonth.split("-").map(Number);
+    
+    // Inicio del mes (00:00 CR = 06:00 UTC)
+    const startDate = new Date(Date.UTC(year, monthNum - 1, 1, 6, 0, 0, 0));
+    
+    // Fin de hoy (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
+    // Usamos el crDateService si está disponible, o lógica manual equivalente
+    const todayEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 5, 59, 59, 999));
+    
+    return { startDate, endDate: todayEnd };
+}
+
+/**
  * Obtiene la fecha de un día específico del mes
  */
 export function getDateForDay(month: string, day: number): Date {
