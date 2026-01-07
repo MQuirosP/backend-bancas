@@ -4,7 +4,7 @@ import { AppError } from "../../../core/errors";
 import logger from "../../../core/logger";
 import { resolveCommission } from "../../../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
-import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts/accounts.calculations";
+import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts/accounts.balances";
 import { getMonthlyRemainingBalance, getMonthlyRemainingBalancesBatch } from "./accounts/accounts.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { crDateService } from "../../../utils/crDateService";

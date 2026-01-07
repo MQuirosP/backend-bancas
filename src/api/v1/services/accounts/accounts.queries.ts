@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { Role, Prisma } from "@prisma/client";
 import prisma from "../../../../core/prismaClient";
 import logger from "../../../../core/logger";
 import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";
@@ -6,6 +6,182 @@ import { resolveCommission } from "../../../../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
 import { buildTicketDateFilter } from "./accounts.dates.utils";
 import { crDateService } from "../../../../utils/crDateService";
+
+/**
+ * Interface para los resultados de la consulta agregada de tickets
+ */
+export interface AggregatedTicketRow {
+    business_date: Date;
+    banca_id: string | null;
+    banca_name: string | null;
+    banca_code: string | null;
+    ventana_id: string;
+    ventana_name: string;
+    ventana_code: string | null;
+    vendedor_id: string | null;
+    vendedor_name: string | null;
+    vendedor_code: string | null;
+    total_sales: number;
+    total_payouts: number;
+    total_tickets: bigint;
+    commission_listero: number;
+    commission_vendedor: number;
+}
+
+/**
+ * ✅ OPTIMIZACIÓN: Obtiene datos agregados de tickets directamente desde SQL
+ * Centraliza la lógica de filtrado y agrupación para el estado de cuenta directo
+ */
+export async function getAggregatedTicketsData(params: {
+    startDate: Date;
+    endDate: Date;
+    dimension: "banca" | "ventana" | "vendedor";
+    bancaId?: string;
+    ventanaId?: string;
+    vendedorId?: string;
+    daysInMonth: number;
+    shouldGroupByDate?: boolean;
+    sort?: "asc" | "desc";
+    isToday?: boolean;
+    monthStartDateForQuery?: string;
+}): Promise<AggregatedTicketRow[]> {
+    const {
+        startDate,
+        endDate,
+        dimension,
+        bancaId,
+        ventanaId,
+        vendedorId,
+        daysInMonth,
+        shouldGroupByDate = false,
+        sort = "desc",
+        isToday = false,
+        monthStartDateForQuery
+    } = params;
+
+    const whereConditions: Prisma.Sql[] = [
+        Prisma.sql`t."deletedAt" IS NULL`,
+        Prisma.sql`t."isActive" = true`,
+        Prisma.sql`t."status" != 'CANCELLED'`,
+        Prisma.sql`EXISTS (
+            SELECT 1 FROM "Sorteo" s
+            WHERE s.id = t."sorteoId"
+            AND s.status = 'EVALUATED'
+        )`,
+    ];
+
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
+
+    // Lógica de fecha (Today vs Mes completo)
+    if (isToday) {
+        whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) = ${startDateCRStr}::date`);
+    } else if (monthStartDateForQuery) {
+        whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${monthStartDateForQuery}::date`);
+    } else {
+        whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`);
+    }
+    
+    whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`);
+
+    // Excluir tickets de listas bloqueadas
+    whereConditions.push(Prisma.sql`NOT EXISTS (
+        SELECT 1 FROM "sorteo_lista_exclusion" sle
+        WHERE sle.sorteo_id = t."sorteoId"
+        AND sle.ventana_id = t."ventanaId"
+        AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+    )`);
+
+    // Aplicar filtros según dimension
+    if (dimension === "banca") {
+        if (bancaId) {
+            whereConditions.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM "Ventana" v 
+                WHERE v.id = t."ventanaId" 
+                AND v."bancaId" = ${bancaId}::uuid
+            )`);
+        }
+        if (ventanaId) {
+            whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+        }
+        if (vendedorId) {
+            whereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+        }
+    } else if (dimension === "vendedor") {
+        if (vendedorId) whereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+        if (ventanaId) whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+        if (bancaId) {
+            whereConditions.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM "Ventana" v 
+                JOIN "User" u ON u."ventanaId" = v.id
+                WHERE u.id = t."vendedorId"
+                AND v."bancaId" = ${bancaId}::uuid
+            )`);
+        }
+    } else if (dimension === "ventana") {
+        if (ventanaId) whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+        if (bancaId) {
+            whereConditions.push(Prisma.sql`EXISTS (
+                SELECT 1 FROM "Ventana" v 
+                WHERE v.id = t."ventanaId" 
+                AND v."bancaId" = ${bancaId}::uuid
+            )`);
+        }
+        if (vendedorId) whereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+    }
+
+    const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`;
+    const dynamicLimit = Math.max(5000, daysInMonth * 200);
+
+    const groupByClause = shouldGroupByDate
+        ? Prisma.sql`
+            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
+            b.id`
+        : Prisma.sql`
+            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
+            b.id,
+            t."ventanaId",
+            t."vendedorId"`;
+
+    const query = Prisma.sql`
+        WITH jugada_aggregates AS (
+            SELECT 
+                j."ticketId",
+                COALESCE(SUM(j.amount), 0) as total_amount,
+                COALESCE(SUM(j."listeroCommissionAmount"), 0) as total_listero_commission,
+                COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as total_vendedor_commission
+            FROM "Jugada" j
+            WHERE j."deletedAt" IS NULL
+            GROUP BY j."ticketId"
+        )
+        SELECT
+            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) as business_date,
+            b.id as banca_id,
+            MAX(b.name) as banca_name,
+            MAX(b.code) as banca_code,
+            ${shouldGroupByDate ? Prisma.sql`NULL::uuid` : Prisma.sql`t."ventanaId"`} as ventana_id,
+            MAX(v.name) as ventana_name,
+            MAX(v.code) as ventana_code,
+            ${shouldGroupByDate ? Prisma.sql`NULL::uuid` : (dimension === "ventana" && ventanaId ? Prisma.sql`NULL::uuid` : Prisma.sql`t."vendedorId"`)} as vendedor_id,
+            MAX(u.name) as vendedor_name,
+            MAX(u.code) as vendedor_code,
+            COALESCE(SUM(ja.total_amount), 0) as total_sales,
+            0 as total_payouts,
+            COUNT(DISTINCT t.id) as total_tickets,
+            COALESCE(SUM(ja.total_listero_commission), 0) as commission_listero,
+            COALESCE(SUM(ja.total_vendedor_commission), 0) as commission_vendedor
+        FROM "Ticket" t
+        LEFT JOIN jugada_aggregates ja ON ja."ticketId" = t.id
+        INNER JOIN "Ventana" v ON v.id = t."ventanaId"
+        INNER JOIN "Banca" b ON b.id = v."bancaId"
+        LEFT JOIN "User" u ON u.id = t."vendedorId"
+        ${whereClause}
+        GROUP BY ${groupByClause}
+        ORDER BY business_date ${sort === "desc" ? Prisma.sql`DESC` : Prisma.sql`ASC`}
+        LIMIT ${dynamicLimit}
+    `;
+
+    return prisma.$queryRaw<AggregatedTicketRow[]>(query);
+}
 
 /**
  * ✅ OPTIMIZACIÓN: Lee resúmenes diarios de la vista materializada
