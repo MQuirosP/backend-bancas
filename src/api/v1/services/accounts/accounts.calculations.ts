@@ -106,7 +106,7 @@ export async function calculateDayStatement(
 
     if (validStatement && validStatement.isSettled) {
         // Mapear de AccountStatement (Prisma) a DayStatement (Frontend)
-        
+
         // Obtener total de pagos y cobros combinados
         const totalPaymentsCollections = await AccountPaymentRepository.getTotalPaymentsCollections(validStatement.id);
 
@@ -1799,8 +1799,8 @@ export async function getStatementDirect(
                                         existing.payouts += sorteoData.payouts;
                                         existing.listeroCommission += sorteoData.listeroCommission;
                                         existing.vendedorCommission += sorteoData.vendedorCommission;
-                                        //  CORRECCIÓN: Balance usando vendedorCommission si vendedorId está presente, sino listeroCommission
-                                        const commissionToUse = vendedorId ? existing.vendedorCommission : existing.listeroCommission;
+                                        //  CORRECCIÓN: Balance usando vendedorCommission si dimension='vendedor' o vendedorId está presente
+                                        const commissionToUse = (dimension === "vendedor" || vendedorId) ? existing.vendedorCommission : existing.listeroCommission;
                                         existing.balance = existing.sales - existing.payouts - commissionToUse;
                                         existing.ticketCount += sorteoData.ticketCount;
                                     } else {
@@ -1814,8 +1814,8 @@ export async function getStatementDirect(
                                             payouts: sorteoData.payouts,
                                             listeroCommission: sorteoData.listeroCommission,
                                             vendedorCommission: sorteoData.vendedorCommission,
-                                            //  CORRECCIÓN: Balance usando vendedorCommission si vendedorId está presente, sino listeroCommission
-                                            balance: sorteoData.sales - sorteoData.payouts - (vendedorId ? sorteoData.vendedorCommission : sorteoData.listeroCommission),
+                                            //  CORRECCIÓN: Balance usando vendedorCommission si dimension='vendedor' o vendedorId está presente
+                                            balance: sorteoData.sales - sorteoData.payouts - ((dimension === "vendedor" || vendedorId) ? sorteoData.vendedorCommission : sorteoData.listeroCommission),
                                             ticketCount: sorteoData.ticketCount,
                                         });
                                     }

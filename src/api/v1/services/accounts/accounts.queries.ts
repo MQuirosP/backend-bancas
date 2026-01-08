@@ -80,7 +80,7 @@ export async function getAggregatedTicketsData(params: {
     } else {
         whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`);
     }
-    
+
     whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`);
 
     // Excluir tickets de listas bloqueadas
@@ -663,10 +663,9 @@ export async function getSorteoBreakdownBatch(
                 payouts: entry.payouts,
                 listeroCommission: entry.listeroCommission,
                 vendedorCommission: entry.vendedorCommission,
-                //  CORRECCIÓN: Calcular balance según vendedorId en query params, NO según userRole
-                // Si vendedorId está presente → usar vendedorCommission
-                // Si vendedorId NO está presente → usar listeroCommission
-                balance: vendedorId
+                //  CORRECCIÓN: Calcular balance según dimensión O vendedorId
+                // Si dimension='vendedor' O vendedorId está presente → usar vendedorCommission
+                balance: (dimension === "vendedor" || vendedorId)
                     ? entry.sales - entry.payouts - entry.vendedorCommission
                     : entry.sales - entry.payouts - entry.listeroCommission,
                 ticketCount: entry.ticketCount,
