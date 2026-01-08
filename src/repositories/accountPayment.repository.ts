@@ -420,12 +420,33 @@ export const AccountPaymentRepository = {
       // Esto es mucho más eficiente y funciona correctamente con datos históricos
       if (bancaId) {
         where.bancaId = bancaId;
+      } else {
+        // Si es "Todas las Bancas", asegurar que tenga bancaId
+        where.bancaId = { not: null };
       }
-      if (ventanaId) {
-        where.ventanaId = ventanaId;
-      }
-      if (vendedorId) {
-        where.vendedorId = vendedorId;
+
+      /**
+       * ========================================================================
+       * FILTRADO DE MOVIMIENTOS POR BANCA
+       * ========================================================================
+       * 
+       * REGLA CRÍTICA: Los pagos/cobros de ventanas o vendedores NO deben afectar el estado de cuenta de la banca
+       * Cuando dimension='banca' y no se especifican sub-niveles (ventanaId/vendedorId), SOLO incluir:
+       * - Movimientos propios de la banca (ventanaId = null, vendedorId = null)
+       * 
+       * NO incluir movimientos de ventanas o vendedores
+       */
+      if (!ventanaId && !vendedorId) {
+        where.ventanaId = null;
+        where.vendedorId = null;
+      } else {
+        // En casos raros donde se filtre por dimensión banca pero se especifique ventana/vendedor
+        if (ventanaId) {
+          where.ventanaId = ventanaId;
+        }
+        if (vendedorId) {
+          where.vendedorId = vendedorId;
+        }
       }
     } else if (dimension === "ventana") {
       /**
