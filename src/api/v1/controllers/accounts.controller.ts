@@ -52,7 +52,7 @@ function calculateStatementETag(
       statementCount: result.statements?.length || 0,
     })
   ].join(':');
-  
+
   const hash = createHash('sha1').update(etagRawKey).digest('hex');
   return `W/"${hash}"`;
 }
@@ -64,7 +64,7 @@ export const AccountsController = {
    */
   async getStatement(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
-    
+
     //  NUEVO: Agregar filtros de período
     const { month, date, fromDate, toDate, scope, dimension, bancaId, ventanaId, vendedorId, sort } = req.query as any;
     const user = req.user;
@@ -75,19 +75,19 @@ export const AccountsController = {
         throw new AppError("Los vendedores solo pueden ver su propio estado de cuenta", 403, "FORBIDDEN");
       }
       // Forzar vendedorId al usuario actual
-        const filters = {
-          month,
-          date, //  NUEVO
-          fromDate, //  NUEVO
-          toDate, //  NUEVO
-          scope: "mine" as const,
-          dimension: "vendedor" as const,
-          vendedorId: user.id,
-          sort: sort || "desc",
-          userRole: user.role, //  CRÍTICO: Pasar rol del usuario
-        };
+      const filters = {
+        month,
+        date, //  NUEVO
+        fromDate, //  NUEVO
+        toDate, //  NUEVO
+        scope: "mine" as const,
+        dimension: "vendedor" as const,
+        vendedorId: user.id,
+        sort: sort || "desc",
+        userRole: user.role, //  CRÍTICO: Pasar rol del usuario
+      };
       const result = await AccountsService.getStatement(filters) as StatementResponse;
-      
+
       //  ETags: Calcular y verificar antes de procesar
       const etagVal = calculateStatementETag(
         month,
@@ -102,15 +102,15 @@ export const AccountsController = {
         sort,
         result
       );
-      
+
       res.setHeader('ETag', etagVal);
       res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
-      
+
       const ifNoneMatch = req.headers['if-none-match'];
       if (ifNoneMatch && ifNoneMatch === etagVal) {
         return res.status(304).end();
       }
-      
+
       return success(res, result);
     }
 
@@ -149,7 +149,7 @@ export const AccountsController = {
           userRole: user.role, //  CRÍTICO: Pasar rol del usuario
         };
         const result = await AccountsService.getStatement(filters) as StatementResponse;
-        
+
         //  ETags: Calcular y verificar antes de procesar
         const etagVal = calculateStatementETag(
           month,
@@ -164,15 +164,15 @@ export const AccountsController = {
           sort,
           result
         );
-        
+
         res.setHeader('ETag', etagVal);
         res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
-        
+
         const ifNoneMatch = req.headers['if-none-match'];
         if (ifNoneMatch && ifNoneMatch === etagVal) {
           return res.status(304).end();
         }
-        
+
         return success(res, result);
       }
 
@@ -205,7 +205,7 @@ export const AccountsController = {
           userRole: user.role, //  CRÍTICO: Pasar rol del usuario
         };
         const result = await AccountsService.getStatement(filters) as StatementResponse;
-        
+
         //  ETags: Calcular y verificar antes de procesar
         const etagVal = calculateStatementETag(
           month,
@@ -220,15 +220,15 @@ export const AccountsController = {
           sort,
           result
         );
-        
+
         res.setHeader('ETag', etagVal);
         res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
-        
+
         const ifNoneMatch = req.headers['if-none-match'];
         if (ifNoneMatch && ifNoneMatch === etagVal) {
           return res.status(304).end();
         }
-        
+
         return success(res, result);
       }
     }
@@ -247,7 +247,7 @@ export const AccountsController = {
         vendedorId,
         bancaId, //  CRÍTICO: Pasar bancaId del query para que se incluya en los filtros efectivos
       });
-      
+
       const filters: any = {
         month,
         date, //  NUEVO
@@ -261,9 +261,9 @@ export const AccountsController = {
         sort: sort || "desc",
         userRole: user.role, //  CRÍTICO: Pasar rol del usuario para calcular balance correctamente
       };
-      
+
       const result = await AccountsService.getStatement(filters) as StatementResponse;
-      
+
       // Log de auditoría
       await ActivityService.log({
         userId: user.id,
@@ -280,7 +280,7 @@ export const AccountsController = {
         layer: "controller",
         requestId: req.requestId,
       });
-      
+
       req.logger?.info({
         layer: "controller",
         action: "ACCOUNT_STATEMENT_VIEW",
@@ -288,7 +288,7 @@ export const AccountsController = {
         requestId: req.requestId,
         payload: { month, scope, dimension },
       });
-      
+
       //  ETags: Calcular y verificar antes de procesar
       const etagVal = calculateStatementETag(
         month,
@@ -303,15 +303,15 @@ export const AccountsController = {
         sort,
         result
       );
-      
+
       res.setHeader('ETag', etagVal);
       res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
-      
+
       const ifNoneMatch = req.headers['if-none-match'];
       if (ifNoneMatch && ifNoneMatch === etagVal) {
         return res.status(304).end();
       }
-      
+
       return success(res, result);
     }
 
@@ -324,7 +324,8 @@ export const AccountsController = {
    */
   async createPayment(req: AuthenticatedRequest, res: Response) {
     const user = req.user!;
-    const { date, time, ventanaId, vendedorId, amount, type, method, notes, isFinal, idempotencyKey } = req.body;
+    //  CRÍTICO: Agregar bancaId al destructuring
+    const { date, time, ventanaId, vendedorId, bancaId, amount, type, method, notes, isFinal, idempotencyKey } = req.body;
 
     // Validar permisos según rol
     if (user.role === Role.VENDEDOR) {
@@ -355,13 +356,13 @@ export const AccountsController = {
       const today = new Date();
       const todayCR = new Date(today.getTime() + 6 * 60 * 60 * 1000); // Convertir a CR
       const todayDateStr = `${todayCR.getUTCFullYear()}-${String(todayCR.getUTCMonth() + 1).padStart(2, '0')}-${String(todayCR.getUTCDate()).padStart(2, '0')}`;
-      
+
       if (date === todayDateStr) {
         // Fecha es hoy, validar que hora no sea futura
         const [hours, minutes] = time.split(':').map(Number);
         const nowHours = todayCR.getUTCHours();
         const nowMinutes = todayCR.getUTCMinutes();
-        
+
         if (hours > nowHours || (hours === nowHours && minutes > nowMinutes)) {
           throw new AppError("La hora no puede ser futura si la fecha es hoy", 400, "FUTURE_TIME");
         }
@@ -371,6 +372,7 @@ export const AccountsController = {
     // Validar relaciones según rol
     let effectiveVentanaId = ventanaId;
     let effectiveVendedorId = vendedorId;
+    let effectiveBancaId = bancaId; //  NUEVO: bancaId efectivo
 
     if (user.role === Role.VENTANA) {
       // Obtener ventanaId del usuario si no está en el token
@@ -406,18 +408,35 @@ export const AccountsController = {
       } else {
         effectiveVendedorId = undefined; // No usar vendedorId cuando es ventana
       }
+      // Ventanas no pueden registrar pagos para Bancas directamente (por ahora)
+      effectiveBancaId = undefined;
     } else if (user.role === Role.ADMIN) {
-      // ADMIN debe proporcionar ventanaId o vendedorId
-      if (!ventanaId && !vendedorId) {
-        throw new AppError("Debe proporcionar ventanaId o vendedorId", 400, "MISSING_DIMENSION");
+      // ADMIN debe proporcionar ventanaId o vendedorId O bancaId
+      if (!ventanaId && !vendedorId && !bancaId) {
+        throw new AppError("Debe proporcionar bancaId, ventanaId o vendedorId", 400, "MISSING_DIMENSION");
       }
-      //  ACTUALIZADO: Permitir que ambos estén presentes (ventanaId se inferirá/persistirá cuando hay vendedorId)
-      // El constraint _one_relation_check ha sido eliminado
+
+      // Lógica de exclusividad:
+      // Si hay vendedorId -> es dimension "vendedor" (ventanaId y bancaId se inferirán o ignorarán)
+      // Si hay ventanaId -> es dimension "ventana" (bancaId se inferirá, vendedorId null)
+      // Si hay bancaId -> es dimension "banca" (ventanaId y vendedorId null)
+
+      if (vendedorId) {
+        effectiveVentanaId = undefined; // Se inferirá en service
+        effectiveBancaId = undefined;   // Se inferirá en service
+      } else if (ventanaId) {
+        effectiveVendedorId = undefined;
+        effectiveBancaId = undefined; // Se inferirá en service
+      } else if (bancaId) {
+        effectiveVendedorId = undefined;
+        effectiveVentanaId = undefined;
+        // effectiveBancaId ya asignado arriba
+      }
     }
 
-    // Validar que al menos uno de los dos esté presente después del procesamiento
-    if (!effectiveVentanaId && !effectiveVendedorId) {
-      throw new AppError("Debe proporcionar ventanaId o vendedorId", 400, "MISSING_DIMENSION");
+    // Validar que al menos uno de los tres esté presente después del procesamiento
+    if (!effectiveVentanaId && !effectiveVendedorId && !effectiveBancaId) {
+      throw new AppError("Debe proporcionar bancaId, ventanaId o vendedorId", 400, "MISSING_DIMENSION");
     }
 
     //  OPTIMIZACIÓN: Usar nombre del usuario del token si está disponible, sino buscar en BD
@@ -429,6 +448,7 @@ export const AccountsController = {
       time: time, //  CRÍTICO: Pasar time tal cual (el service procesará y usará "00:00" si no está presente)
       ventanaId: effectiveVentanaId,
       vendedorId: effectiveVendedorId,
+      bancaId: effectiveBancaId, //  CRÍTICO: Pasar bancaId
       amount,
       type,
       method,
@@ -503,7 +523,7 @@ export const AccountsController = {
    */
   async getPaymentHistory(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
-    
+
     const { date, ventanaId, vendedorId } = req.query as any;
     const user = req.user;
 
@@ -514,7 +534,7 @@ export const AccountsController = {
         vendedorId: user.id,
       };
       const history = await AccountsService.getPaymentHistory(date, filters);
-      
+
       // Log de auditoría
       await ActivityService.log({
         userId: user.id,
@@ -529,7 +549,7 @@ export const AccountsController = {
         layer: "controller",
         requestId: req.requestId,
       });
-      
+
       req.logger?.info({
         layer: "controller",
         action: "ACCOUNT_PAYMENT_HISTORY_VIEW",
@@ -537,7 +557,7 @@ export const AccountsController = {
         requestId: req.requestId,
         payload: { date, count: history.length },
       });
-      
+
       return success(res, history, 200);
     }
 
@@ -567,7 +587,7 @@ export const AccountsController = {
         }
         const filters = { vendedorId };
         const history = await AccountsService.getPaymentHistory(date, filters);
-        
+
         // Log de auditoría
         await ActivityService.log({
           userId: user.id,
@@ -583,7 +603,7 @@ export const AccountsController = {
           layer: "controller",
           requestId: req.requestId,
         });
-        
+
         req.logger?.info({
           layer: "controller",
           action: "ACCOUNT_PAYMENT_HISTORY_VIEW",
@@ -591,14 +611,14 @@ export const AccountsController = {
           requestId: req.requestId,
           payload: { date, vendedorId, count: history.length },
         });
-        
+
         return success(res, history, 200);
       }
 
       // Si no se proporciona vendedorId, ver historial de la ventana
       const filters = { ventanaId: effectiveVentanaId };
       const history = await AccountsService.getPaymentHistory(date, filters);
-      
+
       // Log de auditoría
       await ActivityService.log({
         userId: user.id,
@@ -613,7 +633,7 @@ export const AccountsController = {
         layer: "controller",
         requestId: req.requestId,
       });
-      
+
       req.logger?.info({
         layer: "controller",
         action: "ACCOUNT_PAYMENT_HISTORY_VIEW",
@@ -621,7 +641,7 @@ export const AccountsController = {
         requestId: req.requestId,
         payload: { date, ventanaId: effectiveVentanaId, count: history.length },
       });
-      
+
       return success(res, history, 200);
     }
 
@@ -629,7 +649,7 @@ export const AccountsController = {
     if (user.role === Role.ADMIN) {
       const filters = { ventanaId, vendedorId };
       const history = await AccountsService.getPaymentHistory(date, filters);
-      
+
       // Log de auditoría
       await ActivityService.log({
         userId: user.id,
@@ -645,7 +665,7 @@ export const AccountsController = {
         layer: "controller",
         requestId: req.requestId,
       });
-      
+
       req.logger?.info({
         layer: "controller",
         action: "ACCOUNT_PAYMENT_HISTORY_VIEW",
@@ -653,7 +673,7 @@ export const AccountsController = {
         requestId: req.requestId,
         payload: { date, count: history.length },
       });
-      
+
       return success(res, history, 200);
     }
 
@@ -668,7 +688,7 @@ export const AccountsController = {
    */
   async reversePayment(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
-    
+
     const user = req.user;
     const { paymentId, reason } = req.body;
 
@@ -686,7 +706,7 @@ export const AccountsController = {
       //  VENTANA solo puede revertir pagos de sus propios vendedores
       //  OPTIMIZACIÓN: Obtener ventanaId del usuario solo si no está en el token
       let userVentanaId: string | null = user.ventanaId || null;
-      
+
       if (!userVentanaId) {
         const userWithVentana = await prisma.user.findUnique({
           where: { id: user.id },
@@ -773,9 +793,9 @@ export const AccountsController = {
         ...reversed,
         reversedByUser: reversedByUser
           ? {
-              id: reversedByUser.id,
-              name: reversedByUser.name,
-            }
+            id: reversedByUser.id,
+            name: reversedByUser.name,
+          }
           : null,
       },
       statement, //  Statement actualizado con totalPaid, totalCollected, remainingBalance, etc.
@@ -920,9 +940,9 @@ export const AccountsController = {
       if (!['ventana', 'vendedor'].includes(dimension)) {
         throw new AppError("Los usuarios VENTANA solo pueden usar dimension='ventana' o 'vendedor'", 403, "FORBIDDEN");
       }
-      
+
       effectiveDimension = dimension as "ventana" | "vendedor";
-      
+
       // Obtener ventanaId del usuario
       if (!effectiveVentanaId) {
         const userWithVentana = await prisma.user.findUnique({
@@ -931,11 +951,11 @@ export const AccountsController = {
         });
         effectiveVentanaId = userWithVentana?.ventanaId || null;
       }
-      
+
       if (!effectiveVentanaId) {
         throw new AppError("El usuario VENTANA no tiene una ventana asignada", 400, "NO_VENTANA");
       }
-      
+
       //  Si dimension='vendedor', validar vendedorId (si está presente)
       if (effectiveDimension === "vendedor" && vendedorId) {
         const vendedor = await prisma.user.findUnique({
@@ -947,7 +967,7 @@ export const AccountsController = {
         }
         effectiveVendedorId = vendedorId;
       }
-      
+
       //  Si dimension='vendedor' SIN vendedorId, getBySorteo() agrupará automáticamente
     }
 
