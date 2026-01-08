@@ -173,7 +173,11 @@ export async function calculateDayStatement(
         ...dateFilter,
         deletedAt: null,
         isActive: true,
-        status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
+        status: { in: ["EVALUATED", "PAID", "PAGADO"] }, // Excluir ACTIVE
+        sorteo: {
+            status: "EVALUATED",
+            deletedAt: null,
+        },
         ...(excludedTicketIds.length > 0 ? { id: { notIn: excludedTicketIds } } : {}), //  NUEVO: Excluir tickets bloqueados
     };
 

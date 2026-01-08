@@ -62,7 +62,7 @@ export async function getAggregatedTicketsData(params: {
     const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" != 'CANCELLED'`,
+        Prisma.sql`t."status" IN ('EVALUATED', 'PAID', 'PAGADO')`, // Excluir ACTIVE
         Prisma.sql`EXISTS (
             SELECT 1 FROM "Sorteo" s
             WHERE s.id = t."sorteoId"

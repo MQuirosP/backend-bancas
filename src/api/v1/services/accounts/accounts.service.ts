@@ -102,12 +102,18 @@ export async function getMonthlyRemainingBalancesBatch(
         }
     }
 
-    //  CRÍTICO: Identificar entidades que necesitan cálculo hasta HOY
-    // Si el AccountStatement no es del día de hoy, necesitamos calcular el saldo hasta hoy
-    const entitiesNeedingTodayCalculation = entityIds.filter(id => {
-        const latest = latestByEntity.get(id);
-        return !latest || !latest.isUpToDate; // No hay statement o no está actualizado hasta hoy
-    });
+    //  CRÍTICO: Para el balance "actual", ignorar statements de HOY
+    // Esto asegura que el balance sea dinámico y basado en los filtros de EVALUATED unificados
+    const entitiesNeedingTodayCalculation = entityIds; 
+
+    /* 
+    Comentamos la optimización que usa statements de hoy para forzar el cálculo preciso
+    y solucionar el problema de los tickets ACTIVE.
+    */
+    // const entitiesNeedingTodayCalculation = entityIds.filter(id => {
+    //     const latest = latestByEntity.get(id);
+    //     return !latest || !latest.isUpToDate; 
+    // });
 
     //  LOGGING: Para diagnosticar rendimiento
     logger.info({
@@ -301,9 +307,23 @@ export async function getMonthlyRemainingBalance(
         where.bancaId = bancaId;
     }
 
-    // Buscar el último statement hasta hoy (más reciente)
+    // Buscar el último statement hasta AYER (para asegurar datos asentados)
+    // O hasta hoy, pero si es de hoy, verificar que sea confiable.
+    //  CRÍTICO: Para el balance "actual", si hay un statement de HOY, 
+    // podría tener datos "sucios" (tickets ACTIVE) si se generó antes de la corrección.
+    // Además, el balance actual debe ser dinámico.
+    const todayCR = crDateService.dateUTCToCRString(new Date());
+
     const lastStatement = await prisma.accountStatement.findFirst({
-        where,
+        where: {
+            ...where,
+            // Solo usar statements de días anteriores a hoy para el balance base confiable
+            // O si es de hoy, asegurarnos de que queremos usarlo (generalmente no para balance actual dinámico)
+            date: {
+                gte: startDate,
+                lt: new Date(todayCR + 'T00:00:00.000Z'), // Excluir hoy
+            }
+        },
         orderBy: [
             { date: 'desc' },
             { createdAt: 'desc' },
@@ -314,11 +334,20 @@ export async function getMonthlyRemainingBalance(
         },
     });
 
-    if (lastStatement && lastStatement.remainingBalance !== null && lastStatement.remainingBalance !== undefined) {
-        //  USAR remainingBalance del AccountStatement (rápido y confiable)
-        // Este valor ya incluye: saldoMesAnterior + todos los balances del mes hasta hoy + pagos y cobros hasta hoy
-        return Number(lastStatement.remainingBalance);
-    }
+    // Si encontramos un statement de un día anterior, lo usamos como base y calculamos hoy por aparte
+    // O si no hay ninguno anterior, calculamos todo el mes (fallback)
+    
+    //  NOTA: Para simplificar y corregir el error de inmediato, si es el balance actual, 
+    // vamos a dejar que el fallback (getStatementDirect) haga el trabajo completo del mes hasta hoy,
+    // ya que él sí tiene los filtros de EVALUATED unificados.
+    
+    /* 
+    Comentamos el retorno directo para forzar el cálculo preciso con getStatementDirect
+    mientras estemos en el día actual. Esto soluciona el problema de los 900 de inmediato.
+    */
+    // if (lastStatement && lastStatement.remainingBalance !== null && lastStatement.remainingBalance !== undefined) {
+    //     return Number(lastStatement.remainingBalance);
+    // }
 
     //  FALLBACK: Si no hay AccountStatement, calcular con getStatementDirect (lento pero necesario)
     // Solo se ejecuta si no hay datos en AccountStatement
