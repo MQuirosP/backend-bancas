@@ -748,19 +748,25 @@ export const AccountsService = {
             targetDate = date;
         }
 
-        const { ventanaId, vendedorId } = filters;
+        // Extraer filtros
+        const { ventanaId, vendedorId, bancaId, dimension } = filters;
 
-        // Buscar el statement correspondiente
-        const statement = await AccountStatementRepository.findByDate(targetDate, {
+        //  CRÍTICO: Usar findMovementsByDateRange para obtener historial completo
+        // Esto permite filtrar por dimension correctamente y es más robusto
+        // Para historial de banca, includeChildren debe ser FALSE (solo administrative movements)
+        const movementsMap = await AccountPaymentRepository.findMovementsByDateRange(
+            targetDate,
+            targetDate, // Un solo día
+            dimension,
             ventanaId,
             vendedorId,
-        });
+            bancaId,
+            false // includeChildren = false para historial (solo propios/administrativos)
+        );
 
-        if (!statement) {
-            return [];
-        }
-
-        return getMovementsForDay(statement.id);
+        // Convertir mapa a array plano
+        const dateKey = crDateService.postgresDateToCRString(targetDate);
+        return movementsMap.get(dateKey) || [];
     },
 
     /**

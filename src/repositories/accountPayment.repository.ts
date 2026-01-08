@@ -336,7 +336,7 @@ export const AccountPaymentRepository = {
         },
       },
     });
-    
+
     //  NUEVO: Incluir campo time en la respuesta
     return payments.map(payment => ({
       ...payment,
@@ -404,7 +404,8 @@ export const AccountPaymentRepository = {
     dimension: "banca" | "ventana" | "vendedor", //  NUEVO: Agregado 'banca'
     ventanaId?: string,
     vendedorId?: string,
-    bancaId?: string
+    bancaId?: string,
+    includeChildren: boolean = false //  NUEVO: Flag para incluir movimientos de dependientes (ventanas/vendedores)
   ): Promise<Map<string, any[]>> {
     const where: Prisma.AccountPaymentWhereInput = {
       date: {
@@ -430,24 +431,27 @@ export const AccountPaymentRepository = {
        * FILTRADO DE MOVIMIENTOS POR BANCA
        * ========================================================================
        * 
-       * REGLA CRÍTICA: Los pagos/cobros de ventanas o vendedores NO deben afectar el estado de cuenta de la banca
-       * Cuando dimension='banca' y no se especifican sub-niveles (ventanaId/vendedorId), SOLO incluir:
-       * - Movimientos propios de la banca (ventanaId = null, vendedorId = null)
-       * 
-       * NO incluir movimientos de ventanas o vendedores
+       * REGLA CRÍTICA: 
+       * - Si includeChildren=true (para Balances): Incluir TODOS los movimientos de la banca (propios + dependientes).
+       * - Si includeChildren=false (para Historial): SOLO incluir movimientos administrativos propios de la banca.
        */
-      if (!ventanaId && !vendedorId) {
-        where.ventanaId = null;
-        where.vendedorId = null;
-      } else {
-        // En casos raros donde se filtre por dimensión banca pero se especifique ventana/vendedor
-        if (ventanaId) {
-          where.ventanaId = ventanaId;
-        }
-        if (vendedorId) {
-          where.vendedorId = vendedorId;
+      if (!includeChildren) {
+        //  CRÍTICO: Solo movimientos propios (administrativos)
+        if (!ventanaId && !vendedorId) {
+          where.ventanaId = null;
+          where.vendedorId = null;
+        } else {
+          // En casos raros donde se filtre por dimensión banca pero se especifique ventana/vendedor
+          if (ventanaId) {
+            where.ventanaId = ventanaId;
+          }
+          if (vendedorId) {
+            where.vendedorId = vendedorId;
+          }
         }
       }
+      // Si includeChildren=true, NO filtramos por ventanaId/vendedorId=null, 
+      // permitiendo que vengan movimientos con ventanaId/vendedorId (hijos)
     } else if (dimension === "ventana") {
       /**
        * ========================================================================
