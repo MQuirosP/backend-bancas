@@ -435,12 +435,12 @@ export const TicketRepository = {
           while (attempts < maxAttempts) {
             attempts++;
 
-            // Incrementar contador atómicamente
+            // Incrementar contador atómicamente (global por businessDate)
             const seqRows = await tx.$queryRaw<{ last: number }[]>(
               Prisma.sql`
-                INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
-                VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
-                ON CONFLICT ("businessDate", "ventanaId")
+                INSERT INTO "TicketCounter" ("businessDate", "last")
+                VALUES (${bd.businessDate}::date, 1)
+                ON CONFLICT ("businessDate")
                 DO UPDATE SET "last" = "TicketCounter"."last" + 1
                 RETURNING "last";
               `
@@ -1418,12 +1418,12 @@ export const TicketRepository = {
           while (attempts < maxAttempts) {
             attempts++;
 
-            // Incrementar contador atómicamente
+            // Incrementar contador atómicamente (global por businessDate)
             const seqRows = await tx.$queryRaw<{ last: number }[]>(
               Prisma.sql`
-                INSERT INTO "TicketCounter" ("businessDate", "ventanaId", "last")
-                VALUES (${bd.businessDate}::date, ${ventanaId}::uuid, 1)
-                ON CONFLICT ("businessDate", "ventanaId")
+                INSERT INTO "TicketCounter" ("businessDate", "last")
+                VALUES (${bd.businessDate}::date, 1)
+                ON CONFLICT ("businessDate")
                 DO UPDATE SET "last" = "TicketCounter"."last" + 1
                 RETURNING "last";
               `
