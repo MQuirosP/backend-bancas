@@ -226,14 +226,10 @@ model Ticket {
   @@index([vendedorId, createdAt, deletedAt]) // Para aggregate por vendedor
 }
 
-/// Contador diario de tickets por ventana basado en businessDate (CR)
+/// Contador global diario de tickets basado en businessDate (CR)
 model TicketCounter {
-  businessDate DateTime @db.Date
-  ventanaId    String   @db.Uuid
+  businessDate DateTime @id @db.Date
   last         Int      @default(0)
-
-  @@id([businessDate, ventanaId])
-  @@unique([businessDate, ventanaId, last])
 }
 
 model TicketPayment {
