@@ -20,8 +20,11 @@
 import SorteosAutoService from '../api/v1/services/sorteosAuto.service';
 import logger from '../core/logger';
 
-let openTimer: NodeJS.Timeout | null = null;
-let createTimer: NodeJS.Timeout | null = null;
+// Timers separados para timeout inicial y interval recurrente
+let openInitialTimer: NodeJS.Timeout | null = null;
+let openRecurringTimer: NodeJS.Timeout | null = null;
+let createInitialTimer: NodeJS.Timeout | null = null;
+let createRecurringTimer: NodeJS.Timeout | null = null;
 let closeTimer: NodeJS.Timeout | null = null;
 
 /**
@@ -140,9 +143,14 @@ async function executeAutoCreate(): Promise<void> {
  * Programa el job de apertura automática
  */
 function scheduleAutoOpen(): void {
-  if (openTimer) {
-    clearTimeout(openTimer);
-    clearInterval(openTimer);
+  // Limpiar timers previos si existen
+  if (openInitialTimer) {
+    clearTimeout(openInitialTimer);
+    openInitialTimer = null;
+  }
+  if (openRecurringTimer) {
+    clearInterval(openRecurringTimer);
+    openRecurringTimer = null;
   }
 
   const delayMs = getMillisecondsUntilNextRun(7, 0); // 7:00 AM UTC = 1:00 AM CR
@@ -158,10 +166,12 @@ function scheduleAutoOpen(): void {
   });
 
   // Programar primera ejecución
-  openTimer = setTimeout(() => {
+  openInitialTimer = setTimeout(() => {
     executeAutoOpen();
+    openInitialTimer = null; // Limpiar referencia del timeout ya ejecutado
+
     // Programar para repetir cada 24 horas
-    openTimer = setInterval(executeAutoOpen, 24 * 60 * 60 * 1000);
+    openRecurringTimer = setInterval(executeAutoOpen, 24 * 60 * 60 * 1000);
   }, delayMs);
 }
 
@@ -169,9 +179,14 @@ function scheduleAutoOpen(): void {
  * Programa el job de creación automática
  */
 function scheduleAutoCreate(): void {
-  if (createTimer) {
-    clearTimeout(createTimer);
-    clearInterval(createTimer);
+  // Limpiar timers previos si existen
+  if (createInitialTimer) {
+    clearTimeout(createInitialTimer);
+    createInitialTimer = null;
+  }
+  if (createRecurringTimer) {
+    clearInterval(createRecurringTimer);
+    createRecurringTimer = null;
   }
 
   const delayMs = getMillisecondsUntilNextRun(7, 30); // 7:30 AM UTC = 1:30 AM CR
@@ -187,10 +202,12 @@ function scheduleAutoCreate(): void {
   });
 
   // Programar primera ejecución
-  createTimer = setTimeout(() => {
+  createInitialTimer = setTimeout(() => {
     executeAutoCreate();
+    createInitialTimer = null; // Limpiar referencia del timeout ya ejecutado
+
     // Programar para repetir cada 24 horas
-    createTimer = setInterval(executeAutoCreate, 24 * 60 * 60 * 1000);
+    createRecurringTimer = setInterval(executeAutoCreate, 24 * 60 * 60 * 1000);
   }, delayMs);
 }
 
@@ -213,18 +230,27 @@ export function startSorteosAutoJobs(): void {
  * Detiene los jobs de automatización de sorteos
  */
 export function stopSorteosAutoJobs(): void {
-  if (openTimer) {
-    clearTimeout(openTimer);
-    clearInterval(openTimer);
-    openTimer = null;
+  // Limpiar timers de Auto Open
+  if (openInitialTimer) {
+    clearTimeout(openInitialTimer);
+    openInitialTimer = null;
+  }
+  if (openRecurringTimer) {
+    clearInterval(openRecurringTimer);
+    openRecurringTimer = null;
   }
 
-  if (createTimer) {
-    clearTimeout(createTimer);
-    clearInterval(createTimer);
-    createTimer = null;
+  // Limpiar timers de Auto Create
+  if (createInitialTimer) {
+    clearTimeout(createInitialTimer);
+    createInitialTimer = null;
+  }
+  if (createRecurringTimer) {
+    clearInterval(createRecurringTimer);
+    createRecurringTimer = null;
   }
 
+  // Detener Auto Close
   stopAutoCloseJob();
 
   logger.info({
@@ -308,8 +334,16 @@ async function executeAutoClose(): Promise<void> {
  * Inicia el job de cierre automático (cada 10 minutos)
  */
 function startAutoCloseJob(): void {
+  // Verificar si ya hay un timer activo
   if (closeTimer) {
-    clearInterval(closeTimer);
+    logger.warn({
+      layer: 'job',
+      action: 'SORTEOS_AUTO_CLOSE_ALREADY_RUNNING',
+      payload: {
+        message: 'Job de cierre automático ya está ejecutándose, omitiendo inicialización',
+      },
+    });
+    return;
   }
 
   logger.info({

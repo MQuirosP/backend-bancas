@@ -7,6 +7,10 @@ import { startSorteosAutoJobs, stopSorteosAutoJobs } from '../jobs/sorteosAuto.j
 import { startAccountStatementSettlementJob, stopAccountStatementSettlementJob } from '../jobs/accountStatementSettlement.job'
 import { startMonthlyClosingJob, stopMonthlyClosingJob } from '../jobs/monthlyClosing.job'
 import { initRedisClient, closeRedisClient } from '../core/redisClient'
+import { startSorteoCacheCleanup, stopSorteoCacheCleanup } from '../utils/sorteoCache'
+import { startCommissionCacheCleanup, stopCommissionCacheCleanup } from '../utils/commissionCache'
+import { restrictionCacheV2 } from '../utils/restrictionCacheV2'
+import { activeOperationsService } from '../core/activeOperations.service'
 
 const server = http.createServer(app)
 
@@ -83,11 +87,81 @@ server.listen(config.port, async () => {
       meta: { error: error instanceof Error ? error.message : String(error) },
     })
   }
+
+  // Iniciar cleanup de sorteo cache
+  try {
+    startSorteoCacheCleanup()
+    logger.info({
+      layer: 'server',
+      action: 'SORTEO_CACHE_CLEANUP_STARTED',
+      requestId: null,
+      payload: { message: 'Cleanup de sorteo cache iniciado' },
+    })
+  } catch (error: any) {
+    logger.error({
+      layer: 'server',
+      action: 'SORTEO_CACHE_CLEANUP_START_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
+  // Iniciar cleanup de commission cache
+  try {
+    startCommissionCacheCleanup()
+    logger.info({
+      layer: 'server',
+      action: 'COMMISSION_CACHE_CLEANUP_STARTED',
+      requestId: null,
+      payload: { message: 'Cleanup de commission cache iniciado' },
+    })
+  } catch (error: any) {
+    logger.error({
+      layer: 'server',
+      action: 'COMMISSION_CACHE_CLEANUP_START_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
+  // Iniciar warming process de restriction cache V2
+  try {
+    restrictionCacheV2.startWarmingProcess()
+    logger.info({
+      layer: 'server',
+      action: 'RESTRICTION_CACHE_V2_WARMING_STARTED',
+      requestId: null,
+      payload: { message: 'Warming process de restriction cache V2 iniciado' },
+    })
+  } catch (error: any) {
+    logger.error({
+      layer: 'server',
+      action: 'RESTRICTION_CACHE_V2_WARMING_START_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
 })
 
 // Graceful shutdown
 const gracefulShutdown = async (signal: string) => {
   logger.info({ layer: 'server', action: 'SHUTDOWN_INITIATED', payload: { signal } })
+
+  // ✅ CRÍTICO: Marcar que el servidor está cerrando para rechazar nuevas operaciones
+  activeOperationsService.markShuttingDown()
+
+  // ✅ OPTIMIZACIÓN: Esperar a que terminen las operaciones activas (máximo 30 segundos)
+  const allCompleted = await activeOperationsService.waitForCompletion(30000)
+  if (!allCompleted) {
+    logger.warn({
+      layer: 'server',
+      action: 'SHUTDOWN_FORCED',
+      payload: {
+        message: 'Some operations did not complete within timeout, forcing shutdown',
+        remainingOperations: activeOperationsService.getActiveCount()
+      }
+    })
+  }
 
   // Detener jobs de automatización
   try {
@@ -121,6 +195,42 @@ const gracefulShutdown = async (signal: string) => {
     logger.warn({
       layer: 'server',
       action: 'MONTHLY_CLOSING_JOB_STOP_ERROR',
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
+  // Detener cleanup de sorteo cache
+  try {
+    stopSorteoCacheCleanup()
+    logger.info({ layer: 'server', action: 'SORTEO_CACHE_CLEANUP_STOPPED' })
+  } catch (error: any) {
+    logger.warn({
+      layer: 'server',
+      action: 'SORTEO_CACHE_CLEANUP_STOP_ERROR',
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
+  // Detener cleanup de commission cache
+  try {
+    stopCommissionCacheCleanup()
+    logger.info({ layer: 'server', action: 'COMMISSION_CACHE_CLEANUP_STOPPED' })
+  } catch (error: any) {
+    logger.warn({
+      layer: 'server',
+      action: 'COMMISSION_CACHE_CLEANUP_STOP_ERROR',
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
+  // Detener warming process de restriction cache V2
+  try {
+    restrictionCacheV2.stopWarmingProcess()
+    logger.info({ layer: 'server', action: 'RESTRICTION_CACHE_V2_WARMING_STOPPED' })
+  } catch (error: any) {
+    logger.warn({
+      layer: 'server',
+      action: 'RESTRICTION_CACHE_V2_WARMING_STOP_ERROR',
       meta: { error: error instanceof Error ? error.message : String(error) },
     })
   }
