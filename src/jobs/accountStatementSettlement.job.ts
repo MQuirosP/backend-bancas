@@ -23,6 +23,7 @@
 import prisma from '../core/prismaClient';
 import { AccountStatementRepository } from '../repositories/accountStatement.repository';
 import logger from '../core/logger';
+import { activeOperationsService } from '../core/activeOperations.service';
 
 let settlementTimer: NodeJS.Timeout | null = null;
 
@@ -60,10 +61,32 @@ export async function executeSettlement(userId?: string): Promise<{
   executedAt: Date;
   errors?: Array<{ statementId: string; error: string }>;
 }> {
+  // ✅ OPTIMIZACIÓN: Registrar operación activa para graceful shutdown
+  const operationId = `settlement-${Date.now()}`;
+
+  try {
+    activeOperationsService.register(operationId, 'job', 'Account Statement Settlement Job');
+  } catch (error) {
+    // Si el servidor está cerrando, rechazar la operación
+    logger.warn({
+      layer: 'job',
+      action: 'SETTLEMENT_REJECTED_SHUTDOWN',
+      payload: { message: (error as Error).message }
+    });
+    return {
+      success: false,
+      settledCount: 0,
+      skippedCount: 0,
+      errorCount: 1,
+      executedAt: new Date(),
+      errors: [{ statementId: 'SHUTDOWN', error: 'Server is shutting down' }]
+    };
+  }
+
   try {
     //  CRÍTICO: Leer configuración desde BD (según especificación actualizada)
     let config = await prisma.accountStatementSettlementConfig.findFirst();
-    
+
     if (!config) {
       // Crear configuración por defecto si no existe
       config = await prisma.accountStatementSettlementConfig.create({
@@ -72,6 +95,23 @@ export async function executeSettlement(userId?: string): Promise<{
           settlementAgeDays: 7,
           batchSize: 1000,
         },
+      });
+    }
+
+    // ✅ SEGURIDAD: Validar límite superior de batchSize para prevenir memory issues
+    const MAX_BATCH_SIZE = 2000;
+    const safeBatchSize = Math.min(config.batchSize, MAX_BATCH_SIZE);
+
+    if (config.batchSize > MAX_BATCH_SIZE) {
+      logger.warn({
+        layer: 'job',
+        action: 'SETTLEMENT_BATCH_SIZE_CAPPED',
+        payload: {
+          configuredSize: config.batchSize,
+          cappedSize: safeBatchSize,
+          maxAllowed: MAX_BATCH_SIZE,
+          message: `Batch size capped to ${MAX_BATCH_SIZE} to prevent memory issues`
+        }
       });
     }
 
@@ -129,7 +169,7 @@ export async function executeSettlement(userId?: string): Promise<{
       payload: {
         cutoffDateCR: crDateService.postgresDateToCRString(cutoffDateCR),
         settlementAgeDays: config.settlementAgeDays,
-        batchSize: config.batchSize,
+        batchSize: safeBatchSize, // ← Usar safeBatchSize en lugar de config.batchSize
         executedBy: userId || 'SYSTEM',
         diagnostics: {
           totalStatements,
@@ -142,9 +182,9 @@ export async function executeSettlement(userId?: string): Promise<{
 
     //  CRÍTICO: Buscar todos los statements antiguos (con o sin actividad)
     // Criterios actualizados para Universal Settlement:
-    // 1. date < (today - settlementAgeDays días) 
-    // 2. isSettled = false 
-    // 3. NO requiere actividad (permite cerrar días vacíos del historial) 
+    // 1. date < (today - settlementAgeDays días)
+    // 2. isSettled = false
+    // 3. NO requiere actividad (permite cerrar días vacíos del historial)
     const statementsToSettle = await prisma.accountStatement.findMany({
       where: {
         isSettled: false,
@@ -162,8 +202,21 @@ export async function executeSettlement(userId?: string): Promise<{
       orderBy: {
         date: 'asc' // Procesar desde más antiguo a más reciente
       },
-      take: config.batchSize // Procesar en lotes
+      take: safeBatchSize // ← Usar safeBatchSize validado
     });
+
+    // ✅ ADVERTENCIA: Si llegamos al límite del batch, hay más registros pendientes
+    if (statementsToSettle.length === safeBatchSize) {
+      logger.info({
+        layer: 'job',
+        action: 'SETTLEMENT_MORE_RECORDS_AVAILABLE',
+        payload: {
+          batchSize: safeBatchSize,
+          totalPending: notSettledOldEnoughCount,
+          message: `Procesados ${safeBatchSize} registros. Quedan ${notSettledOldEnoughCount - safeBatchSize} pendientes para próxima ejecución.`
+        }
+      });
+    }
 
     let settledCount = 0;
     let skippedCount = 0;
@@ -303,6 +356,9 @@ export async function executeSettlement(userId?: string): Promise<{
       executedAt: new Date(),
       errors: [{ statementId: 'JOB_ERROR', error: (error as Error).message }]
     };
+  } finally {
+    // ✅ CRÍTICO: Siempre desregistrar la operación al terminar (éxito o error)
+    activeOperationsService.unregister(operationId);
   }
 }
 

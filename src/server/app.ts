@@ -18,6 +18,20 @@ import { bancaContextMiddleware } from '../middlewares/bancaContext.middleware'
 
 const app = express()
 
+// ✅ PROTECCIÓN: Marcar si los middlewares ya fueron configurados
+// Previene re-aplicación en casos de hot-reload o múltiples imports
+const MIDDLEWARES_CONFIGURED_SYMBOL = Symbol.for('app.middlewares.configured');
+if ((app as any)[MIDDLEWARES_CONFIGURED_SYMBOL]) {
+  logger.warn({
+    layer: 'server',
+    action: 'MIDDLEWARES_ALREADY_CONFIGURED',
+    payload: { message: 'Middlewares already configured, skipping to prevent duplicates' }
+  });
+  // Re-exportar la app existente sin re-aplicar middlewares
+} else {
+  // Marcar como configurado
+  (app as any)[MIDDLEWARES_CONFIGURED_SYMBOL] = true;
+
 // Trust proxy: configuración segura para rate limiting
 // Número de proxies confiables (0 = deshabilitado, 1 = un proxy como Render/Heroku, 2 = nginx + load balancer)
 // Por defecto: 1 (común en Render, Heroku, etc.)
@@ -54,7 +68,11 @@ app.use('/api/v1', apiV1Router)
 // global error handler (last)
 app.use(errorHandler)
 
+} // Fin del bloque de configuración de middlewares
+
 // process-level handlers (structured logs)
+// ⚠️ IMPORTANTE: Estos handlers se registran siempre, no solo en el primer import
+// porque son event listeners del proceso, no middlewares de Express
 process.on('uncaughtException', (err: unknown) => {
   const message = err instanceof Error ? err.message : String(err)
   const stack = err instanceof Error ? err.stack : undefined

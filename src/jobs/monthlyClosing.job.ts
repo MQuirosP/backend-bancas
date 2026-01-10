@@ -24,8 +24,12 @@ import {
 } from '../api/v1/services/accounts/monthlyClosing.service';
 import logger from '../core/logger';
 import { crDateService } from '../utils/crDateService';
+import { activeOperationsService } from '../core/activeOperations.service';
 
 let monthlyClosingTimer: NodeJS.Timeout | null = null;
+
+// ✅ OPTIMIZACIÓN: Batch size para prevenir memory issues al cargar todas las ventanas/bancas
+const BATCH_SIZE = 100;
 
 /**
  * Calculate milliseconds until next 1st of month at 2:00 AM CR (8:00 AM UTC)
@@ -77,6 +81,21 @@ export async function executeMonthlyClosing(userId?: string, specificMonth?: str
     bancas: { success: number; errors: number };
     executedAt: Date;
 }> {
+    // ✅ OPTIMIZACIÓN: Registrar operación activa para graceful shutdown
+    const operationId = `monthly-closing-${Date.now()}`;
+
+    try {
+        activeOperationsService.register(operationId, 'job', 'Monthly Closing Job');
+    } catch (error) {
+        // Si el servidor está cerrando, rechazar la operación
+        logger.warn({
+            layer: 'job',
+            action: 'MONTHLY_CLOSING_REJECTED_SHUTDOWN',
+            payload: { message: (error as Error).message }
+        });
+        throw new Error('Server is shutting down, cannot execute monthly closing');
+    }
+
     try {
         // Calculate previous month (the month to close) or use specific month
         let closingMonth: string;
@@ -116,18 +135,15 @@ export async function executeMonthlyClosing(userId?: string, specificMonth?: str
         // 1. Process vendedores
         const vendedoresResult = await processMonthlyClosingForVendedores(closingMonth);
 
-        // 2. Process ventanas
+        // 2. Process ventanas (con paginación para prevenir memory issues)
         let ventanasSuccess = 0;
         let ventanasErrors = 0;
-        
+
         try {
-            const ventanas = await prisma.ventana.findMany({
+            // ✅ Primero obtener el total de ventanas para logging
+            const totalVentanas = await prisma.ventana.count({
                 where: {
                     isActive: true,
-                },
-                select: {
-                    id: true,
-                    bancaId: true,
                 },
             });
 
@@ -136,42 +152,80 @@ export async function executeMonthlyClosing(userId?: string, specificMonth?: str
                 action: 'MONTHLY_CLOSING_START_VENTANAS',
                 payload: {
                     closingMonth,
-                    totalVentanas: ventanas.length,
+                    totalVentanas,
+                    batchSize: BATCH_SIZE,
                 },
             });
 
-            for (const ventana of ventanas) {
-                try {
-                    const balance = await calculateRealMonthBalance(
-                        closingMonth,
-                        'ventana',
-                        ventana.id,
-                        undefined,
-                        ventana.bancaId || undefined
-                    );
+            // ✅ OPTIMIZACIÓN: Procesar en batches para prevenir cargar todas las ventanas en memoria
+            let skip = 0;
+            let hasMore = true;
 
-                    await saveMonthlyClosingBalance(
-                        closingMonth,
-                        'ventana',
-                        balance,
-                        ventana.id,
-                        undefined,
-                        ventana.bancaId || undefined
-                    );
+            while (hasMore) {
+                const ventanas = await prisma.ventana.findMany({
+                    where: {
+                        isActive: true,
+                    },
+                    select: {
+                        id: true,
+                        bancaId: true,
+                    },
+                    take: BATCH_SIZE,
+                    skip,
+                    orderBy: {
+                        id: 'asc', // Orden consistente para paginación
+                    },
+                });
 
-                    ventanasSuccess++;
-                } catch (error: any) {
-                    ventanasErrors++;
-                    logger.error({
-                        layer: 'job',
-                        action: 'MONTHLY_CLOSING_VENTANA_ERROR',
-                        payload: {
+                hasMore = ventanas.length === BATCH_SIZE;
+
+                logger.debug({
+                    layer: 'job',
+                    action: 'MONTHLY_CLOSING_BATCH_VENTANAS',
+                    payload: {
+                        closingMonth,
+                        batchNumber: Math.floor(skip / BATCH_SIZE) + 1,
+                        batchSize: ventanas.length,
+                        processed: skip + ventanas.length,
+                        total: totalVentanas,
+                    },
+                });
+
+                for (const ventana of ventanas) {
+                    try {
+                        const balance = await calculateRealMonthBalance(
                             closingMonth,
-                            ventanaId: ventana.id,
-                            error: error.message,
-                        },
-                    });
+                            'ventana',
+                            ventana.id,
+                            undefined,
+                            ventana.bancaId || undefined
+                        );
+
+                        await saveMonthlyClosingBalance(
+                            closingMonth,
+                            'ventana',
+                            balance,
+                            ventana.id,
+                            undefined,
+                            ventana.bancaId || undefined
+                        );
+
+                        ventanasSuccess++;
+                    } catch (error: any) {
+                        ventanasErrors++;
+                        logger.error({
+                            layer: 'job',
+                            action: 'MONTHLY_CLOSING_VENTANA_ERROR',
+                            payload: {
+                                closingMonth,
+                                ventanaId: ventana.id,
+                                error: error.message,
+                            },
+                        });
+                    }
                 }
+
+                skip += BATCH_SIZE;
             }
 
             logger.info({
@@ -181,6 +235,7 @@ export async function executeMonthlyClosing(userId?: string, specificMonth?: str
                     closingMonth,
                     success: ventanasSuccess,
                     errors: ventanasErrors,
+                    totalProcessed: ventanasSuccess + ventanasErrors,
                 },
             });
         } catch (error: any) {
@@ -195,17 +250,15 @@ export async function executeMonthlyClosing(userId?: string, specificMonth?: str
             ventanasErrors++;
         }
 
-        // 3. Process bancas
+        // 3. Process bancas (con paginación para prevenir memory issues)
         let bancasSuccess = 0;
         let bancasErrors = 0;
-        
+
         try {
-            const bancas = await prisma.banca.findMany({
+            // ✅ Primero obtener el total de bancas para logging
+            const totalBancas = await prisma.banca.count({
                 where: {
                     isActive: true,
-                },
-                select: {
-                    id: true,
                 },
             });
 
@@ -214,42 +267,79 @@ export async function executeMonthlyClosing(userId?: string, specificMonth?: str
                 action: 'MONTHLY_CLOSING_START_BANCAS',
                 payload: {
                     closingMonth,
-                    totalBancas: bancas.length,
+                    totalBancas,
+                    batchSize: BATCH_SIZE,
                 },
             });
 
-            for (const banca of bancas) {
-                try {
-                    const balance = await calculateRealMonthBalance(
-                        closingMonth,
-                        'banca',
-                        undefined,
-                        undefined,
-                        banca.id
-                    );
+            // ✅ OPTIMIZACIÓN: Procesar en batches para prevenir cargar todas las bancas en memoria
+            let skip = 0;
+            let hasMore = true;
 
-                    await saveMonthlyClosingBalance(
-                        closingMonth,
-                        'banca',
-                        balance,
-                        undefined,
-                        undefined,
-                        banca.id
-                    );
+            while (hasMore) {
+                const bancas = await prisma.banca.findMany({
+                    where: {
+                        isActive: true,
+                    },
+                    select: {
+                        id: true,
+                    },
+                    take: BATCH_SIZE,
+                    skip,
+                    orderBy: {
+                        id: 'asc', // Orden consistente para paginación
+                    },
+                });
 
-                    bancasSuccess++;
-                } catch (error: any) {
-                    bancasErrors++;
-                    logger.error({
-                        layer: 'job',
-                        action: 'MONTHLY_CLOSING_BANCA_ERROR',
-                        payload: {
+                hasMore = bancas.length === BATCH_SIZE;
+
+                logger.debug({
+                    layer: 'job',
+                    action: 'MONTHLY_CLOSING_BATCH_BANCAS',
+                    payload: {
+                        closingMonth,
+                        batchNumber: Math.floor(skip / BATCH_SIZE) + 1,
+                        batchSize: bancas.length,
+                        processed: skip + bancas.length,
+                        total: totalBancas,
+                    },
+                });
+
+                for (const banca of bancas) {
+                    try {
+                        const balance = await calculateRealMonthBalance(
                             closingMonth,
-                            bancaId: banca.id,
-                            error: error.message,
-                        },
-                    });
+                            'banca',
+                            undefined,
+                            undefined,
+                            banca.id
+                        );
+
+                        await saveMonthlyClosingBalance(
+                            closingMonth,
+                            'banca',
+                            balance,
+                            undefined,
+                            undefined,
+                            banca.id
+                        );
+
+                        bancasSuccess++;
+                    } catch (error: any) {
+                        bancasErrors++;
+                        logger.error({
+                            layer: 'job',
+                            action: 'MONTHLY_CLOSING_BANCA_ERROR',
+                            payload: {
+                                closingMonth,
+                                bancaId: banca.id,
+                                error: error.message,
+                            },
+                        });
+                    }
                 }
+
+                skip += BATCH_SIZE;
             }
 
             logger.info({
@@ -259,6 +349,7 @@ export async function executeMonthlyClosing(userId?: string, specificMonth?: str
                     closingMonth,
                     success: bancasSuccess,
                     errors: bancasErrors,
+                    totalProcessed: bancasSuccess + bancasErrors,
                 },
             });
         } catch (error: any) {
@@ -309,6 +400,9 @@ export async function executeMonthlyClosing(userId?: string, specificMonth?: str
         });
 
         throw error;
+    } finally {
+        // ✅ CRÍTICO: Siempre desregistrar la operación al terminar (éxito o error)
+        activeOperationsService.unregister(operationId);
     }
 }
 

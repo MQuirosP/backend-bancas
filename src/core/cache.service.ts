@@ -93,6 +93,7 @@ export class CacheService {
 
     /**
      * Eliminar múltiples claves por patrón
+     * ✅ OPTIMIZACIÓN: Usa SCAN en lugar de KEYS para no bloquear el event loop
      * @param pattern Patrón de claves (ej: "cutoff:*")
      * @returns Array de claves eliminadas (para logging)
      */
@@ -107,11 +108,48 @@ export class CacheService {
         }
 
         try {
-            const keys = await redis.keys(pattern);
-            if (keys.length > 0) {
-                await redis.del(...keys);
-                return keys;
+            const allKeys: string[] = [];
+            let cursor = '0';
+
+            // ✅ CRÍTICO: Usar SCAN en lugar de KEYS para evitar bloquear el event loop
+            // SCAN es iterativo y no bloquea, mientras que KEYS bloquea hasta terminar
+            do {
+                // SCAN retorna [cursor, keys[]]
+                const [newCursor, keys] = await redis.scan(
+                    cursor,
+                    'MATCH',
+                    pattern,
+                    'COUNT',
+                    100 // Procesar 100 claves por iteración
+                );
+
+                cursor = newCursor;
+                allKeys.push(...keys);
+
+            } while (cursor !== '0');
+
+            // Eliminar las claves encontradas
+            if (allKeys.length > 0) {
+                // ✅ OPTIMIZACIÓN: Eliminar en batches de 100 para evitar sobrecargar Redis
+                const BATCH_SIZE = 100;
+                for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
+                    const batch = allKeys.slice(i, i + BATCH_SIZE);
+                    await redis.del(...batch);
+                }
+
+                logger.debug({
+                    layer: 'cache',
+                    action: 'DEL_PATTERN_SUCCESS',
+                    payload: {
+                        pattern,
+                        deletedCount: allKeys.length,
+                        batches: Math.ceil(allKeys.length / BATCH_SIZE)
+                    }
+                });
+
+                return allKeys;
             }
+
             return [];
         } catch (error) {
             logger.warn({

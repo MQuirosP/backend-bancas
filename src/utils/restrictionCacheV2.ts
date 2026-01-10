@@ -64,6 +64,7 @@ class RestrictionCacheV2 {
   private warmingQueue: Set<string> = new Set();
   private dependencyGraph: Map<string, Set<string>> = new Map();
   private memoryUsage: number = 0;
+  private warmingInterval: NodeJS.Timeout | null = null; // ← AGREGADO: Referencia al interval
 
   constructor(config: Partial<CacheConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -78,10 +79,8 @@ class RestrictionCacheV2 {
       memoryUsage: 0,
     };
 
-    // Start background warming if enabled
-    if (this.config.warmingEnabled) {
-      this.startWarmingProcess();
-    }
+    // ✅ CAMBIO: NO iniciar warming automáticamente en constructor
+    // Se debe llamar explícitamente startWarmingProcess() desde server.ts
 
     logger.info({
       layer: 'cache',
@@ -427,15 +426,60 @@ class RestrictionCacheV2 {
 
   /**
    * Start background warming process
+   * ✅ PÚBLICO: Debe llamarse explícitamente desde server.ts
    */
-  private startWarmingProcess(): void {
-    setInterval(async () => {
+  public startWarmingProcess(): void {
+    // Verificar si ya hay un warming process ejecutándose
+    if (this.warmingInterval) {
+      logger.warn({
+        layer: 'cache',
+        action: 'RESTRICTION_CACHE_V2_WARMING_ALREADY_RUNNING',
+        payload: { message: 'Warming process already running' },
+      });
+      return;
+    }
+
+    if (!this.config.warmingEnabled) {
+      logger.info({
+        layer: 'cache',
+        action: 'RESTRICTION_CACHE_V2_WARMING_DISABLED',
+        payload: { message: 'Warming is disabled in config' },
+      });
+      return;
+    }
+
+    this.warmingInterval = setInterval(async () => {
       if (this.warmingQueue.size > 0) {
         const keys = Array.from(this.warmingQueue);
         this.warmingQueue.clear();
         await this.warmCache(keys);
       }
     }, 30000); // Warm every 30 seconds
+
+    logger.info({
+      layer: 'cache',
+      action: 'RESTRICTION_CACHE_V2_WARMING_STARTED',
+      payload: {
+        intervalSeconds: 30,
+        warmingEnabled: this.config.warmingEnabled
+      },
+    });
+  }
+
+  /**
+   * Stop background warming process
+   * ✅ PÚBLICO: Debe llamarse en graceful shutdown
+   */
+  public stopWarmingProcess(): void {
+    if (this.warmingInterval) {
+      clearInterval(this.warmingInterval);
+      this.warmingInterval = null;
+
+      logger.info({
+        layer: 'cache',
+        action: 'RESTRICTION_CACHE_V2_WARMING_STOPPED',
+      });
+    }
   }
 
   /**
