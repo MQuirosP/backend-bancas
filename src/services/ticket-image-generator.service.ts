@@ -478,12 +478,14 @@ function calculateTicketHeight(
   // Calcular altura del footer si existe y no está vacío (siempre usar el del vendedor)
   const footerText = ticketData.ticket.vendedor.printFooter;
   if (footerText && typeof footerText === 'string' && footerText.trim().length > 0) {
-    // Calcular líneas del footer (aproximado, considerando wrap)
-    // Usar el mismo ancho que en wrapText para consistencia
+    // Usar un canvas temporal para medir el texto exactamente igual que en el renderizado
+    const tempCanvas = createCanvas(canvasWidth, 100);
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.font = `900 ${11 * scale}px monospace`;
     const maxWidth = canvasWidth - 2 * padding;
-    const estimatedCharsPerLine = Math.floor(maxWidth / (11 * scale * 0.6)); // Aproximado: 0.6 es el ancho promedio de un carácter
-    const estimatedFooterLines = Math.max(1, Math.ceil(footerText.trim().length / estimatedCharsPerLine));
-    height += 11 * scale * estimatedFooterLines + lineGap * Math.max(0, estimatedFooterLines - 1);
+    const footerLines = wrapText(footerText.trim(), maxWidth, tempCtx, 11 * scale);
+    const footerLinesCount = footerLines.length;
+    height += 11 * scale * footerLinesCount + lineGap * Math.max(0, footerLinesCount - 1);
   }
 
   // CÓDIGO DE BARRAS
