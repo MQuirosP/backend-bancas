@@ -42,6 +42,8 @@ export const loginSchema = z.object({
     .string()
     .min(6, "Password must be at least 6 characters long")
     .max(100, "Password must be at most 100 characters long"),
+  platform: z.enum(['web', 'android', 'ios']).optional(),  // Opcional: Plataforma del cliente
+  appVersion: z.string().max(50, "appVersion must be at most 50 characters long").optional(),  // Opcional: Versión de la app
 });
 
 // Schema para establecer banca activa

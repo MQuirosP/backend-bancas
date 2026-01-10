@@ -88,6 +88,8 @@ export const AuthController = {
         role: true,
         ventanaId: true,
         settings: true,
+        platform: true,
+        appVersion: true,
       },
     });
 
@@ -145,6 +147,8 @@ export const AuthController = {
       name: u.name,
       role: u.role,
       settings: u.settings,
+      platform: u.platform,
+      appVersion: u.appVersion,
       vendedorId: u.role === Role.VENDEDOR ? u.id : null,
       ventanaId:
         u.role === Role.VENTANA

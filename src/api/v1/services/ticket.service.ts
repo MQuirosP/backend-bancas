@@ -2694,6 +2694,7 @@ export const TicketService = {
               printPhone: vendedorConfig.printPhone,
               // Siempre validar la configuración del vendedor: si printBarcode es false, no mostrar código de barras
               printBarcode: vendedorBarcodeEnabled,
+              printFooter: vendedorConfig.printFooter,
             },
             ventana: {
               name: ticket.ventana?.name || null,

@@ -144,7 +144,7 @@ export const UserService = {
       select: {
         id: true, name: true, username: true, email: true, role: true,
         ventanaId: true, isActive: true, code: true,
-        createdAt: true, settings: true,
+        createdAt: true, settings: true, platform: true, appVersion: true,
       },
     });
 
@@ -168,7 +168,7 @@ export const UserService = {
       select: {
         id: true, name: true, email: true, username: true, role: true,
         ventanaId: true, isActive: true, code: true,
-        createdAt: true, settings: true,
+        createdAt: true, settings: true, platform: true, appVersion: true,
       },
     });
     if (!user) throw new AppError('User not found', 404);
@@ -335,6 +335,7 @@ export const UserService = {
       select: {
         id: true, name: true, username: true, email: true, role: true,
         ventanaId: true, isActive: true, createdAt: true, settings: true,
+        platform: true, appVersion: true,
       },
     });
 
