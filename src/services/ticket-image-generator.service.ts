@@ -37,6 +37,7 @@ interface TicketData {
       printName: string | null;
       printPhone: string | null;
       printBarcode: boolean;
+      printFooter: string | null;
     };
     ventana: {
       name: string | null;
