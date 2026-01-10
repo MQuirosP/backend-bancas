@@ -335,9 +335,10 @@ export async function generateTicketImage(
     ctx.font = `900 ${11 * scale}px monospace`;
     // Envolver texto largo si es necesario
     const footerLines = wrapText(footerText.trim(), canvasWidth - 2 * padding, ctx, 11 * scale);
+    const footerLineHeight = 13 * scale; // Aumentar line-height para evitar superposición
     for (const line of footerLines) {
       ctx.fillText(line, canvasWidth / 2, y);
-      y += 11 * scale + lineGap;
+      y += footerLineHeight;
     }
   } else {
     // Log para debugging si el footer no se renderiza
@@ -485,7 +486,8 @@ function calculateTicketHeight(
     const maxWidth = canvasWidth - 2 * padding;
     const footerLines = wrapText(footerText.trim(), maxWidth, tempCtx, 11 * scale);
     const footerLinesCount = footerLines.length;
-    height += 11 * scale * footerLinesCount + lineGap * Math.max(0, footerLinesCount - 1);
+    const footerLineHeight = 13 * scale; // Mismo line-height que en el renderizado
+    height += footerLineHeight * footerLinesCount;
   }
 
   // CÓDIGO DE BARRAS
