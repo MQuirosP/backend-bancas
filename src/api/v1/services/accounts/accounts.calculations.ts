@@ -715,34 +715,34 @@ export async function getStatementDirect(
 
     //  VALIDACIÓN DEFENSIVA: Asegurar que las fechas convertidas sean válidas
     if (!startDateCRStr || !endDateCRStr) {
-        logger.error({
-            layer: "service",
-            action: "GET_STATEMENT_DIRECT_INVALID_DATE_STRINGS",
-            payload: {
-                startDate,
-                endDate,
-                startDateCRStr,
-                endDateCRStr,
-                note: "Date conversion returned empty string",
-            },
-        });
+        // logger.error({
+        //     layer: "service",
+        //     action: "GET_STATEMENT_DIRECT_INVALID_DATE_STRINGS",
+        //     payload: {
+        //         startDate,
+        //         endDate,
+        //         startDateCRStr,
+        //         endDateCRStr,
+        //         note: "Date conversion returned empty string",
+        //     },
+        // });
         throw new Error("Error converting dates to CR timezone strings");
     }
 
     //  CRÍTICO: Validar que effectiveMonth sea un string válido
     if (!effectiveMonth || typeof effectiveMonth !== 'string' || !effectiveMonth.includes('-')) {
-        logger.error({
-            layer: "service",
-            action: "GET_STATEMENT_DIRECT_INVALID_MONTH",
-            payload: {
-                effectiveMonth,
-                dimension,
-                ventanaId,
-                vendedorId,
-                bancaId,
-                note: "effectiveMonth is invalid, cannot proceed",
-            },
-        });
+        // logger.error({
+        //     layer: "service",
+        //     action: "GET_STATEMENT_DIRECT_INVALID_MONTH",
+        //     payload: {
+        //         effectiveMonth,
+        //         dimension,
+        //         ventanaId,
+        //         vendedorId,
+        //         bancaId,
+        //         note: "effectiveMonth is invalid, cannot proceed",
+        //     },
+        // });
         throw new Error(`effectiveMonth debe ser un string en formato YYYY-MM, recibido: ${effectiveMonth}`);
     }
 
@@ -810,11 +810,11 @@ export async function getStatementDirect(
     const endDateParts = (endDateCRStr || "").split('-');
 
     if (startDateParts.length < 2 || endDateParts.length < 2) {
-        logger.error({
-            layer: "service",
-            action: "GET_STATEMENT_DIRECT_DATE_FORMAT_ERROR",
-            payload: { startDateCRStr, endDateCRStr, dimension }
-        });
+        // logger.error({
+        //     layer: "service",
+        //     action: "GET_STATEMENT_DIRECT_DATE_FORMAT_ERROR",
+        //     payload: { startDateCRStr, endDateCRStr, dimension }
+        // });
         throw new Error("Invalid date format from conversion service");
     }
 
@@ -850,24 +850,24 @@ export async function getStatementDirect(
         return dates;
     };
 
-    logger.info({
-        layer: "service",
-        action: "GET_STATEMENT_DIRECT_START",
-        payload: {
-            dimension,
-            ventanaId: ventanaId || null,
-            vendedorId: vendedorId || null,
-            bancaId: bancaId || null,
-            shouldGroupByDate,
-            startDate: startDateCRStr,
-            endDate: endDateCRStr,
-            daysInRange: daysInMonth,
-            isToday,
-            crossesMonths,
-            periodIncludesToday,
-            optimized: isToday ? "yes" : "no",
-        },
-    });
+    // logger.info({
+    //     layer: "service",
+    //     action: "GET_STATEMENT_DIRECT_START",
+    //     payload: {
+    //         dimension,
+    //         ventanaId: ventanaId || null,
+    //         vendedorId: vendedorId || null,
+    //         bancaId: bancaId || null,
+    //         shouldGroupByDate,
+    //         startDate: startDateCRStr,
+    //         endDate: endDateCRStr,
+    //         daysInRange: daysInMonth,
+    //         isToday,
+    //         crossesMonths,
+    //         periodIncludesToday,
+    //         optimized: isToday ? "yes" : "no",
+    //     },
+    // });
 
     //  PROPUESTA 2: Intentar usar AccountStatement como caché (si no incluye hoy)
     // Esto es MUY RÁPIDO pero requiere que todos los días tengan AccountStatement
@@ -3169,18 +3169,18 @@ export async function getStatementDirect(
 
     if (useAccountStatementForMonthly) {
         //  OPTIMIZACIÓN: Usar AccountStatement directamente (mucho más rápido)
-        logger.info({
-            layer: "service",
-            action: "ACCOUNT_STATEMENT_MONTHLY_USED",
-            payload: {
-                dimension,
-                bancaId,
-                month: currentMonthStr,
-                statementsCount: monthlyStatements.length,
-                expectedDays,
-                note: "Using AccountStatement for monthly totals (optimization)",
-            },
-        });
+        // logger.info({
+        //     layer: "service",
+        //     action: "ACCOUNT_STATEMENT_MONTHLY_USED",
+        //     payload: {
+        //         dimension,
+        //         bancaId,
+        //         month: currentMonthStr,
+        //         statementsCount: monthlyStatements.length,
+        //         expectedDays,
+        //         note: "Using AccountStatement for monthly totals (optimization)",
+        //     },
+        // });
 
         // Sumar totales desde AccountStatement
         monthlyTotalSales = monthlyStatements.reduce((sum, s) => sum + Number(s.totalSales || 0), 0);
@@ -3244,32 +3244,32 @@ export async function getStatementDirect(
             monthlyRemainingBalanceFromStatements = Number(lastStatementOfMonth?.remainingBalance || 0);
         }
 
-        logger.info({
-            layer: "service",
-            action: "ACCOUNT_STATEMENT_MONTHLY_CALCULATED",
-            payload: {
-                dimension,
-                month: currentMonthStr,
-                monthlyTotalSales,
-                monthlyTotalPayouts,
-                monthlyTotalBalance,
-                monthlyRemainingBalance: monthlyRemainingBalanceFromStatements,
-                note: "Calculated from AccountStatement",
-            },
-        });
+        // logger.info({
+        //     layer: "service",
+        //     action: "ACCOUNT_STATEMENT_MONTHLY_CALCULATED",
+        //     payload: {
+        //         dimension,
+        //         month: currentMonthStr,
+        //         monthlyTotalSales,
+        //         monthlyTotalPayouts,
+        //         monthlyTotalBalance,
+        //         monthlyRemainingBalance: monthlyRemainingBalanceFromStatements,
+        //         note: "Calculated from AccountStatement",
+        //     },
+        // });
     } else if (!useAccountStatementForMonthly) {
         // Fallback: calcular desde tickets (más lento)
-        logger.info({
-            layer: "service",
-            action: "ACCOUNT_STATEMENT_MONTHLY_QUERY_START",
-            payload: {
-                dimension,
-                bancaId,
-                month: currentMonthStr,
-                monthlyDynamicLimit,
-                note: "Using tickets calculation (no AccountStatement found)",
-            },
-        });
+        // logger.info({
+        //     layer: "service",
+        //     action: "ACCOUNT_STATEMENT_MONTHLY_QUERY_START",
+        //     payload: {
+        //         dimension,
+        //         bancaId,
+        //         month: currentMonthStr,
+        //         monthlyDynamicLimit,
+        //         note: "Using tickets calculation (no AccountStatement found)",
+        //     },
+        // });
 
         // Obtener jugadas del mes completo
         const monthlyJugadas = await prisma.$queryRaw<
@@ -3324,17 +3324,17 @@ export async function getStatementDirect(
   `;
 
         const monthlyQueryEndTime = Date.now();
-        logger.info({
-            layer: "service",
-            action: "ACCOUNT_STATEMENT_MONTHLY_QUERY_END",
-            payload: {
-                dimension,
-                bancaId,
-                month: currentMonthStr,
-                rowsReturned: monthlyJugadas.length,
-                queryTimeMs: monthlyQueryEndTime - monthlyQueryStartTime,
-            },
-        });
+        // logger.info({
+        //     layer: "service",
+        //     action: "ACCOUNT_STATEMENT_MONTHLY_QUERY_END",
+        //     payload: {
+        //         dimension,
+        //         bancaId,
+        //         month: currentMonthStr,
+        //         rowsReturned: monthlyJugadas.length,
+        //         queryTimeMs: monthlyQueryEndTime - monthlyQueryStartTime,
+        //     },
+        // });
 
         // Agrupar jugadas del mes por día y dimensión
         const monthlyByDateAndDimension = new Map<
@@ -4040,18 +4040,18 @@ export async function getStatementDirect(
     const totalRemainingBalance = Number(totalBalance);
 
     const functionEndTime = Date.now();
-    logger.info({
-        layer: "service",
-        action: "GET_STATEMENT_DIRECT_END",
-        payload: {
-            dimension,
-            bancaId,
-            ventanaId,
-            vendedorId,
-            statementsCount: statements.length,
-            totalTimeMs: functionEndTime - functionStartTime,
-        },
-    });
+    // logger.info({
+    //     layer: "service",
+    //     action: "GET_STATEMENT_DIRECT_END",
+    //     payload: {
+    //         dimension,
+    //         bancaId,
+    //         ventanaId,
+    //         vendedorId,
+    //         statementsCount: statements.length,
+    //         totalTimeMs: functionEndTime - functionStartTime,
+    //     },
+    // });
 
     return {
         statements,
@@ -4352,33 +4352,33 @@ export async function getSettledStatements(
             }
         }
 
-        logger.info({
-            layer: "service",
-            action: "GET_SETTLED_STATEMENTS",
-            payload: {
-                dimension,
-                bancaId,
-                ventanaId,
-                vendedorId,
-                statementsCount: settledStatements.size,
-                rawStatementsCount: settledStatementsRaw.length,
-                requiresGrouping,
-            },
-        });
+        // logger.info({
+        //     layer: "service",
+        //     action: "GET_SETTLED_STATEMENTS",
+        //     payload: {
+        //         dimension,
+        //         bancaId,
+        //         ventanaId,
+        //         vendedorId,
+        //         statementsCount: settledStatements.size,
+        //         rawStatementsCount: settledStatementsRaw.length,
+        //         requiresGrouping,
+        //     },
+        // });
 
         return settledStatements;
     } catch (error: any) {
-        logger.error({
-            layer: "service",
-            action: "GET_SETTLED_STATEMENTS_ERROR",
-            payload: {
-                error: error.message,
-                dimension,
-                bancaId,
-                ventanaId,
-                vendedorId,
-            },
-        });
+        // logger.error({
+        //     layer: "service",
+        //     action: "GET_SETTLED_STATEMENTS_ERROR",
+        //     payload: {
+        //         error: error.message,
+        //         dimension,
+        //         bancaId,
+        //         ventanaId,
+        //         vendedorId,
+        //     },
+        // });
         // Si hay error, retornar Map vacío (se calculará en tiempo real)
         return new Map();
     }

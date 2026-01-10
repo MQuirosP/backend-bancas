@@ -10,6 +10,8 @@ export interface RegisterDTO {
 export interface LoginDTO {
     username: string,
     password: string,
+    platform?: 'web' | 'android' | 'ios',  // Opcional: Plataforma del cliente
+    appVersion?: string,  // Opcional: Versión de la aplicación (ej: '2.0.7')
 }
 
 export interface TokenPair {

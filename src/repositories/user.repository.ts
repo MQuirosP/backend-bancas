@@ -96,6 +96,7 @@ export const UserRepository = {
           id: true, name: true, email: true, username: true, role: true,
           ventanaId: true, isActive: true, code: true,
           createdAt: true, updatedAt: true, settings: true,
+          platform: true, appVersion: true,
           ventana: { select: { id: true, name: true } },
         },
         orderBy: orderBy ?? { createdAt: 'desc' },

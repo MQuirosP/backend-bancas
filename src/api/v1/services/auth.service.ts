@@ -73,6 +73,23 @@ export const AuthService = {
       throw new AppError('Invalid credentials', 401);
     }
 
+    // Actualizar platform y appVersion si vienen en el request
+    const updateData: { platform?: string; appVersion?: string } = {};
+    if (data.platform) {
+      updateData.platform = data.platform;
+    }
+    if (data.appVersion) {
+      updateData.appVersion = data.appVersion;
+    }
+
+    // Si hay datos para actualizar, hacerlo ahora
+    if (Object.keys(updateData).length > 0) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: updateData,
+      });
+    }
+
     const accessToken = jwt.sign(
       {
         sub: user.id,
