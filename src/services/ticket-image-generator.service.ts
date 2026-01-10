@@ -329,8 +329,8 @@ export async function generateTicketImage(
   ctx.fillText(`PAGAMOS ${multiplierX}x`, canvasWidth / 2, y);
   y += 12 * scale + 4 * scale;
 
-  // Renderizar footer si existe y no está vacío
-  const footerText = ticketData.ticket.ventana.printFooter;
+  // Renderizar footer si existe y no está vacío (siempre usar el del vendedor)
+  const footerText = ticketData.ticket.vendedor.printFooter;
   if (footerText && typeof footerText === 'string' && footerText.trim().length > 0) {
     ctx.font = `900 ${11 * scale}px monospace`;
     // Envolver texto largo si es necesario
@@ -475,8 +475,8 @@ function calculateTicketHeight(
 
   // MULTIPLICADOR Y FOOTER
   height += 12 * scale + 4 * scale;
-  // Calcular altura del footer si existe y no está vacío
-  const footerText = ticketData.ticket.ventana.printFooter;
+  // Calcular altura del footer si existe y no está vacío (siempre usar el del vendedor)
+  const footerText = ticketData.ticket.vendedor.printFooter;
   if (footerText && typeof footerText === 'string' && footerText.trim().length > 0) {
     // Calcular líneas del footer (aproximado, considerando wrap)
     // Usar el mismo ancho que en wrapText para consistencia
