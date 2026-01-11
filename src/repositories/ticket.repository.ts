@@ -337,6 +337,22 @@ export const TicketRepository = {
     const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
     const actorRole = options?.actorRole ?? Role.VENDEDOR;
 
+    // Log en crudo de la petición recibida
+    logger.info({
+      layer: 'repository',
+      action: 'TICKET_CREATE_REQUEST_RECEIVED',
+      payload: {
+        userId,
+        loteriaId,
+        sorteoId,
+        ventanaId,
+        clienteNombre,
+        jugadasCount: jugadas?.length,
+        jugadasRaw: jugadas, // Registro completo de las jugadas enviadas
+        options
+      }
+    });
+
     // Toda la operación dentro de una transacción con retry y timeouts explícitos
 
     const { ticket, warnings } = await withTransactionRetry(

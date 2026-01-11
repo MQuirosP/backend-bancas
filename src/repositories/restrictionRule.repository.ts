@@ -516,21 +516,17 @@ export const RestrictionRuleRepository = {
   /**
    * LÓGICA DE CUTOFF CONSOLIDADA
    *
-   * Concepto: El cutoff más ALTO (más restrictivo) siempre gana
-   * - DEFAULT = 1 minuto (más permisivo: venta permitida hasta 1 min antes)
-   * - RESTRICCIÓN = 5 minutos (más restrictivo: venta bloqueada a 5 min antes)
+   * Concepto: Jerarquía de anulación (Override)
+   * Prioridad (el primero que se encuentre gana):
+   * 1. RestrictionRule.USER (Regla específica del vendedor)
+   * 2. RestrictionRule.VENTANA (Regla específica de la ventana)
+   * 3. RestrictionRule.BANCA (Regla específica de la banca)
+   * 4. Banca.salesCutoffMinutes (Ajuste directo en la tabla Banca)
+   * 5. DEFAULT = 1 minuto (Fallback general)
    *
-   * Prioridad (se usa el MÁS ALTO de todos):
-   * 1. RestrictionRule.USER
-   * 2. RestrictionRule.VENTANA
-   * 3. RestrictionRule.BANCA
-   * 4. Banca.salesCutoffMinutes (tabla directa)
-   * 5. DEFAULT = 1 minuto (fallback si nada configurado)
-   *
-   * Ejemplo:
-   * - USER: 2 min, VENTANA: 5 min, BANCA: 3 min → Usa 5 min (VENTANA)
-   * - Sin restricciones, Banca tiene 3 min → Usa 3 min (BANCA)
-   * - Sin nada → Usa 1 min (DEFAULT)
+   * Nota: Se abandona el uso de Math.max() para permitir que reglas específicas
+   * puedan reducir el tiempo de cutoff si así se desea, y para que las
+   * restricciones explícitas (ej. 2 min) prevalezcan sobre defaults de tabla (ej. 5 min).
    */
   async resolveSalesCutoff(params: {
     bancaId: string;
@@ -592,46 +588,21 @@ export const RestrictionRuleRepository = {
       }),
     ]);
 
-    // Recolectar todos los candidatos válidos
-    const candidates: Array<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" }> = [];
+    // Aplicar Jerarquía (Override Pattern)
+    let result: EffectiveSalesCutoffDetailed;
 
     if (userRule?.salesCutoffMinutes != null) {
-      candidates.push({ minutes: userRule.salesCutoffMinutes, source: "USER" });
-    }
-    if (ventanaRule?.salesCutoffMinutes != null) {
-      candidates.push({ minutes: ventanaRule.salesCutoffMinutes, source: "VENTANA" });
-    }
-    if (bancaRule?.salesCutoffMinutes != null) {
-      candidates.push({ minutes: bancaRule.salesCutoffMinutes, source: "BANCA" });
-    }
-    if (bancaTable?.salesCutoffMinutes != null) {
-      candidates.push({ minutes: bancaTable.salesCutoffMinutes, source: "BANCA" });
-    }
-
-    // Si no hay restricciones, usar DEFAULT
-    if (candidates.length === 0) {
+      result = { minutes: userRule.salesCutoffMinutes, source: "USER" };
+    } else if (ventanaRule?.salesCutoffMinutes != null) {
+      result = { minutes: ventanaRule.salesCutoffMinutes, source: "VENTANA" };
+    } else if (bancaRule?.salesCutoffMinutes != null) {
+      result = { minutes: bancaRule.salesCutoffMinutes, source: "BANCA" };
+    } else if (bancaTable?.salesCutoffMinutes != null) {
+      result = { minutes: bancaTable.salesCutoffMinutes, source: "BANCA" };
+    } else {
       const safeDefault = (typeof defaultCutoff === 'number' && !isNaN(defaultCutoff)) ? defaultCutoff : 1;
-      const result = { minutes: Math.max(0, safeDefault), source: "DEFAULT" as const };
-
-      logger.info({
-        layer: 'repository',
-        action: 'CUTOFF_USING_DEFAULT',
-        payload: { bancaId, ventanaId, userId, minutes: result.minutes, source: result.source }
-      });
-
-      await setCachedCutoff({ bancaId, ventanaId, userId }, result);
-      return result;
+      result = { minutes: Math.max(0, safeDefault), source: "DEFAULT" };
     }
-
-    // Encontrar el MÁS RESTRICTIVO (el que tiene más minutos)
-    const mostRestrictive = candidates.reduce((max, current) =>
-      current.minutes > max.minutes ? current : max
-    );
-
-    const result = {
-      minutes: Math.max(0, mostRestrictive.minutes),
-      source: mostRestrictive.source
-    };
 
     logger.info({
       layer: 'repository',
@@ -641,8 +612,14 @@ export const RestrictionRuleRepository = {
         ventanaId,
         userId,
         result,
-        allCandidates: candidates,
-        message: `Using most restrictive cutoff: ${result.minutes} min from ${result.source}`
+        hierarchy: {
+          user: userRule?.salesCutoffMinutes,
+          ventana: ventanaRule?.salesCutoffMinutes,
+          bancaRule: bancaRule?.salesCutoffMinutes,
+          bancaTable: bancaTable?.salesCutoffMinutes,
+          default: defaultCutoff
+        },
+        message: `Resolved cutoff: ${result.minutes} min from ${result.source}`
       }
     });
 

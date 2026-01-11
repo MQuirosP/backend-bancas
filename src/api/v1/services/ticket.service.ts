@@ -201,7 +201,7 @@ export const TicketService = {
       //  VALIDACIÓN DEFENSIVA: Asegurar que minutes sea un número válido
       const safeMinutes = (typeof cutoff.minutes === 'number' && !isNaN(cutoff.minutes))
         ? cutoff.minutes
-        : 1; // Fallback seguro a 5 min si viene corrupto
+        : 1; // Fallback seguro a 1 min si viene corrupto
 
       const cutoffMs = safeMinutes * 60_000;
       const limitTime = new Date(sorteo.scheduledAt.getTime() - cutoffMs);

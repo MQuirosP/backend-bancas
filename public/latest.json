@@ -5,7 +5,7 @@
   "minSupportedVersion": "2.0.0",
   "forceUpdate": false,
   "changelog": "Correcciones y mejoras de rendimiento digitación de jugadas",
-  "releasedAt": "2025-12-29T20:00:00Z",
+  "releasedAt": "2026-01-09T20:00:00Z",
   "apkUrl": "https://backend-bancas-yk1i.onrender.com/api/v1/app/download",
   "sha256": "3229a75c32119f1eef695e10538489c955032341e2f5ac60257d62a86b6cecc4"
 }
