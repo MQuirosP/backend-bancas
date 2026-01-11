@@ -116,20 +116,20 @@ export async function getMonthlyRemainingBalancesBatch(
     // });
 
     //  LOGGING: Para diagnosticar rendimiento
-    logger.info({
-        layer: "service",
-        action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_STATUS",
-        payload: {
-            dimension,
-            month,
-            totalEntities: entityIds.length,
-            entitiesWithUpToDateStatement: entityIds.length - entitiesNeedingTodayCalculation.length,
-            entitiesNeedingCalculation: entitiesNeedingTodayCalculation.length,
-            note: entitiesNeedingTodayCalculation.length > 0
-                ? "Some entities need calculation (slower) - AccountStatement not up to date"
-                : "All entities have up-to-date AccountStatement (fast)",
-        },
-    });
+    // logger.info({
+    //     layer: "service",
+    //     action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_STATUS",
+    //     payload: {
+    //         dimension,
+    //         month,
+    //         totalEntities: entityIds.length,
+    //         entitiesWithUpToDateStatement: entityIds.length - entitiesNeedingTodayCalculation.length,
+    //         entitiesNeedingCalculation: entitiesNeedingTodayCalculation.length,
+    //         note: entitiesNeedingTodayCalculation.length > 0
+    //             ? "Some entities need calculation (slower) - AccountStatement not up to date"
+    //             : "All entities have up-to-date AccountStatement (fast)",
+    //     },
+    // });
 
     //  OPTIMIZACIÓN: Si hay AccountStatement actualizado hasta hoy, usarlo directamente (MUY RÁPIDO)
     for (const entityId of entityIds) {
@@ -148,21 +148,21 @@ export async function getMonthlyRemainingBalancesBatch(
 
         //  VALIDACIÓN: Asegurar que month sea válido antes de split
         if (!month || typeof month !== 'string') {
-            logger.error({
-                layer: "service",
-                action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_INVALID_MONTH",
-                payload: { month, entityIds, dimension }
-            });
+            // logger.error({
+            //     layer: "service",
+            //     action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_INVALID_MONTH",
+            //     payload: { month, entityIds, dimension }
+            // });
             return result;
         }
         //  VALIDACIÓN CRÍTICA: Asegurar que month sea válido antes de split
         // Esto previene el error: "Cannot read properties of undefined (reading 'split')"
         if (!month || typeof month !== 'string' || !month.includes('-')) {
-            logger.error({
-                layer: "service",
-                action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_INVALID_MONTH_FORMAT",
-                payload: { month, dimension, entityIds }
-            });
+            // logger.error({
+            //     layer: "service",
+            //     action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_INVALID_MONTH_FORMAT",
+            //     payload: { month, dimension, entityIds }
+            // });
             return result; // Retornar Map vacío en lugar de crashear
         }
         const [year, monthNum] = month.split("-").map(Number);
@@ -224,16 +224,16 @@ export async function getMonthlyRemainingBalancesBatch(
                         result.set(entityId, Number(previousBalance || 0));
                     }
                 } catch (error) {
-                    logger.error({
-                        layer: "service",
-                        action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_CALCULATION_ERROR",
-                        payload: {
-                            entityId,
-                            dimension,
-                            month,
-                            error: (error as Error).message,
-                        },
-                    });
+                    // logger.error({
+                    //     layer: "service",
+                    //     action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_CALCULATION_ERROR",
+                    //     payload: {
+                    //         entityId,
+                    //         dimension,
+                    //         month,
+                    //         error: (error as Error).message,
+                    //     },
+                    // });
                     // Si falla, usar el AccountStatement disponible (si existe) o 0
                     const latest = latestByEntity.get(entityId);
                     result.set(entityId, latest ? latest.remainingBalance : 0);
@@ -270,18 +270,18 @@ export async function getMonthlyRemainingBalance(
 ): Promise<number> {
     //  VALIDACIÓN: Asegurar que month sea válido
     if (!month || typeof month !== 'string' || !month.includes('-')) {
-        logger.warn({
-            layer: "service",
-            action: "GET_MONTHLY_REMAINING_BALANCE_INVALID_MONTH",
-            payload: {
-                month,
-                dimension,
-                ventanaId,
-                vendedorId,
-                bancaId,
-                note: "month is invalid, returning 0",
-            },
-        });
+        // logger.warn({
+        //     layer: "service",
+        //     action: "GET_MONTHLY_REMAINING_BALANCE_INVALID_MONTH",
+        //     payload: {
+        //         month,
+        //         dimension,
+        //         ventanaId,
+        //         vendedorId,
+        //         bancaId,
+        //         note: "month is invalid, returning 0",
+        //     },
+        // });
         return 0;
     }
 
@@ -353,11 +353,11 @@ export async function getMonthlyRemainingBalance(
     // Solo se ejecuta si no hay datos en AccountStatement
     //  VALIDACIÓN CRÍTICA: Asegurar que month sea válido antes de split
     if (!month || typeof month !== 'string' || !month.includes('-')) {
-        logger.warn({
-            layer: "service",
-            action: "GET_MONTHLY_REMAINING_BALANCE_INVALID_MONTH",
-            payload: { month, dimension, ventanaId, vendedorId, bancaId }
-        });
+        // logger.warn({
+        //     layer: "service",
+        //     action: "GET_MONTHLY_REMAINING_BALANCE_INVALID_MONTH",
+        //     payload: { month, dimension, ventanaId, vendedorId, bancaId }
+        // });
         return 0;
     }
     const [year, monthNum] = month.split("-").map(Number);
@@ -403,18 +403,18 @@ export async function getMonthlyRemainingBalance(
             return Number(lastStatement.remainingBalance || 0);
         }
     } catch (error) {
-        logger.error({
-            layer: "service",
-            action: "GET_MONTHLY_REMAINING_BALANCE_CALCULATION_ERROR",
-            payload: {
-                month,
-                dimension,
-                ventanaId,
-                vendedorId,
-                bancaId,
-                error: (error as Error).message,
-            },
-        });
+        // logger.error({
+        //     layer: "service",
+        //     action: "GET_MONTHLY_REMAINING_BALANCE_CALCULATION_ERROR",
+        //     payload: {
+        //         month,
+        //         dimension,
+        //         ventanaId,
+        //         vendedorId,
+        //         bancaId,
+        //         error: (error as Error).message,
+        //     },
+        // });
     }
 
     //  ÚLTIMO FALLBACK: Si no hay statements hasta hoy, usar el saldo del mes anterior
