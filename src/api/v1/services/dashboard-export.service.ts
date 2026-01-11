@@ -1,4 +1,4 @@
-import ExcelJS from 'exceljs';
+import * as ExcelJS from 'exceljs';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pdfMake = require('pdfmake/build/pdfmake');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
