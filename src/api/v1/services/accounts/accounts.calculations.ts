@@ -971,18 +971,18 @@ export async function getStatementDirect(
     });
 
     const queryEndTime = Date.now();
-    logger.info({
-        layer: "service",
-        action: "ACCOUNT_STATEMENT_SQL_QUERY_END",
-        payload: {
-            dimension,
-            bancaId,
-            ventanaId,
-            vendedorId,
-            rowsReturned: aggregatedData.length,
-            queryTimeMs: queryEndTime - queryStartTime,
-        },
-    });
+    // logger.info({
+    //     layer: "service",
+    //     action: "ACCOUNT_STATEMENT_SQL_QUERY_END",
+    //     payload: {
+    //         dimension,
+    //         bancaId,
+    //         ventanaId,
+    //         vendedorId,
+    //         rowsReturned: aggregatedData.length,
+    //         queryTimeMs: queryEndTime - queryStartTime,
+    //     },
+    // });
 
     //  CRÍTICO: Agrupar jugadas por día y banca/ventana/vendedor, calculando comisiones jugada por jugada
     // EXACTAMENTE igual que commissions (líneas 403-492)
@@ -2286,21 +2286,21 @@ export async function getStatementDirect(
 
                 //  DEBUG MARCELA: Investigar problema de acumulado
 
-                if (isMarcela && (date === '2026-01-01' || date === '2026-01-02' || date === '2026-01-03' || date === '2026-01-04')) {
-                    logger.info({
-                        layer: "service",
-                        action: "DEBUG_MARCELA_ACCUMULATION",
-                        payload: {
-                            date,
-                            previousDateStr,
-                            runningValue,
-                            previousDayRemainingBalance,
-                            previousMonthBalance: Number(previousMonthBalance),
-                            previousDateIsDifferentMonth,
-                            initialAccumulated,
-                        }
-                    });
-                }
+                // if (isMarcela && (date === '2026-01-01' || date === '2026-01-02' || date === '2026-01-03' || date === '2026-01-04')) {
+                //     logger.info({
+                //         layer: "service",
+                //         action: "DEBUG_MARCELA_ACCUMULATION",
+                //         payload: {
+                //             date,
+                //             previousDateStr,
+                //             runningValue,
+                //             previousDayRemainingBalance,
+                //             previousMonthBalance: Number(previousMonthBalance),
+                //             previousDateIsDifferentMonth,
+                //             initialAccumulated,
+                //         }
+                //     });
+                // }
             }
 
 
@@ -2384,19 +2384,19 @@ export async function getStatementDirect(
             }
 
             //  DEBUG MARCELA: Investigar por qué el resumen difiere del último sorteo
-            if (isMarcela && (date === '2026-01-01' || date === '2026-01-02' || date === '2026-01-03' || date === '2026-01-04')) {
-                logger.info({
-                    layer: "service",
-                    action: "DEBUG_MARCELA_RESULT",
-                    payload: {
-                        date,
-                        dailyBalance: balance,
-                        initialAccumulated,
-                        statementRemainingBalance,
-                        lastEventAccumulated: (sorteosAndMovements.length > 0) ? sorteosAndMovements[0].accumulated : 'EMPTY'
-                    }
-                });
-            }
+            // if (isMarcela && (date === '2026-01-01' || date === '2026-01-02' || date === '2026-01-03' || date === '2026-01-04')) {
+            //     logger.info({
+            //         layer: "service",
+            //         action: "DEBUG_MARCELA_RESULT",
+            //         payload: {
+            //             date,
+            //             dailyBalance: balance,
+            //             initialAccumulated,
+            //             statementRemainingBalance,
+            //             lastEventAccumulated: (sorteosAndMovements.length > 0) ? sorteosAndMovements[0].accumulated : 'EMPTY'
+            //         }
+            //     });
+            // }
 
             //  CRÍTICO: SIEMPRE actualizar caches con el statementRemainingBalance correcto
             runningAccumulatedByEntity.set(entityId, statementRemainingBalance);
@@ -2434,21 +2434,21 @@ export async function getStatementDirect(
             };
 
             //  DEBUG MARCELA FINAL: ¿Por qué el acumulado del día no coincide con el último sorteo?
-            if (isMarcela && (date === '2026-01-01' || date === '2026-01-02' || date === '2026-01-03' || date === '2026-01-04')) {
-                logger.info({
-                    layer: "service",
-                    action: "DEBUG_MARCELA_FINAL_STATEMENT",
-                    payload: {
-                        date,
-                        dailyBalance: balance,
-                        initialAccumulated,
-                        statementRemainingBalance,
-                        topLevelRemainingBalance: statement.remainingBalance,
-                        lastEventAccumulated: sorteosAndMovements.length > 0 ? sorteosAndMovements[0].accumulated : 'N/A',
-                        firstEventAccumulated: sorteosAndMovements.length > 0 ? sorteosAndMovements[sorteosAndMovements.length - 1].accumulated : 'N/A'
-                    }
-                });
-            }
+            // if (isMarcela && (date === '2026-01-01' || date === '2026-01-02' || date === '2026-01-03' || date === '2026-01-04')) {
+            //     logger.info({
+            //         layer: "service",
+            //         action: "DEBUG_MARCELA_FINAL_STATEMENT",
+            //         payload: {
+            //             date,
+            //             dailyBalance: balance,
+            //             initialAccumulated,
+            //             statementRemainingBalance,
+            //             topLevelRemainingBalance: statement.remainingBalance,
+            //             lastEventAccumulated: sorteosAndMovements.length > 0 ? sorteosAndMovements[0].accumulated : 'N/A',
+            //             firstEventAccumulated: sorteosAndMovements.length > 0 ? sorteosAndMovements[sorteosAndMovements.length - 1].accumulated : 'N/A'
+            //         }
+            //     });
+            // }
 
 
             //  NUEVO: Agregar desglose por entidad cuando hay agrupación

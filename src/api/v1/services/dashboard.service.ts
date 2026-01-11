@@ -1363,22 +1363,22 @@ export const DashboardService = {
       const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
 
       //  DEBUG: Log para verificar qué datos estamos obteniendo
-      logger.info({
-        layer: 'service',
-        action: 'MONTHLY_ACCUMULATED_DEBUG',
-        payload: {
-          monthStartStr,
-          monthEndStr,
-          monthVentanaDataCount: monthVentanaData.length,
-          monthStatementsCount: monthStatements.length,
-          monthCollectionsCount: monthCollections.length,
-          monthVentanaDataSample: monthVentanaData.slice(0, 3).map(v => ({
-            ventanaId: v.ventana_id?.substring(0, 8),
-            totalSales: v.total_sales,
-            totalPayouts: v.total_payouts,
-          })),
-        },
-      });
+      // logger.info({
+      //   layer: 'service',
+      //   action: 'MONTHLY_ACCUMULATED_DEBUG',
+      //   payload: {
+      //     monthStartStr,
+      //     monthEndStr,
+      //     monthVentanaDataCount: monthVentanaData.length,
+      //     monthStatementsCount: monthStatements.length,
+      //     monthCollectionsCount: monthCollections.length,
+      //     monthVentanaDataSample: monthVentanaData.slice(0, 3).map(v => ({
+      //       ventanaId: v.ventana_id?.substring(0, 8),
+      //       totalSales: v.total_sales,
+      //       totalPayouts: v.total_payouts,
+      //     })),
+      //   },
+      // });
 
       // Procesar datos de ventanas del mes
       for (const ventanaRow of monthVentanaData) {
@@ -1461,28 +1461,28 @@ export const DashboardService = {
           monthSaldoByVentana.set(ventanaId, saldoAHoy);
         }
 
-        logger.info({
-          layer: 'service',
-          action: 'MONTHLY_ACCUMULATED_FROM_BATCH',
-          payload: {
-            effectiveMonth,
-            dimension: "ventana",
-            totalEntities: allVentanaIds.size,
-            foundInBatch: balancesBatch.size,
-            note: "Using getMonthlyRemainingBalancesBatch (same as accounts/statement, much faster)",
-          },
-        });
+        // logger.info({
+        //   layer: 'service',
+        //   action: 'MONTHLY_ACCUMULATED_FROM_BATCH',
+        //   payload: {
+        //     effectiveMonth,
+        //     dimension: "ventana",
+        //     totalEntities: allVentanaIds.size,
+        //     foundInBatch: balancesBatch.size,
+        //     note: "Using getMonthlyRemainingBalancesBatch (same as accounts/statement, much faster)",
+        //   },
+        // });
       } catch (error) {
-        logger.error({
-          layer: 'service',
-          action: 'MONTHLY_ACCUMULATED_BATCH_ERROR',
-          payload: {
-            effectiveMonth,
-            dimension: "ventana",
-            error: (error as Error).message,
-            note: "Error getting monthly remaining balances batch, using 0 for all",
-          },
-        });
+        // logger.error({
+        //   layer: 'service',
+        //   action: 'MONTHLY_ACCUMULATED_BATCH_ERROR',
+        //   payload: {
+        //     effectiveMonth,
+        //     dimension: "ventana",
+        //     error: (error as Error).message,
+        //     note: "Error getting monthly remaining balances batch, using 0 for all",
+        //   },
+        // });
         // Si falla el batch, usar 0 para todos
         for (const ventanaId of allVentanaIds) {
           monthSaldoByVentana.set(ventanaId, 0);
@@ -2021,28 +2021,28 @@ export const DashboardService = {
           monthSaldoByVendedor.set(vendedorId, saldoAHoy);
         }
 
-        logger.info({
-          layer: 'service',
-          action: 'MONTHLY_ACCUMULATED_FROM_BATCH_VENDEDOR',
-          payload: {
-            effectiveMonth,
-            dimension: "vendedor",
-            totalEntities: allVendedorIds.size,
-            foundInBatch: balancesBatch.size,
-            note: "Using getMonthlyRemainingBalancesBatch (same as accounts/statement, much faster)",
-          },
-        });
+        // logger.info({
+        //   layer: 'service',
+        //   action: 'MONTHLY_ACCUMULATED_FROM_BATCH_VENDEDOR',
+        //   payload: {
+        //     effectiveMonth,
+        //     dimension: "vendedor",
+        //     totalEntities: allVendedorIds.size,
+        //     foundInBatch: balancesBatch.size,
+        //     note: "Using getMonthlyRemainingBalancesBatch (same as accounts/statement, much faster)",
+        //   },
+        // });
       } catch (error) {
-        logger.error({
-          layer: 'service',
-          action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENDEDOR',
-          payload: {
-            effectiveMonth,
-            dimension: "vendedor",
-            error: (error as Error).message,
-            note: "Error getting monthly remaining balances batch, using 0 for all",
-          },
-        });
+        // logger.error({
+        //   layer: 'service',
+        //   action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENDEDOR',
+        //   payload: {
+        //     effectiveMonth,
+        //     dimension: "vendedor",
+        //     error: (error as Error).message,
+        //     note: "Error getting monthly remaining balances batch, using 0 for all",
+        //   },
+        // });
         // Si falla el batch, usar 0 para todos
         for (const vendedorId of allVendedorIds) {
           monthSaldoByVendedor.set(vendedorId, 0);
@@ -2573,16 +2573,16 @@ export const DashboardService = {
           monthSaldoByVentana.set(ventanaId, saldoAHoy);
         }
       } catch (error) {
-        logger.error({
-          layer: 'service',
-          action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENTANA_CXP',
-          payload: {
-            effectiveMonth,
-            dimension: "ventana",
-            error: (error as Error).message,
-            note: "Error getting monthly remaining balances batch, using 0 for all",
-          },
-        });
+        // logger.error({
+        //   layer: 'service',
+        //   action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENTANA_CXP',
+        //   payload: {
+        //     effectiveMonth,
+        //     dimension: "ventana",
+        //     error: (error as Error).message,
+        //     note: "Error getting monthly remaining balances batch, using 0 for all",
+        //   },
+        // });
         for (const ventanaId of allVentanaIds) {
           monthSaldoByVentana.set(ventanaId, 0);
         }
@@ -3141,16 +3141,16 @@ export const DashboardService = {
           monthSaldoByVendedor.set(vendedorId, saldoAHoy);
         }
       } catch (error) {
-        logger.error({
-          layer: 'service',
-          action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENDEDOR_CXP',
-          payload: {
-            effectiveMonth,
-            dimension: "vendedor",
-            error: (error as Error).message,
-            note: "Error getting monthly remaining balances batch, using 0 for all",
-          },
-        });
+        // logger.error({
+        //   layer: 'service',
+        //   action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENDEDOR_CXP',
+        //   payload: {
+        //     effectiveMonth,
+        //     dimension: "vendedor",
+        //     error: (error as Error).message,
+        //     note: "Error getting monthly remaining balances batch, using 0 for all",
+        //   },
+        // });
         for (const vendedorId of allVendedorIds) {
           monthSaldoByVendedor.set(vendedorId, 0);
         }
