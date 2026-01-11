@@ -390,6 +390,41 @@ export const DashboardController = {
   },
 
   /**
+   * POST /api/v1/admin/dashboard/accumulated-balances
+   * Obtiene saldos acumulados en lote (Saldo a Hoy)
+   */
+  async getAccumulatedBalances(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    if (req.user.role === Role.VENDEDOR) {
+      throw new AppError("No autorizado", 403);
+    }
+
+    // Intentar obtener de body o query (fallback para flexibilidad)
+    const dimension = req.body.dimension || req.query.dimension;
+    let entityIds = req.body.entityIds || req.query.entityIds;
+
+    // Si viene como string separado por comas en el query
+    if (typeof entityIds === 'string') {
+      entityIds = entityIds.split(',');
+    }
+
+    if (!dimension || !Array.isArray(entityIds)) {
+      throw new AppError("Parámetros 'dimension' y 'entityIds' son requeridos", 400);
+    }
+
+    const { bancaId } = await applyDashboardRbac(req, req.query);
+
+    const result = await DashboardService.getAccumulatedBalancesBatch(
+      dimension as "ventana" | "vendedor",
+      entityIds,
+      bancaId
+    );
+
+    return success(res, result);
+  },
+
+  /**
    * GET /api/v1/admin/dashboard/export
    * Exportar dashboard en CSV/XLSX/PDF
    */

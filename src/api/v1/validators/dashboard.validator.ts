@@ -91,3 +91,27 @@ export const DashboardQuerySchema = z
 
 // Middleware de validación
 export const validateDashboardQuery = validateQuery(DashboardQuerySchema);
+
+/**
+ * Schema para saldos acumulados en lote
+ */
+export const AccumulatedBalancesSchema = z.object({
+  dimension: z.enum(["ventana", "vendedor"]),
+  entityIds: z.array(z.string()), // Relajamos de uuid() a string() para diagnosticar
+});
+
+export const validateAccumulatedBalances = (req: any, res: any, next: any) => {
+  try {
+    console.log("Validating accumulated-balances body:", JSON.stringify(req.body));
+    AccumulatedBalancesSchema.parse(req.body);
+    next();
+  } catch (error: any) {
+    console.error("Validation error for accumulated-balances:", error.errors);
+    console.error("Request body was:", req.body);
+    res.status(400).json({ 
+      error: "Validation failed", 
+      details: error.errors,
+      received: req.body 
+    });
+  }
+};

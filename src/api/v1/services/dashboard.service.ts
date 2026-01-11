@@ -8,6 +8,7 @@ import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from
 import { getMonthlyRemainingBalance, getMonthlyRemainingBalancesBatch } from "./accounts/accounts.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { crDateService } from "../../../utils/crDateService";
+import { PerformanceMonitor, measureAsync } from "../../../utils/performanceMonitor";
 
 /**
  * Dashboard Service
@@ -894,7 +895,6 @@ export const DashboardService = {
   async calculateCxC(filters: DashboardFilters, role?: Role): Promise<CxCResult> {
     const dimension = filters.cxcDimension || 'ventana';
 
-    //  NUEVO: Si dimension='vendedor', ejecutar lógica específica para vendedores
     if (dimension === 'vendedor') {
       return this.calculateCxCByVendedor(filters, role);
     }
@@ -904,674 +904,116 @@ export const DashboardService = {
     const rangeEnd = parseDateEnd(toDateStr);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
-    //  NOTE: Commission already included in SQL snapshot (listero_commission_snapshot)
-    // No need to call computeVentanaCommissionFromPolicies here
-
-    //  CRÍTICO: Obtener datos directamente desde tickets/jugadas (igual que calculateGanancia)
-    const ventanaData = await prisma.$queryRaw<
-      Array<{
-        ventana_id: string;
-        ventana_name: string;
-        is_active: boolean;
-        total_sales: number;
-        total_payouts: number;
-        commission_user: number;
-        commission_ventana_raw: number;
-        listero_commission_snapshot: number;
-      }>
-    >(
-      Prisma.sql`
-        WITH tickets_in_range AS (
-          SELECT
-            t.id,
-            t."ventanaId",
-            t."sorteoId",
-            t."vendedorId",
-            t."totalAmount",
-            t."totalPayout"
-          FROM "Ticket" t
-          WHERE ${baseFilters}
-        ),
-        sales_per_ventana AS (
-          SELECT
-            t."ventanaId" AS ventana_id,
-            COALESCE(SUM(j.amount), 0) AS total_sales,
-            COALESCE(SUM(j.payout), 0) AS total_payouts
-          FROM tickets_in_range t
-          JOIN "Jugada" j ON j."ticketId" = t.id
-          WHERE j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u ON u.id = sle.ventana_id
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND u."ventanaId" = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
-          GROUP BY t."ventanaId"
-        ),
-        commissions_per_ventana AS (
-          SELECT
-            t."ventanaId" AS ventana_id,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
-            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
-          FROM tickets_in_range t
-          JOIN "Jugada" j ON j."ticketId" = t.id
-          WHERE j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u ON u.id = sle.ventana_id
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND u."ventanaId" = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
-          GROUP BY t."ventanaId"
+    // SQL consolidada para evitar picos de memoria y múltiples round-trips
+    const ventanaData = await prisma.$queryRaw<any[]>(Prisma.sql`
+      WITH tickets_in_range AS (
+        SELECT t.id, t."ventanaId", t."sorteoId", t."vendedorId"
+        FROM "Ticket" t WHERE ${baseFilters}
+      ),
+      jugada_agg AS (
+        SELECT t."ventanaId",
+               COALESCE(SUM(j.amount), 0) AS total_sales,
+               COALESCE(SUM(j.payout), 0) AS total_payouts,
+               COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+               COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
+               COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
+        FROM tickets_in_range t
+        JOIN "Jugada" j ON j."ticketId" = t.id
+        WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
+        AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
         )
-        SELECT
-          v.id AS ventana_id,
-          v.name AS ventana_name,
-          v."isActive" AS is_active,
-          COALESCE(sp.total_sales, 0) AS total_sales,
-          COALESCE(sp.total_payouts, 0) AS total_payouts,
-          COALESCE(cp.commission_user, 0) AS commission_user,
-          COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw,
-          COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot
-        FROM "Ventana" v
-        LEFT JOIN sales_per_ventana sp ON sp.ventana_id = v.id
-        LEFT JOIN commissions_per_ventana cp ON cp.ventana_id = v.id
-        WHERE v."isActive" = true
-          ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
-        ORDER BY total_sales DESC
-      `
-    );
+        GROUP BY t."ventanaId"
+      ),
+      statements_agg AS (
+        SELECT "ventanaId", COALESCE(SUM("totalPaid"), 0) AS total_paid
+        FROM "AccountStatement"
+        WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NULL
+        GROUP BY "ventanaId"
+      ),
+      collections_agg AS (
+        SELECT "ventanaId", COALESCE(SUM("amount"), 0) AS total_collected
+        FROM "AccountPayment"
+        WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NULL AND "isReversed" = false AND "type" = 'collection'
+        GROUP BY "ventanaId"
+      ),
+      ticket_payments_agg AS (
+        SELECT t."ventanaId", COALESCE(SUM(tp."amountPaid"), 0) AS total_paid_to_customer
+        FROM "TicketPayment" tp
+        JOIN "Ticket" t ON t.id = tp."ticketId"
+        WHERE tp."isReversed" = false AND tp."paymentDate" BETWEEN ${rangeStart} AND ${rangeEnd} AND t."deletedAt" IS NULL
+        GROUP BY t."ventanaId"
+      )
+      SELECT v.id AS ventana_id, v.name AS ventana_name, v."isActive" AS is_active,
+             COALESCE(ja.total_sales, 0) AS total_sales,
+             COALESCE(ja.total_payouts, 0) AS total_payouts,
+             COALESCE(ja.commission_user, 0) AS commission_user,
+             COALESCE(ja.commission_ventana_raw, 0) AS commission_ventana_raw,
+             COALESCE(ja.listero_commission_snapshot, 0) AS listero_commission_snapshot,
+             COALESCE(sa.total_paid, 0) AS total_paid,
+             COALESCE(ca.total_collected, 0) AS total_collected,
+             COALESCE(tpa.total_paid_to_customer, 0) AS total_paid_to_customer
+      FROM "Ventana" v
+      LEFT JOIN jugada_agg ja ON ja."ventanaId" = v.id
+      LEFT JOIN statements_agg sa ON sa."ventanaId" = v.id
+      LEFT JOIN collections_agg ca ON ca."ventanaId" = v.id
+      LEFT JOIN ticket_payments_agg tpa ON tpa."ventanaId" = v.id
+      WHERE v."isActive" = true
+      ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+      ORDER BY total_sales DESC
+    `);
 
-    const where: Prisma.AccountStatementWhereInput = {
-      date: {
-        gte: rangeStart,
-        lte: rangeEnd,
-      },
-      vendedorId: null,
-    };
-
-    if (filters.ventanaId) {
-      where.ventanaId = filters.ventanaId;
-    } else {
-      where.ventanaId = { not: null };
-    }
-
-    // Filtrar por banca activa si está disponible
-    if (filters.bancaId) {
-      where.ventana = {
-        bancaId: filters.bancaId,
-      };
-    }
-
-    const statements = await prisma.accountStatement.findMany({
-      where,
-      include: {
-        ventana: {
-          select: {
-            id: true,
-            name: true,
-            isActive: true,
-          },
-        },
-      },
-    });
-
-    // Asegurar que todas las ventanas activas aparezcan aunque no tengan statement
-    // Filtrar por banca si está disponible
-    const ventanaWhere: any = { isActive: true };
-    if (filters.bancaId) {
-      ventanaWhere.bancaId = filters.bancaId;
-    }
-    const ventanas = await prisma.ventana.findMany({
-      where: ventanaWhere,
-      select: { id: true, name: true, isActive: true },
-    });
-    const ventanaInfoMap = new Map(
-      ventanas.map((v) => [v.id, { name: v.name, isActive: v.isActive }])
-    );
-
-    const aggregated = new Map<
-      string,
-      {
-        ventanaId: string;
-        ventanaName: string;
-        isActive: boolean;
-        totalSales: number;
-        totalPayouts: number;
-        totalListeroCommission: number;
-        totalVendedorCommission: number;
-        totalPaid: number;
-        totalCollected: number;
-        totalPaidToCustomer: number;
-        remainingBalance: number;
-      }
-    >();
-
-    const ensureEntry = (
-      ventanaId: string,
-      fallbackName?: string,
-      fallbackIsActive?: boolean
-    ) => {
-      let entry = aggregated.get(ventanaId);
-      if (!entry) {
-        const info = ventanaInfoMap.get(ventanaId);
-        entry = {
-          ventanaId,
-          ventanaName: fallbackName ?? info?.name ?? "Sin nombre",
-          isActive: fallbackIsActive ?? info?.isActive ?? true,
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-          totalPaidToCustomer: 0,
-          remainingBalance: 0,
-        };
-        aggregated.set(ventanaId, entry);
-      } else {
-        // Actualizar nombre/estado si recibimos datos más recientes
-        if (fallbackName && entry.ventanaName !== fallbackName) {
-          entry.ventanaName = fallbackName;
-        }
-        if (typeof fallbackIsActive === "boolean") {
-          entry.isActive = fallbackIsActive;
-        }
-      }
-      return entry;
-    };
-
-    //  CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
-    for (const ventanaRow of ventanaData) {
-      const ventanaId = ventanaRow.ventana_id;
-      const entry = ensureEntry(ventanaId);
-
-      entry.totalSales = Number(ventanaRow.total_sales) || 0;
-      entry.totalPayouts = Number(ventanaRow.total_payouts) || 0;
-
-      //  CORREGIDO: Usar SIEMPRE el snapshot de comisión del listero
-      // Esto asegura consistencia entre período filtrado y mes completo
-      // No recalcular desde políticas (causa discrepancias de 44 colones)
-      entry.totalListeroCommission = Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0;
-      entry.totalVendedorCommission = Number(ventanaRow.commission_user) || 0;
-    }
-
-    // Obtener totalPaid desde AccountStatement (ya está calculado correctamente)
-    for (const statement of statements) {
-      if (!statement.ventanaId) continue;
-      const key = statement.ventanaId;
-      const existing = ensureEntry(
-        key,
-        statement.ventana?.name,
-        statement.ventana?.isActive ?? undefined
-      );
-
-      existing.totalPaid += statement.totalPaid ?? 0;
-    }
-
-    const accountPaymentWhere: Prisma.AccountPaymentWhereInput = {
-      date: {
-        gte: rangeStart,
-        lte: rangeEnd,
-      },
-      vendedorId: null,
-      isReversed: false,
-      type: "collection",
-    };
-    if (filters.ventanaId) {
-      accountPaymentWhere.ventanaId = filters.ventanaId;
-    } else {
-      accountPaymentWhere.ventanaId = { not: null };
-    }
-    // Filtrar por banca activa si está disponible
-    if (filters.bancaId) {
-      //  CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
-      accountPaymentWhere.bancaId = filters.bancaId;
-    }
-
-    const collections = await prisma.accountPayment.findMany({
-      where: accountPaymentWhere,
-      select: {
-        ventanaId: true,
-        amount: true,
-      },
-    });
-
-    for (const collection of collections) {
-      if (!collection.ventanaId) continue;
-      const entry = ensureEntry(collection.ventanaId);
-      entry.totalCollected += collection.amount ?? 0;
-    }
-
-    const ticketRelationFilter: Prisma.TicketWhereInput = {
-      deletedAt: null,
-    };
-    if (filters.ventanaId) {
-      ticketRelationFilter.ventanaId = filters.ventanaId;
-    }
-    // Filtrar por banca activa si está disponible
-    if (filters.bancaId) {
-      ticketRelationFilter.ventana = {
-        bancaId: filters.bancaId,
-      };
-    }
-
-    const ticketPayments = await prisma.ticketPayment.findMany({
-      where: {
-        isReversed: false,
-        paymentDate: {
-          gte: rangeStart,
-          lte: rangeEnd,
-        },
-        ticket: {
-          is: ticketRelationFilter,
-        },
-      },
-      select: {
-        amountPaid: true,
-        ticket: {
-          select: {
-            ventanaId: true,
-          },
-        },
-      },
-    });
-
-    for (const payment of ticketPayments) {
-      const ventanaId = payment.ticket?.ventanaId;
-      if (!ventanaId) continue;
-      const entry = ensureEntry(ventanaId);
-      entry.totalPaidToCustomer += payment.amountPaid ?? 0;
-    }
-
-    for (const ventana of ventanas) {
-      ensureEntry(ventana.id, ventana.name, ventana.isActive);
-    }
-
-    //  NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
+    const nowCRStr = crDateService.dateUTCToCRString(new Date());
+    const effectiveMonth = nowCRStr.substring(0, 7);
     const monthRangeCheck = resolveDateRange('month');
     const todayRangeCheck = resolveDateRange('today');
     const { startDateCRStr: monthStartCheckStr } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck.fromAt, todayRangeCheck.toAt);
-    const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === crDateService.dateUTCToCRString(new Date());
+    const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === nowCRStr;
 
-    //  NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada ventana
-    const monthSaldoByVentana = new Map<string, number>();
-    {
-      //  CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
-      // Esto asegura consistencia entre local y producción (Render)
-      const monthRange = resolveDateRange('month'); // Primer día del mes en CR
-      const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
+    const allVentanaIds = ventanaData.map(v => v.ventana_id);
 
-      const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
-      const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
-
-      // Convertir a strings de fecha para filtros usando crDateService
-      //  CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
-      // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
-      const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
-
-      //  CRÍTICO: Para consultas de Prisma con campos @db.Date, necesitamos crear Dates que representen
-      // el día completo como DATE (sin hora). monthEndStr ya es el día de hoy en formato YYYY-MM-DD
-      const monthStartDate = new Date(`${monthStartStr}T00:00:00.000Z`);
-      const monthEndDate = new Date(`${monthEndStr}T00:00:00.000Z`);
-
-      // Construir filtros WHERE desde inicio del mes hasta hoy (Saldo a Hoy)
-      const monthBaseFilters = buildTicketBaseFilters(
-        "t",
-        { ...filters, fromDate: monthStart, toDate: monthEnd },
-        monthStartStr,
-        monthEndStr
-      );
-
-      // Obtener datos de ventanas para el mes completo
-      const monthVentanaData = await prisma.$queryRaw<
-        Array<{
-          ventana_id: string;
-          ventana_name: string;
-          is_active: boolean;
-          total_sales: number;
-          total_payouts: number;
-          commission_user: number;
-          commission_ventana_raw: number;
-          listero_commission_snapshot: number;
-        }>
-      >(
-        Prisma.sql`
-          WITH tickets_in_range AS (
-            SELECT
-              t.id,
-              t."ventanaId",
-              t."sorteoId",
-              t."vendedorId",
-              t."totalAmount",
-              t."totalPayout"
-            FROM "Ticket" t
-            WHERE ${monthBaseFilters}
-          ),
-          sales_per_ventana AS (
-            SELECT
-              t."ventanaId" AS ventana_id,
-              COALESCE(SUM(j.amount), 0) AS total_sales,
-              COALESCE(SUM(j.payout), 0) AS total_payouts
-            FROM tickets_in_range t
-            JOIN "Jugada" j ON j."ticketId" = t.id
-            WHERE j."deletedAt" IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM "sorteo_lista_exclusion" sle
-              JOIN "User" u ON u.id = sle.ventana_id
-              WHERE sle.sorteo_id = t."sorteoId"
-              AND u."ventanaId" = t."ventanaId"
-              AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-              AND sle.multiplier_id = j."multiplierId"
-            )
-            GROUP BY t."ventanaId"
-          ),
-          commissions_per_ventana AS (
-            SELECT
-              t."ventanaId" AS ventana_id,
-              COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-              COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
-              COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
-            FROM tickets_in_range t
-            JOIN "Jugada" j ON j."ticketId" = t.id
-            WHERE j."deletedAt" IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM "sorteo_lista_exclusion" sle
-              JOIN "User" u ON u.id = sle.ventana_id
-              WHERE sle.sorteo_id = t."sorteoId"
-              AND u."ventanaId" = t."ventanaId"
-              AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-              AND sle.multiplier_id = j."multiplierId"
-            )
-            GROUP BY t."ventanaId"
-          )
-          SELECT
-            v.id AS ventana_id,
-            v.name AS ventana_name,
-            v."isActive" AS is_active,
-            COALESCE(sp.total_sales, 0) AS total_sales,
-            COALESCE(sp.total_payouts, 0) AS total_payouts,
-            COALESCE(cp.commission_user, 0) AS commission_user,
-            COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw,
-            COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot
-          FROM "Ventana" v
-          LEFT JOIN sales_per_ventana sp ON sp.ventana_id = v.id
-          LEFT JOIN commissions_per_ventana cp ON cp.ventana_id = v.id
-          WHERE v."isActive" = true
-            ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
-        `
-      );
-
-      // Obtener statements del mes completo
-      //  SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
-      // PostgreSQL interpreta los strings directamente como DATE sin conversión de timezone
-      const monthStatements = await prisma.$queryRaw<Array<{
-        id: string;
-        date: Date;
-        ventanaId: string | null;
-        bancaId: string | null;
-        totalPaid: number;
-        totalCollected: number;
-        remainingBalance: number;
-      }>>`
-        SELECT 
-          id,
-          date,
-          "ventanaId",
-          "bancaId",
-          "totalPaid",
-          "totalCollected",
-          "remainingBalance"
-        FROM "AccountStatement"
-        WHERE date >= ${monthStartStr}::date
-          AND date <= ${monthEndStr}::date
-          AND "vendedorId" IS NULL
-          ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = ${filters.ventanaId}::uuid` : Prisma.sql`AND "ventanaId" IS NOT NULL`}
-          ${filters.bancaId ? Prisma.sql`AND "bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
-      `;
-
-      // Obtener collections del mes
-      //  SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
-      // PostgreSQL interpreta los strings directamente como DATE sin conversión de timezone
-      const monthCollections = await prisma.$queryRaw<Array<{
-        ventanaId: string | null;
-        amount: number;
-      }>>`
-        SELECT 
-          "ventanaId",
-          amount
-        FROM "AccountPayment"
-        WHERE date >= ${monthStartStr}::date
-          AND date <= ${monthEndStr}::date
-          AND "vendedorId" IS NULL
-          AND "isReversed" = false
-          AND type = 'collection'
-          ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = ${filters.ventanaId}::uuid` : Prisma.sql`AND "ventanaId" IS NOT NULL`}
-          ${filters.bancaId ? Prisma.sql`AND "bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
-      `;
-
-      // Mapear datos del mes por ventana
-      const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
-
-      //  DEBUG: Log para verificar qué datos estamos obteniendo
-      // logger.info({
-      //   layer: 'service',
-      //   action: 'MONTHLY_ACCUMULATED_DEBUG',
-      //   payload: {
-      //     monthStartStr,
-      //     monthEndStr,
-      //     monthVentanaDataCount: monthVentanaData.length,
-      //     monthStatementsCount: monthStatements.length,
-      //     monthCollectionsCount: monthCollections.length,
-      //     monthVentanaDataSample: monthVentanaData.slice(0, 3).map(v => ({
-      //       ventanaId: v.ventana_id?.substring(0, 8),
-      //       totalSales: v.total_sales,
-      //       totalPayouts: v.total_payouts,
-      //     })),
-      //   },
-      // });
-
-      // Procesar datos de ventanas del mes
-      for (const ventanaRow of monthVentanaData) {
-        const ventanaId = ventanaRow.ventana_id;
-        monthAggregated.set(ventanaId, {
-          totalSales: Number(ventanaRow.total_sales) || 0,
-          totalPayouts: Number(ventanaRow.total_payouts) || 0,
-          totalListeroCommission: Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0,
-          totalVendedorCommission: Number(ventanaRow.commission_user) || 0,
-          totalPaid: 0,
-          totalCollected: 0,
-        });
-      }
-
-      // Agregar pagos del mes
-      for (const statement of monthStatements) {
-        if (!statement.ventanaId) continue;
-        const entry = monthAggregated.get(statement.ventanaId) || {
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-        };
-        entry.totalPaid += statement.totalPaid ?? 0;
-        monthAggregated.set(statement.ventanaId, entry);
-      }
-
-      // Agregar cobros del mes
-      for (const collection of monthCollections) {
-        if (!collection.ventanaId) continue;
-        const entry = monthAggregated.get(collection.ventanaId) || {
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-        };
-        entry.totalCollected += collection.amount ?? 0;
-        monthAggregated.set(collection.ventanaId, entry);
-      }
-
-      // Calcular saldoAHoy para cada ventana
-      // Balance: Ventas - Premios - Comisión Listero
-      // Comisión Vendedor es SOLO informativa, no se resta del balance
-      //  NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      //  CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
-      const nowCRStr = crDateService.dateUTCToCRString(new Date());
-      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-
-      //  CRÍTICO: Obtener TODAS las ventanas que están en aggregated (período filtrado)
-      // no solo las que tienen datos en el mes actual, para incluir saldo del mes anterior
-      const allVentanaIds = new Set([
-        ...Array.from(aggregated.keys()),
-        ...Array.from(monthAggregated.keys()),
-      ]);
-
-      const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
-        effectiveMonth,
-        "ventana",
-        Array.from(allVentanaIds),
-        filters.bancaId
-      );
-
-      //  CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
-      // Reutilizar getMonthlyRemainingBalancesBatch que calcula exactamente el mismo valor que en GET /accounts/statement
-      try {
-        const balancesBatch = await getMonthlyRemainingBalancesBatch(
-          effectiveMonth,
-          "ventana",
-          Array.from(allVentanaIds),
-          filters.bancaId
-        );
-
-        // Mapear resultados del batch
-        for (const ventanaId of allVentanaIds) {
-          const saldoAHoy = balancesBatch.get(ventanaId) ?? 0;
-          monthSaldoByVentana.set(ventanaId, saldoAHoy);
+    const [periodPreviousMonthBalances] = await Promise.all([
+      (async () => {
+        const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+        if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
+          return getPreviousMonthFinalBalancesBatch(effectiveMonth, "ventana", allVentanaIds, filters.bancaId);
         }
+        return new Map<string, number>();
+      })()
+    ]);
 
-        // logger.info({
-        //   layer: 'service',
-        //   action: 'MONTHLY_ACCUMULATED_FROM_BATCH',
-        //   payload: {
-        //     effectiveMonth,
-        //     dimension: "ventana",
-        //     totalEntities: allVentanaIds.size,
-        //     foundInBatch: balancesBatch.size,
-        //     note: "Using getMonthlyRemainingBalancesBatch (same as accounts/statement, much faster)",
-        //   },
-        // });
-      } catch (error) {
-        // logger.error({
-        //   layer: 'service',
-        //   action: 'MONTHLY_ACCUMULATED_BATCH_ERROR',
-        //   payload: {
-        //     effectiveMonth,
-        //     dimension: "ventana",
-        //     error: (error as Error).message,
-        //     note: "Error getting monthly remaining balances batch, using 0 for all",
-        //   },
-        // });
-        // Si falla el batch, usar 0 para todos
-        for (const ventanaId of allVentanaIds) {
-          monthSaldoByVentana.set(ventanaId, 0);
-        }
-      }
+    const byVentana = ventanaData.map((v) => {
+      const totalListeroCommission = Number(v.listero_commission_snapshot) || Number(v.commission_ventana_raw) || 0;
+      const baseBalance = Number(v.total_sales) - Number(v.total_payouts) - totalListeroCommission;
+      const previousMonthBalance = periodPreviousMonthBalances.get(v.ventana_id) || 0;
+      const periodRemainingBalance = previousMonthBalance + baseBalance - Number(v.total_collected) + Number(v.total_paid);
+      const monthlyAccumulatedBalance = 0; // Se calcula por separado para optimizar carga inicial
+      const recalculatedRemainingBalance = isMonthComplete ? 0 : periodRemainingBalance; // Solo se usa el del periodo inicialmente
 
-      //  NOTA: getMonthlyRemainingBalancesBatch ya incluye todas las ventanas (retorna 0 si no hay datos)
-      // No es necesario loop adicional porque el batch query ya procesó todas
-    }
+      return {
+        ventanaId: v.ventana_id,
+        ventanaName: v.ventana_name,
+        totalSales: Number(v.total_sales),
+        totalPayouts: Number(v.total_payouts),
+        listeroCommission: totalListeroCommission,
+        vendedorCommission: Number(v.commission_user),
+        totalListeroCommission,
+        totalVendedorCommission: Number(v.commission_user),
+        totalPaid: Number(v.total_paid),
+        totalPaidOut: Number(v.total_paid),
+        totalCollected: Number(v.total_collected),
+        totalPaidToCustomer: Number(v.total_paid_to_customer),
+        amount: recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0,
+        remainingBalance: recalculatedRemainingBalance,
+        monthlyAccumulated: { remainingBalance: monthlyAccumulatedBalance },
+        isActive: v.is_active,
+      };
+    }).sort((a, b) => b.amount - a.amount);
 
-    //  NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
-    const monthRangeCheck2 = resolveDateRange('month');
-    const todayRangeCheck2 = resolveDateRange('today');
-    const { startDateCRStr: monthStartCheck2Str } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck2.fromAt, todayRangeCheck2.toAt);
-    const isMonthComplete2 = fromDateStr === monthStartCheck2Str && toDateStr === crDateService.dateUTCToCRString(new Date());
-
-    //  NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
-    // El saldo del mes anterior es un movimiento más, como un pago, que debe incluirse en el balance del período
-    const periodPreviousMonthBalances = new Map<string, number>();
-    const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
-    const periodIncludesFirstDay = filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime();
-
-    if (periodIncludesFirstDay) {
-      const nowCRStr = crDateService.dateUTCToCRString(new Date());
-      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-      const allVentanaIdsForPeriod = Array.from(aggregated.keys());
-      const previousMonthBalancesForPeriod = await getPreviousMonthFinalBalancesBatch(
-        effectiveMonth,
-        "ventana",
-        allVentanaIdsForPeriod,
-        filters.bancaId
-      );
-      for (const [ventanaId, balance] of previousMonthBalancesForPeriod.entries()) {
-        periodPreviousMonthBalances.set(ventanaId, Number(balance || 0));
-      }
-    }
-
-    const byVentana = Array.from(aggregated.values())
-      .map((entry) => {
-        const totalPaid = entry.totalPaid;
-        const totalCollected = entry.totalCollected;
-        const totalPaidToCustomer = entry.totalPaidToCustomer;
-        // Balance: Ventas - Premios - Comisión Listero
-        // Comisión Vendedor es SOLO informativa, no se resta del balance
-        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
-        //  CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
-        // Solo si el período incluye el día 1 del mes
-        const previousMonthBalance = periodPreviousMonthBalances.get(entry.ventanaId) || 0;
-        const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
-
-        //  CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
-        // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
-        const monthlyAccumulatedBalance = monthSaldoByVentana.get(entry.ventanaId) ?? 0;
-        const recalculatedRemainingBalance = isMonthComplete2
-          ? monthlyAccumulatedBalance
-          : periodRemainingBalance;
-
-        //  CRÍTICO: amount debe usar el remainingBalance recalculado
-        const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
-
-        return {
-          ventanaId: entry.ventanaId,
-          ventanaName: entry.ventanaName,
-          totalSales: entry.totalSales,
-          totalPayouts: entry.totalPayouts,
-          listeroCommission: entry.totalListeroCommission, //  REQUERIDO: Campo individual
-          vendedorCommission: entry.totalVendedorCommission, //  REQUERIDO: Campo individual
-          totalListeroCommission: entry.totalListeroCommission, //  Mantener para compatibilidad
-          totalVendedorCommission: entry.totalVendedorCommission, //  Mantener para compatibilidad
-          totalPaid,
-          totalPaidOut: totalPaid,
-          totalCollected,
-          totalPaidToCustomer,
-          amount, //  Usa remainingBalance recalculado
-          remainingBalance: recalculatedRemainingBalance, //  Recalculado según rol (período filtrado)
-          monthlyAccumulated: {
-            remainingBalance: monthSaldoByVentana.get(entry.ventanaId) ?? 0, //  NUEVO: Saldo a Hoy (mes completo, inmutable)
-          },
-          isActive: entry.isActive,
-        };
-      })
-      .sort((a, b) => b.amount - a.amount);
-
-    const totalAmount = byVentana.reduce((sum, v) => sum + v.amount, 0);
-
-    return {
-      totalAmount,
-      byVentana,
-    };
+    return { totalAmount: byVentana.reduce((sum, v) => sum + v.amount, 0), byVentana };
   },
 
   /**
@@ -1584,546 +1026,119 @@ export const DashboardService = {
     const rangeEnd = parseDateEnd(toDateStr);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
-    //  CRÍTICO: Obtener datos directamente desde tickets/jugadas agrupados por vendedor
-    const vendedorData = await prisma.$queryRaw<
-      Array<{
-        vendedor_id: string;
-        vendedor_name: string;
-        vendedor_code: string | null;
-        ventana_id: string | null;
-        ventana_name: string | null;
-        is_active: boolean;
-        total_sales: number;
-        total_payouts: number;
-        commission_user: number;
-        commission_ventana_raw: number;
-        listero_commission_snapshot: number;
-      }>
-    >(
-      Prisma.sql`
-        WITH tickets_in_range AS (
-          SELECT
-            t.id,
-            t."vendedorId",
-            t."ventanaId",
-            t."sorteoId",
-            t."totalAmount",
-            t."totalPayout"
-          FROM "Ticket" t
-          WHERE ${baseFilters}
-            AND t."vendedorId" IS NOT NULL
-        ),
-        sales_per_vendedor AS (
-          SELECT
-            t."vendedorId" AS vendedor_id,
-            COALESCE(SUM(j.amount), 0) AS total_sales,
-            COALESCE(SUM(j.payout), 0) AS total_payouts
-          FROM tickets_in_range t
-          JOIN "Jugada" j ON j."ticketId" = t.id
-          WHERE j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u ON u.id = sle.ventana_id
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND u."ventanaId" = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
-          GROUP BY t."vendedorId"
-        ),
-        commissions_per_vendedor AS (
-          SELECT
-            t."vendedorId" AS vendedor_id,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
-            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
-          FROM tickets_in_range t
-          JOIN "Jugada" j ON j."ticketId" = t.id
-          WHERE j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u ON u.id = sle.ventana_id
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND u."ventanaId" = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
-          GROUP BY t."vendedorId"
+    const vendedorData = await prisma.$queryRaw<any[]>(Prisma.sql`
+      WITH tickets_in_range AS (
+        SELECT t.id, t."vendedorId", t."ventanaId", t."sorteoId"
+        FROM "Ticket" t WHERE ${baseFilters} AND t."vendedorId" IS NOT NULL
+      ),
+      jugada_agg AS (
+        SELECT t."vendedorId",
+               COALESCE(SUM(j.amount), 0) AS total_sales,
+               COALESCE(SUM(j.payout), 0) AS total_payouts,
+               COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+               COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
+               COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
+        FROM tickets_in_range t
+        JOIN "Jugada" j ON j."ticketId" = t.id
+        WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
+        AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
         )
-        SELECT
-          u.id AS vendedor_id,
-          u.name AS vendedor_name,
-          u.code AS vendedor_code,
-          u."ventanaId" AS ventana_id,
-          v.name AS ventana_name,
-          u."isActive" AS is_active,
-          COALESCE(sp.total_sales, 0) AS total_sales,
-          COALESCE(sp.total_payouts, 0) AS total_payouts,
-          COALESCE(cp.commission_user, 0) AS commission_user,
-          COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw,
-          COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot
-        FROM "User" u
-        LEFT JOIN sales_per_vendedor sp ON sp.vendedor_id = u.id
-        LEFT JOIN commissions_per_vendedor cp ON cp.vendedor_id = u.id
-        LEFT JOIN "Ventana" v ON v.id = u."ventanaId"
-        WHERE u."isActive" = true
-          AND u.role = 'VENDEDOR'
-          ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
-        ORDER BY total_sales DESC
-      `
-    );
+        GROUP BY t."vendedorId"
+      ),
+      statements_agg AS (
+        SELECT "vendedorId", COALESCE(SUM("totalPaid"), 0) AS total_paid
+        FROM "AccountStatement"
+        WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NOT NULL
+        GROUP BY "vendedorId"
+      ),
+      collections_agg AS (
+        SELECT "vendedorId", COALESCE(SUM("amount"), 0) AS total_collected
+        FROM "AccountPayment"
+        WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NOT NULL AND "isReversed" = false AND "type" = 'collection'
+        GROUP BY "vendedorId"
+      ),
+      ticket_payments_agg AS (
+        SELECT t."vendedorId", COALESCE(SUM(tp."amountPaid"), 0) AS total_paid_to_customer
+        FROM "TicketPayment" tp
+        JOIN "Ticket" t ON t.id = tp."ticketId"
+        WHERE tp."isReversed" = false AND tp."paymentDate" BETWEEN ${rangeStart} AND ${rangeEnd} AND t."deletedAt" IS NULL AND t."vendedorId" IS NOT NULL
+        GROUP BY t."vendedorId"
+      )
+      SELECT u.id AS vendedor_id, u.name AS vendedor_name, u.code AS vendedor_code, 
+             u."ventanaId" AS ventana_id, v.name AS ventana_name, u."isActive" AS is_active,
+             COALESCE(ja.total_sales, 0) AS total_sales,
+             COALESCE(ja.total_payouts, 0) AS total_payouts,
+             COALESCE(ja.commission_user, 0) AS commission_user,
+             COALESCE(ja.commission_ventana_raw, 0) AS commission_ventana_raw,
+             COALESCE(ja.listero_commission_snapshot, 0) AS listero_commission_snapshot,
+             COALESCE(sa.total_paid, 0) AS total_paid,
+             COALESCE(ca.total_collected, 0) AS total_collected,
+             COALESCE(tpa.total_paid_to_customer, 0) AS total_paid_to_customer
+      FROM "User" u
+      LEFT JOIN "Ventana" v ON v.id = u."ventanaId"
+      LEFT JOIN jugada_agg ja ON ja."vendedorId" = u.id
+      LEFT JOIN statements_agg sa ON sa."vendedorId" = u.id
+      LEFT JOIN collections_agg ca ON ca."vendedorId" = u.id
+      LEFT JOIN ticket_payments_agg tpa ON tpa."vendedorId" = u.id
+      WHERE u."isActive" = true AND u.role = 'VENDEDOR'
+      ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+    `);
 
-    const where: Prisma.AccountStatementWhereInput = {
-      date: {
-        gte: rangeStart,
-        lte: rangeEnd,
-      },
-      vendedorId: { not: null },
-    };
-
-    if (filters.ventanaId) {
-      where.ventanaId = filters.ventanaId;
-    }
-
-    if (filters.bancaId) {
-      where.ventana = {
-        bancaId: filters.bancaId,
-      };
-    }
-
-    const statements = await prisma.accountStatement.findMany({
-      where,
-      include: {
-        vendedor: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-            isActive: true,
-            ventanaId: true,
-          },
-        },
-        ventana: {
-          select: {
-            id: true,
-            name: true,
-            isActive: true,
-          },
-        },
-      },
-    });
-
-    const vendedorInfoMap = new Map(
-      vendedorData.map((v) => [v.vendedor_id, { name: v.vendedor_name, code: v.vendedor_code, ventanaId: v.ventana_id, ventanaName: v.ventana_name, isActive: v.is_active }])
-    );
-
-    const aggregated = new Map<
-      string,
-      {
-        vendedorId: string;
-        vendedorName: string;
-        vendedorCode?: string;
-        ventanaId?: string;
-        ventanaName?: string;
-        isActive: boolean;
-        totalSales: number;
-        totalPayouts: number;
-        totalListeroCommission: number;
-        totalVendedorCommission: number;
-        totalPaid: number;
-        totalCollected: number;
-        totalPaidToCustomer: number;
-        remainingBalance: number;
-      }
-    >();
-
-    const ensureEntry = (
-      vendedorId: string,
-      fallbackName?: string,
-      fallbackCode?: string | null,
-      fallbackVentanaId?: string | null,
-      fallbackVentanaName?: string | null,
-      fallbackIsActive?: boolean
-    ) => {
-      let entry = aggregated.get(vendedorId);
-      if (!entry) {
-        const info = vendedorInfoMap.get(vendedorId);
-        entry = {
-          vendedorId,
-          vendedorName: fallbackName ?? info?.name ?? "Sin nombre",
-          vendedorCode: fallbackCode ?? info?.code ?? undefined,
-          ventanaId: fallbackVentanaId ?? info?.ventanaId ?? undefined,
-          ventanaName: fallbackVentanaName ?? info?.ventanaName ?? undefined,
-          isActive: fallbackIsActive ?? info?.isActive ?? true,
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-          totalPaidToCustomer: 0,
-          remainingBalance: 0,
-        };
-        aggregated.set(vendedorId, entry);
-      } else {
-        if (fallbackName && entry.vendedorName !== fallbackName) {
-          entry.vendedorName = fallbackName;
-        }
-        if (typeof fallbackIsActive === "boolean") {
-          entry.isActive = fallbackIsActive;
-        }
-      }
-      return entry;
-    };
-
-    //  CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
-    for (const vendedorRow of vendedorData) {
-      const vendedorId = vendedorRow.vendedor_id;
-      const entry = ensureEntry(
-        vendedorId,
-        vendedorRow.vendedor_name,
-        vendedorRow.vendedor_code,
-        vendedorRow.ventana_id,
-        vendedorRow.ventana_name,
-        vendedorRow.is_active
-      );
-
-      entry.totalSales = Number(vendedorRow.total_sales) || 0;
-      entry.totalPayouts = Number(vendedorRow.total_payouts) || 0;
-      entry.totalListeroCommission = Number(vendedorRow.listero_commission_snapshot) || Number(vendedorRow.commission_ventana_raw) || 0;
-      entry.totalVendedorCommission = Number(vendedorRow.commission_user) || 0;
-    }
-
-    // Obtener totalPaid desde AccountStatement
-    for (const statement of statements) {
-      if (!statement.vendedorId) continue;
-      const key = statement.vendedorId;
-      const existing = ensureEntry(
-        key,
-        statement.vendedor?.name,
-        statement.vendedor?.code ?? null,
-        statement.vendedor?.ventanaId ?? null,
-        statement.ventana?.name ?? null,
-        statement.vendedor?.isActive ?? undefined
-      );
-
-      existing.totalPaid += statement.totalPaid ?? 0;
-    }
-
-    const accountPaymentWhere: Prisma.AccountPaymentWhereInput = {
-      date: {
-        gte: rangeStart,
-        lte: rangeEnd,
-      },
-      vendedorId: { not: null },
-      isReversed: false,
-      type: "collection",
-    };
-    if (filters.ventanaId) {
-      accountPaymentWhere.ventanaId = filters.ventanaId;
-    }
-    if (filters.bancaId) {
-      //  CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
-      accountPaymentWhere.bancaId = filters.bancaId;
-    }
-
-    const collections = await prisma.accountPayment.findMany({
-      where: accountPaymentWhere,
-      select: {
-        vendedorId: true,
-        amount: true,
-      },
-    });
-
-    for (const collection of collections) {
-      if (!collection.vendedorId) continue;
-      const entry = ensureEntry(collection.vendedorId);
-      entry.totalCollected += collection.amount ?? 0;
-    }
-
-    const ticketRelationFilter: Prisma.TicketWhereInput = {
-      deletedAt: null,
-      //  FIX: vendedorId es requerido en schema, no necesitamos filtrar por "not null"
-    };
-    if (filters.ventanaId) {
-      ticketRelationFilter.ventanaId = filters.ventanaId;
-    }
-    if (filters.bancaId) {
-      ticketRelationFilter.ventana = {
-        bancaId: filters.bancaId,
-      };
-    }
-
-    const ticketPayments = await prisma.ticketPayment.findMany({
-      where: {
-        isReversed: false,
-        paymentDate: {
-          gte: rangeStart,
-          lte: rangeEnd,
-        },
-        ticket: {
-          is: ticketRelationFilter,
-        },
-      },
-      select: {
-        amountPaid: true,
-        ticket: {
-          select: {
-            vendedorId: true,
-          },
-        },
-      },
-    });
-
-    for (const payment of ticketPayments) {
-      const vendedorId = payment.ticket?.vendedorId;
-      if (!vendedorId) continue;
-      const entry = ensureEntry(vendedorId);
-      entry.totalPaidToCustomer += payment.amountPaid ?? 0;
-    }
-
-    //  NUEVO: Verificar si el período filtrado es el mes completo (robusto con strings)
+    const nowCRStr = crDateService.dateUTCToCRString(new Date());
+    const effectiveMonth = nowCRStr.substring(0, 7);
     const monthRangeCheck = resolveDateRange('month');
     const todayRangeCheck = resolveDateRange('today');
     const { startDateCRStr: monthStartCheckStr } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck.fromAt, todayRangeCheck.toAt);
-    const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === crDateService.dateUTCToCRString(new Date());
+    const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === nowCRStr;
 
-    //  NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
-    const monthSaldoByVendedor = new Map<string, number>();
-    {
-      //  CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
-      // Esto asegura consistencia entre local y producción (Render)
-      const monthRange = resolveDateRange('month'); // Primer día del mes en CR
-      const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
+    const allVendedorIds = vendedorData.map(v => v.vendedor_id);
 
-      const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
-      const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
-
-      // Convertir a strings de fecha para filtros usando crDateService
-      //  CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
-      // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
-      const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
-
-      const monthBaseFilters = buildTicketBaseFilters(
-        "t",
-        { ...filters, fromDate: monthStart, toDate: monthEnd },
-        monthStartStr,
-        monthEndStr
-      );
-
-      const monthVendedorData = await prisma.$queryRaw<Array<{ vendedor_id: string; total_sales: number; total_payouts: number; commission_user: number; commission_ventana_raw: number; listero_commission_snapshot: number }>>(
-        Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(j.payout), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
-      );
-
-      //  Vendedores funcionan correctamente, mantener consulta original
-      const monthStatements = await prisma.accountStatement.findMany({
-        where: {
-          date: { gte: monthStart, lte: monthEnd },
-          vendedorId: { not: null },
-          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
-        },
-      });
-
-      //  Vendedores funcionan correctamente, mantener consulta original
-      const monthCollections = await prisma.accountPayment.findMany({
-        where: {
-          date: { gte: monthStart, lte: monthEnd },
-          vendedorId: { not: null },
-          isReversed: false,
-          type: "collection",
-          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
-        },
-        select: {
-          vendedorId: true,
-          amount: true,
-        },
-      });
-
-      const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
-
-      for (const vendedorRow of monthVendedorData) {
-        const vendedorId = vendedorRow.vendedor_id;
-        monthAggregated.set(vendedorId, {
-          totalSales: Number(vendedorRow.total_sales) || 0,
-          totalPayouts: Number(vendedorRow.total_payouts) || 0,
-          totalListeroCommission: Number(vendedorRow.listero_commission_snapshot) || Number(vendedorRow.commission_ventana_raw) || 0,
-          totalVendedorCommission: Number(vendedorRow.commission_user) || 0,
-          totalPaid: 0,
-          totalCollected: 0,
-        });
-      }
-
-      for (const statement of monthStatements) {
-        if (!statement.vendedorId) continue;
-        const entry = monthAggregated.get(statement.vendedorId) || {
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-        };
-        entry.totalPaid += statement.totalPaid ?? 0;
-        monthAggregated.set(statement.vendedorId, entry);
-      }
-
-      for (const collection of monthCollections) {
-        if (!collection.vendedorId) continue;
-        const entry = monthAggregated.get(collection.vendedorId) || {
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-        };
-        entry.totalCollected += collection.amount ?? 0;
-        monthAggregated.set(collection.vendedorId, entry);
-      }
-
-      //  NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      //  CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
-      const nowCRStr = crDateService.dateUTCToCRString(new Date());
-      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-
-      //  CRÍTICO: Obtener TODOS los vendedores que están en aggregated (período filtrado)
-      // no solo los que tienen datos en el mes actual, para incluir saldo del mes anterior
-      const allVendedorIds = new Set([
-        ...Array.from(aggregated.keys()),
-        ...Array.from(monthAggregated.keys()),
-      ]);
-
-      const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
-        effectiveMonth,
-        "vendedor",
-        Array.from(allVendedorIds),
-        filters.bancaId
-      );
-
-      //  CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
-      // Reutilizar getMonthlyRemainingBalancesBatch que calcula exactamente el mismo valor que en GET /accounts/statement
-      try {
-        const balancesBatch = await getMonthlyRemainingBalancesBatch(
-          effectiveMonth,
-          "vendedor",
-          Array.from(allVendedorIds),
-          filters.bancaId
-        );
-
-        // Mapear resultados del batch
-        for (const vendedorId of allVendedorIds) {
-          const saldoAHoy = balancesBatch.get(vendedorId) ?? 0;
-          monthSaldoByVendedor.set(vendedorId, saldoAHoy);
+    const [periodPreviousMonthBalances] = await Promise.all([
+      (async () => {
+        const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+        if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
+          return getPreviousMonthFinalBalancesBatch(effectiveMonth, "vendedor", allVendedorIds, filters.bancaId);
         }
+        return new Map<string, number>();
+      })()
+    ]);
 
-        // logger.info({
-        //   layer: 'service',
-        //   action: 'MONTHLY_ACCUMULATED_FROM_BATCH_VENDEDOR',
-        //   payload: {
-        //     effectiveMonth,
-        //     dimension: "vendedor",
-        //     totalEntities: allVendedorIds.size,
-        //     foundInBatch: balancesBatch.size,
-        //     note: "Using getMonthlyRemainingBalancesBatch (same as accounts/statement, much faster)",
-        //   },
-        // });
-      } catch (error) {
-        // logger.error({
-        //   layer: 'service',
-        //   action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENDEDOR',
-        //   payload: {
-        //     effectiveMonth,
-        //     dimension: "vendedor",
-        //     error: (error as Error).message,
-        //     note: "Error getting monthly remaining balances batch, using 0 for all",
-        //   },
-        // });
-        // Si falla el batch, usar 0 para todos
-        for (const vendedorId of allVendedorIds) {
-          monthSaldoByVendedor.set(vendedorId, 0);
-        }
-      }
-    }
+    const byVendedor = vendedorData.map((v) => {
+      const totalListeroCommission = Number(v.listero_commission_snapshot) || Number(v.commission_ventana_raw) || 0;
+      const baseBalance = Number(v.total_sales) - Number(v.total_payouts) - totalListeroCommission;
+      const previousMonthBalance = periodPreviousMonthBalances.get(v.vendedor_id) || 0;
+      const periodRemainingBalance = previousMonthBalance + baseBalance - Number(v.total_collected) + Number(v.total_paid);
+      const monthlyAccumulatedBalance = 0; // Se calcula por separado para optimizar carga inicial
+      const recalculatedRemainingBalance = isMonthComplete ? 0 : periodRemainingBalance;
 
-    //  NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
-    // El saldo del mes anterior es un movimiento más, como un pago, que debe incluirse en el balance del período
-    const periodPreviousMonthBalances = new Map<string, number>();
-    const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
-    const periodIncludesFirstDay = filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime();
+      return {
+        vendedorId: v.vendedor_id,
+        vendedorName: v.vendedor_name,
+        vendedorCode: v.vendedor_code,
+        ventanaId: v.ventana_id,
+        ventanaName: v.ventana_name,
+        totalSales: Number(v.total_sales),
+        totalPayouts: Number(v.total_payouts),
+        listeroCommission: totalListeroCommission,
+        vendedorCommission: Number(v.commission_user),
+        totalListeroCommission,
+        totalVendedorCommission: Number(v.commission_user),
+        totalPaid: Number(v.total_paid),
+        totalPaidOut: Number(v.total_paid),
+        totalCollected: Number(v.total_collected),
+        totalPaidToCustomer: Number(v.total_paid_to_customer),
+        amount: recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0,
+        remainingBalance: recalculatedRemainingBalance,
+        monthlyAccumulated: { remainingBalance: monthlyAccumulatedBalance },
+        isActive: v.is_active,
+      };
+    }).sort((a, b) => b.amount - a.amount);
 
-    if (periodIncludesFirstDay) {
-      const nowCRStr = crDateService.dateUTCToCRString(new Date());
-      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-      const allVendedorIdsForPeriod = Array.from(aggregated.keys());
-      const previousMonthBalancesForPeriod = await getPreviousMonthFinalBalancesBatch(
-        effectiveMonth,
-        "vendedor",
-        allVendedorIdsForPeriod,
-        filters.bancaId
-      );
-      for (const [vendedorId, balance] of previousMonthBalancesForPeriod.entries()) {
-        periodPreviousMonthBalances.set(vendedorId, Number(balance || 0));
-      }
-    }
-
-    const byVendedor = Array.from(aggregated.values())
-      .map((entry) => {
-        const totalPaid = entry.totalPaid;
-        const totalCollected = entry.totalCollected;
-        const totalPaidToCustomer = entry.totalPaidToCustomer;
-        // Balance: Ventas - Premios - Comisión Vendedor
-        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
-        //  CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
-        // Solo si el período incluye el día 1 del mes
-        const previousMonthBalance = periodPreviousMonthBalances.get(entry.vendedorId) || 0;
-        const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
-
-        //  CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
-        // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
-        const monthlyAccumulatedBalance = monthSaldoByVendedor.get(entry.vendedorId) ?? 0;
-        const recalculatedRemainingBalance = isMonthComplete
-          ? monthlyAccumulatedBalance
-          : periodRemainingBalance;
-
-        const amount = recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0;
-
-        return {
-          vendedorId: entry.vendedorId,
-          vendedorName: entry.vendedorName,
-          vendedorCode: entry.vendedorCode,
-          ventanaId: entry.ventanaId,
-          ventanaName: entry.ventanaName,
-          totalSales: entry.totalSales,
-          totalPayouts: entry.totalPayouts,
-          listeroCommission: entry.totalListeroCommission,
-          vendedorCommission: entry.totalVendedorCommission,
-          totalListeroCommission: entry.totalListeroCommission,
-          totalVendedorCommission: entry.totalVendedorCommission,
-          totalPaid,
-          totalPaidOut: totalPaid,
-          totalCollected,
-          totalPaidToCustomer,
-          amount,
-          remainingBalance: recalculatedRemainingBalance,
-          monthlyAccumulated: {
-            remainingBalance: monthSaldoByVendedor.get(entry.vendedorId) ?? 0,
-          },
-          isActive: entry.isActive,
-        };
-      })
-      .sort((a, b) => b.amount - a.amount);
-
-    const totalAmount = byVendedor.reduce((sum, v) => sum + v.amount, 0);
-
-    return {
-      totalAmount,
-      byVendedor,
-    };
+    return { totalAmount: byVendedor.reduce((sum, v) => sum + v.amount, 0), byVendedor };
   },
 
   /**
@@ -2133,7 +1148,6 @@ export const DashboardService = {
   async calculateCxP(filters: DashboardFilters, role?: Role): Promise<CxPResult> {
     const dimension = filters.cxcDimension || 'ventana';
 
-    //  NUEVO: Si dimension='vendedor', ejecutar lógica específica para vendedores
     if (dimension === 'vendedor') {
       return this.calculateCxPByVendedor(filters, role);
     }
@@ -2143,1147 +1157,271 @@ export const DashboardService = {
     const rangeEnd = parseDateEnd(toDateStr);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
-    //  CRÍTICO: Calcular comisiones desde políticas (igual que calculateGanancia)
-    const {
-      totalVentanaCommission,
-      extrasByVentana,
-    } = await computeVentanaCommissionFromPolicies(filters);
-
-    //  CRÍTICO: Obtener datos directamente desde tickets/jugadas (igual que calculateGanancia)
-    const ventanaData = await prisma.$queryRaw<
-      Array<{
-        ventana_id: string;
-        ventana_name: string;
-        is_active: boolean;
-        total_sales: number;
-        total_payouts: number;
-        commission_user: number;
-        commission_ventana_raw: number;
-        listero_commission_snapshot: number;
-      }>
-    >(
-      Prisma.sql`
-        WITH tickets_in_range AS (
-          SELECT
-            t.id,
-            t."ventanaId",
-            t."sorteoId",
-            t."vendedorId",
-            t."totalAmount",
-            t."totalPayout"
-          FROM "Ticket" t
-          WHERE ${baseFilters}
-        ),
-        sales_per_ventana AS (
-          SELECT
-            t."ventanaId" AS ventana_id,
-            COALESCE(SUM(j.amount), 0) AS total_sales,
-            COALESCE(SUM(j.payout), 0) AS total_payouts
-          FROM tickets_in_range t
-          JOIN "Jugada" j ON j."ticketId" = t.id
-          WHERE j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u ON u.id = sle.ventana_id
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND u."ventanaId" = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
-          GROUP BY t."ventanaId"
-        ),
-        commissions_per_ventana AS (
-          SELECT
-            t."ventanaId" AS ventana_id,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
-            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
-          FROM tickets_in_range t
-          JOIN "Jugada" j ON j."ticketId" = t.id
-          WHERE j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u ON u.id = sle.ventana_id
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND u."ventanaId" = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
-          GROUP BY t."ventanaId"
+    // SQL consolidada para evitar picos de memoria y múltiples round-trips
+    const ventanaData = await prisma.$queryRaw<any[]>(Prisma.sql`
+      WITH tickets_in_range AS (
+        SELECT t.id, t."ventanaId", t."sorteoId", t."vendedorId"
+        FROM "Ticket" t WHERE ${baseFilters}
+      ),
+      jugada_agg AS (
+        SELECT t."ventanaId",
+               COALESCE(SUM(j.amount), 0) AS total_sales,
+               COALESCE(SUM(j.payout), 0) AS total_payouts,
+               COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+               COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
+               COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
+        FROM tickets_in_range t
+        JOIN "Jugada" j ON j."ticketId" = t.id
+        WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
+        AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
         )
-        SELECT
-          v.id AS ventana_id,
-          v.name AS ventana_name,
-          v."isActive" AS is_active,
-          COALESCE(sp.total_sales, 0) AS total_sales,
-          COALESCE(sp.total_payouts, 0) AS total_payouts,
-          COALESCE(cp.commission_user, 0) AS commission_user,
-          COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw,
-          COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot
-        FROM "Ventana" v
-        LEFT JOIN sales_per_ventana sp ON sp.ventana_id = v.id
-        LEFT JOIN commissions_per_ventana cp ON cp.ventana_id = v.id
-        WHERE v."isActive" = true
-          ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
-        ORDER BY total_sales DESC
-      `
-    );
-
-    const where: Prisma.AccountStatementWhereInput = {
-      date: {
-        gte: rangeStart,
-        lte: rangeEnd,
-      },
-      vendedorId: null,
-    };
-
-    if (filters.ventanaId) {
-      where.ventanaId = filters.ventanaId;
-    } else {
-      where.ventanaId = { not: null };
-    }
-
-    // Filtrar por banca activa si está disponible
-    if (filters.bancaId) {
-      where.ventana = {
-        bancaId: filters.bancaId,
-      };
-    }
-
-    const statements = await prisma.accountStatement.findMany({
-      where,
-      include: {
-        ventana: {
-          select: {
-            id: true,
-            name: true,
-            isActive: true,
-          },
-        },
-      },
-    });
-
-    // Filtrar por banca si está disponible
-    const ventanaWhere: any = { isActive: true };
-    if (filters.bancaId) {
-      ventanaWhere.bancaId = filters.bancaId;
-    }
-    const ventanas = await prisma.ventana.findMany({
-      where: ventanaWhere,
-      select: { id: true, name: true, isActive: true },
-    });
-    const ventanaInfoMap = new Map(
-      ventanas.map((v) => [v.id, { name: v.name, isActive: v.isActive }])
-    );
-
-    const aggregated = new Map<
-      string,
-      {
-        ventanaId: string;
-        ventanaName: string;
-        isActive: boolean;
-        totalSales: number;
-        totalPayouts: number;
-        totalListeroCommission: number;
-        totalVendedorCommission: number;
-        totalPaid: number;
-        totalCollected: number;
-        totalPaidToCustomer: number;
-        totalPaidToVentana: number;
-        remainingBalance: number;
-      }
-    >();
-
-    const ensureEntry = (
-      ventanaId: string,
-      fallbackName?: string,
-      fallbackIsActive?: boolean
-    ) => {
-      let entry = aggregated.get(ventanaId);
-      if (!entry) {
-        const info = ventanaInfoMap.get(ventanaId);
-        entry = {
-          ventanaId,
-          ventanaName: fallbackName ?? info?.name ?? "Sin nombre",
-          isActive: fallbackIsActive ?? info?.isActive ?? true,
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-          totalPaidToCustomer: 0,
-          totalPaidToVentana: 0,
-          remainingBalance: 0,
-        };
-        aggregated.set(ventanaId, entry);
-      } else {
-        if (fallbackName && entry.ventanaName !== fallbackName) {
-          entry.ventanaName = fallbackName;
-        }
-        if (typeof fallbackIsActive === "boolean") {
-          entry.isActive = fallbackIsActive;
-        }
-      }
-      return entry;
-    };
-
-    //  CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
-    for (const ventanaRow of ventanaData) {
-      const ventanaId = ventanaRow.ventana_id;
-      const entry = ensureEntry(ventanaId);
-
-      entry.totalSales = Number(ventanaRow.total_sales) || 0;
-      entry.totalPayouts = Number(ventanaRow.total_payouts) || 0;
-
-      //  CORREGIDO: Usar SIEMPRE el snapshot de comisión del listero
-      // Esto asegura consistencia entre período filtrado y mes completo
-      // No recalcular desde políticas (causa discrepancias de 44 colones)
-      entry.totalListeroCommission = Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0;
-      entry.totalVendedorCommission = Number(ventanaRow.commission_user) || 0;
-    }
-
-    // Obtener totalPaid desde AccountStatement (ya está calculado correctamente)
-    for (const statement of statements) {
-      if (!statement.ventanaId) continue;
-      const key = statement.ventanaId;
-      const existing = ensureEntry(
-        key,
-        statement.ventana?.name,
-        statement.ventana?.isActive ?? undefined
-      );
-
-      existing.totalPaid += statement.totalPaid ?? 0;
-    }
-
-    const accountPaymentWhere: Prisma.AccountPaymentWhereInput = {
-      date: {
-        gte: rangeStart,
-        lte: rangeEnd,
-      },
-      vendedorId: null,
-      isReversed: false,
-      type: "collection",
-    };
-    if (filters.ventanaId) {
-      accountPaymentWhere.ventanaId = filters.ventanaId;
-    } else {
-      accountPaymentWhere.ventanaId = { not: null };
-    }
-    // Filtrar por banca activa si está disponible
-    if (filters.bancaId) {
-      //  CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
-      accountPaymentWhere.bancaId = filters.bancaId;
-    }
-
-    const collections = await prisma.accountPayment.findMany({
-      where: accountPaymentWhere,
-      select: {
-        ventanaId: true,
-        amount: true,
-      },
-    });
-
-    for (const collection of collections) {
-      if (!collection.ventanaId) continue;
-      const entry = ensureEntry(collection.ventanaId);
-      entry.totalCollected += collection.amount ?? 0;
-    }
-
-    const ticketRelationFilter: Prisma.TicketWhereInput = {
-      deletedAt: null,
-    };
-    if (filters.ventanaId) {
-      ticketRelationFilter.ventanaId = filters.ventanaId;
-    }
-    // Filtrar por banca activa si está disponible
-    if (filters.bancaId) {
-      ticketRelationFilter.ventana = {
-        bancaId: filters.bancaId,
-      };
-    }
-
-    const ticketPayments = await prisma.ticketPayment.findMany({
-      where: {
-        isReversed: false,
-        paymentDate: {
-          gte: rangeStart,
-          lte: rangeEnd,
-        },
-        ticket: {
-          is: ticketRelationFilter,
-        },
-      },
-      select: {
-        amountPaid: true,
-        ticket: {
-          select: {
-            ventanaId: true,
-          },
-        },
-      },
-    });
-
-    for (const payment of ticketPayments) {
-      const ventanaId = payment.ticket?.ventanaId;
-      if (!ventanaId) continue;
-      const entry = ensureEntry(ventanaId);
-      entry.totalPaidToCustomer += payment.amountPaid ?? 0;
-    }
-
-    for (const ventana of ventanas) {
-      ensureEntry(ventana.id, ventana.name, ventana.isActive);
-    }
-
-    //  NUEVO: Verificar si el período filtrado es el mes completo
-    // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
-    const monthRangeCheck3 = resolveDateRange('month');
-    const todayRangeCheck3 = resolveDateRange('today');
-    const { startDateCRStr: monthStartCheck3Str } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck3.fromAt, todayRangeCheck3.toAt);
-    const isMonthComplete3 = fromDateStr === monthStartCheck3Str && toDateStr === crDateService.dateUTCToCRString(new Date());
-
-    //  NUEVO: Calcular saldoAHoy (acumulado del mes completo) para cada ventana en CxP
-    const monthSaldoByVentana = new Map<string, number>();
-    {
-      //  CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
-      // Esto asegura consistencia entre local y producción (Render)
-      const monthRange = resolveDateRange('month'); // Primer día del mes en CR
-      const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
-
-      const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
-      const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
-
-      // Convertir a strings de fecha para filtros usando crDateService
-      //  CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
-      // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
-      const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
-
-      const monthBaseFilters = buildTicketBaseFilters(
-        "t",
-        { ...filters, fromDate: monthStart, toDate: monthEnd },
-        monthStartStr,
-        monthEndStr
-      );
-
-      const monthVentanaData = await prisma.$queryRaw<Array<{ ventana_id: string; ventana_name: string; is_active: boolean; total_sales: number; total_payouts: number; commission_user: number; commission_ventana_raw: number; listero_commission_snapshot: number }>>(
-        Prisma.sql`SELECT v.id AS ventana_id, v.name AS ventana_name, v."isActive" AS is_active, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "Ventana" v LEFT JOIN (SELECT t."ventanaId" AS ventana_id, COALESCE(SUM(t."totalAmount"), 0) AS total_sales, COALESCE(SUM(t."totalPayout"), 0) AS total_payouts FROM "Ticket" t WHERE ${monthBaseFilters} GROUP BY t."ventanaId") sp ON sp.ventana_id = v.id LEFT JOIN (SELECT t."ventanaId" AS ventana_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND j."deletedAt" IS NULL GROUP BY t."ventanaId") cp ON cp.ventana_id = v.id WHERE v."isActive" = true ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty} ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}`
-      );
-
-      //  SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
-      const monthStatements = await prisma.$queryRaw<Array<{
-        id: string;
-        date: Date;
-        ventanaId: string | null;
-        bancaId: string | null;
-        totalPaid: number;
-        totalCollected: number;
-        remainingBalance: number;
-      }>>`
-        SELECT 
-          id,
-          date,
-          "ventanaId",
-          "bancaId",
-          "totalPaid",
-          "totalCollected",
-          "remainingBalance"
+        GROUP BY t."ventanaId"
+      ),
+      statements_agg AS (
+        SELECT "ventanaId", COALESCE(SUM("totalPaid"), 0) AS total_paid
         FROM "AccountStatement"
-        WHERE date >= ${monthStartStr}::date
-          AND date <= ${monthEndStr}::date
-          AND "vendedorId" IS NULL
-          ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = ${filters.ventanaId}::uuid` : Prisma.sql`AND "ventanaId" IS NOT NULL`}
-          ${filters.bancaId ? Prisma.sql`AND "bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
-      `;
-
-      //  SOLUCIÓN DEFINITIVA: Usar SQL raw con strings YYYY-MM-DD para garantizar consistencia total
-      const monthCollections = await prisma.$queryRaw<Array<{
-        ventanaId: string | null;
-        amount: number;
-      }>>`
-        SELECT 
-          "ventanaId",
-          amount
+        WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NULL
+        GROUP BY "ventanaId"
+      ),
+      collections_agg AS (
+        SELECT "ventanaId", COALESCE(SUM("amount"), 0) AS total_collected
         FROM "AccountPayment"
-        WHERE date >= ${monthStartStr}::date
-          AND date <= ${monthEndStr}::date
-          AND "vendedorId" IS NULL
-          AND "isReversed" = false
-          AND type = 'collection'
-          ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = ${filters.ventanaId}::uuid` : Prisma.sql`AND "ventanaId" IS NOT NULL`}
-          ${filters.bancaId ? Prisma.sql`AND "bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
-      `;
+        WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NULL AND "isReversed" = false AND "type" = 'collection'
+        GROUP BY "ventanaId"
+      ),
+      ticket_payments_agg AS (
+        SELECT t."ventanaId", COALESCE(SUM(tp."amountPaid"), 0) AS total_paid_to_customer
+        FROM "TicketPayment" tp
+        JOIN "Ticket" t ON t.id = tp."ticketId"
+        WHERE tp."isReversed" = false AND tp."paymentDate" BETWEEN ${rangeStart} AND ${rangeEnd} AND t."deletedAt" IS NULL
+        GROUP BY t."ventanaId"
+      )
+      SELECT v.id AS ventana_id, v.name AS ventana_name, v."isActive" AS is_active,
+             COALESCE(ja.total_sales, 0) AS total_sales,
+             COALESCE(ja.total_payouts, 0) AS total_payouts,
+             COALESCE(ja.commission_user, 0) AS commission_user,
+             COALESCE(ja.commission_ventana_raw, 0) AS commission_ventana_raw,
+             COALESCE(ja.listero_commission_snapshot, 0) AS listero_commission_snapshot,
+             COALESCE(sa.total_paid, 0) AS total_paid,
+             COALESCE(ca.total_collected, 0) AS total_collected,
+             COALESCE(tpa.total_paid_to_customer, 0) AS total_paid_to_customer
+      FROM "Ventana" v
+      LEFT JOIN jugada_agg ja ON ja."ventanaId" = v.id
+      LEFT JOIN statements_agg sa ON sa."ventanaId" = v.id
+      LEFT JOIN collections_agg ca ON ca."ventanaId" = v.id
+      LEFT JOIN ticket_payments_agg tpa ON tpa."ventanaId" = v.id
+      WHERE v."isActive" = true
+      ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+      ORDER BY total_sales DESC
+    `);
 
-      const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
+    const nowCRStr = crDateService.dateUTCToCRString(new Date());
+    const effectiveMonth = nowCRStr.substring(0, 7);
+    const monthRangeCheck = resolveDateRange('month');
+    const todayRangeCheck = resolveDateRange('today');
+    const { startDateCRStr: monthStartCheckStr } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck.fromAt, todayRangeCheck.toAt);
+    const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === nowCRStr;
 
-      for (const ventanaRow of monthVentanaData) {
-        const ventanaId = ventanaRow.ventana_id;
-        monthAggregated.set(ventanaId, { totalSales: Number(ventanaRow.total_sales) || 0, totalPayouts: Number(ventanaRow.total_payouts) || 0, totalListeroCommission: Number(ventanaRow.listero_commission_snapshot) || Number(ventanaRow.commission_ventana_raw) || 0, totalVendedorCommission: Number(ventanaRow.commission_user) || 0, totalPaid: 0, totalCollected: 0 });
-      }
+    const allVentanaIds = ventanaData.map(v => v.ventana_id);
 
-      for (const statement of monthStatements) {
-        if (!statement.ventanaId) continue;
-        const entry = monthAggregated.get(statement.ventanaId) || { totalSales: 0, totalPayouts: 0, totalListeroCommission: 0, totalVendedorCommission: 0, totalPaid: 0, totalCollected: 0 };
-        entry.totalPaid += statement.totalPaid ?? 0;
-        monthAggregated.set(statement.ventanaId, entry);
-      }
-
-      for (const collection of monthCollections) {
-        if (!collection.ventanaId) continue;
-        const entry = monthAggregated.get(collection.ventanaId) || { totalSales: 0, totalPayouts: 0, totalListeroCommission: 0, totalVendedorCommission: 0, totalPaid: 0, totalCollected: 0 };
-        entry.totalCollected += collection.amount ?? 0;
-        monthAggregated.set(collection.ventanaId, entry);
-      }
-
-      // Balance: Ventas - Premios - Comisión Listero
-      // Comisión Vendedor es SOLO informativa, no se resta del balance
-      //  NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      //  CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
-      const nowCRStr = crDateService.dateUTCToCRString(new Date());
-      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-
-      //  CRÍTICO: Obtener TODAS las ventanas que están en aggregated (período filtrado)
-      // no solo las que tienen datos en el mes actual, para incluir saldo del mes anterior
-      const allVentanaIds = new Set([
-        ...Array.from(aggregated.keys()),
-        ...Array.from(monthAggregated.keys()),
-      ]);
-
-      const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
-        effectiveMonth,
-        "ventana",
-        Array.from(allVentanaIds),
-        filters.bancaId
-      );
-
-      //  OPTIMIZACIÓN CRÍTICA: Usar batch en lugar de loop serializado
-      // Procesar todas las ventanas en paralelo (en chunks de 5) en lugar de una por una
-      try {
-        const balancesBatch = await getMonthlyRemainingBalancesBatch(
-          effectiveMonth,
-          "ventana",
-          Array.from(allVentanaIds),
-          filters.bancaId
-        );
-
-        for (const ventanaId of allVentanaIds) {
-          const saldoAHoy = balancesBatch.get(ventanaId) ?? 0;
-          monthSaldoByVentana.set(ventanaId, saldoAHoy);
+    const [periodPreviousMonthBalances] = await Promise.all([
+      (async () => {
+        const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+        if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
+          return getPreviousMonthFinalBalancesBatch(effectiveMonth, "ventana", allVentanaIds, filters.bancaId);
         }
-      } catch (error) {
-        // logger.error({
-        //   layer: 'service',
-        //   action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENTANA_CXP',
-        //   payload: {
-        //     effectiveMonth,
-        //     dimension: "ventana",
-        //     error: (error as Error).message,
-        //     note: "Error getting monthly remaining balances batch, using 0 for all",
-        //   },
-        // });
-        for (const ventanaId of allVentanaIds) {
-          monthSaldoByVentana.set(ventanaId, 0);
-        }
-      }
-    }
+        return new Map<string, number>();
+      })()
+    ]);
 
-    //  NUEVO: Obtener saldo del mes anterior para el período filtrado (si incluye el día 1)
-    // El saldo del mes anterior es un movimiento más, como un pago, que debe incluirse en el balance del período
-    const periodPreviousMonthBalances = new Map<string, number>();
-    const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
-    const periodIncludesFirstDay = filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime();
+    const byVentana = ventanaData.map((v) => {
+      const totalListeroCommission = Number(v.listero_commission_snapshot) || Number(v.commission_ventana_raw) || 0;
+      const baseBalance = Number(v.total_sales) - Number(v.total_payouts) - totalListeroCommission;
+      const previousMonthBalance = periodPreviousMonthBalances.get(v.ventana_id) || 0;
+      const periodRemainingBalance = previousMonthBalance + baseBalance - Number(v.total_collected) + Number(v.total_paid);
+      const monthlyAccumulatedBalance = 0; // Se calcula por separado para optimizar carga inicial
+      const recalculatedRemainingBalance = isMonthComplete ? 0 : periodRemainingBalance;
 
-    if (periodIncludesFirstDay) {
-      const nowCRStr = crDateService.dateUTCToCRString(new Date());
-      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-      const allVentanaIdsForPeriod = Array.from(aggregated.keys());
-      const previousMonthBalancesForPeriod = await getPreviousMonthFinalBalancesBatch(
-        effectiveMonth,
-        "ventana",
-        allVentanaIdsForPeriod,
-        filters.bancaId
-      );
-      for (const [ventanaId, balance] of previousMonthBalancesForPeriod.entries()) {
-        periodPreviousMonthBalances.set(ventanaId, Number(balance || 0));
-      }
-    }
+      return {
+        ventanaId: v.ventana_id,
+        ventanaName: v.ventana_name,
+        totalSales: Number(v.total_sales),
+        totalPayouts: Number(v.total_payouts),
+        listeroCommission: totalListeroCommission,
+        vendedorCommission: Number(v.commission_user),
+        totalListeroCommission,
+        totalVendedorCommission: Number(v.commission_user),
+        totalPaid: Number(v.total_paid),
+        totalPaidOut: Number(v.total_paid),
+        totalCollected: Number(v.total_collected),
+        totalPaidToCustomer: Number(v.total_paid_to_customer),
+        totalPaidToVentana: 0,
+        amount: recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0,
+        remainingBalance: recalculatedRemainingBalance,
+        monthlyAccumulated: { remainingBalance: monthlyAccumulatedBalance },
+        isActive: v.is_active,
+      };
+    }).sort((a, b) => b.amount - a.amount);
 
-    const byVentana = Array.from(aggregated.values())
-      .map((entry) => {
-        const totalPaid = entry.totalPaid;
-        const totalCollected = entry.totalCollected;
-        const totalPaidToCustomer = entry.totalPaidToCustomer;
-        const totalPaidToVentana = entry.totalPaidToVentana || 0; // Para CxP según documento
-        // Balance: Ventas - Premios - Comisión Listero
-        // Comisión Vendedor es SOLO informativa, no se resta del balance
-        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalListeroCommission;
-        //  CRÍTICO: El saldo del mes anterior es un movimiento más (como un pago) que debe incluirse en el balance del período
-        // Solo si el período incluye el día 1 del mes
-        const previousMonthBalance = periodPreviousMonthBalances.get(entry.ventanaId) || 0;
-        const periodRemainingBalance = previousMonthBalance + baseBalance - entry.totalCollected + entry.totalPaid;
-
-        //  CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
-        // Si el período es un día específico, usar solo el balance del período (que ya incluye el saldo del mes anterior si es el día 1)
-        const monthlyAccumulatedBalance = monthSaldoByVentana.get(entry.ventanaId) ?? 0;
-        const recalculatedRemainingBalance = isMonthComplete3
-          ? monthlyAccumulatedBalance
-          : periodRemainingBalance;
-
-        //  CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
-        const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
-
-        return {
-          ventanaId: entry.ventanaId,
-          ventanaName: entry.ventanaName,
-          totalSales: entry.totalSales,
-          totalPayouts: entry.totalPayouts,
-          listeroCommission: entry.totalListeroCommission, //  REQUERIDO: Campo individual
-          vendedorCommission: entry.totalVendedorCommission, //  REQUERIDO: Campo individual
-          totalListeroCommission: entry.totalListeroCommission, //  Mantener para compatibilidad
-          totalVendedorCommission: entry.totalVendedorCommission, //  Mantener para compatibilidad
-          totalPaid,
-          totalPaidOut: totalPaid,
-          totalCollected,
-          totalPaidToCustomer,
-          totalPaidToVentana,
-          amount, //  Usa remainingBalance recalculado
-          remainingBalance: recalculatedRemainingBalance, //  Recalculado según rol (período filtrado)
-          monthlyAccumulated: {
-            remainingBalance: monthSaldoByVentana.get(entry.ventanaId) ?? 0, //  NUEVO: Saldo a Hoy (mes completo, inmutable)
-          },
-          isActive: entry.isActive,
-        };
-      })
-      .sort((a, b) => b.amount - a.amount);
-
-    const totalAmount = byVentana.reduce((sum, v) => sum + v.amount, 0);
-
-    return {
-      totalAmount,
-      byVentana,
-    };
+    return { totalAmount: byVentana.reduce((sum, v) => sum + v.amount, 0), byVentana };
   },
 
   /**
    * Calcula CxP agrupado por vendedor
    * Similar a calculateCxP pero agrupa por vendedorId en lugar de ventanaId
    */
+
   async calculateCxPByVendedor(filters: DashboardFilters, role?: Role): Promise<CxPResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
 
-    //  CRÍTICO: Obtener datos directamente desde tickets/jugadas agrupados por vendedor
-    const vendedorData = await prisma.$queryRaw<
-      Array<{
-        vendedor_id: string;
-        vendedor_name: string;
-        vendedor_code: string | null;
-        ventana_id: string | null;
-        ventana_name: string | null;
-        is_active: boolean;
-        total_sales: number;
-        total_payouts: number;
-        commission_user: number;
-        commission_ventana_raw: number;
-        listero_commission_snapshot: number;
-      }>
-    >(
-      Prisma.sql`
-        WITH tickets_in_range AS (
-          SELECT
-            t.id,
-            t."vendedorId",
-            t."ventanaId",
-            t."sorteoId",
-            t."totalAmount",
-            t."totalPayout"
-          FROM "Ticket" t
-          WHERE ${baseFilters}
-            AND t."vendedorId" IS NOT NULL
-        ),
-        sales_per_vendedor AS (
-          SELECT
-            t."vendedorId" AS vendedor_id,
-            COALESCE(SUM(j.amount), 0) AS total_sales,
-            COALESCE(SUM(j.payout), 0) AS total_payouts
-          FROM tickets_in_range t
-          JOIN "Jugada" j ON j."ticketId" = t.id
-          WHERE j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u ON u.id = sle.ventana_id
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND u."ventanaId" = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
-          GROUP BY t."vendedorId"
-        ),
-        commissions_per_vendedor AS (
-          SELECT
-            t."vendedorId" AS vendedor_id,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-            COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
-            COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
-          FROM tickets_in_range t
-          JOIN "Jugada" j ON j."ticketId" = t.id
-          WHERE j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u ON u.id = sle.ventana_id
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND u."ventanaId" = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
-          GROUP BY t."vendedorId"
+    const vendedorData = await prisma.$queryRaw<any[]>(Prisma.sql`
+      WITH tickets_in_range AS (
+        SELECT t.id, t."vendedorId", t."ventanaId", t."sorteoId"
+        FROM "Ticket" t WHERE ${baseFilters} AND t."vendedorId" IS NOT NULL
+      ),
+      jugada_agg AS (
+        SELECT t."vendedorId",
+               COALESCE(SUM(j.amount), 0) AS total_sales,
+               COALESCE(SUM(j.payout), 0) AS total_payouts,
+               COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
+               COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
+               COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
+        FROM tickets_in_range t
+        JOIN "Jugada" j ON j."ticketId" = t.id
+        WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
+        AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
         )
-        SELECT
-          u.id AS vendedor_id,
-          u.name AS vendedor_name,
-          u.code AS vendedor_code,
-          u."ventanaId" AS ventana_id,
-          v.name AS ventana_name,
-          u."isActive" AS is_active,
-          COALESCE(sp.total_sales, 0) AS total_sales,
-          COALESCE(sp.total_payouts, 0) AS total_payouts,
-          COALESCE(cp.commission_user, 0) AS commission_user,
-          COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw,
-          COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot
-        FROM "User" u
-        LEFT JOIN sales_per_vendedor sp ON sp.vendedor_id = u.id
-        LEFT JOIN commissions_per_vendedor cp ON cp.vendedor_id = u.id
-        LEFT JOIN "Ventana" v ON v.id = u."ventanaId"
-        WHERE u."isActive" = true
-          AND u.role = 'VENDEDOR'
-          ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
-        ORDER BY total_sales DESC
-      `
-    );
+        GROUP BY t."vendedorId"
+      ),
+      statements_agg AS (
+        SELECT "vendedorId", COALESCE(SUM("totalPaid"), 0) AS total_paid
+        FROM "AccountStatement"
+        WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NOT NULL
+        GROUP BY "vendedorId"
+      ),
+      collections_agg AS (
+        SELECT "vendedorId", COALESCE(SUM("amount"), 0) AS total_collected
+        FROM "AccountPayment"
+        WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NOT NULL AND "isReversed" = false AND "type" = 'collection'
+        GROUP BY "vendedorId"
+      ),
+      ticket_payments_agg AS (
+        SELECT t."vendedorId", COALESCE(SUM(tp."amountPaid"), 0) AS total_paid_to_customer
+        FROM "TicketPayment" tp
+        JOIN "Ticket" t ON t.id = tp."ticketId"
+        WHERE tp."isReversed" = false AND tp."paymentDate" BETWEEN ${rangeStart} AND ${rangeEnd} AND t."deletedAt" IS NULL AND t."vendedorId" IS NOT NULL
+        GROUP BY t."vendedorId"
+      )
+      SELECT u.id AS vendedor_id, u.name AS vendedor_name, u.code AS vendedor_code, 
+             u."ventanaId" AS ventana_id, v.name AS ventana_name, u."isActive" AS is_active,
+             COALESCE(ja.total_sales, 0) AS total_sales,
+             COALESCE(ja.total_payouts, 0) AS total_payouts,
+             COALESCE(ja.commission_user, 0) AS commission_user,
+             COALESCE(ja.commission_ventana_raw, 0) AS commission_ventana_raw,
+             COALESCE(ja.listero_commission_snapshot, 0) AS listero_commission_snapshot,
+             COALESCE(sa.total_paid, 0) AS total_paid,
+             COALESCE(ca.total_collected, 0) AS total_collected,
+             COALESCE(tpa.total_paid_to_customer, 0) AS total_paid_to_customer
+      FROM "User" u
+      LEFT JOIN "Ventana" v ON v.id = u."ventanaId"
+      LEFT JOIN jugada_agg ja ON ja."vendedorId" = u.id
+      LEFT JOIN statements_agg sa ON sa."vendedorId" = u.id
+      LEFT JOIN collections_agg ca ON ca."vendedorId" = u.id
+      LEFT JOIN ticket_payments_agg tpa ON tpa."vendedorId" = u.id
+      WHERE u."isActive" = true AND u.role = 'VENDEDOR'
+      ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+    `);
 
-    const where: Prisma.AccountStatementWhereInput = {
-      date: {
-        gte: rangeStart,
-        lte: rangeEnd,
-      },
-      vendedorId: { not: null },
-    };
-
-    if (filters.ventanaId) {
-      where.ventanaId = filters.ventanaId;
-    }
-
-    if (filters.bancaId) {
-      where.ventana = {
-        bancaId: filters.bancaId,
-      };
-    }
-
-    const statements = await prisma.accountStatement.findMany({
-      where,
-      include: {
-        vendedor: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-            isActive: true,
-            ventanaId: true,
-          },
-        },
-        ventana: {
-          select: {
-            id: true,
-            name: true,
-            isActive: true,
-          },
-        },
-      },
-    });
-
-    const vendedorInfoMap = new Map(
-      vendedorData.map((v) => [v.vendedor_id, { name: v.vendedor_name, code: v.vendedor_code, ventanaId: v.ventana_id, ventanaName: v.ventana_name, isActive: v.is_active }])
-    );
-
-    const aggregated = new Map<
-      string,
-      {
-        vendedorId: string;
-        vendedorName: string;
-        vendedorCode?: string;
-        ventanaId?: string;
-        ventanaName?: string;
-        isActive: boolean;
-        totalSales: number;
-        totalPayouts: number;
-        totalListeroCommission: number;
-        totalVendedorCommission: number;
-        totalPaid: number;
-        totalCollected: number;
-        totalPaidToCustomer: number;
-        totalPaidToVentana: number;
-        remainingBalance: number;
-      }
-    >();
-
-    const ensureEntry = (
-      vendedorId: string,
-      fallbackName?: string,
-      fallbackCode?: string | null,
-      fallbackVentanaId?: string | null,
-      fallbackVentanaName?: string | null,
-      fallbackIsActive?: boolean
-    ) => {
-      let entry = aggregated.get(vendedorId);
-      if (!entry) {
-        const info = vendedorInfoMap.get(vendedorId);
-        entry = {
-          vendedorId,
-          vendedorName: fallbackName ?? info?.name ?? "Sin nombre",
-          vendedorCode: fallbackCode ?? info?.code ?? undefined,
-          ventanaId: fallbackVentanaId ?? info?.ventanaId ?? undefined,
-          ventanaName: fallbackVentanaName ?? info?.ventanaName ?? undefined,
-          isActive: fallbackIsActive ?? info?.isActive ?? true,
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-          totalPaidToCustomer: 0,
-          totalPaidToVentana: 0,
-          remainingBalance: 0,
-        };
-        aggregated.set(vendedorId, entry);
-      } else {
-        if (fallbackName && entry.vendedorName !== fallbackName) {
-          entry.vendedorName = fallbackName;
-        }
-        if (typeof fallbackIsActive === "boolean") {
-          entry.isActive = fallbackIsActive;
-        }
-      }
-      return entry;
-    };
-
-    //  CRÍTICO: Usar datos calculados directamente desde tickets/jugadas
-    for (const vendedorRow of vendedorData) {
-      const vendedorId = vendedorRow.vendedor_id;
-      const entry = ensureEntry(
-        vendedorId,
-        vendedorRow.vendedor_name,
-        vendedorRow.vendedor_code,
-        vendedorRow.ventana_id,
-        vendedorRow.ventana_name,
-        vendedorRow.is_active
-      );
-
-      entry.totalSales = Number(vendedorRow.total_sales) || 0;
-      entry.totalPayouts = Number(vendedorRow.total_payouts) || 0;
-      entry.totalListeroCommission = Number(vendedorRow.listero_commission_snapshot) || Number(vendedorRow.commission_ventana_raw) || 0;
-      entry.totalVendedorCommission = Number(vendedorRow.commission_user) || 0;
-    }
-
-    // Obtener totalPaid desde AccountStatement
-    for (const statement of statements) {
-      if (!statement.vendedorId) continue;
-      const key = statement.vendedorId;
-      const existing = ensureEntry(
-        key,
-        statement.vendedor?.name,
-        statement.vendedor?.code ?? null,
-        statement.vendedor?.ventanaId ?? null,
-        statement.ventana?.name ?? null,
-        statement.vendedor?.isActive ?? undefined
-      );
-
-      existing.totalPaid += statement.totalPaid ?? 0;
-    }
-
-    const accountPaymentWhere: Prisma.AccountPaymentWhereInput = {
-      date: {
-        gte: rangeStart,
-        lte: rangeEnd,
-      },
-      vendedorId: { not: null },
-      isReversed: false,
-      type: "collection",
-    };
-    if (filters.ventanaId) {
-      accountPaymentWhere.ventanaId = filters.ventanaId;
-    }
-    if (filters.bancaId) {
-      //  CRÍTICO: AccountPayment tiene bancaId directamente, no usar relación ventana
-      accountPaymentWhere.bancaId = filters.bancaId;
-    }
-
-    const collections = await prisma.accountPayment.findMany({
-      where: accountPaymentWhere,
-      select: {
-        vendedorId: true,
-        amount: true,
-      },
-    });
-
-    for (const collection of collections) {
-      if (!collection.vendedorId) continue;
-      const entry = ensureEntry(collection.vendedorId);
-      entry.totalCollected += collection.amount ?? 0;
-    }
-
-    const ticketRelationFilter: Prisma.TicketWhereInput = {
-      deletedAt: null,
-      //  FIX: vendedorId es requerido en schema, no necesitamos filtrar por "not null"
-    };
-    if (filters.ventanaId) {
-      ticketRelationFilter.ventanaId = filters.ventanaId;
-    }
-    if (filters.bancaId) {
-      ticketRelationFilter.ventana = {
-        bancaId: filters.bancaId,
-      };
-    }
-
-    const ticketPayments = await prisma.ticketPayment.findMany({
-      where: {
-        isReversed: false,
-        paymentDate: {
-          gte: rangeStart,
-          lte: rangeEnd,
-        },
-        ticket: {
-          is: ticketRelationFilter,
-        },
-      },
-      select: {
-        amountPaid: true,
-        ticket: {
-          select: {
-            vendedorId: true,
-          },
-        },
-      },
-    });
-
-    for (const payment of ticketPayments) {
-      const vendedorId = payment.ticket?.vendedorId;
-      if (!vendedorId) continue;
-      const entry = ensureEntry(vendedorId);
-      entry.totalPaidToCustomer += payment.amountPaid ?? 0;
-    }
-
-    //  NUEVO: Verificar si el período filtrado es el mes completo
-    // Si es así, el remainingBalance del período debe ser igual al monthlyAccumulated.remainingBalance
+    const nowCRStr = crDateService.dateUTCToCRString(new Date());
+    const effectiveMonth = nowCRStr.substring(0, 7);
     const monthRangeCheck = resolveDateRange('month');
     const todayRangeCheck = resolveDateRange('today');
     const { startDateCRStr: monthStartCheckStr } = crDateService.dateRangeUTCToCRStrings(monthRangeCheck.fromAt, todayRangeCheck.toAt);
-    const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === crDateService.dateUTCToCRString(new Date());
+    const isMonthComplete = fromDateStr === monthStartCheckStr && toDateStr === nowCRStr;
 
-    //  NUEVO: Calcular saldoAHoy (acumulado desde inicio del mes hasta hoy) para cada vendedor
-    const monthSaldoByVendedor = new Map<string, number>();
-    {
-      //  CORREGIDO: Usar resolveDateRange para calcular correctamente las fechas en CR timezone
-      // Esto asegura consistencia entre local y producción (Render)
-      const monthRange = resolveDateRange('month'); // Primer día del mes en CR
-      const todayRange = resolveDateRange('today'); // Fin del día de hoy en CR
+    const allVendedorIds = vendedorData.map(v => v.vendedor_id);
 
-      const monthStart = monthRange.fromAt; // Primer día del mes en CR (06:00:00 UTC)
-      const monthEnd = todayRange.toAt; // Fin del día de hoy en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
-
-      // Convertir a strings de fecha para filtros usando crDateService
-      //  CRÍTICO: Usar dateRangeUTCToCRStrings para obtener correctamente el día de fin
-      // porque toAt puede ser del día siguiente en UTC pero representa el fin del día anterior en CR
-      const { startDateCRStr: monthStartStr, endDateCRStr: monthEndStr } = crDateService.dateRangeUTCToCRStrings(monthStart, monthEnd);
-
-      const monthBaseFilters = buildTicketBaseFilters(
-        "t",
-        { ...filters, fromDate: monthStart, toDate: monthEnd },
-        monthStartStr,
-        monthEndStr
-      );
-
-      const monthVendedorData = await prisma.$queryRaw<Array<{ vendedor_id: string; total_sales: number; total_payouts: number; commission_user: number; commission_ventana_raw: number; listero_commission_snapshot: number }>>(
-        Prisma.sql`SELECT u.id AS vendedor_id, COALESCE(sp.total_sales, 0) AS total_sales, COALESCE(sp.total_payouts, 0) AS total_payouts, COALESCE(cp.commission_user, 0) AS commission_user, COALESCE(cp.commission_ventana_raw, 0) AS commission_ventana_raw, COALESCE(cp.listero_commission_snapshot, 0) AS listero_commission_snapshot FROM "User" u LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(j.amount), 0) AS total_sales, COALESCE(SUM(j.payout), 0) AS total_payouts FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") sp ON sp.vendedor_id = u.id LEFT JOIN (SELECT t."vendedorId" AS vendedor_id, COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user, COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw, COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot FROM "Ticket" t JOIN "Jugada" j ON j."ticketId" = t.id WHERE ${monthBaseFilters} AND t."vendedorId" IS NOT NULL AND j."deletedAt" IS NULL AND j."isExcluded" = false GROUP BY t."vendedorId") cp ON cp.vendedor_id = u.id WHERE u."isActive" = true AND u.role = 'VENDEDOR' ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}`
-      );
-
-      //  Vendedores funcionan correctamente, mantener consulta original
-      const monthStatements = await prisma.accountStatement.findMany({
-        where: {
-          date: { gte: monthStart, lte: monthEnd },
-          vendedorId: { not: null },
-          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
-        },
-      });
-
-      //  Vendedores funcionan correctamente, mantener consulta original
-      const monthCollections = await prisma.accountPayment.findMany({
-        where: {
-          date: { gte: monthStart, lte: monthEnd },
-          vendedorId: { not: null },
-          isReversed: false,
-          type: "collection",
-          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
-        },
-        select: {
-          vendedorId: true,
-          amount: true,
-        },
-      });
-
-      const monthAggregated = new Map<string, { totalSales: number; totalPayouts: number; totalListeroCommission: number; totalVendedorCommission: number; totalPaid: number; totalCollected: number }>();
-
-      for (const vendedorRow of monthVendedorData) {
-        const vendedorId = vendedorRow.vendedor_id;
-        monthAggregated.set(vendedorId, {
-          totalSales: Number(vendedorRow.total_sales) || 0,
-          totalPayouts: Number(vendedorRow.total_payouts) || 0,
-          totalListeroCommission: Number(vendedorRow.listero_commission_snapshot) || Number(vendedorRow.commission_ventana_raw) || 0,
-          totalVendedorCommission: Number(vendedorRow.commission_user) || 0,
-          totalPaid: 0,
-          totalCollected: 0,
-        });
-      }
-
-      for (const statement of monthStatements) {
-        if (!statement.vendedorId) continue;
-        const entry = monthAggregated.get(statement.vendedorId) || {
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-        };
-        entry.totalPaid += statement.totalPaid ?? 0;
-        monthAggregated.set(statement.vendedorId, entry);
-      }
-
-      for (const collection of monthCollections) {
-        if (!collection.vendedorId) continue;
-        const entry = monthAggregated.get(collection.vendedorId) || {
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-        };
-        entry.totalCollected += collection.amount ?? 0;
-        monthAggregated.set(collection.vendedorId, entry);
-      }
-
-      // Balance: Ventas - Premios - Comisión Vendedor
-      //  NUEVO: Incluir saldo final del mes anterior (batch - una sola consulta)
-      //  CORREGIDO: Usar crDateService para obtener el mes efectivo en formato YYYY-MM
-      const nowCRStr = crDateService.dateUTCToCRString(new Date());
-      const effectiveMonth = nowCRStr.substring(0, 7); // YYYY-MM
-
-      //  CRÍTICO: Obtener TODOS los vendedores activos, no solo los que tienen datos en el mes actual
-      // Esto asegura que vendedores con saldo del mes anterior pero sin datos en el mes actual también aparezcan
-      const allVendedorIds = await prisma.user.findMany({
-        where: {
-          role: "VENDEDOR",
-          isActive: true,
-          deletedAt: null,
-          ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-          //  CORRECCIÓN: User no tiene bancaId directo, se infiere a través de ventana.bancaId
-          ...(filters.bancaId ? {
-            ventana: {
-              bancaId: filters.bancaId
-            }
-          } : {}),
-        },
-        select: { id: true },
-      }).then(users => users.map(u => u.id));
-
-      const previousMonthBalances = await getPreviousMonthFinalBalancesBatch(
-        effectiveMonth,
-        "vendedor",
-        allVendedorIds,
-        filters.bancaId
-      );
-
-      //  CRÍTICO: Asegurar que todos los vendedores con saldo del mes anterior estén en monthAggregated
-      // Esto garantiza que el cálculo del saldo sea consistente
-      for (const vendedorId of allVendedorIds) {
-        if (!monthAggregated.has(vendedorId)) {
-          monthAggregated.set(vendedorId, {
-            totalSales: 0,
-            totalPayouts: 0,
-            totalListeroCommission: 0,
-            totalVendedorCommission: 0,
-            totalPaid: 0,
-            totalCollected: 0,
-          });
+    const [periodPreviousMonthBalances] = await Promise.all([
+      (async () => {
+        const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+        if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
+          return getPreviousMonthFinalBalancesBatch(effectiveMonth, "vendedor", allVendedorIds, filters.bancaId);
         }
-      }
-
-      //  CORRECCIÓN CRÍTICA: Usar batch query para obtener todos los remainingBalance de una vez (MUCHO MÁS RÁPIDO)
-      try {
-        const balancesBatch = await getMonthlyRemainingBalancesBatch(
-          effectiveMonth,
-          "vendedor",
-          Array.from(allVendedorIds),
-          filters.bancaId
-        );
-
-        for (const vendedorId of allVendedorIds) {
-          const saldoAHoy = balancesBatch.get(vendedorId) ?? 0;
-          monthSaldoByVendedor.set(vendedorId, saldoAHoy);
-        }
-      } catch (error) {
-        // logger.error({
-        //   layer: 'service',
-        //   action: 'MONTHLY_ACCUMULATED_BATCH_ERROR_VENDEDOR_CXP',
-        //   payload: {
-        //     effectiveMonth,
-        //     dimension: "vendedor",
-        //     error: (error as Error).message,
-        //     note: "Error getting monthly remaining balances batch, using 0 for all",
-        //   },
-        // });
-        for (const vendedorId of allVendedorIds) {
-          monthSaldoByVendedor.set(vendedorId, 0);
-        }
-      }
-    }
-
-    //  CRÍTICO: Incluir TODOS los vendedores con saldo, no solo los que tienen datos en el período filtrado
-    // Esto asegura que vendedores con saldo del mes anterior pero sin datos en el período aparezcan
-    const allVendedorIdsWithSaldo = new Set([
-      ...Array.from(aggregated.keys()),
-      ...Array.from(monthSaldoByVendedor.keys()),
+        return new Map<string, number>();
+      })()
     ]);
 
-    // Obtener información de vendedores que no están en aggregated
-    const missingVendedorIds = Array.from(allVendedorIdsWithSaldo).filter(id => !aggregated.has(id));
-    if (missingVendedorIds.length > 0) {
-      const missingVendedors = await prisma.user.findMany({
-        where: {
-          id: { in: missingVendedorIds },
-          role: "VENDEDOR",
-          isActive: true,
-          deletedAt: null,
-        },
-        select: {
-          id: true,
-          name: true,
-          code: true,
-          ventanaId: true,
-          ventana: { select: { name: true } },
-          isActive: true,
-        },
-      });
+    const byVendedor = vendedorData.map((v) => {
+      const totalListeroCommission = Number(v.listero_commission_snapshot) || Number(v.commission_ventana_raw) || 0;
+      const baseBalance = Number(v.total_sales) - Number(v.total_payouts) - totalListeroCommission;
+      const previousMonthBalance = periodPreviousMonthBalances.get(v.vendedor_id) || 0;
+      const periodRemainingBalance = previousMonthBalance + baseBalance - Number(v.total_collected) + Number(v.total_paid);
+      const monthlyAccumulatedBalance = 0; // Se calcula por separado para optimizar carga inicial
+      const recalculatedRemainingBalance = isMonthComplete ? 0 : periodRemainingBalance;
 
-      for (const vendedor of missingVendedors) {
-        // Agregar al aggregated con valores en 0
-        aggregated.set(vendedor.id, {
-          vendedorId: vendedor.id,
-          vendedorName: vendedor.name,
-          vendedorCode: vendedor.code ?? undefined,
-          ventanaId: vendedor.ventanaId ?? undefined,
-          ventanaName: vendedor.ventana?.name ?? undefined,
-          isActive: vendedor.isActive,
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-          totalPaidToCustomer: 0,
-          totalPaidToVentana: 0,
-          remainingBalance: 0,
-        });
-      }
-    }
+      return {
+        vendedorId: v.vendedor_id,
+        vendedorName: v.vendedor_name,
+        vendedorCode: v.vendedor_code,
+        ventanaId: v.ventana_id,
+        ventanaName: v.ventana_name,
+        totalSales: Number(v.total_sales),
+        totalPayouts: Number(v.total_payouts),
+        listeroCommission: totalListeroCommission,
+        vendedorCommission: Number(v.commission_user),
+        totalListeroCommission,
+        totalVendedorCommission: Number(v.commission_user),
+        totalPaid: Number(v.total_paid),
+        totalPaidOut: Number(v.total_paid),
+        totalCollected: Number(v.total_collected),
+        totalPaidToCustomer: Number(v.total_paid_to_customer),
+        totalPaidToVentana: 0,
+        amount: recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0,
+        remainingBalance: recalculatedRemainingBalance,
+        monthlyAccumulated: { remainingBalance: monthlyAccumulatedBalance },
+        isActive: v.is_active,
+      };
+    }).sort((a, b) => b.amount - a.amount);
 
-    const byVendedor = Array.from(allVendedorIdsWithSaldo)
-      .map((vendedorId) => {
-        const entry = aggregated.get(vendedorId) || {
-          vendedorId,
-          vendedorName: "Desconocido",
-          vendedorCode: undefined,
-          ventanaId: undefined,
-          ventanaName: undefined,
-          isActive: true,
-          totalSales: 0,
-          totalPayouts: 0,
-          totalListeroCommission: 0,
-          totalVendedorCommission: 0,
-          totalPaid: 0,
-          totalCollected: 0,
-          totalPaidToCustomer: 0,
-          totalPaidToVentana: 0,
-          remainingBalance: 0,
-        };
+    return { totalAmount: byVendedor.reduce((sum, v) => sum + v.amount, 0), byVendedor };
+  },
 
-        const totalPaid = entry.totalPaid;
-        const totalCollected = entry.totalCollected;
-        const totalPaidToCustomer = entry.totalPaidToCustomer;
-        const totalPaidToVentana = entry.totalPaidToVentana || 0;
-        // Balance: Ventas - Premios - Comisión Vendedor
-        const baseBalance = entry.totalSales - entry.totalPayouts - entry.totalVendedorCommission;
-        const periodRemainingBalance = baseBalance - entry.totalCollected + entry.totalPaid;
+  /**
+   * Obtiene saldos acumulados mensuales (Saldo a Hoy) en lote para un conjunto de entidades.
+   * Método optimizado para ser llamado por separado desde el frontend.
+   */
+  async getAccumulatedBalancesBatch(
+    dimension: "ventana" | "vendedor",
+    entityIds: string[],
+    bancaId?: string
+  ): Promise<Record<string, number>> {
+    const nowCRStr = crDateService.dateUTCToCRString(new Date());
+    const effectiveMonth = nowCRStr.substring(0, 7);
 
-        //  CRÍTICO: Si el período es el mes completo, usar el saldo acumulado mensual (que incluye saldo del mes anterior)
-        // Si el período es un día específico, usar solo el balance del período
-        const monthlyAccumulatedBalance = monthSaldoByVendedor.get(entry.vendedorId) ?? 0;
-        const recalculatedRemainingBalance = isMonthComplete
-          ? monthlyAccumulatedBalance
-          : periodRemainingBalance;
+    const balancesMap = await getMonthlyRemainingBalancesBatch(
+      effectiveMonth,
+      dimension,
+      entityIds,
+      bancaId
+    );
 
-        //  CRÍTICO: amount debe usar el remainingBalance recalculado (valor absoluto si es negativo)
-        const amount = recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0;
+    const result: Record<string, number> = {};
+    balancesMap.forEach((balance, id) => {
+      result[id] = balance;
+    });
 
-        return {
-          vendedorId: entry.vendedorId,
-          vendedorName: entry.vendedorName,
-          vendedorCode: entry.vendedorCode,
-          ventanaId: entry.ventanaId,
-          ventanaName: entry.ventanaName,
-          totalSales: entry.totalSales,
-          totalPayouts: entry.totalPayouts,
-          listeroCommission: entry.totalListeroCommission,
-          vendedorCommission: entry.totalVendedorCommission,
-          totalListeroCommission: entry.totalListeroCommission,
-          totalVendedorCommission: entry.totalVendedorCommission,
-          totalPaid,
-          totalPaidOut: totalPaid,
-          totalCollected,
-          totalPaidToCustomer,
-          totalPaidToVentana,
-          amount,
-          remainingBalance: recalculatedRemainingBalance,
-          monthlyAccumulated: {
-            remainingBalance: monthSaldoByVendedor.get(vendedorId) ?? 0,
-          },
-          isActive: entry.isActive,
-        };
-      })
-      .filter(v => {
-        // Incluir vendedores con:
-        // 1. Saldo del mes anterior (monthlyAccumulated)
-        // 2. Saldo en el período filtrado
-        // 3. Ventas en el período filtrado
-        return v.monthlyAccumulated.remainingBalance !== 0 || v.remainingBalance !== 0 || v.totalSales > 0;
-      })
-      .sort((a, b) => b.amount - a.amount);
-
-    const totalAmount = byVendedor.reduce((sum, v) => sum + v.amount, 0);
-
-    return {
-      totalAmount,
-      byVendedor,
-    };
+    return result;
   },
 
   /**
@@ -3407,48 +1545,78 @@ export const DashboardService = {
    * @param role Rol del usuario autenticado (para determinar qué comisión restar)
    */
   async getFullDashboard(filters: DashboardFilters, role?: Role) {
+    // 🔴 INICIO: Capturar estado inicial
+    const monitor = new PerformanceMonitor('dashboard.getFullDashboard');
+    monitor.start('INIT');
+
     const startTime = Date.now();
     let queryCount = 0;
 
-    const [ganancia, cxc, cxp, summary, timeSeries, exposure, previousPeriod] = await Promise.all([
-      this.calculateGanancia(filters, role).then((r) => {
+    // 🟡 CHECKPOINT: Antes de Promise.all
+    monitor.checkpoint('BEFORE_PARALLEL_QUERIES');
+
+    // Medir cada operación individualmente
+    const measured = await Promise.all([
+      measureAsync('calculateGanancia', () => this.calculateGanancia(filters, role).then((r) => {
         queryCount += 2;
         return r;
-      }),
-      this.calculateCxC(filters).then((r) => {
+      })),
+      measureAsync('calculateCxC', () => this.calculateCxC(filters).then((r) => {
         queryCount += 1;
         return r;
-      }),
-      this.calculateCxP(filters).then((r) => {
+      })),
+      measureAsync('calculateCxP', () => this.calculateCxP(filters).then((r) => {
         queryCount += 1;
         return r;
-      }),
-      this.getSummary(filters, role).then((r) => {
+      })),
+      measureAsync('getSummary', () => this.getSummary(filters, role).then((r) => {
         queryCount += 1;
         return r;
-      }),
-      this.getTimeSeries({ ...filters, interval: filters.interval || 'day' }).then((r) => {
+      })),
+      measureAsync('getTimeSeries', () => this.getTimeSeries({ ...filters, interval: filters.interval || 'day' }).then((r) => {
         queryCount += 1;
         return r;
-      }),
-      this.calculateExposure(filters).then((r) => {
+      })),
+      measureAsync('calculateExposure', () => this.calculateExposure(filters).then((r) => {
         queryCount += 3;
         return r;
-      }),
-      this.calculatePreviousPeriod(filters, role).then((r) => {
+      })),
+      measureAsync('calculatePreviousPeriod', () => this.calculatePreviousPeriod(filters, role).then((r) => {
         queryCount += 1;
         return r;
-      }),
+      })),
     ]);
+
+    // Extraer resultados
+    const [ganancia, cxc, cxp, summary, timeSeries, exposure, previousPeriod] = measured.map(m => m.result);
+
+    // 🟡 CHECKPOINT: Después de queries, antes de alerts
+    monitor.checkpoint('AFTER_PARALLEL_QUERIES');
+
+    // Log individual de tiempos y memoria por operación
+    logger.info({
+      layer: 'performance',
+      action: 'DASHBOARD_OPERATIONS_BREAKDOWN',
+      meta: {
+        operations: measured.map(({ durationMs, memoryDeltaMB }, idx) => ({
+          name: ['ganancia', 'cxc', 'cxp', 'summary', 'timeSeries', 'exposure', 'previousPeriod'][idx],
+          durationMs,
+          memoryDeltaMB: parseFloat(memoryDeltaMB.toFixed(2)),
+        })),
+      },
+    });
 
     const alerts = this.generateAlerts({ ganancia, cxc, cxp, summary, exposure });
 
-    return {
+    // 🟡 CHECKPOINT: Antes de construir respuesta
+    monitor.checkpoint('BEFORE_RESPONSE_BUILD');
+
+    const response = {
       ganancia,
       cxc,
       cxp,
       summary,
-      timeSeries: timeSeries.timeSeries,
+      timeSeries: (timeSeries as any).timeSeries,
       exposure,
       previousPeriod,
       alerts,
@@ -3464,6 +1632,20 @@ export const DashboardService = {
         totalQueries: queryCount,
       },
     };
+
+    // 🔴 FIN: Capturar estado final y generar resumen
+    const performanceSummary = monitor.end('RESPONSE_READY');
+
+    // Agregar métricas al meta del response (útil para debugging en dev)
+    if (process.env.NODE_ENV !== 'production') {
+      (response.meta as any).performance = {
+        totalTimeMs: performanceSummary.totalTimeMs,
+        peakHeapUsedMB: parseFloat(performanceSummary.peakHeapUsedMB.toFixed(2)),
+        heapGrowthMB: parseFloat(performanceSummary.heapGrowthMB.toFixed(2)),
+      };
+    }
+
+    return response;
   },
 
   /**

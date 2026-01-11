@@ -1,0 +1,4 @@
+# Logs de performance testing
+*.log
+*.json
+!.gitignore

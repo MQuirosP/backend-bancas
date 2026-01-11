@@ -2,7 +2,7 @@ import { Router } from "express";
 import { protect } from "../../../middlewares/auth.middleware";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import DashboardController from "../controllers/dashboard.controller";
-import { validateDashboardQuery } from "../validators/dashboard.validator";
+import { validateDashboardQuery, validateAccumulatedBalances } from "../validators/dashboard.validator";
 
 const router = Router();
 
@@ -29,6 +29,8 @@ router.get("/cxp", validateDashboardQuery, DashboardController.getCxP);
 router.get("/timeseries", validateDashboardQuery, DashboardController.getTimeSeries);
 router.get("/exposure", validateDashboardQuery, DashboardController.getExposure);
 router.get("/vendedores", validateDashboardQuery, DashboardController.getVendedores);
+router.post("/accumulated-balances", DashboardController.getAccumulatedBalances);
+router.get("/accumulated-balances", DashboardController.getAccumulatedBalances);
 router.get("/export", validateDashboardQuery, DashboardController.exportDashboard);
 
 export default router;
