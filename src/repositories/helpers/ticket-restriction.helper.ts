@@ -645,6 +645,21 @@ async function executeValidationTask(
             const multiplierContext = rule.multiplierId ? ` (multiplicador: ${rule.multiplier?.name || '...'})` : '';
             const available = Math.max(0, effectiveMaxAmount - sumForNumber);
 
+            logger.warn({
+              layer: 'repository',
+              action: 'MAXAMOUNT_EXCEEDED',
+              payload: {
+                number: num,
+                multiplierContext,
+                isAutoDate: rule.isAutoDate,
+                amountAttempted: sumForNumber,
+                maxAmount: effectiveMaxAmount,
+                available,
+                ruleId: rule.id,
+                sorteoId: context.sorteoId,
+              },
+            });
+
             throw new AppError(
               `El número ${num}${multiplierContext}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
               400,
@@ -705,6 +720,20 @@ async function executeValidationTask(
             const ruleScope = rule.userId ? "personal" : rule.ventanaId ? "de ventana" : rule.bancaId ? "de banca" : "general";
             const isAutoDatePrefix = rule.isAutoDate ? " (automático)" : "";
             const available = Math.max(0, effectiveMaxAmount - sumForNumber);
+
+            logger.warn({
+              layer: 'repository',
+              action: 'MAXAMOUNT_EXCEEDED',
+              payload: {
+                number: num,
+                isAutoDate: rule.isAutoDate,
+                amountAttempted: sumForNumber,
+                maxAmount: effectiveMaxAmount,
+                available,
+                ruleId: rule.id,
+                sorteoId: context.sorteoId,
+              },
+            });
 
             throw new AppError(
               `El número ${num}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
@@ -873,7 +902,25 @@ export async function validateRulesInParallel(
 
   // Si hay errores, lanzar el primero (comportamiento backward compatible)
   if (errors.length > 0) {
-    throw errors[0];
+    const firstError = errors[0];
+    
+    logger.warn({
+      layer: 'repository',
+      action: 'TICKET_REJECTED_BY_RESTRICTIONS',
+      payload: {
+        sorteoId,
+        numbersCount: numbers.length,
+        numbersAttempted: numbers.map((n: any) => ({
+          number: n.number,
+          amount: n.amountForNumber
+        })),
+        error: firstError.message,
+        errorCode: (firstError as any).code,
+        errorMeta: (firstError as any).meta,
+      },
+    });
+
+    throw firstError;
   }
 }
 

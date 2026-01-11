@@ -26,7 +26,7 @@ model Banca {
   email                  String?
   phone                  String?
   isActive               Boolean                 @default(true)
-  salesCutoffMinutes     Int                     @default(5)
+  salesCutoffMinutes     Int                     @default(1)
   commissionPolicyJson   Json? // Política de comisiones jerárquica
   loteriaSettings        BancaLoteriaSetting[]
   restrictionRules       RestrictionRule[]
