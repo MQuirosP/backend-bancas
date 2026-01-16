@@ -116,19 +116,19 @@ export class CommissionResolver {
       const match = findMatchingRule(ventanaPolicy, input);
       if (match) {
         const commissionAmount = parseFloat(((input.amount * match.percent) / 100).toFixed(2));
-        logger.info({
-          layer: "service",
-          action: "LISTERO_COMMISSION_RESOLVED",
-          payload: {
-            origin: "VENTANA",
-            percent: match.percent,
-            ruleId: match.ruleId,
-            amount: commissionAmount,
-            loteriaId: input.loteriaId,
-            betType: input.betType,
-            multiplierX: input.finalMultiplierX,
-          },
-        });
+        // logger.info({
+        //   layer: "service",
+        //   action: "LISTERO_COMMISSION_RESOLVED",
+        //   payload: {
+        //     origin: "VENTANA",
+        //     percent: match.percent,
+        //     ruleId: match.ruleId,
+        //     amount: commissionAmount,
+        //     loteriaId: input.loteriaId,
+        //     betType: input.betType,
+        //     multiplierX: input.finalMultiplierX,
+        //   },
+        // });
         return {
           commissionPercent: match.percent,
           commissionAmount,
@@ -144,19 +144,19 @@ export class CommissionResolver {
       const match = findMatchingRule(bancaPolicy, input);
       if (match) {
         const commissionAmount = parseFloat(((input.amount * match.percent) / 100).toFixed(2));
-        logger.info({
-          layer: "service",
-          action: "LISTERO_COMMISSION_RESOLVED",
-          payload: {
-            origin: "BANCA",
-            percent: match.percent,
-            ruleId: match.ruleId,
-            amount: commissionAmount,
-            loteriaId: input.loteriaId,
-            betType: input.betType,
-            multiplierX: input.finalMultiplierX,
-          },
-        });
+        // logger.info({
+        //   layer: "service",
+        //   action: "LISTERO_COMMISSION_RESOLVED",
+        //   payload: {
+        //     origin: "BANCA",
+        //     percent: match.percent,
+        //     ruleId: match.ruleId,
+        //     amount: commissionAmount,
+        //     loteriaId: input.loteriaId,
+        //     betType: input.betType,
+        //     multiplierX: input.finalMultiplierX,
+        //   },
+        // });
         return {
           commissionPercent: match.percent,
           commissionAmount,
