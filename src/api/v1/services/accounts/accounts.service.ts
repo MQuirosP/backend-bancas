@@ -102,18 +102,14 @@ export async function getMonthlyRemainingBalancesBatch(
         }
     }
 
-    //  CRÍTICO: Para el balance "actual", ignorar statements de HOY
-    // Esto asegura que el balance sea dinámico y basado en los filtros de EVALUATED unificados
-    const entitiesNeedingTodayCalculation = entityIds; 
-
-    /* 
-    Comentamos la optimización que usa statements de hoy para forzar el cálculo preciso
-    y solucionar el problema de los tickets ACTIVE.
-    */
-    // const entitiesNeedingTodayCalculation = entityIds.filter(id => {
-    //     const latest = latestByEntity.get(id);
-    //     return !latest || !latest.isUpToDate; 
-    // });
+    //  OPTIMIZACIÓN: Solo calcular para entidades sin AccountStatement actualizado
+    // Confiamos en la tabla porque se sincroniza en tiempo real con:
+    // - Evaluación de sorteos (syncSorteoStatements)
+    // - Registro/reversión de pagos (registerPayment/reversePayment)
+    const entitiesNeedingTodayCalculation = entityIds.filter(id => {
+        const latest = latestByEntity.get(id);
+        return !latest || !latest.isUpToDate;
+    });
 
     //  LOGGING: Para diagnosticar rendimiento
     // logger.info({

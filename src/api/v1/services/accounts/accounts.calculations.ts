@@ -14,7 +14,7 @@ import { getSorteoBreakdownBatch, getAggregatedTicketsData, AggregatedTicketRow 
 import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts.balances";
 import { getCachedDayStatement, setCachedDayStatement, getCachedBySorteo, setCachedBySorteo, getCachedPreviousMonthBalance, setCachedPreviousMonthBalance } from "../../../../utils/accountStatementCache";
 import { intercalateSorteosAndMovements, SorteoOrMovement } from "./accounts.intercalate";
-import { getAccountStatementIfValid } from "./accounts.statement-reader";
+import { getAccountStatementIfValid, getAccountStatementIfExists } from "./accounts.statement-reader";
 
 /**
  * ============================================================================
@@ -92,38 +92,39 @@ export async function calculateDayStatement(
         return cached;
     }
 
-    //  OPTIMIZACIÓN: Si el día está asentado y es válido, usarlo directamente
-    // Esto evita recalcular miles de tickets para días antiguos (Universal Settlement)
-    const validStatement = await getAccountStatementIfValid(
+    //  OPTIMIZACIÓN: Confiar en AccountStatement si existe
+    // La tabla se mantiene sincronizada en tiempo real por:
+    // - Evaluación de sorteos (syncSorteoStatements)
+    // - Registro/reversión de pagos (registerPayment/reversePayment)
+    // Solo recalculamos si el registro NO existe
+    const existingStatement = await getAccountStatementIfExists(
         date,
         dimension,
         bancaId,
         ventanaId,
-        vendedorId,
-        undefined,
-        month
+        vendedorId
     );
 
-    if (validStatement && validStatement.isSettled) {
+    if (existingStatement) {
         // Mapear de AccountStatement (Prisma) a DayStatement (Frontend)
 
         // Obtener total de pagos y cobros combinados
-        const totalPaymentsCollections = await AccountPaymentRepository.getTotalPaymentsCollections(validStatement.id);
+        const totalPaymentsCollections = await AccountPaymentRepository.getTotalPaymentsCollections(existingStatement.id);
 
         //  OPTIMIZACIÓN: Obtener nombres de ventana/vendedor en paralelo si existen
         let ventanaName: string | null = null;
         let vendedorName: string | null = null;
 
         const [ventana, vendedor] = await Promise.all([
-            validStatement.ventanaId
+            existingStatement.ventanaId
                 ? prisma.ventana.findUnique({
-                    where: { id: validStatement.ventanaId },
+                    where: { id: existingStatement.ventanaId },
                     select: { name: true },
                 })
                 : Promise.resolve(null),
-            validStatement.vendedorId
+            existingStatement.vendedorId
                 ? prisma.user.findUnique({
-                    where: { id: validStatement.vendedorId },
+                    where: { id: existingStatement.vendedorId },
                     select: { name: true },
                 })
                 : Promise.resolve(null),
@@ -133,28 +134,28 @@ export async function calculateDayStatement(
         vendedorName = vendedor?.name || null;
 
         const result: DayStatement = {
-            id: validStatement.id,
-            date: validStatement.date,
-            month: validStatement.month,
-            bancaId: validStatement.bancaId,
-            ventanaId: validStatement.ventanaId,
-            vendedorId: validStatement.vendedorId,
+            id: existingStatement.id,
+            date: existingStatement.date,
+            month: existingStatement.month,
+            bancaId: existingStatement.bancaId,
+            ventanaId: existingStatement.ventanaId,
+            vendedorId: existingStatement.vendedorId,
             ventanaName,
             vendedorName,
-            totalSales: Number(validStatement.totalSales),
-            totalPayouts: Number(validStatement.totalPayouts),
-            listeroCommission: Number(validStatement.listeroCommission),
-            vendedorCommission: Number(validStatement.vendedorCommission),
-            balance: Number(validStatement.balance),
-            totalPaid: Number(validStatement.totalPaid),
-            totalCollected: Number(validStatement.totalCollected),
+            totalSales: Number(existingStatement.totalSales),
+            totalPayouts: Number(existingStatement.totalPayouts),
+            listeroCommission: Number(existingStatement.listeroCommission),
+            vendedorCommission: Number(existingStatement.vendedorCommission),
+            balance: Number(existingStatement.balance),
+            totalPaid: Number(existingStatement.totalPaid),
+            totalCollected: Number(existingStatement.totalCollected),
             totalPaymentsCollections,
-            remainingBalance: Number(validStatement.remainingBalance),
-            isSettled: true,
-            canEdit: false,
-            ticketCount: validStatement.ticketCount,
-            createdAt: validStatement.createdAt,
-            updatedAt: validStatement.updatedAt,
+            remainingBalance: Number(existingStatement.remainingBalance),
+            isSettled: existingStatement.isSettled,
+            canEdit: existingStatement.canEdit,
+            ticketCount: existingStatement.ticketCount,
+            createdAt: existingStatement.createdAt,
+            updatedAt: existingStatement.updatedAt,
         };
 
         // Cachear y retornar
