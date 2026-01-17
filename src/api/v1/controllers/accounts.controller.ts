@@ -354,7 +354,8 @@ export const AccountsController = {
     //  NUEVO: Validar que hora no sea futura si fecha es hoy
     if (time) {
       const today = new Date();
-      const todayCR = new Date(today.getTime() + 6 * 60 * 60 * 1000); // Convertir a CR
+      // ️ CORRECCIÓN: Costa Rica está en UTC-6, RESTAR 6 horas para obtener hora local CR
+      const todayCR = new Date(today.getTime() - 6 * 60 * 60 * 1000);
       const todayDateStr = `${todayCR.getUTCFullYear()}-${String(todayCR.getUTCMonth() + 1).padStart(2, '0')}-${String(todayCR.getUTCDate()).padStart(2, '0')}`;
 
       if (date === todayDateStr) {
