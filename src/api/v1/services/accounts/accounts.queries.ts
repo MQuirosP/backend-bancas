@@ -84,11 +84,26 @@ export async function getAggregatedTicketsData(params: {
     whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`);
 
     // Excluir tickets de listas bloqueadas
+    //  ACTUALIZADO: Excluir por multiplierId si la exclusión lo especifica
+    // Lógica: Un ticket está excluido si:
+    // 1. Exclusión de ventana completa (vendedor_id NULL, multiplier_id NULL)
+    // 2. Exclusión de vendedor específico (vendedor_id NOT NULL, multiplier_id NULL)
+    // 3. Exclusión de multiplicador específico en ventana (vendedor_id NULL, multiplier_id NOT NULL)
+    // 4. Exclusión de multiplicador específico en vendedor (vendedor_id NOT NULL, multiplier_id NOT NULL)
     whereConditions.push(Prisma.sql`NOT EXISTS (
         SELECT 1 FROM "sorteo_lista_exclusion" sle
         WHERE sle.sorteo_id = t."sorteoId"
         AND sle.ventana_id = t."ventanaId"
         AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+        AND (
+            sle.multiplier_id IS NULL  -- Exclusión sin filtro de multiplicador
+            OR EXISTS (  -- Exclusión con filtro de multiplicador: verificar si el ticket tiene jugadas con ese multiplicador
+                SELECT 1 FROM "Jugada" j
+                WHERE j."ticketId" = t.id
+                AND j."multiplierId" = sle.multiplier_id
+                AND j."deletedAt" IS NULL
+            )
+        )
     )`);
 
     // Aplicar filtros según dimension

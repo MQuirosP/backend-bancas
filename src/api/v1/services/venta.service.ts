@@ -241,11 +241,25 @@ async function getExclusionsWhere(filters: VentasFilters): Promise<Prisma.Ticket
 
   const notConditions: Prisma.TicketWhereInput[] = exclusions
     .filter(ex => ex.ventana?.ventanaId) // Asegurar que tenemos el ID real de la ventana
-    .map(ex => ({
-      sorteoId: ex.sorteoId,
-      ventanaId: ex.ventana!.ventanaId!, // ID real de la ventana
-      ...(ex.vendedorId ? { vendedorId: ex.vendedorId } : {}) // Si es específico de vendedor
-    }));
+    .map(ex => {
+      const condition: Prisma.TicketWhereInput = {
+        sorteoId: ex.sorteoId,
+        ventanaId: ex.ventana!.ventanaId!, // ID real de la ventana
+        ...(ex.vendedorId ? { vendedorId: ex.vendedorId } : {}) // Si es específico de vendedor
+      };
+
+      //  NUEVO: Si la exclusión tiene multiplierId, filtrar tickets que contengan jugadas con ese multiplicador
+      if (ex.multiplierId) {
+        condition.jugadas = {
+          some: {
+            multiplierId: ex.multiplierId,
+            deletedAt: null,
+          }
+        };
+      }
+
+      return condition;
+    });
 
   if (notConditions.length === 0) {
     return {};
