@@ -123,6 +123,64 @@ export function isValidRemainingBalance(
 }
 
 /**
+ *  OPTIMIZACIÓN: Obtener AccountStatement si existe (sin validaciones adicionales)
+ * Confiamos en que los datos están sincronizados porque:
+ * - Cada evaluación de sorteo actualiza el statement
+ * - Cada registro/reversión de pago actualiza el statement
+ * - El sistema mantiene la tabla sincronizada en tiempo real
+ */
+export async function getAccountStatementIfExists(
+    date: Date,
+    dimension: "banca" | "ventana" | "vendedor",
+    bancaId?: string,
+    ventanaId?: string,
+    vendedorId?: string
+): Promise<AccountStatement | null> {
+    try {
+        let targetBancaId: string | undefined = undefined;
+        let targetVentanaId: string | undefined = undefined;
+        let targetVendedorId: string | undefined = undefined;
+
+        if (dimension === "banca") {
+            targetBancaId = bancaId || undefined;
+        } else if (dimension === "ventana") {
+            targetBancaId = bancaId || undefined;
+            targetVentanaId = ventanaId || undefined;
+        } else if (dimension === "vendedor") {
+            targetBancaId = bancaId || undefined;
+            targetVentanaId = ventanaId || undefined;
+            targetVendedorId = vendedorId || undefined;
+        }
+
+        const statement = await prisma.accountStatement.findFirst({
+            where: {
+                date,
+                bancaId: targetBancaId || null,
+                ventanaId: targetVentanaId || null,
+                vendedorId: targetVendedorId || null,
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+        });
+
+        return statement; // Retornar el statement si existe, null si no
+    } catch (error) {
+        logger.error({
+            layer: "service",
+            action: "GET_ACCOUNT_STATEMENT_IF_EXISTS_ERROR",
+            payload: {
+                date,
+                dimension,
+                error: (error as Error).message,
+            },
+        });
+        return null;
+    }
+}
+
+/**
+ * @deprecated Usar getAccountStatementIfExists en su lugar
  *  CRÍTICO: Leer statement de AccountStatement si existe y es válido
  * Esto evita recalcular cuando los datos ya están guardados
  */
