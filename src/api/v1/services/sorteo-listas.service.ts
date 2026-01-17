@@ -599,7 +599,56 @@ export const SorteoListasService = {
             }
         }
 
-        //  NUEVO: Actualizar jugadas Y tickets para marcarlos como excluidos
+        //  PASO 1: Crear registro en sorteo_lista_exclusion (tabla de auditoría)
+        // Buscar registro existente
+        const existingRecord = await prisma.sorteoListaExclusion.findFirst({
+            where: {
+                sorteoId,
+                ventanaId: data.ventanaId,
+                vendedorId: data.vendedorId || null,
+                multiplierId: data.multiplierId || null,
+            },
+        });
+
+        let exclusionRecord;
+        if (existingRecord) {
+            // Actualizar registro existente
+            exclusionRecord = await prisma.sorteoListaExclusion.update({
+                where: { id: existingRecord.id },
+                data: {
+                    excludedAt: new Date(),
+                    excludedBy: userId,
+                    reason: data.reason || null,
+                },
+            });
+        } else {
+            // Crear nuevo registro
+            exclusionRecord = await prisma.sorteoListaExclusion.create({
+                data: {
+                    sorteoId,
+                    ventanaId: data.ventanaId,
+                    vendedorId: data.vendedorId || null,
+                    multiplierId: data.multiplierId || null,
+                    excludedBy: userId,
+                    reason: data.reason || null,
+                },
+            });
+        }
+
+        logger.info({
+            layer: "service",
+            action: "EXCLUDE_LISTA_TABLE_RECORD",
+            payload: {
+                exclusionRecordId: exclusionRecord.id,
+                sorteoId,
+                ventanaId: data.ventanaId,
+                vendedorId: data.vendedorId,
+                multiplierId: data.multiplierId,
+                message: "Registro creado/actualizado en sorteo_lista_exclusion"
+            }
+        });
+
+        //  PASO 2: Actualizar jugadas Y tickets para marcarlos como excluidos (marcado denormalizado)
         // Construir el where para buscar las jugadas/tickets a excluir
         const ticketWhere: any = {
             sorteoId,
@@ -615,7 +664,7 @@ export const SorteoListasService = {
         // porque solo algunas jugadas se excluyen. Los tickets se actualizarán después si todas sus jugadas quedan excluidas.
         // Si NO hay filtro de multiplicador, excluimos todos los tickets del scope.
         let ticketResult = { count: 0 };
-        
+
         if (!data.multiplierId) {
             // Sin filtro de multiplicador: excluir todos los tickets del scope
             ticketResult = await prisma.ticket.updateMany({
@@ -787,23 +836,24 @@ export const SorteoListasService = {
                 ventanaId: data.ventanaId,
                 vendedorId: data.vendedorId,
                 multiplierId: data.multiplierId,
+                exclusionRecordId: exclusionRecord.id,
                 ticketsExcluidos: ticketResult.count,
                 jugadasExcluidas: jugadaResult.count,
-                message: `${ticketResult.count} tickets y ${jugadaResult.count} jugadas marcados como excluidos`
+                message: `Exclusión completa: registro en tabla + ${ticketResult.count} tickets y ${jugadaResult.count} jugadas marcados`
             }
         });
 
         return {
-            id: `excluded-${sorteoId}-${data.ventanaId}-${data.vendedorId || 'all'}-${data.multiplierId || 'all'}`,
+            id: exclusionRecord.id, // Usar el ID real de la tabla
             sorteoId,
             ventanaId: data.ventanaId,
             vendedorId: data.vendedorId || null,
             multiplierId: data.multiplierId || null,
-            excludedAt: new Date().toISOString(),
+            excludedAt: exclusionRecord.excludedAt.toISOString(),
             excludedBy: userId,
             reason: data.reason || null,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            createdAt: exclusionRecord.createdAt.toISOString(),
+            updatedAt: exclusionRecord.updatedAt.toISOString(),
         };
     },
 
@@ -833,7 +883,34 @@ export const SorteoListasService = {
             );
         }
 
-        //  NUEVO: Actualizar jugadas Y tickets para desmarcarlos como excluidos
+        //  PASO 1: Eliminar registro de sorteo_lista_exclusion (tabla de auditoría)
+        const deletedRecord = await prisma.sorteoListaExclusion.deleteMany({
+            where: {
+                sorteoId,
+                ventanaId: data.ventanaId,
+                vendedorId: data.vendedorId || null,
+                multiplierId: data.multiplierId || null,
+            },
+        });
+
+        if (deletedRecord.count === 0) {
+            throw new AppError("No se encontró un registro de exclusión que coincida con los criterios", 404);
+        }
+
+        logger.info({
+            layer: "service",
+            action: "INCLUDE_LISTA_TABLE_RECORD",
+            payload: {
+                deletedCount: deletedRecord.count,
+                sorteoId,
+                ventanaId: data.ventanaId,
+                vendedorId: data.vendedorId,
+                multiplierId: data.multiplierId,
+                message: "Registro eliminado de sorteo_lista_exclusion"
+            }
+        });
+
+        //  PASO 2: Actualizar jugadas Y tickets para desmarcarlos como excluidos (marcado denormalizado)
         const ticketWhere: any = {
             sorteoId,
             ventanaId: data.ventanaId,
@@ -939,9 +1016,8 @@ export const SorteoListasService = {
             });
         }
 
-        if (jugadaResult.count === 0) {
-            throw new AppError("No se encontraron jugadas excluidas que coincidan con los criterios", 404);
-        }
+        // Nota: No lanzamos error si jugadaResult.count === 0 porque el registro puede haber sido
+        // eliminado antes de que hubiera jugadas (por ejemplo, exclusión preventiva)
 
         // 2. Buscar tickets que fueron afectados y restaurarlos si ya no tienen jugadas excluidas
         // Construir where para buscar tickets afectados
