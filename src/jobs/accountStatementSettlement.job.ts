@@ -60,6 +60,11 @@ export async function executeSettlement(userId?: string): Promise<{
   errorCount: number;
   executedAt: Date;
   errors?: Array<{ statementId: string; error: string }>;
+  carryForward?: {
+    createdCount: number;
+    skippedCount: number;
+    errorCount: number;
+  };
 }> {
   // ✅ OPTIMIZACIÓN: Registrar operación activa para graceful shutdown
   const operationId = `settlement-${Date.now()}`;
@@ -324,11 +329,302 @@ export async function executeSettlement(userId?: string): Promise<{
         skippedCount,
         errorCount: errors.length,
         errors: errors.length > 0 ? errors : undefined,
-        message: statementsToSettle.length === 0 
+        message: statementsToSettle.length === 0
           ? 'No se encontraron estados de cuenta que cumplieran los criterios. Puede que ya estén todos asentados o que todos sean muy recientes.'
           : undefined
       }
     });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FASE 2: ARRASTRE DE SALDOS
+    // Crea statements para entidades sin actividad pero con saldo pendiente
+    // Esto garantiza que siempre exista un AccountStatement actualizado
+    // ═══════════════════════════════════════════════════════════════════════════
+    let carryForwardCreated = 0;
+    let carryForwardSkipped = 0;
+    const carryForwardErrors: Array<{ entityId: string; error: string }> = [];
+
+    try {
+      logger.info({
+        layer: 'job',
+        action: 'CARRY_FORWARD_START',
+        payload: { targetDate: todayCRStr }
+      });
+
+      // Obtener todas las entidades activas (3 dimensiones: banca, ventana, vendedor)
+      const [activeBancas, activeVentanas, activeVendedores] = await Promise.all([
+        prisma.banca.findMany({
+          where: { isActive: true },
+          select: { id: true }
+        }),
+        prisma.ventana.findMany({
+          where: { isActive: true },
+          select: { id: true, bancaId: true }
+        }),
+        prisma.user.findMany({
+          where: {
+            isActive: true,
+            role: 'VENDEDOR',
+            // Incluir TODOS los vendedores activos, con o sin ventana
+            // Los vendedores sin ventana también tienen su propio saldo
+          },
+          select: { id: true, ventanaId: true, ventana: { select: { bancaId: true } } }
+        })
+      ]);
+
+      // Procesar BANCAS (nivel más alto de consolidación)
+      for (const banca of activeBancas) {
+        try {
+          // Verificar si ya existe statement para hoy (banca consolidada: ventanaId=null, vendedorId=null)
+          const existingToday = await prisma.accountStatement.findFirst({
+            where: {
+              date: todayCR,
+              bancaId: banca.id,
+              ventanaId: null,
+              vendedorId: null,
+            }
+          });
+
+          if (existingToday) {
+            carryForwardSkipped++;
+            continue;
+          }
+
+          // Buscar el statement de banca consolidada más reciente
+          const latestStatement = await prisma.accountStatement.findFirst({
+            where: {
+              bancaId: banca.id,
+              ventanaId: null,
+              vendedorId: null,
+              date: { lt: todayCR }
+            },
+            orderBy: { date: 'desc' }
+          });
+
+          if (!latestStatement || Number(latestStatement.remainingBalance) === 0) {
+            carryForwardSkipped++;
+            continue;
+          }
+
+          // Crear statement de arrastre para banca
+          // Nota: El índice unique parcial es account_statements_date_banca_unique
+          // y solo aplica cuando ventanaId IS NULL AND vendedorId IS NULL
+          const effectiveMonth = todayCRStr.substring(0, 7);
+
+          // Usar create con try/catch para manejar conflictos del índice parcial
+          try {
+            await prisma.accountStatement.create({
+              data: {
+                date: todayCR,
+                month: effectiveMonth,
+                bancaId: banca.id,
+                ventanaId: null,
+                vendedorId: null,
+                ticketCount: 0,
+                totalSales: 0,
+                totalPayouts: 0,
+                listeroCommission: 0,
+                vendedorCommission: 0,
+                balance: 0,
+                totalPaid: 0,
+                totalCollected: 0,
+                remainingBalance: Number(latestStatement.remainingBalance),
+                accumulatedBalance: Number(latestStatement.accumulatedBalance || latestStatement.remainingBalance),
+                isSettled: false,
+                canEdit: true,
+              }
+            });
+            carryForwardCreated++;
+          } catch (createError: any) {
+            // Si es error de constraint único, el registro ya existe (race condition)
+            if (createError.code === 'P2002') {
+              carryForwardSkipped++;
+            } else {
+              throw createError;
+            }
+          }
+        } catch (error) {
+          carryForwardErrors.push({
+            entityId: `banca:${banca.id}`,
+            error: (error as Error).message
+          });
+        }
+      }
+
+      // Procesar VENTANAS
+      for (const ventana of activeVentanas) {
+        try {
+          // Verificar si ya existe statement para hoy (ventana consolidada)
+          const existingToday = await prisma.accountStatement.findFirst({
+            where: {
+              date: todayCR,
+              ventanaId: ventana.id,
+              vendedorId: null,
+            }
+          });
+
+          if (existingToday) {
+            carryForwardSkipped++;
+            continue;
+          }
+
+          // Buscar el statement consolidado de ventana más reciente (vendedorId = null)
+          const latestStatement = await prisma.accountStatement.findFirst({
+            where: {
+              ventanaId: ventana.id,
+              vendedorId: null,
+              date: { lt: todayCR }
+            },
+            orderBy: { date: 'desc' }
+          });
+
+          if (!latestStatement) {
+            // No hay statements anteriores para esta ventana consolidada
+            carryForwardSkipped++;
+            continue;
+          }
+
+          if (Number(latestStatement.remainingBalance) === 0) {
+            // Saldo es exactamente 0, no hay nada que arrastrar
+            carryForwardSkipped++;
+            continue;
+          }
+
+          // Crear statement de arrastre con manejo de conflictos
+          const effectiveMonth = todayCRStr.substring(0, 7);
+          try {
+            await prisma.accountStatement.create({
+              data: {
+                date: todayCR,
+                month: effectiveMonth,
+                bancaId: ventana.bancaId,
+                ventanaId: ventana.id,
+                vendedorId: null,
+                ticketCount: 0,
+                totalSales: 0,
+                totalPayouts: 0,
+                listeroCommission: 0,
+                vendedorCommission: 0,
+                balance: 0,
+                totalPaid: 0,
+                totalCollected: 0,
+                remainingBalance: Number(latestStatement.remainingBalance),
+                accumulatedBalance: Number(latestStatement.accumulatedBalance || latestStatement.remainingBalance),
+                isSettled: false,
+                canEdit: true,
+              }
+            });
+            carryForwardCreated++;
+          } catch (createError: any) {
+            // Si es error de constraint único, el registro ya existe (race condition)
+            if (createError.code === 'P2002') {
+              carryForwardSkipped++;
+            } else {
+              throw createError;
+            }
+          }
+        } catch (error) {
+          carryForwardErrors.push({
+            entityId: `ventana:${ventana.id}`,
+            error: (error as Error).message
+          });
+        }
+      }
+
+      // Procesar VENDEDORES (con o sin ventana - cada uno tiene su propio saldo)
+      for (const vendedor of activeVendedores) {
+        try {
+          // Buscar statement existente para hoy (usando el constraint único: date + vendedorId)
+          const existingToday = await prisma.accountStatement.findFirst({
+            where: {
+              date: todayCR,
+              vendedorId: vendedor.id,
+            }
+          });
+
+          if (existingToday) {
+            carryForwardSkipped++;
+            continue;
+          }
+
+          const latestStatement = await prisma.accountStatement.findFirst({
+            where: {
+              vendedorId: vendedor.id,
+              date: { lt: todayCR }
+            },
+            orderBy: { date: 'desc' }
+          });
+
+          if (!latestStatement || Number(latestStatement.remainingBalance) === 0) {
+            carryForwardSkipped++;
+            continue;
+          }
+
+          const effectiveMonth = todayCRStr.substring(0, 7);
+          const bancaId = vendedor.ventana?.bancaId;
+
+          // Crear statement de arrastre con manejo de conflictos
+          try {
+            await prisma.accountStatement.create({
+              data: {
+                date: todayCR,
+                month: effectiveMonth,
+                bancaId: bancaId || null,
+                ventanaId: vendedor.ventanaId,
+                vendedorId: vendedor.id,
+                ticketCount: 0,
+                totalSales: 0,
+                totalPayouts: 0,
+                listeroCommission: 0,
+                vendedorCommission: 0,
+                balance: 0,
+                totalPaid: 0,
+                totalCollected: 0,
+                remainingBalance: Number(latestStatement.remainingBalance),
+                accumulatedBalance: Number(latestStatement.accumulatedBalance || latestStatement.remainingBalance),
+                isSettled: false,
+                canEdit: true,
+              }
+            });
+            carryForwardCreated++;
+          } catch (createError: any) {
+            // Si es error de constraint único, el registro ya existe (race condition)
+            if (createError.code === 'P2002') {
+              carryForwardSkipped++;
+            } else {
+              throw createError;
+            }
+          }
+        } catch (error) {
+          carryForwardErrors.push({
+            entityId: `vendedor:${vendedor.id}`,
+            error: (error as Error).message
+          });
+        }
+      }
+
+      logger.info({
+        layer: 'job',
+        action: 'CARRY_FORWARD_COMPLETE',
+        payload: {
+          targetDate: todayCRStr,
+          dimensions: {
+            bancas: activeBancas.length,
+            ventanas: activeVentanas.length,
+            vendedores: activeVendedores.length,
+          },
+          createdCount: carryForwardCreated,
+          skippedCount: carryForwardSkipped,
+          errorCount: carryForwardErrors.length,
+        }
+      });
+    } catch (error) {
+      logger.error({
+        layer: 'job',
+        action: 'CARRY_FORWARD_ERROR',
+        payload: { error: (error as Error).message }
+      });
+    }
 
     return {
       success: true,
@@ -336,7 +632,12 @@ export async function executeSettlement(userId?: string): Promise<{
       skippedCount,
       errorCount: errors.length,
       executedAt: new Date(),
-      errors: errors.length > 0 ? errors : undefined
+      errors: errors.length > 0 ? errors : undefined,
+      carryForward: {
+        createdCount: carryForwardCreated,
+        skippedCount: carryForwardSkipped,
+        errorCount: carryForwardErrors.length,
+      }
     };
   } catch (error) {
     logger.error({
