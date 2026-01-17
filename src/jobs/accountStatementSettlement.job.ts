@@ -561,16 +561,21 @@ export async function executeSettlement(userId?: string): Promise<{
           }
 
           const effectiveMonth = todayCRStr.substring(0, 7);
-          const bancaId = vendedor.ventana?.bancaId;
+          // NOTA: bancaId se infiere del statement anterior, no del vendedor actual
+          // porque el vendedor puede haber cambiado de ventana/banca
+          const bancaId = latestStatement.bancaId;
 
           // Crear statement de arrastre con manejo de conflictos
+          // CRÍTICO: ventanaId debe ser NULL para statements de vendedor
+          // El modelo de datos usa ventanaId=null para vendedores individuales
+          // y ventanaId!=null solo para statements consolidados de ventana
           try {
             await prisma.accountStatement.create({
               data: {
                 date: todayCR,
                 month: effectiveMonth,
                 bancaId: bancaId || null,
-                ventanaId: vendedor.ventanaId,
+                ventanaId: null, // CRÍTICO: Siempre null para vendedores
                 vendedorId: vendedor.id,
                 ticketCount: 0,
                 totalSales: 0,
