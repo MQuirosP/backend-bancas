@@ -133,12 +133,12 @@ export async function registerPayment(data: {
     // Buscar o crear el AccountStatement de forma segura
     let statement;
     if (data.vendedorId) {
-        // Buscar por date y vendedorId (ventanaId debe ser null)
+        // Buscar por date y vendedorId (constraint único: date + vendedorId)
+        // NO filtrar por ventanaId porque pueden existir statements históricos con ventanaId != null
         statement = await prisma.accountStatement.findFirst({
             where: {
                 date: paymentDate,
                 vendedorId: data.vendedorId,
-                ventanaId: null,
             },
         });
         if (!statement) {
@@ -147,7 +147,7 @@ export async function registerPayment(data: {
                     data: {
                         date: paymentDate,
                         month,
-                        ventanaId: null,
+                        ventanaId: null, // Nuevos statements de vendedor siempre con ventanaId=null
                         vendedorId: data.vendedorId,
                         bancaId: finalBancaId ?? null,
                         ticketCount: 0,
@@ -165,11 +165,11 @@ export async function registerPayment(data: {
                 });
             } catch (err: any) {
                 if (err.code === 'P2002') {
+                    // Retry: buscar sin filtro de ventanaId (puede ser statement histórico)
                     statement = await prisma.accountStatement.findFirst({
                         where: {
                             date: paymentDate,
                             vendedorId: data.vendedorId,
-                            ventanaId: null,
                         },
                     });
                 } else {
