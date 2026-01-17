@@ -102,139 +102,48 @@ export async function getMonthlyRemainingBalancesBatch(
         }
     }
 
-    //  OPTIMIZACIÓN: Solo calcular para entidades sin AccountStatement actualizado
-    // Confiamos en la tabla porque se sincroniza en tiempo real con:
+    //  OPTIMIZACIÓN TOTAL: Confiar en AccountStatement
+    // La tabla se sincroniza en tiempo real con:
     // - Evaluación de sorteos (syncSorteoStatements)
     // - Registro/reversión de pagos (registerPayment/reversePayment)
-    const entitiesNeedingTodayCalculation = entityIds.filter(id => {
-        const latest = latestByEntity.get(id);
-        return !latest || !latest.isUpToDate;
-    });
+    // - Job de arrastre de saldos (para entidades sin actividad)
+    //
+    // Por lo tanto, el último statement disponible SIEMPRE tiene el saldo correcto.
+    // No necesitamos que sea de HOY, solo el más reciente.
 
-    //  LOGGING: Para diagnosticar rendimiento
-    // logger.info({
-    //     layer: "service",
-    //     action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_STATUS",
-    //     payload: {
-    //         dimension,
-    //         month,
-    //         totalEntities: entityIds.length,
-    //         entitiesWithUpToDateStatement: entityIds.length - entitiesNeedingTodayCalculation.length,
-    //         entitiesNeedingCalculation: entitiesNeedingTodayCalculation.length,
-    //         note: entitiesNeedingTodayCalculation.length > 0
-    //             ? "Some entities need calculation (slower) - AccountStatement not up to date"
-    //             : "All entities have up-to-date AccountStatement (fast)",
-    //     },
-    // });
+    // Identificar entidades sin statement en el mes actual (necesitan saldo del mes anterior)
+    const entitiesWithoutStatement = entityIds.filter(id => !latestByEntity.has(id));
 
-    //  OPTIMIZACIÓN: Si hay AccountStatement actualizado hasta hoy, usarlo directamente (MUY RÁPIDO)
+    //  RÁPIDO: Usar el último remainingBalance disponible para cada entidad
     for (const entityId of entityIds) {
         const latest = latestByEntity.get(entityId);
-        if (latest && latest.isUpToDate) {
-            //  USAR remainingBalance de AccountStatement del día de hoy (rápido y confiable)
+        if (latest) {
+            // Usar el último remainingBalance disponible (confiamos en la sincronización)
             result.set(entityId, latest.remainingBalance);
         }
     }
 
-    //  CRÍTICO: Para entidades sin AccountStatement o con AccountStatement desactualizado,
-    // calcular el saldo hasta HOY usando getStatementDirect (más lento pero preciso)
-    if (entitiesNeedingTodayCalculation.length > 0) {
-        const { getStatementDirect } = await import('./accounts.calculations');
-        const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
+    //  Para entidades SIN statements en el mes actual, obtener saldo del mes anterior
+    if (entitiesWithoutStatement.length > 0) {
+        const { getPreviousMonthFinalBalancesBatch } = await import('./accounts.balances');
 
-        //  VALIDACIÓN: Asegurar que month sea válido antes de split
-        if (!month || typeof month !== 'string') {
-            // logger.error({
-            //     layer: "service",
-            //     action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_INVALID_MONTH",
-            //     payload: { month, entityIds, dimension }
-            // });
-            return result;
-        }
-        //  VALIDACIÓN CRÍTICA: Asegurar que month sea válido antes de split
-        // Esto previene el error: "Cannot read properties of undefined (reading 'split')"
-        if (!month || typeof month !== 'string' || !month.includes('-')) {
-            // logger.error({
-            //     layer: "service",
-            //     action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_INVALID_MONTH_FORMAT",
-            //     payload: { month, dimension, entityIds }
-            // });
-            return result; // Retornar Map vacío en lugar de crashear
-        }
-        const [year, monthNum] = month.split("-").map(Number);
-        const daysInMonth = new Date(year, monthNum, 0).getDate();
+        try {
+            const previousBalances = await getPreviousMonthFinalBalancesBatch(
+                month,
+                dimension,
+                entitiesWithoutStatement,
+                bancaId
+            );
 
-        //  OPTIMIZACIÓN: Procesar en bloques pequeños (chunks) para evitar saturar la base de datos
-        // y reducir el riesgo de errores de concurrencia al guardar statements simultáneamente.
-        const CHUNK_SIZE = 5;
-        for (let i = 0; i < entitiesNeedingTodayCalculation.length; i += CHUNK_SIZE) {
-            const chunk = entitiesNeedingTodayCalculation.slice(i, i + CHUNK_SIZE);
-
-            await Promise.all(chunk.map(async (entityId) => {
-                try {
-                    const entityVentanaId = dimension === "ventana" ? entityId : undefined;
-                    const entityVendedorId = dimension === "vendedor" ? entityId : undefined;
-
-                    const calcResult = await getStatementDirect(
-                        {
-                            date: "range" as const,
-                            fromDate: startDateCRStr,
-                            toDate: endDateCRStr,
-                            dimension,
-                            ventanaId: entityVentanaId,
-                            vendedorId: entityVendedorId,
-                            bancaId,
-                            scope: "all",
-                            sort: "desc",
-                            userRole: "ADMIN",
-                        },
-                        startDate,
-                        endDate,
-                        daysInMonth,
-                        month,
-                        dimension,
-                        entityVentanaId,
-                        entityVendedorId,
-                        bancaId,
-                        "ADMIN",
-                        "desc"
-                    );
-
-                    if (calcResult.statements && calcResult.statements.length > 0) {
-                        //  Obtener el remainingBalance del último día con datos hasta HOY
-                        const sortedStatements = [...calcResult.statements].sort((a, b) =>
-                            new Date(a.date).getTime() - new Date(b.date).getTime()
-                        );
-                        const lastStatement = sortedStatements[sortedStatements.length - 1];
-                        result.set(entityId, Number(lastStatement.remainingBalance || 0));
-                    } else {
-                        // Si no hay statements, usar saldo del mes anterior
-                        const { getPreviousMonthFinalBalance } = await import('./accounts.balances');
-                        const previousBalance = await getPreviousMonthFinalBalance(
-                            month,
-                            dimension,
-                            entityVentanaId,
-                            entityVendedorId,
-                            bancaId
-                        );
-                        result.set(entityId, Number(previousBalance || 0));
-                    }
-                } catch (error) {
-                    // logger.error({
-                    //     layer: "service",
-                    //     action: "GET_MONTHLY_REMAINING_BALANCES_BATCH_CALCULATION_ERROR",
-                    //     payload: {
-                    //         entityId,
-                    //         dimension,
-                    //         month,
-                    //         error: (error as Error).message,
-                    //     },
-                    // });
-                    // Si falla, usar el AccountStatement disponible (si existe) o 0
-                    const latest = latestByEntity.get(entityId);
-                    result.set(entityId, latest ? latest.remainingBalance : 0);
-                }
-            }));
+            for (const entityId of entitiesWithoutStatement) {
+                const previousBalance = previousBalances.get(entityId) || 0;
+                result.set(entityId, previousBalance);
+            }
+        } catch (error) {
+            // Si falla, asignar 0 a las entidades sin statement
+            for (const entityId of entitiesWithoutStatement) {
+                result.set(entityId, 0);
+            }
         }
     }
 
