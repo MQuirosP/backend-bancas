@@ -1876,10 +1876,15 @@ export async function getStatementDirect(
             //  CRÍTICO: Balance del día = ventas - premios - comisiones + movimientos
             // Los movimientos (pagos/cobros) deben participar en el balance diario
             // payment = positivo (aumenta balance), collection = negativo (disminuye balance)
+            //  CRÍTICO: Extraer el saldo del mes anterior del movimiento especial (si existe)
+            // Este valor participa en el balance del día pero NO en totalPaid/totalCollected
+            const previousMonthBalanceMovement = movements.find((m: any) => m.id?.startsWith('previous-month-balance-'));
+            const previousMonthBalanceAmount = previousMonthBalanceMovement ? Number(previousMonthBalanceMovement.amount || 0) : 0;
+
             const filteredMovements = movements.filter((m: any) => {
-                //  CRÍTICO: Excluir movimiento especial "Saldo del mes anterior"
-                // Este movimiento solo debe afectar initialAccumulated, NO totalPaid
-                // Si no se excluye, el saldo se cuenta DOS VECES (en initialAccumulated + totalPaid)
+                // Excluir movimiento especial "Saldo del mes anterior" de totalPaid/totalCollected
+                // Este valor NO es un pago/cobro real del día, es un arrastre contable
+                // Se suma al balance de forma separada (ver previousMonthBalanceAmount)
                 if (m.id?.startsWith('previous-month-balance-')) return false;
 
                 // Excluir movimientos revertidos
@@ -1907,10 +1912,11 @@ export async function getStatementDirect(
                 .filter((m: any) => m.type === "collection")
                 .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0));
 
-            //  CRÍTICO: Balance del día = ventas - premios - comisiones + movimientos
+            //  CRÍTICO: Balance del día = saldo mes anterior + ventas - premios - comisiones + movimientos
+            // El saldo del mes anterior (si existe) participa en el balance pero no en totalPaid/totalCollected
             // Los movimientos (pagos/cobros) deben participar en el balance diario
             // payment = positivo (aumenta balance), collection = negativo (disminuye balance)
-            const balance = entry.totalSales - totalPayouts - commissionToUse + totalPaid - totalCollected;
+            const balance = previousMonthBalanceAmount + entry.totalSales - totalPayouts - commissionToUse + totalPaid - totalCollected;
 
             //  CRÍTICO: remainingBalance debe ser ACUMULADO REAL hasta esta fecha
             // NO debe depender del filtro de periodo aplicado
