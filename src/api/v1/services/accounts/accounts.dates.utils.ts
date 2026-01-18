@@ -54,22 +54,25 @@ export function toCostaRicaISODate(date: Date): string {
  */
 export function getMonthDateRange(month: string): { startDate: Date; endDate: Date; daysInMonth: number } {
     const [year, monthNum] = month.split("-").map(Number);
-    const startDate = new Date(Date.UTC(year, monthNum - 1, 1, 0, 0, 0, 0));
+    // ️ CRÍTICO: Usar 06:00:00 UTC = 00:00:00 CR (Costa Rica es UTC-6)
+    // Si usamos 00:00:00 UTC, al restar 6 horas para convertir a CR obtenemos el día anterior
+    const startDate = new Date(Date.UTC(year, monthNum - 1, 1, 6, 0, 0, 0));
 
-    // Obtener fecha actual en UTC
+    // Obtener fecha actual en UTC (usar 06:00 UTC para representar inicio del día en CR)
     const now = new Date();
-    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+    // ️ CRÍTICO: today debe ser el fin del día en CR (23:59:59 CR = 05:59:59 UTC del día siguiente)
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 5, 59, 59, 999));
 
-    // Calcular último día del mes consultado
-    const monthEndDate = new Date(Date.UTC(year, monthNum, 0, 23, 59, 59, 999));
+    // Calcular último día del mes consultado (23:59:59 CR = 05:59:59 UTC del día siguiente)
+    const lastDayOfMonth = new Date(Date.UTC(year, monthNum, 0)).getDate();
+    const monthEndDate = new Date(Date.UTC(year, monthNum - 1, lastDayOfMonth + 1, 5, 59, 59, 999));
 
     // Si el mes consultado es el mes actual, limitar a hoy
     // Si es un mes pasado, usar el último día de ese mes
-    // Si es un mes futuro, usar el último día del mes consultado (aunque no debería pasar)
     const isCurrentMonth = year === now.getUTCFullYear() && monthNum === now.getUTCMonth() + 1;
     const endDate = isCurrentMonth ? (today < startDate ? startDate : today) : monthEndDate;
 
-    const daysInMonth = monthEndDate.getDate();
+    const daysInMonth = lastDayOfMonth;
     return { startDate, endDate, daysInMonth };
 }
 
