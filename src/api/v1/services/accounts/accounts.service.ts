@@ -1183,10 +1183,13 @@ export const AccountsService = {
         }
 
         // Intercalar sorteos y movimientos
-        //  CRÍTICO: Para el primer día, usar previousMonthBalance como initialAccumulated
-        // Para días siguientes, usar el acumulado del día anterior
+        //  CRÍTICO: Para el primer día del mes, initialAccumulated = 0 porque el saldo del mes anterior
+        // ya viene como movimiento especial (previous-month-balance) con su balance, y la fórmula
+        // de acumulado progresivo lo sumará normalmente. Si pasáramos previousMonthBalance aquí,
+        // se duplicaría el valor (una vez en initialAccumulated y otra en el balance del movimiento).
+        // Para días siguientes, usar el acumulado del día anterior normalmente.
         const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
-        const initialAccumulated = isFirstDay ? previousMonthBalance : lastDayAccumulated;
+        const initialAccumulated = isFirstDay ? 0 : lastDayAccumulated;
 
         //  LOGGING: Verificar que initialAccumulated tenga el valor correcto
         logger.info({
@@ -1196,16 +1199,13 @@ export const AccountsService = {
                 date,
                 isFirstDay,
                 dimension: filters.dimension,
-                bancaId: filters.bancaId,
-                ventanaId: filters.ventanaId,
-                vendedorId: filters.vendedorId,
                 previousMonthBalance: isFirstDay ? previousMonthBalance : undefined,
                 lastDayAccumulated: !isFirstDay ? lastDayAccumulated : undefined,
                 initialAccumulated,
                 sorteosCount: bySorteo.length,
                 movementsCount: movements.length,
                 note: isFirstDay
-                    ? "Primer día del mes: usando previousMonthBalance como initialAccumulated"
+                    ? "Primer día del mes: initialAccumulated=0, saldo viene en movimiento especial"
                     : `Día siguiente: usando lastDayAccumulated (${lastDayAccumulated}) como initialAccumulated`,
             },
         });
