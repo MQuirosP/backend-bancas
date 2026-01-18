@@ -3507,38 +3507,51 @@ export async function getStatementDirect(
     let previousMonthBalanceNum = 0;
 
     //  CRÍTICO: Para totalRemainingBalance (Saldo a Hoy), obtener directamente el accumulatedBalance
-    // del último día registrado en AccountStatement para la entidad específica
-    // Esto es la fuente de verdad y evita cálculos complejos
-    // SIEMPRE usar query directo, independiente de useAccountStatementForMonthly
+    // del último día registrado en AccountStatement para la entidad específica DENTRO DEL MES
+    // Usa monthStartDate y monthEndDate ya calculadas arriba (líneas ~2972-2975)
+
     if (dimension === "vendedor" && vendedorId) {
-        // Query directo: accumulatedBalance del último día del vendedor
         const lastStatement = await prisma.accountStatement.findFirst({
-            where: { vendedorId },
+            where: {
+                vendedorId,
+                date: { gte: monthStartDate, lte: monthEndDate }
+            },
             select: { accumulatedBalance: true },
             orderBy: { date: 'desc' },
         });
         monthlyRemainingBalance = Number(lastStatement?.accumulatedBalance || 0);
     } else if (dimension === "ventana" && ventanaId) {
-        // Query directo: accumulatedBalance del último día de la ventana (consolidado)
         const lastStatement = await prisma.accountStatement.findFirst({
-            where: { ventanaId, vendedorId: null },
+            where: {
+                ventanaId,
+                vendedorId: null,
+                date: { gte: monthStartDate, lte: monthEndDate }
+            },
             select: { accumulatedBalance: true },
             orderBy: { date: 'desc' },
         });
         monthlyRemainingBalance = Number(lastStatement?.accumulatedBalance || 0);
     } else if (dimension === "banca" && bancaId) {
-        // Query directo: accumulatedBalance del último día de la banca (consolidado)
         const lastStatement = await prisma.accountStatement.findFirst({
-            where: { bancaId, ventanaId: null, vendedorId: null },
+            where: {
+                bancaId,
+                ventanaId: null,
+                vendedorId: null,
+                date: { gte: monthStartDate, lte: monthEndDate }
+            },
             select: { accumulatedBalance: true },
             orderBy: { date: 'desc' },
         });
         monthlyRemainingBalance = Number(lastStatement?.accumulatedBalance || 0);
     } else if (dimension === "banca" && !bancaId) {
-        // Query directo: sumar accumulatedBalance del último día de CADA banca
-        // Primero obtener todas las bancas únicas con statements
+        // Sumar accumulatedBalance del último día de CADA banca DENTRO DEL MES
         const allBancaIds = await prisma.accountStatement.findMany({
-            where: { bancaId: { not: null }, ventanaId: null, vendedorId: null },
+            where: {
+                bancaId: { not: null },
+                ventanaId: null,
+                vendedorId: null,
+                date: { gte: monthStartDate, lte: monthEndDate }
+            },
             select: { bancaId: true },
             distinct: ['bancaId'],
         });
@@ -3547,7 +3560,12 @@ export async function getStatementDirect(
         for (const { bancaId: bId } of allBancaIds) {
             if (bId) {
                 const lastStmt = await prisma.accountStatement.findFirst({
-                    where: { bancaId: bId, ventanaId: null, vendedorId: null },
+                    where: {
+                        bancaId: bId,
+                        ventanaId: null,
+                        vendedorId: null,
+                        date: { gte: monthStartDate, lte: monthEndDate }
+                    },
                     select: { accumulatedBalance: true },
                     orderBy: { date: 'desc' },
                 });
@@ -3556,9 +3574,14 @@ export async function getStatementDirect(
         }
         monthlyRemainingBalance = totalAccumulated;
     } else if (dimension === "ventana" && !ventanaId) {
-        // Query directo: sumar accumulatedBalance del último día de CADA ventana
+        // Sumar accumulatedBalance del último día de CADA ventana DENTRO DEL MES
         const allVentanaIds = await prisma.accountStatement.findMany({
-            where: { ventanaId: { not: null }, vendedorId: null, bancaId: null },
+            where: {
+                ventanaId: { not: null },
+                vendedorId: null,
+                bancaId: null,
+                date: { gte: monthStartDate, lte: monthEndDate }
+            },
             select: { ventanaId: true },
             distinct: ['ventanaId'],
         });
@@ -3567,7 +3590,11 @@ export async function getStatementDirect(
         for (const { ventanaId: vId } of allVentanaIds) {
             if (vId) {
                 const lastStmt = await prisma.accountStatement.findFirst({
-                    where: { ventanaId: vId, vendedorId: null },
+                    where: {
+                        ventanaId: vId,
+                        vendedorId: null,
+                        date: { gte: monthStartDate, lte: monthEndDate }
+                    },
                     select: { accumulatedBalance: true },
                     orderBy: { date: 'desc' },
                 });
