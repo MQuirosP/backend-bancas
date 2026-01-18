@@ -3063,6 +3063,7 @@ export async function getStatementDirect(
             totalPaid: true,
             totalCollected: true,
             remainingBalance: true,
+            accumulatedBalance: true, //  CRÍTICO: Usar para monthlyAccumulated.totalRemainingBalance
             ventanaId: true, //  CRÍTICO: Necesario para agrupar por ventana cuando dimension="ventana" sin ventanaId
             vendedorId: true, //  CRÍTICO: Necesario para filtrar statements de vendedores
             bancaId: true, //  CRÍTICO: Necesario para agrupar por banca cuando dimension="banca" sin bancaId
@@ -3202,47 +3203,44 @@ export async function getStatementDirect(
         const monthlyTotalBalanceBase = monthlyTotalSales - monthlyTotalPayouts - monthlyTotalCommissionToUse;
         monthlyTotalBalance = monthlyTotalBalanceBase + monthlyTotalPaid - monthlyTotalCollected;
 
-        //  CRÍTICO: Para monthlyRemainingBalance, calcular según dimensión:
-        // - Si dimension="ventana" sin ventanaId (shouldGroupByDate=true): SUMAR remainingBalance de todas las ventanas
-        // - Si dimension="ventana" con ventanaId: usar remainingBalance del último día de esa ventana
-        // - Si dimension="vendedor": usar remainingBalance del último día de ese vendedor
+        //  CRÍTICO: Para monthlyRemainingBalance (Saldo a Hoy), usar accumulatedBalance del último día registrado
+        // accumulatedBalance es la fuente de verdad para el saldo acumulado de la entidad
+        // - Si dimension="ventana" sin ventanaId (shouldGroupByDate=true): SUMAR accumulatedBalance de todas las ventanas
+        // - Si dimension="ventana" con ventanaId: usar accumulatedBalance del último día de esa ventana
+        // - Si dimension="vendedor" con vendedorId: usar accumulatedBalance del último día de ese vendedor
+        // - Si dimension="banca" sin bancaId: SUMAR accumulatedBalance de todas las bancas
+        // - Si dimension="banca" con bancaId: usar accumulatedBalance del último día de esa banca
         //  CRÍTICO: Declarar fuera del bloque para que esté disponible más abajo
         monthlyRemainingBalanceFromStatements = 0;
 
         if (dimension === "banca" && !bancaId) {
-            //  CRÍTICO: Sumar remainingBalance de TODAS las bancas (consolidado)
-            // Agrupar por bancaId y tomar el último remainingBalance de cada una, luego sumar
+            //  CRÍTICO: Sumar accumulatedBalance de TODAS las bancas (consolidado)
+            // Agrupar por bancaId y tomar el último accumulatedBalance de cada una, luego sumar
             const bancasMap = new Map<string, number>();
             for (const stmt of monthlyStatements) {
                 if (stmt.bancaId && !stmt.ventanaId && !stmt.vendedorId) {
-                    const existing = bancasMap.get(stmt.bancaId);
-                    // Tomar el remainingBalance más reciente de cada banca
-                    if (!existing || stmt.remainingBalance !== null) {
-                        bancasMap.set(stmt.bancaId, Number(stmt.remainingBalance || 0));
-                    }
+                    // Tomar el accumulatedBalance más reciente de cada banca (ordenado por date ASC, el último es el más reciente)
+                    bancasMap.set(stmt.bancaId, Number(stmt.accumulatedBalance || 0));
                 }
             }
             monthlyRemainingBalanceFromStatements = Array.from(bancasMap.values()).reduce((sum, balance) => sum + balance, 0);
         } else if (dimension === "ventana" && !ventanaId) {
-            //  CRÍTICO: Sumar remainingBalance de TODAS las ventanas (consolidado)
-            // Agrupar por ventanaId y tomar el último remainingBalance de cada una, luego sumar
+            //  CRÍTICO: Sumar accumulatedBalance de TODAS las ventanas (consolidado)
+            // Agrupar por ventanaId y tomar el último accumulatedBalance de cada una, luego sumar
             //  CRÍTICO: Excluir statements de bancas (bancaId presente, ventanaId null)
             const ventanasMap = new Map<string, number>();
             for (const stmt of monthlyStatements) {
                 if (stmt.ventanaId && !stmt.vendedorId && !stmt.bancaId) {
                     //  CRÍTICO: Solo statements de ventanas (ventanaId presente, vendedorId null, bancaId null)
-                    const existing = ventanasMap.get(stmt.ventanaId);
-                    // Tomar el remainingBalance más reciente de cada ventana
-                    if (!existing || stmt.remainingBalance !== null) {
-                        ventanasMap.set(stmt.ventanaId, Number(stmt.remainingBalance || 0));
-                    }
+                    // Tomar el accumulatedBalance más reciente de cada ventana (ordenado por date ASC, el último es el más reciente)
+                    ventanasMap.set(stmt.ventanaId, Number(stmt.accumulatedBalance || 0));
                 }
             }
             monthlyRemainingBalanceFromStatements = Array.from(ventanasMap.values()).reduce((sum, balance) => sum + balance, 0);
         } else {
-            // Para dimension específica, usar el remainingBalance del último día
+            // Para dimension específica (vendedor, ventana con ID, banca con ID), usar accumulatedBalance del último día
             const lastStatementOfMonth = monthlyStatements[monthlyStatements.length - 1];
-            monthlyRemainingBalanceFromStatements = Number(lastStatementOfMonth?.remainingBalance || 0);
+            monthlyRemainingBalanceFromStatements = Number(lastStatementOfMonth?.accumulatedBalance || 0);
         }
 
         // logger.info({
@@ -3508,18 +3506,77 @@ export async function getStatementDirect(
     let monthlyRemainingBalance: number;
     let previousMonthBalanceNum = 0;
 
-    if (useAccountStatementForMonthly) {
-        //  CRÍTICO: monthlyRemainingBalance ya fue calculado arriba (línea ~2809-2828)
-        // cuando useAccountStatementForMonthly es true, se calcula monthlyRemainingBalanceFromStatements
-        // que ya tiene la lógica correcta para sumar ventanas cuando dimension="ventana" sin ventanaId
-        // Usar ese valor calculado
-        monthlyRemainingBalance = monthlyRemainingBalanceFromStatements ?? 0;
+    //  CRÍTICO: Para totalRemainingBalance (Saldo a Hoy), obtener directamente el accumulatedBalance
+    // del último día registrado en AccountStatement para la entidad específica
+    // Esto es la fuente de verdad y evita cálculos complejos
+    // SIEMPRE usar query directo, independiente de useAccountStatementForMonthly
+    if (dimension === "vendedor" && vendedorId) {
+        // Query directo: accumulatedBalance del último día del vendedor
+        const lastStatement = await prisma.accountStatement.findFirst({
+            where: { vendedorId },
+            select: { accumulatedBalance: true },
+            orderBy: { date: 'desc' },
+        });
+        monthlyRemainingBalance = Number(lastStatement?.accumulatedBalance || 0);
+    } else if (dimension === "ventana" && ventanaId) {
+        // Query directo: accumulatedBalance del último día de la ventana (consolidado)
+        const lastStatement = await prisma.accountStatement.findFirst({
+            where: { ventanaId, vendedorId: null },
+            select: { accumulatedBalance: true },
+            orderBy: { date: 'desc' },
+        });
+        monthlyRemainingBalance = Number(lastStatement?.accumulatedBalance || 0);
+    } else if (dimension === "banca" && bancaId) {
+        // Query directo: accumulatedBalance del último día de la banca (consolidado)
+        const lastStatement = await prisma.accountStatement.findFirst({
+            where: { bancaId, ventanaId: null, vendedorId: null },
+            select: { accumulatedBalance: true },
+            orderBy: { date: 'desc' },
+        });
+        monthlyRemainingBalance = Number(lastStatement?.accumulatedBalance || 0);
+    } else if (dimension === "banca" && !bancaId) {
+        // Query directo: sumar accumulatedBalance del último día de CADA banca
+        // Primero obtener todas las bancas únicas con statements
+        const allBancaIds = await prisma.accountStatement.findMany({
+            where: { bancaId: { not: null }, ventanaId: null, vendedorId: null },
+            select: { bancaId: true },
+            distinct: ['bancaId'],
+        });
 
-        // Para calcular previousMonthBalance, usar el remainingBalance del último día del mes anterior
-        // o calcularlo si no tenemos ese statement
-        previousMonthBalanceNum = 0; // Se calculará si es necesario para otros cálculos
+        let totalAccumulated = 0;
+        for (const { bancaId: bId } of allBancaIds) {
+            if (bId) {
+                const lastStmt = await prisma.accountStatement.findFirst({
+                    where: { bancaId: bId, ventanaId: null, vendedorId: null },
+                    select: { accumulatedBalance: true },
+                    orderBy: { date: 'desc' },
+                });
+                totalAccumulated += Number(lastStmt?.accumulatedBalance || 0);
+            }
+        }
+        monthlyRemainingBalance = totalAccumulated;
+    } else if (dimension === "ventana" && !ventanaId) {
+        // Query directo: sumar accumulatedBalance del último día de CADA ventana
+        const allVentanaIds = await prisma.accountStatement.findMany({
+            where: { ventanaId: { not: null }, vendedorId: null, bancaId: null },
+            select: { ventanaId: true },
+            distinct: ['ventanaId'],
+        });
+
+        let totalAccumulated = 0;
+        for (const { ventanaId: vId } of allVentanaIds) {
+            if (vId) {
+                const lastStmt = await prisma.accountStatement.findFirst({
+                    where: { ventanaId: vId, vendedorId: null },
+                    select: { accumulatedBalance: true },
+                    orderBy: { date: 'desc' },
+                });
+                totalAccumulated += Number(lastStmt?.accumulatedBalance || 0);
+            }
+        }
+        monthlyRemainingBalance = totalAccumulated;
     } else {
-        // Si calculamos desde tickets, calcular remainingBalance desde datos base
+        // Fallback: Si no hay AccountStatement, calcular desde datos base
         const previousMonthBalance = await getPreviousMonthFinalBalance(
             currentMonthStr,
             dimension,
@@ -3528,10 +3585,6 @@ export async function getStatementDirect(
             bancaId
         );
         previousMonthBalanceNum = Number(previousMonthBalance);
-
-        //  CRÍTICO: monthlyTotalBalance = balance del mes actual (sin mes anterior)
-        // monthlyRemainingBalance = previousMonthBalance + monthlyTotalBalance
-        // (monthlyTotalBalance ya incluye movimientos: paid - collected)
         monthlyRemainingBalance = previousMonthBalanceNum + monthlyTotalBalance;
     }
 
