@@ -794,6 +794,27 @@ export async function getStatementDirect(
         (dimension === "ventana" && (!ventanaId || ventanaId === "" || ventanaId === null)) ||
         (dimension === "vendedor" && (!vendedorId || vendedorId === "" || vendedorId === null));
 
+    //  RESOLVE ENTITY NAMES (Optimización para evitar nulls en días sin actividad)
+    let resolvedBancaName: string | null = null;
+    let resolvedBancaCode: string | null = null;
+    let resolvedVentanaName: string | null = null;
+    let resolvedVentanaCode: string | null = null;
+    let resolvedVendedorName: string | null = null;
+    let resolvedVendedorCode: string | null = null;
+
+    if (bancaId) {
+        const b = await prisma.banca.findUnique({ where: { id: bancaId }, select: { name: true, code: true } });
+        if (b) { resolvedBancaName = b.name; resolvedBancaCode = b.code; }
+    }
+    if (ventanaId) {
+        const v = await prisma.user.findUnique({ where: { id: ventanaId }, select: { name: true, code: true } });
+        if (v) { resolvedVentanaName = v.name; resolvedVentanaCode = v.code as string | null; }
+    }
+    if (vendedorId) {
+        const ven = await prisma.user.findUnique({ where: { id: vendedorId }, select: { name: true, code: true } });
+        if (ven) { resolvedVendedorName = ven.name; resolvedVendedorCode = ven.code as string | null; }
+    }
+
     //  DEBUG: Log para verificar agrupación y rendimiento
     const functionStartTime = Date.now();
 
@@ -1294,14 +1315,14 @@ export async function getStatementDirect(
             // Crear entrada vacía para el primer día si no existe (para que el movimiento especial se muestre)
             byDateAndDimension.set(firstDayGroupKey, {
                 bancaId: dimension === "banca" ? (bancaId || null) : null,
-                bancaName: null,
-                bancaCode: null,
+                bancaName: resolvedBancaName || null,
+                bancaCode: resolvedBancaCode || null,
                 ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
-                ventanaName: null,
-                ventanaCode: null,
+                ventanaName: resolvedVentanaName || null,
+                ventanaCode: resolvedVentanaCode || null,
                 vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
-                vendedorName: null,
-                vendedorCode: null,
+                vendedorName: resolvedVendedorName || null,
+                vendedorCode: resolvedVendedorCode || null,
                 totalSales: 0,
                 totalPayouts: 0,
                 totalTicketsCount: 0,
@@ -1429,14 +1450,14 @@ export async function getStatementDirect(
                     if (!byDateAndDimension.has(groupKey)) {
                         byDateAndDimension.set(groupKey, {
                             bancaId: dimension === "banca" ? (bancaId || null) : null,
-                            bancaName: null,
-                            bancaCode: null,
+                            bancaName: resolvedBancaName || null,
+                            bancaCode: resolvedBancaCode || null,
                             ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
-                            ventanaName: null,
-                            ventanaCode: null,
+                            ventanaName: resolvedVentanaName || null,
+                            ventanaCode: resolvedVentanaCode || null,
                             vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
-                            vendedorName: null,
-                            vendedorCode: null,
+                            vendedorName: resolvedVendedorName || null,
+                            vendedorCode: resolvedVendedorCode || null,
                             totalSales: 0,
                             totalPayouts: 0,
                             totalTicketsCount: 0,
