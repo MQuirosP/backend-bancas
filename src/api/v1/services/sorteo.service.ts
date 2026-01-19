@@ -1693,6 +1693,45 @@ gs."hour24" ASC
         vendedorId
       );
 
+      //  NUEVO: Obtener saldo del mes anterior para agregarlo como movimiento especial
+      // Determinar el mes efectivo del rango de fechas
+      const rangeEffectiveMonth = `${dateRange.fromAt.getFullYear()}-${String(dateRange.fromAt.getMonth() + 1).padStart(2, '0')}`;
+      const rangePreviousMonthBalance = await getPreviousMonthFinalBalance(
+        rangeEffectiveMonth,
+        "vendedor",
+        undefined,
+        vendedorId,
+        undefined
+      );
+
+      //  CRÍTICO: Agregar movimiento especial del saldo del mes anterior al primer día del rango
+      // Solo si el primer día es el día 1 del mes (inicio del mes)
+      const firstDayOfRange = formatDateOnly(dateRange.fromAt);
+      const [yearFirst, monthFirst, dayFirst] = firstDayOfRange.split('-').map(Number);
+
+      if (dayFirst === 1) {
+        const firstDayMovements = movementsByDate.get(firstDayOfRange) || [];
+        const movementId = `previous-month-balance-${vendedorId}`;
+        const alreadyExists = firstDayMovements.some((m: any) => m.id === movementId);
+
+        // Solo agregar si no existe ya y si el saldo es diferente de 0
+        if (!alreadyExists && rangePreviousMonthBalance !== 0) {
+          // Agregar movimiento especial al inicio del día
+          firstDayMovements.unshift({
+            id: movementId,
+            type: "payment" as const,
+            amount: rangePreviousMonthBalance,
+            method: "Saldo del mes anterior",
+            notes: `Saldo arrastrado del mes anterior`,
+            isReversed: false,
+            createdAt: new Date(`${firstDayOfRange}T00:00:00.000Z`).toISOString(),
+            date: firstDayOfRange,
+          });
+          movementsByDate.set(firstDayOfRange, firstDayMovements);
+        }
+      }
+
+
       //  PASO 2: Construir datos de sorteos SIN calcular accumulated aún
       const sorteoData = sorteos.map((sorteo, index) => {
         const financial = financialMap.get(sorteo.id) || {
@@ -1857,6 +1896,9 @@ gs."hour24" ASC
       for (const [dateStr, movements] of movementsByDate.entries()) {
         for (const movement of movements) {
           if (!movement.isReversed) {
+            //  CRÍTICO: Detectar si es el movimiento especial "Saldo del mes anterior"
+            const isOpeningBalance = movement.id?.startsWith('previous-month-balance-');
+
             // Combinar: fecha del usuario + hora de createdAt (en hora CR)
             const createdAtDate = new Date(movement.createdAt);
             // Convertir UTC a CR (UTC-6)
@@ -1867,9 +1909,14 @@ gs."hour24" ASC
             const [year, month, day] = movement.date.split('-').map(Number);
             const scheduledAt = new Date(year, month - 1, day, hour, minute, seconds);
 
+            //  CRÍTICO: El movimiento especial tiene subtotal: 0 porque el saldo ya está en eventAccumulated inicial
+            const subtotal = movement.type === 'payment' ? (movement.amount || 0) : -(movement.amount || 0);
+
             movementItems.push({
               sorteoId: `mov-${movement.id}`,
-              sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
+              sorteoName: isOpeningBalance
+                ? 'Saldo del mes anterior'
+                : (movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado'),
               scheduledAt, //  Fecha del usuario + hora de creación
               date: movement.date, //  Fecha que el usuario indicó
               time: formatTime12h(scheduledAt),
@@ -1883,7 +1930,7 @@ gs."hour24" ASC
               commissionByReventado: 0,
               totalPrizes: 0,
               ticketCount: 0,
-              subtotal: movement.type === 'payment' ? (movement.amount || 0) : -(movement.amount || 0),
+              subtotal, //  CRÍTICO: Usar variable calculada (normal para saldo inicial)
               accumulated: 0, // Se recalculará después
               chronologicalIndex: 0,
               totalChronological: 0,
@@ -1894,8 +1941,8 @@ gs."hour24" ASC
               // Campos específicos de movimiento
               type: movement.type,
               amount: movement.amount,
-              method: movement.method,
-              notes: movement.notes,
+              method: movement.method || (isOpeningBalance ? 'Saldo del mes anterior' : ''),
+              notes: movement.notes || (isOpeningBalance ? 'Saldo arrastrado del mes anterior' : ''),
             });
           }
         }
@@ -1910,6 +1957,7 @@ gs."hour24" ASC
       });
 
       //  PASO 5: Calcular acumulado y chronologicalIndex por evento (sorteo/movimiento)
+      //  CRÍTICO: Inicializar acumulado en 0 siempre. El saldo inicial viene en el primer movimiento especial.
       let eventAccumulated = 0;
       const totalEvents = allEvents.length;
       const dataWithAccumulated = allEvents.map((event, index) => {
