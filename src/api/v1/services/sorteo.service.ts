@@ -684,7 +684,7 @@ export const SorteoService = {
     // ️ IMPORTANTE: Usar el nuevo servicio de sincronización que actualiza accumulatedBalance
     try {
       const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
-      
+
       // ️ CRÍTICO: Convertir scheduledAt a fecha CR antes de sincronizar
       // existing.scheduledAt está en UTC, convertirlo a fecha CR
       const { crDateService } = await import('../../../utils/crDateService');
@@ -692,11 +692,11 @@ export const SorteoService = {
       const [year, month, day] = sorteoDateCR.split('-').map(Number);
       // Crear Date UTC que representa el día calendario en CR
       const sorteoDateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-      
+
       // Sincronizar todos los statements afectados por el sorteo
       // Esto actualizará accumulatedBalance progresivo para todas las dimensiones afectadas
       await AccountStatementSyncService.syncSorteoStatements(id, sorteoDateUTC);
-      
+
       logger.info({
         layer: 'service',
         action: 'ACCOUNT_STATEMENT_SYNCED_ON_SORTEO_EVALUATE',
@@ -2069,20 +2069,20 @@ gs."hour24" ASC
 
       //  NUEVO: Calcular monthlyAccumulated (acumulado del mes completo hasta hoy)
       // Obtener todos los sorteos evaluados del mes completo
+      //  CRÍTICO: NO filtrar por loteriaId - el acumulado mensual debe incluir TODOS los sorteos del vendedor
+      // independientemente de los filtros aplicados al reporte actual
       const monthlySorteoWhere: Prisma.SorteoWhereInput = {
-        status: {
-          in: allowedStatuses,
-        },
+        status: SorteoStatus.EVALUATED, //  FIX: Usar solo EVALUATED para consistencia con accounts.service
         scheduledAt: {
           gte: monthlyStartDate,
           lte: monthlyEndDate,
         },
-        ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+        //  FIX: NO aplicar filtro de loteriaId - monthlyAccumulated debe reflejar el total real del mes
         tickets: {
           some: {
             vendedorId,
             deletedAt: null,
-            isActive: ticketIsActive,
+            isActive: true, //  FIX: Siempre usar true para consistencia con accounts.service
           },
         },
       };
@@ -2103,7 +2103,7 @@ gs."hour24" ASC
           sorteoId: { in: monthlySorteoIds },
           vendedorId,
           deletedAt: null,
-          isActive: ticketIsActive,
+          isActive: true, //  FIX: Usar true para consistencia con monthlySorteoWhere
         },
         _sum: {
           totalAmount: true,
@@ -2122,7 +2122,7 @@ gs."hour24" ASC
           vendedorId,
           isWinner: true,
           deletedAt: null,
-          isActive: ticketIsActive,
+          isActive: true, //  FIX: Usar true para consistencia con monthlySorteoWhere
         },
         _sum: {
           totalPayout: true,
@@ -2154,7 +2154,7 @@ gs."hour24" ASC
             sorteoId: { in: monthlySorteoIds },
             vendedorId,
             deletedAt: null,
-            isActive: ticketIsActive,
+            isActive: true, //  FIX: Usar true para consistencia con monthlySorteoWhere
           },
           deletedAt: null,
         },
