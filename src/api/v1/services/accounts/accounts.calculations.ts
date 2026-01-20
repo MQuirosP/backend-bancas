@@ -1216,41 +1216,8 @@ export async function getStatementDirect(
         );
     }
 
-    //  CRÍTICO: Agregar movimiento especial directamente a movementsByDate para el primer día
-    // SOLO si no existe ya (para evitar duplicación)
-    // Insertar SIEMPRE el movimiento especial del primer día (aun si el monto es 0) para forzar visibilidad del día
-    {
-        const firstDayMovements = movementsByDate.get(firstDayOfOpeningMonthStr) || [];
-        const entityId = dimension === "banca"
-            ? (bancaId || 'all-bancas')
-            : dimension === "ventana"
-                ? (ventanaId || 'null')
-                : (vendedorId || 'null');
-
-        //  VALIDACIÓN: Verificar que no exista ya para evitar duplicación
-        const movementId = `previous-month-balance-${entityId}`;
-        const alreadyExists = firstDayMovements.some(m => m.id === movementId);
-
-        if (!alreadyExists) {
-            // Agregar movimiento especial al inicio del día del mes objetivo (primer día)
-            firstDayMovements.unshift({
-                id: movementId,
-                type: "payment" as const,
-                amount: previousMonthBalanceForMovement,
-                method: "Saldo del mes anterior",
-                notes: `Saldo arrastrado del mes anterior`,
-                isReversed: false,
-                createdAt: new Date(`${firstDayOfOpeningMonthStr}T00:00:00.000Z`).toISOString(),
-                date: firstDayOfOpeningMonthStr,
-                time: "00:00",
-                balance: 0,
-                bancaId: dimension === "banca" ? (bancaId || null) : null,
-                ventanaId: dimension === "ventana" ? (ventanaId || null) : null,
-                vendedorId: dimension === "vendedor" ? (vendedorId || null) : null,
-            });
-            movementsByDate.set(firstDayOfOpeningMonthStr, firstDayMovements);
-        }
-    }
+    // Saldo del mes anterior se usará directamente en initialAccumulated
+    // sin crear un movimiento virtual que ensucie la lista.
 
     // Obtener todas las entidades únicas que aparecerán en los statements (para casos con múltiples entidades)
     const allEntityIdsForPreviousBalance = new Set<string>();
@@ -2050,20 +2017,9 @@ export async function getStatementDirect(
                     }
                 }
 
-                //  CRÍTICO: Si existe movimiento "previous-month-balance-", usar 0
-                // Si NO existe, usar previousMonthBalance directamente
-                // El movimiento solo se agrega si previousMonthBalanceForMovement !== 0
-                const hasPreviousBalanceMovement = movementsWithPreviousBalance.some(m =>
-                    m.id?.startsWith('previous-month-balance-')
-                );
-
-                if (hasPreviousBalanceMovement) {
-                    // El movimiento especial aportará el saldo, iniciar en 0
-                    initialAccumulated = 0;
-                } else {
-                    // No hay movimiento especial, usar saldo del mes anterior directamente
-                    initialAccumulated = Number(previousMonthBalance);
-                }
+                //  CRÍTICO: Usar saldo del mes anterior directamente como acumulado inicial.
+                // Ya no usamos un movimiento virtual para esto.
+                initialAccumulated = Number(previousMonthBalance);
 
                 // Reducir logs innecesarios - solo log si hay problema
 
