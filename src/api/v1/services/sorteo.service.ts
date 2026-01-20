@@ -1694,8 +1694,9 @@ gs."hour24" ASC
       );
 
       //  NUEVO: Obtener saldo del mes anterior para agregarlo como movimiento especial
-      // Determinar el mes efectivo del rango de fechas
-      const rangeEffectiveMonth = `${dateRange.fromAt.getFullYear()}-${String(dateRange.fromAt.getMonth() + 1).padStart(2, '0')}`;
+      // Determinar el mes efectivo del rango de fechas usando componentes CR
+      const fromAtComponents = getCRLocalComponents(dateRange.fromAt);
+      const rangeEffectiveMonth = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}`;
       const rangePreviousMonthBalance = await getPreviousMonthFinalBalance(
         rangeEffectiveMonth,
         "vendedor",
@@ -1907,7 +1908,8 @@ gs."hour24" ASC
             const minute = crTime.getUTCMinutes();
             const seconds = crTime.getUTCSeconds();
             const [year, month, day] = movement.date.split('-').map(Number);
-            const scheduledAt = new Date(year, month - 1, day, hour, minute, seconds);
+            //  CRÍTICO: Usar Date.UTC y ajustar offset (UTC-6) para evitar dependencia de la hora local del server
+            const scheduledAt = new Date(Date.UTC(year, month - 1, day, hour, minute, seconds) + (6 * 60 * 60 * 1000));
 
             //  CRÍTICO: El movimiento especial tiene subtotal: 0 porque el saldo ya está en eventAccumulated inicial
             const subtotal = movement.type === 'payment' ? (movement.amount || 0) : -(movement.amount || 0);
@@ -1971,11 +1973,10 @@ gs."hour24" ASC
       });
 
       //  NUEVO: Calcular rango de fechas para monthlyAccumulated (desde inicio del mes hasta hoy)
-      const today = new Date();
-      const monthlyStartDate = new Date(today.getFullYear(), today.getMonth(), 1);
-      //  FIX: monthlyEndDate debe ser el FINAL del día de hoy (23:59:59.999)
-      // para incluir sorteos programados más tarde en el día actual
-      const monthlyEndDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+      //  CRÍTICO: Usar resolveDateRange para garantizar consistencia con el timezone de CR
+      const monthlyRange = resolveDateRange("month");
+      const monthlyStartDate = monthlyRange.fromAt;
+      const monthlyEndDate = monthlyRange.toAt;
 
       //  NUEVO: Obtener movimientos del mes completo para monthlyAccumulated
       const monthlyMovementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
@@ -2224,7 +2225,9 @@ gs."hour24" ASC
       const monthlyTotalRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
 
       //  NUEVO: Obtener saldo final del mes anterior para este vendedor
-      const effectiveMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+      //  CRÍTICO: Obtener el mes efectivo desde los componentes de monthlyStartDate
+      const monthlyStartComponents = getCRLocalComponents(monthlyStartDate);
+      const effectiveMonth = `${monthlyStartComponents.year}-${String(monthlyStartComponents.month).padStart(2, '0')}`;
       const previousMonthBalance = await getPreviousMonthFinalBalance(
         effectiveMonth,
         "vendedor",
