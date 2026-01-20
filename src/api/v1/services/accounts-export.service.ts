@@ -80,11 +80,11 @@ export class AccountsExportService {
       // 5. Obtener breakdown por sorteo y movimientos ANTES de transformar (para incluir en statements cuando no hay agrupación)
       let breakdown: AccountStatementSorteoItem[] | undefined = undefined;
       let movements: AccountMovementItem[] | undefined = undefined;
-      
+
       if (options.includeBreakdown && statements.length > 0) {
         breakdown = await this.getBreakdown(statements, filters);
       }
-      
+
       if (options.includeMovements && statements.length > 0) {
         movements = await this.getMovements(statements, filters.dimension);
       }
@@ -347,17 +347,17 @@ export class AccountsExportService {
             remainingBalance: bv.remainingBalance,
             ticketCount: bv.ticketCount || 0,
           };
-          
+
           //  NUEVO: Incluir bySorteo del breakdown si existe
           if (bv.bySorteo && bv.bySorteo.length > 0) {
             breakdown.bySorteo = bv.bySorteo.map((sorteo) => this.transformSorteoItem(sorteo, this.formatDate(s.date), bv.ventanaName, null, ventanaInfo?.code || null, null, null));
           }
-          
+
           //  NUEVO: Incluir movements del breakdown si existen
           if (bv.movements && bv.movements.length > 0) {
             breakdown.movements = bv.movements.map((mov) => this.transformMovementItem(mov, this.formatDate(s.date), bv.ventanaName, null, ventanaInfo?.code || null, null, null));
           }
-          
+
           return breakdown;
         });
       }
@@ -385,29 +385,29 @@ export class AccountsExportService {
             remainingBalance: bv.remainingBalance,
             ticketCount: bv.ticketCount || 0,
           };
-          
+
           //  NUEVO: Incluir bySorteo del breakdown si existe
           if (bv.bySorteo && bv.bySorteo.length > 0) {
             breakdown.bySorteo = bv.bySorteo.map((sorteo) => this.transformSorteoItem(sorteo, this.formatDate(s.date), bv.ventanaName, bv.vendedorName, ventanaInfo?.code || null, bv.vendedorId, vendedorInfo?.code || null));
           }
-          
+
           //  NUEVO: Incluir movements del breakdown si existen
           if (bv.movements && bv.movements.length > 0) {
             breakdown.movements = bv.movements.map((mov) => this.transformMovementItem(mov, this.formatDate(s.date), bv.ventanaName, bv.vendedorName, ventanaInfo?.code || null, bv.vendedorId, vendedorInfo?.code || null));
           }
-          
+
           return breakdown;
         });
       }
 
       //  NUEVO: Si NO hay agrupación, incluir bySorteo y movements del statement principal
       const hasGrouping = (dimension === 'banca' && s.byBanca && s.byBanca.length > 0) ||
-                          (dimension === 'ventana' && s.byVentana && s.byVentana.length > 0) ||
-                          (dimension === 'vendedor' && s.byVendedor && s.byVendedor.length > 0);
-      
+        (dimension === 'ventana' && s.byVentana && s.byVentana.length > 0) ||
+        (dimension === 'vendedor' && s.byVendedor && s.byVendedor.length > 0);
+
       if (!hasGrouping) {
         const dateKey = this.formatDate(s.date);
-        
+
         // Incluir bySorteo del statement principal si está disponible
         if (breakdown && breakdown.length > 0) {
           const statementBreakdown = breakdown.filter((b) => b.date === dateKey);
@@ -415,7 +415,7 @@ export class AccountsExportService {
             item.bySorteo = statementBreakdown;
           }
         }
-        
+
         // Incluir movements del statement principal si están disponibles
         if (movements && movements.length > 0) {
           const statementMovements = movements.filter((m) => m.statementDate === dateKey);
@@ -442,8 +442,8 @@ export class AccountsExportService {
     const isDimensionVentana = filters.dimension === 'ventana';
     const hasGrouping = statements.some(
       (s) => (isDimensionBanca && s.byBanca && s.byBanca.length > 0) ||
-             (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
-             (!isDimensionVentana && !isDimensionBanca && s.byVendedor && s.byVendedor.length > 0)
+        (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
+        (!isDimensionVentana && !isDimensionBanca && s.byVendedor && s.byVendedor.length > 0)
     );
 
     //  OPTIMIZACIÓN: Si hay agrupación, usar bySorteo de los breakdowns anidados
@@ -595,7 +595,7 @@ export class AccountsExportService {
       //  OPTIMIZACIÓN: Obtener códigos en batch antes del loop
       const ventanaCodesMap = new Map<string, string | null>();
       const vendedorCodesMap = new Map<string, string | null>();
-      
+
       if (ventanaIds.length > 0) {
         const ventanasWithCodes = await prisma.ventana.findMany({
           where: { id: { in: ventanaIds } },
@@ -603,7 +603,7 @@ export class AccountsExportService {
         });
         ventanasWithCodes.forEach((v) => ventanaCodesMap.set(v.id, v.code));
       }
-      
+
       if (vendedorIds.length > 0) {
         const vendedoresWithCodes = await prisma.user.findMany({
           where: { id: { in: vendedorIds } },
@@ -624,7 +624,7 @@ export class AccountsExportService {
             const vendedorName = vendedorId ? vendedorMap.get(vendedorId) || null : null;
             const ventanaCode = ventanaId ? (ventanaCodesMap.get(ventanaId) || null) : null;
             const vendedorCode = vendedorId ? (vendedorCodesMap.get(vendedorId) || null) : null;
-            
+
             result.push(this.transformSorteoItem(
               item,
               dateKey,
@@ -655,8 +655,8 @@ export class AccountsExportService {
     const isDimensionVentana = dimension === 'ventana';
     const hasGrouping = statements.some(
       (s) => (isDimensionBanca && s.byBanca && s.byBanca.length > 0) ||
-             (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
-             (!isDimensionVentana && s.byVendedor && s.byVendedor.length > 0)
+        (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
+        (!isDimensionVentana && s.byVendedor && s.byVendedor.length > 0)
     );
 
     //  OPTIMIZACIÓN: Si hay agrupación, usar movements de los breakdowns anidados
@@ -720,15 +720,15 @@ export class AccountsExportService {
           for (const ventanaBreakdown of statement.byVentana) {
             if (ventanaBreakdown.movements && ventanaBreakdown.movements.length > 0) {
               for (const movement of ventanaBreakdown.movements) {
-            result.push(this.transformMovementItem(
-              movement,
-              dateKey,
-              ventanaBreakdown.ventanaName,
-              null,
-              ventanaBreakdown.ventanaCode || null,
-              null,
-              null
-            ));
+                result.push(this.transformMovementItem(
+                  movement,
+                  dateKey,
+                  ventanaBreakdown.ventanaName,
+                  null,
+                  ventanaBreakdown.ventanaCode || null,
+                  null,
+                  null
+                ));
               }
             }
           }
@@ -736,15 +736,15 @@ export class AccountsExportService {
           for (const vendedorBreakdown of statement.byVendedor) {
             if (vendedorBreakdown.movements && vendedorBreakdown.movements.length > 0) {
               for (const movement of vendedorBreakdown.movements) {
-            result.push(this.transformMovementItem(
-              movement,
-              dateKey,
-              vendedorBreakdown.ventanaName,
-              vendedorBreakdown.vendedorName,
-              null, // ventanaCode no disponible en breakdown
-              vendedorBreakdown.vendedorId,
-              null  // vendedorCode no disponible en breakdown
-            ));
+                result.push(this.transformMovementItem(
+                  movement,
+                  dateKey,
+                  vendedorBreakdown.ventanaName,
+                  vendedorBreakdown.vendedorName,
+                  null, // ventanaCode no disponible en breakdown
+                  vendedorBreakdown.vendedorId,
+                  null  // vendedorCode no disponible en breakdown
+                ));
               }
             }
           }
@@ -850,7 +850,7 @@ export class AccountsExportService {
         const vendedorName = vendedorId ? vendedorMap.get(vendedorId) || null : null;
         const ventanaCode = ventanaId ? (ventanaCodesMap.get(ventanaId) || null) : null;
         const vendedorCode = vendedorId ? (vendedorCodesMap.get(vendedorId) || null) : null;
-        
+
         result.push(this.transformMovementItem(
           {
             id: p.id,
@@ -951,12 +951,9 @@ export class AccountsExportService {
   /**
    * Formatea Date a YYYY-MM-DD
    */
-  private static formatDate(date: Date): string {
-    const d = new Date(date);
-    const year = d.getUTCFullYear();
-    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(d.getUTCDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+  private static formatDate(date: Date | string): string {
+    if (typeof date === 'string') return date;
+    return date.toISOString().split('T')[0];
   }
 
   /**

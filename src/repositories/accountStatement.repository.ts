@@ -96,7 +96,7 @@ export const AccountStatementRepository = {
           statement = await prisma.accountStatement.findFirst({
             where: where
           });
-          
+
           if (statement) {
             logger.info({
               layer: "repository",
@@ -310,31 +310,42 @@ export const AccountStatementRepository = {
     filters: {
       ventanaId?: string;
       vendedorId?: string;
+      bancaId?: string;
     }
   ) {
     const where: Prisma.AccountStatementWhereInput = {
       date,
     };
 
-    //  ACTUALIZADO: Permitir búsqueda con ambos campos presentes
-    // El constraint _one_relation_check ha sido eliminado
+    //  CRÍTICO: Implementar filtrado estricto por dimensión
+    // Regla: Una entidad solo ve sus propios registros consolidados.
     if (filters.vendedorId) {
-      // Si hay vendedorId, buscar específicamente por vendedorId (el (date, vendedorId) es único)
+      // Nivel Vendedor: vendedorId específico
       where.vendedorId = filters.vendedorId;
-      // NO filtrar por ventanaId para vendedores aquí, ya que el sync lo guarda como null
-      // para evitar conflictos con el unique constraint (date, ventanaId)
     } else if (filters.ventanaId) {
-      // Si solo hay ventanaId, buscar el consolidado de la ventana (vendedorId debe ser null)
+      // Nivel Ventana: ventanaId específico Y vendedorId debe ser NULL (consolidado de ventana)
       where.ventanaId = filters.ventanaId;
       where.vendedorId = null;
+    } else if (filters.bancaId) {
+      // Nivel Banca: bancaId específico Y ventanaId/vendedorId deben ser NULL (consolidado de banca)
+      where.bancaId = filters.bancaId;
+      where.ventanaId = null;
+      where.vendedorId = null;
+    } else {
+      // Nivel Global/Todas las Bancas: Mostrar solo consolidados de banca (donde ventanaId y vendedorId son NULL)
+      where.ventanaId = null;
+      where.vendedorId = null;
     }
-    //  FIX: Si no se especifica ninguno, NO forzar ventanaId/vendedorId a null
-    // Dejar que la query encuentre cualquier statement para esa fecha
-    // (sin restricción de dimension)
 
     return await prisma.accountStatement.findFirst({
       where,
       include: {
+        banca: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         ventana: {
           select: {
             id: true,
