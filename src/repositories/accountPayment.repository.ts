@@ -253,7 +253,16 @@ export const AccountPaymentRepository = {
     // Si es statement de vendedor, ya está filtrado por accountStatementId que tiene el vendedorId correcto
 
     const payments = await prisma.accountPayment.findMany({
-      where,
+      where: {
+        ...where,
+        //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
+        NOT: {
+          OR: [
+            { notes: { contains: 'Saldo arrastrado del mes anterior' } },
+            { method: 'Saldo del mes anterior' }
+          ]
+        }
+      },
       select: {
         amount: true,
       },
@@ -290,7 +299,16 @@ export const AccountPaymentRepository = {
     // Si es statement de vendedor, ya está filtrado por accountStatementId que tiene el vendedorId correcto
 
     const collections = await prisma.accountPayment.findMany({
-      where,
+      where: {
+        ...where,
+        //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
+        NOT: {
+          OR: [
+            { notes: { contains: 'Saldo arrastrado del mes anterior' } },
+            { method: 'Saldo del mes anterior' }
+          ]
+        }
+      },
       select: {
         amount: true,
       },
@@ -308,6 +326,13 @@ export const AccountPaymentRepository = {
       where: {
         accountStatementId,
         isReversed: false, // Solo movimientos no revertidos
+        //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
+        NOT: {
+          OR: [
+            { notes: { contains: 'Saldo arrastrado del mes anterior' } },
+            { method: 'Saldo del mes anterior' }
+          ]
+        }
       },
       select: {
         amount: true,
@@ -348,7 +373,7 @@ export const AccountPaymentRepository = {
    *  OPTIMIZACIÓN: Obtiene totales de pagos y cobros para múltiples statements en una sola query
    * Retorna un Map<statementId, { totalPaid, totalCollected, totalPaymentsCollections }>
    */
-  async getTotalsBatch(accountStatementIds: string[]): Promise<Map<string, { totalPaid: number; totalCollected: number; totalPaymentsCollections: number }>> {
+  async findPaymentsTotalsBatch(accountStatementIds: string[]): Promise<Map<string, { totalPaid: number; totalCollected: number; totalPaymentsCollections: number }>> {
     if (accountStatementIds.length === 0) {
       return new Map();
     }
@@ -358,6 +383,13 @@ export const AccountPaymentRepository = {
       where: {
         accountStatementId: { in: accountStatementIds },
         isReversed: false,
+        //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
+        NOT: {
+          OR: [
+            { method: 'Saldo del mes anterior' },
+            { notes: { contains: 'Saldo arrastrado del mes anterior' } }
+          ]
+        }
       },
       select: {
         accountStatementId: true,
@@ -414,6 +446,13 @@ export const AccountPaymentRepository = {
       },
       //  CRÍTICO: Incluir TODOS los movimientos (activos y revertidos) para auditoría
       // Los cálculos en accounts.calculations.ts filtran !isReversed cuando es necesario
+      //  CRÍTICO 2: Excluir explícitamente el saldo del mes anterior para que NO infla balances operativos
+      NOT: {
+        OR: [
+          { method: 'Saldo del mes anterior' },
+          { notes: { contains: 'Saldo arrastrado del mes anterior' } }
+        ]
+      }
     };
 
     if (dimension === "banca") {

@@ -308,10 +308,10 @@ export class AccountStatementSyncService {
 
       const dayMovements = movements.get(dateStrCR) || [];
       const totalPaid = dayMovements
-        .filter((m: any) => m.type === "payment" && !m.isReversed)
+        .filter((m: any) => m.type === "payment" && !m.isReversed && m.method !== "Saldo del mes anterior")
         .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0);
       const totalCollected = dayMovements
-        .filter((m: any) => m.type === "collection" && !m.isReversed)
+        .filter((m: any) => m.type === "collection" && !m.isReversed && m.method !== "Saldo del mes anterior")
         .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0);
 
       // Calcular balance del día

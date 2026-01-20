@@ -1903,13 +1903,14 @@ export async function getStatementDirect(
             const previousMonthBalanceAmount = previousMonthBalanceMovement ? Number(previousMonthBalanceMovement.amount || 0) : 0;
 
             const filteredMovements = movements.filter((m: any) => {
-                // Excluir movimiento especial "Saldo del mes anterior" de totalPaid/totalCollected
-                // Este valor NO es un pago/cobro real del día, es un arrastre contable
-                // Se suma al balance de forma separada (ver previousMonthBalanceAmount)
-                if (m.id?.startsWith('previous-month-balance-')) return false;
-
                 // Excluir movimientos revertidos
                 if (m.isReversed) return false;
+
+                //  CRÍTICO: Excluir explícitamente el saldo del mes anterior (arrastre)
+                // Puede venir por ID especial, por método o por notas
+                if (m.id?.startsWith('previous-month-balance-')) return false;
+                if (m.method === 'Saldo del mes anterior') return false;
+                if (m.notes?.includes('Saldo arrastrado del mes anterior')) return false;
 
                 //  CRÍTICO: Para ventanas, solo incluir movimientos consolidados (vendedorId = null)
                 // NO incluir movimientos de vendedores específicos
@@ -1933,11 +1934,11 @@ export async function getStatementDirect(
                 .filter((m: any) => m.type === "collection")
                 .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0));
 
-            //  CRÍTICO: Balance del día = saldo mes anterior + ventas - premios - comisiones + movimientos
-            // El saldo del mes anterior (si existe) participa en el balance pero no en totalPaid/totalCollected
-            // Los movimientos (pagos/cobros) deben participar en el balance diario
+            //  CRÍTICO: Balance del día = ventas - premios - comisiones + movimientos operativos
+            // El saldo del mes anterior (si existe) participa en el balance para el ACUMULADO progresivo
+            // pero NO debe sumarse al campo 'balance' de un día operativo, para evitar inflarlo
             // payment = positivo (aumenta balance), collection = negativo (disminuye balance)
-            const balance = previousMonthBalanceAmount + entry.totalSales - totalPayouts - commissionToUse + totalPaid - totalCollected;
+            const balance = entry.totalSales - totalPayouts - commissionToUse + totalPaid - totalCollected;
 
             //  CRÍTICO: remainingBalance debe ser ACUMULADO REAL hasta esta fecha
             // NO debe depender del filtro de periodo aplicado
@@ -4306,7 +4307,7 @@ export async function getSettledStatements(
 
         // 2. Recalcular movimientos desde AccountPayment (batch)
         const statementIds = settledStatementsRaw.map(s => s.id);
-        const movementsTotals = await AccountPaymentRepository.getTotalsBatch(statementIds);
+        const movementsTotals = await AccountPaymentRepository.findPaymentsTotalsBatch(statementIds);
 
         //  CRÍTICO: Determinar si necesitamos agregar por fecha
         // Cuando dimension=banca con bancaId pero sin ventanaId/vendedorId, hay múltiples statements por fecha
@@ -4534,7 +4535,7 @@ export function combineSettledAndCalculated(
 
     // Agregar estados calculados (sobrescriben si hay conflicto, pero no debería haberlo)
     for (const statement of calculated) {
-        const dateKey = crDateService.postgresDateToCRString(statement.date);
+        const dateKey = typeof statement.date === 'string' ? statement.date : crDateService.postgresDateToCRString(statement.date);
         combined.set(dateKey, statement);
     }
 

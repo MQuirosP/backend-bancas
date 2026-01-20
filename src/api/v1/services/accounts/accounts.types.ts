@@ -112,7 +112,7 @@ export interface VendedorBreakdown {
 
 export interface DayStatement {
     id: string;
-    date: Date;
+    date: Date | string; // Permitir string para evitar T00:00:00.000Z
     month: string;
     bancaId?: string | null;      //  NUEVO: Solo si dimension='banca' o si hay filtro por banca
     bancaName?: string | null;    //  NUEVO
