@@ -570,7 +570,14 @@ export const AccountsService = {
                     // Recalcular si no está liquidado
                     let currentPaid = Number(stmt.totalPaid || 0);
                     let currentCollected = Number(stmt.totalCollected || 0);
-                    let currentBalance = Number(stmt.balance);
+
+                    //  QUIRÚRGICO: Si está liquidado, recalculamos el balance operativo usando los campos base
+                    // de Ventas - Premios - Comisión + Pagos Reales - Cobros Reales.
+                    // Esto evita que inflaciones históricas (como el arrastre guardado en el campo 'balance')
+                    // afecten los totales del reporte.
+                    let currentBalance = stmt.isSettled
+                        ? (Number(stmt.totalSales) - Number(stmt.totalPayouts) - Number(dimension === 'vendedor' ? stmt.vendedorCommission : stmt.listeroCommission) + currentPaid - currentCollected)
+                        : Number(stmt.balance);
 
                     if (!stmt.isSettled && recalculatedTotals.has(stmt.id)) {
                         const rec = recalculatedTotals.get(stmt.id)!;
@@ -627,7 +634,11 @@ export const AccountsService = {
                 // Recalcular si no está liquidado
                 let currentPaid = Number(stmt.totalPaid || 0);
                 let currentCollected = Number(stmt.totalCollected || 0);
-                let currentBalance = Number(stmt.balance);
+
+                //  QUIRÚRGICO: Si está liquidado, recalculamos el balance operativo usando los campos base
+                let currentBalance = stmt.isSettled
+                    ? (Number(stmt.totalSales) - Number(stmt.totalPayouts) - Number(dimension === 'vendedor' ? stmt.vendedorCommission : stmt.listeroCommission) + currentPaid - currentCollected)
+                    : Number(stmt.balance);
 
                 if (!stmt.isSettled && recalculatedTotals.has(stmt.id)) {
                     const rec = recalculatedTotals.get(stmt.id)!;
@@ -1299,37 +1310,8 @@ export const AccountsService = {
                 );
             }
 
-            if (previousMonthBalance !== 0) {
-                const firstDayMovements = movementsByDate.get(date) || [];
-                //  CRÍTICO: Verificar que no exista ya un movimiento especial con el mismo ID
-                const existingSpecialMovement = firstDayMovements.find((m: any) => m.id?.startsWith('previous-month-balance-'));
-                if (!existingSpecialMovement) {
-                    const entityId = filters.dimension === "banca"
-                        ? (filters.bancaId || 'null')
-                        : filters.dimension === "ventana"
-                            ? (filters.ventanaId || 'null')
-                            : (filters.vendedorId || 'null');
-
-                    //  CRÍTICO: El movimiento especial tiene balance: 0 porque el saldo ya está en initialAccumulated
-                    // Pero amount debe ser el saldo del mes anterior para mostrarlo en el frontend
-                    firstDayMovements.unshift({
-                        id: `previous-month-balance-${entityId}`,
-                        type: "payment" as const,
-                        amount: previousMonthBalance, //  Para mostrar en el frontend
-                        method: "Saldo del mes anterior",
-                        notes: `Saldo arrastrado del mes anterior`,
-                        isReversed: false,
-                        createdAt: new Date(`${date}T00:00:00.000Z`).toISOString(),
-                        date: date,
-                        time: "00:00",
-                        balance: 0, //  CRÍTICO: Balance = 0 porque ya está en initialAccumulated
-                        bancaId: filters.dimension === "banca" ? (filters.bancaId || null) : null,
-                        ventanaId: filters.dimension === "ventana" ? (filters.ventanaId || null) : null,
-                        vendedorId: filters.dimension === "vendedor" ? (filters.vendedorId || null) : null,
-                    });
-                    movementsByDate.set(date, firstDayMovements);
-                }
-            }
+            // Saldo del mes anterior se usará directamente en initialAccumulated
+            // sin crear un movimiento virtual que ensucie la lista.
         }
 
         // Determinar si hay agrupación
@@ -1407,13 +1389,10 @@ export const AccountsService = {
         }
 
         // Intercalar sorteos y movimientos
-        //  CRÍTICO: Para el primer día del mes, initialAccumulated = 0 porque el saldo del mes anterior
-        // ya viene como movimiento especial (previous-month-balance) con su balance, y la fórmula
-        // de acumulado progresivo lo sumará normalmente. Si pasáramos previousMonthBalance aquí,
-        // se duplicaría el valor (una vez en initialAccumulated y otra en el balance del movimiento).
-        // Para días siguientes, usar el acumulado del día anterior normalmente.
+        //  CRÍTICO: Para el primer día del mes, initialAccumulated es el saldo del mes anterior.
+        // Ya no inyectamos un movimiento virtual; el saldo inicia directamente desde la base.
         const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
-        const initialAccumulated = isFirstDay ? 0 : lastDayAccumulated;
+        const initialAccumulated = isFirstDay ? previousMonthBalance : lastDayAccumulated;
 
         //  LOGGING: Verificar que initialAccumulated tenga el valor correcto
         logger.info({

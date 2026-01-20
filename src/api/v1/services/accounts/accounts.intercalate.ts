@@ -113,8 +113,7 @@ export function intercalateSorteosAndMovements(
     // Los movimientos reversados se muestran en el frontend con estilo diferente
     // pero NO afectan el balance acumulado (balance: 0 si isReversed)
 
-    //  CRÍTICO: Detectar si es el movimiento especial "Saldo del mes anterior"
-    const isPreviousMonthBalance = movement.id?.startsWith('previous-month-balance-');
+
 
     //  CRÍTICO: Usar time si está disponible y es válido, sino usar createdAt
     // Si movement.time existe, combinar date + time en CR y convertir a UTC para scheduledAt
@@ -189,15 +188,13 @@ export function intercalateSorteosAndMovements(
 
     //  CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
     // Si no está reversado, usar el monto normal
-    //  CAMBIO: Permitir que "Saldo del mes anterior" tenga balance real para que se muestre en el historial
-    // y participe en el cálculo acumulado (siempre y cuando initialAccumulated se ajuste a 0 externally)
     const effectiveBalance = movement.isReversed
       ? 0
       : (movement.type === 'payment' ? amountNum : -amountNum);
 
     movementItems.push({
       sorteoId: `mov-${movement.id}`,
-      sorteoName: isPreviousMonthBalance ? 'Saldo inicial' : (movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado'),
+      sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
       scheduledAt: scheduledAt.toISOString(),
       date: movement.date,
       time: timeToDisplay, //  Usar time validado o createdAt convertido a CR
@@ -216,7 +213,7 @@ export function intercalateSorteosAndMovements(
       ticketCount: 0,
 
       // Campos específicos de movimiento
-      type: isPreviousMonthBalance ? 'initial_balance' : movement.type, //  NUEVO: Tipo especial para saldo inicial
+      type: movement.type,
       amount: amountNum, //  CRÍTICO: Convertir a Number (puede venir como Decimal de Prisma)
       method: movement.method,
       notes: movement.notes,
