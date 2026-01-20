@@ -1,0 +1,21 @@
+{
+  "payment": {
+    "id": "beef9330-930c-4d5a-8b0b-65fc8ee3cde2",
+    "originalStatementId": "9a4f0208-73ad-4e19-bade-e1ee6afbe816"
+  },
+  "wrongStatement": {
+    "id": "9a4f0208-73ad-4e19-bade-e1ee6afbe816",
+    "totalPaid": 0,
+    "totalCollected": 0,
+    "remainingBalance": -160295.5,
+    "balance": -83525.75
+  },
+  "correctStatement": {
+    "id": "bec62d3d-263e-4935-90ea-dffbde681cc9",
+    "totalPaid": 0,
+    "totalCollected": 0,
+    "remainingBalance": 24607.5,
+    "balance": 157002.5
+  },
+  "timestamp": "2026-01-20T18:28:16.714Z"
+}

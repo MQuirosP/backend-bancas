@@ -1900,16 +1900,43 @@ gs."hour24" ASC
             //  CRÍTICO: Detectar si es el movimiento especial "Saldo del mes anterior"
             const isOpeningBalance = movement.id?.startsWith('previous-month-balance-');
 
-            // Combinar: fecha del usuario + hora de createdAt (en hora CR)
-            const createdAtDate = new Date(movement.createdAt);
-            // Convertir UTC a CR (UTC-6)
-            const crTime = new Date(createdAtDate.getTime() - (6 * 60 * 60 * 1000));
-            const hour = crTime.getUTCHours();
-            const minute = crTime.getUTCMinutes();
-            const seconds = crTime.getUTCSeconds();
+            //  CRÍTICO: Usar movement.time si está disponible (hora real del movimiento)
+            // Si no, fallback a createdAt (hora de registro en BD)
+            let scheduledAt: Date;
+            let timeDisplay: string;
+
+            const hasValidTime = movement.time && typeof movement.time === 'string' && movement.time.trim().length > 0;
             const [year, month, day] = movement.date.split('-').map(Number);
-            //  CRÍTICO: Usar Date.UTC y ajustar offset (UTC-6) para evitar dependencia de la hora local del server
-            const scheduledAt = new Date(Date.UTC(year, month - 1, day, hour, minute, seconds) + (6 * 60 * 60 * 1000));
+
+            if (hasValidTime) {
+              // Usar movement.time (formato HH:MM en hora CR)
+              const [hours, minutes] = movement.time.split(':').map(Number);
+
+              // Convertir hora CR a UTC para scheduledAt (CR es UTC-6, sumar 6 horas)
+              const utcHours = hours + 6;
+              if (utcHours >= 24) {
+                // Día siguiente en UTC
+                scheduledAt = new Date(Date.UTC(year, month - 1, day + 1, utcHours - 24, minutes, 0));
+              } else {
+                scheduledAt = new Date(Date.UTC(year, month - 1, day, utcHours, minutes, 0));
+              }
+
+              // Formatear hora en 12h
+              const ampm = hours >= 12 ? 'PM' : 'AM';
+              const hours12 = hours % 12 || 12;
+              timeDisplay = `${hours12}:${String(minutes).padStart(2, '0')}${ampm} `;
+            } else {
+              // Fallback: usar createdAt
+              const createdAtDate = new Date(movement.createdAt);
+              // Convertir UTC a CR (UTC-6)
+              const crTime = new Date(createdAtDate.getTime() - (6 * 60 * 60 * 1000));
+              const hour = crTime.getUTCHours();
+              const minute = crTime.getUTCMinutes();
+              const seconds = crTime.getUTCSeconds();
+              //  CRÍTICO: Usar Date.UTC y ajustar offset (UTC-6) para evitar dependencia de la hora local del server
+              scheduledAt = new Date(Date.UTC(year, month - 1, day, hour, minute, seconds) + (6 * 60 * 60 * 1000));
+              timeDisplay = formatTime12h(scheduledAt);
+            }
 
             //  CRÍTICO: El movimiento especial tiene subtotal: 0 porque el saldo ya está en eventAccumulated inicial
             const subtotal = movement.type === 'payment' ? (movement.amount || 0) : -(movement.amount || 0);
@@ -1919,9 +1946,9 @@ gs."hour24" ASC
               sorteoName: isOpeningBalance
                 ? 'Saldo del mes anterior'
                 : (movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado'),
-              scheduledAt, //  Fecha del usuario + hora de creación
+              scheduledAt, //  Fecha del usuario + hora del movimiento (o creación como fallback)
               date: movement.date, //  Fecha que el usuario indicó
-              time: formatTime12h(scheduledAt),
+              time: timeDisplay, //  Usar hora de movement.time si disponible
               loteriaId: null,
               loteriaName: null,
               winningNumber: null,
@@ -2085,20 +2112,35 @@ gs."hour24" ASC
           return b.date.localeCompare(a.date);
         });
 
-      //  CRÍTICO: Calcular acumulado histórico por día basado en totalRemainingBalance
-      // Ordenar días ASC para calcular acumulado progresivo
-      const daysSortedAsc = [...daysArray].sort((a, b) => a.date.localeCompare(b.date));
+      //  CRÍTICO: Obtener accumulatedBalance desde AccountStatement para cada día
+      // Esto asegura que el acumulado sea consistente independiente del período consultado
+      // (el acumulado a una fecha X siempre será el mismo sin importar los filtros)
+      const datesToQuery = daysArray.map(d => {
+        const [year, month, day] = d.date.split('-').map(Number);
+        return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+      });
 
-      let dailyAccumulated = 0;
-      for (const day of daysSortedAsc) {
-        // Sumar el subtotal del día (que incluye sorteos + movimientos)
-        dailyAccumulated += (day.dayTotals.totalRemainingBalance || 0);
+      const statementsForAccumulated = await prisma.accountStatement.findMany({
+        where: {
+          vendedorId,
+          date: { in: datesToQuery },
+        },
+        select: {
+          date: true,
+          accumulatedBalance: true,
+        },
+      });
 
-        // Actualizar el accumulated en el día original
-        const originalDay = daysArray.find(d => d.date === day.date);
-        if (originalDay) {
-          originalDay.dayTotals.accumulated = dailyAccumulated;
-        }
+      // Crear mapa de fecha -> accumulatedBalance
+      const accumulatedByDate = new Map<string, number>();
+      for (const stmt of statementsForAccumulated) {
+        const dateStr = stmt.date.toISOString().split('T')[0];
+        accumulatedByDate.set(dateStr, stmt.accumulatedBalance);
+      }
+
+      // Asignar accumulated a cada día desde AccountStatement
+      for (const day of daysArray) {
+        day.dayTotals.accumulated = accumulatedByDate.get(day.date) ?? 0;
       }
 
       // Calcular totales agregados (suma de todos los días)
