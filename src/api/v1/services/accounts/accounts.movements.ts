@@ -318,6 +318,49 @@ export async function registerPayment(data: {
             throw new AppError(`Error al procesar la hora: ${error.message}`, 400, "TIME_VALIDATION_ERROR");
         }
 
+        // VALIDACIÓN PREVENTIVA: Asegurar que el vendedorId del statement coincida con el del payment
+        // Esto previene el bug histórico donde pagos se vinculaban al statement incorrecto
+        if (data.vendedorId && statement.vendedorId !== data.vendedorId) {
+            logger.error({
+                layer: "service",
+                action: "PAYMENT_STATEMENT_MISMATCH_VENDEDOR",
+                payload: {
+                    paymentVendedorId: data.vendedorId,
+                    statementVendedorId: statement.vendedorId,
+                    statementId: statement.id,
+                    date: data.date,
+                    amount: data.amount,
+                    type: data.type,
+                },
+            });
+            throw new AppError(
+                `Error de integridad: El payment es para vendedor ${data.vendedorId} pero el statement encontrado es de vendedor ${statement.vendedorId}. Contacte soporte.`,
+                500,
+                "STATEMENT_VENDEDOR_MISMATCH"
+            );
+        }
+
+        // VALIDACIÓN PREVENTIVA: Para pagos de ventana (sin vendedorId), verificar que el statement sea de ventana
+        if (!data.vendedorId && finalVentanaId && statement.vendedorId !== null) {
+            logger.error({
+                layer: "service",
+                action: "PAYMENT_STATEMENT_MISMATCH_VENTANA",
+                payload: {
+                    paymentVentanaId: finalVentanaId,
+                    statementVendedorId: statement.vendedorId,
+                    statementId: statement.id,
+                    date: data.date,
+                    amount: data.amount,
+                    type: data.type,
+                },
+            });
+            throw new AppError(
+                `Error de integridad: El payment es para ventana ${finalVentanaId} pero el statement encontrado tiene vendedorId ${statement.vendedorId}. Contacte soporte.`,
+                500,
+                "STATEMENT_VENTANA_MISMATCH"
+            );
+        }
+
         // Crear pago
         payment = await tx.accountPayment.create({
             data: {
