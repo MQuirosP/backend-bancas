@@ -19,6 +19,7 @@
 
 import SorteosAutoService from '../api/v1/services/sorteosAuto.service';
 import logger from '../core/logger';
+import { warmupConnection } from '../core/connectionWarmup';
 
 // Timers separados para timeout inicial y interval recurrente
 let openInitialTimer: NodeJS.Timeout | null = null;
@@ -55,6 +56,17 @@ async function executeAutoOpen(): Promise<void> {
       action: 'SORTEOS_AUTO_OPEN_START',
       payload: { timestamp: new Date().toISOString() },
     });
+
+    // Warmup de conexión antes de ejecutar (usa DIRECT_URL para evitar cold starts)
+    const isReady = await warmupConnection({ useDirect: true, context: 'autoOpen' });
+    if (!isReady) {
+      logger.error({
+        layer: 'job',
+        action: 'SORTEOS_AUTO_OPEN_SKIP',
+        payload: { reason: 'Connection warmup failed after retries' },
+      });
+      return;
+    }
 
     //  Pasar null para jobs cron (sin usuario autenticado)
     // La actividad se registrará con userId: null
@@ -102,6 +114,17 @@ async function executeAutoCreate(): Promise<void> {
       action: 'SORTEOS_AUTO_CREATE_START',
       payload: { timestamp: new Date().toISOString() },
     });
+
+    // Warmup de conexión antes de ejecutar (usa DIRECT_URL para evitar cold starts)
+    const isReady = await warmupConnection({ useDirect: true, context: 'autoCreate' });
+    if (!isReady) {
+      logger.error({
+        layer: 'job',
+        action: 'SORTEOS_AUTO_CREATE_SKIP',
+        payload: { reason: 'Connection warmup failed after retries' },
+      });
+      return;
+    }
 
     //  Pasar null para jobs cron (sin usuario autenticado)
     const result = await SorteosAutoService.executeAutoCreate(7, null as any); // 7 días por defecto
@@ -294,6 +317,17 @@ async function executeAutoClose(): Promise<void> {
       action: 'SORTEOS_AUTO_CLOSE_START',
       payload: { timestamp: new Date().toISOString() },
     });
+
+    // Warmup de conexión antes de ejecutar (usa DIRECT_URL para evitar cold starts)
+    const isReady = await warmupConnection({ useDirect: true, context: 'autoClose' });
+    if (!isReady) {
+      logger.error({
+        layer: 'job',
+        action: 'SORTEOS_AUTO_CLOSE_SKIP',
+        payload: { reason: 'Connection warmup failed after retries' },
+      });
+      return;
+    }
 
     //  Pasar null para jobs cron (sin usuario autenticado)
     const result = await SorteosAutoService.executeAutoClose(null as any);
