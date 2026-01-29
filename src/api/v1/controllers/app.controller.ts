@@ -10,22 +10,15 @@ import crypto from 'crypto';
 import logger from '../../../core/logger';
 
 /**
- * Caché en memoria para metadatos del APK
+ * Caché en memoria para metadatos del APK (archivo grande ~77MB)
  * Se invalida automáticamente cuando el archivo cambia (por mtime)
+ * NOTA: Solo se cachea el APK, NO latest.json (archivo pequeño ~300 bytes)
  */
 let cachedApkMetadata: {
   size: number;
   sha256: string;
   mtime: number;
 } | null = null;
-
-/**
- * Caché en memoria para latest.json
- *  FIX CRÍTICO: Evita fs.readFileSync en cada request → reduce GC pressure
- * Se invalida automáticamente cuando el archivo cambia (por mtime)
- */
-let cachedLatest: any | null = null;
-let cachedLatestMtime = 0;
 
 /**
  * GET /api/v1/app/version
@@ -40,8 +33,8 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
     const latestPath = path.join(projectRoot, 'public', 'latest.json');
     const apkPath = path.join(projectRoot, 'public', 'apk', 'app-release-latest.apk');
 
-    //  FIX: Cachear latest.json en memoria - solo recargar si cambió
-    // Evita fs.readFileSync + JSON.parse en cada request → reduce GC pressure
+    // Lectura directa de latest.json en cada request
+    // Archivo pequeño (~300 bytes), no requiere caché y evita problemas de sincronización
     if (!fs.existsSync(latestPath)) {
       logger.error({
         layer: 'controller',
@@ -56,21 +49,7 @@ export const getVersionInfo = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    const statsJson = fs.statSync(latestPath);
-
-    // Solo recargar si el archivo cambió (o primera vez)
-    if (!cachedLatest || cachedLatestMtime !== statsJson.mtimeMs) {
-      cachedLatest = JSON.parse(fs.readFileSync(latestPath, 'utf-8'));
-      cachedLatestMtime = statsJson.mtimeMs;
-
-      logger.debug({
-        layer: 'controller',
-        action: 'LATEST_JSON_CACHED',
-        payload: { version: cachedLatest.versionName }
-      });
-    }
-
-    const latest = cachedLatest;
+    const latest = JSON.parse(fs.readFileSync(latestPath, 'utf-8'));
 
     // Obtener metadatos del APK de forma optimizada
     let fileSize: number | null = null;
