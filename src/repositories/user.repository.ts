@@ -87,7 +87,7 @@ export const UserRepository = {
       ];
     }
 
-    const [data, total] = await prisma.$transaction([
+    const [rawData, total] = await prisma.$transaction([
       prisma.user.findMany({
         where,
         skip,
@@ -97,12 +97,28 @@ export const UserRepository = {
           ventanaId: true, isActive: true, code: true,
           createdAt: true, updatedAt: true, settings: true,
           platform: true, appVersion: true,
-          ventana: { select: { id: true, name: true } },
+          ventana: {
+            select: {
+              id: true,
+              name: true,
+              banca: { select: { id: true, name: true } },
+            }
+          },
         },
         orderBy: orderBy ?? { createdAt: 'desc' },
       }),
       prisma.user.count({ where }),
     ]);
+
+    // Aplanar banca al mismo nivel que ventana
+    const data = rawData.map((user: any) => {
+      const { ventana, ...rest } = user;
+      return {
+        ...rest,
+        ventana: ventana ? { id: ventana.id, name: ventana.name } : null,
+        banca: ventana?.banca ?? null,
+      };
+    });
 
     return { data, total };
   },
