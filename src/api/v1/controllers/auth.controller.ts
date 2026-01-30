@@ -5,6 +5,21 @@ import { logger } from '../../../core/logger';
 import prisma from '../../../core/prismaClient';
 import { ActivityType, Role } from '@prisma/client';
 import { success, created } from '../../../utils/responses';
+import { RequestContext } from '../dto/auth.dto';
+import { AppError } from '../../../core/errors';
+
+// Helper para extraer contexto del request
+function getRequestContext(req: Request): RequestContext {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  const ipAddress = typeof forwardedFor === 'string'
+    ? forwardedFor.split(',')[0].trim()
+    : req.ip || req.socket?.remoteAddress || undefined;
+
+  return {
+    userAgent: req.headers['user-agent'],
+    ipAddress,
+  };
+}
 
 export const AuthController = {
   async register(req: Request, res: Response) {
@@ -34,13 +49,18 @@ export const AuthController = {
   },
 
   async login(req: Request, res: Response) {
-    const { accessToken, refreshToken, user } = await AuthService.login(req.body);
+    const context = getRequestContext(req);
+    const { accessToken, refreshToken, user } = await AuthService.login(req.body, context);
 
     logger.info({
       layer: 'controller',
       action: ActivityType.LOGIN,
       userId: user.id,
-      payload: { username: user.username },
+      payload: {
+        username: user.username,
+        deviceId: req.body.deviceId,
+        deviceName: req.body.deviceName,
+      },
     });
 
     // Activity log asíncrono (fire-and-forget) - no bloquea la respuesta
@@ -50,7 +70,11 @@ export const AuthController = {
         action: ActivityType.LOGIN,
         targetType: 'USER',
         targetId: user.id,
-        details: { email: user.email },
+        details: {
+          email: user.email,
+          deviceId: req.body.deviceId,
+          deviceName: req.body.deviceName,
+        },
       },
     }).catch(err => {
       logger.error({
@@ -65,7 +89,8 @@ export const AuthController = {
 
   async refresh(req: Request, res: Response) {
     const { refreshToken } = req.body;
-    const tokens = await AuthService.refresh(refreshToken);
+    const context = getRequestContext(req);
+    const tokens = await AuthService.refresh(refreshToken, context);
     return success(res, tokens);
   },
 
@@ -274,5 +299,78 @@ export const AuthController = {
     });
 
     return success(res, user);
+  },
+
+  /**
+   * GET /auth/sessions/user/:userId
+   * Lista las sesiones activas de un usuario específico (para ADMIN)
+   */
+  async getUserSessions(req: Request, res: Response) {
+    const actor = (req as any).user;
+    const { userId } = req.params;
+
+    if (!actor) {
+      throw new AppError('Unauthorized', 401);
+    }
+
+    // Solo ADMIN puede ver sesiones de otros usuarios
+    if (actor.role !== Role.ADMIN && actor.id !== userId) {
+      throw new AppError('No tiene permisos para ver las sesiones de este usuario', 403);
+    }
+
+    // Verificar que el usuario existe
+    const targetUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true },
+    });
+
+    if (!targetUser) {
+      throw new AppError('Usuario no encontrado', 404);
+    }
+
+    const sessions = await AuthService.getUserSessions(userId);
+
+    return success(res, sessions);
+  },
+
+  /**
+   * DELETE /auth/sessions/:sessionId
+   * Revoca una sesión específica
+   */
+  async revokeSession(req: Request, res: Response) {
+    const actor = (req as any).user;
+    const { sessionId } = req.params;
+
+    if (!actor) {
+      throw new AppError('Unauthorized', 401);
+    }
+
+    const isAdmin = actor.role === Role.ADMIN;
+    await AuthService.revokeSession(actor.id, sessionId, isAdmin);
+
+    return success(res, { message: 'Session revoked' });
+  },
+
+  /**
+   * POST /auth/logout/all
+   * Cierra todas las sesiones del usuario autenticado
+   */
+  async logoutAll(req: Request, res: Response) {
+    const actor = (req as any).user;
+
+    if (!actor) {
+      throw new AppError('Unauthorized', 401);
+    }
+
+    const result = await AuthService.logoutAll(actor.id);
+
+    logger.info({
+      layer: 'controller',
+      action: 'LOGOUT_ALL',
+      userId: actor.id,
+      payload: { revokedCount: result.count },
+    });
+
+    return success(res, { message: `${result.count} sessions revoked` });
   },
 };
