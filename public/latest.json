@@ -1,7 +1,7 @@
 {
-  "versionName": "2.0.9",
-  "versionCode": 10,
-  "buildNumber": 10,
+  "versionName": "2.0.8",
+  "versionCode": 9,
+  "buildNumber": 9,
   "minSupportedVersion": "2.0.0",
   "forceUpdate": false,
   "changelog": "Correcciones y mejoras de rendimiento digitación de jugadas",
