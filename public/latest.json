@@ -1,11 +1,11 @@
 {
-  "versionName": "2.0.8",
-  "versionCode": 9,
-  "buildNumber": 9,
+  "versionName": "2.0.9",
+  "versionCode": 10,
+  "buildNumber": 10,
   "minSupportedVersion": "2.0.0",
   "forceUpdate": false,
-  "changelog": "Correcciones y mejoras de rendimiento digitación de jugadas",
-  "releasedAt": "2026-01-11T02:00:00Z",
+  "changelog": "Sesión multidispositivo",
+  "releasedAt": "2026-01-30T23:12:00Z",
   "apkUrl": "https://backend-bancas-yk1i.onrender.com/api/v1/app/download",
-  "sha256": "893142fcef5cc333171ae4f2a533c720f3f91fe3643d5dab436aa778a48fb89a"
+  "sha256": "d919a5e7326467831f213c910e292ddc6bf8f7739d5917e7c116557bb2723cc6"
 }
