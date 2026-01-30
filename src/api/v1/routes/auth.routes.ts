@@ -15,4 +15,9 @@ router.get('/me', protect, AuthController.me);
 router.patch('/me', protect, validateBody(updateUserSchema), AuthController.updateMe);
 router.post('/set-active-banca', protect, validateBody(setActiveBancaSchema), AuthController.setActiveBanca);
 
+// Endpoints de sesiones (multi-dispositivo)
+router.get('/sessions/user/:userId', protect, AuthController.getUserSessions);
+router.delete('/sessions/:sessionId', protect, AuthController.revokeSession);
+router.post('/logout/all', protect, AuthController.logoutAll);
+
 export default router;

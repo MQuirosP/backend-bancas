@@ -2,13 +2,25 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../../../core/prismaClient';
 import { config } from '../../../config';
-import { RegisterDTO, LoginDTO, TokenPair } from '../dto/auth.dto';
+import { RegisterDTO, LoginDTO, TokenPair, RequestContext } from '../dto/auth.dto';
 import { AppError } from '../../../core/errors';
 import { v4 as uuidv4 } from 'uuid';
 import { comparePassword, hashPassword } from '../../../utils/crypto';
+import { logger } from '../../../core/logger';
 
 const ACCESS_SECRET = config.jwtAccessSecret;
 const REFRESH_SECRET = config.jwtRefreshSecret;
+
+// Interface para sesiones activas
+export interface Session {
+  id: string;
+  deviceId: string | null;
+  deviceName: string | null;
+  ipAddress: string | null;
+  lastUsedAt: Date;
+  createdAt: Date;
+  current?: boolean;
+}
 
 export const AuthService = {
   async register(data: RegisterDTO) {
@@ -58,7 +70,10 @@ export const AuthService = {
     return user;
   },
 
-  async login(data: LoginDTO): Promise<TokenPair & { user: { id: string; username: string; email: string | null; role: string; ventanaId: string | null } }> {
+  async login(
+    data: LoginDTO,
+    context?: RequestContext
+  ): Promise<TokenPair & { user: { id: string; username: string; email: string | null; role: string; ventanaId: string | null } }> {
     const user = await prisma.user.findUnique({ where: { username: data.username } });
     if (!user) {
       throw new AppError('Invalid credentials', 401);
@@ -90,6 +105,31 @@ export const AuthService = {
       });
     }
 
+    // Si viene deviceId, revocar tokens anteriores de este dispositivo
+    if (data.deviceId) {
+      const revokedCount = await prisma.refreshToken.updateMany({
+        where: {
+          userId: user.id,
+          deviceId: data.deviceId,
+          revoked: false,
+        },
+        data: {
+          revoked: true,
+          revokedAt: new Date(),
+          revokedReason: 'new_login',
+        },
+      });
+
+      if (revokedCount.count > 0) {
+        logger.info({
+          layer: 'service',
+          action: 'REVOKE_DEVICE_TOKENS',
+          userId: user.id,
+          payload: { deviceId: data.deviceId, revokedCount: revokedCount.count },
+        });
+      }
+    }
+
     const accessToken = jwt.sign(
       {
         sub: user.id,
@@ -102,11 +142,18 @@ export const AuthService = {
 
     const refreshToken = uuidv4();
 
+    // Crear token con campos de dispositivo
     await prisma.refreshToken.create({
       data: {
         userId: user.id,
         token: refreshToken,
         expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
+        // Campos de tracking de dispositivo
+        deviceId: data.deviceId ?? null,
+        deviceName: data.deviceName ?? null,
+        userAgent: context?.userAgent ?? null,
+        ipAddress: context?.ipAddress ?? null,
+        lastUsedAt: new Date(),
       },
     });
 
@@ -127,46 +174,200 @@ export const AuthService = {
     };
   },
 
-  async refresh(refreshToken: string): Promise<TokenPair> {
+  async refresh(refreshToken: string, context?: RequestContext): Promise<TokenPair> {
+    let decoded: { tid: string };
     try {
-      const decoded = jwt.verify(refreshToken, REFRESH_SECRET) as any;
-      const tokenRecord = await prisma.refreshToken.findUnique({
-        where: { token: decoded.tid },
-      });
-
-      if (!tokenRecord || tokenRecord.revoked || tokenRecord.expiresAt < new Date()) {
-        throw new AppError('Invalid refresh token', 401);
-      }
-
-      const user = await prisma.user.findUnique({ where: { id: tokenRecord.userId } });
-      if (!user) throw new AppError('User not found', 404);
-
-      const accessToken = jwt.sign(
-        {
-          sub: user.id,
-          role: user.role,
-          ventanaId: user.ventanaId ?? null,
-        },
-        ACCESS_SECRET,
-        { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
-      );
-
-      return { accessToken, refreshToken };
+      decoded = jwt.verify(refreshToken, REFRESH_SECRET) as { tid: string };
     } catch {
       throw new AppError('Invalid refresh token', 401);
     }
+
+    const tokenRecord = await prisma.refreshToken.findUnique({
+      where: { token: decoded.tid },
+    });
+
+    if (!tokenRecord || tokenRecord.revoked || tokenRecord.expiresAt < new Date()) {
+      throw new AppError('Invalid refresh token', 401);
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: tokenRecord.userId } });
+    if (!user) throw new AppError('User not found', 404);
+
+    // Verificar si el usuario sigue activo
+    if (!user.isActive || user.deletedAt) {
+      // Revocar el token si el usuario está inactivo
+      await prisma.refreshToken.update({
+        where: { id: tokenRecord.id },
+        data: {
+          revoked: true,
+          revokedAt: new Date(),
+          revokedReason: 'user_inactive',
+        },
+      });
+      throw new AppError('La cuenta está inactiva.', 403, 'USER_INACTIVE');
+    }
+
+    // ROTACIÓN: Revocar token actual
+    await prisma.refreshToken.update({
+      where: { id: tokenRecord.id },
+      data: {
+        revoked: true,
+        revokedAt: new Date(),
+        revokedReason: 'rotation',
+      },
+    });
+
+    // Crear nuevo token (heredando datos del dispositivo)
+    const newRefreshTokenId = uuidv4();
+    await prisma.refreshToken.create({
+      data: {
+        userId: user.id,
+        token: newRefreshTokenId,
+        expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
+        // Heredar datos del dispositivo del token anterior
+        deviceId: tokenRecord.deviceId,
+        deviceName: tokenRecord.deviceName,
+        userAgent: context?.userAgent ?? tokenRecord.userAgent,
+        ipAddress: context?.ipAddress ?? tokenRecord.ipAddress,
+        lastUsedAt: new Date(),
+      },
+    });
+
+    const accessToken = jwt.sign(
+      {
+        sub: user.id,
+        role: user.role,
+        ventanaId: user.ventanaId ?? null,
+      },
+      ACCESS_SECRET,
+      { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
+    );
+
+    // Firmar el NUEVO refresh token
+    const signedRefresh = jwt.sign({ tid: newRefreshTokenId }, REFRESH_SECRET, {
+      expiresIn: config.jwtRefreshExpires as jwt.SignOptions['expiresIn'],
+    });
+
+    return { accessToken, refreshToken: signedRefresh };
   },
 
   async logout(refreshToken: string) {
     try {
-      const decoded = jwt.verify(refreshToken, REFRESH_SECRET) as any;
+      const decoded = jwt.verify(refreshToken, REFRESH_SECRET) as { tid: string };
       await prisma.refreshToken.update({
         where: { token: decoded.tid },
-        data: { revoked: true },
+        data: {
+          revoked: true,
+          revokedAt: new Date(),
+          revokedReason: 'logout',
+        },
       });
     } catch {
       // ignore errors to avoid leaking info
     }
+  },
+
+  /**
+   * Cierra todas las sesiones de un usuario
+   */
+  async logoutAll(userId: string): Promise<{ count: number }> {
+    const result = await prisma.refreshToken.updateMany({
+      where: {
+        userId,
+        revoked: false,
+      },
+      data: {
+        revoked: true,
+        revokedAt: new Date(),
+        revokedReason: 'logout_all',
+      },
+    });
+
+    logger.info({
+      layer: 'service',
+      action: 'LOGOUT_ALL',
+      userId,
+      payload: { revokedCount: result.count },
+    });
+
+    return { count: result.count };
+  },
+
+  /**
+   * Lista las sesiones activas de un usuario
+   */
+  async getUserSessions(userId: string, currentTokenId?: string): Promise<Session[]> {
+    const tokens = await prisma.refreshToken.findMany({
+      where: {
+        userId,
+        revoked: false,
+        expiresAt: { gt: new Date() },
+      },
+      select: {
+        id: true,
+        token: true,
+        deviceId: true,
+        deviceName: true,
+        ipAddress: true,
+        lastUsedAt: true,
+        createdAt: true,
+      },
+      orderBy: { lastUsedAt: 'desc' },
+    });
+
+    return tokens.map(t => ({
+      id: t.id,
+      deviceId: t.deviceId,
+      deviceName: t.deviceName || 'Unknown device',
+      ipAddress: t.ipAddress,
+      lastUsedAt: t.lastUsedAt ?? t.createdAt,
+      createdAt: t.createdAt,
+      current: currentTokenId ? t.token === currentTokenId : false,
+    }));
+  },
+
+  /**
+   * Revoca una sesión específica
+   */
+  async revokeSession(requestingUserId: string, sessionId: string, isAdmin: boolean = false): Promise<void> {
+    // Buscar el token
+    const token = await prisma.refreshToken.findUnique({
+      where: { id: sessionId },
+      select: {
+        id: true,
+        userId: true,
+        revoked: true,
+      },
+    });
+
+    if (!token) {
+      throw new AppError('Session not found', 404);
+    }
+
+    // Verificar permisos: solo el dueño o un admin puede revocar
+    if (!isAdmin && token.userId !== requestingUserId) {
+      throw new AppError('No tiene permisos para revocar esta sesión', 403);
+    }
+
+    if (token.revoked) {
+      throw new AppError('Session already revoked', 400);
+    }
+
+    await prisma.refreshToken.update({
+      where: { id: sessionId },
+      data: {
+        revoked: true,
+        revokedAt: new Date(),
+        revokedReason: isAdmin ? 'revoked_by_admin' : 'revoked_by_user',
+      },
+    });
+
+    logger.info({
+      layer: 'service',
+      action: 'REVOKE_SESSION',
+      userId: requestingUserId,
+      payload: { sessionId, targetUserId: token.userId, isAdmin },
+    });
   },
 };
 

@@ -44,6 +44,9 @@ export const loginSchema = z.object({
     .max(100, "Password must be at most 100 characters long"),
   platform: z.enum(['web', 'android', 'ios']).optional(),  // Opcional: Plataforma del cliente
   appVersion: z.string().max(50, "appVersion must be at most 50 characters long").optional(),  // Opcional: Versión de la app
+  // Campos para tracking de dispositivos (multi-dispositivo)
+  deviceId: z.string().max(255).optional(),    // UUID persistente generado por el cliente
+  deviceName: z.string().max(255).optional(),  // Nombre legible: "Chrome · Windows", "Samsung Galaxy S23"
 });
 
 // Schema para establecer banca activa
