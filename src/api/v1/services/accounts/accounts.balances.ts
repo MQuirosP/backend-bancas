@@ -186,13 +186,10 @@ export async function getPreviousMonthFinalBalance(
 
         // PASO 1: Buscar en AccountStatement (fuente de verdad)
         // Priorizar accumulatedBalance del último día del mes anterior
-        const lastDayNum = new Date(previousYear, previousMonth, 0).getDate();
-        const firstDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, 1, 6, 0, 0, 0));
-        const lastDayOfPreviousMonth = new Date(Date.UTC(previousYear, previousMonth - 1, lastDayNum + 1, 5, 59, 59, 999));
-
+        // CRÍTICO: Usar el campo 'month' para filtrar, es más robusto que rangos de fecha
         let isConsolidated = false;
         const where: Prisma.AccountStatementWhereInput = {
-            date: { gte: firstDayOfPreviousMonth, lte: lastDayOfPreviousMonth },
+            month: previousMonthStr, // Filtrar por el mes anterior directamente
         };
 
         if (dimension === "vendedor") {
@@ -218,6 +215,8 @@ export async function getPreviousMonthFinalBalance(
                 where.bancaId = bancaId;
             } else {
                 isConsolidated = true;
+                // CRÍTICO: Excluir registros sin bancaId para evitar sumar statements huérfanos
+                where.bancaId = { not: null };
             }
         }
 
