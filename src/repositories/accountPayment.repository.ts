@@ -1,6 +1,7 @@
 import prisma from "../core/prismaClient";
 import { Prisma } from "@prisma/client";
 import logger from "../core/logger";
+import { getCRLocalComponents } from "../utils/businessDate";
 
 export const AccountPaymentRepository = {
   /**
@@ -439,10 +440,20 @@ export const AccountPaymentRepository = {
     bancaId?: string,
     includeChildren: boolean = false //  NUEVO: Flag para incluir movimientos de dependientes (ventanas/vendedores)
   ): Promise<Map<string, any[]>> {
+    //  CRÍTICO: Convertir timestamps UTC a fechas YYYY-MM-DD en hora CR
+    // El campo 'date' en AccountPayment es tipo DATE (sin hora), se almacena como YYYY-MM-DD
+    // Prisma lo interpreta como medianoche UTC (ej: 2026-01-29 → 2026-01-29T00:00:00.000Z)
+    // Si usamos timestamps UTC directamente, podemos incluir/excluir días incorrectos
+    // Ejemplo: endDate=2026-01-29T05:59:59Z (23:59 CR del 28) incluiría 2026-01-29T00:00:00Z (día 29)
+    const startCR = getCRLocalComponents(startDate);
+    const endCR = getCRLocalComponents(endDate);
+    const startDateStr = `${startCR.year}-${String(startCR.month).padStart(2, '0')}-${String(startCR.day).padStart(2, '0')}`;
+    const endDateStr = `${endCR.year}-${String(endCR.month).padStart(2, '0')}-${String(endCR.day).padStart(2, '0')}`;
+
     const where: Prisma.AccountPaymentWhereInput = {
       date: {
-        gte: startDate,
-        lte: endDate,
+        gte: new Date(startDateStr + 'T00:00:00.000Z'),
+        lte: new Date(endDateStr + 'T00:00:00.000Z'),
       },
       //  CRÍTICO: Incluir TODOS los movimientos (activos y revertidos) para auditoría
       // Los cálculos en accounts.calculations.ts filtran !isReversed cuando es necesario
