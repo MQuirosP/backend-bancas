@@ -92,7 +92,7 @@ export function intercalateSorteosAndMovements(
   }>,
   movements: Array<{
     id: string;
-    type: "payment" | "collection";
+    type: "payment" | "collection" | "opening_balance"; //  NUEVO: opening_balance para saldo del mes anterior
     amount: number;
     method: string;
     notes: string | null;
@@ -100,6 +100,7 @@ export function intercalateSorteosAndMovements(
     createdAt: string;
     date: string;
     time?: string | null; //  NUEVO: HH:MM (opcional, hora del movimiento en CR)
+    isOpeningBalance?: boolean; //  NUEVO: Flag para identificar saldo del mes anterior
   }>,
   dateStr: string,
   initialAccumulated: number = 0 //  NUEVO: Acumulado inicial (para arrastrar saldo del día anterior)
@@ -186,15 +187,34 @@ export function intercalateSorteosAndMovements(
     //  CRÍTICO: Convertir amount a Number (puede venir como Decimal de Prisma)
     const amountNum = Number(movement.amount || 0);
 
+    //  CRÍTICO: Detectar si es el saldo del mes anterior
+    const isOpeningBalance = movement.isOpeningBalance || movement.type === 'opening_balance';
+
     //  CRÍTICO: Si está reversado, balance = 0 (no afecta acumulado)
     // Si no está reversado, usar el monto normal
-    const effectiveBalance = movement.isReversed
-      ? 0
-      : (movement.type === 'payment' ? amountNum : -amountNum);
+    // Para opening_balance, siempre es positivo (es el saldo inicial)
+    let effectiveBalance: number;
+    if (movement.isReversed) {
+      effectiveBalance = 0;
+    } else if (isOpeningBalance) {
+      effectiveBalance = amountNum; // Saldo inicial siempre positivo
+    } else {
+      effectiveBalance = movement.type === 'payment' ? amountNum : -amountNum;
+    }
+
+    //  Determinar nombre del movimiento
+    let sorteoName: string;
+    if (isOpeningBalance) {
+      sorteoName = 'Saldo del mes anterior';
+    } else if (movement.type === 'payment') {
+      sorteoName = 'Pago recibido';
+    } else {
+      sorteoName = 'Cobro realizado';
+    }
 
     movementItems.push({
       sorteoId: `mov-${movement.id}`,
-      sorteoName: movement.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
+      sorteoName,
       scheduledAt: scheduledAt.toISOString(),
       date: movement.date,
       time: timeToDisplay, //  Usar time validado o createdAt convertido a CR
@@ -213,7 +233,8 @@ export function intercalateSorteosAndMovements(
       ticketCount: 0,
 
       // Campos específicos de movimiento
-      type: movement.type,
+      //  CRÍTICO: Mapear opening_balance a initial_balance para compatibilidad con SorteoOrMovement
+      type: isOpeningBalance ? 'initial_balance' : movement.type as "payment" | "collection",
       amount: amountNum, //  CRÍTICO: Convertir a Number (puede venir como Decimal de Prisma)
       method: movement.method,
       notes: movement.notes,
