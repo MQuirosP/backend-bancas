@@ -2069,11 +2069,12 @@ gs."hour24" ASC
           const totalTickets = sorteosDelDia.reduce((sum, s) => sum + (s.ticketCount || 0), 0);
 
           // Calcular totalPaid y totalCollected desde movimientos del día
+          // Excluir el movimiento especial "Saldo del mes anterior" del cálculo
           const totalPaid = movimientosDelDia
-            .filter((m: any) => m.type === "payment")
+            .filter((m: any) => m.type === "payment" && !m.sorteoId?.includes('previous-month-balance'))
             .reduce((sum: number, m: any) => sum + (m.amount || 0), 0);
           const totalCollected = movimientosDelDia
-            .filter((m: any) => m.type === "collection")
+            .filter((m: any) => m.type === "collection" && !m.sorteoId?.includes('previous-month-balance'))
             .reduce((sum: number, m: any) => sum + (m.amount || 0), 0);
 
           // Calcular totalBalance y totalRemainingBalance
