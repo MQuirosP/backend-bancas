@@ -1389,10 +1389,45 @@ export const AccountsService = {
         }
 
         // Intercalar sorteos y movimientos
-        //  CRÍTICO: Para el primer día del mes, initialAccumulated es el saldo del mes anterior.
-        // Ya no inyectamos un movimiento virtual; el saldo inicia directamente desde la base.
+        //  CRÍTICO: Para el primer día del mes, agregar movimiento especial "Saldo del mes anterior"
         const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
-        const initialAccumulated = isFirstDay ? previousMonthBalance : lastDayAccumulated;
+
+        //  NUEVO: Agregar movimiento visual del saldo del mes anterior para el primer día
+        if (isFirstDay && previousMonthBalance !== 0) {
+            // Crear ID único basado en los filtros
+            let movementId = 'previous-month-balance';
+            if (filters.dimension === 'banca' && filters.bancaId) {
+                movementId += `-banca-${filters.bancaId}`;
+            } else if (filters.dimension === 'ventana' && filters.ventanaId) {
+                movementId += `-ventana-${filters.ventanaId}`;
+            } else if (filters.dimension === 'vendedor' && filters.vendedorId) {
+                movementId += `-vendedor-${filters.vendedorId}`;
+            } else {
+                movementId += `-${filters.dimension}-all`;
+            }
+
+            // Verificar que no exista ya
+            const alreadyExists = movements.some((m: any) => m.id === movementId);
+            if (!alreadyExists) {
+                // Crear movimiento especial al INICIO del día (00:00 CR = 06:00 UTC)
+                const openingBalanceMovement = {
+                    id: movementId,
+                    type: 'opening_balance' as const,
+                    amount: previousMonthBalance,
+                    method: 'Saldo del mes anterior',
+                    notes: 'Saldo arrastrado del mes anterior',
+                    isReversed: false,
+                    createdAt: new Date(Date.UTC(year, month - 1, day, 6, 0, 0, 0)).toISOString(),
+                    date: date,
+                    time: '00:00', // Hora CR para que sea el primero
+                    // Campos adicionales para que intercalateSorteosAndMovements lo procese correctamente
+                    isOpeningBalance: true,
+                };
+                movements.unshift(openingBalanceMovement);
+            }
+        }
+
+        const initialAccumulated = isFirstDay ? 0 : lastDayAccumulated; // Ahora inicia en 0 porque el saldo viene en el movimiento
 
         //  LOGGING: Verificar que initialAccumulated tenga el valor correcto
         logger.info({
