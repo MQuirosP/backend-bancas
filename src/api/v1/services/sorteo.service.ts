@@ -1908,7 +1908,12 @@ gs."hour24" ASC
             const hasValidTime = movement.time && typeof movement.time === 'string' && movement.time.trim().length > 0;
             const [year, month, day] = movement.date.split('-').map(Number);
 
-            if (hasValidTime) {
+            //  CRÍTICO: El saldo del mes anterior SIEMPRE debe ser el primer evento del día
+            if (isOpeningBalance) {
+              // Forzar hora 00:00:00 para que sea el primer evento cronológicamente
+              scheduledAt = new Date(Date.UTC(year, month - 1, day, 6, 0, 0, 0)); // 00:00 CR = 06:00 UTC
+              timeDisplay = "12:00AM ";
+            } else if (hasValidTime) {
               // Usar movement.time (formato HH:MM en hora CR)
               const [hours, minutes] = movement.time.split(':').map(Number);
 
