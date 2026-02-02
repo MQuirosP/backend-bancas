@@ -329,7 +329,7 @@ function buildTicketBaseFilters(
   ];
 
   if (filters.ventanaId) {
-    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."ventanaId"`)} = ${filters.ventanaId}`);
+    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."ventanaId"`)} = ${filters.ventanaId}::uuid`);
   }
 
   // Filtrar por banca activa (para ADMIN multibanca)
@@ -342,7 +342,7 @@ function buildTicketBaseFilters(
   }
 
   if (filters.loteriaId) {
-    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."loteriaId"`)} = ${filters.loteriaId}`);
+    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."loteriaId"`)} = ${filters.loteriaId}::uuid`);
   }
 
   let combined = conditions[0];
@@ -1711,6 +1711,8 @@ export const DashboardService = {
         total_sales: number;
         total_commissions: number;
         total_tickets: number;
+        total_payout: number;
+        total_winners: number;
       }>
     >(
       Prisma.sql`
@@ -1718,7 +1720,9 @@ export const DashboardService = {
           ${selectClause} as date_bucket,
           COALESCE(SUM(t."totalAmount"), 0) as total_sales,
           COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
-          COUNT(DISTINCT t.id) as total_tickets
+          COUNT(DISTINCT t.id) as total_tickets,
+          COALESCE(SUM(t."totalPayout"), 0) as total_payout,
+          COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as total_winners
         FROM "Ticket" t
         WHERE ${baseFilters}
         GROUP BY ${groupByClause}
@@ -1734,6 +1738,8 @@ export const DashboardService = {
       sales: number;
       commissions: number;
       tickets: number;
+      payout: number;
+      winners: number;
     }> = [];
 
     if (filters.compare) {
@@ -1753,6 +1759,8 @@ export const DashboardService = {
           total_sales: number;
           total_commissions: number;
           total_tickets: number;
+          total_payout: number;
+          total_winners: number;
         }>
       >(
         Prisma.sql`
@@ -1760,7 +1768,9 @@ export const DashboardService = {
             ${selectClause} as date_bucket,
             COALESCE(SUM(t."totalAmount"), 0) as total_sales,
             COALESCE(SUM(t."totalCommission"), 0) as total_commissions,
-            COUNT(DISTINCT t.id) as total_tickets
+            COUNT(DISTINCT t.id) as total_tickets,
+            COALESCE(SUM(t."totalPayout"), 0) as total_payout,
+            COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as total_winners
           FROM "Ticket" t
           WHERE ${prevBaseFilters}
           GROUP BY ${groupByClause}
@@ -1780,6 +1790,8 @@ export const DashboardService = {
           sales: Number(row.total_sales) || 0,
           commissions: Number(row.total_commissions) || 0,
           tickets: Number(row.total_tickets) || 0,
+          payout: Number(row.total_payout) || 0,
+          winners: Number(row.total_winners) || 0,
         };
       });
     }
@@ -1800,6 +1812,8 @@ export const DashboardService = {
           sales: Number(row.total_sales) || 0,
           commissions: Number(row.total_commissions) || 0,
           tickets: Number(row.total_tickets) || 0,
+          payout: Number(row.total_payout) || 0,
+          winners: Number(row.total_winners) || 0,
         };
       }),
       comparison: filters.compare ? comparisonData : undefined, //  NUEVO: Datos del período anterior
