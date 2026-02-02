@@ -514,31 +514,49 @@ export const SorteoService = {
         },
       });
 
-      // 3.2 Pagar NUMERO
-      // IMPORTANTE: Excluir tickets CANCELLED y solo jugadas activas
-      const numeroWinners = await tx.jugada.findMany({
-        where: {
-          ticket: {
-            sorteoId: id,
-            status: { not: "CANCELLED" }, // Excluir tickets cancelados
-            isActive: true, // Solo tickets activos
-            deletedAt: null, // Solo tickets no eliminados
-            id: { notIn: Array.from(excludedTicketIds) }, //  NUEVO: Excluir tickets de listas bloqueadas
-          },
-          type: "NUMERO",
-          number: winningNumber,
-          isActive: true,
-        },
-        select: {
-          id: true,
-          amount: true,
-          finalMultiplierX: true,
-          ticketId: true,
-        },
-      });
+      // 3.2 Buscar ganadores NUMERO y REVENTADO en paralelo
+      const ticketFilter = {
+        sorteoId: id,
+        status: { not: "CANCELLED" as const },
+        isActive: true,
+        deletedAt: null,
+        id: { notIn: Array.from(excludedTicketIds) },
+      };
 
-      // Optimización: Ejecutar updates en paralelo por batches
+      const [numeroWinners, reventadoWinners] = await Promise.all([
+        // NUMERO winners
+        tx.jugada.findMany({
+          where: {
+            ticket: ticketFilter,
+            type: "NUMERO",
+            number: winningNumber,
+            isActive: true,
+          },
+          select: {
+            id: true,
+            amount: true,
+            finalMultiplierX: true,
+            ticketId: true,
+          },
+        }),
+        // REVENTADO winners (solo si extraX > 0)
+        extraX > 0
+          ? tx.jugada.findMany({
+              where: {
+                ticket: ticketFilter,
+                type: "REVENTADO",
+                reventadoNumber: winningNumber,
+                isActive: true,
+              },
+              select: { id: true, amount: true, ticketId: true },
+            })
+          : Promise.resolve([]),
+      ]);
+
+      // 3.3 Actualizar jugadas ganadoras en paralelo por batches
       const BATCH_SIZE = 100;
+
+      // Updates de NUMERO
       for (let i = 0; i < numeroWinners.length; i += BATCH_SIZE) {
         const batch = numeroWinners.slice(i, i + BATCH_SIZE);
         await Promise.all(
@@ -552,48 +570,25 @@ export const SorteoService = {
         );
       }
 
-      // 3.3 Pagar REVENTADO (y asignar multiplierId)
-      // Solo paga si extraX > 0 (es decir, si salió multiplicador extra)
-      let reventadoWinners: { id: string; amount: number; ticketId: string }[] = [];
-
-      if (extraX > 0) {
-        // IMPORTANTE: Excluir tickets CANCELLED y solo jugadas activas
-        reventadoWinners = await tx.jugada.findMany({
-          where: {
-            ticket: {
-              sorteoId: id,
-              status: { not: "CANCELLED" }, // Excluir tickets cancelados
-              isActive: true, // Solo tickets activos
-              deletedAt: null, // Solo tickets no eliminados
-              id: { notIn: Array.from(excludedTicketIds) }, //  NUEVO: Excluir tickets de listas bloqueadas
-            },
-            type: "REVENTADO",
-            reventadoNumber: winningNumber,
-            isActive: true,
-          },
-          select: { id: true, amount: true, ticketId: true },
-        });
-
-        // Optimización: Ejecutar updates en paralelo por batches
-        for (let i = 0; i < reventadoWinners.length; i += BATCH_SIZE) {
-          const batch = reventadoWinners.slice(i, i + BATCH_SIZE);
-          await Promise.all(
-            batch.map((j) => {
-              const payout = j.amount * extraX;
-              return tx.jugada.update({
-                where: { id: j.id },
-                data: {
-                  isWinner: true,
-                  finalMultiplierX: extraX,
-                  payout,
-                  ...(extraMultiplierId
-                    ? { multiplier: { connect: { id: extraMultiplierId } } }
-                    : {}),
-                },
-              });
-            })
-          );
-        }
+      // Updates de REVENTADO (solo si hay ganadores)
+      for (let i = 0; i < reventadoWinners.length; i += BATCH_SIZE) {
+        const batch = reventadoWinners.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          batch.map((j) => {
+            const payout = j.amount * extraX;
+            return tx.jugada.update({
+              where: { id: j.id },
+              data: {
+                isWinner: true,
+                finalMultiplierX: extraX,
+                payout,
+                ...(extraMultiplierId
+                  ? { multiplier: { connect: { id: extraMultiplierId } } }
+                  : {}),
+              },
+            });
+          })
+        );
       }
 
       // 3.4 Marcar tickets y calcular totalPayout para ganadores
