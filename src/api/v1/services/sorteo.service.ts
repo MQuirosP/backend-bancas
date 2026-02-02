@@ -1993,11 +1993,75 @@ gs."hour24" ASC
         return timeA - timeB;
       });
 
+      //  PASO 4.5: Obtener el acumulado inicial para el primer día del rango consultado
+      //  CRÍTICO: Esto asegura que el accumulated de cada evento sea ABSOLUTO (desde inicio del mes),
+      //  no relativo al período consultado. Así el acumulado es consistente sin importar el filtro.
+      let initialAccumulatedForRange = 0;
+
+      if (allEvents.length > 0) {
+        const firstEventDate = allEvents[0].date;
+        const [firstYear, firstMonth, firstDay] = firstEventDate.split('-').map(Number);
+
+        if (firstDay === 1) {
+          //  Si el rango empieza el día 1 del mes, usar el saldo del mes anterior
+          initialAccumulatedForRange = Number(rangePreviousMonthBalance) || 0;
+        } else {
+          //  Si el rango NO empieza el día 1, obtener el accumulatedBalance del día anterior
+          //  desde AccountStatement (fuente de verdad)
+          const previousDay = new Date(Date.UTC(firstYear, firstMonth - 1, firstDay - 1, 0, 0, 0, 0));
+          const previousDayStatement = await prisma.accountStatement.findFirst({
+            where: {
+              vendedorId,
+              date: previousDay,
+            },
+            select: { accumulatedBalance: true },
+          });
+
+          if (previousDayStatement) {
+            initialAccumulatedForRange = Number(previousDayStatement.accumulatedBalance) || 0;
+          } else {
+            //  Fallback: si no hay statement del día anterior, calcular desde inicio del mes
+            //  Obtener todos los statements desde el día 1 hasta el día anterior
+            const monthStart = new Date(Date.UTC(firstYear, firstMonth - 1, 1, 0, 0, 0, 0));
+            const lastStatementBeforeRange = await prisma.accountStatement.findFirst({
+              where: {
+                vendedorId,
+                date: {
+                  gte: monthStart,
+                  lt: previousDay,
+                },
+              },
+              orderBy: { date: 'desc' },
+              select: { accumulatedBalance: true },
+            });
+
+            if (lastStatementBeforeRange) {
+              initialAccumulatedForRange = Number(lastStatementBeforeRange.accumulatedBalance) || 0;
+            } else {
+              //  Si no hay statements previos en el mes, usar saldo del mes anterior
+              initialAccumulatedForRange = Number(rangePreviousMonthBalance) || 0;
+            }
+          }
+        }
+      }
+
       //  PASO 5: Calcular acumulado y chronologicalIndex por evento (sorteo/movimiento)
-      //  CRÍTICO: Inicializar acumulado en 0 siempre. El saldo inicial viene en el primer movimiento especial.
-      let eventAccumulated = 0;
+      //  CRÍTICO: Inicializar con el acumulado del día anterior al rango (o saldo mes anterior si es día 1)
+      //  Esto garantiza que el accumulated sea ABSOLUTO, no relativo al período consultado
+      let eventAccumulated = initialAccumulatedForRange;
+      let lastProcessedDate = '';
       const totalEvents = allEvents.length;
       const dataWithAccumulated = allEvents.map((event, index) => {
+        const eventDate = event.date;
+
+        //  CRÍTICO: Si cambiamos de día dentro del rango, verificar si necesitamos
+        //  ajustar el acumulado (en caso de gaps entre días sin el movimiento especial)
+        if (lastProcessedDate && eventDate !== lastProcessedDate) {
+          //  El acumulado ya incluye todos los eventos del día anterior,
+          //  así que solo continuamos sumando (el carry-over es automático)
+        }
+        lastProcessedDate = eventDate;
+
         //  CRÍTICO: Usar Number() para garantizar suma numérica (evitar concatenación de strings)
         eventAccumulated += Number(event.subtotal) || 0;
         return {
