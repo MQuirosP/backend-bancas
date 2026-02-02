@@ -469,19 +469,24 @@ const SorteoRepository = {
         });
         accountPaymentsDeleted = res.count;
 
-        await Promise.all(
-          statementIds.map((stmt) =>
-            tx.accountStatement.update({
-              where: { id: stmt.id },
-              data: {
-                totalPaid: 0,
-                remainingBalance: stmt.balance,
-                isSettled: false,
-                canEdit: true,
-              },
-            })
-          )
-        );
+        // Optimización: Ejecutar updates en batches
+        const BATCH_SIZE = 100;
+        for (let i = 0; i < statementIds.length; i += BATCH_SIZE) {
+          const batch = statementIds.slice(i, i + BATCH_SIZE);
+          await Promise.all(
+            batch.map((stmt) =>
+              tx.accountStatement.update({
+                where: { id: stmt.id },
+                data: {
+                  totalPaid: 0,
+                  remainingBalance: stmt.balance,
+                  isSettled: false,
+                  canEdit: true,
+                },
+              })
+            )
+          );
+        }
       }
 
       const updated = await tx.sorteo.update({
@@ -519,7 +524,7 @@ const SorteoRepository = {
       });
 
       return updated;
-    });
+    }, { timeout: 180000 }); // 3 minutos para sorteos con muchos tickets/jugadas
 
     return sorteo;
   },
