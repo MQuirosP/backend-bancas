@@ -1716,12 +1716,14 @@ gs."hour24" ASC
         const alreadyExists = firstDayMovements.some((m: any) => m.id === movementId);
 
         // Solo agregar si no existe ya y si el saldo es diferente de 0
-        if (!alreadyExists && rangePreviousMonthBalance !== 0) {
+        // CRÍTICO: Usar Number() para asegurar comparación numérica (evitar "0" !== 0)
+        const numericPreviousBalance = Number(rangePreviousMonthBalance) || 0;
+        if (!alreadyExists && numericPreviousBalance !== 0) {
           // Agregar movimiento especial al inicio del día
           firstDayMovements.unshift({
             id: movementId,
             type: "payment" as const,
-            amount: rangePreviousMonthBalance,
+            amount: numericPreviousBalance,
             method: "Saldo del mes anterior",
             notes: `Saldo arrastrado del mes anterior`,
             isReversed: false,
@@ -1944,7 +1946,8 @@ gs."hour24" ASC
             }
 
             //  CRÍTICO: El movimiento especial tiene subtotal: 0 porque el saldo ya está en eventAccumulated inicial
-            const subtotal = movement.type === 'payment' ? (movement.amount || 0) : -(movement.amount || 0);
+            //  CRÍTICO: Usar Number() para garantizar tipo numérico y evitar concatenación de strings
+            const subtotal = movement.type === 'payment' ? Number(movement.amount || 0) : -Number(movement.amount || 0);
 
             movementItems.push({
               sorteoId: `mov-${movement.id}`,
@@ -1995,7 +1998,8 @@ gs."hour24" ASC
       let eventAccumulated = 0;
       const totalEvents = allEvents.length;
       const dataWithAccumulated = allEvents.map((event, index) => {
-        eventAccumulated += event.subtotal;
+        //  CRÍTICO: Usar Number() para garantizar suma numérica (evitar concatenación de strings)
+        eventAccumulated += Number(event.subtotal) || 0;
         return {
           ...event,
           accumulated: eventAccumulated,
@@ -2285,6 +2289,8 @@ gs."hour24" ASC
       );
 
       // Sumar saldo del mes anterior al acumulado del mes actual
+      //  CRÍTICO: Usar Number() para garantizar sumas numéricas (evitar concatenación de strings)
+      const numericPreviousMonthBalance = Number(previousMonthBalance) || 0;
       const monthlyAccumulated = {
         totalSales: monthlyTotalSales,
         totalCommission: monthlyTotalCommission,
@@ -2294,9 +2300,9 @@ gs."hour24" ASC
         totalTickets: monthlyTotalTickets,
         totalPaid: monthlyTotalPaid,
         totalCollected: monthlyTotalCollected,
-        totalBalance: previousMonthBalance + monthlyTotalBalance,
-        totalRemainingBalance: previousMonthBalance + monthlyTotalRemainingBalance,
-        totalSubtotal: previousMonthBalance + monthlyTotalRemainingBalance, //  DEPRECATED: igual a totalRemainingBalance
+        totalBalance: numericPreviousMonthBalance + monthlyTotalBalance,
+        totalRemainingBalance: numericPreviousMonthBalance + monthlyTotalRemainingBalance,
+        totalSubtotal: numericPreviousMonthBalance + monthlyTotalRemainingBalance, //  DEPRECATED: igual a totalRemainingBalance
       };
       const result = {
         data: daysArray,

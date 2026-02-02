@@ -249,7 +249,8 @@ export async function getPreviousMonthFinalBalance(
         // PASO 3: Caché
         const cacheKey = { effectiveMonth, dimension, ventanaId, vendedorId, bancaId };
         const cachedBalance = await getCachedPreviousMonthBalance(cacheKey);
-        if (cachedBalance !== null) return cachedBalance;
+        //  CRÍTICO: Convertir a Number() para garantizar tipo numérico (el caché podría tener strings)
+        if (cachedBalance !== null) return Number(cachedBalance) || 0;
 
         // PASO 4: Calcular desde fuente
         const balance = await calculatePreviousMonthBalanceFromSource(effectiveMonth, dimension, { ventanaId, vendedorId, bancaId });
