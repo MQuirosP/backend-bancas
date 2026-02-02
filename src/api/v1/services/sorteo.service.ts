@@ -498,7 +498,7 @@ export const SorteoService = {
     //  NUEVO: Obtener tickets excluidos ANTES de evaluar
     const excludedTicketIds = await getExcludedTicketIds(id);
 
-    // 3) Transacción
+    // 3) Transacción (timeout aumentado para sorteos con muchos ganadores)
     const evaluationResult = await prisma.$transaction(async (tx) => {
       // 3.1 Snapshot del sorteo
       await tx.sorteo.update({
@@ -537,12 +537,19 @@ export const SorteoService = {
         },
       });
 
-      for (const j of numeroWinners) {
-        const payout = j.amount * j.finalMultiplierX;
-        await tx.jugada.update({
-          where: { id: j.id },
-          data: { isWinner: true, payout },
-        });
+      // Optimización: Ejecutar updates en paralelo por batches
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < numeroWinners.length; i += BATCH_SIZE) {
+        const batch = numeroWinners.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          batch.map((j) => {
+            const payout = j.amount * j.finalMultiplierX;
+            return tx.jugada.update({
+              where: { id: j.id },
+              data: { isWinner: true, payout },
+            });
+          })
+        );
       }
 
       // 3.3 Pagar REVENTADO (y asignar multiplierId)
@@ -567,69 +574,87 @@ export const SorteoService = {
           select: { id: true, amount: true, ticketId: true },
         });
 
-        for (const j of reventadoWinners) {
-          const payout = j.amount * extraX;
-          await tx.jugada.update({
-            where: { id: j.id },
-            data: {
-              isWinner: true,
-              finalMultiplierX: extraX, // snapshot a la jugada
-              payout,
-              ...(extraMultiplierId
-                ? { multiplier: { connect: { id: extraMultiplierId } } }
-                : {}),
-            },
-          });
+        // Optimización: Ejecutar updates en paralelo por batches
+        for (let i = 0; i < reventadoWinners.length; i += BATCH_SIZE) {
+          const batch = reventadoWinners.slice(i, i + BATCH_SIZE);
+          await Promise.all(
+            batch.map((j) => {
+              const payout = j.amount * extraX;
+              return tx.jugada.update({
+                where: { id: j.id },
+                data: {
+                  isWinner: true,
+                  finalMultiplierX: extraX,
+                  payout,
+                  ...(extraMultiplierId
+                    ? { multiplier: { connect: { id: extraMultiplierId } } }
+                    : {}),
+                },
+              });
+            })
+          );
         }
       }
 
       // 3.4 Marcar tickets y calcular totalPayout para ganadores
-      const winningTicketIds = new Set<string>([
-        ...numeroWinners.map((j) => j.ticketId),
-        ...reventadoWinners.map((j) => j.ticketId),
-      ]);
+      // Calcular payouts en memoria para evitar aggregates individuales
+      const payoutsByTicket = new Map<string, number>();
+      for (const j of numeroWinners) {
+        const payout = j.amount * j.finalMultiplierX;
+        payoutsByTicket.set(j.ticketId, (payoutsByTicket.get(j.ticketId) || 0) + payout);
+      }
+      for (const j of reventadoWinners) {
+        const payout = j.amount * extraX;
+        payoutsByTicket.set(j.ticketId, (payoutsByTicket.get(j.ticketId) || 0) + payout);
+      }
+
+      const winningTicketIds = new Set<string>(payoutsByTicket.keys());
+      const winners = winningTicketIds.size;
 
       // IMPORTANTE: Solo evaluar tickets activos y no cancelados
       const tickets = await tx.ticket.findMany({
         where: {
           sorteoId: id,
-          status: { not: "CANCELLED" }, // Excluir tickets cancelados
-          isActive: true, // Solo tickets activos
-          deletedAt: null, // Solo tickets no eliminados
-          id: { notIn: Array.from(excludedTicketIds) }, //  NUEVO: Excluir tickets de listas bloqueadas
+          status: { not: "CANCELLED" },
+          isActive: true,
+          deletedAt: null,
+          id: { notIn: Array.from(excludedTicketIds) },
         },
         select: { id: true },
       });
 
-      let winners = 0;
-      for (const t of tickets) {
-        const tIsWinner = winningTicketIds.has(t.id);
-        if (tIsWinner) winners++;
+      // Optimización: Separar tickets ganadores y no ganadores
+      const losingTicketIds = tickets
+        .filter((t) => !winningTicketIds.has(t.id))
+        .map((t) => t.id);
+      const winningTickets = tickets.filter((t) => winningTicketIds.has(t.id));
 
-        // Si es ganador, calcular totalPayout sumando jugadas ganadoras
-        let totalPayout = 0;
-        let remainingAmount = 0;
-        if (tIsWinner) {
-          const winningJugadas = await tx.jugada.aggregate({
-            where: { ticketId: t.id, isWinner: true },
-            _sum: { payout: true },
-          });
-          totalPayout = winningJugadas._sum.payout || 0;
-          remainingAmount = totalPayout; // Inicialmente todo pendiente
-        }
-
-        await tx.ticket.update({
-          where: { id: t.id },
-          data: {
-            status: "EVALUATED",
-            isWinner: tIsWinner,
-            ...(tIsWinner ? {
-              totalPayout,
-              totalPaid: 0,
-              remainingAmount,
-            } : {}),
-          },
+      // Actualizar todos los tickets no ganadores en una sola operación
+      if (losingTicketIds.length > 0) {
+        await tx.ticket.updateMany({
+          where: { id: { in: losingTicketIds } },
+          data: { status: "EVALUATED", isWinner: false },
         });
+      }
+
+      // Actualizar tickets ganadores en paralelo por batches
+      for (let i = 0; i < winningTickets.length; i += BATCH_SIZE) {
+        const batch = winningTickets.slice(i, i + BATCH_SIZE);
+        await Promise.all(
+          batch.map((t) => {
+            const totalPayout = payoutsByTicket.get(t.id) || 0;
+            return tx.ticket.update({
+              where: { id: t.id },
+              data: {
+                status: "EVALUATED",
+                isWinner: true,
+                totalPayout,
+                totalPaid: 0,
+                remainingAmount: totalPayout,
+              },
+            });
+          })
+        );
       }
 
       await tx.sorteo.update({
@@ -657,7 +682,7 @@ export const SorteoService = {
       });
 
       return { winners, extraMultiplierX: extraX };
-    });
+    }, { timeout: 60000 }); // 60 segundos para sorteos con muchos ganadores
 
     // 4) Log adicional
     await ActivityService.log({
