@@ -538,7 +538,7 @@ export const SorteoService = {
       });
 
       // Optimización: Ejecutar updates en paralelo por batches
-      const BATCH_SIZE = 50;
+      const BATCH_SIZE = 100;
       for (let i = 0; i < numeroWinners.length; i += BATCH_SIZE) {
         const batch = numeroWinners.slice(i, i + BATCH_SIZE);
         await Promise.all(
@@ -682,7 +682,7 @@ export const SorteoService = {
       });
 
       return { winners, extraMultiplierX: extraX };
-    }, { timeout: 60000 }); // 60 segundos para sorteos con muchos ganadores
+    }, { timeout: 180000 }); // 3 minutos para sorteos con muchos tickets/jugadas
 
     // 4) Log adicional
     await ActivityService.log({
