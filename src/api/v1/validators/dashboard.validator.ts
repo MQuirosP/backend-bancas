@@ -40,6 +40,7 @@ export const DashboardQuerySchema = z
 
     // Export
     format: z.enum(["csv", "xlsx", "pdf"]).optional(),
+    sections: z.string().optional(), // Secciones a incluir en export (kpis,ventanas,loterias,vendedores)
 
     // Comparación
     compare: z.enum(["true", "false"]).transform(v => v === "true").optional(),
