@@ -73,12 +73,25 @@ export const TicketsReportService = {
 
     const { page, pageSize, skip } = normalizePagination(filters.page, filters.pageSize);
 
+    // Determinar qué status de ticket incluir según el filtro de pago
+    let ticketStatuses: TicketStatus[];
+    if (filters.paymentStatus === 'paid') {
+      // Tickets pagados: incluir PAID, PAGADO (y EVALUATED por si tienen remainingAmount=0)
+      ticketStatuses = [TicketStatus.EVALUATED, TicketStatus.PAID, TicketStatus.PAGADO];
+    } else if (filters.paymentStatus === 'unpaid' || filters.paymentStatus === 'partial') {
+      // Tickets pendientes o parciales: solo EVALUATED
+      ticketStatuses = [TicketStatus.EVALUATED];
+    } else {
+      // Todos: incluir todos los status relevantes
+      ticketStatuses = [TicketStatus.EVALUATED, TicketStatus.PAID, TicketStatus.PAGADO];
+    }
+
     // Construir filtros WHERE
     const where: Prisma.TicketWhereInput = {
       isWinner: true,
       isActive: true,
       deletedAt: null,
-      status: { in: [TicketStatus.EVALUATED, TicketStatus.ACTIVE] },
+      status: { in: ticketStatuses },
       createdAt: {
         gte: dateRange.from,
         lte: dateRange.to,
