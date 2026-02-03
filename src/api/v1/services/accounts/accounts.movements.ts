@@ -395,8 +395,8 @@ export async function registerPayment(data: {
         // 2. Calcular nuevos totales operativos
         const newTotalPaid = data.type === "payment" ? currentTotalPaid + data.amount : currentTotalPaid;
         const newTotalCollected = data.type === "collection" ? currentTotalCollected + data.amount : currentTotalCollected;
-        const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
-        const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
+        //  CRÍTICO: El balance operativo del día (sin acumular)
+        const newDayBalance = baseBalance - newTotalCollected + newTotalPaid;
 
         // 3.  CRÍTICO: Calcular accumulatedBalance ATÓMICAMENTE
         // Obtenemos el balance del día anterior dentro de la transacción de forma segura
@@ -443,7 +443,14 @@ export async function registerPayment(data: {
             }
         }
 
-        // 4. Actualizar statement con todos los campos calculados
+        // 4.  CRÍTICO: remainingBalance = accumulatedBalance (saldo acumulativo, NO solo del día)
+        // Esto asegura que el saldo mostrado sea el acumulado real desde el mes anterior
+        const newRemainingBalance = newAccumulatedBalance;
+
+        // 5. Calcular isSettled usando el saldo acumulado (remainingBalance)
+        const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
+
+        // 6. Actualizar statement con todos los campos calculados
         updatedStatement = await tx.accountStatement.update({
             where: { id: currentStatement.id },
             data: {
@@ -452,11 +459,11 @@ export async function registerPayment(data: {
                 totalPayouts: recalculatedStatement.totalPayouts,
                 listeroCommission: recalculatedStatement.listeroCommission,
                 vendedorCommission: recalculatedStatement.vendedorCommission,
-                balance: baseBalance,
+                balance: newDayBalance, //  balance operativo del día (para totales de período)
                 totalPaid: newTotalPaid,
                 totalCollected: newTotalCollected,
-                remainingBalance: newRemainingBalance,
-                accumulatedBalance: newAccumulatedBalance, //  ACTUALIZACIÓN ATÓMICA
+                remainingBalance: newRemainingBalance, //  CORREGIDO: saldo acumulativo
+                accumulatedBalance: newAccumulatedBalance, //  Redundante pero explícito
                 isSettled,
                 canEdit: !isSettled,
             },
@@ -564,8 +571,8 @@ export async function reversePayment(
 
         const newTotalPaid = payment.type === "payment" ? currentTotalPaid - payment.amount : currentTotalPaid;
         const newTotalCollected = payment.type === "collection" ? currentTotalCollected - payment.amount : currentTotalCollected;
-        const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
-        const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
+        //  CRÍTICO: Balance operativo del día (sin acumular)
+        const newDayBalance = baseBalance - newTotalCollected + newTotalPaid;
 
         let newAccumulatedBalance = 0;
         const [year, monthNum, dayNum] = dateStr.split('-').map(Number);
@@ -588,9 +595,13 @@ export async function reversePayment(
             }
         }
 
+        //  CRÍTICO: remainingBalance = accumulatedBalance (saldo acumulativo)
+        const newRemainingBalance = newAccumulatedBalance;
+        const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
+
         updatedStatement = await tx.accountStatement.update({
             where: { id: currentStatement.id },
-            data: { ticketCount: recalculatedStatement.ticketCount, totalSales: recalculatedStatement.totalSales, totalPayouts: recalculatedStatement.totalPayouts, listeroCommission: recalculatedStatement.listeroCommission, vendedorCommission: recalculatedStatement.vendedorCommission, balance: baseBalance, totalPaid: newTotalPaid, totalCollected: newTotalCollected, remainingBalance: newRemainingBalance, accumulatedBalance: newAccumulatedBalance, isSettled, canEdit: !isSettled }
+            data: { ticketCount: recalculatedStatement.ticketCount, totalSales: recalculatedStatement.totalSales, totalPayouts: recalculatedStatement.totalPayouts, listeroCommission: recalculatedStatement.listeroCommission, vendedorCommission: recalculatedStatement.vendedorCommission, balance: newDayBalance, totalPaid: newTotalPaid, totalCollected: newTotalCollected, remainingBalance: newRemainingBalance, accumulatedBalance: newAccumulatedBalance, isSettled, canEdit: !isSettled }
         });
     });
 
