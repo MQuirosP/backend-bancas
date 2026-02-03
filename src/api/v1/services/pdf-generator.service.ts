@@ -129,10 +129,10 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
           minute: '2-digit',
         });
 
-        doc.fontSize(11).font('Courier-Bold');
+        doc.fontSize(15).font('Courier-Bold');
         doc.text(`Usuario: ${userName}${userCode}`, { align: 'left' });
         doc.font('Courier');
-        doc.fontSize(9);
+        doc.fontSize(12);
         doc.text(`Fecha y hora de generación: ${generatedAt}`, { align: 'left' });
 
         //  NUEVO: Mostrar información de lotería, sorteo y multiplicador

@@ -36,8 +36,8 @@ export function resolveDateRange(
       break;
 
     case 'month':
-      // Últimos 30 días (incluyendo hoy)
-      start = startOfLocalDay(addLocalDays(now, -29));
+      // Mes actual (desde el día 1 hasta hoy)
+      start = startOfLocalDay(new Date(now.getFullYear(), now.getMonth(), 1));
       end = endOfLocalDay(now);
       break;
 
