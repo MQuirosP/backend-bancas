@@ -296,23 +296,53 @@ export class AccountStatementSyncService {
         }
       }
 
-      // Obtener movimientos del día
-      const movements = await AccountPaymentRepository.findMovementsByDateRange(
-        date, // Date UTC que representa día en CR
-        date, // Mismo día
-        dimension,
-        ventanaId,
-        vendedorId,
-        bancaId
-      );
+      // Obtener totales de movimientos usando el cliente de la transacción
+      const [totalP, totalC] = await Promise.all([
+        tx.accountPayment.aggregate({
+          where: {
+            accountStatementId: statement?.id || undefined,
+            // Si el statement no existe aún, necesitamos buscar por fecha y dimensiones
+            ...(!statement ? {
+              date: date,
+              vendedorId: vendedorId || null,
+              ventanaId: dimension === "vendedor" ? null : (finalVentanaId || null),
+              bancaId: finalBancaId || null,
+            } : {}),
+            isReversed: false,
+            type: "payment",
+            NOT: {
+              OR: [
+                { notes: { contains: 'Saldo arrastrado' } },
+                { method: 'Saldo del mes anterior' }
+              ]
+            }
+          },
+          _sum: { amount: true }
+        }),
+        tx.accountPayment.aggregate({
+          where: {
+            accountStatementId: statement?.id || undefined,
+            ...(!statement ? {
+              date: date,
+              vendedorId: vendedorId || null,
+              ventanaId: dimension === "vendedor" ? null : (finalVentanaId || null),
+              bancaId: finalBancaId || null,
+            } : {}),
+            isReversed: false,
+            type: "collection",
+            NOT: {
+              OR: [
+                { notes: { contains: 'Saldo arrastrado' } },
+                { method: 'Saldo del mes anterior' }
+              ]
+            }
+          },
+          _sum: { amount: true }
+        })
+      ]);
 
-      const dayMovements = movements.get(dateStrCR) || [];
-      const totalPaid = dayMovements
-        .filter((m: any) => m.type === "payment" && !m.isReversed && m.method !== "Saldo del mes anterior")
-        .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0);
-      const totalCollected = dayMovements
-        .filter((m: any) => m.type === "collection" && !m.isReversed && m.method !== "Saldo del mes anterior")
-        .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0);
+      const totalPaid = totalP._sum.amount || 0;
+      const totalCollected = totalC._sum.amount || 0;
 
       // Calcular balance del día
       const commissionToUse = dimension === "vendedor" ? vendedorCommission : listeroCommission;

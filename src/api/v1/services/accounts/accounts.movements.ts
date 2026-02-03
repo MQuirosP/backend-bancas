@@ -8,6 +8,7 @@ import { calculateIsSettled } from "./accounts.commissions";
 import { invalidateAccountStatementCache, invalidateBySorteoCache } from "../../../../utils/accountStatementCache";
 import { crDateService } from "../../../../utils/crDateService";
 import { recalculateMonthlyClosingForDimension } from "./monthlyClosing.service";
+import { getPreviousMonthFinalBalance } from "./accounts.balances";
 import logger from "../../../../core/logger";
 
 /**
@@ -293,14 +294,61 @@ export async function registerPayment(data: {
     let updatedStatement: any = undefined;
     let processedTime: string = "00:00";
     await prisma.$transaction(async (tx) => {
-        // Obtener totales actuales
-        const [currentTotalPaid, currentTotalCollected] = await Promise.all([
-            AccountPaymentRepository.getTotalPaid(statement.id),
-            AccountPaymentRepository.getTotalCollected(statement.id),
+        //  CRÍTICO: Obtener estado actual del statement DENTRO de la transacción
+        // Esto previene race conditions y asegura que usemos el canal correcto (tx)
+        const currentStatement = await tx.accountStatement.findUnique({
+            where: { id: statement.id },
+            select: {
+                id: true,
+                date: true,
+                vendedorId: true,
+                ventanaId: true,
+                bancaId: true,
+                accumulatedBalance: true
+            }
+        });
+
+        if (!currentStatement) {
+            throw new AppError("Estado de cuenta no encontrado en la transacción", 500, "STATEMENT_TRANSACTION_ERROR");
+        }
+
+        // Obtener totales actuales usando el cliente de la transacción
+        //  REGLA CRÍTICA: NO usar repositorios globales dentro de tx que usan el prisma global
+        const [totalP, totalC] = await Promise.all([
+            tx.accountPayment.aggregate({
+                where: {
+                    accountStatementId: currentStatement.id,
+                    isReversed: false,
+                    type: "payment",
+                    NOT: {
+                        OR: [
+                            { notes: { contains: 'Saldo arrastrado del mes anterior' } },
+                            { method: 'Saldo del mes anterior' }
+                        ]
+                    }
+                },
+                _sum: { amount: true }
+            }),
+            tx.accountPayment.aggregate({
+                where: {
+                    accountStatementId: currentStatement.id,
+                    isReversed: false,
+                    type: "collection",
+                    NOT: {
+                        OR: [
+                            { notes: { contains: 'Saldo arrastrado del mes anterior' } },
+                            { method: 'Saldo del mes anterior' }
+                        ]
+                    }
+                },
+                _sum: { amount: true }
+            })
         ]);
 
+        const currentTotalPaid = totalP._sum.amount || 0;
+        const currentTotalCollected = totalC._sum.amount || 0;
+
         const baseBalance = recalculatedStatement.balance;
-        const currentRemainingBalance = baseBalance - currentTotalCollected + currentTotalPaid;
 
         // Validar monto
         if (data.type === "payment" && data.amount <= 0) {
@@ -318,53 +366,15 @@ export async function registerPayment(data: {
             throw new AppError(`Error al procesar la hora: ${error.message}`, 400, "TIME_VALIDATION_ERROR");
         }
 
-        // VALIDACIÓN PREVENTIVA: Asegurar que el vendedorId del statement coincida con el del payment
-        // Esto previene el bug histórico donde pagos se vinculaban al statement incorrecto
-        if (data.vendedorId && statement.vendedorId !== data.vendedorId) {
-            logger.error({
-                layer: "service",
-                action: "PAYMENT_STATEMENT_MISMATCH_VENDEDOR",
-                payload: {
-                    paymentVendedorId: data.vendedorId,
-                    statementVendedorId: statement.vendedorId,
-                    statementId: statement.id,
-                    date: data.date,
-                    amount: data.amount,
-                    type: data.type,
-                },
-            });
-            throw new AppError(
-                `Error de integridad: El payment es para vendedor ${data.vendedorId} pero el statement encontrado es de vendedor ${statement.vendedorId}. Contacte soporte.`,
-                500,
-                "STATEMENT_VENDEDOR_MISMATCH"
-            );
+        // VALIDACIÓN PREVENTIVA: Asegurar integridad de IDs
+        if (data.vendedorId && currentStatement.vendedorId !== data.vendedorId) {
+            throw new AppError(`Error de integridad: Vendedor mismatch.`, 500, "STATEMENT_VENDEDOR_MISMATCH");
         }
 
-        // VALIDACIÓN PREVENTIVA: Para pagos de ventana (sin vendedorId), verificar que el statement sea de ventana
-        if (!data.vendedorId && finalVentanaId && statement.vendedorId !== null) {
-            logger.error({
-                layer: "service",
-                action: "PAYMENT_STATEMENT_MISMATCH_VENTANA",
-                payload: {
-                    paymentVentanaId: finalVentanaId,
-                    statementVendedorId: statement.vendedorId,
-                    statementId: statement.id,
-                    date: data.date,
-                    amount: data.amount,
-                    type: data.type,
-                },
-            });
-            throw new AppError(
-                `Error de integridad: El payment es para ventana ${finalVentanaId} pero el statement encontrado tiene vendedorId ${statement.vendedorId}. Contacte soporte.`,
-                500,
-                "STATEMENT_VENTANA_MISMATCH"
-            );
-        }
-
-        // Crear pago
+        // 1. Crear el registro de pago
         payment = await tx.accountPayment.create({
             data: {
-                accountStatementId: statement.id,
+                accountStatementId: currentStatement.id,
                 date: paymentDate,
                 month,
                 time: processedTime,
@@ -382,15 +392,60 @@ export async function registerPayment(data: {
             },
         });
 
-        // Calcular nuevos totales
+        // 2. Calcular nuevos totales operativos
         const newTotalPaid = data.type === "payment" ? currentTotalPaid + data.amount : currentTotalPaid;
         const newTotalCollected = data.type === "collection" ? currentTotalCollected + data.amount : currentTotalCollected;
         const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
         const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
 
-        // Actualizar statement
+        // 3.  CRÍTICO: Calcular accumulatedBalance ATÓMICAMENTE
+        // Obtenemos el balance del día anterior dentro de la transacción de forma segura
+        let newAccumulatedBalance = 0;
+        const [year, monthNum, dayNum] = data.date.split('-').map(Number);
+
+        if (dayNum === 1) {
+            // Primer día del mes: usar saldo del mes anterior
+            const prevMonthBalance = await getPreviousMonthFinalBalance(
+                month,
+                dimension,
+                finalVentanaId || undefined,
+                data.vendedorId || undefined,
+                finalBancaId || undefined
+            );
+            newAccumulatedBalance = prevMonthBalance + baseBalance - newTotalCollected + newTotalPaid;
+        } else {
+            // No es el primer día: buscar acumulado del día anterior EXACTO
+            const previousDayDate = new Date(Date.UTC(year, monthNum - 1, dayNum - 1));
+
+            const prevStatement = await tx.accountStatement.findFirst({
+                where: dimension === "vendedor" && data.vendedorId
+                    ? { date: previousDayDate, vendedorId: data.vendedorId }
+                    : dimension === "ventana" && finalVentanaId
+                        ? { date: previousDayDate, ventanaId: finalVentanaId, vendedorId: null }
+                        : { date: previousDayDate, bancaId: finalBancaId, ventanaId: null, vendedorId: null },
+                select: { accumulatedBalance: true }
+            });
+
+            const prevAccumulated = Number(prevStatement?.accumulatedBalance || 0);
+
+            // Si el día anterior no existe, usamos el saldo del mes como fallback
+            if (!prevStatement) {
+                const prevMonthBalance = await getPreviousMonthFinalBalance(
+                    month,
+                    dimension,
+                    finalVentanaId || undefined,
+                    data.vendedorId || undefined,
+                    finalBancaId || undefined
+                );
+                newAccumulatedBalance = prevMonthBalance + baseBalance - newTotalCollected + newTotalPaid;
+            } else {
+                newAccumulatedBalance = prevAccumulated + baseBalance - newTotalCollected + newTotalPaid;
+            }
+        }
+
+        // 4. Actualizar statement con todos los campos calculados
         updatedStatement = await tx.accountStatement.update({
-            where: { id: statement.id },
+            where: { id: currentStatement.id },
             data: {
                 ticketCount: recalculatedStatement.ticketCount,
                 totalSales: recalculatedStatement.totalSales,
@@ -401,6 +456,7 @@ export async function registerPayment(data: {
                 totalPaid: newTotalPaid,
                 totalCollected: newTotalCollected,
                 remainingBalance: newRemainingBalance,
+                accumulatedBalance: newAccumulatedBalance, //  ACTUALIZACIÓN ATÓMICA
                 isSettled,
                 canEdit: !isSettled,
             },
@@ -420,520 +476,140 @@ export async function registerPayment(data: {
 
     //  CRÍTICO: Si se registró un pago/cobro en un mes que ya tiene cierre mensual,
     // recalcular automáticamente el cierre para mantener los saldos actualizados
-    // Esto se hace de forma asíncrona para no bloquear la creación del pago
-    const paymentMonth = month; // month ya está en formato "YYYY-MM"
+    const paymentMonth = month;
     const nowCRStr = crDateService.dateUTCToCRString(new Date());
     const [currentYear, currentMonth] = nowCRStr.split('-').map(Number);
-    const paymentMonthYear = parseInt(paymentMonth.split('-')[0]);
-    const paymentMonthNum = parseInt(paymentMonth.split('-')[1]);
+    const [pYear, pMonth] = paymentMonth.split('-').map(Number);
 
-    // Verificar si el mes del pago es anterior al mes actual (ya cerrado)
-    const isPastMonth = paymentMonthYear < currentYear ||
-        (paymentMonthYear === currentYear && paymentMonthNum < currentMonth);
-
-    if (isPastMonth) {
-        // Recalcular cierre mensual de forma asíncrona (no bloquear)
+    if (pYear < currentYear || (pYear === currentYear && pMonth < currentMonth)) {
         Promise.all([
-            // Recalcular para vendedor si aplica
-            data.vendedorId ? recalculateMonthlyClosingForDimension(
-                paymentMonth,
-                "vendedor",
-                finalVentanaId || undefined,
-                data.vendedorId,
-                finalBancaId || undefined
-            ) : Promise.resolve(),
-
-            // Recalcular para ventana si aplica
-            finalVentanaId ? recalculateMonthlyClosingForDimension(
-                paymentMonth,
-                "ventana",
-                finalVentanaId,
-                undefined,
-                finalBancaId || undefined
-            ) : Promise.resolve(),
-
-            // Recalcular para banca si aplica
-            finalBancaId ? recalculateMonthlyClosingForDimension(
-                paymentMonth,
-                "banca",
-                undefined,
-                undefined,
-                finalBancaId
-            ) : Promise.resolve(),
+            data.vendedorId ? recalculateMonthlyClosingForDimension(paymentMonth, "vendedor", finalVentanaId || undefined, data.vendedorId, finalBancaId || undefined) : Promise.resolve(),
+            finalVentanaId ? recalculateMonthlyClosingForDimension(paymentMonth, "ventana", finalVentanaId, undefined, finalBancaId || undefined) : Promise.resolve(),
+            finalBancaId ? recalculateMonthlyClosingForDimension(paymentMonth, "banca", undefined, undefined, finalBancaId) : Promise.resolve(),
         ]).catch((error) => {
-            // Log error pero no bloquear
-            logger.error({
-                layer: "service",
-                action: "MONTHLY_CLOSING_AUTO_RECALCULATE_ERROR",
-                payload: {
-                    paymentId: payment.id,
-                    paymentMonth,
-                    error: error.message,
-                },
-            });
+            logger.error({ layer: "service", action: "MONTHLY_CLOSING_AUTO_RECALCULATE_ERROR", payload: { paymentId: payment.id, error: error.message } });
         });
     }
 
-    //  CRÍTICO: Verificar post-guardado que time se guardó correctamente
-    // El FE siempre envía time (o no lo envía, en cuyo caso usamos "00:00")
-    // Si no se guardó, actualizar inmediatamente (no lanzar error, el usuario no tiene la culpa)
-    if (payment.time !== processedTime) {
-        logger.warn({
-            layer: 'service',
-            action: 'PAYMENT_TIME_MISMATCH_RETRY',
-            payload: {
-                paymentId: payment.id,
-                expectedTime: processedTime,
-                actualTime: payment.time,
-                originalTime: data.time,
-            },
-        });
-
-        // ️ CRÍTICO: Si el time no se guardó, actualizar inmediatamente
-        // El FE siempre envía time válido o no lo envía (usamos "00:00"), así que debe guardarse SIEMPRE
-        // No lanzamos error porque el usuario no tiene la culpa, es un bug del sistema
-        try {
-            const updatedPayment = await prisma.accountPayment.update({
-                where: { id: payment.id },
-                data: { time: processedTime },
-            });
-
-            logger.info({
-                layer: 'service',
-                action: 'PAYMENT_TIME_UPDATED',
-                payload: {
-                    paymentId: payment.id,
-                    time: updatedPayment.time,
-                },
-            });
-
-            // Actualizar el objeto payment para que tenga el time correcto en la respuesta
-            payment.time = updatedPayment.time;
-        } catch (updateError: any) {
-            // Si falla la actualización, loggear error crítico
-            // Esto es un bug del sistema que debe investigarse
-            logger.error({
-                layer: 'service',
-                action: 'PAYMENT_TIME_UPDATE_FAILED',
-                payload: {
-                    paymentId: payment.id,
-                    expectedTime: processedTime,
-                    error: updateError.message,
-                },
-            });
-            // ️ No lanzamos error al usuario, pero loggeamos para investigar el bug
-        }
-    }
-
-
-
-    //  CRÍTICO: Sincronizar accumulatedBalance después de registrar el pago
-    // Esto asegura que accumulatedBalance se mantenga correcto y actualizado
-    try {
-        const { AccountStatementSyncService } = await import('./accounts.sync.service');
-        const paymentDateUTC = new Date(Date.UTC(
-            parseInt(data.date.split('-')[0]),
-            parseInt(data.date.split('-')[1]) - 1,
-            parseInt(data.date.split('-')[2]),
-            0, 0, 0, 0
-        ));
-
-        // Sincronizar statement de vendedor (si hay vendedorId)
-        if (data.vendedorId) {
-            await AccountStatementSyncService.syncDayStatement(
-                paymentDateUTC,
-                "vendedor",
-                data.vendedorId,
-                { force: true }
-            ).catch((error) => {
-                logger.warn({
-                    layer: "service",
-                    action: "SYNC_DAY_STATEMENT_AFTER_PAYMENT_ERROR_VENDEDOR",
-                    payload: {
-                        paymentId: payment.id,
-                        date: data.date,
-                        vendedorId: data.vendedorId,
-                        error: (error as Error).message,
-                    },
-                });
-            });
-        }
-
-        // Sincronizar statement consolidado de ventana (si hay ventanaId)
-        if (finalVentanaId) {
-            await AccountStatementSyncService.syncDayStatement(
-                paymentDateUTC,
-                "ventana",
-                finalVentanaId,
-                { force: true }
-            ).catch((error) => {
-                logger.warn({
-                    layer: "service",
-                    action: "SYNC_DAY_STATEMENT_AFTER_PAYMENT_ERROR_VENTANA",
-                    payload: {
-                        paymentId: payment.id,
-                        date: data.date,
-                        ventanaId: finalVentanaId,
-                        error: (error as Error).message,
-                    },
-                });
-            });
-        }
-
-        // Sincronizar statement consolidado de banca (si hay bancaId)
-        if (finalBancaId) {
-            await AccountStatementSyncService.syncDayStatement(
-                paymentDateUTC,
-                "banca",
-                finalBancaId,
-                { force: true }
-            ).catch((error) => {
-                logger.warn({
-                    layer: "service",
-                    action: "SYNC_DAY_STATEMENT_AFTER_PAYMENT_ERROR_BANCA",
-                    payload: {
-                        paymentId: payment.id,
-                        date: data.date,
-                        bancaId: finalBancaId,
-                        error: (error as Error).message,
-                    },
-                });
-            });
-        }
-    } catch (error) {
-        // No bloquear la creación del pago si falla la sincronización
-        logger.error({
-            layer: "service",
-            action: "SYNC_DAY_STATEMENT_AFTER_PAYMENT_IMPORT_ERROR",
-            payload: {
-                paymentId: payment.id,
-                date: data.date,
-                error: (error as Error).message,
-            },
-        });
-    }
-
-    //  OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
-    const dateStr = data.date; // Ya está en formato YYYY-MM-DD
-    Promise.all([
-        invalidateAccountStatementCache({
-            date: dateStr,
-            ventanaId: finalVentanaId || null,
-            vendedorId: data.vendedorId || null,
-        }),
-        invalidateBySorteoCache({
-            date: dateStr,
-            ventanaId: finalVentanaId || null,
-            vendedorId: data.vendedorId || null,
-            bancaId: finalBancaId || null,
-        }),
-    ]).catch(() => {
-        // Ignorar errores de invalidación de caché
-    });
-
-    //  OPTIMIZACIÓN: Construir statement para respuesta (evita query adicional)
-    // Ya tenemos todos los datos actualizados en updatedStatement
-    // Las relaciones (ventana, vendedor) no son críticas para la respuesta, el FE puede obtenerlas del statement completo si las necesita
-
-    //  CRÍTICO: Formatear fechas a strings YYYY-MM-DD para el frontend
-    const statementForResponse: any = {
-        ...updatedStatement,
-        date: crDateService.postgresDateToCRString(updatedStatement.date), // Convertir Date a YYYY-MM-DD
-        // month ya es string YYYY-MM, no necesita conversión
-        createdAt: updatedStatement.createdAt.toISOString(),
-        updatedAt: updatedStatement.updatedAt.toISOString(),
-        // settledAt puede ser null, formatear solo si existe
-        settledAt: updatedStatement.settledAt ? updatedStatement.settledAt.toISOString() : null,
-    };
-
-    //  CRÍTICO: Formatear payment para respuesta (fechas a strings)
-    const paymentForResponse: any = {
-        ...payment,
-        date: crDateService.postgresDateToCRString(payment.date), // Convertir Date a YYYY-MM-DD
-        createdAt: payment.createdAt.toISOString(),
-        updatedAt: payment.updatedAt.toISOString(),
-        reversedAt: payment.reversedAt ? payment.reversedAt.toISOString() : null,
-        // Eliminar relaciones anidadas si existen (paidBy, accountStatement, etc.)
-        // El FE no las necesita en la respuesta (ya las tiene del statement)
-        paidBy: undefined,
-        accountStatement: undefined,
-        reversedByUser: undefined,
-    };
-    // Limpiar campos undefined
-    delete paymentForResponse.paidBy;
-    delete paymentForResponse.accountStatement;
-    delete paymentForResponse.reversedByUser;
+    // Invalidar caché
+    updateCacheAfterMovement(data.date, finalVentanaId, data.vendedorId, finalBancaId);
 
     return {
-        payment: paymentForResponse,
-        statement: statementForResponse,
+        payment: {
+            ...payment,
+            date: crDateService.postgresDateToCRString(payment.date),
+            createdAt: payment.createdAt.toISOString(),
+            updatedAt: payment.updatedAt.toISOString(),
+        },
+        statement: {
+            ...updatedStatement,
+            date: crDateService.postgresDateToCRString(updatedStatement.date),
+            createdAt: updatedStatement.createdAt.toISOString(),
+            updatedAt: updatedStatement.updatedAt.toISOString(),
+            settledAt: updatedStatement.settledAt ? updatedStatement.settledAt.toISOString() : null,
+        },
     };
 }
 
 /**
  * Revierte un pago/cobro
- * CRÍTICO: No permite revertir si el día quedaría saldado (saldo = 0)
- * 
- * @param payment - El pago a revertir (ya obtenido del repositorio)
- * @param userId - ID del usuario que revierte el pago
- * @param reason - Motivo opcional de la reversión
  */
 export async function reversePayment(
     payment: Awaited<ReturnType<typeof AccountPaymentRepository.findById>>,
     userId: string,
     reason?: string
 ) {
-    if (!payment) {
-        throw new AppError("Pago no encontrado", 404, "PAYMENT_NOT_FOUND");
-    }
-
-    if (payment.isReversed) {
-        throw new AppError("El pago ya está revertido", 400, "PAYMENT_ALREADY_REVERSED");
-    }
-
-    // Validar motivo si se proporciona
-    if (reason && reason.length < 5) {
-        throw new AppError("El motivo de reversión debe tener al menos 5 caracteres", 400, "INVALID_REASON");
-    }
-
-    //  OPTIMIZACIÓN: Usar el statement ya incluido en el payment en lugar de findOrCreate
-    // El payment siempre tiene accountStatement porque viene de findById con include
-    if (!payment.accountStatement) {
-        throw new AppError("Estado de cuenta no encontrado para este pago", 404, "STATEMENT_NOT_FOUND");
-    }
+    if (!payment) throw new AppError("Pago no encontrado", 404, "PAYMENT_NOT_FOUND");
+    if (payment.isReversed) throw new AppError("El pago ya está revertido", 400, "PAYMENT_ALREADY_REVERSED");
+    if (reason && reason.length < 5) throw new AppError("El motivo debe tener al menos 5 caracteres", 400, "INVALID_REASON");
 
     const statement = payment.accountStatement;
+    if (!statement) throw new AppError("Estado de cuenta no encontrado", 404, "STATEMENT_NOT_FOUND");
 
-    //  CRÍTICO: Recalcular el statement completo desde tickets ANTES de revertir el movimiento
-    // Esto asegura que ticketCount, totalSales, totalPayouts, comisiones, etc. estén siempre correctos
-    const dimension: "ventana" | "vendedor" = statement.ventanaId ? "ventana" : "vendedor";
+    const dimension: "banca" | "ventana" | "vendedor" = statement.vendedorId ? "vendedor" : (statement.ventanaId ? "ventana" : "banca");
     const paymentDate = new Date(payment.date);
-    const month = paymentDate.toISOString().substring(0, 7); // YYYY-MM
+    const month = paymentDate.toISOString().substring(0, 7);
+    const dateStr = crDateService.postgresDateToCRString(payment.date);
 
-    // Recalcular statement completo desde tickets para asegurar consistencia
-    const recalculatedStatement = await calculateDayStatement(
-        paymentDate,
-        month,
-        dimension,
-        statement.ventanaId ?? undefined,
-        statement.vendedorId ?? undefined,
-        statement.bancaId ?? undefined,
-        "ADMIN" // Usar ADMIN para permitir ver todos los datos
-    );
-
-    // Usar balance recalculado desde tickets (ya incluye totalSales, totalPayouts, comisiones)
+    const recalculatedStatement = await calculateDayStatement(paymentDate, month, dimension, statement.ventanaId ?? undefined, statement.vendedorId ?? undefined, statement.bancaId ?? undefined, "ADMIN");
     const baseBalance = recalculatedStatement.balance;
 
-    //  OPTIMIZACIÓN: Obtener totales actuales en paralelo
-    const [currentTotalPaid, currentTotalCollected] = await Promise.all([
-        AccountPaymentRepository.getTotalPaid(statement.id),
-        AccountPaymentRepository.getTotalCollected(statement.id),
-    ]);
-
-    // Calcular saldo actual (con todos los pagos activos)
-    // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
-    const currentRemainingBalance = baseBalance - currentTotalCollected + currentTotalPaid;
-
-    // Calcular saldo después de revertir este pago
-    let balanceAfterReversal: number;
-    if (payment.type === "payment") {
-        // Si es un pago, al revertirlo se suma al saldo (se quita el pago)
-        balanceAfterReversal = currentRemainingBalance + payment.amount;
-    } else {
-        // Si es un cobro, al revertirlo se resta del saldo (se quita el cobro)
-        balanceAfterReversal = currentRemainingBalance - payment.amount;
-    }
-
-    // CRÍTICO: Validar que el día NO quede saldado
-    // FIX: Validar usando la misma lógica que isSettled (incluye hasPayments)
-    // Después de revertir, si no quedan pagos activos, no debería quedar saldado
-    const remainingPaymentsAfterReversal =
-        (payment.type === "payment" ? currentTotalPaid - payment.amount : currentTotalPaid) +
-        (payment.type === "collection" ? currentTotalCollected - payment.amount : currentTotalCollected);
-    const hasPaymentsAfterReversal = remainingPaymentsAfterReversal > 0;
-    const absBalance = Math.abs(balanceAfterReversal);
-
-    // No permitir revertir si quedaría saldado (balance ≈ 0 Y hay pagos restantes)
-    if (absBalance <= 0.01 && hasPaymentsAfterReversal) {
-        throw new AppError(
-            "No se puede revertir este pago porque el día quedaría saldado. El saldo resultante sería cero o muy cercano a cero.",
-            400,
-            "CANNOT_REVERSE_SETTLED_DAY"
-        );
-    }
-
-    // Revertir pago
-    const reversed = await AccountPaymentRepository.reverse(payment.id, userId);
-
-    //  OPTIMIZACIÓN: Calcular nuevos totales directamente sin consultar la BD nuevamente
-    // Ya sabemos los totales actuales, solo restamos el pago/cobro revertido
-    const newTotalPaid = payment.type === "payment"
-        ? currentTotalPaid - payment.amount
-        : currentTotalPaid;
-    const newTotalCollected = payment.type === "collection"
-        ? currentTotalCollected - payment.amount
-        : currentTotalCollected;
-
-    // Fórmula correcta: remainingBalance = balance - totalCollected + totalPaid
-    const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
-
-    // FIX: Usar helper para cálculo consistente de isSettled (incluye validación de hasPayments y ticketCount)
-    // Usar ticketCount del statement recalculado para asegurar consistencia
-    const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
-
-    //  CRÍTICO: Actualizar statement con valores de tickets (desde recalculatedStatement) + movimientos
-    const updatedStatement = await AccountStatementRepository.update(statement.id, {
-        // Valores de tickets (recalculados desde tickets/jugadas)
-        ticketCount: recalculatedStatement.ticketCount,
-        totalSales: recalculatedStatement.totalSales,
-        totalPayouts: recalculatedStatement.totalPayouts,
-        listeroCommission: recalculatedStatement.listeroCommission,
-        vendedorCommission: recalculatedStatement.vendedorCommission,
-        balance: baseBalance, // Balance desde tickets (sin movimientos)
-        // Valores de movimientos (actualizados con el movimiento revertido)
-        totalPaid: newTotalPaid,
-        totalCollected: newTotalCollected,
-        remainingBalance: newRemainingBalance,
-        isSettled,
-        canEdit: !isSettled,
-    });
-
-    //  CRÍTICO: Sincronizar accumulatedBalance después de revertir el pago
-    // Esto asegura que accumulatedBalance se mantenga correcto y actualizado
-    try {
-        const { AccountStatementSyncService } = await import('./accounts.sync.service');
-        const paymentDateUTC = payment.date; // Ya es Date UTC que representa día calendario en CR
-
-        // Sincronizar statement de vendedor (si hay vendedorId)
-        if (payment.vendedorId) {
-            await AccountStatementSyncService.syncDayStatement(
-                paymentDateUTC,
-                "vendedor",
-                payment.vendedorId,
-                { force: true }
-            ).catch((error) => {
-                logger.warn({
-                    layer: "service",
-                    action: "SYNC_DAY_STATEMENT_AFTER_REVERSE_ERROR_VENDEDOR",
-                    payload: {
-                        paymentId: payment.id,
-                        date: crDateService.postgresDateToCRString(payment.date),
-                        vendedorId: payment.vendedorId,
-                        error: (error as Error).message,
-                    },
-                });
-            });
-        }
-
-        // Sincronizar statement consolidado de ventana (si hay ventanaId)
-        if (payment.ventanaId) {
-            await AccountStatementSyncService.syncDayStatement(
-                paymentDateUTC,
-                "ventana",
-                payment.ventanaId,
-                { force: true }
-            ).catch((error) => {
-                logger.warn({
-                    layer: "service",
-                    action: "SYNC_DAY_STATEMENT_AFTER_REVERSE_ERROR_VENTANA",
-                    payload: {
-                        paymentId: payment.id,
-                        date: crDateService.postgresDateToCRString(payment.date),
-                        ventanaId: payment.ventanaId,
-                        error: (error as Error).message,
-                    },
-                });
-            });
-        }
-
-        // Sincronizar statement consolidado de banca (si hay bancaId)
-        if (payment.bancaId) {
-            await AccountStatementSyncService.syncDayStatement(
-                paymentDateUTC,
-                "banca",
-                payment.bancaId,
-                { force: true }
-            ).catch((error) => {
-                logger.warn({
-                    layer: "service",
-                    action: "SYNC_DAY_STATEMENT_AFTER_REVERSE_ERROR_BANCA",
-                    payload: {
-                        paymentId: payment.id,
-                        date: crDateService.postgresDateToCRString(payment.date),
-                        bancaId: payment.bancaId,
-                        error: (error as Error).message,
-                    },
-                });
-            });
-        }
-    } catch (error) {
-        // No bloquear la reversión del pago si falla la sincronización
-        logger.error({
-            layer: "service",
-            action: "SYNC_DAY_STATEMENT_AFTER_REVERSE_IMPORT_ERROR",
-            payload: {
-                paymentId: payment.id,
-                date: crDateService.postgresDateToCRString(payment.date),
-                error: (error as Error).message,
-            },
+    let updatedStatement: any = undefined;
+    await prisma.$transaction(async (tx) => {
+        const currentStatement = await tx.accountStatement.findUnique({
+            where: { id: statement.id },
+            select: { id: true, date: true, vendedorId: true, ventanaId: true, bancaId: true, accumulatedBalance: true }
         });
-    }
 
-    //  OPTIMIZACIÓN: Invalidar caché de estados de cuenta y bySorteo para este día
-    const dateStr = crDateService.postgresDateToCRString(payment.date);
-    Promise.all([
-        invalidateAccountStatementCache({
-            date: dateStr,
-            ventanaId: payment.ventanaId || null,
-            vendedorId: payment.vendedorId || null,
-        }),
-        invalidateBySorteoCache({
-            date: dateStr,
-            ventanaId: payment.ventanaId || null,
-            vendedorId: payment.vendedorId || null,
-            bancaId: payment.bancaId || null,
-        }),
-    ]).catch(() => {
-        // Ignorar errores de invalidación de caché
+        if (!currentStatement) throw new AppError("Statement not found in tx", 500);
+
+        const [totalP, totalC] = await Promise.all([
+            tx.accountPayment.aggregate({
+                where: { accountStatementId: currentStatement.id, isReversed: false, type: "payment", NOT: { OR: [{ notes: { contains: 'Saldo arrastrado' } }, { method: 'Saldo del mes anterior' }] } },
+                _sum: { amount: true }
+            }),
+            tx.accountPayment.aggregate({
+                where: { accountStatementId: currentStatement.id, isReversed: false, type: "collection", NOT: { OR: [{ notes: { contains: 'Saldo arrastrado' } }, { method: 'Saldo del mes anterior' }] } },
+                _sum: { amount: true }
+            })
+        ]);
+
+        const currentTotalPaid = totalP._sum.amount || 0;
+        const currentTotalCollected = totalC._sum.amount || 0;
+
+        await tx.accountPayment.update({
+            where: { id: payment.id },
+            data: { isReversed: true, reversedAt: new Date(), reversedBy: userId }
+        });
+
+        const newTotalPaid = payment.type === "payment" ? currentTotalPaid - payment.amount : currentTotalPaid;
+        const newTotalCollected = payment.type === "collection" ? currentTotalCollected - payment.amount : currentTotalCollected;
+        const newRemainingBalance = baseBalance - newTotalCollected + newTotalPaid;
+        const isSettled = calculateIsSettled(recalculatedStatement.ticketCount, newRemainingBalance, newTotalPaid, newTotalCollected);
+
+        let newAccumulatedBalance = 0;
+        const [year, monthNum, dayNum] = dateStr.split('-').map(Number);
+
+        if (dayNum === 1) {
+            const prevMonthBalance = await getPreviousMonthFinalBalance(month, dimension, currentStatement.ventanaId || undefined, currentStatement.vendedorId || undefined, currentStatement.bancaId || undefined);
+            newAccumulatedBalance = prevMonthBalance + baseBalance - newTotalCollected + newTotalPaid;
+        } else {
+            const previousDayDate = new Date(Date.UTC(year, monthNum - 1, dayNum - 1));
+            const prevStatement = await tx.accountStatement.findFirst({
+                where: dimension === "vendedor" ? { date: previousDayDate, vendedorId: currentStatement.vendedorId } : dimension === "ventana" ? { date: previousDayDate, ventanaId: currentStatement.ventanaId, vendedorId: null } : { date: previousDayDate, bancaId: currentStatement.bancaId, ventanaId: null, vendedorId: null },
+                select: { accumulatedBalance: true }
+            });
+
+            if (!prevStatement) {
+                const prevMonthBalance = await getPreviousMonthFinalBalance(month, dimension, currentStatement.ventanaId || undefined, currentStatement.vendedorId || undefined, currentStatement.bancaId || undefined);
+                newAccumulatedBalance = prevMonthBalance + baseBalance - newTotalCollected + newTotalPaid;
+            } else {
+                newAccumulatedBalance = Number(prevStatement.accumulatedBalance || 0) + baseBalance - newTotalCollected + newTotalPaid;
+            }
+        }
+
+        updatedStatement = await tx.accountStatement.update({
+            where: { id: currentStatement.id },
+            data: { ticketCount: recalculatedStatement.ticketCount, totalSales: recalculatedStatement.totalSales, totalPayouts: recalculatedStatement.totalPayouts, listeroCommission: recalculatedStatement.listeroCommission, vendedorCommission: recalculatedStatement.vendedorCommission, balance: baseBalance, totalPaid: newTotalPaid, totalCollected: newTotalCollected, remainingBalance: newRemainingBalance, accumulatedBalance: newAccumulatedBalance, isSettled, canEdit: !isSettled }
+        });
     });
 
-    //  OPTIMIZACIÓN: Construir statement completo para respuesta (evita query adicional)
-    // Ya tenemos todos los datos, solo combinamos con las relaciones del statement original
-    // El statement viene de payment.accountStatement que no incluye relaciones, así que las omitimos
-    // El FE puede obtenerlas del statement original si las necesita
-
-    //  CRÍTICO: Formatear fechas a strings YYYY-MM-DD para el frontend
-    const statementForResponse: any = {
-        ...updatedStatement,
-        date: crDateService.postgresDateToCRString(updatedStatement.date), // Convertir Date a YYYY-MM-DD
-        // month ya es string YYYY-MM, no necesita conversión
-        createdAt: updatedStatement.createdAt.toISOString(),
-        updatedAt: updatedStatement.updatedAt.toISOString(),
-        // settledAt puede ser null, formatear solo si existe
-        settledAt: updatedStatement.settledAt ? updatedStatement.settledAt.toISOString() : null,
-    };
-
-    //  CRÍTICO: Formatear payment para respuesta (fechas a strings)
-    const reversedForResponse: any = {
-        ...reversed,
-        date: crDateService.postgresDateToCRString(reversed.date), // Convertir Date a YYYY-MM-DD
-        createdAt: reversed.createdAt.toISOString(),
-        updatedAt: reversed.updatedAt.toISOString(),
-        reversedAt: reversed.reversedAt ? reversed.reversedAt.toISOString() : null,
-        // Eliminar relaciones anidadas si existen
-        paidBy: undefined,
-        accountStatement: undefined,
-        reversedByUser: undefined,
-    };
-    // Limpiar campos undefined
-    delete reversedForResponse.paidBy;
-    delete reversedForResponse.accountStatement;
-    delete reversedForResponse.reversedByUser;
+    updateCacheAfterMovement(dateStr, statement.ventanaId, statement.vendedorId, statement.bancaId);
 
     return {
-        payment: reversedForResponse,
-        statement: statementForResponse,
+        payment: { ...payment, isReversed: true, reversedAt: new Date().toISOString(), reversedBy: userId, date: dateStr },
+        statement: { ...updatedStatement, date: crDateService.postgresDateToCRString(updatedStatement.date), createdAt: updatedStatement.createdAt.toISOString(), updatedAt: updatedStatement.updatedAt.toISOString(), settledAt: updatedStatement.settledAt ? updatedStatement.settledAt.toISOString() : null }
     };
+}
+
+/**
+ * Helper para invalidar caché después de un movimiento
+ */
+function updateCacheAfterMovement(date: string, ventanaId?: string | null, vendedorId?: string | null, bancaId?: string | null) {
+    Promise.all([
+        invalidateAccountStatementCache({ date, ventanaId: ventanaId || null, vendedorId: vendedorId || null }),
+        invalidateBySorteoCache({ date, ventanaId: ventanaId || null, vendedorId: vendedorId || null, bancaId: bancaId || null }),
+    ]).catch(() => { });
 }
 
 /**
