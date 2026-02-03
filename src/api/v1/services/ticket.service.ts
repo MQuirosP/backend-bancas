@@ -1108,46 +1108,39 @@ export const TicketService = {
       }
 
       // Aplicar filtros según dimension y scope
-      // Prioridad: dimension > filtros directos > scope
-      if (params.dimension === "listero") {
-        if (params.ventanaId) {
-          ticketWhere.ventanaId = params.ventanaId;
-        } else {
-          // Si dimension='listero' pero no hay ventanaId, es un error
-          throw new AppError("ventanaId es requerido cuando dimension='listero'", 400);
-        }
-      } else if (params.dimension === "vendedor") {
-        if (params.vendedorId) {
-          ticketWhere.vendedorId = params.vendedorId;
-        } else {
-          // Si dimension='vendedor' pero no hay vendedorId, es un error
-          throw new AppError("vendedorId es requerido cuando dimension='vendedor'", 400);
-        }
-      } else if (params.ventanaId) {
-        // ventanaId viene de RBAC o del request (sin dimension específica)
+      // FIX: Los filtros son INDEPENDIENTES y ACUMULATIVOS (AND lógico)
+
+      // 1. Validar dimension (si se especifica, requiere el filtro correspondiente)
+      if (params.dimension === "listero" && !params.ventanaId) {
+        throw new AppError("ventanaId es requerido cuando dimension='listero'", 400);
+      }
+      if (params.dimension === "vendedor" && !params.vendedorId) {
+        throw new AppError("vendedorId es requerido cuando dimension='vendedor'", 400);
+      }
+
+      // 2. Aplicar filtros de forma INDEPENDIENTE (no else if)
+      // Cada filtro se aplica si está presente, permitiendo combinaciones
+      if (params.ventanaId) {
         ticketWhere.ventanaId = params.ventanaId;
-      } else if (params.vendedorId) {
-        // vendedorId viene de RBAC o del request (sin dimension específica)
+      }
+
+      if (params.vendedorId) {
         ticketWhere.vendedorId = params.vendedorId;
-      } else if (params.scope === "mine") {
-        // Si scope='mine' y no hay filtros específicos, usar userId según rol
+      }
+
+      // 3. Si scope='mine' y NO hay filtros explícitos, aplicar filtro según rol
+      if (params.scope === "mine" && !params.ventanaId && !params.vendedorId) {
         if (role === "VENDEDOR") {
           ticketWhere.vendedorId = userId;
         } else if (role === "VENTANA") {
-          // Para VENTANA, el ventanaId debería venir en params.ventanaId desde RBAC
-          if (!params.ventanaId) {
-            logger.warn({
-              layer: "service",
-              action: "TICKET_NUMBERS_SUMMARY_MISSING_VENTANA_ID",
-              payload: { role, userId, message: "VENTANA user should have ventanaId from RBAC" },
-            });
-            // No lanzar error, solo loguear (RBAC debería haberlo agregado)
-          } else {
-            ticketWhere.ventanaId = params.ventanaId;
-          }
+          logger.warn({
+            layer: "service",
+            action: "TICKET_NUMBERS_SUMMARY_MISSING_VENTANA_ID",
+            payload: { role, userId, message: "VENTANA user should have ventanaId from RBAC" },
+          });
         }
       }
-      // Si scope='all' y no hay filtros específicos ni dimension, no agregar filtros de ventanaId/vendedorId
+      // Si scope='all' y no hay filtros específicos, no agregar filtros de ventanaId/vendedorId (admin ve todo)
 
       //  NUEVO: Obtener sorteo/lotería para detectar digits y reventadoEnabled
       let sorteoDigits = 2; // Default
