@@ -47,11 +47,21 @@ export function resolveDateRange(
       break;
     }
 
-    case 'month':
-      // 👈 AQUÍ estaba el bug fuerte
-      start = startOfLocalDay(new Date(now.getFullYear(), now.getMonth(), 1));
-      end = endOfLocalDay(now);
-      break;
+    case 'month': {
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+
+      const fromString = `${year}-${month}-01`;
+      const toString = formatDateOnly(now);
+
+      return {
+        from: new Date(`${fromString}T00:00:00-06:00`),
+        to: new Date(`${toString}T23:59:59-06:00`),
+        fromString,
+        toString,
+      };
+    }
+
 
     case 'year':
       start = startOfLocalDay(addLocalDays(now, -364));
