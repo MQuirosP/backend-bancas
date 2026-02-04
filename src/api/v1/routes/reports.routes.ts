@@ -14,6 +14,10 @@ import {
   LoteriasPerformanceQuerySchema,
   VentanasRankingQuerySchema,
   VendedoresCommissionsChartQuerySchema,
+  ExposureQuerySchema,
+  ProfitabilityQuerySchema,
+  TimeAnalysisQuerySchema,
+  VendedoresRankingQuerySchema,
 } from '../validators/reports.validator';
 
 const router = Router();
@@ -65,6 +69,35 @@ router.get(
   requireAdmin,
   validateQuery(VendedoresCommissionsChartQuerySchema),
   ReportsController.getVendedoresCommissionsChart
+);
+
+router.get(
+  '/vendedores/ranking',
+  requireAdmin,
+  validateQuery(VendedoresRankingQuerySchema),
+  ReportsController.getVendedoresRanking
+);
+
+// Nuevos Endpoints de Tickets
+router.get(
+  '/tickets/exposure',
+  requireAdmin,
+  validateQuery(ExposureQuerySchema),
+  ReportsController.getExposure
+);
+
+router.get(
+  '/tickets/profitability',
+  requireAdmin,
+  validateQuery(ProfitabilityQuerySchema),
+  ReportsController.getProfitability
+);
+
+router.get(
+  '/tickets/time-analysis',
+  requireAdmin,
+  validateQuery(TimeAnalysisQuerySchema),
+  ReportsController.getTimeAnalysis
 );
 
 export default router;

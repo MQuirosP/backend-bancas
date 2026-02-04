@@ -17,7 +17,7 @@ export const ReportsController = {
    */
   async getWinnersPayments(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
-    
+
     const result = await TicketsReportService.getWinnersPayments({
       date: query.date || 'today',
       fromDate: query.fromDate,
@@ -28,6 +28,11 @@ export const ReportsController = {
       paymentStatus: query.paymentStatus || 'all',
       page: query.page ? Number(query.page) : undefined,
       pageSize: query.pageSize ? Number(query.pageSize) : undefined,
+      // Nuevos filtros
+      expiredOnly: query.expiredOnly === 'true' || query.expiredOnly === true,
+      minPayout: query.minPayout ? Number(query.minPayout) : undefined,
+      maxPayout: query.maxPayout ? Number(query.maxPayout) : undefined,
+      betType: query.betType || 'all',
     });
 
     return success(res, result.data, result.meta);
@@ -39,7 +44,7 @@ export const ReportsController = {
    */
   async getNumbersAnalysis(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
-    
+
     const result = await TicketsReportService.getNumbersAnalysis({
       date: query.date || 'today',
       fromDate: query.fromDate,
@@ -47,7 +52,10 @@ export const ReportsController = {
       loteriaId: query.loteriaId,
       betType: query.betType || 'all',
       top: query.top ? Number(query.top) : undefined,
-      includeComparison: query.includeComparison === 'true',
+      includeComparison: query.includeComparison === 'true' || query.includeComparison === true,
+      // Nuevos parámetros
+      includeWinners: query.includeWinners === 'true' || query.includeWinners === true,
+      includeExposure: query.includeExposure === 'true' || query.includeExposure === true,
     });
 
     return success(res, result.data, result.meta);
@@ -119,7 +127,7 @@ export const ReportsController = {
    */
   async getVendedoresCommissionsChart(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
-    
+
     if (!query.ventanaId) {
       return res.status(400).json({
         success: false,
@@ -129,7 +137,7 @@ export const ReportsController = {
         },
       });
     }
-    
+
     const result = await VendedoresReportService.getCommissionsChart({
       ventanaId: query.ventanaId,
       date: query.date || 'today',
@@ -137,6 +145,83 @@ export const ReportsController = {
       toDate: query.toDate,
       ticketStatus: query.ticketStatus,
       excludeTicketStatus: query.excludeTicketStatus,
+    });
+
+    return success(res, result.data, result.meta);
+  },
+
+  /**
+   * GET /api/v1/reports/vendedores/ranking
+   * Ranking de productividad de vendedores
+   */
+  async getVendedoresRanking(req: AuthenticatedRequest, res: Response) {
+    const query = req.query as any;
+
+    const result = await VendedoresReportService.getRanking({
+      date: query.date || 'today',
+      fromDate: query.fromDate,
+      toDate: query.toDate,
+      ventanaId: query.ventanaId,
+      top: query.top ? Number(query.top) : undefined,
+      sortBy: query.sortBy || 'ventas',
+      includeInactive: query.includeInactive === 'true' || query.includeInactive === true,
+    });
+
+    return success(res, result.data, result.meta);
+  },
+
+  /**
+   * GET /api/v1/reports/tickets/exposure
+   * Análisis de exposición y riesgo por número
+   * REQUERIDO: sorteoId
+   */
+  async getExposure(req: AuthenticatedRequest, res: Response) {
+    const query = req.query as any;
+
+    const result = await TicketsReportService.getExposure({
+      sorteoId: query.sorteoId,
+      loteriaId: query.loteriaId,
+      top: query.top ? Number(query.top) : undefined,
+      minExposure: query.minExposure ? Number(query.minExposure) : undefined,
+    });
+
+    return success(res, result.data, result.meta);
+  },
+
+  /**
+   * GET /api/v1/reports/tickets/profitability
+   * Análisis de rentabilidad y márgenes
+   */
+  async getProfitability(req: AuthenticatedRequest, res: Response) {
+    const query = req.query as any;
+
+    const result = await TicketsReportService.getProfitability({
+      date: query.date || 'today',
+      fromDate: query.fromDate,
+      toDate: query.toDate,
+      ventanaId: query.ventanaId,
+      loteriaId: query.loteriaId,
+      includeComparison: query.includeComparison === 'true' || query.includeComparison === true,
+      groupBy: query.groupBy,
+    });
+
+    return success(res, result.data, result.meta);
+  },
+
+  /**
+   * GET /api/v1/reports/tickets/time-analysis
+   * Análisis de ventas por hora y día de semana
+   */
+  async getTimeAnalysis(req: AuthenticatedRequest, res: Response) {
+    const query = req.query as any;
+
+    const result = await TicketsReportService.getTimeAnalysis({
+      date: query.date || 'today',
+      fromDate: query.fromDate,
+      toDate: query.toDate,
+      ventanaId: query.ventanaId,
+      loteriaId: query.loteriaId,
+      metric: query.metric || 'ventas',
     });
 
     return success(res, result.data, result.meta);

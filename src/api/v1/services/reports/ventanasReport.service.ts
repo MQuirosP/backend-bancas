@@ -19,7 +19,7 @@ async function computeListeroCommissionByVentana(
   toDateStr: string,
   ventanaId?: string
 ): Promise<Map<string, number>> {
-  // Obtener jugadas en el rango con businessDate del ticket
+  // Obtener jugadas en el rango con businessDate del ticket (solo sorteos evaluados)
   const jugadas = await prisma.jugada.findMany({
     where: {
       deletedAt: null,
@@ -27,7 +27,11 @@ async function computeListeroCommissionByVentana(
       ticket: {
         deletedAt: null,
         isActive: true,
-        status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] },
+        status: { in: ['EVALUATED', 'PAID', 'PAGADO'] },
+        sorteo: {
+          status: 'EVALUATED',
+          deletedAt: null,
+        },
         ...(ventanaId ? { ventanaId } : {}),
       },
     },
@@ -228,11 +232,10 @@ export const VentanasReportService = {
     const toDateStr = dateRange.toString; // YYYY-MM-DD
 
     // Query optimizada con CTEs
-    // Usa businessDate (o createdAt convertido a CR) para filtrar por fecha de negocio
-    // Incluye tickets ACTIVE, EVALUATED y PAID (excluye CANCELLED)
+    // Solo sorteos EVALUADOS (mismas condiciones que accounts)
     const ventanasQuery = Prisma.sql`
       WITH tickets_in_range AS (
-        SELECT 
+        SELECT
           t.id,
           t."ventanaId",
           t."vendedorId",
@@ -241,9 +244,12 @@ export const VentanasReportService = {
           t."isWinner",
           COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) as business_date
         FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
         WHERE t."deletedAt" IS NULL
           AND t."isActive" = true
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+          AND s.status = 'EVALUATED'
+          AND s."deletedAt" IS NULL
           AND (
             COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
           ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date

@@ -172,5 +172,203 @@ export const VendedoresReportService = {
       },
     };
   },
+
+  /**
+   * Ranking de productividad de vendedores
+   */
+  async getRanking(filters: {
+    date?: DateToken;
+    fromDate?: string;
+    toDate?: string;
+    ventanaId?: string;
+    top?: number;
+    sortBy?: 'ventas' | 'tickets' | 'comisiones' | 'margen';
+    includeInactive?: boolean;
+  }): Promise<any> {
+    const dateRange = resolveDateRange(
+      filters.date || 'today',
+      filters.fromDate,
+      filters.toDate
+    );
+
+    const top = filters.top || 20;
+    const sortBy = filters.sortBy || 'ventas';
+    const fromDateStr = dateRange.fromString;
+    const toDateStr = dateRange.toString;
+
+    // Query principal para ranking de vendedores
+    const rankingQuery = Prisma.sql`
+      WITH tickets_in_range AS (
+        SELECT
+          t.id,
+          t."vendedorId",
+          t."ventanaId",
+          t."totalAmount",
+          t."totalPayout",
+          t."isWinner",
+          t."createdAt"
+        FROM "Ticket" t
+        WHERE (
+            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
+          ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND t."isActive" = true
+          AND t."deletedAt" IS NULL
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ),
+      ventas_por_vendedor AS (
+        SELECT
+          t."vendedorId",
+          COUNT(DISTINCT t.id) as tickets_count,
+          COALESCE(SUM(t."totalAmount"), 0) as ventas,
+          COALESCE(SUM(CASE WHEN t."isWinner" = true THEN 1 ELSE 0 END), 0) as ganadores,
+          COALESCE(SUM(t."totalPayout"), 0) as premios_pagados,
+          MIN(t."createdAt") as first_sale_at,
+          MAX(t."createdAt") as last_sale_at,
+          COUNT(DISTINCT DATE(t."createdAt")) as days_active
+        FROM tickets_in_range t
+        GROUP BY t."vendedorId"
+      ),
+      comisiones_por_vendedor AS (
+        SELECT
+          t."vendedorId",
+          COALESCE(SUM(j."commissionAmount"), 0) as comisiones
+        FROM tickets_in_range t
+        INNER JOIN "Jugada" j ON j."ticketId" = t.id
+          AND j."deletedAt" IS NULL
+          AND j."isActive" = true
+        GROUP BY t."vendedorId"
+      )
+      SELECT
+        u.id as vendedor_id,
+        u.name as vendedor_name,
+        u."ventanaId" as ventana_id,
+        vn.name as ventana_name,
+        COALESCE(v.ventas, 0) as ventas,
+        COALESCE(v.tickets_count, 0) as tickets_count,
+        COALESCE(c.comisiones, 0) as comisiones,
+        COALESCE(v.ganadores, 0) as ganadores,
+        COALESCE(v.premios_pagados, 0) as premios_pagados,
+        v.first_sale_at,
+        v.last_sale_at,
+        COALESCE(v.days_active, 0) as days_active
+      FROM "User" u
+      INNER JOIN "Ventana" vn ON u."ventanaId" = vn.id
+      LEFT JOIN ventas_por_vendedor v ON v."vendedorId" = u.id
+      LEFT JOIN comisiones_por_vendedor c ON c."vendedorId" = u.id
+      WHERE u.role = 'VENDEDOR'
+        AND u."isActive" = true
+        ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+        ${!filters.includeInactive ? Prisma.sql`AND v.ventas IS NOT NULL AND v.ventas > 0` : Prisma.empty}
+    `;
+
+    const vendedoresRaw = await prisma.$queryRaw<Array<{
+      vendedor_id: string;
+      vendedor_name: string;
+      ventana_id: string;
+      ventana_name: string;
+      ventas: number;
+      tickets_count: bigint;
+      comisiones: number;
+      ganadores: bigint;
+      premios_pagados: number;
+      first_sale_at: Date | null;
+      last_sale_at: Date | null;
+      days_active: bigint;
+    }>>(rankingQuery);
+
+    // Procesar y calcular margen
+    let vendedoresData = vendedoresRaw.map(v => {
+      const ventas = parseFloat(v.ventas?.toString() || '0');
+      const premiosPagados = parseFloat(v.premios_pagados?.toString() || '0');
+      const comisiones = parseFloat(v.comisiones?.toString() || '0');
+      const ticketsCount = parseInt(v.tickets_count?.toString() || '0');
+      const ganadores = parseInt(v.ganadores?.toString() || '0');
+      const margen = ventas - premiosPagados - comisiones;
+      const avgTicketAmount = ticketsCount > 0 ? ventas / ticketsCount : 0;
+
+      return {
+        vendedorId: v.vendedor_id,
+        vendedorName: v.vendedor_name,
+        ventanaId: v.ventana_id,
+        ventanaName: v.ventana_name,
+        ventas,
+        ticketsCount,
+        avgTicketAmount: parseFloat(avgTicketAmount.toFixed(2)),
+        comisiones,
+        ganadores,
+        premiosPagados,
+        margen,
+        daysActive: parseInt(v.days_active?.toString() || '0'),
+        firstSaleAt: v.first_sale_at ? formatIsoLocal(v.first_sale_at) : null,
+        lastSaleAt: v.last_sale_at ? formatIsoLocal(v.last_sale_at) : null,
+        rank: 0, // Se calcula después
+        previousRank: null as number | null,
+      };
+    });
+
+    // Ordenar según sortBy
+    const sortKey = sortBy === 'comisiones' ? 'comisiones' : sortBy;
+    vendedoresData.sort((a, b) => {
+      const valA = a[sortKey as keyof typeof a] as number;
+      const valB = b[sortKey as keyof typeof b] as number;
+      return valB - valA;
+    });
+
+    // Asignar rank
+    vendedoresData.forEach((v, index) => {
+      v.rank = index + 1;
+    });
+
+    // Separar activos e inactivos
+    const activeVendedores = vendedoresData.filter(v => v.ventas > 0);
+    const inactiveVendedores = vendedoresData.filter(v => v.ventas <= 0);
+
+    // Limitar al top solicitado
+    const topVendedores = activeVendedores.slice(0, top);
+
+    // Calcular resumen
+    const totalVendedores = vendedoresData.length;
+    const totalActiveVendedores = activeVendedores.length;
+    const totalInactiveVendedores = inactiveVendedores.length;
+    const totalVentas = activeVendedores.reduce((sum, v) => sum + v.ventas, 0);
+    const totalTickets = activeVendedores.reduce((sum, v) => sum + v.ticketsCount, 0);
+    const averagePerVendedor = totalActiveVendedores > 0 ? totalVentas / totalActiveVendedores : 0;
+    const averageTicketsPerVendedor = totalActiveVendedores > 0 ? totalTickets / totalActiveVendedores : 0;
+
+    const summary = {
+      totalVendedores,
+      activeVendedores: totalActiveVendedores,
+      inactiveVendedores: totalInactiveVendedores,
+      totalVentas,
+      totalTickets,
+      averagePerVendedor: parseFloat(averagePerVendedor.toFixed(2)),
+      averageTicketsPerVendedor: parseFloat(averageTicketsPerVendedor.toFixed(2)),
+    };
+
+    // Inactivos con días desde última venta
+    const inactiveData = filters.includeInactive ? inactiveVendedores.map(v => ({
+      vendedorId: v.vendedorId,
+      vendedorName: v.vendedorName,
+      ventanaName: v.ventanaName,
+      daysSinceLastSale: v.lastSaleAt ? Math.floor((Date.now() - new Date(v.lastSaleAt).getTime()) / (1000 * 60 * 60 * 24)) : null,
+      lastSaleAt: v.lastSaleAt,
+    })) : [];
+
+    return {
+      data: {
+        summary,
+        vendedores: topVendedores,
+        ...(filters.includeInactive && inactiveData.length > 0 && { inactive: inactiveData }),
+      },
+      meta: {
+        dateRange: {
+          from: dateRange.fromString,
+          to: dateRange.toString,
+        },
+        sortBy,
+      },
+    };
+  },
 };
 
