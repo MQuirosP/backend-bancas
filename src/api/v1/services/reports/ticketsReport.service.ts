@@ -1247,22 +1247,21 @@ export const TicketsReportService = {
   // MÉTRICAS PRINCIPALES (RESUMEN)
   // ===============================
   const metricsQuery = Prisma.sql`
-    SELECT
-      SUM(t."totalAmount") as total_ventas,
-      SUM(COALESCE(t."totalPayout", 0)) as total_premios,
-      COUNT(*) as tickets_count,
-      COUNT(CASE WHEN t."isWinner" = true THEN 1 END) as tickets_ganadores
-    FROM "Ticket" t
-    INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-    WHERE ${createdAtCR} BETWEEN ${dateRange.from} AND ${dateRange.to}
-      AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
-      AND t."isActive" = true
-      AND t."deletedAt" IS NULL
-      AND s.status = 'EVALUATED'
-      AND s."deletedAt" IS NULL
-      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-  `;
+  SELECT
+    SUM(t."totalAmount") as total_ventas,
+    SUM(COALESCE(t."totalPayout", 0)) as total_premios,
+    COUNT(*) as tickets_count,
+    COUNT(CASE WHEN t."isWinner" = true THEN 1 END) as tickets_ganadores
+  FROM "Ticket" t
+  INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+  WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+    AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+    AND t."isActive" = true
+    AND t."deletedAt" IS NULL
+    AND s.status = 'EVALUATED'
+    AND s."deletedAt" IS NULL
+`;
+
 
   const [metrics] = await prisma.$queryRaw<Array<{
     total_ventas: number | null;
