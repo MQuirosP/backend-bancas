@@ -1232,36 +1232,34 @@ export const TicketsReportService = {
   includeComparison?: boolean;
   groupBy?: 'day' | 'week' | 'month';
 }): Promise<any> {
+
   const dateRange = resolveDateRange(
     filters.date || 'today',
     filters.fromDate,
     filters.toDate
   );
 
-  // Helper: createdAt siempre evaluado en horario Costa Rica
-  const createdAtCR = Prisma.sql`
-    (t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
-  `;
-
-  // ===============================
-  // MÉTRICAS PRINCIPALES (RESUMEN)
-  // ===============================
+  // ======================================================
+  // MÉTRICAS PRINCIPALES (SUMMARY) — SOLO businessDate
+  // ======================================================
   const metricsQuery = Prisma.sql`
-  SELECT
-    SUM(t."totalAmount") as total_ventas,
-    SUM(COALESCE(t."totalPayout", 0)) as total_premios,
-    COUNT(*) as tickets_count,
-    COUNT(CASE WHEN t."isWinner" = true THEN 1 END) as tickets_ganadores
-  FROM "Ticket" t
-  INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-  WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-    AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
-    AND t."isActive" = true
-    AND t."deletedAt" IS NULL
-    AND s.status = 'EVALUATED'
-    AND s."deletedAt" IS NULL
-`;
-
+    SELECT
+      SUM(t."totalAmount") as total_ventas,
+      SUM(COALESCE(t."totalPayout", 0)) as total_premios,
+      COUNT(*) as tickets_count,
+      COUNT(CASE WHEN t."isWinner" = true THEN 1 END) as tickets_ganadores
+    FROM "Ticket" t
+    INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+    WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
+                                AND ${dateRange.toString}::date
+      AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+      AND t."isActive" = true
+      AND t."deletedAt" IS NULL
+      AND s.status = 'EVALUATED'
+      AND s."deletedAt" IS NULL
+      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+  `;
 
   const [metrics] = await prisma.$queryRaw<Array<{
     total_ventas: number | null;
@@ -1270,15 +1268,16 @@ export const TicketsReportService = {
     tickets_ganadores: bigint;
   }>>(metricsQuery);
 
-  // ===============================
-  // COMISIONES DE LISTERO
-  // ===============================
+  // ======================================================
+  // COMISIONES — por ticket → businessDate
+  // ======================================================
   const comisionesQuery = Prisma.sql`
     SELECT SUM(j."listeroCommissionAmount") as total_comisiones
     FROM "Jugada" j
     INNER JOIN "Ticket" t ON j."ticketId" = t.id
     INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-    WHERE ${createdAtCR} BETWEEN ${dateRange.from} AND ${dateRange.to}
+    WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
+                                AND ${dateRange.toString}::date
       AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
@@ -1290,11 +1289,13 @@ export const TicketsReportService = {
       ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
   `;
 
-  const [comisiones] = await prisma.$queryRaw<Array<{ total_comisiones: number | null }>>(comisionesQuery);
+  const [comisiones] = await prisma.$queryRaw<Array<{
+    total_comisiones: number | null;
+  }>>(comisionesQuery);
 
-  // ===============================
-  // PARSEOS
-  // ===============================
+  // ======================================================
+  // PARSEOS Y CÁLCULOS
+  // ======================================================
   const totalVentas = Number(metrics?.total_ventas ?? 0);
   const totalPremios = Number(metrics?.total_premios ?? 0);
   const totalComisiones = Number(comisiones?.total_comisiones ?? 0);
@@ -1310,28 +1311,42 @@ export const TicketsReportService = {
     totalComisiones,
     margenBruto,
     margenNeto,
-    porcentajeRetorno: totalVentas > 0 ? +(totalPremios / totalVentas * 100).toFixed(2) : 0,
-    porcentajeMargen: totalVentas > 0 ? +(margenNeto / totalVentas * 100).toFixed(2) : 0,
+    porcentajeRetorno: totalVentas > 0
+      ? +(totalPremios / totalVentas * 100).toFixed(2)
+      : 0,
+    porcentajeMargen: totalVentas > 0
+      ? +(margenNeto / totalVentas * 100).toFixed(2)
+      : 0,
     ticketsCount,
     ticketsGanadores,
-    tasaGanadores: ticketsCount > 0 ? +(ticketsGanadores / ticketsCount * 100).toFixed(2) : 0,
+    tasaGanadores: ticketsCount > 0
+      ? +(ticketsGanadores / ticketsCount * 100).toFixed(2)
+      : 0,
   };
 
-  // ===============================
-  // TENDENCIA
-  // ===============================
+  // ======================================================
+  // TENDENCIA — businessDate
+  // ======================================================
   let trend: any[] = [];
+
   if (filters.groupBy) {
-    const truncFunc = Prisma.raw(`'${filters.groupBy}'`);
+
+    const groupExpr =
+      filters.groupBy === 'day'
+        ? Prisma.sql`t."businessDate"`
+        : filters.groupBy === 'week'
+        ? Prisma.sql`DATE_TRUNC('week', t."businessDate")`
+        : Prisma.sql`DATE_TRUNC('month', t."businessDate")`;
 
     const trendQuery = Prisma.sql`
       SELECT
-        DATE_TRUNC(${truncFunc}, ${createdAtCR}) as period,
+        ${groupExpr} as period,
         SUM(t."totalAmount") as ventas,
         SUM(COALESCE(t."totalPayout", 0)) as premios
       FROM "Ticket" t
       INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-      WHERE ${createdAtCR} BETWEEN ${dateRange.from} AND ${dateRange.to}
+      WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
+                                  AND ${dateRange.toString}::date
         AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
@@ -1339,7 +1354,7 @@ export const TicketsReportService = {
         AND s."deletedAt" IS NULL
         ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
         ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-      GROUP BY DATE_TRUNC(${truncFunc}, ${createdAtCR})
+      GROUP BY ${groupExpr}
       ORDER BY period ASC
     `;
 
@@ -1349,7 +1364,7 @@ export const TicketsReportService = {
       const ventas = Number(r.ventas ?? 0);
       const premios = Number(r.premios ?? 0);
       return {
-        period: formatDateOnly(r.period),
+        period: formatDateOnly(new Date(r.period)),
         ventas,
         premios,
         margenBruto: ventas - premios,
@@ -1357,9 +1372,9 @@ export const TicketsReportService = {
     });
   }
 
-  // ===============================
-  // POR LOTERÍA (SOLO SORTEOS EVALUADOS)
-  // ===============================
+  // ======================================================
+  // POR LOTERÍA — SOLO sorteos evaluados
+  // ======================================================
   const byLoteriaQuery = Prisma.sql`
     SELECT
       t."loteriaId",
@@ -1369,7 +1384,8 @@ export const TicketsReportService = {
     FROM "Ticket" t
     INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
     INNER JOIN "Loteria" l ON t."loteriaId" = l.id
-    WHERE ${createdAtCR} BETWEEN ${dateRange.from} AND ${dateRange.to}
+    WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
+                                AND ${dateRange.toString}::date
       AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
@@ -1394,7 +1410,9 @@ export const TicketsReportService = {
       ventas,
       premios,
       margenBruto,
-      porcentajeMargen: ventas > 0 ? +(margenBruto / ventas * 100).toFixed(2) : 0,
+      porcentajeMargen: ventas > 0
+        ? +(margenBruto / ventas * 100).toFixed(2)
+        : 0,
     };
   });
 
@@ -1411,7 +1429,8 @@ export const TicketsReportService = {
       },
     },
   };
-},
+}
+,
 
 
   /**
