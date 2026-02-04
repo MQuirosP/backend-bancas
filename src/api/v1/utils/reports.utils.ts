@@ -5,6 +5,15 @@
 import { DateToken, DateRange } from '../types/reports.types';
 import { startOfLocalDay, addLocalDays, endOfLocalDay } from '../../../utils/datetime';
 
+function nowInCostaRica(): Date {
+  return new Date(
+    new Date().toLocaleString('en-US', {
+      timeZone: 'America/Costa_Rica',
+    })
+  );
+}
+
+
 /**
  * Resuelve un token de fecha a un rango de fechas en hora de Costa Rica
  */
@@ -13,7 +22,7 @@ export function resolveDateRange(
   fromDate?: string,
   toDate?: string
 ): DateRange {
-  const now = new Date();
+  const now = nowInCostaRica();
   let start: Date;
   let end: Date;
 
@@ -23,29 +32,28 @@ export function resolveDateRange(
       end = endOfLocalDay(now);
       break;
 
-    case 'yesterday':
+    case 'yesterday': {
       const yesterday = addLocalDays(now, -1);
       start = startOfLocalDay(yesterday);
       end = endOfLocalDay(yesterday);
       break;
+    }
 
-    case 'week':
-      // Esta semana calendario (lunes a hoy)
-      // Calcular el lunes de esta semana
-      const dayOfWeek = now.getDay(); // 0 = Domingo, 1 = Lunes, ..., 6 = Sábado
-      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Domingo -> 6 días atrás, Lunes -> 0
+    case 'week': {
+      const dayOfWeek = now.getDay(); // 0 dom, 1 lun
+      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
       start = startOfLocalDay(addLocalDays(now, -daysToMonday));
       end = endOfLocalDay(now);
       break;
+    }
 
     case 'month':
-      // Mes actual (desde el día 1 hasta hoy)
+      // 👈 AQUÍ estaba el bug fuerte
       start = startOfLocalDay(new Date(now.getFullYear(), now.getMonth(), 1));
       end = endOfLocalDay(now);
       break;
 
     case 'year':
-      // Últimos 365 días (incluyendo hoy)
       start = startOfLocalDay(addLocalDays(now, -364));
       end = endOfLocalDay(now);
       break;
@@ -54,8 +62,12 @@ export function resolveDateRange(
       if (!fromDate || !toDate) {
         throw new Error('fromDate y toDate son requeridos cuando date=range');
       }
-      start = startOfLocalDay(new Date(fromDate + 'T00:00:00'));
-      end = endOfLocalDay(new Date(toDate + 'T23:59:59'));
+      start = startOfLocalDay(
+        new Date(`${fromDate}T00:00:00`)
+      );
+      end = endOfLocalDay(
+        new Date(`${toDate}T23:59:59`)
+      );
       break;
 
     default:
