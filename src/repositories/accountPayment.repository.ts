@@ -257,12 +257,12 @@ export const AccountPaymentRepository = {
       where: {
         ...where,
         //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
-        NOT: {
-          OR: [
-            { notes: { contains: 'Saldo arrastrado del mes anterior' } },
-            { method: 'Saldo del mes anterior' }
-          ]
-        }
+        //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+        method: { not: 'Saldo del mes anterior' },
+        OR: [
+          { notes: null },
+          { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+        ]
       },
       select: {
         amount: true,
@@ -303,12 +303,12 @@ export const AccountPaymentRepository = {
       where: {
         ...where,
         //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
-        NOT: {
-          OR: [
-            { notes: { contains: 'Saldo arrastrado del mes anterior' } },
-            { method: 'Saldo del mes anterior' }
-          ]
-        }
+        //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+        method: { not: 'Saldo del mes anterior' },
+        OR: [
+          { notes: null },
+          { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+        ]
       },
       select: {
         amount: true,
@@ -328,12 +328,12 @@ export const AccountPaymentRepository = {
         accountStatementId,
         isReversed: false, // Solo movimientos no revertidos
         //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
-        NOT: {
-          OR: [
-            { notes: { contains: 'Saldo arrastrado del mes anterior' } },
-            { method: 'Saldo del mes anterior' }
-          ]
-        }
+        //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+        method: { not: 'Saldo del mes anterior' },
+        OR: [
+          { notes: null },
+          { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+        ]
       },
       select: {
         amount: true,
@@ -385,12 +385,12 @@ export const AccountPaymentRepository = {
         accountStatementId: { in: accountStatementIds },
         isReversed: false,
         //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
-        NOT: {
-          OR: [
-            { method: 'Saldo del mes anterior' },
-            { notes: { contains: 'Saldo arrastrado del mes anterior' } }
-          ]
-        }
+        //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+        method: { not: 'Saldo del mes anterior' },
+        OR: [
+          { notes: null },
+          { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+        ]
       },
       select: {
         accountStatementId: true,
@@ -458,12 +458,12 @@ export const AccountPaymentRepository = {
       //  CRÍTICO: Incluir TODOS los movimientos (activos y revertidos) para auditoría
       // Los cálculos en accounts.calculations.ts filtran !isReversed cuando es necesario
       //  CRÍTICO 2: Excluir explícitamente el saldo del mes anterior para que NO infla balances operativos
-      NOT: {
-        OR: [
-          { method: 'Saldo del mes anterior' },
-          { notes: { contains: 'Saldo arrastrado del mes anterior' } }
-        ]
-      }
+      //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+      method: { not: 'Saldo del mes anterior' },
+      OR: [
+        { notes: null },
+        { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+      ]
     };
 
     if (dimension === "banca") {

@@ -310,12 +310,12 @@ export class AccountStatementSyncService {
             } : {}),
             isReversed: false,
             type: "payment",
-            NOT: {
-              OR: [
-                { notes: { contains: 'Saldo arrastrado' } },
-                { method: 'Saldo del mes anterior' }
-              ]
-            }
+            //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+            method: { not: 'Saldo del mes anterior' },
+            OR: [
+              { notes: null },
+              { NOT: { notes: { contains: 'Saldo arrastrado' } } }
+            ]
           },
           _sum: { amount: true }
         }),
@@ -330,12 +330,12 @@ export class AccountStatementSyncService {
             } : {}),
             isReversed: false,
             type: "collection",
-            NOT: {
-              OR: [
-                { notes: { contains: 'Saldo arrastrado' } },
-                { method: 'Saldo del mes anterior' }
-              ]
-            }
+            //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+            method: { not: 'Saldo del mes anterior' },
+            OR: [
+              { notes: null },
+              { NOT: { notes: { contains: 'Saldo arrastrado' } } }
+            ]
           },
           _sum: { amount: true }
         })

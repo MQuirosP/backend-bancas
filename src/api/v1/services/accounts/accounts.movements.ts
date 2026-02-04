@@ -320,12 +320,12 @@ export async function registerPayment(data: {
                     accountStatementId: currentStatement.id,
                     isReversed: false,
                     type: "payment",
-                    NOT: {
-                        OR: [
-                            { notes: { contains: 'Saldo arrastrado del mes anterior' } },
-                            { method: 'Saldo del mes anterior' }
-                        ]
-                    }
+                    //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+                    method: { not: 'Saldo del mes anterior' },
+                    OR: [
+                        { notes: null },
+                        { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+                    ]
                 },
                 _sum: { amount: true }
             }),
@@ -334,12 +334,12 @@ export async function registerPayment(data: {
                     accountStatementId: currentStatement.id,
                     isReversed: false,
                     type: "collection",
-                    NOT: {
-                        OR: [
-                            { notes: { contains: 'Saldo arrastrado del mes anterior' } },
-                            { method: 'Saldo del mes anterior' }
-                        ]
-                    }
+                    //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+                    method: { not: 'Saldo del mes anterior' },
+                    OR: [
+                        { notes: null },
+                        { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+                    ]
                 },
                 _sum: { amount: true }
             })
@@ -552,11 +552,31 @@ export async function reversePayment(
 
         const [totalP, totalC] = await Promise.all([
             tx.accountPayment.aggregate({
-                where: { accountStatementId: currentStatement.id, isReversed: false, type: "payment", NOT: { OR: [{ notes: { contains: 'Saldo arrastrado' } }, { method: 'Saldo del mes anterior' }] } },
+                where: {
+                    accountStatementId: currentStatement.id,
+                    isReversed: false,
+                    type: "payment",
+                    //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+                    method: { not: 'Saldo del mes anterior' },
+                    OR: [
+                        { notes: null },
+                        { NOT: { notes: { contains: 'Saldo arrastrado' } } }
+                    ]
+                },
                 _sum: { amount: true }
             }),
             tx.accountPayment.aggregate({
-                where: { accountStatementId: currentStatement.id, isReversed: false, type: "collection", NOT: { OR: [{ notes: { contains: 'Saldo arrastrado' } }, { method: 'Saldo del mes anterior' }] } },
+                where: {
+                    accountStatementId: currentStatement.id,
+                    isReversed: false,
+                    type: "collection",
+                    //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
+                    method: { not: 'Saldo del mes anterior' },
+                    OR: [
+                        { notes: null },
+                        { NOT: { notes: { contains: 'Saldo arrastrado' } } }
+                    ]
+                },
                 _sum: { amount: true }
             })
         ]);
