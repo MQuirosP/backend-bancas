@@ -30,8 +30,11 @@ export function resolveDateRange(
       break;
 
     case 'week':
-      // Últimos 7 días (incluyendo hoy)
-      start = startOfLocalDay(addLocalDays(now, -6));
+      // Esta semana calendario (lunes a hoy)
+      // Calcular el lunes de esta semana
+      const dayOfWeek = now.getDay(); // 0 = Domingo, 1 = Lunes, ..., 6 = Sábado
+      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Domingo -> 6 días atrás, Lunes -> 0
+      start = startOfLocalDay(addLocalDays(now, -daysToMonday));
       end = endOfLocalDay(now);
       break;
 

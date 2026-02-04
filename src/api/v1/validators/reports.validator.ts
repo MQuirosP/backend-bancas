@@ -41,12 +41,20 @@ export const EntityFiltersSchema = z.object({
 
 export const WinnersPaymentsQuerySchema = DateRangeSchema.merge(PaginationSchema).merge(EntityFiltersSchema).extend({
   paymentStatus: z.enum(['all', 'paid', 'partial', 'unpaid']).default('all').optional(),
+  // Nuevos filtros
+  expiredOnly: z.coerce.boolean().default(false).optional(),
+  minPayout: z.coerce.number().min(0).optional(),
+  maxPayout: z.coerce.number().min(0).optional(),
+  betType: z.enum(['NUMERO', 'REVENTADO', 'all']).default('all').optional(),
 }).strict();
 
 export const NumbersAnalysisQuerySchema = DateRangeSchema.merge(EntityFiltersSchema).extend({
   betType: z.enum(['NUMERO', 'REVENTADO', 'all']).default('all').optional(),
   top: z.coerce.number().int().min(1).max(100).default(20).optional(),
   includeComparison: z.coerce.boolean().default(false).optional(),
+  // Nuevos parámetros
+  includeWinners: z.coerce.boolean().default(false).optional(),
+  includeExposure: z.coerce.boolean().default(false).optional(),
 }).strict();
 
 export const CancelledTicketsQuerySchema = DateRangeSchema.merge(PaginationSchema).merge(EntityFiltersSchema).strict();
@@ -101,4 +109,34 @@ export const VendedoresCommissionsChartQuerySchema = DateRangeSchema.merge(Entit
 }).strict();
 
 export const VendedoresSalesBehaviorQuerySchema = DateRangeSchema.merge(EntityFiltersSchema).strict();
+
+// ============================================================================
+// NUEVOS ENDPOINTS DE REPORTES
+// ============================================================================
+
+// Endpoint de Exposición y Riesgo (CRÍTICO)
+export const ExposureQuerySchema = EntityFiltersSchema.extend({
+  sorteoId: z.string().uuid(), // REQUERIDO
+  loteriaId: z.string().uuid().optional(),
+  top: z.coerce.number().int().min(1).max(100).default(20).optional(),
+  minExposure: z.coerce.number().min(0).optional(),
+}).strict();
+
+// Endpoint de Rentabilidad
+export const ProfitabilityQuerySchema = DateRangeSchema.merge(EntityFiltersSchema).extend({
+  includeComparison: z.coerce.boolean().default(false).optional(),
+  groupBy: z.enum(['day', 'week', 'month']).optional(),
+}).strict();
+
+// Endpoint de Análisis por Horarios
+export const TimeAnalysisQuerySchema = DateRangeSchema.merge(EntityFiltersSchema).extend({
+  metric: z.enum(['ventas', 'tickets', 'cancelaciones']).default('ventas').optional(),
+}).strict();
+
+// Endpoint de Ranking de Vendedores
+export const VendedoresRankingQuerySchema = DateRangeSchema.merge(EntityFiltersSchema).extend({
+  top: z.coerce.number().int().min(1).max(100).default(20).optional(),
+  sortBy: z.enum(['ventas', 'tickets', 'comisiones', 'margen']).default('ventas').optional(),
+  includeInactive: z.coerce.boolean().default(false).optional(),
+}).strict();
 
