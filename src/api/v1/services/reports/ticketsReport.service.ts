@@ -371,10 +371,10 @@ export const TicketsReportService = {
       // Usar updatedAt cuando el status es EVALUATED como aproximación de la fecha de evaluación
       const evaluatedAt = ticket.sorteo?.status === 'EVALUATED' ? ticket.sorteo.updatedAt : null;
       const now = new Date();
-      
+
       let daysSinceEvaluation: number | null = null;
       let hoursSinceEvaluation: number | null = null;
-      
+
       if (evaluatedAt) {
         const diffMs = now.getTime() - evaluatedAt.getTime();
         daysSinceEvaluation = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -1224,30 +1224,115 @@ export const TicketsReportService = {
    * Reporte de rentabilidad y márgenes
    */
   async getProfitability(filters: {
-    date?: DateToken;
-    fromDate?: string;
-    toDate?: string;
-    ventanaId?: string;
-    loteriaId?: string;
-    includeComparison?: boolean;
-    groupBy?: 'day' | 'week' | 'month';
-  }): Promise<any> {
-    const dateRange = resolveDateRange(
-      filters.date || 'today',
-      filters.fromDate,
-      filters.toDate
-    );
+  date?: DateToken;
+  fromDate?: string;
+  toDate?: string;
+  ventanaId?: string;
+  loteriaId?: string;
+  includeComparison?: boolean;
+  groupBy?: 'day' | 'week' | 'month';
+}): Promise<any> {
+  const dateRange = resolveDateRange(
+    filters.date || 'today',
+    filters.fromDate,
+    filters.toDate
+  );
 
-    // Query principal para métricas de rentabilidad (solo sorteos evaluados)
-    const metricsQuery = Prisma.sql`
+  // Helper: createdAt siempre evaluado en horario Costa Rica
+  const createdAtCR = Prisma.sql`
+    (t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
+  `;
+
+  // ===============================
+  // MÉTRICAS PRINCIPALES (RESUMEN)
+  // ===============================
+  const metricsQuery = Prisma.sql`
+    SELECT
+      SUM(t."totalAmount") as total_ventas,
+      SUM(COALESCE(t."totalPayout", 0)) as total_premios,
+      COUNT(*) as tickets_count,
+      COUNT(CASE WHEN t."isWinner" = true THEN 1 END) as tickets_ganadores
+    FROM "Ticket" t
+    INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+    WHERE ${createdAtCR} BETWEEN ${dateRange.from} AND ${dateRange.to}
+      AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+      AND t."isActive" = true
+      AND t."deletedAt" IS NULL
+      AND s.status = 'EVALUATED'
+      AND s."deletedAt" IS NULL
+      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+  `;
+
+  const [metrics] = await prisma.$queryRaw<Array<{
+    total_ventas: number | null;
+    total_premios: number | null;
+    tickets_count: bigint;
+    tickets_ganadores: bigint;
+  }>>(metricsQuery);
+
+  // ===============================
+  // COMISIONES DE LISTERO
+  // ===============================
+  const comisionesQuery = Prisma.sql`
+    SELECT SUM(j."listeroCommissionAmount") as total_comisiones
+    FROM "Jugada" j
+    INNER JOIN "Ticket" t ON j."ticketId" = t.id
+    INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+    WHERE ${createdAtCR} BETWEEN ${dateRange.from} AND ${dateRange.to}
+      AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+      AND t."isActive" = true
+      AND t."deletedAt" IS NULL
+      AND j."isActive" = true
+      AND j."deletedAt" IS NULL
+      AND s.status = 'EVALUATED'
+      AND s."deletedAt" IS NULL
+      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+  `;
+
+  const [comisiones] = await prisma.$queryRaw<Array<{ total_comisiones: number | null }>>(comisionesQuery);
+
+  // ===============================
+  // PARSEOS
+  // ===============================
+  const totalVentas = Number(metrics?.total_ventas ?? 0);
+  const totalPremios = Number(metrics?.total_premios ?? 0);
+  const totalComisiones = Number(comisiones?.total_comisiones ?? 0);
+  const ticketsCount = Number(metrics?.tickets_count ?? 0);
+  const ticketsGanadores = Number(metrics?.tickets_ganadores ?? 0);
+
+  const margenBruto = totalVentas - totalPremios;
+  const margenNeto = margenBruto - totalComisiones;
+
+  const summary = {
+    totalVentas,
+    totalPremios,
+    totalComisiones,
+    margenBruto,
+    margenNeto,
+    porcentajeRetorno: totalVentas > 0 ? +(totalPremios / totalVentas * 100).toFixed(2) : 0,
+    porcentajeMargen: totalVentas > 0 ? +(margenNeto / totalVentas * 100).toFixed(2) : 0,
+    ticketsCount,
+    ticketsGanadores,
+    tasaGanadores: ticketsCount > 0 ? +(ticketsGanadores / ticketsCount * 100).toFixed(2) : 0,
+  };
+
+  // ===============================
+  // TENDENCIA
+  // ===============================
+  let trend: any[] = [];
+  if (filters.groupBy) {
+    const truncFunc = Prisma.raw(`'${filters.groupBy}'`);
+
+    const trendQuery = Prisma.sql`
       SELECT
-        SUM(t."totalAmount") as total_ventas,
-        SUM(COALESCE(t."totalPayout", 0)) as total_premios,
-        COUNT(*) as tickets_count,
-        COUNT(CASE WHEN t."isWinner" = true THEN 1 END) as tickets_ganadores
+        DATE_TRUNC(${truncFunc}, ${createdAtCR}) as period,
+        SUM(t."totalAmount") as ventas,
+        SUM(COALESCE(t."totalPayout", 0)) as premios
       FROM "Ticket" t
       INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-      WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+      WHERE ${createdAtCR} BETWEEN ${dateRange.from} AND ${dateRange.to}
         AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
@@ -1255,211 +1340,80 @@ export const TicketsReportService = {
         AND s."deletedAt" IS NULL
         ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
         ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+      GROUP BY DATE_TRUNC(${truncFunc}, ${createdAtCR})
+      ORDER BY period ASC
     `;
 
-    const [metrics] = await prisma.$queryRaw<Array<{
-      total_ventas: number | null;
-      total_premios: number | null;
-      tickets_count: bigint;
-      tickets_ganadores: bigint;
-    }>>(metricsQuery);
+    const rows = await prisma.$queryRaw<any[]>(trendQuery);
 
-    // Query para comisiones de listero (desde jugadas, solo sorteos evaluados)
-    const comisionesQuery = Prisma.sql`
-      SELECT SUM(j."listeroCommissionAmount") as total_comisiones
-      FROM "Jugada" j
-      INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-      WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
-        AND t."isActive" = true
-        AND t."deletedAt" IS NULL
-        AND j."deletedAt" IS NULL
-        AND j."isActive" = true
-        AND s.status = 'EVALUATED'
-        AND s."deletedAt" IS NULL
-        ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-    `;
-
-    const [comisiones] = await prisma.$queryRaw<Array<{ total_comisiones: number | null }>>(comisionesQuery);
-
-    const totalVentas = parseFloat(metrics?.total_ventas?.toString() || '0');
-    const totalPremios = parseFloat(metrics?.total_premios?.toString() || '0');
-    const totalComisiones = parseFloat(comisiones?.total_comisiones?.toString() || '0');
-    const ticketsCount = parseInt(metrics?.tickets_count?.toString() || '0');
-    const ticketsGanadores = parseInt(metrics?.tickets_ganadores?.toString() || '0');
-
-    const margenBruto = totalVentas - totalPremios;
-    const margenNeto = margenBruto - totalComisiones;
-    const porcentajeRetorno = totalVentas > 0 ? (totalPremios / totalVentas) * 100 : 0;
-    const porcentajeMargen = totalVentas > 0 ? (margenNeto / totalVentas) * 100 : 0;
-    const tasaGanadores = ticketsCount > 0 ? (ticketsGanadores / ticketsCount) * 100 : 0;
-
-    const summary = {
-      totalVentas,
-      totalPremios,
-      totalComisiones,
-      margenBruto,
-      margenNeto,
-      porcentajeRetorno: parseFloat(porcentajeRetorno.toFixed(2)),
-      porcentajeMargen: parseFloat(porcentajeMargen.toFixed(2)),
-      ticketsCount,
-      ticketsGanadores,
-      tasaGanadores: parseFloat(tasaGanadores.toFixed(2)),
-    };
-
-    // Período anterior si se solicita comparación
-    let previousPeriod = null;
-    if (filters.includeComparison) {
-      const prevRange = calculatePreviousPeriod(dateRange);
-
-      const prevMetricsQuery = Prisma.sql`
-        SELECT
-          SUM(t."totalAmount") as total_ventas,
-          SUM(COALESCE(t."totalPayout", 0)) as total_premios
-        FROM "Ticket" t
-        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-        WHERE t."createdAt" BETWEEN ${prevRange.from} AND ${prevRange.to}
-          AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
-          AND t."isActive" = true
-          AND t."deletedAt" IS NULL
-          AND s.status = 'EVALUATED'
-          AND s."deletedAt" IS NULL
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-      `;
-
-      const [prevMetrics] = await prisma.$queryRaw<Array<{
-        total_ventas: number | null;
-        total_premios: number | null;
-      }>>(prevMetricsQuery);
-
-      const prevTotalVentas = parseFloat(prevMetrics?.total_ventas?.toString() || '0');
-      const prevTotalPremios = parseFloat(prevMetrics?.total_premios?.toString() || '0');
-      const prevMargenBruto = prevTotalVentas - prevTotalPremios;
-
-      previousPeriod = {
-        totalVentas: prevTotalVentas,
-        margenBruto: prevMargenBruto,
-        porcentajeMargen: prevTotalVentas > 0 ? parseFloat(((prevMargenBruto / prevTotalVentas) * 100).toFixed(2)) : 0,
-        changeVentas: calculateChangePercent(totalVentas, prevTotalVentas),
-        changeMargen: calculateChangePercent(margenBruto, prevMargenBruto),
-      };
-    }
-
-    // Tendencia por período si se solicita groupBy
-    let trend: Array<any> = [];
-    if (filters.groupBy) {
-      // Usar Prisma.raw para insertar el nombre de la función de truncamiento de forma segura
-      // Solo valores validados por el schema Zod pueden llegar aquí: 'day', 'week', 'month'
-      const truncFuncRaw = Prisma.raw(`'${filters.groupBy}'`);
-
-      const trendQuery = Prisma.sql`
-        SELECT
-          DATE_TRUNC(${truncFuncRaw}, t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica') as period,
-          SUM(t."totalAmount") as ventas,
-          SUM(COALESCE(t."totalPayout", 0)) as premios
-        FROM "Ticket" t
-        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-          AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
-          AND t."isActive" = true
-          AND t."deletedAt" IS NULL
-          AND s.status = 'EVALUATED'
-          AND s."deletedAt" IS NULL
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-        GROUP BY DATE_TRUNC(${truncFuncRaw}, t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
-        ORDER BY period ASC
-      `;
-
-      const trendRaw = await prisma.$queryRaw<Array<{
-        period: Date;
-        ventas: number;
-        premios: number;
-      }>>(trendQuery);
-
-      trend = trendRaw.map(t => {
-        const ventas = parseFloat(t.ventas?.toString() || '0');
-        const premios = parseFloat(t.premios?.toString() || '0');
-        const margenBruto = ventas - premios;
-
-        return {
-          period: formatDateOnly(t.period),
-          ventas,
-          premios,
-          margenBruto,
-        };
-      });
-    }
-
-    // Por lotería
-    const byLoteriaQuery = Prisma.sql`
-  SELECT
-    t."loteriaId",
-    l.name as loteria_name,
-    SUM(t."totalAmount") as ventas,
-    SUM(COALESCE(t."totalPayout", 0)) as premios
-  FROM "Ticket" t
-  INNER JOIN "Loteria" l ON t."loteriaId" = l.id
-  INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-  WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-    AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
-    AND s.status = 'EVALUATED'
-    AND t."isActive" = true
-    AND t."deletedAt" IS NULL
-    ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-    ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-  GROUP BY t."loteriaId", l.name
-  ORDER BY ventas DESC
-`;
-
-
-    const byLoteriaRaw = await prisma.$queryRaw<Array<{
-      loteriaId: string;
-      loteria_name: string;
-      ventas: number;
-      premios: number;
-    }>>(byLoteriaQuery);
-
-    const byLoteria = byLoteriaRaw.map(l => {
-      const ventas = parseFloat(l.ventas?.toString() || '0');
-      const premios = parseFloat(l.premios?.toString() || '0');
-      const margenBruto = ventas - premios;
-      const porcentajeMargen = ventas > 0 ? (margenBruto / ventas) * 100 : 0;
-
+    trend = rows.map(r => {
+      const ventas = Number(r.ventas ?? 0);
+      const premios = Number(r.premios ?? 0);
       return {
-        loteriaId: l.loteriaId,
-        loteriaName: l.loteria_name,
+        period: formatDateOnly(r.period),
         ventas,
         premios,
-        margenBruto,
-        porcentajeMargen: parseFloat(porcentajeMargen.toFixed(2)),
+        margenBruto: ventas - premios,
       };
     });
+  }
+
+  // ===============================
+  // POR LOTERÍA (SOLO SORTEOS EVALUADOS)
+  // ===============================
+  const byLoteriaQuery = Prisma.sql`
+    SELECT
+      t."loteriaId",
+      l.name as loteria_name,
+      SUM(t."totalAmount") as ventas,
+      SUM(COALESCE(t."totalPayout", 0)) as premios
+    FROM "Ticket" t
+    INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+    INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+    WHERE ${createdAtCR} BETWEEN ${dateRange.from} AND ${dateRange.to}
+      AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+      AND t."isActive" = true
+      AND t."deletedAt" IS NULL
+      AND s.status = 'EVALUATED'
+      AND s."deletedAt" IS NULL
+      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+    GROUP BY t."loteriaId", l.name
+    ORDER BY ventas DESC
+  `;
+
+  const byLoteriaRaw = await prisma.$queryRaw<any[]>(byLoteriaQuery);
+
+  const byLoteria = byLoteriaRaw.map(l => {
+    const ventas = Number(l.ventas ?? 0);
+    const premios = Number(l.premios ?? 0);
+    const margenBruto = ventas - premios;
 
     return {
-      data: {
-        summary,
-        ...(previousPeriod && { previousPeriod }),
-        ...(trend.length > 0 && { trend }),
-        byLoteria,
-      },
-      meta: {
-        dateRange: {
-          from: dateRange.fromString,
-          to: dateRange.toString,
-        },
-        ...(filters.includeComparison && previousPeriod && {
-          comparisonDateRange: {
-            from: calculatePreviousPeriod(dateRange).fromString,
-            to: calculatePreviousPeriod(dateRange).toString,
-          },
-        }),
-      },
+      loteriaId: l.loteriaId,
+      loteriaName: l.loteria_name,
+      ventas,
+      premios,
+      margenBruto,
+      porcentajeMargen: ventas > 0 ? +(margenBruto / ventas * 100).toFixed(2) : 0,
     };
-  },
+  });
+
+  return {
+    data: {
+      summary,
+      ...(trend.length && { trend }),
+      byLoteria,
+    },
+    meta: {
+      dateRange: {
+        from: dateRange.fromString,
+        to: dateRange.toString,
+      },
+    },
+  };
+},
+
 
   /**
    * Reporte de análisis por hora y día de semana
