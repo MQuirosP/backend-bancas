@@ -948,24 +948,21 @@ export const TicketsReportService = {
 
     // Agrupación por lotería
     const byLoteriaQuery = Prisma.sql`
-  SELECT
-    t."loteriaId",
-    l.name as loteria_name,
-    COUNT(*) as cancelled_count,
-    SUM(t."totalAmount") as cancelled_amount
-  FROM "Ticket" t
-  INNER JOIN "Loteria" l ON t."loteriaId" = l.id
-  INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-  WHERE t.status = 'CANCELLED'
-    AND s.status = 'EVALUATED'
-    AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-    ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-    ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-    ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-  GROUP BY t."loteriaId", l.name
-  ORDER BY cancelled_count DESC
-`;
-
+      SELECT
+        t."loteriaId",
+        l.name as loteria_name,
+        COUNT(*) as cancelled_count,
+        SUM(t."totalAmount") as cancelled_amount
+      FROM "Ticket" t
+      INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+      WHERE t.status = 'CANCELLED'
+        AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+        ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+        ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+      GROUP BY t."loteriaId", l.name
+      ORDER BY cancelled_count DESC
+    `;
 
     const byLoteriaRaw = await prisma.$queryRaw<Array<{
       loteriaId: string;
@@ -1399,22 +1396,25 @@ export const TicketsReportService = {
 
     // Por lotería
     const byLoteriaQuery = Prisma.sql`
-      SELECT
-        t."loteriaId",
-        l.name as loteria_name,
-        SUM(t."totalAmount") as ventas,
-        SUM(COALESCE(t."totalPayout", 0)) as premios
-      FROM "Ticket" t
-      INNER JOIN "Loteria" l ON t."loteriaId" = l.id
-      WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-        AND t."isActive" = true
-        AND t."deletedAt" IS NULL
-        ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-      GROUP BY t."loteriaId", l.name
-      ORDER BY ventas DESC
-    `;
+  SELECT
+    t."loteriaId",
+    l.name as loteria_name,
+    SUM(t."totalAmount") as ventas,
+    SUM(COALESCE(t."totalPayout", 0)) as premios
+  FROM "Ticket" t
+  INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+  INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+  WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+    AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+    AND s.status = 'EVALUATED'
+    AND t."isActive" = true
+    AND t."deletedAt" IS NULL
+    ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+    ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+  GROUP BY t."loteriaId", l.name
+  ORDER BY ventas DESC
+`;
+
 
     const byLoteriaRaw = await prisma.$queryRaw<Array<{
       loteriaId: string;
