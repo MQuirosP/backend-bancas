@@ -1,3 +1,5 @@
+import { crDateService } from "../../../../utils/crDateService";
+
 /**
  * ️ ESTÁNDAR CRÍTICO: ZONA HORARIA COSTA RICA
  * 
@@ -10,8 +12,8 @@
  * - La base de datos almacena fechas como DATE (sin hora), representando días calendario en CR
  * - Siempre convertir a CR antes de comparar o formatear fechas
  */
-export const COSTA_RICA_UTC_OFFSET_HOURS = 6; // Costa Rica está en UTC-6, así que 00:00 local = 06:00 UTC
-export const COSTA_RICA_UTC_OFFSET_MS = COSTA_RICA_UTC_OFFSET_HOURS * 60 * 60 * 1000;
+export const COSTA_RICA_UTC_OFFSET_HOURS = crDateService.CR_TIMEZONE_OFFSET_HOURS;
+export const COSTA_RICA_UTC_OFFSET_MS = crDateService.CR_TIMEZONE_OFFSET_MS;
 
 /**
  * Convierte un Date UTC a fecha calendario en CR (YYYY-MM-DD)
@@ -20,18 +22,9 @@ export const COSTA_RICA_UTC_OFFSET_MS = COSTA_RICA_UTC_OFFSET_HOURS * 60 * 60 * 
  * 
  * @param date Date en UTC que representa un instante en CR
  * @returns String YYYY-MM-DD representando el día calendario en CR
- * 
- * Ejemplo:
- * - Input: Date('2025-11-20T05:59:59.999Z') (fin del día 19 en CR)
- * - Output: '2025-11-19' (día correcto en CR)
  */
 export function toCRDateString(date: Date): string {
-    // Convertir UTC a CR: sumar 6 horas para obtener la fecha en CR
-    const crDate = new Date(date.getTime() + COSTA_RICA_UTC_OFFSET_MS);
-    const year = crDate.getUTCFullYear();
-    const month = String(crDate.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(crDate.getUTCDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    return crDateService.dateUTCToCRString(date);
 }
 
 export function toCostaRicaISODate(date: Date): string {

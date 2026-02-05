@@ -1,5 +1,6 @@
 import { getCRLocalComponents } from "../../../../utils/businessDate";
 import { crDateService } from "../../../../utils/crDateService";
+import { ACCOUNT_PREVIOUS_MONTH_METHOD } from "./accounts.types";
 
 /**
  * Formatea una hora en formato 12h con AM/PM desde un Date
@@ -205,7 +206,7 @@ export function intercalateSorteosAndMovements(
     //  Determinar nombre del movimiento
     let sorteoName: string;
     if (isOpeningBalance) {
-      sorteoName = 'Saldo del mes anterior';
+      sorteoName = ACCOUNT_PREVIOUS_MONTH_METHOD;
     } else if (movement.type === 'payment') {
       sorteoName = 'Pago recibido';
     } else {

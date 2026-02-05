@@ -28,23 +28,50 @@ import { activeOperationsService } from '../core/activeOperations.service';
 let settlementTimer: NodeJS.Timeout | null = null;
 
 /**
+ * Parse a very limited 5-field cron ("m h * * *") and return next Date in UTC.
+ * Supports numeric minute/hour only (no ranges/lists/steps). Returns null if unsupported.
+ */
+function getNextRunFromCron(cronExpr: string, now: Date): Date | null {
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [minStr, hourStr] = parts;
+  const minute = minStr === '*' ? 0 : Number(minStr);
+  const hour = hourStr === '*' ? 0 : Number(hourStr);
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) return null;
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return null;
+
+  const candidate = new Date(now);
+  candidate.setUTCHours(hour, minute, 0, 0);
+  if (candidate <= now) {
+    candidate.setUTCDate(candidate.getUTCDate() + 1);
+  }
+  return candidate;
+}
+
+/**
  * Calculate milliseconds until next scheduled run
- * Defaults to 3 AM UTC if no cronSchedule is configured
+ * If cronSchedule is set in DB, respect it (minute/hour daily); fallback to 3 AM UTC.
  */
 async function getMillisecondsUntilNextSettlement(): Promise<number> {
   const config = await prisma.accountStatementSettlementConfig.findFirst();
-  
-  // Si hay cronSchedule configurado, usar node-cron para calcular el próximo run
-  // Por ahora, usar horario fijo de 3 AM UTC como default
   const now = new Date();
-  const next = new Date(now);
 
-  // Set to 3 AM UTC (after activity log cleanup at 2 AM)
-  next.setUTCHours(3, 0, 0, 0);
+  let next: Date | null = null;
+  if (config?.cronSchedule) {
+    next = getNextRunFromCron(config.cronSchedule, now);
+    if (!next) {
+      logger.warn({
+        layer: 'job',
+        action: 'SETTLEMENT_CRON_PARSE_FAILED',
+        payload: { cronSchedule: config.cronSchedule, fallback: '03:00 UTC' }
+      });
+    }
+  }
 
-  // If 3 AM has already passed today, schedule for tomorrow
-  if (next <= now) {
-    next.setUTCDate(next.getUTCDate() + 1);
+  if (!next) {
+    next = new Date(now);
+    next.setUTCHours(3, 0, 0, 0);
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
   }
 
   return next.getTime() - now.getTime();
@@ -738,4 +765,3 @@ export function stopAccountStatementSettlementJob(): void {
     });
   }
 }
-

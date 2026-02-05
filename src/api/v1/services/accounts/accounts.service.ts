@@ -1,4 +1,4 @@
-import { AccountsFilters, DayStatement, StatementResponse, StatementTotals } from "./accounts.types";
+import { AccountsFilters, DayStatement, StatementResponse, StatementTotals, ACCOUNT_PREVIOUS_MONTH_METHOD, ACCOUNT_CARRY_OVER_NOTES } from "./accounts.types";
 import { getMonthDateRange, toCRDateString, getStatementDateRange } from "./accounts.dates.utils";
 import { resolveDateRange } from "../../../../utils/dateRange";
 import { getMovementsForDay, getSorteoBreakdownBatch } from "./accounts.queries";
@@ -1414,8 +1414,8 @@ export const AccountsService = {
                     id: movementId,
                     type: 'opening_balance' as const,
                     amount: previousMonthBalance,
-                    method: 'Saldo del mes anterior',
-                    notes: 'Saldo arrastrado del mes anterior',
+                    method: ACCOUNT_PREVIOUS_MONTH_METHOD,
+                    notes: ACCOUNT_CARRY_OVER_NOTES,
                     isReversed: false,
                     createdAt: new Date(Date.UTC(year, month - 1, day, 6, 0, 0, 0)).toISOString(),
                     date: date,

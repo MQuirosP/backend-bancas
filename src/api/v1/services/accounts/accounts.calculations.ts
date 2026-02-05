@@ -7,7 +7,7 @@ import { AccountPaymentRepository } from "../../../../repositories/accountPaymen
 import { calculateIsSettled } from "./accounts.commissions";
 import { buildTicketDateFilter } from "./accounts.dates.utils";
 import { crDateService } from "../../../../utils/crDateService";
-import { AccountsFilters, DayStatement, StatementTotals, StatementResponse } from "./accounts.types";
+import { AccountsFilters, DayStatement, StatementTotals, StatementResponse, ACCOUNT_PREVIOUS_MONTH_METHOD, ACCOUNT_CARRY_OVER_NOTES } from "./accounts.types";
 import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
 import { resolveCommission } from "../../../../services/commission.resolver";
 import { getSorteoBreakdownBatch, getAggregatedTicketsData, AggregatedTicketRow } from "./accounts.queries";
@@ -384,13 +384,9 @@ export async function calculateDayStatement(
                     bancaId
                 );
             } else {
-                // Otros días: Buscar remainingBalance del día anterior
-                const previousDate = new Date(date);
-                previousDate.setUTCDate(previousDate.getUTCDate() - 1);
-
-                // Usar prisma directamente para mayor control sobre filtros (especialmente para banca)
+                // Otros días: Buscar el statement más reciente en el mismo mes antes de hoy (maneja huecos)
                 const prevStmtWhere: any = {
-                    date: previousDate,
+                    date: { lt: date, gte: new Date(Date.UTC(year, monthVal - 1, 1)) },
                 };
 
                 if (dimension === "vendedor" && vendedorId) {
@@ -406,6 +402,7 @@ export async function calculateDayStatement(
 
                 const prevStmt = await prisma.accountStatement.findFirst({
                     where: prevStmtWhere,
+                    orderBy: { date: 'desc' },
                     select: { remainingBalance: true }
                 });
 
@@ -513,16 +510,17 @@ export async function calculateDayStatement(
                 bancaId
             );
         } else {
-            const previousDate = new Date(date);
-            previousDate.setUTCDate(previousDate.getUTCDate() - 1);
-
-            const prevStmtWhere: any = { date: previousDate };
+            // Otros días: Buscar el statement más reciente en el mismo mes antes de hoy (maneja huecos)
+            const prevStmtWhere: any = {
+                date: { lt: date, gte: new Date(Date.UTC(year, monthVal - 1, 1)) },
+            };
             if (dimension === "vendedor" && vendedorId) prevStmtWhere.vendedorId = vendedorId;
             else if (dimension === "ventana" && correctedVentanaId) { prevStmtWhere.ventanaId = correctedVentanaId; prevStmtWhere.vendedorId = null; }
             else if (dimension === "banca" && bancaId) { prevStmtWhere.bancaId = bancaId; prevStmtWhere.ventanaId = null; prevStmtWhere.vendedorId = null; }
 
             const prevStmt = await prisma.accountStatement.findFirst({
                 where: prevStmtWhere,
+                orderBy: { date: 'desc' },
                 select: { remainingBalance: true }
             });
 
@@ -604,16 +602,17 @@ export async function calculateDayStatement(
             targetBancaId
         );
     } else {
-        const previousDate = new Date(date);
-        previousDate.setUTCDate(previousDate.getUTCDate() - 1);
-
-        const prevStmtWhere: any = { date: previousDate };
+        // Otros días: Buscar el statement más reciente en el mismo mes antes de hoy (maneja huecos)
+        const prevStmtWhere: any = {
+            date: { lt: date, gte: new Date(Date.UTC(year, monthVal - 1, 1)) },
+        };
         if (dimension === "vendedor" && targetVendedorId) prevStmtWhere.vendedorId = targetVendedorId;
         else if (dimension === "ventana" && targetVentanaId) { prevStmtWhere.ventanaId = targetVentanaId; prevStmtWhere.vendedorId = null; }
         else if (dimension === "banca" && targetBancaId) { prevStmtWhere.bancaId = targetBancaId; prevStmtWhere.ventanaId = null; prevStmtWhere.vendedorId = null; }
 
         const prevStmt = await prisma.accountStatement.findFirst({
             where: prevStmtWhere,
+            orderBy: { date: 'desc' },
             select: { remainingBalance: true }
         });
 
@@ -1876,8 +1875,8 @@ export async function getStatementDirect(
                 //  CRÍTICO: Excluir explícitamente el saldo del mes anterior (arrastre)
                 // Puede venir por ID especial, por método o por notas
                 if (m.id?.startsWith('previous-month-balance-')) return false;
-                if (m.method === 'Saldo del mes anterior') return false;
-                if (m.notes?.includes('Saldo arrastrado del mes anterior')) return false;
+                if (m.method === ACCOUNT_PREVIOUS_MONTH_METHOD) return false;
+                if (m.notes?.includes(ACCOUNT_CARRY_OVER_NOTES)) return false;
 
                 //  CRÍTICO: Para ventanas, solo incluir movimientos consolidados (vendedorId = null)
                 // NO incluir movimientos de vendedores específicos

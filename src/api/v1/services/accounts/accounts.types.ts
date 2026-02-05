@@ -3,6 +3,9 @@ import { Role } from "@prisma/client";
 /**
  * Filtros para queries de accounts
  */
+export const ACCOUNT_CARRY_OVER_NOTES = 'Saldo arrastrado del mes anterior';
+export const ACCOUNT_PREVIOUS_MONTH_METHOD = 'Saldo del mes anterior';
+
 export interface AccountsFilters {
     month?: string; // YYYY-MM (opcional si se usa date)
     //  NUEVO: Filtros de período
