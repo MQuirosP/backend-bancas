@@ -180,16 +180,17 @@ export async function getPreviousMonthFinalBalance(
         }
 
         const [year, month] = effectiveMonth.split("-").map(Number);
-        const previousYear = month === 1 ? year - 1 : year;
-        const previousMonth = month === 1 ? 12 : month - 1;
-        const previousMonthStr = `${previousYear}-${String(previousMonth).padStart(2, '0')}`;
+        
+        //  CRÍTICO: Obtener el primer día del mes actual para buscar el último statement ANTES de esa fecha
+        // Esto permite que el sistema sea robusto incluso si hubo varios meses de inactividad
+        const firstDayOfCurrentMonth = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
 
         // PASO 1: Buscar en AccountStatement (fuente de verdad)
-        // Priorizar accumulatedBalance del último día del mes anterior
-        // CRÍTICO: Usar el campo 'month' para filtrar, es más robusto que rangos de fecha
+        // Priorizar accumulatedBalance del último día disponible ANTES del mes actual
+        //  MEJORA: Buscar el último statement histórico antes del mes actual, no solo del mes inmediatamente anterior
         let isConsolidated = false;
         const where: Prisma.AccountStatementWhereInput = {
-            month: previousMonthStr, // Filtrar por el mes anterior directamente
+            date: { lt: firstDayOfCurrentMonth }, // Buscar cualquier statement anterior al inicio del mes actual
         };
 
         if (dimension === "vendedor") {

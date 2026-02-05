@@ -14,6 +14,7 @@ import { AppError } from "../../../../core/errors";
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
 import { AccountStatementRepository as ASRepo } from "../../../../repositories/accountStatement.repository";
 import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";
+import { ACCOUNT_CARRY_OVER_NOTES, ACCOUNT_PREVIOUS_MONTH_METHOD } from "./accounts.types";
 import { calculateIsSettled } from "./accounts.commissions";
 import { buildTicketDateFilter } from "./accounts.dates.utils";
 import { crDateService } from "../../../../utils/crDateService";
@@ -311,10 +312,10 @@ export class AccountStatementSyncService {
             isReversed: false,
             type: "payment",
             //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
-            method: { not: 'Saldo del mes anterior' },
+            method: { not: ACCOUNT_PREVIOUS_MONTH_METHOD },
             OR: [
               { notes: null },
-              { NOT: { notes: { contains: 'Saldo arrastrado' } } }
+              { NOT: { notes: { contains: ACCOUNT_CARRY_OVER_NOTES } } }
             ]
           },
           _sum: { amount: true }
@@ -331,10 +332,10 @@ export class AccountStatementSyncService {
             isReversed: false,
             type: "collection",
             //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
-            method: { not: 'Saldo del mes anterior' },
+            method: { not: ACCOUNT_PREVIOUS_MONTH_METHOD },
             OR: [
               { notes: null },
-              { NOT: { notes: { contains: 'Saldo arrastrado' } } }
+              { NOT: { notes: { contains: ACCOUNT_CARRY_OVER_NOTES } } }
             ]
           },
           _sum: { amount: true }
@@ -460,7 +461,7 @@ export class AccountStatementSyncService {
       const ticketCount = tickets.length;
       const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
 
-      // 7-8. Usar upsert directamente dentro de la transacción
+      // 7. Preparar datos de actualización
       const updateData = {
         totalSales: parseFloat(totalSales.toFixed(2)),
         totalPayouts: parseFloat(totalPayouts.toFixed(2)),
@@ -476,32 +477,53 @@ export class AccountStatementSyncService {
         ticketCount,
         month: monthStr,
         bancaId: finalBancaId,
-        ventanaId: dimension === "vendedor" ? null : (finalVentanaId || null), //  CORREGIDO: Usar null explícito para vendedores
+        ventanaId: dimension === "vendedor" ? null : (finalVentanaId || null),
         vendedorId: vendedorId || null,
       };
 
+      // 8. Guardar o actualizar el statement de forma robusta
+      // CRÍTICO: Intentar encontrar registro existente primero
       const statementToUpdate = await tx.accountStatement.findFirst({
         where: dimension === "vendedor" && vendedorId
           ? { date, vendedorId }
           : dimension === "ventana" && finalVentanaId
             ? { date, ventanaId: finalVentanaId, vendedorId: null }
-            : dimension === "banca" && finalBancaId
-              ? { date, bancaId: finalBancaId, ventanaId: null, vendedorId: null }
-              : { date },
+            : { date, bancaId: finalBancaId, ventanaId: null, vendedorId: null },
       });
 
-      if (statementToUpdate) {
-        await tx.accountStatement.update({
-          where: { id: statementToUpdate.id },
-          data: updateData,
-        });
-      } else {
-        await tx.accountStatement.create({
-          data: {
-            ...updateData,
-            date: date,
-          },
-        });
+      try {
+        if (statementToUpdate) {
+          await tx.accountStatement.update({
+            where: { id: statementToUpdate.id },
+            data: updateData,
+          });
+        } else {
+          await tx.accountStatement.create({
+            data: {
+              ...updateData,
+              date: date,
+            },
+          });
+        }
+      } catch (error: any) {
+        //  MANEJO DE CONCURRENCIA: Si falla por unique constraint (P2002), intentar update
+        if (error.code === "P2002") {
+          const retryStatement = await tx.accountStatement.findFirst({
+            where: dimension === "vendedor" && vendedorId
+              ? { date, vendedorId }
+              : dimension === "ventana" && finalVentanaId
+                ? { date, ventanaId: finalVentanaId, vendedorId: null }
+                : { date, bancaId: finalBancaId, ventanaId: null, vendedorId: null },
+          });
+          if (retryStatement) {
+            await tx.accountStatement.update({
+              where: { id: retryStatement.id },
+              data: updateData,
+            });
+          }
+        } else {
+          throw error;
+        }
       }
 
       logger.info({
@@ -651,6 +673,33 @@ export class AccountStatementSyncService {
       });
 
       await Promise.all(syncPromises);
+      
+      //  CRÍTICO: Propagar cambios si el sorteo es de una fecha pasada
+      const todayCR = crDateService.dateUTCToCRString(new Date());
+      if (sorteoDateStrCR < todayCR) {
+        logger.info({
+          layer: "service",
+          action: "SYNC_SORTEO_STATEMENTS_PROPAGATING",
+          payload: { sorteoId, sorteoDateStrCR, todayCR }
+        });
+
+        // Propagar para cada combinación (en paralelo para rendimiento)
+        const propagationPromises: Promise<void>[] = [];
+        
+        for (const combo of uniqueCombinations.values()) {
+          if (combo.vendedorId) {
+            propagationPromises.push(this.propagateBalanceChange(combo.businessDate, "vendedor", combo.vendedorId));
+          }
+          if (combo.ventanaId) {
+            propagationPromises.push(this.propagateBalanceChange(combo.businessDate, "ventana", combo.ventanaId));
+          }
+          if (combo.bancaId) {
+            propagationPromises.push(this.propagateBalanceChange(combo.businessDate, "banca", combo.bancaId));
+          }
+        }
+        
+        await Promise.all(propagationPromises);
+      }
 
       logger.info({
         layer: "service",
@@ -830,13 +879,12 @@ export class AccountStatementSyncService {
         startDate: dateStrCR,
         dimension,
         entityId,
-        month: monthStr,
       },
     });
 
-    // 1. Encontrar todos los statements existentes de esta entidad para el resto del mes
+    // 1. Encontrar todos los statements existentes de esta entidad a partir de la fecha indicada
+    //  CRÍTICO: No limitar al mes actual, permitir propagación a meses futuros si existen
     const where: any = {
-      month: monthStr,
       date: { gt: startDate },
     };
 

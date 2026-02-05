@@ -234,7 +234,7 @@ export const AccountStatementRepository = {
     } else if (filters.ventanaId) {
       // Si solo hay ventanaId, buscar statements consolidados de ventana
       where.ventanaId = filters.ventanaId;
-      // No forzar vendedorId=null, permitir ambos casos
+      where.vendedorId = null; //  IMPORTANTE: Solo consolidados, no registros de vendedores
     }
 
     return await prisma.accountStatement.findMany({

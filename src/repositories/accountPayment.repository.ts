@@ -2,6 +2,8 @@ import prisma from "../core/prismaClient";
 import { Prisma } from "@prisma/client";
 import logger from "../core/logger";
 import { getCRLocalComponents } from "../utils/businessDate";
+import { crDateService } from "../utils/crDateService";
+import { ACCOUNT_CARRY_OVER_NOTES, ACCOUNT_PREVIOUS_MONTH_METHOD } from "../api/v1/services/accounts/accounts.types";
 
 export const AccountPaymentRepository = {
   /**
@@ -258,10 +260,10 @@ export const AccountPaymentRepository = {
         ...where,
         //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
         //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
-        method: { not: 'Saldo del mes anterior' },
+        method: { not: ACCOUNT_PREVIOUS_MONTH_METHOD },
         OR: [
           { notes: null },
-          { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+          { NOT: { notes: { contains: ACCOUNT_CARRY_OVER_NOTES } } }
         ]
       },
       select: {
@@ -304,10 +306,10 @@ export const AccountPaymentRepository = {
         ...where,
         //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
         //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
-        method: { not: 'Saldo del mes anterior' },
+        method: { not: ACCOUNT_PREVIOUS_MONTH_METHOD },
         OR: [
           { notes: null },
-          { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+          { NOT: { notes: { contains: ACCOUNT_CARRY_OVER_NOTES } } }
         ]
       },
       select: {
@@ -329,10 +331,10 @@ export const AccountPaymentRepository = {
         isReversed: false, // Solo movimientos no revertidos
         //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
         //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
-        method: { not: 'Saldo del mes anterior' },
+        method: { not: ACCOUNT_PREVIOUS_MONTH_METHOD },
         OR: [
           { notes: null },
-          { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+          { NOT: { notes: { contains: ACCOUNT_CARRY_OVER_NOTES } } }
         ]
       },
       select: {
@@ -386,10 +388,10 @@ export const AccountPaymentRepository = {
         isReversed: false,
         //  CRÍTICO: Excluir explícitamente el saldo del mes anterior
         //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
-        method: { not: 'Saldo del mes anterior' },
+        method: { not: ACCOUNT_PREVIOUS_MONTH_METHOD },
         OR: [
           { notes: null },
-          { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+          { NOT: { notes: { contains: ACCOUNT_CARRY_OVER_NOTES } } }
         ]
       },
       select: {
@@ -459,10 +461,10 @@ export const AccountPaymentRepository = {
       // Los cálculos en accounts.calculations.ts filtran !isReversed cuando es necesario
       //  CRÍTICO 2: Excluir explícitamente el saldo del mes anterior para que NO infla balances operativos
       //  FIX: Manejar notes=null correctamente (NULL LIKE '%text%' retorna NULL, no false)
-      method: { not: 'Saldo del mes anterior' },
+      method: { not: ACCOUNT_PREVIOUS_MONTH_METHOD },
       OR: [
         { notes: null },
-        { NOT: { notes: { contains: 'Saldo arrastrado del mes anterior' } } }
+        { NOT: { notes: { contains: ACCOUNT_CARRY_OVER_NOTES } } }
       ]
     };
 
@@ -583,19 +585,11 @@ export const AccountPaymentRepository = {
       orderBy: { createdAt: "asc" },
     });
 
-    // Función helper para convertir Date a fecha CR (YYYY-MM-DD)
-    const toCRDateString = (date: Date): string => {
-      const offsetMs = 6 * 60 * 60 * 1000; // UTC-6 = +6 horas para convertir a CR
-      const crDate = new Date(date.getTime() + offsetMs);
-      const year = crDate.getUTCFullYear();
-      const month = String(crDate.getUTCMonth() + 1).padStart(2, '0');
-      const day = String(crDate.getUTCDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    };
-
+    // USAR crDateService para conversiones consistentes
     const movementsMap = new Map<string, any[]>();
     for (const payment of payments) {
-      const dateKey = toCRDateString(payment.date);
+      // ️ CRÍTICO: payment.date es un DATE de PostgreSQL, ya representa el día correcto
+      const dateKey = crDateService.postgresDateToCRString(payment.date);
       if (!movementsMap.has(dateKey)) {
         movementsMap.set(dateKey, []);
       }
