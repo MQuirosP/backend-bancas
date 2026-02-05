@@ -44,7 +44,7 @@ export class AccountStatementSyncService {
     date: Date, // Date UTC que representa día calendario en CR
     dimension: "banca" | "ventana" | "vendedor",
     entityId?: string,
-    options?: { force?: boolean } // Forzar recálculo incluso si isSettled=true
+    options?: { force?: boolean, tx?: Prisma.TransactionClient } // Forzar recálculo incluso si isSettled=true
   ): Promise<void> {
     // ️ CRÍTICO: Convertir date a string CR para operaciones
     const dateStrCR = crDateService.postgresDateToCRString(date);
@@ -119,8 +119,8 @@ export class AccountStatementSyncService {
       finalBancaId = ventana?.bancaId || undefined;
     }
 
-    // Usar transacción para asegurar consistencia
-    await prisma.$transaction(async (tx) => {
+    // Definir lógica de ejecución
+    const execute = async (tx: Prisma.TransactionClient) => {
       // 1. Buscar statement existente con los IDs correctos
       // ️ CRÍTICO: Para vendedores, buscar primero por vendedorId específicamente
       // porque el constraint único (date, ventanaId) puede tener conflicto con statement consolidado
@@ -378,55 +378,38 @@ export class AccountStatementSyncService {
           },
         });
       } else {
-        // Buscar statement del día anterior
-        const previousDayDate = new Date(Date.UTC(year, month - 1, day - 1));
-        const previousDateStrCR = crDateService.postgresDateToCRString(previousDayDate);
-
-        // ️ CRÍTICO: Para vendedores, buscar SOLO por vendedorId (sin ventanaId)
-        // porque los statements de vendedores pueden tener ventanaId: null para evitar conflictos
+        // Buscar statement del día más reciente antes de hoy en el mismo mes
+        // ️ MEJORA: Maneja huecos de actividad buscando el último statement disponible
         let previousStatement: any = null;
+        const previousCriteria: any = {
+          date: { lt: date, gte: new Date(Date.UTC(year, month - 1, 1)) },
+        };
 
         if (vendedorId) {
           // Buscar por vendedorId (sin considerar ventanaId)
-          previousStatement = await tx.accountStatement.findFirst({
-            where: {
-              date: previousDayDate,
-              vendedorId: vendedorId,
-            },
-            select: {
-              accumulatedBalance: true,
-            },
-          });
+          previousCriteria.vendedorId = vendedorId;
         } else if (ventanaId) {
           // Para ventanas: buscar por ventanaId sin vendedorId
-          previousStatement = await tx.accountStatement.findFirst({
-            where: {
-              date: previousDayDate,
-              ventanaId: ventanaId,
-              vendedorId: null,
-            },
-            select: {
-              accumulatedBalance: true,
-            },
-          });
+          previousCriteria.ventanaId = ventanaId;
+          previousCriteria.vendedorId = null;
         } else if (bancaId) {
           // Para bancas: buscar por bancaId sin ventanaId ni vendedorId
-          previousStatement = await tx.accountStatement.findFirst({
-            where: {
-              date: previousDayDate,
-              bancaId: bancaId,
-              ventanaId: null,
-              vendedorId: null,
-            },
-            select: {
-              accumulatedBalance: true,
-            },
-          });
+          previousCriteria.bancaId = bancaId;
+          previousCriteria.ventanaId = null;
+          previousCriteria.vendedorId = null;
         }
 
+        previousStatement = await tx.accountStatement.findFirst({
+          where: previousCriteria,
+          orderBy: { date: 'desc' },
+          select: {
+            accumulatedBalance: true,
+            date: true,
+          },
+        });
+
         if (previousStatement && previousStatement.accumulatedBalance !== null && previousStatement.accumulatedBalance !== undefined) {
-          //  CRÍTICO: Usar accumulatedBalance del día anterior + balance recalculado
-          // El balance recalculado debe reflejar el estado actual de tickets y movimientos
+          //  CRÍTICO: Usar accumulatedBalance del día anterior encontrado + balance recalculado
           const previousAccumulated = Number(previousStatement.accumulatedBalance) || 0;
           accumulatedBalance = previousAccumulated + balance;
 
@@ -435,7 +418,7 @@ export class AccountStatementSyncService {
             action: "SYNC_DAY_STATEMENT_FROM_PREVIOUS",
             payload: {
               date: dateStrCR,
-              previousDate: previousDateStrCR,
+              previousDate: crDateService.postgresDateToCRString(previousStatement.date),
               dimension,
               entityId,
               previousAccumulatedBalance: Number(previousStatement.accumulatedBalance),
@@ -444,9 +427,7 @@ export class AccountStatementSyncService {
             },
           });
         } else {
-          //  CRÍTICO: Si no hay statement del día anterior, usar saldo del mes anterior
-          // NO buscar retroactivamente porque puede encontrar valores de otros vendedores/ventanas
-          // El saldo del mes anterior es la fuente de verdad cuando no hay statement del día anterior
+          //  CRÍTICO: Si no hay statement previo en el mes, usar saldo del mes anterior
           const previousMonthBalance = await getPreviousMonthFinalBalance(
             monthStr,
             dimension,
@@ -461,66 +442,25 @@ export class AccountStatementSyncService {
             action: "SYNC_DAY_STATEMENT_NO_PREVIOUS_DAY_USE_MONTH_BALANCE",
             payload: {
               date: dateStrCR,
-              previousDate: previousDateStrCR,
               dimension,
               entityId,
               previousMonthBalance: Number(previousMonthBalance),
               balance,
               accumulatedBalance,
-              note: "No se encontró statement del día anterior, usando saldo del mes anterior",
+              note: "No se encontró statement previo en el mes, usando saldo del mes anterior",
             },
           });
         }
       }
 
-      // 5. Calcular remainingBalance desde sorteos evaluados y movimientos
-      //  CORRECCIÓN CRÍTICA: remainingBalance debe ser el acumulado al FINAL del día
-      // después de todos los sorteos y movimientos en orden cronológico.
-      // 
-      // accumulatedBalance = saldoInicialDia + balance
-      // donde balance = totalSales - totalPayouts - commission + totalPaid - totalCollected
-      // 
-      // remainingBalance debe ser igual a accumulatedBalance porque accumulatedBalance
-      // ya incluye todos los sorteos y movimientos del día (a través de balance).
-      // 
-      // Sin embargo, si queremos ser más precisos, remainingBalance debería ser el
-      // último accumulated después de intercalar sorteos y movimientos, pero eso
-      // requiere calcular bySorteo, lo cual es costoso aquí.
-      // 
-      // Por ahora, usamos accumulatedBalance como remainingBalance porque:
-      // - accumulatedBalance ya incluye todo el balance del día
-      // - El orden cronológico de sorteos/movimientos no cambia el balance total
-      // - La diferencia solo importa para el desglose bySorteo, que se calcula en getStatementDirect
+      // 5. Calcular remainingBalance
       let remainingBalance = accumulatedBalance;
-
-      //  VALIDACIÓN: Si accumulatedBalance es 0 pero hay actividad, puede ser un error
-      // (a menos que el saldo del día anterior también sea 0 y el balance del día sea 0)
-      if (accumulatedBalance === 0 && (totalSales > 0 || totalPayouts > 0 || totalPaid > 0 || totalCollected > 0)) {
-        logger.warn({
-          layer: "service",
-          action: "SYNC_DAY_STATEMENT_ZERO_ACCUMULATED_WITH_ACTIVITY",
-          payload: {
-            date: dateStrCR,
-            dimension,
-            entityId,
-            totalSales,
-            totalPayouts,
-            totalPaid,
-            totalCollected,
-            balance,
-            accumulatedBalance,
-            note: "accumulatedBalance is 0 but there is activity - this may be correct if previous day balance was negative and day balance is positive, or vice versa",
-          },
-        });
-      }
 
       // 6. Determinar isSettled
       const ticketCount = tickets.length;
       const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
 
-      // 7-8. Usar upsert directamente dentro de la transacción (más seguro y eficiente)
-      //  CORREGIDO: Usar upsert en lugar de findOrCreate + update para evitar errores
-      // cuando el registro no existe o está fuera de la transacción
+      // 7-8. Usar upsert directamente dentro de la transacción
       const updateData = {
         totalSales: parseFloat(totalSales.toFixed(2)),
         totalPayouts: parseFloat(totalPayouts.toFixed(2)),
@@ -540,12 +480,9 @@ export class AccountStatementSyncService {
         vendedorId: vendedorId || null,
       };
 
-      //  CORRECCIÓN: Usar findFirst + update/create en lugar de upsert
-      // porque Prisma no soporta upsert con constraints únicos compuestos directamente
-      //  CRÍTICO: Para vendedor, buscar por date + vendedorId (puede tener o no ventanaId)
-      const existingStatement = await tx.accountStatement.findFirst({
+      const statementToUpdate = await tx.accountStatement.findFirst({
         where: dimension === "vendedor" && vendedorId
-          ? { date, vendedorId } //  No filtrar por ventanaId, puede tener o no
+          ? { date, vendedorId }
           : dimension === "ventana" && finalVentanaId
             ? { date, ventanaId: finalVentanaId, vendedorId: null }
             : dimension === "banca" && finalBancaId
@@ -553,9 +490,9 @@ export class AccountStatementSyncService {
               : { date },
       });
 
-      if (existingStatement) {
+      if (statementToUpdate) {
         await tx.accountStatement.update({
-          where: { id: existingStatement.id },
+          where: { id: statementToUpdate.id },
           data: updateData,
         });
       } else {
@@ -582,10 +519,19 @@ export class AccountStatementSyncService {
           isSettled,
         },
       });
-    }, {
-      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
-      timeout: 30000,
-    });
+    };
+
+    // Usar transacción proporcionada o crear una nueva
+    if (options?.tx) {
+      await execute(options.tx);
+    } else {
+      await prisma.$transaction(async (tx) => {
+        await execute(tx);
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+        timeout: 30000,
+      });
+    }
   }
 
   /**
@@ -856,6 +802,97 @@ export class AccountStatementSyncService {
         dimension,
         entityId,
         daysProcessed: daysToProcess.length,
+      },
+    });
+  }
+
+  /**
+   * Propaga un cambio de saldo a los días posteriores del mismo mes
+   * Se debe llamar después de registrar o revertir un pago en un día pasado
+   * 
+   * @param startDate - Fecha del cambio (los cambios se propagan a partir del día SIGUIENTE)
+   * @param dimension - Dimensión
+   * @param entityId - ID de la entidad
+   */
+  static async propagateBalanceChange(
+    startDate: Date,
+    dimension: "banca" | "ventana" | "vendedor",
+    entityId?: string
+  ): Promise<void> {
+    const dateStrCR = crDateService.postgresDateToCRString(startDate);
+    const [year, month] = dateStrCR.split('-').map(Number);
+    const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+
+    logger.info({
+      layer: "service",
+      action: "PROPAGATE_BALANCE_CHANGE_START",
+      payload: {
+        startDate: dateStrCR,
+        dimension,
+        entityId,
+        month: monthStr,
+      },
+    });
+
+    // 1. Encontrar todos los statements existentes de esta entidad para el resto del mes
+    const where: any = {
+      month: monthStr,
+      date: { gt: startDate },
+    };
+
+    if (dimension === "vendedor") {
+      where.vendedorId = entityId;
+    } else if (dimension === "ventana") {
+      where.ventanaId = entityId;
+      where.vendedorId = null;
+    } else if (dimension === "banca") {
+      where.bancaId = entityId;
+      where.ventanaId = null;
+      where.vendedorId = null;
+    }
+
+    const statementsToUpdate = await prisma.accountStatement.findMany({
+      where,
+      orderBy: { date: 'asc' },
+      select: { date: true },
+    });
+
+    if (statementsToUpdate.length === 0) {
+      logger.info({
+        layer: "service",
+        action: "PROPAGATE_BALANCE_CHANGE_NO_STATEMENTS",
+        payload: { date: dateStrCR, dimension, entityId },
+      });
+      return;
+    }
+
+    // 2. Sincronizar cada día en orden cronológico ASC
+    // Esto asegura que el accumulatedBalance se arrastre correctamente
+    for (const stmt of statementsToUpdate) {
+      try {
+        await this.syncDayStatement(stmt.date, dimension, entityId, { force: true });
+      } catch (error) {
+        logger.error({
+          layer: "service",
+          action: "PROPAGATE_BALANCE_CHANGE_DAY_ERROR",
+          payload: {
+            date: crDateService.postgresDateToCRString(stmt.date),
+            dimension,
+            entityId,
+            error: (error as Error).message,
+          },
+        });
+      }
+    }
+
+    logger.info({
+      layer: "service",
+      action: "PROPAGATE_BALANCE_CHANGE_COMPLETED",
+      payload: {
+        startDate: dateStrCR,
+        dimension,
+        entityId,
+        statementsUpdated: statementsToUpdate.length,
       },
     });
   }
