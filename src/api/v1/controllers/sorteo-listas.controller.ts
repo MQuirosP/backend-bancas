@@ -7,13 +7,17 @@ export const SorteoListasController = {
         const includeExcluded = req.query.includeExcluded === 'true'; // Default false
         const vendedorId = req.query.vendedorId as string | undefined;
         const multiplierId = req.query.multiplierId as string | undefined;
+        const mode = (req.query.mode as string) === 'compact' ? 'compact' : 'full';
 
         const response = await SorteoListasService.getListas(
             req.params.id,
             includeExcluded,
             vendedorId,
-            multiplierId
+            multiplierId,
+            mode
         );
+        //  Cache corto porque los datos cambian poco mientras el sorteo está abierto
+        res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=30');
         //  Retornar estructura completa (no envuelto en "data")
         res.json({ success: true, ...response });
     },

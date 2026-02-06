@@ -13,6 +13,7 @@ import { resolveDateRange } from "../../../utils/dateRange";
 import { UserService } from "./user.service";
 import { nowCR, validateDate, formatDateCRWithTZ } from "../../../utils/datetime";
 import { getCRLocalComponents } from "../../../utils/businessDate";
+import { PDFDocument } from "pdf-lib";
 
 const CUTOFF_GRACE_MS = 1000;
 // Updated: Added clienteNombre field support
@@ -1555,6 +1556,128 @@ export const TicketService = {
       logger.error({
         layer: "service",
         action: "TICKET_NUMBERS_SUMMARY_FAIL",
+        payload: { message: err.message, params },
+      });
+      throw err;
+    }
+  },
+
+  /**
+   * Resuelve los multiplicadores a usar en el batch (por sorteo o lotería)
+   */
+  async resolveMultipliersForBatch(params: { loteriaId?: string | null; sorteoId?: string | null; multiplierIds?: string[] }) {
+    let loteriaId = params.loteriaId;
+    if (!loteriaId && params.sorteoId) {
+      const sorteo = await prisma.sorteo.findUnique({
+        where: { id: params.sorteoId },
+        select: { loteriaId: true },
+      });
+      loteriaId = sorteo?.loteriaId || null;
+    }
+
+    if (!loteriaId) {
+      throw new AppError("Se requiere loteriaId o sorteoId para groupBy=multiplier", 400);
+    }
+
+    const multipliers = await prisma.loteriaMultiplier.findMany({
+      where: {
+        loteriaId,
+        ...(params.multiplierIds && params.multiplierIds.length > 0 ? { id: { in: params.multiplierIds } } : {}),
+      },
+      select: { id: true, name: true, valueX: true },
+      orderBy: { valueX: "desc" },
+    });
+
+    return multipliers;
+  },
+
+  /**
+   * Batch numbers summary por multiplicador: genera PDF único (y opcionalmente PNGs)
+   */
+  async numbersSummaryBatch(
+    params: any,
+    role: string,
+    userId: string,
+    format: 'pdf' | 'png' = 'pdf'
+  ) {
+    try {
+      const multipliers: Array<{ id: string; name: string; valueX: number | null }> = params.multipliers || [];
+      if (!multipliers.length) {
+        throw new AppError("No hay multiplicadores para procesar", 400);
+      }
+
+      const pdfParts: Buffer[] = [];
+      const index: Array<{ multiplierId: string; multiplierName: string; startPage: number; endPage: number }> = [];
+
+      let currentPage = 1;
+
+      for (const multiplier of multipliers) {
+        const result = await TicketService.numbersSummary(
+          {
+            ...params,
+            multiplierId: multiplier.id,
+          },
+          role,
+          userId
+        );
+
+        // Generar PDF para este multiplicador con metadatos enriquecidos
+        const { generateNumbersSummaryPDF } = await import('./pdf-generator.service');
+        const pdfBuffer = await generateNumbersSummaryPDF({
+          meta: {
+            ...result.meta,
+            multiplierName: multiplier.name,
+          },
+          numbers: result.data,
+        });
+
+        // Calcular páginas y rango para índice
+        const loaded = await PDFDocument.load(pdfBuffer);
+        const pages = loaded.getPageCount();
+        index.push({
+          multiplierId: multiplier.id,
+          multiplierName: multiplier.name,
+          startPage: currentPage,
+          endPage: currentPage + pages - 1,
+        });
+        currentPage += pages;
+
+        pdfParts.push(pdfBuffer);
+      }
+
+      // Unir todos los PDFs en uno solo
+      const mergedPdf = await PDFDocument.create();
+      for (const part of pdfParts) {
+        const doc = await PDFDocument.load(part);
+        const copiedPages = await mergedPdf.copyPages(doc, doc.getPageIndices());
+        copiedPages.forEach((p) => mergedPdf.addPage(p));
+      }
+      const pdfBuffer = Buffer.from(await mergedPdf.save());
+
+      if (format === 'png') {
+        const { pdfToPng } = await import('pdf-to-png-converter');
+        const pngPages = await pdfToPng(new Uint8Array(pdfBuffer).buffer);
+        const pages = pngPages
+          .filter(p => p && p.content)
+          .map((p, idx) => ({
+            page: idx + 1,
+            filename: `lista-numeros-${idx + 1}.png`,
+            image: (p.content as Buffer).toString('base64'),
+          }));
+
+        return {
+          pages,
+          index,
+          meta: { totalPages: pages.length, multipliers: multipliers.length },
+          pdfBuffer,
+        };
+      }
+
+      return { pdfBuffer, index, meta: { multipliers: multipliers.length, totalPages: currentPage - 1 } };
+    } catch (err: any) {
+      logger.error({
+        layer: "service",
+        action: "TICKET_NUMBERS_SUMMARY_BATCH_FAIL",
         payload: { message: err.message, params },
       });
       throw err;

@@ -760,6 +760,91 @@ export const TicketController = {
   },
 
   /**
+   * POST /api/v1/tickets/numbers-summary/pdf/batch
+   * Genera un único PDF/PNG con todas las listas por multiplicador (batch)
+   * Disminuye N llamadas individuales actuales.
+   */
+  async numbersSummaryPdfBatch(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { multiplierIds, format, groupBy = 'multiplier', ...rest } = req.body;
+      const me = req.user!;
+
+      if (groupBy !== 'multiplier') {
+        return res.status(400).json({ success: false, error: "GROUP_NOT_SUPPORTED", message: "Solo se admite groupBy=multiplier" });
+      }
+
+      // Reutilizar el mismo contexto RBAC que el endpoint normal
+      const context: AuthContext = {
+        userId: me.id,
+        role: me.role,
+        ventanaId: me.ventanaId,
+        bancaId: req.bancaContext?.bancaId || null,
+      };
+
+      const requestFilters: RequestFilters = {
+        ...(rest.ventanaId ? { ventanaId: rest.ventanaId } : {}),
+        ...(rest.vendedorId ? { vendedorId: rest.vendedorId } : {}),
+        ...(rest.loteriaId ? { loteriaId: rest.loteriaId } : {}),
+        ...(rest.sorteoId ? { sorteoId: rest.sorteoId } : {}),
+      };
+
+      const effectiveFilters = await applyRbacFilters(context, requestFilters);
+
+      // Resolver lista de multiplicadores
+      const multipliers = await TicketService.resolveMultipliersForBatch({
+        loteriaId: effectiveFilters.loteriaId,
+        sorteoId: effectiveFilters.sorteoId,
+        multiplierIds,
+      });
+
+      if (multipliers.length === 0) {
+        return res.status(404).json({ success: false, error: "NO_MULTIPLIERS", message: "No se encontraron multiplicadores para generar el batch" });
+      }
+
+      const result = await TicketService.numbersSummaryBatch(
+        {
+          ...rest,
+          scope: rest.scope || (me.role === Role.ADMIN ? 'all' : 'mine'),
+          ventanaId: effectiveFilters.ventanaId,
+          vendedorId: effectiveFilters.vendedorId,
+          loteriaId: effectiveFilters.loteriaId,
+          sorteoId: effectiveFilters.sorteoId,
+          multipliers,
+        },
+        me.role,
+        me.id,
+        format
+      );
+
+      if (format === 'png') {
+        // Retornar JSON con todas las páginas en base64 y el índice de rangos
+        return res.json({
+          pages: result.pages,
+          index: result.index,
+          meta: result.meta,
+        });
+      }
+
+      // PDF
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="lista-numeros-batch-${Date.now()}.pdf"`);
+      res.setHeader('Content-Length', result.pdfBuffer.length);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+
+      return res.send(result.pdfBuffer);
+    } catch (err: any) {
+      req.logger?.error({
+        layer: "controller",
+        action: "TICKET_NUMBERS_SUMMARY_PDF_BATCH_ERROR",
+        payload: { message: err.message, stack: err.stack },
+      });
+      throw err;
+    }
+  },
+
+  /**
    * GET /api/v1/tickets/by-number/:ticketNumber
    * Obtiene las jugadas de un ticket existente mediante su número
    * Endpoint público/inter-vendedor (no filtra por vendedor)

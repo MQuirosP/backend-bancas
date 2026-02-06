@@ -11,6 +11,29 @@ export interface IncludeListaDTO {
   multiplierId?: string | null;
 }
 
+export type ListaMode = 'full' | 'compact';
+
+export interface MultiplierTotalSummary {
+  multiplierId: string | null;
+  multiplierName: string | null;
+  multiplierValue: number | null;
+  totalSales: number;
+  totalCommission: number;
+  totalTickets: number;
+  totalExcluded: number;
+}
+
+export interface CompactListeroSummary {
+  ventanaId: string;
+  ventanaName: string;
+  ventanaCode: string;
+  totalSales: number;
+  totalTickets: number;
+  totalCommission: number;
+  totalExcluded: number;
+  totalsByMultiplier: MultiplierTotalSummary[];
+}
+
 export interface ListaExclusionResponse {
   id: string;
   sorteoId: string;
@@ -117,12 +140,15 @@ export interface SorteoInfo {
 export interface ListasResponse {
   sorteo: SorteoInfo;
   listeros: ListeroSummary[];
+  listerosCompact?: CompactListeroSummary[];
+  mode?: ListaMode;
   meta: {
     totalSales: number;
     totalTickets: number;
     totalCommission: number;
     totalExcluded: number;
   };
+  refreshedAt?: string;
 }
 
 //  LEGACY: Mantener para compatibilidad (deprecated)
