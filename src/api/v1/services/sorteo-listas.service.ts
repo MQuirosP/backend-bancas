@@ -10,7 +10,10 @@ import {
     ListasResponse,
     ListeroSummary,
     VendedorSummary,
-    SorteoInfo
+    SorteoInfo,
+    ListaMode,
+    CompactListeroSummary,
+    MultiplierTotalSummary,
 } from "../dto/sorteo-listas.dto";
 import logger from "../../../core/logger";
 import { formatIsoLocal } from "../../../utils/datetime";
@@ -26,7 +29,8 @@ export const SorteoListasService = {
         sorteoId: string,
         includeExcluded: boolean = true,
         vendedorIdFilter?: string,
-        multiplierIdFilter?: string
+        multiplierIdFilter?: string,
+        mode: ListaMode = "full"
     ): Promise<ListasResponse> {
         // 1. Obtener información completa del sorteo
         const sorteo = await prisma.sorteo.findUnique({
@@ -270,6 +274,7 @@ export const SorteoListasService = {
 
         // 6. Construir estructura de respuesta agrupada
         const listeros: ListeroSummary[] = [];
+        const listerosCompact: CompactListeroSummary[] = [];
         let totalSalesGlobal = 0;
         let totalTicketsGlobal = 0;
         let totalCommissionGlobal = 0;
@@ -279,11 +284,21 @@ export const SorteoListasService = {
             //  NUEVO: La exclusión ya está filtrada en las jugadas, solo necesitamos agrupar
             // Construir array de vendedores (agrupados por multiplicador) para esta ventana
             const vendedores: VendedorSummary[] = [];
+            const multiplierTotals = new Map<string, {
+                multiplierId: string | null;
+                multiplierName: string | null;
+                multiplierValue: number | null;
+                totalSales: number;
+                totalCommission: number;
+                ticketIds: Set<string>;
+                totalExcluded: number;
+            }>();
             let ventanaTotalSales = 0;
             let ventanaTotalTickets = 0;
             let ventanaTotalCommission = 0;
             let ventanaCommissionByNumber = 0;
             let ventanaCommissionByReventado = 0;
+            let ventanaExcludedCount = 0;
 
             // Agrupar entradas por vendedor
             const entriesByVendor = new Map<string, typeof ventanaData.vendedores extends Map<any, infer V> ? V[] : never>();
@@ -348,7 +363,27 @@ export const SorteoListasService = {
                     });
 
                     totalExcluded++;
+                    ventanaExcludedCount++;
                     // NO sumamos a los totales de ventana porque está excluido
+
+                    // Acumular totales compactos por multiplicador
+                    const multKey = first.multiplierId || "null";
+                    if (!multiplierTotals.has(multKey)) {
+                        multiplierTotals.set(multKey, {
+                            multiplierId: first.multiplierId,
+                            multiplierName: first.multiplierName,
+                            multiplierValue: first.multiplierValue,
+                            totalSales: 0,
+                            totalCommission: 0,
+                            ticketIds: new Set<string>(),
+                            totalExcluded: 0,
+                        });
+                    }
+                    const agg = multiplierTotals.get(multKey)!;
+                    agg.totalSales += collapsedSales;
+                    agg.totalCommission += collapsedCommission;
+                    collapsedTickets.forEach(id => agg.ticketIds.add(id));
+                    agg.totalExcluded += 1;
                     continue;
                 }
 
@@ -390,7 +425,31 @@ export const SorteoListasService = {
                         ventanaCommissionByReventado += data.commissionByReventado;
                     }
 
-                    if (isExcludedItem) totalExcluded++;
+                    if (isExcludedItem) {
+                        totalExcluded++;
+                        ventanaExcludedCount++;
+                    }
+
+                    // Acumular totales compactos por multiplicador
+                    const multKey = data.multiplierId || "null";
+                    if (!multiplierTotals.has(multKey)) {
+                        multiplierTotals.set(multKey, {
+                            multiplierId: data.multiplierId,
+                            multiplierName: data.multiplierName,
+                            multiplierValue: data.multiplierValue ?? null,
+                            totalSales: 0,
+                            totalCommission: 0,
+                            ticketIds: new Set<string>(),
+                            totalExcluded: 0,
+                        });
+                    }
+                    const agg = multiplierTotals.get(multKey)!;
+                    agg.totalSales += data.totalSales;
+                    agg.totalCommission += data.totalCommission;
+                    data.ticketIds.forEach(id => agg.ticketIds.add(id));
+                    if (isExcludedItem) {
+                        agg.totalExcluded += 1;
+                    }
                 }
             }
 
@@ -429,6 +488,38 @@ export const SorteoListasService = {
                 vendedores,
             });
 
+            // Versión compacta (sin vendedores, agregada por multiplicador)
+            const totalsByMultiplier: MultiplierTotalSummary[] = Array.from(multiplierTotals.values())
+                .map(mt => ({
+                    multiplierId: mt.multiplierId,
+                    multiplierName: mt.multiplierName,
+                    multiplierValue: mt.multiplierValue,
+                    totalSales: mt.totalSales,
+                    totalCommission: mt.totalCommission,
+                    totalTickets: mt.ticketIds.size,
+                    totalExcluded: mt.totalExcluded,
+                }))
+                .sort((a, b) => {
+                    if (a.multiplierValue !== null && b.multiplierValue !== null) {
+                        return b.multiplierValue - a.multiplierValue;
+                    }
+                    if (a.multiplierName && b.multiplierName) {
+                        return a.multiplierName.localeCompare(b.multiplierName);
+                    }
+                    return 0;
+                });
+
+            listerosCompact.push({
+                ventanaId: ventanaData.ventanaId,
+                ventanaName: ventanaData.ventanaName,
+                ventanaCode: ventanaData.ventanaCode,
+                totalSales: ventanaTotalSales,
+                totalTickets: ventanaTotalTickets,
+                totalCommission: ventanaTotalCommission,
+                totalExcluded: ventanaExcludedCount,
+                totalsByMultiplier,
+            });
+
             totalSalesGlobal += ventanaTotalSales;
             totalTicketsGlobal += ventanaTotalTickets;
             totalCommissionGlobal += ventanaTotalCommission;
@@ -447,13 +538,16 @@ export const SorteoListasService = {
                 winningNumber: sorteo.winningNumber,
                 loteria: sorteo.loteria,
             },
-            listeros,
+            listeros: mode === "compact" ? [] : listeros,
+            ...(mode === "compact" ? { listerosCompact } : {}),
+            mode,
             meta: {
                 totalSales: totalSalesGlobal,
                 totalTickets: totalTicketsGlobal,
                 totalCommission: totalCommissionGlobal,
                 totalExcluded,
             },
+            refreshedAt: new Date().toISOString(),
         };
 
         // Log para debugging
@@ -468,6 +562,7 @@ export const SorteoListasService = {
                 includeExcluded,
                 vendedorIdFilter,
                 multiplierIdFilter,
+                mode,
                 message: "Resultado de getListas (con exclusión a nivel de jugada)"
             }
         });

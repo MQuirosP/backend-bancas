@@ -25,6 +25,7 @@ router.get("/filter-options", TicketController.getFilterOptions);
 router.get("/numbers-summary/filter-options", TicketController.getNumbersSummaryFilterOptions);
 router.get("/numbers-summary", validateNumbersSummaryQuery, TicketController.numbersSummary);
 router.post("/numbers-summary/pdf", TicketController.numbersSummaryPdf);
+router.post("/numbers-summary/pdf/batch", TicketController.numbersSummaryPdfBatch);
 router.get("/by-number/:ticketNumber", validateTicketNumberParam, TicketController.getByTicketNumber);
 // IMPORTANTE: /:id/image debe ir ANTES de /:id para que no capture esa ruta
 router.get("/:id/image", TicketController.getTicketImage);

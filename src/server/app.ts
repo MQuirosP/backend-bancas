@@ -4,6 +4,7 @@ import 'express-async-errors'
 import helmet from 'helmet'
 import morgan from 'morgan'
 import path from 'path'
+import compression from 'express-compression'
 
 import { config } from '../config'
 import logger from '../core/logger'
@@ -50,6 +51,11 @@ app.use('/public', express.static(path.join(process.cwd(), 'public')));
 app.use(express.json({ limit: '200kb' }))
 app.use(requireJson) // asegurarte que ignora OPTIONS
 app.use(express.urlencoded({ extended: true }))
+// Compresión gzip/br con umbral bajo para acelerar primera carga de listas
+app.use(compression({
+  brotli: { enabled: true, zlib: {} },
+  threshold: 1024, // 1KB
+}));
 app.use(rateLimitMiddleware)
 
 // dev logging

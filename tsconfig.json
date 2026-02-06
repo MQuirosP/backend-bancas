@@ -15,7 +15,7 @@
     "noImplicitAny": true,
 
     //  Agregamos esto
-    "typeRoots": ["./src/core", "./node_modules/@types"],
+    "typeRoots": ["./src/core", "./src/types", "./node_modules/@types"],
     "types": ["node", "express"]
   },
   "include": ["src/**/*"],
