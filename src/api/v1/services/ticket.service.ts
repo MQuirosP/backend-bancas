@@ -1598,7 +1598,7 @@ export const TicketService = {
     params: any,
     role: string,
     userId: string,
-    format: 'pdf' | 'png' = 'pdf'
+    format: 'pdf' | 'png' = 'png'
   ) {
     try {
       const multipliers: Array<{ id: string; name: string; valueX: number | null }> = params.multipliers || [];
@@ -1606,10 +1606,22 @@ export const TicketService = {
         throw new AppError("No hay multiplicadores para procesar", 400);
       }
 
-      const pdfParts: Buffer[] = [];
-      const index: Array<{ multiplierId: string; multiplierName: string; startPage: number; endPage: number }> = [];
+      // Solo soportamos PNG para batch
+      if (format !== 'png') {
+        throw new AppError("Solo se admite format='png' en batch", 400);
+      }
 
-      let currentPage = 1;
+      const { generateNumbersSummaryPDF } = await import('./pdf-generator.service');
+      const { pdfToPng } = await import('pdf-to-png-converter');
+
+      const pages: Array<{
+        page: number;
+        filename: string;
+        image: string;
+        multiplierId: string;
+        multiplierName: string;
+        multiplierValue: number | null;
+      }> = [];
 
       for (const multiplier of multipliers) {
         const result = await TicketService.numbersSummary(
@@ -1621,8 +1633,7 @@ export const TicketService = {
           userId
         );
 
-        // Generar PDF para este multiplicador con metadatos enriquecidos
-        const { generateNumbersSummaryPDF } = await import('./pdf-generator.service');
+        // Generar PDF por multiplicador
         const pdfBuffer = await generateNumbersSummaryPDF({
           meta: {
             ...result.meta,
@@ -1631,49 +1642,41 @@ export const TicketService = {
           numbers: result.data,
         });
 
-        // Calcular páginas y rango para índice
-        const loaded = await PDFDocument.load(pdfBuffer);
-        const pages = loaded.getPageCount();
-        index.push({
-          multiplierId: multiplier.id,
-          multiplierName: multiplier.name,
-          startPage: currentPage,
-          endPage: currentPage + pages - 1,
+        const doc = await PDFDocument.load(pdfBuffer);
+        const pageCount = doc.getPageCount();
+
+        // Convertir todas las páginas a PNG
+        const pngPages = await pdfToPng(new Uint8Array(pdfBuffer).buffer, {
+          pagesToProcess: Array.from({ length: pageCount }, (_, i) => i + 1),
         });
-        currentPage += pages;
 
-        pdfParts.push(pdfBuffer);
-      }
+        if (!pngPages || pngPages.length === 0) {
+          throw new AppError(`No se pudo generar PNG para el multiplicador ${multiplier.name}`, 422);
+        }
 
-      // Unir todos los PDFs en uno solo
-      const mergedPdf = await PDFDocument.create();
-      for (const part of pdfParts) {
-        const doc = await PDFDocument.load(part);
-        const copiedPages = await mergedPdf.copyPages(doc, doc.getPageIndices());
-        copiedPages.forEach((p) => mergedPdf.addPage(p));
-      }
-      const pdfBuffer = Buffer.from(await mergedPdf.save());
-
-      if (format === 'png') {
-        const { pdfToPng } = await import('pdf-to-png-converter');
-        const pngPages = await pdfToPng(new Uint8Array(pdfBuffer).buffer);
-        const pages = pngPages
+        pngPages
           .filter(p => p && p.content)
-          .map((p, idx) => ({
-            page: idx + 1,
-            filename: `lista-numeros-${idx + 1}.png`,
-            image: (p.content as Buffer).toString('base64'),
-          }));
-
-        return {
-          pages,
-          index,
-          meta: { totalPages: pages.length, multipliers: multipliers.length },
-          pdfBuffer,
-        };
+          .forEach((p, idx) => {
+            const buffer = p.content as Buffer;
+            if (!buffer) {
+              return;
+            }
+            pages.push({
+              page: idx,
+              filename: `lista-${multiplier.name || multiplier.valueX || 'mult'}-${idx + 1}.png`,
+              image: buffer.toString('base64'),
+              multiplierId: multiplier.id,
+              multiplierName: multiplier.name,
+              multiplierValue: multiplier.valueX,
+            });
+          });
       }
 
-      return { pdfBuffer, index, meta: { multipliers: multipliers.length, totalPages: currentPage - 1 } };
+      return {
+        format: 'png',
+        pages,
+        meta: { multipliers: multipliers.length, totalPages: pages.length },
+      };
     } catch (err: any) {
       logger.error({
         layer: "service",
