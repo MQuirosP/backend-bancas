@@ -1091,6 +1091,31 @@ export const AccountsService = {
                             lastDayAccumulated,
                         },
                     });
+                } else if (!isSingleStatementQuery && filters.dimension === 'banca' && !filters.bancaId) {
+                    //  OPTIMIZACIÓN: Para "ALL bancas", usar aggregate directo en AccountStatement
+                    // en vez de getStatementDirect() (que recalcula todo el mes y consume mucha memoria)
+                    const aggregated = await prisma.accountStatement.aggregate({
+                        where: {
+                            date: previousDayDate,
+                            bancaId: { not: null },
+                            ventanaId: null,
+                            vendedorId: null,
+                        },
+                        _sum: { remainingBalance: true },
+                    });
+
+                    lastDayAccumulated = Number(aggregated._sum.remainingBalance ?? 0);
+
+                    logger.info({
+                        layer: "service",
+                        action: "GET_BY_SORTEO_USING_AGGREGATE_ALL_BANCAS",
+                        payload: {
+                            date,
+                            previousDate: previousDateStr,
+                            lastDayAccumulated,
+                            note: "Usando SUM(remainingBalance) de AccountStatement para ALL bancas (evita getStatementDirect)",
+                        },
+                    });
                 } else {
                     logger.warn({
                         layer: "service",
