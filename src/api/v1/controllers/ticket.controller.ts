@@ -773,6 +773,10 @@ export const TicketController = {
         return res.status(400).json({ success: false, error: "GROUP_NOT_SUPPORTED", message: "Solo se admite groupBy=multiplier" });
       }
 
+      if (format && format !== 'png') {
+        return res.status(400).json({ success: false, error: "FORMAT_NOT_SUPPORTED", message: "Solo se admite format='png' en batch" });
+      }
+
       // Reutilizar el mismo contexto RBAC que el endpoint normal
       const context: AuthContext = {
         userId: me.id,
@@ -813,27 +817,16 @@ export const TicketController = {
         },
         me.role,
         me.id,
-        format
+        'png'
       );
 
-      if (format === 'png') {
-        // Retornar JSON con todas las páginas en base64 y el índice de rangos
-        return res.json({
-          pages: result.pages,
-          index: result.index,
-          meta: result.meta,
-        });
-      }
-
-      // PDF
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="lista-numeros-batch-${Date.now()}.pdf"`);
-      res.setHeader('Content-Length', result.pdfBuffer.length);
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-
-      return res.send(result.pdfBuffer);
+      // Siempre PNG para batch: devolver JSON
+      return res.json({
+        success: true,
+        format: 'png',
+        pages: result.pages,
+        meta: result.meta,
+      });
     } catch (err: any) {
       req.logger?.error({
         layer: "controller",
