@@ -13,6 +13,27 @@ import { formatIsoLocal } from '../../../../utils/datetime';
 // Helper para formatear solo fecha YYYY-MM-DD
 const formatDateOnly = (date: Date): string => formatIsoLocal(date).split('T')[0];
 
+/**
+ * Determina qué desgloses incluir según los filtros aplicados.
+ * Regla:
+ *  - byLoteria:  cuando NO hay loteriaId
+ *  - bySorteo:   cuando SÍ hay loteriaId
+ *  - byVentana:  cuando NO hay ventanaId Y NO hay vendedorId
+ *  - byVendedor: cuando NO hay vendedorId Y SÍ hay ventanaId
+ */
+function resolveBreakdowns(filters: { loteriaId?: string; ventanaId?: string; vendedorId?: string }) {
+  const hasLoteria = !!(filters.loteriaId && filters.loteriaId.trim() !== '');
+  const hasVentana = !!(filters.ventanaId && filters.ventanaId.trim() !== '');
+  const hasVendedor = !!(filters.vendedorId && filters.vendedorId.trim() !== '');
+
+  return {
+    includeLoteria: !hasLoteria,
+    includeSorteo: hasLoteria,
+    includeVentana: !hasVentana && !hasVendedor,
+    includeVendedor: !hasVendedor && hasVentana,
+  };
+}
+
 interface WinnersPaymentsFilters {
   date?: DateToken;
   fromDate?: string;
@@ -419,6 +440,138 @@ export const TicketsReportService = {
       };
     });
 
+    // ======================================================
+    // DESGLOSES (breakdowns) según filtros aplicados
+    // ======================================================
+    const bk = resolveBreakdowns(filters);
+
+    const winnersBaseFilter = Prisma.sql`
+      t."isWinner" = true
+      AND t."isActive" = true
+      AND t."deletedAt" IS NULL
+      AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+      AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+    `;
+
+    let bySorteo: any[] | undefined;
+    if (bk.includeSorteo) {
+      const q = Prisma.sql`
+        SELECT
+          t."sorteoId" as "sorteoId",
+          s.name as sorteo_name,
+          COUNT(*) as count,
+          SUM(COALESCE(t."totalPayout", 0)) as total_payout,
+          SUM(COALESCE(t."totalPaid", 0)) as total_paid,
+          SUM(COALESCE(t."remainingAmount", 0)) as total_pending
+        FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        WHERE ${winnersBaseFilter}
+        GROUP BY t."sorteoId", s.name
+        ORDER BY total_payout DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        bySorteo = raw.map(r => ({
+          sorteoId: r.sorteoId,
+          sorteoName: r.sorteo_name,
+          count: Number(r.count),
+          totalPayout: Number(r.total_payout ?? 0),
+          totalPaid: Number(r.total_paid ?? 0),
+          totalPending: Number(r.total_pending ?? 0),
+        }));
+      }
+    }
+
+    let byLoteria: any[] | undefined;
+    if (bk.includeLoteria) {
+      const q = Prisma.sql`
+        SELECT
+          t."loteriaId" as "loteriaId",
+          l.name as loteria_name,
+          COUNT(*) as count,
+          SUM(COALESCE(t."totalPayout", 0)) as total_payout,
+          SUM(COALESCE(t."totalPaid", 0)) as total_paid,
+          SUM(COALESCE(t."remainingAmount", 0)) as total_pending
+        FROM "Ticket" t
+        INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+        WHERE ${winnersBaseFilter}
+        GROUP BY t."loteriaId", l.name
+        ORDER BY total_payout DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        byLoteria = raw.map(r => ({
+          loteriaId: r.loteriaId,
+          loteriaName: r.loteria_name,
+          count: Number(r.count),
+          totalPayout: Number(r.total_payout ?? 0),
+          totalPaid: Number(r.total_paid ?? 0),
+          totalPending: Number(r.total_pending ?? 0),
+        }));
+      }
+    }
+
+    let byVentana: any[] | undefined;
+    if (bk.includeVentana) {
+      const q = Prisma.sql`
+        SELECT
+          t."ventanaId" as "ventanaId",
+          v.name as ventana_name,
+          COUNT(*) as count,
+          SUM(COALESCE(t."totalPayout", 0)) as total_payout,
+          SUM(COALESCE(t."totalPaid", 0)) as total_paid,
+          SUM(COALESCE(t."remainingAmount", 0)) as total_pending
+        FROM "Ticket" t
+        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+        WHERE ${winnersBaseFilter}
+        GROUP BY t."ventanaId", v.name
+        ORDER BY total_payout DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        byVentana = raw.map(r => ({
+          ventanaId: r.ventanaId,
+          ventanaName: r.ventana_name,
+          count: Number(r.count),
+          totalPayout: Number(r.total_payout ?? 0),
+          totalPaid: Number(r.total_paid ?? 0),
+          totalPending: Number(r.total_pending ?? 0),
+        }));
+      }
+    }
+
+    let byVendedor: any[] | undefined;
+    if (bk.includeVendedor) {
+      const q = Prisma.sql`
+        SELECT
+          t."vendedorId" as "vendedorId",
+          u.name as vendedor_name,
+          COUNT(*) as count,
+          SUM(COALESCE(t."totalPayout", 0)) as total_payout,
+          SUM(COALESCE(t."totalPaid", 0)) as total_paid,
+          SUM(COALESCE(t."remainingAmount", 0)) as total_pending
+        FROM "Ticket" t
+        INNER JOIN "User" u ON t."vendedorId" = u.id
+        WHERE ${winnersBaseFilter}
+        GROUP BY t."vendedorId", u.name
+        ORDER BY total_payout DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        byVendedor = raw.map(r => ({
+          vendedorId: r.vendedorId,
+          vendedorName: r.vendedor_name,
+          count: Number(r.count),
+          totalPayout: Number(r.total_payout ?? 0),
+          totalPaid: Number(r.total_paid ?? 0),
+          totalPending: Number(r.total_pending ?? 0),
+        }));
+      }
+    }
+
     return {
       data: {
         summary: {
@@ -429,7 +582,6 @@ export const TicketsReportService = {
           partialPaymentsCount,
           unpaidCount,
           averagePaymentTimeHours,
-          // Nuevos campos
           expiredCount,
           expiredAmount,
           maxPayout: maxPayoutValue,
@@ -437,6 +589,10 @@ export const TicketsReportService = {
           maxPayoutTicketNumber,
           byBetType,
           payoutDistribution,
+          ...(bySorteo && { bySorteo }),
+          ...(byLoteria && { byLoteria }),
+          ...(byVentana && { byVentana }),
+          ...(byVendedor && { byVendedor }),
         },
         tickets: ticketsData,
       },
@@ -461,6 +617,8 @@ export const TicketsReportService = {
     fromDate?: string;
     toDate?: string;
     loteriaId?: string;
+    ventanaId?: string;
+    vendedorId?: string;
     betType?: 'NUMERO' | 'REVENTADO' | 'all';
     top?: number;
     includeComparison?: boolean;
@@ -472,6 +630,14 @@ export const TicketsReportService = {
       filters.fromDate,
       filters.toDate
     );
+
+    // Filtros comunes de entidad para reutilizar
+    const numbersEntityFilters = Prisma.sql`
+      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+      ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
+    `;
 
     // Query optimizada para números más jugados
     const numbersQuery = Prisma.sql`
@@ -488,8 +654,7 @@ export const TicketsReportService = {
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
-        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-        ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
+        ${numbersEntityFilters}
       GROUP BY j.number
       ORDER BY total_amount DESC
       LIMIT ${filters.top || 20}
@@ -516,8 +681,7 @@ export const TicketsReportService = {
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
-        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-        ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
+        ${numbersEntityFilters}
     `;
 
     const [summary] = await prisma.$queryRaw<Array<{
@@ -546,8 +710,7 @@ export const TicketsReportService = {
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
           AND j."deletedAt" IS NULL
-          ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-          ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
+          ${numbersEntityFilters}
         GROUP BY j.number
       `;
 
@@ -687,6 +850,127 @@ export const TicketsReportService = {
       // Por ahora, dejamos null
     }
 
+    // ======================================================
+    // DESGLOSES (breakdowns) según filtros aplicados
+    // ======================================================
+    const numbersBaseFilter = Prisma.sql`
+      t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+      AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+      AND t."isActive" = true
+      AND t."deletedAt" IS NULL
+      AND j."deletedAt" IS NULL
+      ${numbersEntityFilters}
+    `;
+
+    const nbk = resolveBreakdowns(filters);
+
+    let numBySorteo: any[] | undefined;
+    if (nbk.includeSorteo) {
+      const q = Prisma.sql`
+        SELECT
+          t."sorteoId" as "sorteoId",
+          s.name as sorteo_name,
+          SUM(j.amount) as total_amount,
+          COUNT(DISTINCT j."ticketId") as tickets_count
+        FROM "Jugada" j
+        INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        WHERE ${numbersBaseFilter}
+        GROUP BY t."sorteoId", s.name
+        ORDER BY total_amount DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        numBySorteo = raw.map(r => {
+          // Find the top number for this sorteo
+          return {
+            sorteoId: r.sorteoId,
+            sorteoName: r.sorteo_name,
+            totalAmount: Number(r.total_amount ?? 0),
+            ticketsCount: Number(r.tickets_count ?? 0),
+          };
+        });
+      }
+    }
+
+    let numByLoteria: any[] | undefined;
+    if (nbk.includeLoteria) {
+      const q = Prisma.sql`
+        SELECT
+          t."loteriaId" as "loteriaId",
+          l.name as loteria_name,
+          SUM(j.amount) as total_amount,
+          COUNT(DISTINCT j."ticketId") as tickets_count
+        FROM "Jugada" j
+        INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+        WHERE ${numbersBaseFilter}
+        GROUP BY t."loteriaId", l.name
+        ORDER BY total_amount DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        numByLoteria = raw.map(r => ({
+          loteriaId: r.loteriaId,
+          loteriaName: r.loteria_name,
+          totalAmount: Number(r.total_amount ?? 0),
+          ticketsCount: Number(r.tickets_count ?? 0),
+        }));
+      }
+    }
+
+    let numByVentana: any[] | undefined;
+    if (nbk.includeVentana) {
+      const q = Prisma.sql`
+        SELECT
+          t."ventanaId" as "ventanaId",
+          v.name as ventana_name,
+          SUM(j.amount) as total_amount,
+          COUNT(DISTINCT j."ticketId") as tickets_count
+        FROM "Jugada" j
+        INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+        WHERE ${numbersBaseFilter}
+        GROUP BY t."ventanaId", v.name
+        ORDER BY total_amount DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        numByVentana = raw.map(r => ({
+          ventanaId: r.ventanaId,
+          ventanaName: r.ventana_name,
+          totalAmount: Number(r.total_amount ?? 0),
+          ticketsCount: Number(r.tickets_count ?? 0),
+        }));
+      }
+    }
+
+    let numByVendedor: any[] | undefined;
+    if (nbk.includeVendedor) {
+      const q = Prisma.sql`
+        SELECT
+          t."vendedorId" as "vendedorId",
+          u.name as vendedor_name,
+          SUM(j.amount) as total_amount,
+          COUNT(DISTINCT j."ticketId") as tickets_count
+        FROM "Jugada" j
+        INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        INNER JOIN "User" u ON t."vendedorId" = u.id
+        WHERE ${numbersBaseFilter}
+        GROUP BY t."vendedorId", u.name
+        ORDER BY total_amount DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        numByVendedor = raw.map(r => ({
+          vendedorId: r.vendedorId,
+          vendedorName: r.vendedor_name,
+          totalAmount: Number(r.total_amount ?? 0),
+          ticketsCount: Number(r.tickets_count ?? 0),
+        }));
+      }
+    }
+
     return {
       data: {
         currentPeriod: {
@@ -707,6 +991,10 @@ export const TicketsReportService = {
             highRiskNumbers,
           }),
         },
+        ...(numBySorteo && { bySorteo: numBySorteo }),
+        ...(numByLoteria && { byLoteria: numByLoteria }),
+        ...(numByVentana && { byVentana: numByVentana }),
+        ...(numByVendedor && { byVendedor: numByVendedor }),
       },
       meta: {
         dateRange: {
@@ -848,150 +1136,213 @@ export const TicketsReportService = {
       };
     });
 
-    // Agrupación por ventana
-    const byVentanaQuery = Prisma.sql`
-      SELECT
-        t."ventanaId",
-        v.name as ventana_name,
-        COUNT(*) as cancelled_count,
-        SUM(t."totalAmount") as cancelled_amount
-      FROM "Ticket" t
-      INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-      WHERE t.status = 'CANCELLED'
-        AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-      GROUP BY t."ventanaId", v.name
+    // ======================================================
+    // DESGLOSES (breakdowns) según filtros aplicados
+    // ======================================================
+    const cbk = resolveBreakdowns(filters);
+
+    const cancelledEntityFilter = Prisma.sql`
+      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
     `;
 
-    const byVentanaRaw = await prisma.$queryRaw<Array<{
-      ventanaId: string;
-      ventana_name: string;
-      cancelled_count: bigint;
-      cancelled_amount: number;
-    }>>(byVentanaQuery);
+    let cByVentana: any[] | undefined;
+    if (cbk.includeVentana) {
+      const byVentanaQuery = Prisma.sql`
+        SELECT
+          t."ventanaId",
+          v.name as ventana_name,
+          COUNT(*) as cancelled_count,
+          SUM(t."totalAmount") as cancelled_amount
+        FROM "Ticket" t
+        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+        WHERE t.status = 'CANCELLED'
+          AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          ${cancelledEntityFilter}
+        GROUP BY t."ventanaId", v.name
+      `;
 
-    // Calcular tasa de cancelación por ventana
-    const byVentana = await Promise.all(byVentanaRaw.map(async (v) => {
-      const ventanaTotalTickets = await prisma.ticket.count({
-        where: {
-          ventanaId: v.ventanaId,
-          createdAt: { gte: dateRange.from, lte: dateRange.to },
-        },
-      });
-      const cancelledCount = parseInt(v.cancelled_count.toString());
-      const cancelledRate = ventanaTotalTickets > 0
-        ? calculatePercentage(cancelledCount, ventanaTotalTickets)
-        : 0;
+      const byVentanaRaw = await prisma.$queryRaw<Array<{
+        ventanaId: string;
+        ventana_name: string;
+        cancelled_count: bigint;
+        cancelled_amount: number;
+      }>>(byVentanaQuery);
 
-      return {
-        ventanaId: v.ventanaId,
-        ventanaName: v.ventana_name,
-        cancelledCount,
-        cancelledAmount: parseFloat(v.cancelled_amount?.toString() || '0'),
-        cancelledRate,
-        totalTickets: ventanaTotalTickets,
-      };
-    }));
+      if (byVentanaRaw.length > 0) {
+        cByVentana = await Promise.all(byVentanaRaw.map(async (v) => {
+          const ventanaTotalTickets = await prisma.ticket.count({
+            where: {
+              ventanaId: v.ventanaId,
+              createdAt: { gte: dateRange.from, lte: dateRange.to },
+            },
+          });
+          const cancelledCount = parseInt(v.cancelled_count.toString());
+          const cancelledRate = ventanaTotalTickets > 0
+            ? calculatePercentage(cancelledCount, ventanaTotalTickets)
+            : 0;
 
-    // Agrupación por vendedor
-    const byVendedorQuery = Prisma.sql`
-      SELECT
-        t."vendedorId",
-        u.name as vendedor_name,
-        v.name as ventana_name,
-        COUNT(*) as cancelled_count,
-        SUM(t."totalAmount") as cancelled_amount
-      FROM "Ticket" t
-      INNER JOIN "User" u ON t."vendedorId" = u.id
-      INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-      WHERE t.status = 'CANCELLED'
-        AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-      GROUP BY t."vendedorId", u.name, v.name
-      ORDER BY cancelled_count DESC
-    `;
+          return {
+            ventanaId: v.ventanaId,
+            ventanaName: v.ventana_name,
+            cancelledCount,
+            cancelledAmount: parseFloat(v.cancelled_amount?.toString() || '0'),
+            cancelledRate,
+            totalTickets: ventanaTotalTickets,
+          };
+        }));
+        cByVentana.sort((a, b) => b.cancelledCount - a.cancelledCount);
+      }
+    }
 
-    const byVendedorRaw = await prisma.$queryRaw<Array<{
-      vendedorId: string;
-      vendedor_name: string;
-      ventana_name: string;
-      cancelled_count: bigint;
-      cancelled_amount: number;
-    }>>(byVendedorQuery);
+    let cByVendedor: any[] | undefined;
+    if (cbk.includeVendedor) {
+      const byVendedorQuery = Prisma.sql`
+        SELECT
+          t."vendedorId",
+          u.name as vendedor_name,
+          v.name as ventana_name,
+          COUNT(*) as cancelled_count,
+          SUM(t."totalAmount") as cancelled_amount
+        FROM "Ticket" t
+        INNER JOIN "User" u ON t."vendedorId" = u.id
+        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+        WHERE t.status = 'CANCELLED'
+          AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          ${cancelledEntityFilter}
+        GROUP BY t."vendedorId", u.name, v.name
+        ORDER BY cancelled_count DESC
+      `;
 
-    // Calcular tasa de cancelación por vendedor
-    const byVendedor = await Promise.all(byVendedorRaw.map(async (v) => {
-      const vendedorTotalTickets = await prisma.ticket.count({
-        where: {
-          vendedorId: v.vendedorId,
-          createdAt: { gte: dateRange.from, lte: dateRange.to },
-        },
-      });
-      const cancelledCount = parseInt(v.cancelled_count.toString());
-      const cancelledRate = vendedorTotalTickets > 0
-        ? calculatePercentage(cancelledCount, vendedorTotalTickets)
-        : 0;
+      const byVendedorRaw = await prisma.$queryRaw<Array<{
+        vendedorId: string;
+        vendedor_name: string;
+        ventana_name: string;
+        cancelled_count: bigint;
+        cancelled_amount: number;
+      }>>(byVendedorQuery);
 
-      return {
-        vendedorId: v.vendedorId,
-        vendedorName: v.vendedor_name,
-        ventanaName: v.ventana_name,
-        cancelledCount,
-        cancelledAmount: parseFloat(v.cancelled_amount.toString()),
-        cancelledRate,
-      };
-    }));
+      if (byVendedorRaw.length > 0) {
+        cByVendedor = await Promise.all(byVendedorRaw.map(async (v) => {
+          const vendedorTotalTickets = await prisma.ticket.count({
+            where: {
+              vendedorId: v.vendedorId,
+              createdAt: { gte: dateRange.from, lte: dateRange.to },
+            },
+          });
+          const cancelledCount = parseInt(v.cancelled_count.toString());
+          const cancelledRate = vendedorTotalTickets > 0
+            ? calculatePercentage(cancelledCount, vendedorTotalTickets)
+            : 0;
 
-    // Agrupación por lotería
-    const byLoteriaQuery = Prisma.sql`
-      SELECT
-        t."loteriaId",
-        l.name as loteria_name,
-        COUNT(*) as cancelled_count,
-        SUM(t."totalAmount") as cancelled_amount
-      FROM "Ticket" t
-      INNER JOIN "Loteria" l ON t."loteriaId" = l.id
-      WHERE t.status = 'CANCELLED'
-        AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-      GROUP BY t."loteriaId", l.name
-      ORDER BY cancelled_count DESC
-    `;
+          return {
+            vendedorId: v.vendedorId,
+            vendedorName: v.vendedor_name,
+            ventanaName: v.ventana_name,
+            cancelledCount,
+            cancelledAmount: parseFloat(v.cancelled_amount.toString()),
+            cancelledRate,
+          };
+        }));
+      }
+    }
 
-    const byLoteriaRaw = await prisma.$queryRaw<Array<{
-      loteriaId: string;
-      loteria_name: string;
-      cancelled_count: bigint;
-      cancelled_amount: number;
-    }>>(byLoteriaQuery);
+    let cByLoteria: any[] | undefined;
+    if (cbk.includeLoteria) {
+      const byLoteriaQuery = Prisma.sql`
+        SELECT
+          t."loteriaId",
+          l.name as loteria_name,
+          COUNT(*) as cancelled_count,
+          SUM(t."totalAmount") as cancelled_amount
+        FROM "Ticket" t
+        INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+        WHERE t.status = 'CANCELLED'
+          AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          ${cancelledEntityFilter}
+        GROUP BY t."loteriaId", l.name
+        ORDER BY cancelled_count DESC
+      `;
 
-    // Calcular tasa de cancelación por lotería
-    const byLoteria = await Promise.all(byLoteriaRaw.map(async (l) => {
-      const loteriaTotalTickets = await prisma.ticket.count({
-        where: {
-          loteriaId: l.loteriaId,
-          createdAt: { gte: dateRange.from, lte: dateRange.to },
-        },
-      });
-      const cancelledCount = parseInt(l.cancelled_count.toString());
-      const cancelledRate = loteriaTotalTickets > 0
-        ? calculatePercentage(cancelledCount, loteriaTotalTickets)
-        : 0;
+      const byLoteriaRaw = await prisma.$queryRaw<Array<{
+        loteriaId: string;
+        loteria_name: string;
+        cancelled_count: bigint;
+        cancelled_amount: number;
+      }>>(byLoteriaQuery);
 
-      return {
-        loteriaId: l.loteriaId,
-        loteriaName: l.loteria_name,
-        cancelledCount,
-        cancelledAmount: parseFloat(l.cancelled_amount.toString()),
-        cancelledRate,
-      };
-    }));
+      if (byLoteriaRaw.length > 0) {
+        cByLoteria = await Promise.all(byLoteriaRaw.map(async (l) => {
+          const loteriaTotalTickets = await prisma.ticket.count({
+            where: {
+              loteriaId: l.loteriaId,
+              createdAt: { gte: dateRange.from, lte: dateRange.to },
+            },
+          });
+          const cancelledCount = parseInt(l.cancelled_count.toString());
+          const cancelledRate = loteriaTotalTickets > 0
+            ? calculatePercentage(cancelledCount, loteriaTotalTickets)
+            : 0;
+
+          return {
+            loteriaId: l.loteriaId,
+            loteriaName: l.loteria_name,
+            cancelledCount,
+            cancelledAmount: parseFloat(l.cancelled_amount.toString()),
+            cancelledRate,
+          };
+        }));
+      }
+    }
+
+    let cBySorteo: any[] | undefined;
+    if (cbk.includeSorteo) {
+      const bySorteoQuery = Prisma.sql`
+        SELECT
+          t."sorteoId",
+          s.name as sorteo_name,
+          COUNT(*) as cancelled_count,
+          SUM(t."totalAmount") as cancelled_amount
+        FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        WHERE t.status = 'CANCELLED'
+          AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          ${cancelledEntityFilter}
+        GROUP BY t."sorteoId", s.name
+        ORDER BY cancelled_count DESC
+      `;
+
+      const bySorteoRaw = await prisma.$queryRaw<Array<{
+        sorteoId: string;
+        sorteo_name: string;
+        cancelled_count: bigint;
+        cancelled_amount: number;
+      }>>(bySorteoQuery);
+
+      if (bySorteoRaw.length > 0) {
+        cBySorteo = await Promise.all(bySorteoRaw.map(async (s) => {
+          const sorteoTotalTickets = await prisma.ticket.count({
+            where: {
+              sorteoId: s.sorteoId,
+              createdAt: { gte: dateRange.from, lte: dateRange.to },
+            },
+          });
+          const cancelledCount = parseInt(s.cancelled_count.toString());
+          const cancelledRate = sorteoTotalTickets > 0
+            ? calculatePercentage(cancelledCount, sorteoTotalTickets)
+            : 0;
+
+          return {
+            sorteoId: s.sorteoId,
+            sorteoName: s.sorteo_name,
+            cancelledCount,
+            cancelledAmount: parseFloat(s.cancelled_amount.toString()),
+            cancelledRate,
+          };
+        }));
+      }
+    }
 
     return {
       data: {
@@ -1000,13 +1351,14 @@ export const TicketsReportService = {
           totalCancelledAmount,
           cancelledRate,
           averageCancelledAmount: parseFloat(averageCancelledAmount.toFixed(2)),
-          averageTimeToCancel, // minutos promedio
+          averageTimeToCancel,
           byTimeRange,
         },
         tickets: ticketsData,
-        byVentana,
-        byVendedor,
-        byLoteria,
+        ...(cByVentana && { byVentana: cByVentana }),
+        ...(cByVendedor && { byVendedor: cByVendedor }),
+        ...(cByLoteria && { byLoteria: cByLoteria }),
+        ...(cBySorteo && { bySorteo: cBySorteo }),
       },
       meta: {
         page,
@@ -1228,6 +1580,7 @@ export const TicketsReportService = {
   fromDate?: string;
   toDate?: string;
   ventanaId?: string;
+  vendedorId?: string;
   loteriaId?: string;
   includeComparison?: boolean;
   groupBy?: 'day' | 'week' | 'month';
@@ -1238,6 +1591,13 @@ export const TicketsReportService = {
     filters.fromDate,
     filters.toDate
   );
+
+  // Filtro de entidad reutilizable para profitability
+  const profitEntityFilter = Prisma.sql`
+    ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+    ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+    ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+  `;
 
   // ======================================================
   // MÉTRICAS PRINCIPALES (SUMMARY) — SOLO businessDate
@@ -1257,8 +1617,7 @@ export const TicketsReportService = {
       AND t."deletedAt" IS NULL
       AND s.status = 'EVALUATED'
       AND s."deletedAt" IS NULL
-      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+      ${profitEntityFilter}
   `;
 
   const [metrics] = await prisma.$queryRaw<Array<{
@@ -1285,8 +1644,7 @@ export const TicketsReportService = {
       AND j."deletedAt" IS NULL
       AND s.status = 'EVALUATED'
       AND s."deletedAt" IS NULL
-      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+      ${profitEntityFilter}
   `;
 
   const [comisiones] = await prisma.$queryRaw<Array<{
@@ -1352,8 +1710,7 @@ export const TicketsReportService = {
         AND t."deletedAt" IS NULL
         AND s.status = 'EVALUATED'
         AND s."deletedAt" IS NULL
-        ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        ${profitEntityFilter}
       GROUP BY ${groupExpr}
       ORDER BY period ASC
     `;
@@ -1373,54 +1730,134 @@ export const TicketsReportService = {
   }
 
   // ======================================================
-  // POR LOTERÍA — SOLO sorteos evaluados
+  // DESGLOSES (breakdowns) según filtros aplicados
   // ======================================================
-  const byLoteriaQuery = Prisma.sql`
-    SELECT
-      t."loteriaId",
-      l.name as loteria_name,
-      SUM(t."totalAmount") as ventas,
-      SUM(COALESCE(t."totalPayout", 0)) as premios
-    FROM "Ticket" t
-    INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-    INNER JOIN "Loteria" l ON t."loteriaId" = l.id
-    WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
-                                AND ${dateRange.toString}::date
-      AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
-      AND t."isActive" = true
-      AND t."deletedAt" IS NULL
-      AND s.status = 'EVALUATED'
-      AND s."deletedAt" IS NULL
-      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-    GROUP BY t."loteriaId", l.name
-    ORDER BY ventas DESC
+  const profitBaseFilter = Prisma.sql`
+    t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+    AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+    AND t."isActive" = true
+    AND t."deletedAt" IS NULL
+    AND s.status = 'EVALUATED'
+    AND s."deletedAt" IS NULL
+    ${profitEntityFilter}
   `;
 
-  const byLoteriaRaw = await prisma.$queryRaw<any[]>(byLoteriaQuery);
+  const pbk = resolveBreakdowns(filters);
 
-  const byLoteria = byLoteriaRaw.map(l => {
-    const ventas = Number(l.ventas ?? 0);
-    const premios = Number(l.premios ?? 0);
-    const margenBruto = ventas - premios;
+  const mapProfitRow = (r: any) => {
+    const ventas = Number(r.ventas ?? 0);
+    const premios = Number(r.premios ?? 0);
+    const mb = ventas - premios;
+    return { ventas, premios, margenBruto: mb, porcentajeMargen: ventas > 0 ? +(mb / ventas * 100).toFixed(2) : 0 };
+  };
 
-    return {
-      loteriaId: l.loteriaId,
-      loteriaName: l.loteria_name,
-      ventas,
-      premios,
-      margenBruto,
-      porcentajeMargen: ventas > 0
-        ? +(margenBruto / ventas * 100).toFixed(2)
-        : 0,
-    };
-  });
+  let pByLoteria: any[] | undefined;
+  if (pbk.includeLoteria) {
+    const q = Prisma.sql`
+      SELECT
+        t."loteriaId",
+        l.name as loteria_name,
+        SUM(t."totalAmount") as ventas,
+        SUM(COALESCE(t."totalPayout", 0)) as premios
+      FROM "Ticket" t
+      INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+      INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+      WHERE ${profitBaseFilter}
+      GROUP BY t."loteriaId", l.name
+      ORDER BY ventas DESC
+    `;
+    const raw = await prisma.$queryRaw<any[]>(q);
+    if (raw.length > 0) {
+      pByLoteria = raw.map(r => ({
+        loteriaId: r.loteriaId,
+        loteriaName: r.loteria_name,
+        ...mapProfitRow(r),
+      }));
+    }
+  }
+
+  let pBySorteo: any[] | undefined;
+  if (pbk.includeSorteo) {
+    const q = Prisma.sql`
+      SELECT
+        t."sorteoId",
+        s.name as sorteo_name,
+        SUM(t."totalAmount") as ventas,
+        SUM(COALESCE(t."totalPayout", 0)) as premios
+      FROM "Ticket" t
+      INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+      WHERE ${profitBaseFilter}
+      GROUP BY t."sorteoId", s.name
+      ORDER BY ventas DESC
+    `;
+    const raw = await prisma.$queryRaw<any[]>(q);
+    if (raw.length > 0) {
+      pBySorteo = raw.map(r => ({
+        sorteoId: r.sorteoId,
+        sorteoName: r.sorteo_name,
+        ...mapProfitRow(r),
+      }));
+    }
+  }
+
+  let pByVentana: any[] | undefined;
+  if (pbk.includeVentana) {
+    const q = Prisma.sql`
+      SELECT
+        t."ventanaId",
+        v.name as ventana_name,
+        SUM(t."totalAmount") as ventas,
+        SUM(COALESCE(t."totalPayout", 0)) as premios
+      FROM "Ticket" t
+      INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+      INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+      WHERE ${profitBaseFilter}
+      GROUP BY t."ventanaId", v.name
+      ORDER BY ventas DESC
+    `;
+    const raw = await prisma.$queryRaw<any[]>(q);
+    if (raw.length > 0) {
+      pByVentana = raw.map(r => ({
+        ventanaId: r.ventanaId,
+        ventanaName: r.ventana_name,
+        ...mapProfitRow(r),
+      }));
+    }
+  }
+
+  let pByVendedor: any[] | undefined;
+  if (pbk.includeVendedor) {
+    const q = Prisma.sql`
+      SELECT
+        t."vendedorId",
+        u.name as vendedor_name,
+        SUM(t."totalAmount") as ventas,
+        SUM(COALESCE(t."totalPayout", 0)) as premios
+      FROM "Ticket" t
+      INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+      INNER JOIN "User" u ON t."vendedorId" = u.id
+      WHERE ${profitBaseFilter}
+      GROUP BY t."vendedorId", u.name
+      ORDER BY ventas DESC
+    `;
+    const raw = await prisma.$queryRaw<any[]>(q);
+    if (raw.length > 0) {
+      pByVendedor = raw.map(r => ({
+        vendedorId: r.vendedorId,
+        vendedorName: r.vendedor_name,
+        ...mapProfitRow(r),
+      }));
+    }
+  }
 
   return {
     data: {
       summary,
       ...(trend.length && { trend }),
-      byLoteria,
+      ...(pByLoteria && { byLoteria: pByLoteria }),
+      ...(pBySorteo && { bySorteo: pBySorteo }),
+      ...(pByVentana && { byVentana: pByVentana }),
+      ...(pByVendedor && { byVendedor: pByVendedor }),
     },
     meta: {
       dateRange: {
@@ -1429,8 +1866,7 @@ export const TicketsReportService = {
       },
     },
   };
-}
-,
+},
 
 
   /**
@@ -1441,6 +1877,7 @@ export const TicketsReportService = {
     fromDate?: string;
     toDate?: string;
     ventanaId?: string;
+    vendedorId?: string;
     loteriaId?: string;
     metric?: 'ventas' | 'tickets' | 'cancelaciones';
   }): Promise<any> {
@@ -1470,6 +1907,13 @@ export const TicketsReportService = {
     // Para cancelaciones: tickets cancelados (sin filtro de sorteo)
     const cancelledTicketFilter = Prisma.sql`AND t.status = 'CANCELLED'`;
 
+    // Filtro de entidad reutilizable para time-analysis
+    const timeEntityFilter = Prisma.sql`
+      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+    `;
+
     // Por hora (convertir a hora local de Costa Rica)
     const byHourQuery = metric === 'cancelaciones'
       ? Prisma.sql`
@@ -1480,8 +1924,7 @@ export const TicketsReportService = {
           FROM "Ticket" t
           WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
             ${cancelledTicketFilter}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+            ${timeEntityFilter}
           GROUP BY EXTRACT(HOUR FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
           ORDER BY hour ASC
         `
@@ -1494,8 +1937,7 @@ export const TicketsReportService = {
           INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
           WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
             ${validTicketFilter}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+            ${timeEntityFilter}
           GROUP BY EXTRACT(HOUR FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
           ORDER BY hour ASC
         `;
@@ -1526,8 +1968,7 @@ export const TicketsReportService = {
           FROM "Ticket" t
           WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
             ${cancelledTicketFilter}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+            ${timeEntityFilter}
           GROUP BY EXTRACT(DOW FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
           ORDER BY day ASC
         `
@@ -1540,8 +1981,7 @@ export const TicketsReportService = {
           INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
           WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
             ${validTicketFilter}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+            ${timeEntityFilter}
           GROUP BY EXTRACT(DOW FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
           ORDER BY day ASC
         `;
@@ -1587,7 +2027,6 @@ export const TicketsReportService = {
     // Datos de cancelaciones si la métrica principal no es cancelaciones
     let cancellations = null;
     if (metric !== 'cancelaciones') {
-      // Cancelaciones por hora (convertir a hora local de Costa Rica)
       const cancelByHourQuery = Prisma.sql`
         SELECT
           EXTRACT(HOUR FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica') as hour,
@@ -1596,8 +2035,7 @@ export const TicketsReportService = {
         FROM "Ticket" t
         WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
           AND t.status = 'CANCELLED'
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+          ${timeEntityFilter}
         GROUP BY EXTRACT(HOUR FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
         ORDER BY hour ASC
       `;
@@ -1626,12 +2064,134 @@ export const TicketsReportService = {
       };
     }
 
+    // ======================================================
+    // DESGLOSES (breakdowns) según filtros aplicados
+    // ======================================================
+    const tbk = resolveBreakdowns(filters);
+
+    // Para time-analysis, el desglose principal son count y amount + peakHour
+    // Usamos el query base de ventas (no cancelaciones) para los breakdowns
+    let tBySorteo: any[] | undefined;
+    if (tbk.includeSorteo) {
+      const q = Prisma.sql`
+        SELECT
+          t."sorteoId" as "sorteoId",
+          s.name as sorteo_name,
+          COUNT(*) as count,
+          SUM(t."totalAmount") as amount
+        FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          ${validTicketFilter}
+          ${timeEntityFilter}
+        GROUP BY t."sorteoId", s.name
+        ORDER BY amount DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        tBySorteo = raw.map(r => ({
+          sorteoId: r.sorteoId,
+          sorteoName: r.sorteo_name,
+          count: Number(r.count),
+          amount: Number(r.amount ?? 0),
+        }));
+      }
+    }
+
+    let tByLoteria: any[] | undefined;
+    if (tbk.includeLoteria) {
+      const q = Prisma.sql`
+        SELECT
+          t."loteriaId" as "loteriaId",
+          l.name as loteria_name,
+          COUNT(*) as count,
+          SUM(t."totalAmount") as amount
+        FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          ${validTicketFilter}
+          ${timeEntityFilter}
+        GROUP BY t."loteriaId", l.name
+        ORDER BY amount DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        tByLoteria = raw.map(r => ({
+          loteriaId: r.loteriaId,
+          loteriaName: r.loteria_name,
+          count: Number(r.count),
+          amount: Number(r.amount ?? 0),
+        }));
+      }
+    }
+
+    let tByVentana: any[] | undefined;
+    if (tbk.includeVentana) {
+      const q = Prisma.sql`
+        SELECT
+          t."ventanaId" as "ventanaId",
+          v.name as ventana_name,
+          COUNT(*) as count,
+          SUM(t."totalAmount") as amount
+        FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          ${validTicketFilter}
+          ${timeEntityFilter}
+        GROUP BY t."ventanaId", v.name
+        ORDER BY amount DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        tByVentana = raw.map(r => ({
+          ventanaId: r.ventanaId,
+          ventanaName: r.ventana_name,
+          count: Number(r.count),
+          amount: Number(r.amount ?? 0),
+        }));
+      }
+    }
+
+    let tByVendedor: any[] | undefined;
+    if (tbk.includeVendedor) {
+      const q = Prisma.sql`
+        SELECT
+          t."vendedorId" as "vendedorId",
+          u.name as vendedor_name,
+          COUNT(*) as count,
+          SUM(t."totalAmount") as amount
+        FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        INNER JOIN "User" u ON t."vendedorId" = u.id
+        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          ${validTicketFilter}
+          ${timeEntityFilter}
+        GROUP BY t."vendedorId", u.name
+        ORDER BY amount DESC
+      `;
+      const raw = await prisma.$queryRaw<any[]>(q);
+      if (raw.length > 0) {
+        tByVendedor = raw.map(r => ({
+          vendedorId: r.vendedorId,
+          vendedorName: r.vendedor_name,
+          count: Number(r.count),
+          amount: Number(r.amount ?? 0),
+        }));
+      }
+    }
+
     return {
       data: {
         byHour,
         byDayOfWeek,
         summary,
         ...(cancellations && { cancellations }),
+        ...(tBySorteo && { bySorteo: tBySorteo }),
+        ...(tByLoteria && { byLoteria: tByLoteria }),
+        ...(tByVentana && { byVentana: tByVentana }),
+        ...(tByVendedor && { byVendedor: tByVendedor }),
       },
       meta: {
         dateRange: {
