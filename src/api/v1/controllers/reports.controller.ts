@@ -50,10 +50,11 @@ export const ReportsController = {
       fromDate: query.fromDate,
       toDate: query.toDate,
       loteriaId: query.loteriaId,
+      ventanaId: query.ventanaId,
+      vendedorId: query.vendedorId,
       betType: query.betType || 'all',
       top: query.top ? Number(query.top) : undefined,
       includeComparison: query.includeComparison === 'true' || query.includeComparison === true,
-      // Nuevos parámetros
       includeWinners: query.includeWinners === 'true' || query.includeWinners === true,
       includeExposure: query.includeExposure === 'true' || query.includeExposure === true,
     });
@@ -200,6 +201,7 @@ export const ReportsController = {
       fromDate: query.fromDate,
       toDate: query.toDate,
       ventanaId: query.ventanaId,
+      vendedorId: query.vendedorId,
       loteriaId: query.loteriaId,
       includeComparison: query.includeComparison === 'true' || query.includeComparison === true,
       groupBy: query.groupBy,
@@ -220,6 +222,7 @@ export const ReportsController = {
       fromDate: query.fromDate,
       toDate: query.toDate,
       ventanaId: query.ventanaId,
+      vendedorId: query.vendedorId,
       loteriaId: query.loteriaId,
       metric: query.metric || 'ventas',
     });
