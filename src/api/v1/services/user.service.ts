@@ -591,7 +591,7 @@ export const UserService = {
     const user = await prisma.user.update({
       where: { id },
       data: { isActive: true },
-      select: { id: true, name: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
+      select: { id: true, name: true, username: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
     });
 
     // Log de auditoría
@@ -601,7 +601,9 @@ export const UserService = {
         action: ActivityType.USER_RESTORE,
         targetType: 'USER',
         targetId: id,
-        details: null,
+        details: {
+          description: `Usuario restaurado/reactivado: ${user.name} (@${user.username})`
+        },
       });
     }
 
@@ -612,7 +614,7 @@ export const UserService = {
     // Obtener contraseña actual del usuario
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, password: true, name: true },
+      select: { id: true, username: true, password: true, name: true },
     });
 
     if (!user) {
@@ -632,6 +634,18 @@ export const UserService = {
     await prisma.user.update({
       where: { id: userId },
       data: { password: hashedNewPassword },
+    });
+
+    // Log de auditoría
+    await ActivityService.log({
+      userId,
+      action: ActivityType.USER_UPDATE,
+      targetType: 'USER',
+      targetId: userId,
+      details: { 
+        field: 'password',
+        description: `El usuario ${user.username} cambió su propia contraseña`
+      },
     });
 
     return {
