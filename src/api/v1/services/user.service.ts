@@ -155,7 +155,12 @@ export const UserService = {
         action: ActivityType.USER_CREATE,
         targetType: 'USER',
         targetId: result.id,
-        details: { username: result.username, role: result.role, ventanaId: result.ventanaId },
+        details: { 
+          username: result.username, 
+          role: result.role, 
+          ventanaId: result.ventanaId,
+          description: `Usuario creado: ${result.name} (@${result.username}). Rol: ${result.role}${result.ventanaId ? `. Ventana ID: ${result.ventanaId}` : ''}`
+        },
       });
     }
 
@@ -346,7 +351,10 @@ export const UserService = {
         action: ActivityType.USER_UPDATE,
         targetType: 'USER',
         targetId: id,
-        details: { changedFields: Object.keys(toUpdate) },
+        details: { 
+          changedFields: Object.keys(toUpdate),
+          description: `Usuario actualizado: ${result.name} (@${result.username}). Campos modificados: ${Object.keys(toUpdate).join(', ')}`
+        },
       });
     }
 
@@ -381,7 +389,7 @@ export const UserService = {
       data: {
         isActive: false,
       },
-      select: { id: true, name: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
+      select: { id: true, name: true, username: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
     });
 
     // Log de auditoría
@@ -391,7 +399,10 @@ export const UserService = {
         action: ActivityType.USER_DELETE,
         targetType: 'USER',
         targetId: id,
-        details: { reason: deletedReason },
+        details: { 
+          reason: deletedReason,
+          description: `Usuario desactivado: ${user.name} (@${user.username}). Razón: ${deletedReason ?? 'No especificada'}`
+        },
       });
     }
 

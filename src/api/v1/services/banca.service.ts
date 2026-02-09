@@ -18,7 +18,10 @@ export const BancaService = {
       action: ActivityType.BANCA_CREATE,
       targetType: "BANCA",
       targetId: banca.id,
-      details: data,
+      details: {
+        ...data,
+        description: `Banca creada: ${banca.name} (${banca.code})`
+      },
     });
 
     return banca;
@@ -44,7 +47,10 @@ export const BancaService = {
       action: ActivityType.BANCA_UPDATE,
       targetType: "BANCA",
       targetId: id,
-      details: data,
+      details: {
+        ...data,
+        description: `Banca actualizada: ${banca.name} (${banca.code})`
+      },
     });
 
     return banca;
@@ -64,7 +70,10 @@ export const BancaService = {
       action: ActivityType.BANCA_DELETE,
       targetType: "BANCA",
       targetId: id,
-      details: { reason },
+      details: { 
+        reason,
+        description: `Banca desactivada: ${banca.name} (${banca.code}). Razón: ${reason ?? 'No especificada'}`
+      },
     });
 
     return banca;
@@ -106,7 +115,10 @@ export const BancaService = {
       action: ActivityType.BANCA_RESTORE,
       targetType: "BANCA",
       targetId: id,
-      details: { reason },
+      details: { 
+        reason,
+        description: `Banca restaurada: ${banca.name} (${banca.code}). Razón: ${reason ?? 'No especificada'}`
+      },
     });
 
     return banca;
