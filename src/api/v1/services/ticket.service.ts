@@ -427,7 +427,13 @@ export const TicketService = {
       };
 
       // Obtener número de jugadas (el ticket incluye jugadas pero TypeScript no lo infiere)
-      const jugadasCount = (ticket as any).jugadas?.length ?? jugadasIn.length;
+      const jugadasList = (ticket as any).jugadas || [];
+      const jugadasCount = jugadasList.length ?? jugadasIn.length;
+      
+      // Detallar jugadas en la descripción
+      const jugadasSummary = jugadasList
+        .map((j: any) => `${j.type === 'REVENTADO' ? 'R:' : '#'}${j.number}: ₡${j.amount.toLocaleString()}`)
+        .join(", ");
 
       await ActivityService.log({
         userId,
@@ -438,6 +444,7 @@ export const TicketService = {
           ticketNumber: ticket.ticketNumber,
           totalAmount: ticket.totalAmount,
           jugadas: jugadasCount,
+          description: `Ticket #${ticket.ticketNumber} creado por [${effectiveVendedorId}] - ${vendedor?.name || 'N/A'} para ${sorteo.loteria.name} - ${sorteoWithFormattedName.name} por un monto de ₡${ticket.totalAmount.toLocaleString()}. Jugadas: [${jugadasSummary}]`,
         },
         requestId,
         layer: "service",
@@ -562,7 +569,12 @@ export const TicketService = {
       action: ActivityType.TICKET_CANCEL,
       targetType: "TICKET",
       targetId: id,
-      details: { reason: "Cancelled by user" },
+      details: { 
+        ticketNumber: ticket.ticketNumber,
+        totalAmount: ticket.totalAmount,
+        reason: "Cancelled by user",
+        description: `Ticket #${ticket.ticketNumber} cancelado (Monto: ₡${ticket.totalAmount.toLocaleString()})`
+      },
       requestId,
       layer: "service",
     });
@@ -586,7 +598,12 @@ export const TicketService = {
       action: ActivityType.TICKET_RESTORE,
       targetType: "TICKET",
       targetId: id,
-      details: { restored: true },
+      details: { 
+        ticketNumber: ticket.ticketNumber,
+        totalAmount: ticket.totalAmount,
+        restored: true,
+        description: `Ticket #${ticket.ticketNumber} restaurado (Monto: ₡${ticket.totalAmount.toLocaleString()})`
+      },
       requestId,
       layer: "service",
     });
@@ -753,6 +770,7 @@ export const TicketService = {
           isPartial,
           isFinal: data.isFinal,
           newStatus: shouldMarkPaid ? "PAID" : ticket.status,
+          description: `Pago de ₡${data.amountPaid.toLocaleString()} registrado para el Ticket #${ticket.ticketNumber}${isPartial ? " (Pago Parcial)" : ""}`,
         },
         requestId,
         layer: "service",
@@ -881,6 +899,7 @@ export const TicketService = {
           reason,
           newTotalPaid: activePaid,
           newStatus,
+          description: `Pago de ₡${lastPayment.amountPaid.toLocaleString()} revertido para el Ticket #${ticket.ticketNumber}${reason ? ` (Motivo: ${reason})` : ""}`,
         },
         requestId,
         layer: "service",
@@ -995,6 +1014,7 @@ export const TicketService = {
           totalPayout,
           remainingAccepted: totalPayout - totalPaid,
           notes,
+          description: `Pago finalizado para el Ticket #${ticket.ticketNumber}. Monto pendiente aceptado: ₡${(totalPayout - totalPaid).toLocaleString()}`,
         },
         requestId,
         layer: "service",
