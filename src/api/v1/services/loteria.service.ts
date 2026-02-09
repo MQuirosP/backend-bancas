@@ -37,7 +37,10 @@ export const LoteriaService = {
         action: ActivityType.LOTERIA_CREATE,
         targetType: "LOTERIA",
         targetId: loteria.id,
-        details: { name: loteria.name },
+        details: { 
+          name: loteria.name,
+          description: `Lotería creada: ${loteria.name}`
+        },
         requestId,
         layer: "service",
       });
@@ -182,6 +185,7 @@ export const LoteriaService = {
           ...data,
           sorteosAffected: result.cascadeResult.count,
           sorteosIds: result.cascadeResult.sorteosIds,
+          description: `Lotería actualizada: ${result.updated.name}${isActiveChanged ? `. Estado cambiado a ${data.isActive ? 'ACTIVO' : 'INACTIVO'}. Sorteos afectados: ${result.cascadeResult.count}` : ''}`
         },
         requestId,
         layer: "service",
@@ -214,7 +218,10 @@ export const LoteriaService = {
       action: ActivityType.LOTERIA_UPDATE,
       targetType: "LOTERIA",
       targetId: id,
-      details: data,
+      details: {
+        ...data,
+        description: `Lotería actualizada: ${updated.name}`
+      },
       requestId,
       layer: "service",
     });
@@ -265,6 +272,7 @@ export const LoteriaService = {
         isActive: false,
         sorteosInactivated: result.cascadeResult.count,
         sorteosIds: result.cascadeResult.sorteosIds,
+        description: `Lotería desactivada: ${result.deleted.name}. Sorteos inactivados: ${result.cascadeResult.count}`
       },
       requestId,
       layer: "service",
@@ -316,6 +324,7 @@ export const LoteriaService = {
         isActive: true,
         sorteosRestored: result.cascadeResult.count,
         sorteosIds: result.cascadeResult.sorteosIds,
+        description: `Lotería restaurada: ${result.restored.name}. Sorteos restaurados: ${result.cascadeResult.count}`
       },
       requestId,
       layer: "service",

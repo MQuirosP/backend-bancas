@@ -131,6 +131,7 @@ export const VentanaService = {
         password: undefined, // No guardar password en logs
         userCreated: true,
         userId: result.user.id,
+        description: `Ventana creada: ${result.ventana.name} (${result.ventana.code || 'N/A'}) en Banca ID: ${data.bancaId}. Usuario: ${result.user.username}`
       },
     });
 
@@ -288,7 +289,9 @@ export const VentanaService = {
       targetId: id,
       details: {
         ...data,
+        password: undefined,
         passwordUpdated: passwordToUpdate ? true : undefined,
+        description: `Ventana actualizada: ${ventana.name} (${ventana.code || 'N/A'})${passwordToUpdate ? '. Contraseña actualizada.' : ''}`
       },
     });
 
@@ -303,7 +306,10 @@ export const VentanaService = {
       action: ActivityType.VENTANA_DELETE,
       targetType: "VENTANA",
       targetId: id,
-      details: { reason },
+      details: { 
+        reason,
+        description: `Ventana desactivada: ${ventana.name} (${ventana.code || 'N/A'}). Razón: ${reason ?? 'No especificada'}`
+      },
     });
 
     return ventana;
@@ -339,7 +345,10 @@ async findAll(page?: number, pageSize?: number, search?: string, isActive?: bool
       action: ActivityType.VENTANA_RESTORE,
       targetType: "VENTANA",
       targetId: id,
-      details: { reason },
+      details: { 
+        reason,
+        description: `Ventana restaurada: ${ventana.name} (${ventana.code || 'N/A'}). Razón: ${reason ?? 'No especificada'}`
+      },
     });
 
     return ventana;

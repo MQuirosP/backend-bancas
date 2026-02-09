@@ -62,7 +62,11 @@ export const VendedorService = {
       action: ActivityType.USER_CREATE,
       targetType: "USER",
       targetId: user.id,
-      details: { role: Role.VENDEDOR, ventanaId: data.ventanaId },
+      details: { 
+        role: Role.VENDEDOR, 
+        ventanaId: data.ventanaId,
+        description: `Vendedor creado: ${user.name} (@${user.username}) en Ventana ID: ${data.ventanaId}`
+      },
     });
 
     return user;
@@ -120,6 +124,7 @@ export const VendedorService = {
         emailChanged: data.email !== undefined,
         passwordChanged: !!data.password,
         isActiveChanged: typeof data.isActive === "boolean",
+        description: `Vendedor actualizado: ${user.name} (@${user.username})`
       },
     });
 
@@ -147,7 +152,10 @@ export const VendedorService = {
       action: ActivityType.USER_DELETE,
       targetType: "USER",
       targetId: id,
-      details: { reason },
+      details: { 
+        reason,
+        description: `Vendedor desactivado: ${user.name} (@${user.username}). Razón: ${reason ?? 'No especificada'}`
+      },
     });
 
     return user;
@@ -167,7 +175,10 @@ export const VendedorService = {
       action: ActivityType.USER_RESTORE,
       targetType: "USER",
       targetId: id,
-      details: { reason },
+      details: { 
+        reason,
+        description: `Vendedor restaurado: ${user.name} (@${user.username}). Razón: ${reason ?? 'No especificada'}`
+      },
     });
 
     return user;

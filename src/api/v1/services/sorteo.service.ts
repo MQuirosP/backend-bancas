@@ -112,11 +112,19 @@ export const SorteoService = {
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
 
+    const loteriaObj = await prisma.loteria.findUnique({
+      where: { id: data.loteriaId },
+      select: { name: true }
+    });
+    const scheduledAtFormatted = formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt'));
+
     const details: Prisma.InputJsonObject = {
       loteriaId: data.loteriaId,
-      scheduledAt: formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')), //  Normalizar y formatear con timezone
+      loteriaName: loteriaObj?.name || 'N/A',
+      scheduledAt: scheduledAtFormatted,
       digits: finalDigits,
       digitsSource: data.digits ? 'explicit' : 'inherited',
+      description: `Sorteo creado para ${loteriaObj?.name || 'N/A'} programado para el ${scheduledAtFormatted}`,
     };
 
     await ActivityService.log({
@@ -131,7 +139,10 @@ export const SorteoService = {
   },
 
   async update(id: string, data: UpdateSorteoDTO, userId: string) {
-    const existing = await SorteoRepository.findById(id);
+    const existing = await prisma.sorteo.findUnique({
+      where: { id },
+      include: { loteria: { select: { name: true } } }
+    });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
     if (FINAL_STATES.has(existing.status)) {
       throw new AppError("No se puede editar un sorteo evaluado o cerrado", 409);
@@ -171,12 +182,19 @@ export const SorteoService = {
       details.isActive = data.isActive;
     }
 
+    const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
+    const lotName = existing.loteria?.name || 'Lotería';
+    const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
+
     await ActivityService.log({
       userId,
       action: ActivityType.SORTEO_UPDATE,
       targetType: "SORTEO",
       targetId: id,
-      details,
+      details: {
+        ...details,
+        description: `Actualización de datos para ${sorteoDesc}`
+      },
     });
 
     return serializeSorteo(s);
@@ -187,19 +205,30 @@ export const SorteoService = {
    * Útil para activar sorteos que están en CLOSED o EVALUATED
    */
   async setActive(id: string, isActive: boolean, userId: string) {
-    const existing = await SorteoRepository.findById(id);
+    const existing = await prisma.sorteo.findUnique({
+      where: { id },
+      include: { loteria: { select: { name: true } } }
+    });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
 
     const s = await SorteoRepository.update(id, {
       isActive,
     } as UpdateSorteoDTO);
 
+    const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
+    const lotName = existing.loteria?.name || 'Lotería';
+    const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
+
     await ActivityService.log({
       userId,
       action: ActivityType.SORTEO_UPDATE,
       targetType: "SORTEO",
       targetId: id,
-      details: { isActive, previousIsActive: (existing as any).isActive },
+      details: { 
+        isActive, 
+        previousIsActive: (existing as any).isActive,
+        description: `Sorteo ${sorteoDesc} marcado como ${isActive ? 'ACTIVO' : 'INACTIVO'}`
+      },
     });
 
     return serializeSorteo(s);
@@ -210,7 +239,10 @@ export const SorteoService = {
    * Útil para reabrir sorteos que están en CLOSED
    */
   async forceOpen(id: string, userId: string) {
-    const existing = await SorteoRepository.findById(id);
+    const existing = await prisma.sorteo.findUnique({
+      where: { id },
+      include: { loteria: { select: { name: true } } }
+    });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
     if (existing.status === SorteoStatus.EVALUATED) {
       throw new AppError("No se puede reabrir un sorteo evaluado. Usa revert-evaluation primero.", 409);
@@ -218,10 +250,15 @@ export const SorteoService = {
 
     const s = await SorteoRepository.forceOpen(id);
 
+    const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
+    const lotName = existing.loteria?.name || 'Lotería';
+    const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
+
     const details: Prisma.InputJsonObject = {
       from: existing.status,
       to: SorteoStatus.OPEN,
       forced: true,
+      description: `Sorteo ${sorteoDesc} RE-ABIERTO forzadamente (Estado anterior: ${existing.status})`
     };
 
     await ActivityService.log({
@@ -279,12 +316,19 @@ export const SorteoService = {
       forced: true,
     };
 
+    const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
+    const lotName = existing.loteria?.name || 'Lotería';
+    const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
+
     await ActivityService.log({
       userId,
       action: ActivityType.SORTEO_UPDATE,
       targetType: "SORTEO",
       targetId: id,
-      details,
+      details: {
+        ...details,
+        description: `Sorteo ${sorteoDesc} activado y abierto forzadamente`
+      },
     });
 
     logger.info({
@@ -352,6 +396,10 @@ export const SorteoService = {
       },
     });
 
+    const sFormattedAt = formatDateCRWithTZ(s.scheduledAt);
+    const lotName = s.loteria?.name || 'Lotería';
+    const sorteoDesc = `${s.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
+
     await ActivityService.log({
       userId,
       action: ActivityType.SORTEO_UPDATE,
@@ -362,6 +410,7 @@ export const SorteoService = {
         isActive: true,
         previousStatus: existing.status,
         previousIsActive: (existing as any).isActive,
+        description: `Sorteo ${sorteoDesc} reseteado a estado PROGRAMADO`
       },
     });
 
@@ -369,7 +418,10 @@ export const SorteoService = {
   },
 
   async open(id: string, userId: string) {
-    const existing = await SorteoRepository.findById(id);
+    const existing = await prisma.sorteo.findUnique({
+      where: { id },
+      include: { loteria: { select: { name: true } } }
+    });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
     if (existing.status !== SorteoStatus.SCHEDULED) {
       throw new AppError("Solo se puede abrir desde SCHEDULED", 409);
@@ -384,9 +436,14 @@ export const SorteoService = {
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
 
+    const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
+    const lotName = existing.loteria?.name || 'Lotería';
+    const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
+
     const details: Prisma.InputJsonObject = {
       from: existing.status,
       to: SorteoStatus.OPEN,
+      description: `Sorteo ${sorteoDesc} ABIERTO`
     };
 
     await ActivityService.log({
@@ -401,7 +458,10 @@ export const SorteoService = {
   },
 
   async close(id: string, userId: string) {
-    const existing = await SorteoRepository.findById(id);
+    const existing = await prisma.sorteo.findUnique({
+      where: { id },
+      include: { loteria: { select: { name: true } } }
+    });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
     if (existing.status !== SorteoStatus.OPEN && existing.status !== SorteoStatus.EVALUATED) {
       throw new AppError("Solo se puede cerrar desde OPEN o EVALUATED", 409);
@@ -414,10 +474,15 @@ export const SorteoService = {
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
 
+    const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
+    const lotName = existing.loteria?.name || 'Lotería';
+    const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
+
     const details: Prisma.InputJsonObject = {
       from: existing.status,
       to: SorteoStatus.CLOSED,
       ticketsClosed: ticketsAffected,  //  NUEVO: Registrar cuántos tickets se marcaron
+      description: `Sorteo ${sorteoDesc} CERRADO (${ticketsAffected} tickets afectados)`
     };
 
     await ActivityService.log({
@@ -442,7 +507,10 @@ export const SorteoService = {
       throw new AppError("winningNumber es requerido", 400);
 
     // 1) Cargar sorteo y validar estado
-    const existing = await SorteoRepository.findById(id);
+    const existing = await prisma.sorteo.findUnique({
+      where: { id },
+      include: { loteria: { select: { name: true } } }
+    });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
     if (!EVALUABLE_STATES.has(existing.status)) {
       throw new AppError("Solo se puede evaluar desde OPEN", 409);
@@ -660,6 +728,11 @@ export const SorteoService = {
       });
 
       // 3.5 Auditoría
+      const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
+      const lotName = (existing as any).loteria?.name || 'Lotería';
+      const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
+      const evaluationDesc = `Sorteo ${sorteoDesc} EVALUADO. Número ganador: ${winningNumber}${extraOutcomeCode ? ` (${extraOutcomeCode})` : ''}. Ganadores: ${winners}`;
+
       await tx.activityLog.create({
         data: {
           userId,
@@ -672,6 +745,7 @@ export const SorteoService = {
             extraMultiplierX: extraX,
             extraOutcomeCode,
             winners,
+            description: evaluationDesc
           },
         },
       });
@@ -680,6 +754,11 @@ export const SorteoService = {
     }, { timeout: 180000 }); // 3 minutos para sorteos con muchos tickets/jugadas
 
     // 4) Log adicional
+    const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
+    const lotName = (existing as any).loteria?.name || 'Lotería';
+    const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
+    const evaluationDesc = `Sorteo ${sorteoDesc} EVALUADO. Número ganador: ${winningNumber}${extraOutcomeCode ? ` (${extraOutcomeCode})` : ''}. Ganadores: ${evaluationResult.winners}`;
+
     await ActivityService.log({
       userId,
       action: ActivityType.SORTEO_EVALUATE,
@@ -691,6 +770,7 @@ export const SorteoService = {
         extraMultiplierX: evaluationResult.extraMultiplierX,
         extraOutcomeCode,
         winners: evaluationResult.winners,
+        description: evaluationDesc
       },
     });
 
@@ -783,7 +863,10 @@ export const SorteoService = {
   },
 
   async revertEvaluation(id: string, userId: string, reason?: string) {
-    const existing = await SorteoRepository.findById(id);
+    const existing = await prisma.sorteo.findUnique({
+      where: { id },
+      include: { loteria: { select: { name: true } } }
+    });
     if (!existing) throw new AppError("Sorteo no encontrado", 404);
     if (existing.status !== SorteoStatus.EVALUATED) {
       throw new AppError("Solo se puede revertir un sorteo evaluado", 409);
@@ -795,6 +878,10 @@ export const SorteoService = {
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
 
+    const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
+    const lotName = existing.loteria?.name || 'Lotería';
+    const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
+
     await ActivityService.log({
       userId,
       action: ActivityType.SORTEO_REOPEN,
@@ -804,6 +891,7 @@ export const SorteoService = {
         reason: reason ?? null,
         previousWinningNumber: existing.winningNumber,
         previousExtraMultiplierId: existing.extraMultiplierId,
+        description: `Evaluación de ${sorteoDesc} REVERTIDA. Razón: ${reason ?? 'No especificada'}`
       },
     });
 
