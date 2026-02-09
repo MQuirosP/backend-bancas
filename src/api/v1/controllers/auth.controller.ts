@@ -55,39 +55,7 @@ export const AuthController = {
 
   async login(req: Request, res: Response) {
     const context = getRequestContext(req);
-    const { accessToken, refreshToken, user } = await AuthService.login(req.body, context);
-
-    logger.info({
-      layer: 'controller',
-      action: ActivityType.LOGIN,
-      userId: user.id,
-      payload: {
-        username: user.username,
-        deviceId: req.body.deviceId,
-        deviceName: req.body.deviceName,
-      },
-    });
-
-    // Activity log asíncrono
-    ActivityService.log({
-      userId: user.id,
-      action: ActivityType.LOGIN,
-      targetType: 'USER',
-      targetId: user.id,
-      details: {
-        username: user.username,
-        deviceId: req.body.deviceId,
-        deviceName: req.body.deviceName,
-        description: `Inicio de sesión exitoso para el usuario ${user.username}${req.body.deviceName ? ` desde el dispositivo ${req.body.deviceName}` : ''}`
-      },
-      layer: 'controller'
-    }).catch(err => {
-      logger.error({
-        layer: 'controller',
-        action: 'ACTIVITY_LOG_FAIL',
-        payload: { error: err.message, userId: user.id },
-      });
-    });
+    const { accessToken, refreshToken } = await AuthService.login(req.body, context);
 
     return success(res, { accessToken, refreshToken });
   },

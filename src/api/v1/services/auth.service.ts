@@ -7,6 +7,8 @@ import { AppError } from '../../../core/errors';
 import { v4 as uuidv4 } from 'uuid';
 import { comparePassword, hashPassword } from '../../../utils/crypto';
 import { logger } from '../../../core/logger';
+import ActivityService from '../../../core/activity.service';
+import { ActivityType } from '@prisma/client';
 
 const ACCESS_SECRET = config.jwtAccessSecret;
 const REFRESH_SECRET = config.jwtRefreshSecret;
@@ -74,17 +76,55 @@ export const AuthService = {
     data: LoginDTO,
     context?: RequestContext
   ): Promise<TokenPair & { user: { id: string; username: string; email: string | null; role: string; ventanaId: string | null } }> {
-    const user = await prisma.user.findUnique({ where: { username: data.username } });
+    const { username, password } = data;
+    const { ipAddress, userAgent } = context || {};
+
+    const user = await prisma.user.findUnique({ where: { username } });
+    
     if (!user) {
+      await ActivityService.log({
+        action: ActivityType.LOGIN,
+        targetType: 'USER',
+        details: { 
+          username, ipAddress, userAgent,
+          reason: 'User not found',
+          description: `Intento de inicio de sesión FALLIDO para el usuario ${username}. Razón: Usuario no encontrado.`
+        },
+        layer: 'service'
+      });
       throw new AppError('Invalid credentials', 401);
     }
 
     if (!user.isActive || user.deletedAt) {
+      await ActivityService.log({
+        userId: user.id,
+        action: ActivityType.LOGIN,
+        targetType: 'USER',
+        targetId: user.id,
+        details: { 
+          username, ipAddress, userAgent,
+          reason: 'User inactive',
+          description: `Intento de inicio de sesión FALLIDO para el usuario ${username} (${user.name}). Razón: Cuenta inactiva.`
+        },
+        layer: 'service'
+      });
       throw new AppError('La cuenta está inactiva. Contacta al administrador.', 403, 'USER_INACTIVE');
     }
 
-    const match = await comparePassword(data.password, user.password);
+    const match = await comparePassword(password, user.password);
     if (!match) {
+      await ActivityService.log({
+        userId: user.id,
+        action: ActivityType.LOGIN,
+        targetType: 'USER',
+        targetId: user.id,
+        details: { 
+          username, ipAddress, userAgent,
+          reason: 'Invalid password',
+          description: `Intento de inicio de sesión FALLIDO para el usuario ${username} (${user.name}). Razón: Contraseña incorrecta.`
+        },
+        layer: 'service'
+      });
       throw new AppError('Invalid credentials', 401);
     }
 
@@ -159,6 +199,29 @@ export const AuthService = {
 
     const signedRefresh = jwt.sign({ tid: refreshToken }, REFRESH_SECRET, {
       expiresIn: config.jwtRefreshExpires as jwt.SignOptions['expiresIn'],
+    });
+
+    // Log success asíncrono
+    ActivityService.log({
+      userId: user.id,
+      action: ActivityType.LOGIN,
+      targetType: 'USER',
+      targetId: user.id,
+      details: {
+        username: user.username,
+        deviceId: data.deviceId,
+        deviceName: data.deviceName,
+        ipAddress,
+        userAgent,
+        description: `Inicio de sesión exitoso para el usuario ${user.username} (${user.name})${data.deviceName ? ` desde el dispositivo ${data.deviceName}` : ''}`
+      },
+      layer: 'service'
+    }).catch(err => {
+      logger.error({
+        layer: 'service',
+        action: 'ACTIVITY_LOG_FAIL',
+        payload: { error: err.message, userId: user.id },
+      });
     });
 
     return {
