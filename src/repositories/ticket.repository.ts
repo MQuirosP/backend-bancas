@@ -1260,33 +1260,6 @@ export const TicketRepository = {
       }
     }
 
-    // ActivityLog fuera de la TX (no bloqueante)
-    const commissionsDetailsForLog = (ticket as any).__commissionsDetails || [];
-    const jugadasDetailsForLog = (ticket as any).__jugadasDetails || [];
-    prisma.activityLog
-      .create({
-        data: {
-          userId,
-          action: "TICKET_CREATE",
-          targetType: "TICKET",
-          targetId: ticket.id,
-          details: {
-            ticketNumber: ticket.ticketNumber,
-            totalAmount: ticket.totalAmount,
-            jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
-            commissions: commissionsDetailsForLog,
-            jugadasDetails: jugadasDetailsForLog, //  NUEVO: Lista de jugadas con número, tipo y monto
-          },
-        },
-      })
-      .catch((err) =>
-        logger.warn({
-          layer: "activityLog",
-          action: "ASYNC_FAIL",
-          payload: { message: err.message },
-        })
-      );
-
     // Logging
     logger.info({
       layer: "repository",
@@ -1311,14 +1284,10 @@ export const TicketRepository = {
       },
     });
 
-    delete (ticket as any).__commissionsDetails;
-    delete (ticket as any).__jugadasCount;
-    delete (ticket as any).__businessDateInfo;
-
-    //  NOTA: AccountStatement se actualiza cuando se evalúan los sorteos, no al crear tickets
-    // Los sorteos se evalúan conforme van sucediendo, y es ahí cuando los tickets se toman en cuenta
-    // Esto permite consolidar toda la información (ventas, premios, comisiones) en AccountStatement
-    // para eficiencia al servir datos al FE sin recalcular días enteros
+    // Mantener detalles para el log en el servicio (opcionalmente)
+    // delete (ticket as any).__commissionsDetails;
+    // delete (ticket as any).__jugadasCount;
+    // delete (ticket as any).__businessDateInfo;
 
     return { ticket, warnings };
   },
@@ -2179,34 +2148,6 @@ export const TicketRepository = {
       }
     }
 
-    // ActivityLog fuera de la TX (no bloqueante)
-    const commissionsDetailsForLog = (ticket as any).__commissionsDetails || [];
-    const jugadasDetailsForLog = (ticket as any).__jugadasDetails || [];
-    prisma.activityLog
-      .create({
-        data: {
-          userId,
-          action: "TICKET_CREATE",
-          targetType: "TICKET",
-          targetId: ticket.id,
-          details: {
-            ticketNumber: ticket.ticketNumber,
-            totalAmount: ticket.totalAmount,
-            jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
-            commissions: commissionsDetailsForLog,
-            jugadasDetails: jugadasDetailsForLog, //  NUEVO: Lista de jugadas con número, tipo y monto
-            optimized: true,
-          },
-        },
-      })
-      .catch((err) =>
-        logger.warn({
-          layer: "activityLog",
-          action: "ASYNC_FAIL",
-          payload: { message: err.message },
-        })
-      );
-
     logger.info({
       layer: "repository",
       action: "TICKET_CREATE_OPTIMIZED_SUCCESS",
@@ -2219,10 +2160,11 @@ export const TicketRepository = {
       },
     });
 
-    delete (ticket as any).__commissionsDetails;
-    delete (ticket as any).__jugadasCount;
-    delete (ticket as any).__jugadasDetails;
-    delete (ticket as any).__businessDateInfo;
+    // Mantener detalles para el log en el servicio
+    // delete (ticket as any).__commissionsDetails;
+    // delete (ticket as any).__jugadasCount;
+    // delete (ticket as any).__jugadasDetails;
+    // delete (ticket as any).__businessDateInfo;
 
     return { ticket, warnings };
   },
@@ -2511,29 +2453,6 @@ export const TicketRepository = {
       }
     );
 
-    // ActivityLog fuera de la TX (no bloqueante)
-    prisma.activityLog
-      .create({
-        data: {
-          userId,
-          action: "TICKET_CANCEL",
-          targetType: "TICKET",
-          targetId: ticket.id,
-          details: {
-            ticketNumber: ticket.ticketNumber,
-            totalAmount: ticket.totalAmount,
-            cancelledAt: ticket.updatedAt,
-          },
-        },
-      })
-      .catch((err) =>
-        logger.warn({
-          layer: "activityLog",
-          action: "ASYNC_FAIL",
-          payload: { message: err.message },
-        })
-      );
-
     // Logging global
     logger.warn({
       layer: "repository",
@@ -2641,28 +2560,6 @@ export const TicketRepository = {
         timeoutMs: 20_000,
       }
     );
-
-    // ActivityLog
-    prisma.activityLog
-      .create({
-        data: {
-          userId,
-          action: "TICKET_RESTORE",
-          targetType: "TICKET",
-          targetId: ticket.id,
-          details: {
-            ticketNumber: ticket.ticketNumber,
-            restoredAt: ticket.updatedAt,
-          },
-        },
-      })
-      .catch((err) =>
-        logger.warn({
-          layer: "activityLog",
-          action: "ASYNC_FAIL",
-          payload: { message: err.message },
-        })
-      );
 
     logger.info({
       layer: "repository",

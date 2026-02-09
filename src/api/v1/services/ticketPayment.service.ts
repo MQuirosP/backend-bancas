@@ -145,6 +145,7 @@ export const TicketPaymentService = {
             ticketNumber: ticket.ticketNumber,
             newStatus: TicketStatus.PAID,
             fromStatus: TicketStatus.EVALUATED,
+            description: `Ticket #${ticket.ticketNumber} marcado como PAGADO`,
           },
           layer: "service",
         });
@@ -166,6 +167,7 @@ export const TicketPaymentService = {
         isFinal: data.isFinal,
         remainingAmount,
         totalPayout,
+        description: `Pago de ₡${data.amountPaid.toLocaleString()} registrado para el Ticket #${ticket.ticketNumber}${isPartial ? " (Pago Parcial)" : ""}`,
       },
       layer: "service",
     });
@@ -181,6 +183,7 @@ export const TicketPaymentService = {
           ticketNumber: ticket.ticketNumber,
           finalAmount: data.amountPaid,
           remainingAccepted: remainingAmount,
+          description: `Pago finalizado para el Ticket #${ticket.ticketNumber}. Monto pendiente aceptado: ₡${remainingAmount.toLocaleString()}`,
         },
         layer: "service",
       });
@@ -368,6 +371,7 @@ export const TicketPaymentService = {
         reversed: true,
         ticketNumber: existing.ticket.ticketNumber,
         amountReversed: existing.amountPaid,
+        description: `Pago de ₡${existing.amountPaid.toLocaleString()} revertido para el Ticket #${existing.ticket.ticketNumber}`,
       },
       layer: "service",
     });
