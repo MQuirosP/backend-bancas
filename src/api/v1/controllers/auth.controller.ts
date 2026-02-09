@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import UserService from '../services/user.service';
+import ActivityService from '../../../core/activity.service';
 import { logger } from '../../../core/logger';
 import prisma from '../../../core/prismaClient';
 import { ActivityType, Role } from '@prisma/client';
@@ -29,17 +30,21 @@ export const AuthController = {
       layer: 'controller',
       action: ActivityType.USER_CREATE,
       userId: user.id,
-      payload: { email: user.email },
+      payload: { username: user.username },
     });
 
-    await prisma.activityLog.create({
-      data: {
-        userId: user.id,
-        action: ActivityType.USER_CREATE,
-        targetType: 'USER',
-        targetId: user.id,
-        details: { email: user.email },
+    await ActivityService.log({
+      userId: user.id,
+      action: ActivityType.USER_CREATE,
+      targetType: 'USER',
+      targetId: user.id,
+      details: { 
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        description: `Nuevo usuario registrado: ${user.username} (${user.name || 'Sin nombre'}) con rol ${user.role}`
       },
+      layer: 'controller'
     });
 
     return created(res, {
@@ -63,19 +68,19 @@ export const AuthController = {
       },
     });
 
-    // Activity log asíncrono (fire-and-forget) - no bloquea la respuesta
-    prisma.activityLog.create({
-      data: {
-        userId: user.id,
-        action: ActivityType.LOGIN,
-        targetType: 'USER',
-        targetId: user.id,
-        details: {
-          email: user.email,
-          deviceId: req.body.deviceId,
-          deviceName: req.body.deviceName,
-        },
+    // Activity log asíncrono
+    ActivityService.log({
+      userId: user.id,
+      action: ActivityType.LOGIN,
+      targetType: 'USER',
+      targetId: user.id,
+      details: {
+        username: user.username,
+        deviceId: req.body.deviceId,
+        deviceName: req.body.deviceName,
+        description: `Inicio de sesión exitoso para el usuario ${user.username}${req.body.deviceName ? ` desde el dispositivo ${req.body.deviceName}` : ''}`
       },
+      layer: 'controller'
     }).catch(err => {
       logger.error({
         layer: 'controller',
@@ -280,14 +285,18 @@ export const AuthController = {
       payload: { changes: Object.keys(body) },
     });
 
-    await prisma.activityLog.create({
-      data: {
-        userId: actorId,
-        action: ActivityType.USER_UPDATE,
-        targetType: 'USER',
-        targetId: actorId,
-        details: { fields: Object.keys(body), selfUpdate: true },
+    await ActivityService.log({
+      userId: actorId,
+      action: ActivityType.USER_UPDATE,
+      targetType: 'USER',
+      targetId: actorId,
+      details: { 
+        fields: Object.keys(body), 
+        selfUpdate: true,
+        description: `El usuario ${actor.username} actualizó su propio perfil. Campos modificados: ${Object.keys(body).join(', ')}`
       },
+      layer: 'controller',
+      requestId
     }).catch(err => {
       logger.error({
         layer: 'controller',
