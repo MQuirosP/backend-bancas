@@ -46,6 +46,7 @@ interface TicketData {
       printBarcode: boolean;
       printFooter: string | null;
     };
+    isActive: boolean; // Add isActive property
   };
 }
 
@@ -164,29 +165,38 @@ export async function generateTicketImage(
 
   // Calcular altura aproximada (se ajustará dinámicamente)
   const canvasHeight = calculateTicketHeight(ticketData, scale, padding, sectionGap, canvasWidth, lineGap);
-  
+
   const canvas = createCanvas(canvasWidth, canvasHeight);
   const ctx = canvas.getContext('2d');
-  
+
   // Configurar fondo blanco
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-  
+
   // Configurar fuente base
   ctx.fillStyle = '#000000';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  
+
   let y = padding;
 
   // ========== 1. ENCABEZADO ==========
   ctx.font = `900 ${14 * scale}px monospace`;
   ctx.textAlign = 'center';
-  
+
   const ticketNumber = String(ticketData.ticket.ticketNumber ?? ticketData.ticket.id).toUpperCase();
   ctx.fillText(`CODIGO # ${ticketNumber}`, canvasWidth / 2, y);
   y += 14 * scale + 4 * scale; // fontSize + gap
 
+  // Verificar si está ANULADO y mostrarlo visiblemente
+  // if (ticketData.ticket.isActive === false) {
+  //   ctx.font = `900 ${16 * scale}px monospace`;
+  //   ctx.fillText('*** ANULADO ***', canvasWidth / 2, y);
+  //   y += 16 * scale + sectionGap;
+  //   ctx.textAlign = 'center'; // Restaurar alineación
+  // }
+
+  ctx.font = `900 ${14 * scale}px monospace`; // Restaurar fuente normal
   const loteriaName = (ticketData.ticket.sorteo.loteria.name ?? 'TICA').toUpperCase();
   //  CRÍTICO: Usar formatTime12h para obtener hora correcta en Costa Rica
   const horaFormateada = ticketData.ticket.sorteo.scheduledAt
@@ -199,7 +209,7 @@ export async function generateTicketImage(
 
   // ========== 2. INFORMACIÓN DEL TICKET ==========
   ctx.font = `900 ${13 * scale}px monospace`;
-  
+
   const printName = ticketData.ticket.vendedor.printName ?? ticketData.ticket.vendedor.name ?? 'Nombre Vendedor';
   const code = ticketData.ticket.vendedor.code ? ` - ${ticketData.ticket.vendedor.code}` : '';
   const vendedorText = `VENDEDOR: ${printName}${code}`;
@@ -224,11 +234,11 @@ export async function generateTicketImage(
   //  CRÍTICO: Usar getCRLocalComponents para obtener fecha/hora correcta en Costa Rica
   const fechaFormateada = ticketData.ticket.sorteo.scheduledAt
     ? (() => {
-        const { year, month, day } = getCRLocalComponents(ticketData.ticket.sorteo.scheduledAt);
-        const dayStr = String(day).padStart(2, '0');
-        const monthStr = String(month).padStart(2, '0');
-        return `${dayStr}/${monthStr}/${year}`;
-      })()
+      const { year, month, day } = getCRLocalComponents(ticketData.ticket.sorteo.scheduledAt);
+      const dayStr = String(day).padStart(2, '0');
+      const monthStr = String(month).padStart(2, '0');
+      return `${dayStr}/${monthStr}/${year}`;
+    })()
     : '--/--/----';
   ctx.fillText(`SORTEO: ${fechaFormateada}`, padding, y);
   y += 13 * scale + lineGap;
@@ -236,11 +246,11 @@ export async function generateTicketImage(
   //  CRÍTICO: Usar getCRLocalComponents para obtener hora correcta en Costa Rica
   const horaFormateada24 = ticketData.ticket.sorteo.scheduledAt
     ? (() => {
-        const { hour, minute } = getCRLocalComponents(ticketData.ticket.sorteo.scheduledAt);
-        const hourStr = String(hour).padStart(2, '0');
-        const minuteStr = String(minute).padStart(2, '0');
-        return `${hourStr}:${minuteStr}`;
-      })()
+      const { hour, minute } = getCRLocalComponents(ticketData.ticket.sorteo.scheduledAt);
+      const hourStr = String(hour).padStart(2, '0');
+      const minuteStr = String(minute).padStart(2, '0');
+      return `${hourStr}:${minuteStr}`;
+    })()
     : '--:--';
   ctx.fillText(`TIEMPOS: ${horaFormateada24} hrs`, padding, y);
   y += 13 * scale + lineGap;
@@ -256,7 +266,7 @@ export async function generateTicketImage(
   for (const group of numeros) {
     const amountStr = String(group.amount);
     const numberRows = formatNumbersListForThermal(group.numbers);
-    
+
     // Primera línea: amount* + números
     ctx.font = `900 ${15 * scale}px monospace`;
     ctx.fillText(amountStr, padding, y);
@@ -286,7 +296,7 @@ export async function generateTicketImage(
     for (const group of reventados) {
       const amountStr = String(group.amount);
       const numberRows = formatNumbersListForThermal(group.numbers);
-      
+
       // Primera línea: amount* + números
       ctx.font = `900 ${15 * scale}px monospace`;
       ctx.fillText(amountStr, padding, y);
@@ -305,6 +315,17 @@ export async function generateTicketImage(
     }
   }
 
+
+  // ========== 4.5 ANULADO (COMO JUGADA) ==========
+  if (ticketData.ticket.isActive === false) {
+    y += sectionGap; // Espacio antes de ANULADO
+    ctx.font = `900 ${18 * scale}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText('*** ANULADO ***', canvasWidth / 2, y);
+    ctx.textAlign = 'left';
+    y += 18 * scale;
+  }
+
   y += sectionGap;
 
   // ========== 5. TOTAL ==========
@@ -318,12 +339,12 @@ export async function generateTicketImage(
 
   // ========== 6. MULTIPLICADOR Y FOOTER ==========
   ctx.textAlign = 'center';
-  
+
   // Obtener multiplierX
   const primeraJugadaNumero = ticketData.ticket.jugadas.find(j => j.type === 'NUMERO' && j.finalMultiplierX > 0);
-  const multiplierX = primeraJugadaNumero?.finalMultiplierX ?? 
-                      ticketData.ticket.sorteo.loteria.rulesJson?.baseMultiplierX ?? 
-                      1;
+  const multiplierX = primeraJugadaNumero?.finalMultiplierX ??
+    ticketData.ticket.sorteo.loteria.rulesJson?.baseMultiplierX ??
+    1;
 
   ctx.font = `900 ${12 * scale}px monospace`;
   ctx.fillText(`PAGAMOS ${multiplierX}x`, canvasWidth / 2, y);
@@ -364,21 +385,21 @@ export async function generateTicketImage(
   const vendedorBarcodeEnabled = ticketData.ticket.vendedor.printBarcode !== false;
   const ventanaBarcodeEnabled = ticketData.ticket.ventana.printBarcode !== false;
   const shouldShowBarcode = vendedorBarcodeEnabled && ventanaBarcodeEnabled;
-  
+
   if (shouldShowBarcode) {
     try {
       const barcodeText = ticketNumber;
-      
+
       // Calcular exactamente como el frontend
       // Padding: 8px (4px cada lado)
       const padding = 8 * scale;
       const barcodeWidth = Math.floor((canvasWidth - padding) * 0.90);
-      
+
       // Calcular barWidth dinámicamente igual que el frontend
       // barWidth = max(2, min(3, floor(barcodeWidth / (estimatedChars * 15))))
       const estimatedChars = barcodeText.length;
       const barWidth = Math.max(2, Math.min(3, Math.floor(barcodeWidth / (estimatedChars * 15))));
-      
+
       // Generar código de barras CODE128 con los mismos parámetros que el frontend
       // En bwip-js, 'scale' es el ancho del módulo (equivalente a 'width' en jsbarcode)
       const barcodeBuffer = await bwipjs.toBuffer({
@@ -397,20 +418,20 @@ export async function generateTicketImage(
 
       // Cargar imagen del código de barras
       const barcodeImage = await loadImage(barcodeBuffer);
-      
+
       // Si el ancho generado excede el máximo, escalarlo (igual que el frontend con viewBox)
       let finalWidth = barcodeImage.width;
       let finalHeight = barcodeImage.height;
-      
+
       if (barcodeImage.width > barcodeWidth) {
         const scaleRatio = barcodeWidth / barcodeImage.width;
         finalWidth = barcodeWidth;
         finalHeight = barcodeImage.height * scaleRatio;
       }
-      
+
       // Centrar horizontalmente
       const barcodeX = (canvasWidth - finalWidth) / 2;
-      
+
       // Dibujar código de barras
       ctx.drawImage(barcodeImage, barcodeX, y, finalWidth, finalHeight);
       y += finalHeight + 4 * scale;
@@ -469,6 +490,11 @@ function calculateTicketHeight(
     }
   }
 
+  // Altura para ANULADO
+  if (ticketData.ticket.isActive === false) {
+    height += sectionGap + 18 * scale;
+  }
+
   height += sectionGap;
 
   // TOTAL
@@ -492,8 +518,8 @@ function calculateTicketHeight(
 
   // CÓDIGO DE BARRAS
   // Validar siempre la configuración del vendedor
-  const shouldShowBarcode = ticketData.ticket.vendedor.printBarcode !== false && 
-                            ticketData.ticket.ventana.printBarcode !== false;
+  const shouldShowBarcode = ticketData.ticket.vendedor.printBarcode !== false &&
+    ticketData.ticket.ventana.printBarcode !== false;
   if (shouldShowBarcode) {
     height += 12 * scale + 4 * scale + 50 * scale; // Texto + espacio para código de barras
   }
@@ -508,13 +534,13 @@ export function mmToPixels(widthMm: number | null): number {
   if (!widthMm) {
     return 220; // Default: 58mm (220px)
   }
-  
+
   if (widthMm === 58) {
     return 220;
   } else if (widthMm === 88) {
     return 340;
   }
-  
+
   // Fallback: calcular proporcionalmente
   return Math.round(widthMm * 3.779527559);
 }

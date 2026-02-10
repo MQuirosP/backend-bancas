@@ -40,6 +40,7 @@
     "apply:get-previous-day-accumulated": "npx dotenv-cli -e .env.local -- ts-node scripts/apply-get-previous-day-accumulated.ts",
     "apply:missing-indexes": "npx dotenv-cli -e .env.local -- ts-node scripts/apply-missing-indexes.ts",
     "maintenance": "npx dotenv-cli -e .env.local -- ts-node src/tools/maintenance/index.ts",
+    "resync:sequential": "npx dotenv-cli -e .env.local -- ts-node scripts/resync-today.ts",
     "test": "npx dotenv-cli -e .env.test -- jest --runInBand --detectOpenHandles",
     "test:watch": "npx dotenv-cli -e .env.test -- jest --watch",
     "test:coverage": "npx dotenv-cli -e .env.test -- jest --coverage"
@@ -76,6 +77,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/bwip-js": "^3.2.3",
     "@types/cors": "^2.8.19",
     "@types/dotenv-safe": "^9.1.0",
     "@types/express": "^4.17.23",
