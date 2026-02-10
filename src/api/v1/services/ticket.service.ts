@@ -429,7 +429,7 @@ export const TicketService = {
       // Obtener número de jugadas (el ticket incluye jugadas pero TypeScript no lo infiere)
       const jugadasList = (ticket as any).jugadas || [];
       const jugadasCount = jugadasList.length ?? jugadasIn.length;
-      
+
       // Detallar jugadas en la descripción
       const jugadasSummary = jugadasList
         .map((j: any) => `${j.type === 'REVENTADO' ? 'R:' : '#'}${j.number}: ₡${j.amount.toLocaleString()}`)
@@ -569,7 +569,7 @@ export const TicketService = {
       action: ActivityType.TICKET_CANCEL,
       targetType: "TICKET",
       targetId: id,
-      details: { 
+      details: {
         ticketNumber: ticket.ticketNumber,
         totalAmount: ticket.totalAmount,
         reason: "Cancelled by user",
@@ -598,7 +598,7 @@ export const TicketService = {
       action: ActivityType.TICKET_RESTORE,
       targetType: "TICKET",
       targetId: id,
-      details: { 
+      details: {
         ticketNumber: ticket.ticketNumber,
         totalAmount: ticket.totalAmount,
         restored: true,
@@ -1252,7 +1252,7 @@ export const TicketService = {
 
         const loteriaRules = loteria?.rulesJson as any;
         reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
-        
+
         //  Usar resolveDigits para obtener digits desde rulesJson
         const { resolveDigits } = await import('../../../utils/loteriaRules');
         sorteoDigits = resolveDigits(loteriaRules, 2);
@@ -2720,6 +2720,7 @@ export const TicketService = {
           totalAmount: true,
           clienteNombre: true,
           createdAt: true,
+          isActive: true, // Add isActive
           vendedorId: true,
           ventanaId: true,
           jugadas: {
@@ -2792,7 +2793,7 @@ export const TicketService = {
         ticket.ventana?.name || null,
         ticket.ventana?.phone || null
       );
-      
+
       // Validar explícitamente la configuración del código de barras del vendedor
       // Si printBarcode es false, no se mostrará el código de barras en la imagen
       const vendedorBarcodeEnabled = vendedorConfig.printBarcode !== false;
@@ -2812,7 +2813,7 @@ export const TicketService = {
 
       // Generar imagen
       const { generateTicketImage } = await import('../../../services/ticket-image-generator.service');
-      
+
       const imageBuffer = await generateTicketImage(
         {
           ticket: {
@@ -2821,6 +2822,7 @@ export const TicketService = {
             totalAmount: ticket.totalAmount,
             clienteNombre: ticket.clienteNombre,
             createdAt: ticket.createdAt,
+            isActive: ticket.isActive, // Pass isActive
             jugadas: ticket.jugadas,
             sorteo: {
               ...sorteoWithFormattedName,

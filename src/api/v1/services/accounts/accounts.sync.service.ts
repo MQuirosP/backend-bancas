@@ -168,15 +168,14 @@ export class AccountStatementSyncService {
       //  Obtener tickets excluidos para esta fecha
       const excludedTicketIds = await getExcludedTicketIdsForDate(date);
 
-      // Obtener tickets del día (SOLO tickets con sorteos EVALUADOS para consistencia de balance)
+      // Obtener tickets del día (Incluir ACTIVE para reportar ventas en tiempo real)
       const tickets = await tx.ticket.findMany({
         where: {
           ...dateFilter,
           deletedAt: null,
           isActive: true,
-          status: { in: ["EVALUATED", "PAID", "PAGADO"] }, // Excluir ACTIVE
+          status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
           sorteo: {
-            status: "EVALUATED",
             deletedAt: null,
           },
           ...(excludedTicketIds.length > 0 ? { id: { notIn: excludedTicketIds } } : {}),
@@ -189,11 +188,25 @@ export class AccountStatementSyncService {
         select: {
           id: true,
           totalAmount: true,
+          status: true,
           ventanaId: true,
           vendedorId: true,
           ventana: {
             select: { bancaId: true }
           }
+        },
+      });
+
+      logger.info({
+        layer: "service",
+        action: "SYNC_DAY_STATEMENT_TICKETS_FOUND",
+        payload: {
+          date: dateStrCR,
+          dimension,
+          entityId,
+          ticketsCount: tickets.length,
+          activeTickets: tickets.filter(t => t.status === "ACTIVE").length,
+          evaluatedTickets: tickets.filter(t => ["EVALUATED", "PAID", "PAGADO"].includes(t.status)).length,
         },
       });
 
@@ -613,18 +626,8 @@ export class AccountStatementSyncService {
       const uniqueVentanas = new Set<string>();
       const uniqueBancas = new Set<string>();
 
-      // Filtrar solo tickets del día del sorteo y recolectar dimensiones únicas
+      // Recolectar dimensiones únicas de todos los tickets afectados por el sorteo
       for (const ticket of affectedTickets) {
-        if (!ticket.businessDate) continue;
-
-        // ️ CRÍTICO: businessDate ya está en formato CR (DATE de PostgreSQL)
-        const ticketDateStrCR = crDateService.postgresDateToCRString(ticket.businessDate);
-
-        // Solo considerar tickets del día del sorteo
-        if (ticketDateStrCR !== sorteoDateStrCR) {
-          continue;
-        }
-
         // Recolectar todas las dimensiones únicas
         if (ticket.vendedorId) {
           uniqueVendedores.add(ticket.vendedorId);
@@ -643,9 +646,9 @@ export class AccountStatementSyncService {
         payload: {
           sorteoId,
           sorteoDateStrCR,
-          uniqueVendedores: uniqueVendedores.size,
-          uniqueVentanas: uniqueVentanas.size,
-          uniqueBancas: uniqueBancas.size,
+          uniqueVendedores: Array.from(uniqueVendedores),
+          uniqueVentanas: Array.from(uniqueVentanas),
+          uniqueBancas: Array.from(uniqueBancas),
         },
       });
 
