@@ -6,7 +6,7 @@ import { Router } from 'express';
 import { protect } from '../../../middlewares/auth.middleware';
 import { requireAdmin } from '../../../middlewares/roleGuards.middleware';
 import { ReportsController } from '../controllers/reports.controller';
-import { validateQuery } from '../../../middlewares/validate.middleware';
+import { validateQuery, validateParams } from '../../../middlewares/validate.middleware';
 import {
   WinnersPaymentsQuerySchema,
   NumbersAnalysisQuerySchema,
@@ -18,6 +18,8 @@ import {
   ProfitabilityQuerySchema,
   TimeAnalysisQuerySchema,
   VendedoresRankingQuerySchema,
+  WinnersListQuerySchema,
+  WinnersListParamsSchema,
 } from '../validators/reports.validator';
 
 const router = Router();
@@ -98,6 +100,14 @@ router.get(
   requireAdmin,
   validateQuery(TimeAnalysisQuerySchema),
   ReportsController.getTimeAnalysis
+);
+
+// Nuevo endpoint para lista de ganadores (Reporte optimizado)
+router.get(
+  '/winners-list/:sorteoId',
+  validateParams(WinnersListParamsSchema),
+  validateQuery(WinnersListQuerySchema),
+  ReportsController.getWinnersList
 );
 
 export default router;

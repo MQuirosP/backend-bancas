@@ -140,3 +140,12 @@ export const VendedoresRankingQuerySchema = DateRangeSchema.merge(EntityFiltersS
   includeInactive: z.coerce.boolean().default(false).optional(),
 }).strict();
 
+// Endpoint de Ganadores por Sorteo
+export const WinnersListQuerySchema = z.object({
+  vendedorId: z.string().uuid().optional(),
+}).strict();
+
+export const WinnersListParamsSchema = z.object({
+  sorteoId: z.string().uuid('sorteoId inválido (UUID)'),
+}).strict();
+
