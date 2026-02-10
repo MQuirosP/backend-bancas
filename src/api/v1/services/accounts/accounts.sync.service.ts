@@ -358,11 +358,16 @@ export class AccountStatementSyncService {
       const totalPaid = totalP._sum.amount || 0;
       const totalCollected = totalC._sum.amount || 0;
 
-      // Calcular balance del día
+      // Calcular balance del día (SIN movimientos para mantener consistencia con otros servicios)
       const commissionToUse = dimension === "vendedor" ? vendedorCommission : listeroCommission;
-      const balance = totalSales - totalPayouts - commissionToUse + totalPaid - totalCollected;
+      const balance = totalSales - totalPayouts - commissionToUse;
 
-      // 4. Calcular accumulatedBalance
+      // 4. Calcular remainingBalance (balance del día CON movimientos)
+      //  CRÍTICO: remainingBalance = balance base - collections + payments
+      //  Esto es consistente con accounts.balances.ts y monthlyClosing.service.ts
+      const remainingBalance = balance - totalCollected + totalPaid;
+
+      // 5. Calcular accumulatedBalance (usando remainingBalance que incluye movimientos)
       let accumulatedBalance: number = 0; // Inicializar con valor por defecto
 
       // Verificar si es el día 1 del mes
@@ -377,7 +382,8 @@ export class AccountStatementSyncService {
           vendedorId || undefined,
           bancaId || undefined
         );
-        accumulatedBalance = Number(previousMonthBalance) + balance;
+        //  CRÍTICO: Usar remainingBalance (que incluye movimientos) para el acumulado
+        accumulatedBalance = Number(previousMonthBalance) + remainingBalance;
 
         logger.info({
           layer: "service",
@@ -388,6 +394,7 @@ export class AccountStatementSyncService {
             entityId,
             previousMonthBalance: Number(previousMonthBalance),
             balance,
+            remainingBalance,
             accumulatedBalance,
           },
         });
@@ -423,9 +430,9 @@ export class AccountStatementSyncService {
         });
 
         if (previousStatement && previousStatement.accumulatedBalance !== null && previousStatement.accumulatedBalance !== undefined) {
-          //  CRÍTICO: Usar accumulatedBalance del día anterior encontrado + balance recalculado
+          //  CRÍTICO: Usar accumulatedBalance del día anterior + remainingBalance (que incluye movimientos)
           const previousAccumulated = Number(previousStatement.accumulatedBalance) || 0;
-          accumulatedBalance = previousAccumulated + balance;
+          accumulatedBalance = previousAccumulated + remainingBalance;
 
           logger.info({
             layer: "service",
@@ -437,6 +444,7 @@ export class AccountStatementSyncService {
               entityId,
               previousAccumulatedBalance: Number(previousStatement.accumulatedBalance),
               balance,
+              remainingBalance,
               accumulatedBalance,
             },
           });
@@ -449,7 +457,8 @@ export class AccountStatementSyncService {
             vendedorId || undefined,
             bancaId || undefined
           );
-          accumulatedBalance = Number(previousMonthBalance) + balance;
+          //  CRÍTICO: Usar remainingBalance (que incluye movimientos) para el acumulado
+          accumulatedBalance = Number(previousMonthBalance) + remainingBalance;
 
           logger.info({
             layer: "service",
@@ -460,15 +469,13 @@ export class AccountStatementSyncService {
               entityId,
               previousMonthBalance: Number(previousMonthBalance),
               balance,
+              remainingBalance,
               accumulatedBalance,
               note: "No se encontró statement previo en el mes, usando saldo del mes anterior",
             },
           });
         }
       }
-
-      // 5. Calcular remainingBalance
-      let remainingBalance = accumulatedBalance;
 
       // 6. Determinar isSettled
       const ticketCount = tickets.length;
