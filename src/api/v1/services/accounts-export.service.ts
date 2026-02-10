@@ -758,47 +758,81 @@ export class AccountsExportService {
         return [];
       }
 
-      const payments = await prisma.accountPayment.findMany({
-        where: {
-          accountStatementId: { in: statementIds },
-        },
-        select: {
-          id: true,
-          accountStatementId: true,
-          date: true,
-          amount: true,
-          type: true,
-          method: true,
-          notes: true,
-          isReversed: true,
-          isFinal: true,
-          createdAt: true,
-          updatedAt: true,
-          reversedAt: true,
-          paidBy: {
-            select: {
-              id: true,
-              name: true,
+      //  CRÍTICO: Validar que todos los IDs sean UUIDs válidos antes de consultar
+      const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+      const invalidIds = statementIds.filter(id => !UUID_REGEX.test(id));
+
+      if (invalidIds.length > 0) {
+        logger.error({
+          layer: 'service',
+          action: 'ACCOUNTS_EXPORT_INVALID_UUIDS',
+          payload: {
+            message: 'Se encontraron UUIDs inválidos en statementIds',
+            invalidIds: invalidIds.slice(0, 10), // Solo los primeros 10
+            totalInvalid: invalidIds.length,
+          },
+        });
+        throw new Error(`Se encontraron ${invalidIds.length} statement IDs con formato UUID inválido`);
+      }
+
+      let payments;
+      try {
+        payments = await prisma.accountPayment.findMany({
+          where: {
+            accountStatementId: { in: statementIds },
+          },
+          select: {
+            id: true,
+            accountStatementId: true,
+            date: true,
+            amount: true,
+            type: true,
+            method: true,
+            notes: true,
+            isReversed: true,
+            isFinal: true,
+            createdAt: true,
+            updatedAt: true,
+            reversedAt: true,
+            paidBy: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            reversedByUser: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            accountStatement: {
+              select: {
+                date: true,
+                ventanaId: true,
+                vendedorId: true,
+              },
             },
           },
-          reversedByUser: {
-            select: {
-              id: true,
-              name: true,
-            },
+          orderBy: {
+            createdAt: 'asc',
           },
-          accountStatement: {
-            select: {
-              date: true,
-              ventanaId: true,
-              vendedorId: true,
-            },
+        });
+      } catch (error: any) {
+        //  Capturar información detallada del error UUID
+        logger.error({
+          layer: 'service',
+          action: 'ACCOUNTS_EXPORT_PAYMENT_QUERY_ERROR',
+          payload: {
+            message: error.message,
+            code: error.code,
+            meta: error.meta,
+            statementIdsCount: statementIds.length,
+            sampleStatementIds: statementIds.slice(0, 5),
           },
-        },
-        orderBy: {
-          createdAt: 'asc',
-        },
-      });
+        });
+        throw error;
+      }
 
       // Resolver nombres y códigos de entidades
       const ventanaIds = Array.from(
