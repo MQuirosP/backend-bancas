@@ -2202,5 +2202,94 @@ export const TicketsReportService = {
       },
     };
   },
+
+  /**
+   * Obtiene la lista de ganadores de un sorteo específico, optimizada para reportes
+   */
+  async getWinnersList(sorteoId: string, filters: { vendedorId?: string }) {
+    // 1. Obtener datos del sorteo, lotería y vendedor (si aplica)
+    const sorteo = await prisma.sorteo.findUnique({
+      where: { id: sorteoId },
+      include: {
+        loteria: {
+          select: { name: true }
+        }
+      }
+    });
+
+    if (!sorteo) {
+      throw new AppError('Sorteo no encontrado', 404);
+    }
+
+    // 2. Obtener tickets ganadores para este sorteo
+    const tickets = await prisma.ticket.findMany({
+      where: {
+        sorteoId,
+        isWinner: true,
+        isActive: true,
+        deletedAt: null,
+        ...(filters.vendedorId && filters.vendedorId.trim() !== '' && { vendedorId: filters.vendedorId })
+      },
+      select: {
+        ticketNumber: true,
+        totalAmount: true,
+        totalPayout: true,
+        vendedor: {
+          select: { name: true }
+        }
+      },
+      orderBy: {
+        totalPayout: 'desc'
+      }
+    });
+
+    // 3. Determinar el nombre del vendedor para el encabezado
+    let vendedorName = 'Todos';
+    if (filters.vendedorId && filters.vendedorId.trim() !== '') {
+      const vendedor = await prisma.user.findUnique({
+        where: { id: filters.vendedorId },
+        select: { name: true }
+      });
+      vendedorName = vendedor?.name || 'Desconocido';
+    } else if (tickets.length > 0) {
+      // Si todos los tickets son del mismo vendedor, podemos mostrar su nombre
+      const firstVendedor = tickets[0].vendedor.name;
+      const allSame = tickets.every(t => t.vendedor.name === firstVendedor);
+      if (allSame) {
+        vendedorName = firstVendedor;
+      }
+    }
+
+    // 4. Calcular totales
+    const totalAmount = tickets.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+    const totalPayout = tickets.reduce((acc, t) => acc + (t.totalPayout || 0), 0);
+
+    return {
+      data: {
+        sorteo: {
+          name: sorteo.name,
+          winningNumber: sorteo.winningNumber,
+          isReventado: !!sorteo.extraOutcomeCode
+        },
+        loteria: {
+          name: sorteo.loteria.name
+        },
+        vendedor: {
+          name: vendedorName
+        },
+        printDateTime: new Date().toISOString(),
+        tickets: tickets.map(t => ({
+          ticketNumber: t.ticketNumber,
+          totalAmount: t.totalAmount,
+          totalPayout: t.totalPayout
+        })),
+        totals: {
+          count: tickets.length,
+          totalAmount,
+          totalPayout
+        }
+      }
+    };
+  },
 };
 

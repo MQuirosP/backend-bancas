@@ -229,5 +229,27 @@ export const ReportsController = {
 
     return success(res, result.data, result.meta);
   },
+
+  /**
+   * GET /api/v1/reports/winners-list/:sorteoId
+   * Lista consolidada de tickets ganadores para un sorteo
+   */
+  async getWinnersList(req: AuthenticatedRequest, res: Response) {
+    const { sorteoId } = req.params;
+    let { vendedorId } = req.query as any;
+
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    // Si no es ADMIN, forzar que solo vea sus propios ganadores
+    if (req.user.role !== 'ADMIN') {
+      vendedorId = req.user.id;
+    }
+
+    const result = await TicketsReportService.getWinnersList(sorteoId, { vendedorId });
+
+    return success(res, result.data);
+  },
 };
 
