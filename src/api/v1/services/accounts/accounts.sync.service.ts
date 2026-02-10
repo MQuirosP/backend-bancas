@@ -20,6 +20,7 @@ import { buildTicketDateFilter } from "./accounts.dates.utils";
 import { crDateService } from "../../../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
 import { getExcludedTicketIdsForDate } from "./accounts.calculations";
+import { intercalateSorteosAndMovements } from "./accounts.intercalate";
 
 /**
  * Servicio de sincronización de AccountStatement
