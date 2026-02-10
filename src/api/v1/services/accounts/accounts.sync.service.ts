@@ -575,6 +575,7 @@ export class AccountStatementSyncService {
 
     try {
       // 1. Obtener todos los tickets afectados por el sorteo
+      // ️ FIX: NO usar distinct - obtener TODOS los tickets y agregar manualmente
       const affectedTickets = await prisma.ticket.findMany({
         where: {
           sorteoId: sorteoId,
@@ -592,7 +593,6 @@ export class AccountStatementSyncService {
             },
           },
         },
-        distinct: ['businessDate', 'ventanaId', 'vendedorId'],
       });
 
       if (affectedTickets.length === 0) {
@@ -607,73 +607,93 @@ export class AccountStatementSyncService {
         return;
       }
 
-      // 2. Agrupar por combinación única de día/ventana/vendedor/banca
-      const uniqueCombinations = new Map<string, {
-        businessDate: Date;
-        bancaId: string | null;
-        ventanaId: string | null;
-        vendedorId: string | null;
-      }>();
+      // 2. Agregar manualmente todas las entidades únicas que necesitan sincronización
+      // Usar Sets para garantizar unicidad
+      const uniqueVendedores = new Set<string>();
+      const uniqueVentanas = new Set<string>();
+      const uniqueBancas = new Set<string>();
 
+      // Filtrar solo tickets del día del sorteo y recolectar dimensiones únicas
       for (const ticket of affectedTickets) {
         if (!ticket.businessDate) continue;
 
         // ️ CRÍTICO: businessDate ya está en formato CR (DATE de PostgreSQL)
         const ticketDateStrCR = crDateService.postgresDateToCRString(ticket.businessDate);
 
-        // Solo sincronizar statements del día del sorteo
+        // Solo considerar tickets del día del sorteo
         if (ticketDateStrCR !== sorteoDateStrCR) {
           continue;
         }
 
-        const bancaId = ticket.ventana?.bancaId || null;
-        const key = `${ticketDateStrCR}|${bancaId || 'null'}|${ticket.ventanaId || 'null'}|${ticket.vendedorId || 'null'}`;
-
-        if (!uniqueCombinations.has(key)) {
-          uniqueCombinations.set(key, {
-            businessDate: ticket.businessDate,
-            bancaId,
-            ventanaId: ticket.ventanaId,
-            vendedorId: ticket.vendedorId,
-          });
+        // Recolectar todas las dimensiones únicas
+        if (ticket.vendedorId) {
+          uniqueVendedores.add(ticket.vendedorId);
+        }
+        if (ticket.ventanaId) {
+          uniqueVentanas.add(ticket.ventanaId);
+        }
+        if (ticket.ventana?.bancaId) {
+          uniqueBancas.add(ticket.ventana.bancaId);
         }
       }
 
-      // 3. Sincronizar statements para cada combinación única
-      const syncPromises = Array.from(uniqueCombinations.values()).map(async (combo) => {
-        // Sincronizar statement de vendedor (si hay vendedorId)
-        if (combo.vendedorId) {
-          await this.syncDayStatement(
-            combo.businessDate,
-            "vendedor",
-            combo.vendedorId,
-            { force: true }
-          );
-        }
-
-        // Sincronizar statement consolidado de ventana (si hay ventanaId)
-        if (combo.ventanaId) {
-          await this.syncDayStatement(
-            combo.businessDate,
-            "ventana",
-            combo.ventanaId,
-            { force: true }
-          );
-        }
-
-        // Sincronizar statement consolidado de banca (si hay bancaId)
-        if (combo.bancaId) {
-          await this.syncDayStatement(
-            combo.businessDate,
-            "banca",
-            combo.bancaId,
-            { force: true }
-          );
-        }
+      logger.info({
+        layer: "service",
+        action: "SYNC_SORTEO_STATEMENTS_DIMENSIONS_FOUND",
+        payload: {
+          sorteoId,
+          sorteoDateStrCR,
+          uniqueVendedores: uniqueVendedores.size,
+          uniqueVentanas: uniqueVentanas.size,
+          uniqueBancas: uniqueBancas.size,
+        },
       });
 
+      // 3. Sincronizar statements para cada entidad única
+      // Convertir sorteoDateStrCR a Date UTC para sincronización
+      const [year, month, day] = sorteoDateStrCR.split('-').map(Number);
+      const sorteoDateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+
+      const syncPromises: Promise<void>[] = [];
+
+      // Sincronizar todos los vendedores
+      for (const vendedorId of uniqueVendedores) {
+        syncPromises.push(
+          this.syncDayStatement(
+            sorteoDateUTC,
+            "vendedor",
+            vendedorId,
+            { force: true }
+          )
+        );
+      }
+
+      // Sincronizar todas las ventanas
+      for (const ventanaId of uniqueVentanas) {
+        syncPromises.push(
+          this.syncDayStatement(
+            sorteoDateUTC,
+            "ventana",
+            ventanaId,
+            { force: true }
+          )
+        );
+      }
+
+      // Sincronizar todas las bancas
+      for (const bancaId of uniqueBancas) {
+        syncPromises.push(
+          this.syncDayStatement(
+            sorteoDateUTC,
+            "banca",
+            bancaId,
+            { force: true }
+          )
+        );
+      }
+
       await Promise.all(syncPromises);
-      
+
       //  CRÍTICO: Propagar cambios si el sorteo es de una fecha pasada
       const todayCR = crDateService.dateUTCToCRString(new Date());
       if (sorteoDateStrCR < todayCR) {
@@ -683,21 +703,19 @@ export class AccountStatementSyncService {
           payload: { sorteoId, sorteoDateStrCR, todayCR }
         });
 
-        // Propagar para cada combinación (en paralelo para rendimiento)
+        // Propagar para cada entidad (en paralelo para rendimiento)
         const propagationPromises: Promise<void>[] = [];
-        
-        for (const combo of uniqueCombinations.values()) {
-          if (combo.vendedorId) {
-            propagationPromises.push(this.propagateBalanceChange(combo.businessDate, "vendedor", combo.vendedorId));
-          }
-          if (combo.ventanaId) {
-            propagationPromises.push(this.propagateBalanceChange(combo.businessDate, "ventana", combo.ventanaId));
-          }
-          if (combo.bancaId) {
-            propagationPromises.push(this.propagateBalanceChange(combo.businessDate, "banca", combo.bancaId));
-          }
+
+        for (const vendedorId of uniqueVendedores) {
+          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "vendedor", vendedorId));
         }
-        
+        for (const ventanaId of uniqueVentanas) {
+          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "ventana", ventanaId));
+        }
+        for (const bancaId of uniqueBancas) {
+          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "banca", bancaId));
+        }
+
         await Promise.all(propagationPromises);
       }
 
@@ -707,7 +725,7 @@ export class AccountStatementSyncService {
         payload: {
           sorteoId,
           sorteoDateStrCR,
-          combinationsSynced: uniqueCombinations.size,
+          entitiesSynced: uniqueVendedores.size + uniqueVentanas.size + uniqueBancas.size,
         },
       });
     } catch (error) {
