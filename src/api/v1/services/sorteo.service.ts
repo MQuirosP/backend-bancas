@@ -2055,7 +2055,10 @@ gs."hour24" ASC
 
             //  CRÍTICO: El movimiento especial tiene subtotal: 0 porque el saldo ya está en eventAccumulated inicial
             //  CRÍTICO: Usar Number() para garantizar tipo numérico y evitar concatenación de strings
-            const subtotal = movement.type === 'payment' ? Number(movement.amount || 0) : -Number(movement.amount || 0);
+            //  Si es el saldo del mes anterior, subtotal = 0 (ya está en initialAccumulatedForRange)
+            const subtotal = isOpeningBalance
+              ? 0
+              : (movement.type === 'payment' ? Number(movement.amount || 0) : -Number(movement.amount || 0));
 
             movementItems.push({
               sorteoId: `mov-${movement.id}`,
