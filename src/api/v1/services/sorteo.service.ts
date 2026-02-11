@@ -874,6 +874,35 @@ export const SorteoService = {
 
     const reverted = await SorteoRepository.revertEvaluation(id);
 
+    // Sincronizar AccountStatements después de revertir
+    try {
+      const { crDateService } = await import('../../../utils/crDateService');
+      const sorteoDateCR = crDateService.dateUTCToCRString(existing.scheduledAt);
+      const [year, month, day] = sorteoDateCR.split('-').map(Number);
+      const sorteoDateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+
+      await AccountStatementSyncService.syncSorteoStatements(id, sorteoDateUTC);
+
+      logger.info({
+        layer: 'service',
+        action: 'ACCOUNT_STATEMENT_SYNCED_ON_SORTEO_REVERT',
+        payload: {
+          sorteoId: id,
+          sorteoDateCR,
+        }
+      });
+    } catch (err) {
+      logger.error({
+        layer: 'service',
+        action: 'ACCOUNT_STATEMENT_SYNC_ERROR_ON_SORTEO_REVERT',
+        payload: {
+          sorteoId: id,
+          error: (err as Error).message
+        }
+      });
+      // No lanzar error, la reversión ya se hizo
+    }
+
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
