@@ -600,24 +600,33 @@ export class AccountStatementSyncService {
         return;
       }
 
-      // 2. Agregar manualmente todas las entidades únicas que necesitan sincronización
-      // Usar Sets para garantizar unicidad
-      const uniqueVendedores = new Set<string>();
-      const uniqueVentanas = new Set<string>();
-      const uniqueBancas = new Set<string>();
+      // 2. Agrupar entidades únicas POR businessDate
+      // CRÍTICO: Los tickets pueden tener businessDate diferente a la fecha del sorteo
+      // Ejemplo: sorteo del 11-feb, tickets vendidos el 10-feb → businessDate = 10-feb
+      // Debemos sincronizar el statement del día del TICKET, no del sorteo
+      const dateEntityMap = new Map<string, { vendedores: Set<string>, ventanas: Set<string>, bancas: Set<string> }>();
 
-      // Recolectar dimensiones únicas de todos los tickets afectados por el sorteo
       for (const ticket of affectedTickets) {
-        // Recolectar todas las dimensiones únicas
-        if (ticket.vendedorId) {
-          uniqueVendedores.add(ticket.vendedorId);
+        // Determinar la fecha del ticket (businessDate o sorteo como fallback)
+        let ticketDateStr: string;
+        if (ticket.businessDate) {
+          ticketDateStr = crDateService.postgresDateToCRString(ticket.businessDate);
+        } else {
+          ticketDateStr = sorteoDateStrCR;
         }
-        if (ticket.ventanaId) {
-          uniqueVentanas.add(ticket.ventanaId);
+
+        if (!dateEntityMap.has(ticketDateStr)) {
+          dateEntityMap.set(ticketDateStr, {
+            vendedores: new Set<string>(),
+            ventanas: new Set<string>(),
+            bancas: new Set<string>(),
+          });
         }
-        if (ticket.ventana?.bancaId) {
-          uniqueBancas.add(ticket.ventana.bancaId);
-        }
+
+        const entry = dateEntityMap.get(ticketDateStr)!;
+        if (ticket.vendedorId) entry.vendedores.add(ticket.vendedorId);
+        if (ticket.ventanaId) entry.ventanas.add(ticket.ventanaId);
+        if (ticket.ventana?.bancaId) entry.bancas.add(ticket.ventana.bancaId);
       }
 
       logger.info({
@@ -626,79 +635,61 @@ export class AccountStatementSyncService {
         payload: {
           sorteoId,
           sorteoDateStrCR,
-          uniqueVendedores: Array.from(uniqueVendedores),
-          uniqueVentanas: Array.from(uniqueVentanas),
-          uniqueBancas: Array.from(uniqueBancas),
+          uniqueDates: Array.from(dateEntityMap.keys()),
+          totalEntities: Array.from(dateEntityMap.values()).reduce(
+            (sum, e) => sum + e.vendedores.size + e.ventanas.size + e.bancas.size, 0
+          ),
         },
       });
 
-      // 3. Sincronizar statements para cada entidad única
-      // Convertir sorteoDateStrCR a Date UTC para sincronización
-      const [year, month, day] = sorteoDateStrCR.split('-').map(Number);
-      const sorteoDateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-
+      // 3. Sincronizar statements para cada fecha + entidad única
       const syncPromises: Promise<void>[] = [];
+      const todayCR = crDateService.dateUTCToCRString(new Date());
+      const propagationPromises: Promise<void>[] = [];
 
-      // Sincronizar todos los vendedores
-      for (const vendedorId of uniqueVendedores) {
-        syncPromises.push(
-          this.syncDayStatement(
-            sorteoDateUTC,
-            "vendedor",
-            vendedorId,
-            { force: true }
-          )
-        );
-      }
+      dateEntityMap.forEach((entities, dateStr) => {
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const dateUTC = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
 
-      // Sincronizar todas las ventanas
-      for (const ventanaId of uniqueVentanas) {
-        syncPromises.push(
-          this.syncDayStatement(
-            sorteoDateUTC,
-            "ventana",
-            ventanaId,
-            { force: true }
-          )
-        );
-      }
+        entities.vendedores.forEach(vendedorId => {
+          syncPromises.push(
+            this.syncDayStatement(dateUTC, "vendedor", vendedorId, { force: true })
+          );
+        });
+        entities.ventanas.forEach(ventanaId => {
+          syncPromises.push(
+            this.syncDayStatement(dateUTC, "ventana", ventanaId, { force: true })
+          );
+        });
+        entities.bancas.forEach(bancaId => {
+          syncPromises.push(
+            this.syncDayStatement(dateUTC, "banca", bancaId, { force: true })
+          );
+        });
 
-      // Sincronizar todas las bancas
-      for (const bancaId of uniqueBancas) {
-        syncPromises.push(
-          this.syncDayStatement(
-            sorteoDateUTC,
-            "banca",
-            bancaId,
-            { force: true }
-          )
-        );
-      }
+        // Propagar cambios si la fecha del ticket es pasada
+        if (dateStr < todayCR) {
+          entities.vendedores.forEach(vendedorId => {
+            propagationPromises.push(this.propagateBalanceChange(dateUTC, "vendedor", vendedorId));
+          });
+          entities.ventanas.forEach(ventanaId => {
+            propagationPromises.push(this.propagateBalanceChange(dateUTC, "ventana", ventanaId));
+          });
+          entities.bancas.forEach(bancaId => {
+            propagationPromises.push(this.propagateBalanceChange(dateUTC, "banca", bancaId));
+          });
+        }
+      });
 
       await Promise.all(syncPromises);
 
-      //  CRÍTICO: Propagar cambios si el sorteo es de una fecha pasada
-      const todayCR = crDateService.dateUTCToCRString(new Date());
-      if (sorteoDateStrCR < todayCR) {
+      // Propagar después de sincronizar
+      if (propagationPromises.length > 0) {
         logger.info({
           layer: "service",
           action: "SYNC_SORTEO_STATEMENTS_PROPAGATING",
-          payload: { sorteoId, sorteoDateStrCR, todayCR }
+          payload: { sorteoId, sorteoDateStrCR, todayCR, propagations: propagationPromises.length }
         });
-
-        // Propagar para cada entidad (en paralelo para rendimiento)
-        const propagationPromises: Promise<void>[] = [];
-
-        for (const vendedorId of uniqueVendedores) {
-          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "vendedor", vendedorId));
-        }
-        for (const ventanaId of uniqueVentanas) {
-          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "ventana", ventanaId));
-        }
-        for (const bancaId of uniqueBancas) {
-          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "banca", bancaId));
-        }
-
         await Promise.all(propagationPromises);
       }
 
@@ -708,7 +699,8 @@ export class AccountStatementSyncService {
         payload: {
           sorteoId,
           sorteoDateStrCR,
-          entitiesSynced: uniqueVendedores.size + uniqueVentanas.size + uniqueBancas.size,
+          uniqueDates: Array.from(dateEntityMap.keys()),
+          entitiesSynced: syncPromises.length,
         },
       });
     } catch (error) {
