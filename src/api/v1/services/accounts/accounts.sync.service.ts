@@ -363,19 +363,17 @@ export class AccountStatementSyncService {
       const commissionToUse = dimension === "vendedor" ? vendedorCommission : listeroCommission;
       const balance = totalSales - totalPayouts - commissionToUse;
 
-      // 4. Calcular remainingBalance (balance del día CON movimientos)
-      //  CRÍTICO: remainingBalance = balance base - collections + payments
-      //  Esto es consistente con accounts.balances.ts y monthlyClosing.service.ts
-      const remainingBalance = balance - totalCollected + totalPaid;
-
-      // 5. Calcular accumulatedBalance (usando remainingBalance que incluye movimientos)
-      let accumulatedBalance: number = 0; // Inicializar con valor por defecto
+      // 4. Calcular remainingBalance progresivamente (NO con totales agregados)
+      // CRÍTICO: remainingBalance debe calcularse PROGRESIVAMENTE iterando eventos en orden cronológico
+      //  Para eso, usamos la misma lógica de intercalateSorteosAndMovements que usa /bySorteo
 
       // Verificar si es el día 1 del mes
       const isFirstDayOfMonth = day === 1;
 
+      // Primero, obtener el accumulated del día anterior
+      let previousDayAccumulated = 0;
       if (isFirstDayOfMonth) {
-        // Usar saldo del mes anterior
+        // Si es día 1, usar el saldo del mes anterior
         const previousMonthBalance = await getPreviousMonthFinalBalance(
           monthStr,
           dimension,
@@ -383,100 +381,74 @@ export class AccountStatementSyncService {
           vendedorId || undefined,
           bancaId || undefined
         );
-        //  CRÍTICO: Usar remainingBalance (que incluye movimientos) para el acumulado
-        accumulatedBalance = Number(previousMonthBalance) + remainingBalance;
-
-        logger.info({
-          layer: "service",
-          action: "SYNC_DAY_STATEMENT_FIRST_DAY",
-          payload: {
-            date: dateStrCR,
-            dimension,
-            entityId,
-            previousMonthBalance: Number(previousMonthBalance),
-            balance,
-            remainingBalance,
-            accumulatedBalance,
-          },
-        });
+        previousDayAccumulated = Number(previousMonthBalance) || 0;
       } else {
-        // Buscar statement del día más reciente antes de hoy en el mismo mes
-        // ️ MEJORA: Maneja huecos de actividad buscando el último statement disponible
-        let previousStatement: any = null;
+        // Buscar el statement del día anterior en el mes
         const previousCriteria: any = {
           date: { lt: date, gte: new Date(Date.UTC(year, month - 1, 1)) },
         };
 
         if (vendedorId) {
-          // Buscar por vendedorId (sin considerar ventanaId)
           previousCriteria.vendedorId = vendedorId;
         } else if (ventanaId) {
-          // Para ventanas: buscar por ventanaId sin vendedorId
           previousCriteria.ventanaId = ventanaId;
           previousCriteria.vendedorId = null;
         } else if (bancaId) {
-          // Para bancas: buscar por bancaId sin ventanaId ni vendedorId
           previousCriteria.bancaId = bancaId;
           previousCriteria.ventanaId = null;
           previousCriteria.vendedorId = null;
         }
 
-        previousStatement = await tx.accountStatement.findFirst({
+        const previousStatement = await tx.accountStatement.findFirst({
           where: previousCriteria,
           orderBy: { date: 'desc' },
           select: {
             accumulatedBalance: true,
-            date: true,
+            remainingBalance: true,
           },
         });
 
-        if (previousStatement && previousStatement.accumulatedBalance !== null && previousStatement.accumulatedBalance !== undefined) {
-          //  CRÍTICO: Usar accumulatedBalance del día anterior + remainingBalance (que incluye movimientos)
-          const previousAccumulated = Number(previousStatement.accumulatedBalance) || 0;
-          accumulatedBalance = previousAccumulated + remainingBalance;
-
-          logger.info({
-            layer: "service",
-            action: "SYNC_DAY_STATEMENT_FROM_PREVIOUS",
-            payload: {
-              date: dateStrCR,
-              previousDate: crDateService.postgresDateToCRString(previousStatement.date),
-              dimension,
-              entityId,
-              previousAccumulatedBalance: Number(previousStatement.accumulatedBalance),
-              balance,
-              remainingBalance,
-              accumulatedBalance,
-            },
-          });
+        if (previousStatement) {
+          // Usar remainingBalance del día anterior como inicio (es el accumulated del día anterior)
+          previousDayAccumulated = Number(previousStatement.remainingBalance) || Number(previousStatement.accumulatedBalance) || 0;
         } else {
-          //  CRÍTICO: Si no hay statement previo en el mes, usar saldo del mes anterior
+          // Si no hay statement anterior en el mes, usar saldo del mes anterior
           const previousMonthBalance = await getPreviousMonthFinalBalance(
             monthStr,
             dimension,
-            dimension === "vendedor" ? undefined : (ventanaId || undefined), //  NO pasar ventanaId para vendedores
+            ventanaId || undefined,
             vendedorId || undefined,
             bancaId || undefined
           );
-          //  CRÍTICO: Usar remainingBalance (que incluye movimientos) para el acumulado
-          accumulatedBalance = Number(previousMonthBalance) + remainingBalance;
-
-          logger.info({
-            layer: "service",
-            action: "SYNC_DAY_STATEMENT_NO_PREVIOUS_DAY_USE_MONTH_BALANCE",
-            payload: {
-              date: dateStrCR,
-              dimension,
-              entityId,
-              previousMonthBalance: Number(previousMonthBalance),
-              balance,
-              remainingBalance,
-              accumulatedBalance,
-              note: "No se encontró statement previo en el mes, usando saldo del mes anterior",
-            },
-          });
+          previousDayAccumulated = Number(previousMonthBalance) || 0;
         }
       }
+
+      //  Calcular remainingBalance progresivamente: saldo anterior + balance del día + pagos - cobros
+      //  Esto equivale a lo que hace intercalateSorteosAndMovements pero de forma simplificada
+      //  cuando solo nos interesa el total del día
+      const remainingBalance = previousDayAccumulated + balance + totalPaid - totalCollected;
+
+      // 5. accumulatedBalance es el mismo que remainingBalance (ya incluye todo el acumulado)
+      //  remainingBalance ya contiene: saldo anterior + balance + movimientos
+      const accumulatedBalance = remainingBalance;
+
+      logger.info({
+        layer: "service",
+        action: "SYNC_DAY_STATEMENT_CALCULATED",
+        payload: {
+          date: dateStrCR,
+          dimension,
+          entityId,
+          previousDayAccumulated,
+          balance,
+          totalPaid,
+          totalCollected,
+          remainingBalance,
+          accumulatedBalance,
+          note: "remainingBalance calculado progresivamente: saldo anterior + balance + pagos - cobros"
+        },
+      });
 
       // 6. Determinar isSettled
       const ticketCount = tickets.length;
