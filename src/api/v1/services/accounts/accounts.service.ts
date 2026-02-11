@@ -559,7 +559,7 @@ export const AccountsService = {
                     existing.vendedorCommission += Number(stmt.vendedorCommission);
                     existing.totalPaid += Number(stmt.totalPaid || 0);
                     existing.totalCollected += Number(stmt.totalCollected || 0);
-                    existing.totalPaymentsCollections += (Number(stmt.totalPaid || 0) + Number(stmt.totalCollected || 0));
+                    existing.totalPaymentsCollections += (Number(stmt.totalPaid || 0) - Number(stmt.totalCollected || 0)); //  CORREGIDO: totalPaid - totalCollected
                     existing.balance += Number(stmt.balance);
 
                     // Aggregate remaining balances
@@ -604,7 +604,7 @@ export const AccountsService = {
                         remainingBalance: Number(stmt.remainingBalance),
                         totalPaid: currentPaid,
                         totalCollected: currentCollected,
-                        totalPaymentsCollections: currentPaid + currentCollected,
+                        totalPaymentsCollections: currentPaid - currentCollected, //  CORREGIDO: totalPaid - totalCollected
                         isSettled: stmt.isSettled,
                         canEdit: false,
                         ticketCount: stmt.ticketCount,
@@ -668,7 +668,7 @@ export const AccountsService = {
                     vendedorCommission: Number(stmt.vendedorCommission),
                     totalPaid: currentPaid,
                     totalCollected: currentCollected,
-                    totalPaymentsCollections: currentPaid + currentCollected,
+                    totalPaymentsCollections: currentPaid - currentCollected, //  CORREGIDO: totalPaid - totalCollected
                     balance: currentBalance,
                     remainingBalance: Number(stmt.remainingBalance),
                     ticketCount: stmt.ticketCount,
