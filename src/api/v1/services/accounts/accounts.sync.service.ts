@@ -169,7 +169,7 @@ export class AccountStatementSyncService {
       //  Obtener tickets excluidos para esta fecha
       const excludedTicketIds = await getExcludedTicketIdsForDate(date);
 
-      // Obtener tickets del día (Incluir ACTIVE para reportar ventas en tiempo real)
+      // Obtener tickets del día (SOLO de sorteos EVALUADOS para consistencia con /bySorteo)
       const tickets = await tx.ticket.findMany({
         where: {
           ...dateFilter,
@@ -177,6 +177,7 @@ export class AccountStatementSyncService {
           isActive: true,
           status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
           sorteo: {
+            status: "EVALUATED",
             deletedAt: null,
           },
           ...(excludedTicketIds.length > 0 ? { id: { notIn: excludedTicketIds } } : {}),
