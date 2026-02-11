@@ -876,6 +876,7 @@ export const SorteoService = {
 
     // Sincronizar AccountStatements después de revertir
     try {
+      const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
       const { crDateService } = await import('../../../utils/crDateService');
       const sorteoDateCR = crDateService.dateUTCToCRString(existing.scheduledAt);
       const [year, month, day] = sorteoDateCR.split('-').map(Number);
