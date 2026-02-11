@@ -149,7 +149,7 @@ export async function calculateDayStatement(
             balance: Number(existingStatement.balance),
             totalPaid: Number(existingStatement.totalPaid),
             totalCollected: Number(existingStatement.totalCollected),
-            totalPaymentsCollections,
+            totalPaymentsCollections: parseFloat((Number(existingStatement.totalPaid) - Number(existingStatement.totalCollected)).toFixed(2)),
             remainingBalance: Number(existingStatement.remainingBalance),
             isSettled: existingStatement.isSettled,
             canEdit: existingStatement.canEdit,
@@ -454,7 +454,7 @@ export async function calculateDayStatement(
                 balance: recalculatedBalance,
                 totalPaid: recalculatedTotalPaid,
                 totalCollected: recalculatedTotalCollected,
-                totalPaymentsCollections: recalculatedTotalPaymentsCollections, //  NUEVO
+                totalPaymentsCollections: parseFloat((recalculatedTotalPaid - recalculatedTotalCollected).toFixed(2)), //  CORREGIDO: totalPaid - totalCollected
                 remainingBalance: recalculatedRemainingBalance,
                 isSettled: false,
                 canEdit: true,
@@ -673,7 +673,7 @@ export async function calculateDayStatement(
         balance: parseFloat(balance.toFixed(2)),
         totalPaid: parseFloat(totalPaid.toFixed(2)),
         totalCollected: parseFloat(totalCollected.toFixed(2)), // Agregar totalCollected al objeto retornado
-        totalPaymentsCollections: parseFloat(totalPaymentsCollections.toFixed(2)), //  NUEVO: Total de pagos y cobros combinados (no revertidos)
+        totalPaymentsCollections: parseFloat((totalPaid - totalCollected).toFixed(2)), //  CORREGIDO: totalPaid - totalCollected (no revertidos)
         remainingBalance: parseFloat(remainingBalance.toFixed(2)),
         isSettled,
         canEdit,
@@ -2406,7 +2406,7 @@ export async function getStatementDirect(
                 balance: parseFloat(balance.toFixed(2)), //  CORRECCIÓN: balance es el balance del día (Daily Net) para consistencia con totales
                 totalPaid: parseFloat(totalPaid.toFixed(2)),
                 totalCollected: parseFloat(totalCollected.toFixed(2)),
-                totalPaymentsCollections: parseFloat((totalPaid + totalCollected).toFixed(2)),
+                totalPaymentsCollections: parseFloat((totalPaid - totalCollected).toFixed(2)), //  CORREGIDO: totalPaid - totalCollected
                 remainingBalance: parseFloat(statementRemainingBalance.toFixed(2)), //  CRÍTICO: remainingBalance es el acumulado progresivo
                 accumulatedBalance: parseFloat(statementRemainingBalance.toFixed(2)), //  CRÍTICO: accumulatedBalance es el acumulado progresivo
                 progressiveSequentialBalance: parseFloat(statementRemainingBalance.toFixed(2)), //  NUEVO: Acumulado progresivo secuencial del último sorteo del día (para uso del frontend)
