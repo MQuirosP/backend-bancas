@@ -782,19 +782,16 @@ export const SorteoService = {
     // La evaluación marca jugadas como ganadoras, afectando totalPayouts del statement
     // Los sorteos se evalúan conforme van sucediendo, y es ahí cuando los tickets se toman en cuenta
     // ️ IMPORTANTE: Usar el nuevo servicio de sincronización que actualiza accumulatedBalance
+    let syncError: string | null = null;
     try {
       const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
 
       // ️ CRÍTICO: Convertir scheduledAt a fecha CR antes de sincronizar
-      // existing.scheduledAt está en UTC, convertirlo a fecha CR
       const { crDateService } = await import('../../../utils/crDateService');
       const sorteoDateCR = crDateService.dateUTCToCRString(existing.scheduledAt);
       const [year, month, day] = sorteoDateCR.split('-').map(Number);
-      // Crear Date UTC que representa el día calendario en CR
       const sorteoDateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 
-      // Sincronizar todos los statements afectados por el sorteo
-      // Esto actualizará accumulatedBalance progresivo para todas las dimensiones afectadas
       await AccountStatementSyncService.syncSorteoStatements(id, sorteoDateUTC);
 
       logger.info({
@@ -806,20 +803,28 @@ export const SorteoService = {
         }
       });
     } catch (err) {
+      syncError = (err as Error).message;
       logger.error({
         layer: 'service',
         action: 'ACCOUNT_STATEMENT_SYNC_ERROR_ON_SORTEO_EVALUATE',
         payload: {
-          error: (err as Error).message,
+          error: syncError,
           sorteoId: id,
         }
       });
-      // No relanzar - no debe romper la evaluación del sorteo
+      // No relanzar - la evaluación ya commiteó, pero el error se incluye en la respuesta
     }
 
     // 5) Obtener sorteo evaluado para devolver
     const evaluated = await SorteoRepository.findById(id);
-    return evaluated ? serializeSorteo(evaluated) : evaluated;
+    const result = evaluated ? serializeSorteo(evaluated) : evaluated;
+
+    // Incluir warning de sync si hubo error (el frontend puede mostrarlo)
+    if (syncError && result) {
+      (result as any).syncWarning = `Statement sync falló: ${syncError}`;
+    }
+
+    return result;
   },
 
   async remove(id: string, userId: string, reason?: string) {
@@ -875,6 +880,7 @@ export const SorteoService = {
     const reverted = await SorteoRepository.revertEvaluation(id);
 
     // Sincronizar AccountStatements después de revertir
+    let syncError: string | null = null;
     try {
       const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
       const { crDateService } = await import('../../../utils/crDateService');
@@ -893,15 +899,16 @@ export const SorteoService = {
         }
       });
     } catch (err) {
+      syncError = (err as Error).message;
       logger.error({
         layer: 'service',
         action: 'ACCOUNT_STATEMENT_SYNC_ERROR_ON_SORTEO_REVERT',
         payload: {
           sorteoId: id,
-          error: (err as Error).message
+          error: syncError,
         }
       });
-      // No lanzar error, la reversión ya se hizo
+      // No relanzar - la reversión ya commiteó, pero el error se incluye en la respuesta
     }
 
     // Invalidar cache de sorteos
@@ -925,7 +932,13 @@ export const SorteoService = {
       },
     });
 
-    return serializeSorteo(reverted);
+    const result = serializeSorteo(reverted);
+
+    if (syncError) {
+      (result as any).syncWarning = `Statement sync falló: ${syncError}`;
+    }
+
+    return result;
   },
 
   /**

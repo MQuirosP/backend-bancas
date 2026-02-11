@@ -551,12 +551,223 @@ export class AccountStatementSyncService {
   }
 
   /**
+   * Sincroniza el statement de un día usando getBySorteo como fuente de verdad única.
+   * Garantiza que AccountStatement contenga EXACTAMENTE los mismos valores que /bySorteo.
+   *
+   * Se usa para flujos que NO requieren transacción: evaluación/reversión de sorteos.
+   * Para pagos/cobros que necesitan tx, se sigue usando syncDayStatement.
+   *
+   * @param dateStr - Fecha en formato YYYY-MM-DD (CR timezone)
+   * @param dimension - Dimensión: "banca" | "ventana" | "vendedor"
+   * @param entityId - ID de la entidad
+   */
+  static async syncDayStatementFromBySorteo(
+    dateStr: string,
+    dimension: "banca" | "ventana" | "vendedor",
+    entityId: string
+  ): Promise<void> {
+    try {
+      // 1. Llamar a getBySorteo para obtener los eventos del día
+      const { AccountsService } = await import('./accounts.service');
+
+      const filters: {
+        dimension: "banca" | "ventana" | "vendedor";
+        vendedorId?: string;
+        ventanaId?: string;
+        bancaId?: string;
+      } = { dimension };
+
+      if (dimension === 'vendedor') filters.vendedorId = entityId;
+      else if (dimension === 'ventana') filters.ventanaId = entityId;
+      else if (dimension === 'banca') filters.bancaId = entityId;
+
+      const bySorteoData = await AccountsService.getBySorteo(dateStr, filters);
+
+      if (!bySorteoData || bySorteoData.length === 0) {
+        logger.info({
+          layer: "service",
+          action: "SYNC_FROM_BYSORTEO_NO_EVENTS",
+          payload: { dateStr, dimension, entityId },
+        });
+        return;
+      }
+
+      // 2. Extraer totales desde los eventos (misma lógica que fix-statements.ts)
+      let totalSales = 0;
+      let totalPayouts = 0;
+      let listeroCommission = 0;
+      let vendedorCommission = 0;
+      let totalPaid = 0;
+      let totalCollected = 0;
+
+      for (const event of bySorteoData) {
+        const isMov = (event.sorteoId || '').startsWith('mov-');
+        const isInitial = event.type === 'initial_balance';
+
+        if (!isMov) {
+          totalSales += Number(event.sales || 0);
+          totalPayouts += Number(event.payouts || 0);
+          listeroCommission += Number(event.listeroCommission || 0);
+          vendedorCommission += Number(event.vendedorCommission || 0);
+        } else if (!isInitial && !event.isReversed) {
+          if (event.type === 'payment') {
+            totalPaid += Number(event.amount || 0);
+          } else if (event.type === 'collection') {
+            totalCollected += Number(event.amount || 0);
+          }
+        }
+      }
+
+      // 3. Calcular balance (misma fórmula que getBySorteo usa internamente)
+      const commissionToUse = dimension === 'vendedor' ? vendedorCommission : listeroCommission;
+      const balance = totalSales - totalPayouts - commissionToUse;
+
+      // 4. Obtener accumulated del último evento cronológico
+      const lastEvent = bySorteoData.reduce((max: any, event: any) => {
+        return (event.chronologicalIndex || 0) > (max.chronologicalIndex || 0) ? event : max;
+      }, bySorteoData[0]);
+
+      const accumulatedBalance = parseFloat((lastEvent.accumulated || 0).toFixed(2));
+      const remainingBalance = accumulatedBalance;
+
+      // 5. Inferir IDs de entidades padre
+      let vendedorId: string | undefined;
+      let ventanaId: string | undefined;
+      let bancaId: string | undefined;
+
+      if (dimension === 'vendedor') {
+        vendedorId = entityId;
+        const vendedor = await prisma.user.findUnique({
+          where: { id: entityId },
+          select: { ventanaId: true },
+        });
+        ventanaId = vendedor?.ventanaId || undefined;
+      } else if (dimension === 'ventana') {
+        ventanaId = entityId;
+      } else {
+        bancaId = entityId;
+      }
+
+      if (!bancaId && ventanaId) {
+        const ventana = await prisma.ventana.findUnique({
+          where: { id: ventanaId },
+          select: { bancaId: true },
+        });
+        bancaId = ventana?.bancaId || undefined;
+      }
+
+      // 6. Convertir dateStr a Date UTC
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const dateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+      const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+
+      // 7. Buscar statement existente
+      let statementToUpdate: any = null;
+      if (vendedorId) {
+        statementToUpdate = await prisma.accountStatement.findFirst({
+          where: { date: dateUTC, vendedorId },
+        });
+      } else if (ventanaId) {
+        statementToUpdate = await prisma.accountStatement.findFirst({
+          where: { date: dateUTC, ventanaId, vendedorId: null },
+        });
+      } else if (bancaId) {
+        statementToUpdate = await prisma.accountStatement.findFirst({
+          where: { date: dateUTC, bancaId, ventanaId: null, vendedorId: null },
+        });
+      }
+
+      // 8. Calcular isSettled y ticketCount
+      const ticketCount = bySorteoData
+        .filter((e: any) => !(e.sorteoId || '').startsWith('mov-'))
+        .reduce((sum: number, e: any) => sum + (e.ticketCount || 0), 0);
+      const isSettled = calculateIsSettled(ticketCount, remainingBalance, totalPaid, totalCollected);
+
+      // 9. Preparar datos (misma estructura que syncDayStatement)
+      const updateData = {
+        totalSales: parseFloat(totalSales.toFixed(2)),
+        totalPayouts: parseFloat(totalPayouts.toFixed(2)),
+        listeroCommission: parseFloat(listeroCommission.toFixed(2)),
+        vendedorCommission: parseFloat(vendedorCommission.toFixed(2)),
+        balance: parseFloat(balance.toFixed(2)),
+        totalPaid: parseFloat(totalPaid.toFixed(2)),
+        totalCollected: parseFloat(totalCollected.toFixed(2)),
+        remainingBalance: parseFloat(remainingBalance.toFixed(2)),
+        accumulatedBalance: parseFloat(accumulatedBalance.toFixed(2)),
+        isSettled,
+        canEdit: !isSettled,
+        ticketCount,
+        month: monthStr,
+        bancaId: bancaId || null,
+        ventanaId: dimension === 'vendedor' ? null : (ventanaId || null),
+        vendedorId: vendedorId || null,
+      };
+
+      // 10. Upsert
+      if (statementToUpdate) {
+        await prisma.accountStatement.update({
+          where: { id: statementToUpdate.id },
+          data: updateData,
+        });
+      } else {
+        try {
+          await prisma.accountStatement.create({
+            data: { ...updateData, date: dateUTC },
+          });
+        } catch (error: any) {
+          if (error.code === 'P2002') {
+            const retryStmt = await prisma.accountStatement.findFirst({
+              where: vendedorId
+                ? { date: dateUTC, vendedorId }
+                : ventanaId
+                  ? { date: dateUTC, ventanaId, vendedorId: null }
+                  : { date: dateUTC, bancaId, ventanaId: null, vendedorId: null },
+            });
+            if (retryStmt) {
+              await prisma.accountStatement.update({
+                where: { id: retryStmt.id },
+                data: updateData,
+              });
+            }
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      logger.info({
+        layer: "service",
+        action: "SYNC_FROM_BYSORTEO_COMPLETED",
+        payload: {
+          dateStr, dimension, entityId,
+          totalSales: updateData.totalSales,
+          totalPayouts: updateData.totalPayouts,
+          balance: updateData.balance,
+          remainingBalance: updateData.remainingBalance,
+          accumulatedBalance: updateData.accumulatedBalance,
+        },
+      });
+
+    } catch (error) {
+      logger.error({
+        layer: "service",
+        action: "SYNC_FROM_BYSORTEO_ERROR",
+        payload: {
+          dateStr, dimension, entityId,
+          error: (error as Error).message,
+        },
+      });
+      throw error; // Propagar — el caller (syncSorteoStatements) decide qué hacer
+    }
+  }
+
+  /**
    * Sincroniza todos los statements afectados por un sorteo
    * Se llama después de evaluar un sorteo
-   * 
+   *
    * ️ CRÍTICO: sorteoDate debe ser Date UTC que representa el día calendario en CR
    * donde ocurrió el sorteo (extraer desde sorteo.scheduledAt convertido a CR)
-   * 
+   *
    * @param sorteoId - ID del sorteo evaluado
    * @param sorteoDate - Date UTC que representa día calendario en CR
    */
@@ -601,33 +812,21 @@ export class AccountStatementSyncService {
         return;
       }
 
-      // 2. Agrupar entidades únicas POR businessDate
-      // CRÍTICO: Los tickets pueden tener businessDate diferente a la fecha del sorteo
-      // Ejemplo: sorteo del 11-feb, tickets vendidos el 10-feb → businessDate = 10-feb
-      // Debemos sincronizar el statement del día del TICKET, no del sorteo
-      const dateEntityMap = new Map<string, { vendedores: Set<string>, ventanas: Set<string>, bancas: Set<string> }>();
+      // 2. Agregar manualmente todas las entidades únicas que necesitan sincronización
+      const uniqueVendedores = new Set<string>();
+      const uniqueVentanas = new Set<string>();
+      const uniqueBancas = new Set<string>();
 
       for (const ticket of affectedTickets) {
-        // Determinar la fecha del ticket (businessDate o sorteo como fallback)
-        let ticketDateStr: string;
-        if (ticket.businessDate) {
-          ticketDateStr = crDateService.postgresDateToCRString(ticket.businessDate);
-        } else {
-          ticketDateStr = sorteoDateStrCR;
+        if (ticket.vendedorId) {
+          uniqueVendedores.add(ticket.vendedorId);
         }
-
-        if (!dateEntityMap.has(ticketDateStr)) {
-          dateEntityMap.set(ticketDateStr, {
-            vendedores: new Set<string>(),
-            ventanas: new Set<string>(),
-            bancas: new Set<string>(),
-          });
+        if (ticket.ventanaId) {
+          uniqueVentanas.add(ticket.ventanaId);
         }
-
-        const entry = dateEntityMap.get(ticketDateStr)!;
-        if (ticket.vendedorId) entry.vendedores.add(ticket.vendedorId);
-        if (ticket.ventanaId) entry.ventanas.add(ticket.ventanaId);
-        if (ticket.ventana?.bancaId) entry.bancas.add(ticket.ventana.bancaId);
+        if (ticket.ventana?.bancaId) {
+          uniqueBancas.add(ticket.ventana.bancaId);
+        }
       }
 
       logger.info({
@@ -636,63 +835,93 @@ export class AccountStatementSyncService {
         payload: {
           sorteoId,
           sorteoDateStrCR,
-          uniqueDates: Array.from(dateEntityMap.keys()),
-          totalEntities: Array.from(dateEntityMap.values()).reduce(
-            (sum, e) => sum + e.vendedores.size + e.ventanas.size + e.bancas.size, 0
-          ),
+          uniqueVendedores: Array.from(uniqueVendedores),
+          uniqueVentanas: Array.from(uniqueVentanas),
+          uniqueBancas: Array.from(uniqueBancas),
         },
       });
 
-      // 3. Sincronizar statements para cada fecha + entidad única
+      // 3. Sincronizar statements para cada entidad única
+      const [year, month, day] = sorteoDateStrCR.split('-').map(Number);
+      const sorteoDateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+
       const syncPromises: Promise<void>[] = [];
+      const dateStr = crDateService.postgresDateToCRString(sorteoDateUTC);
+
+      for (const vendedorId of Array.from(uniqueVendedores)) {
+        syncPromises.push(
+          this.syncDayStatementFromBySorteo(dateStr, "vendedor", vendedorId)
+        );
+      }
+      for (const ventanaId of Array.from(uniqueVentanas)) {
+        syncPromises.push(
+          this.syncDayStatementFromBySorteo(dateStr, "ventana", ventanaId)
+        );
+      }
+      for (const bancaId of Array.from(uniqueBancas)) {
+        syncPromises.push(
+          this.syncDayStatementFromBySorteo(dateStr, "banca", bancaId)
+        );
+      }
+
+      // Ejecutar TODOS los syncs aunque alguno falle (allSettled)
+      const syncResults = await Promise.allSettled(syncPromises);
+      const syncFailures = syncResults.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
+
+      if (syncFailures.length > 0) {
+        logger.error({
+          layer: "service",
+          action: "SYNC_SORTEO_STATEMENTS_PARTIAL_FAILURE",
+          payload: {
+            sorteoId,
+            sorteoDateStrCR,
+            totalSyncs: syncResults.length,
+            failures: syncFailures.length,
+            errors: syncFailures.map(f => f.reason?.message || String(f.reason)),
+          },
+        });
+      }
+
+      // Propagar cambios si el sorteo es de una fecha pasada
       const todayCR = crDateService.dateUTCToCRString(new Date());
-      const propagationPromises: Promise<void>[] = [];
-
-      dateEntityMap.forEach((entities, dateStr) => {
-        const [y, m, d] = dateStr.split('-').map(Number);
-        const dateUTC = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
-
-        entities.vendedores.forEach(vendedorId => {
-          syncPromises.push(
-            this.syncDayStatement(dateUTC, "vendedor", vendedorId, { force: true })
-          );
-        });
-        entities.ventanas.forEach(ventanaId => {
-          syncPromises.push(
-            this.syncDayStatement(dateUTC, "ventana", ventanaId, { force: true })
-          );
-        });
-        entities.bancas.forEach(bancaId => {
-          syncPromises.push(
-            this.syncDayStatement(dateUTC, "banca", bancaId, { force: true })
-          );
-        });
-
-        // Propagar cambios si la fecha del ticket es pasada
-        if (dateStr < todayCR) {
-          entities.vendedores.forEach(vendedorId => {
-            propagationPromises.push(this.propagateBalanceChange(dateUTC, "vendedor", vendedorId));
-          });
-          entities.ventanas.forEach(ventanaId => {
-            propagationPromises.push(this.propagateBalanceChange(dateUTC, "ventana", ventanaId));
-          });
-          entities.bancas.forEach(bancaId => {
-            propagationPromises.push(this.propagateBalanceChange(dateUTC, "banca", bancaId));
-          });
-        }
-      });
-
-      await Promise.all(syncPromises);
-
-      // Propagar después de sincronizar
-      if (propagationPromises.length > 0) {
+      if (sorteoDateStrCR < todayCR) {
         logger.info({
           layer: "service",
           action: "SYNC_SORTEO_STATEMENTS_PROPAGATING",
-          payload: { sorteoId, sorteoDateStrCR, todayCR, propagations: propagationPromises.length }
+          payload: { sorteoId, sorteoDateStrCR, todayCR }
         });
-        await Promise.all(propagationPromises);
+
+        const propagationPromises: Promise<void>[] = [];
+        for (const vendedorId of Array.from(uniqueVendedores)) {
+          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "vendedor", vendedorId));
+        }
+        for (const ventanaId of Array.from(uniqueVentanas)) {
+          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "ventana", ventanaId));
+        }
+        for (const bancaId of Array.from(uniqueBancas)) {
+          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "banca", bancaId));
+        }
+
+        const propResults = await Promise.allSettled(propagationPromises);
+        const propFailures = propResults.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
+
+        if (propFailures.length > 0) {
+          logger.error({
+            layer: "service",
+            action: "SYNC_SORTEO_STATEMENTS_PROPAGATION_FAILURE",
+            payload: {
+              sorteoId,
+              sorteoDateStrCR,
+              totalPropagations: propResults.length,
+              failures: propFailures.length,
+              errors: propFailures.map(f => f.reason?.message || String(f.reason)),
+            },
+          });
+        }
       }
+
+      const totalFailures = syncFailures.length;
+      const totalSynced = syncResults.length - totalFailures;
 
       logger.info({
         layer: "service",
@@ -700,10 +929,18 @@ export class AccountStatementSyncService {
         payload: {
           sorteoId,
           sorteoDateStrCR,
-          uniqueDates: Array.from(dateEntityMap.keys()),
-          entitiesSynced: syncPromises.length,
+          entitiesSynced: totalSynced,
+          entitiesFailed: totalFailures,
         },
       });
+
+      // Si hubo fallos, propagar el error al caller (evaluate/revert)
+      if (totalFailures > 0) {
+        throw new Error(
+          `Sync parcial: ${totalFailures}/${syncResults.length} entidades fallaron. ` +
+          `Errores: ${syncFailures.map(f => f.reason?.message).join('; ')}`
+        );
+      }
     } catch (error) {
       logger.error({
         layer: "service",
@@ -714,7 +951,7 @@ export class AccountStatementSyncService {
           error: (error as Error).message,
         },
       });
-      // No relanzar el error - no debe romper la evaluación del sorteo
+      throw error; // Propagar — evaluate()/revertEvaluation() decide qué hacer
     }
   }
 
@@ -806,7 +1043,7 @@ export class AccountStatementSyncService {
       const dayStrCR = crDateService.postgresDateToCRString(day);
 
       try {
-        await this.syncDayStatement(day, dimension, entityId, { force: true });
+        await this.syncDayStatementFromBySorteo(dayStrCR, dimension, entityId!);
 
         // Log de progreso cada 10 días
         if ((i + 1) % 10 === 0 || i === daysToProcess.length - 1) {
@@ -912,7 +1149,8 @@ export class AccountStatementSyncService {
     // Esto asegura que el accumulatedBalance se arrastre correctamente
     for (const stmt of statementsToUpdate) {
       try {
-        await this.syncDayStatement(stmt.date, dimension, entityId, { force: true });
+        const stmtDateStr = crDateService.postgresDateToCRString(stmt.date);
+        await this.syncDayStatementFromBySorteo(stmtDateStr, dimension, entityId!);
       } catch (error) {
         logger.error({
           layer: "service",
