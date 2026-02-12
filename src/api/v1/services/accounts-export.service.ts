@@ -1,5 +1,6 @@
 // src/api/v1/services/accounts-export.service.ts
 import { AccountsService } from './accounts/accounts.service';
+import { validate as isUuid } from 'uuid';
 import { AccountsExportCsvService } from './accounts-export-csv.service';
 import { AccountsExportExcelService } from './accounts-export-excel.service';
 import { AccountsExportPdfService } from './accounts-export-pdf.service';
@@ -752,7 +753,10 @@ export class AccountsExportService {
       }
     } else {
       //  Comportamiento original cuando NO hay agrupación
-      const statementIds = statements.map((s) => s.id).filter((id) => id);
+      // Filter only real database UUIDs (skip virtual IDs like gap- or agg-)
+      const statementIds = statements
+        .map((s) => s.id)
+        .filter((id): id is string => !!id && isUuid(id));
 
       if (statementIds.length === 0) {
         return [];
