@@ -3,11 +3,12 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider     = "postgresql"
+  url          = env("DATABASE_URL")
+  directUrl    = env("DIRECT_URL")
+  relationMode = "foreignKeys"
   // shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
-  // ️ Shadow database deshabilitado para Supabase/PgBouncer
+  // ⚠️ Shadow database deshabilitado para Supabase/PgBouncer
   // Usar "prisma migrate deploy" en lugar de "prisma migrate dev"
 }
 
@@ -474,13 +475,13 @@ model RefreshToken {
   updatedAt DateTime @updatedAt
 
   // Campos para tracking de dispositivos (multi-dispositivo)
-  deviceId      String?   @db.VarChar(255)  // UUID persistente generado por el cliente
-  deviceName    String?   @db.VarChar(255)  // Nombre legible: "Chrome · Windows", "Samsung Galaxy S23"
-  userAgent     String?                      // User-Agent completo para auditoría
-  ipAddress     String?   @db.VarChar(45)   // IPv4 o IPv6
-  lastUsedAt    DateTime? @default(now())   // Última vez que se usó para refresh
-  revokedAt     DateTime?                    // Cuándo se revocó
-  revokedReason String?   @db.VarChar(50)   // 'logout' | 'rotation' | 'new_login' | 'security' | 'admin'
+  deviceId      String?   @db.VarChar(255) // UUID persistente generado por el cliente
+  deviceName    String?   @db.VarChar(255) // Nombre legible: "Chrome · Windows", "Samsung Galaxy S23"
+  userAgent     String? // User-Agent completo para auditoría
+  ipAddress     String?   @db.VarChar(45) // IPv4 o IPv6
+  lastUsedAt    DateTime? @default(now()) // Última vez que se usó para refresh
+  revokedAt     DateTime? // Cuándo se revocó
+  revokedReason String?   @db.VarChar(50) // 'logout' | 'rotation' | 'new_login' | 'security' | 'admin'
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -672,7 +673,7 @@ model AccountStatement {
   totalPaid        Float @default(0)
   totalCollected   Float @default(0) //  NUEVO: Total de collections (cobros) del día
   remainingBalance Float @default(0)
-  
+
   //  NUEVO: Saldo acumulado progresivo desde el día 1 del mes
   // Este campo se actualiza cuando se asienta el día (isSettled = true)
   // Fórmula: accumulatedBalance = previousDayAccumulatedBalance + balance

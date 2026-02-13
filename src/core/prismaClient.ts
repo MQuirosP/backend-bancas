@@ -15,4 +15,17 @@ const prisma = global.__prisma ?? new PrismaClient({
 // Sin esto: cada import crea nueva instancia → exhausted connection pool
 global.__prisma = prisma;
 
+/**
+ * Verifica la conexión ejecutando un ping simple.
+ * Útil para asegurar resiliencia en procesos críticos.
+ */
+export async function verifyConnection(): Promise<boolean> {
+    try {
+        await prisma.$queryRaw`SELECT 1`;
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
 export default prisma;
