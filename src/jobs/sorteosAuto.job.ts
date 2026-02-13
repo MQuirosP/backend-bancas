@@ -353,11 +353,23 @@ async function executeAutoClose(): Promise<void> {
       });
     }
   } catch (error: any) {
+    const errorCode = error?.code as string | undefined;
+    const errorMessage = error?.message ?? String(error);
+
+    // Clasificación técnica para diagnóstico rápido
+    let errorType = "UNKNOWN_ERROR";
+    if (errorCode === "P1001") errorType = "DB_UNREACHABLE";
+    if (errorCode === "P2028") errorType = "POOLER_TIMEOUT";
+    if (errorMessage.toLowerCase().includes("query_wait_timeout"))
+      errorType = "POOLER_WAIT_TIMEOUT";
+
     logger.error({
-      layer: 'job',
-      action: 'SORTEOS_AUTO_CLOSE_FAIL',
+      layer: "job",
+      action: "SORTEOS_AUTO_CLOSE_FAIL",
       payload: {
-        error: error instanceof Error ? error.message : String(error),
+        errorType,
+        errorCode,
+        error: errorMessage,
         stack: error instanceof Error ? error.stack : undefined,
       },
     });

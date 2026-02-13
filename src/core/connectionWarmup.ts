@@ -66,6 +66,16 @@ export async function warmupConnection(
       const errorCode = error?.code as string | undefined;
       const errorMessage = error?.message ?? String(error);
 
+      // Clasificación técnica del error para mejor diagnóstico en producción
+      let errorType = "UNKNOWN";
+      if (errorCode === "P1001") errorType = "CANNOT_REACH_DB";
+      if (errorCode === "P2028") errorType = "TRANSACTION_TIMEOUT_POOLER";
+      if (errorCode === "P1017") errorType = "CONNECTION_CLOSED";
+      if (errorMessage.toLowerCase().includes("query_wait_timeout"))
+        errorType = "POOLER_WAIT_TIMEOUT";
+      if (errorMessage.toLowerCase().includes("too many connections"))
+        errorType = "POOLER_SATURATED";
+
       logger.warn({
         layer: "connection",
         action: "WARMUP_RETRY",
@@ -75,6 +85,7 @@ export async function warmupConnection(
           clientType,
           context,
           errorCode,
+          errorType,
           errorMessage:
             errorMessage.length > 200
               ? errorMessage.substring(0, 200) + "..."
