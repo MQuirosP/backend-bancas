@@ -393,7 +393,16 @@ export class AccountsExportService {
           const initialAcc = (bv.remainingBalance || 0) - (bv.balance || 0);
           const interleavedV = intercalateSorteosAndMovements(
             ventanaSorteos.map(vs => ({ ...vs, sales: vs.totalSales, payouts: vs.totalPayouts })),
-            ventanaMovements.map(vm => ({ ...vm, type: (vm.type === 'PAGO' ? 'payment' : 'collection') as any, createdAt: vm.createdAt.toISOString() })),
+            ventanaMovements.map(vm => ({
+              id: vm.id,
+              type: (vm.type === 'PAGO' ? 'payment' : 'collection') as any,
+              amount: vm.amount,
+              method: vm.method,
+              notes: vm.notes || null,
+              isReversed: vm.status === 'REVERTIDO',
+              createdAt: vm.createdAt.toISOString(),
+              date: vm.statementDate
+            })),
             dateKey,
             initialAcc
           );
@@ -431,7 +440,16 @@ export class AccountsExportService {
           const initialAcc = (bv.remainingBalance || 0) - (bv.balance || 0);
           const interleavedV = intercalateSorteosAndMovements(
             vendedorSorteos.map(vs => ({ ...vs, sales: vs.totalSales, payouts: vs.totalPayouts })),
-            vendedorMovements.map(vm => ({ ...vm, type: (vm.type === 'PAGO' ? 'payment' : 'collection') as any, createdAt: vm.createdAt.toISOString() })),
+            vendedorMovements.map(vm => ({
+              id: vm.id,
+              type: (vm.type === 'PAGO' ? 'payment' : 'collection') as any,
+              amount: vm.amount,
+              method: vm.method,
+              notes: vm.notes || null,
+              isReversed: vm.status === 'REVERTIDO',
+              createdAt: vm.createdAt.toISOString(),
+              date: vm.statementDate
+            })),
             dateKey,
             initialAcc
           );
