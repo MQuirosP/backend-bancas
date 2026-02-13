@@ -82,7 +82,7 @@ export class AccountsExportService {
 
       // 5. Obtener breakdown por sorteo y movimientos ANTES de transformar (para incluir en statements cuando no hay agrupación)
       const breakdown = await this.getBreakdown(statements, filters);
-      const movements = await this.getMovements(statements, filters.dimension);
+      const movements = await this.getMovements(statements, filters);
 
       // 6. Transformar statements a formato de exportación (con breakdown y movements para incluir cuando no hay agrupación)
       const exportStatements: AccountStatementExportItem[] = await this.transformStatements(
@@ -360,7 +360,7 @@ export class AccountsExportService {
 
       const movementInputs = dayMovements.map(m => ({
         id: m.id,
-        type: (m.type === 'PAGO' ? 'payment' : 'collection') as any,
+        type: (m.type === 'PAGO' ? 'payment' : 'collection') as "payment" | "collection",
         amount: m.amount,
         method: m.method,
         notes: m.notes || null,
@@ -395,7 +395,7 @@ export class AccountsExportService {
             ventanaSorteos.map(vs => ({ ...vs, sales: vs.totalSales, payouts: vs.totalPayouts })),
             ventanaMovements.map(vm => ({
               id: vm.id,
-              type: (vm.type === 'PAGO' ? 'payment' : 'collection') as any,
+              type: (vm.type === 'PAGO' ? 'payment' : 'collection') as "payment" | "collection",
               amount: vm.amount,
               method: vm.method,
               notes: vm.notes || null,
@@ -442,7 +442,7 @@ export class AccountsExportService {
             vendedorSorteos.map(vs => ({ ...vs, sales: vs.totalSales, payouts: vs.totalPayouts })),
             vendedorMovements.map(vm => ({
               id: vm.id,
-              type: (vm.type === 'PAGO' ? 'payment' : 'collection') as any,
+              type: (vm.type === 'PAGO' ? 'payment' : 'collection') as "payment" | "collection",
               amount: vm.amount,
               method: vm.method,
               notes: vm.notes || null,
@@ -491,204 +491,96 @@ export class AccountsExportService {
     filters: AccountsFilters
   ): Promise<AccountStatementSorteoItem[]> {
     const result: AccountStatementSorteoItem[] = [];
-    const isDimensionBanca = filters.dimension === 'banca';
-    const isDimensionVentana = filters.dimension === 'ventana';
-    const hasGrouping = statements.some(
-      (s) => (isDimensionBanca && s.byBanca && s.byBanca.length > 0) ||
-        (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
-        (!isDimensionVentana && !isDimensionBanca && s.byVendedor && s.byVendedor.length > 0)
+    const dates = statements.map((s) => new Date(s.date));
+
+    // 1. Obtener todos los sorteos en batch para el período y dimensión
+    const breakdownMap = await getSorteoBreakdownBatch(
+      dates,
+      filters.dimension,
+      filters.ventanaId,
+      filters.vendedorId,
+      filters.bancaId,
+      filters.userRole || 'ADMIN'
     );
 
-    //  OPTIMIZACIÓN: Si hay agrupación, usar bySorteo de los breakdowns anidados
-    if (hasGrouping) {
-      for (const statement of statements) {
-        const dateKey = this.formatDate(statement.date);
+    // 2. Resolver nombres y códigos de entidades para el reporte
+    const ventanaIds = new Set<string>();
+    const vendedorIds = new Set<string>();
 
-        if (isDimensionBanca && statement.byBanca) {
-          //  NUEVO: Manejar byBanca
-          for (const bancaBreakdown of statement.byBanca) {
-            // Incluir sorteos de byVentana dentro de esta banca
-            if (bancaBreakdown.byVentana) {
-              for (const ventanaBreakdown of bancaBreakdown.byVentana) {
-                if (ventanaBreakdown.bySorteo && ventanaBreakdown.bySorteo.length > 0) {
-                  for (const sorteo of ventanaBreakdown.bySorteo) {
-                    result.push(this.transformSorteoItem(
-                      sorteo,
-                      dateKey,
-                      ventanaBreakdown.ventanaName,
-                      null,
-                      ventanaBreakdown.ventanaCode || null,
-                      null,
-                      null
-                    ));
-                  }
-                }
-              }
-            }
-            // Incluir sorteos de byVendedor dentro de esta banca
-            if (bancaBreakdown.byVendedor) {
-              for (const vendedorBreakdown of bancaBreakdown.byVendedor) {
-                if (vendedorBreakdown.bySorteo && vendedorBreakdown.bySorteo.length > 0) {
-                  for (const sorteo of vendedorBreakdown.bySorteo) {
-                    result.push(this.transformSorteoItem(
-                      sorteo,
-                      dateKey,
-                      vendedorBreakdown.ventanaName,
-                      vendedorBreakdown.vendedorName,
-                      null, // ventanaCode no disponible en breakdown
-                      vendedorBreakdown.vendedorId,
-                      null  // vendedorCode no disponible en breakdown
-                    ));
-                  }
-                }
-              }
-            }
-          }
-        } else if (isDimensionVentana && statement.byVentana) {
-          for (const ventanaBreakdown of statement.byVentana) {
-            if (ventanaBreakdown.bySorteo && ventanaBreakdown.bySorteo.length > 0) {
-              for (const sorteo of ventanaBreakdown.bySorteo) {
-                const scheduledDate = new Date(sorteo.scheduledAt);
-                const crTime = new Date(
-                  scheduledDate.toLocaleString('en-US', { timeZone: 'America/Costa_Rica' })
-                );
-                const hours = crTime.getHours();
-                const minutes = crTime.getMinutes();
-                const ampm = hours >= 12 ? 'PM' : 'AM';
-                const displayHours = hours % 12 || 12;
-                const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
-
-                result.push(this.transformSorteoItem(
-                  sorteo,
-                  dateKey,
-                  ventanaBreakdown.ventanaName,
-                  null,
-                  null,
-                  null,
-                  null
-                ));
-              }
-            }
-          }
-        } else if (!isDimensionVentana && !isDimensionBanca && statement.byVendedor) {
-          for (const vendedorBreakdown of statement.byVendedor) {
-            if (vendedorBreakdown.bySorteo && vendedorBreakdown.bySorteo.length > 0) {
-              for (const sorteo of vendedorBreakdown.bySorteo) {
-                const scheduledDate = new Date(sorteo.scheduledAt);
-                const crTime = new Date(
-                  scheduledDate.toLocaleString('en-US', { timeZone: 'America/Costa_Rica' })
-                );
-                const hours = crTime.getHours();
-                const minutes = crTime.getMinutes();
-                const ampm = hours >= 12 ? 'PM' : 'AM';
-                const displayHours = hours % 12 || 12;
-                const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;
-
-                result.push(this.transformSorteoItem(
-                  sorteo,
-                  dateKey,
-                  vendedorBreakdown.ventanaName,
-                  vendedorBreakdown.vendedorName,
-                  null, // ventanaCode no disponible en breakdown
-                  vendedorBreakdown.vendedorId,
-                  null  // vendedorCode no disponible en breakdown
-                ));
-              }
-            }
-          }
+    for (const key of breakdownMap.keys()) {
+      const parts = key.split('_');
+      if (parts.length > 1) {
+        const entityId = parts[1];
+        if (filters.dimension === 'vendedor' || filters.vendedorId) {
+          vendedorIds.add(entityId);
+        } else {
+          ventanaIds.add(entityId);
         }
       }
-    } else {
-      //  Comportamiento original cuando NO hay agrupación
-      const dates = statements.map((s) => new Date(s.date));
-      const breakdownMap = await getSorteoBreakdownBatch(
-        dates,
-        filters.dimension,
-        filters.ventanaId,
-        filters.vendedorId,
-        filters.bancaId,
-        filters.userRole || 'ADMIN'
-      );
+    }
 
-      // Resolver nombres de entidades
-      const ventanaIds = Array.from(
-        new Set(
-          statements
-            .map((s) => s.ventanaId)
-            .filter((id): id is string => id !== null && id !== undefined)
-        )
-      );
-      const vendedorIds = Array.from(
-        new Set(
-          statements
-            .map((s) => s.vendedorId)
-            .filter((id): id is string => id !== null && id !== undefined)
-        )
-      );
+    const ventanaMap = new Map<string, { name: string; code: string | null }>();
+    const vendedorMap = new Map<string, { name: string; code: string | null; ventanaId?: string; ventanaName?: string }>();
 
-      const ventanaMap = new Map<string, string>();
-      const vendedorMap = new Map<string, string>();
+    if (ventanaIds.size > 0) {
+      const ventanas = await prisma.ventana.findMany({
+        where: { id: { in: Array.from(ventanaIds) } },
+        select: { id: true, name: true, code: true },
+      });
+      ventanas.forEach((v) => ventanaMap.set(v.id, { name: v.name, code: v.code }));
+    }
 
-      if (ventanaIds.length > 0) {
-        const ventanas = await prisma.ventana.findMany({
-          where: { id: { in: ventanaIds } },
-          select: { id: true, name: true },
-        });
-        ventanas.forEach((v) => ventanaMap.set(v.id, v.name));
-      }
+    if (vendedorIds.size > 0) {
+      const vendedores = await prisma.user.findMany({
+        where: { id: { in: Array.from(vendedorIds) } },
+        select: { id: true, name: true, code: true, ventana: { select: { id: true, name: true } } },
+      });
+      vendedores.forEach((v) => vendedorMap.set(v.id, {
+        name: v.name,
+        code: v.code,
+        ventanaId: v.ventana?.id,
+        ventanaName: v.ventana?.name
+      }));
+    }
 
-      if (vendedorIds.length > 0) {
-        const vendedores = await prisma.user.findMany({
-          where: { id: { in: vendedorIds } },
-          select: { id: true, name: true },
-        });
-        vendedores.forEach((v) => vendedorMap.set(v.id, v.name));
-      }
+    // 3. Aplanar Map a Array de AccountStatementSorteoItem
+    for (const [key, sorteos] of breakdownMap.entries()) {
+      const parts = key.split('_');
+      const dateKey = parts[0];
+      const entityId = parts[1];
 
-      //  OPTIMIZACIÓN: Obtener códigos en batch antes del loop
-      const ventanaCodesMap = new Map<string, string | null>();
-      const vendedorCodesMap = new Map<string, string | null>();
+      for (const s of sorteos) {
+        let vId: string | null = null;
+        let vName: string | null = null;
+        let vCode: string | null = null;
+        let vendName: string | null = null;
+        let vendId: string | null = null;
+        let vendCode: string | null = null;
 
-      if (ventanaIds.length > 0) {
-        const ventanasWithCodes = await prisma.ventana.findMany({
-          where: { id: { in: ventanaIds } },
-          select: { id: true, code: true },
-        });
-        ventanasWithCodes.forEach((v) => ventanaCodesMap.set(v.id, v.code));
-      }
-
-      if (vendedorIds.length > 0) {
-        const vendedoresWithCodes = await prisma.user.findMany({
-          where: { id: { in: vendedorIds } },
-          select: { id: true, code: true },
-        });
-        vendedoresWithCodes.forEach((v) => vendedorCodesMap.set(v.id, v.code));
-      }
-
-      for (const statement of statements) {
-        const dateKey = this.formatDate(statement.date);
-        const dayBreakdown = breakdownMap.get(dateKey);
-
-        if (dayBreakdown) {
-          for (const item of dayBreakdown) {
-            const ventanaId = statement.ventanaId;
-            const vendedorId = statement.vendedorId;
-            const ventanaName = ventanaId ? ventanaMap.get(ventanaId) || null : null;
-            const vendedorName = vendedorId ? vendedorMap.get(vendedorId) || null : null;
-            const ventanaCode = ventanaId ? (ventanaCodesMap.get(ventanaId) || null) : null;
-            const vendedorCode = vendedorId ? (vendedorCodesMap.get(vendedorId) || null) : null;
-
-            result.push(this.transformSorteoItem(
-              item,
-              dateKey,
-              ventanaName,
-              vendedorName,
-              ventanaCode,
-              vendedorId,
-              vendedorCode
-            ));
-          }
+        if (filters.dimension === 'vendedor' || filters.vendedorId) {
+          const vendInfo = vendedorMap.get(entityId);
+          vendName = vendInfo?.name || null;
+          vendId = entityId;
+          vendCode = vendInfo?.code || null;
+          vId = vendInfo?.ventanaId || null;
+          vName = vendInfo?.ventanaName || null;
+        } else {
+          const ventInfo = ventanaMap.get(entityId);
+          vId = entityId;
+          vName = ventInfo?.name || null;
+          vCode = ventInfo?.code || null;
         }
+
+        result.push(this.transformSorteoItem(
+          s,
+          dateKey,
+          vId,
+          vName,
+          vendName,
+          vCode,
+          vendId,
+          vendCode
+        ));
       }
     }
 
@@ -701,273 +593,158 @@ export class AccountsExportService {
    */
   private static async getMovements(
     statements: DayStatement[],
-    dimension: 'banca' | 'ventana' | 'vendedor' //  NUEVO: Agregado 'banca'
+    filters: AccountsFilters
   ): Promise<AccountMovementItem[]> {
     const result: AccountMovementItem[] = [];
+    const dimension = filters.dimension;
     const isDimensionBanca = dimension === 'banca';
     const isDimensionVentana = dimension === 'ventana';
-    const hasGrouping = statements.some(
-      (s) => (isDimensionBanca && s.byBanca && s.byBanca.length > 0) ||
-        (isDimensionVentana && s.byVentana && s.byVentana.length > 0) ||
-        (!isDimensionVentana && s.byVendedor && s.byVendedor.length > 0)
-    );
 
-    //  OPTIMIZACIÓN: Si hay agrupación, usar movements de los breakdowns anidados
-    if (hasGrouping) {
-      for (const statement of statements) {
-        const dateKey = this.formatDate(statement.date);
+    // 1. Recolectar fechas y IDs de statements explícitos
+    const dates = statements.map(s => {
+      const d = new Date(s.date as string);
+      return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    });
 
-        if (isDimensionBanca && statement.byBanca) {
-          //  NUEVO: Manejar byBanca
-          for (const bancaBreakdown of statement.byBanca) {
-            if (bancaBreakdown.movements && bancaBreakdown.movements.length > 0) {
-              for (const movement of bancaBreakdown.movements) {
-                result.push(this.transformMovementItem(
-                  movement,
-                  dateKey,
-                  null, // ventanaName
-                  null, // vendedorName
-                  bancaBreakdown.bancaCode || null, // ventanaCode
-                  null, // vendedorId
-                  null  // vendedorCode
-                ));
-              }
-            }
-            // También incluir movements de byVentana y byVendedor dentro de esta banca
-            if (bancaBreakdown.byVentana) {
-              for (const ventanaBreakdown of bancaBreakdown.byVentana) {
-                if (ventanaBreakdown.movements && ventanaBreakdown.movements.length > 0) {
-                  for (const movement of ventanaBreakdown.movements) {
-                    result.push(this.transformMovementItem(
-                      movement,
-                      dateKey,
-                      ventanaBreakdown.ventanaName,
-                      null,
-                      ventanaBreakdown.ventanaCode || null,
-                      null,
-                      null
-                    ));
-                  }
-                }
-              }
-            }
-            if (bancaBreakdown.byVendedor) {
-              for (const vendedorBreakdown of bancaBreakdown.byVendedor) {
-                if (vendedorBreakdown.movements && vendedorBreakdown.movements.length > 0) {
-                  for (const movement of vendedorBreakdown.movements) {
-                    result.push(this.transformMovementItem(
-                      movement,
-                      dateKey,
-                      vendedorBreakdown.ventanaName,
-                      vendedorBreakdown.vendedorName,
-                      null, // ventanaCode no disponible en breakdown
-                      vendedorBreakdown.vendedorId,
-                      null  // vendedorCode no disponible en breakdown
-                    ));
-                  }
-                }
-              }
-            }
-          }
-        } else if (isDimensionVentana && statement.byVentana) {
-          for (const ventanaBreakdown of statement.byVentana) {
-            if (ventanaBreakdown.movements && ventanaBreakdown.movements.length > 0) {
-              for (const movement of ventanaBreakdown.movements) {
-                result.push(this.transformMovementItem(
-                  movement,
-                  dateKey,
-                  ventanaBreakdown.ventanaName,
-                  null,
-                  ventanaBreakdown.ventanaCode || null,
-                  null,
-                  null
-                ));
-              }
-            }
-          }
-        } else if (!isDimensionVentana && !isDimensionBanca && statement.byVendedor) {
-          for (const vendedorBreakdown of statement.byVendedor) {
-            if (vendedorBreakdown.movements && vendedorBreakdown.movements.length > 0) {
-              for (const movement of vendedorBreakdown.movements) {
-                result.push(this.transformMovementItem(
-                  movement,
-                  dateKey,
-                  vendedorBreakdown.ventanaName,
-                  vendedorBreakdown.vendedorName,
-                  null, // ventanaCode no disponible en breakdown
-                  vendedorBreakdown.vendedorId,
-                  null  // vendedorCode no disponible en breakdown
-                ));
-              }
-            }
-          }
-        }
-      }
-    } else {
-      //  Comportamiento original cuando NO hay agrupación
-      // Filter only real database UUIDs (skip virtual IDs like gap- or agg-)
-      const statementIds = statements
-        .map((s) => s.id)
-        .filter((id): id is string => !!id && isUuid(id));
+    if (dates.length === 0) return [];
 
-      if (statementIds.length === 0) {
-        return [];
-      }
+    // IDs de statements persistidos (UUIDs reales)
+    const statementIds = statements
+      .map(s => s.id)
+      .filter(id => id && isUuid(id));
 
-      //  CRÍTICO: Validar que todos los IDs sean UUIDs válidos antes de consultar
-      const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-      const invalidIds = statementIds.filter(id => !UUID_REGEX.test(id));
+    // 2. Construir query de Prisma flexible
+    // Buscamos por statementId O por (dimension + dates) para cubrir agregados
+    const where: any = {
+      OR: []
+    };
 
-      if (invalidIds.length > 0) {
-        logger.error({
-          layer: 'service',
-          action: 'ACCOUNTS_EXPORT_INVALID_UUIDS',
-          payload: {
-            message: 'Se encontraron UUIDs inválidos en statementIds',
-            invalidIds: invalidIds.slice(0, 10), // Solo los primeros 10
-            totalInvalid: invalidIds.length,
-          },
-        });
-        throw new Error(`Se encontraron ${invalidIds.length} statement IDs con formato UUID inválido`);
-      }
+    if (statementIds.length > 0) {
+      where.OR.push({ accountStatementId: { in: statementIds } });
+    }
 
-      let payments;
-      try {
-        payments = await prisma.accountPayment.findMany({
-          where: {
-            accountStatementId: { in: statementIds },
-          },
-          select: {
-            id: true,
-            accountStatementId: true,
-            date: true,
-            amount: true,
-            type: true,
-            method: true,
-            notes: true,
-            isReversed: true,
-            isFinal: true,
-            createdAt: true,
-            updatedAt: true,
-            reversedAt: true,
-            paidBy: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-            reversedByUser: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-            accountStatement: {
-              select: {
-                date: true,
-                ventanaId: true,
-                vendedorId: true,
-              },
-            },
-          },
-          orderBy: {
-            createdAt: 'asc',
-          },
-        });
-      } catch (error: any) {
-        //  Capturar información detallada del error UUID
-        logger.error({
-          layer: 'service',
-          action: 'ACCOUNTS_EXPORT_PAYMENT_QUERY_ERROR',
-          payload: {
-            message: error.message,
-            code: error.code,
-            meta: error.meta,
-            statementIdsCount: statementIds.length,
-            sampleStatementIds: statementIds.slice(0, 5),
-          },
-        });
-        throw error;
-      }
+    // Agregar condiciones por entidad y fecha para atrapar movimientos de statements agregados
+    const entityCondition: any = {
+      date: { in: dates }
+    };
 
-      // Resolver nombres y códigos de entidades
-      const ventanaIds = Array.from(
-        new Set(
-          payments
-            .map((p) => p.accountStatement?.ventanaId)
-            .filter((id): id is string => id !== null && id !== undefined)
-        )
-      );
-      const vendedorIds = Array.from(
-        new Set(
-          payments
-            .map((p) => p.accountStatement?.vendedorId)
-            .filter((id): id is string => id !== null && id !== undefined)
-        )
-      );
+    if (filters.bancaId) entityCondition.bancaId = filters.bancaId;
+    if (filters.ventanaId) entityCondition.ventanaId = filters.ventanaId;
+    if (filters.vendedorId) entityCondition.vendedorId = filters.vendedorId;
 
-      const ventanaMap = new Map<string, string>();
-      const ventanaCodesMap = new Map<string, string | null>();
-      const vendedorMap = new Map<string, string>();
-      const vendedorCodesMap = new Map<string, string | null>();
+    // Si es un reporte global por dimensión, también debemos incluir movimientos de esa dimensión
+    if (!filters.bancaId && isDimensionBanca) entityCondition.bancaId = { not: null };
+    if (!filters.ventanaId && isDimensionVentana) entityCondition.ventanaId = { not: null };
+    if (!filters.vendedorId && dimension === 'vendedor') entityCondition.vendedorId = { not: null };
 
-      if (ventanaIds.length > 0) {
-        const ventanas = await prisma.ventana.findMany({
-          where: { id: { in: ventanaIds } },
-          select: { id: true, name: true, code: true },
-        });
-        ventanas.forEach((v) => {
-          ventanaMap.set(v.id, v.name);
-          ventanaCodesMap.set(v.id, v.code);
-        });
-      }
+    if (Object.keys(entityCondition).length > 1) { // date + al menos uno más
+      where.OR.push(entityCondition);
+    }
 
-      if (vendedorIds.length > 0) {
-        const vendedores = await prisma.user.findMany({
-          where: { id: { in: vendedorIds } },
-          select: { id: true, name: true, code: true },
-        });
-        vendedores.forEach((v) => {
-          vendedorMap.set(v.id, v.name);
-          vendedorCodesMap.set(v.id, v.code);
-        });
-      }
+    // Si OR está vacío (no debería pasar), fallar a algo seguro
+    if (where.OR.length === 0) {
+      return [];
+    }
 
-      for (const p of payments) {
-        const ventanaId = p.accountStatement?.ventanaId;
-        const vendedorId = p.accountStatement?.vendedorId;
-        const ventanaName = ventanaId ? ventanaMap.get(ventanaId) || null : null;
-        const vendedorName = vendedorId ? vendedorMap.get(vendedorId) || null : null;
-        const ventanaCode = ventanaId ? (ventanaCodesMap.get(ventanaId) || null) : null;
-        const vendedorCode = vendedorId ? (vendedorCodesMap.get(vendedorId) || null) : null;
+    // 3. Consultar movimientos directamente de la base de datos
+    let payments;
+    try {
+      payments = await prisma.accountPayment.findMany({
+        where,
+        select: {
+          id: true,
+          accountStatementId: true,
+          date: true,
+          amount: true,
+          type: true,
+          method: true,
+          notes: true,
+          isReversed: true,
+          isFinal: true,
+          createdAt: true,
+          updatedAt: true,
+          reversedAt: true,
+          paidBy: { select: { id: true, name: true } },
+          reversedByUser: { select: { id: true, name: true } },
+          accountStatement: { select: { date: true, ventanaId: true, vendedorId: true } },
+          bancaId: true,
+          ventanaId: true,
+          vendedorId: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+    } catch (error: any) {
+      logger.error({
+        layer: 'service',
+        action: 'ACCOUNTS_EXPORT_PAYMENT_QUERY_ERROR',
+        payload: { message: error.message },
+      });
+      throw error;
+    }
 
-        result.push(this.transformMovementItem(
-          {
-            id: p.id,
-            createdAt: p.createdAt,
-            updatedAt: p.updatedAt,
-            accountStatementId: p.accountStatementId,
-            ventanaId,
-            type: p.type,
-            amount: p.amount,
-            method: p.method,
-            notes: p.notes,
-            registeredBy: p.paidBy?.name || 'Desconocido',
-            registeredById: p.paidBy?.id || null,
-            isReversed: p.isReversed,
-            isFinal: p.isFinal || false,
-            reversedAt: p.reversedAt,
-            reversedBy: p.reversedByUser?.name || null,
-            reversedById: p.reversedByUser?.id || null,
-          },
-          this.formatDate(p.accountStatement?.date || p.date),
-          ventanaName,
-          vendedorName,
-          ventanaCode,
-          vendedorId,
-          vendedorCode
-        ));
-      }
+    // 4. Resolver nombres y códigos de entidades para los movimientos encontrados
+    const ventanaIds = new Set<string>();
+    const vendedorIds = new Set<string>();
+
+    for (const p of payments) {
+      const vId = p.accountStatement?.ventanaId || p.ventanaId;
+      const vendId = p.accountStatement?.vendedorId || p.vendedorId;
+      if (vId) ventanaIds.add(vId);
+      if (vendId) vendedorIds.add(vendId);
+    }
+
+    const ventanaMap = new Map<string, { name: string; code: string | null }>();
+    const vendedorMap = new Map<string, { name: string; code: string | null }>();
+
+    if (ventanaIds.size > 0) {
+      const ventanas = await prisma.ventana.findMany({
+        where: { id: { in: Array.from(ventanaIds) } },
+        select: { id: true, name: true, code: true },
+      });
+      ventanas.forEach((v) => ventanaMap.set(v.id, { name: v.name, code: v.code }));
+    }
+
+    if (vendedorIds.size > 0) {
+      const vendedores = await prisma.user.findMany({
+        where: { id: { in: Array.from(vendedorIds) } },
+        select: { id: true, name: true, code: true },
+      });
+      vendedores.forEach((v) => vendedorMap.set(v.id, { name: v.name, code: v.code }));
+    }
+
+    // 5. Transformar y devolver
+    for (const p of payments) {
+      const vId = p.accountStatement?.ventanaId || p.ventanaId;
+      const vInfo = vId ? ventanaMap.get(vId) : null;
+      const vendId = p.accountStatement?.vendedorId || p.vendedorId;
+      const vendInfo = vendId ? vendedorMap.get(vendId) : null;
+
+      result.push(this.transformMovementItem(
+        {
+          id: p.id,
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          accountStatementId: p.accountStatementId,
+          ventanaId: vId,
+          type: p.type,
+          amount: p.amount,
+          method: p.method,
+          notes: p.notes,
+          registeredBy: p.paidBy?.name || 'Desconocido',
+          registeredById: p.paidBy?.id || null,
+          isReversed: p.isReversed,
+          isFinal: p.isFinal || false,
+          reversedAt: p.reversedAt,
+          reversedBy: p.reversedByUser?.name || null,
+          reversedById: p.reversedByUser?.id || null,
+        },
+        this.formatDate(p.accountStatement?.date || p.date),
+        vInfo?.name || null,
+        vendInfo?.name || null,
+        vInfo?.code || null,
+        vendId || null,
+        vendInfo?.code || null
+      ));
     }
 
     return result;
@@ -1046,12 +823,10 @@ export class AccountsExportService {
     return date.toISOString().split('T')[0];
   }
 
-  /**
-   * Transforma un item de sorteo a formato de exportación con toda la información
-   */
   private static transformSorteoItem(
     sorteo: any,
     date: string,
+    ventanaId: string | null,
     ventanaName: string | null,
     vendedorName: string | null,
     ventanaCode: string | null,
@@ -1076,7 +851,7 @@ export class AccountsExportService {
       loteriaName: sorteo.loteriaName,
       scheduledAt: sorteo.scheduledAt,
       sorteoTime,
-      ventanaId: sorteo.ventanaId || null,
+      ventanaId,
       ventanaName,
       ventanaCode,
       vendedorId,
