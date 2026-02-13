@@ -17,10 +17,9 @@ export class AccountsExportPdfService {
           size: 'LETTER',
           layout: 'landscape',
           margins: { top: 50, bottom: 50, left: 50, right: 50 },
-          autoFirstPage: false, //  CRÍTICO: Evitar página en blanco inicial
+          autoFirstPage: false,
         });
 
-        // Registrar fuentes personalizadas para soportar ₡
         doc.registerFont('Helvetica', path.join(process.cwd(), 'src/assets/fonts/Regular.ttf'));
         doc.registerFont('Helvetica-Bold', path.join(process.cwd(), 'src/assets/fonts/Bold.ttf'));
 
@@ -30,16 +29,9 @@ export class AccountsExportPdfService {
         doc.on('end', () => resolve(Buffer.concat(chunks)));
         doc.on('error', reject);
 
-        // Agregar primera página manualmente
         doc.addPage();
-
-        // Encabezado del documento
         this.addHeader(doc, payload);
-
-        // Tabla de resumen
         this.addSummaryTable(doc, payload);
-
-        // Pie de página
         this.addFooter(doc, payload);
 
         doc.end();
@@ -55,11 +47,9 @@ export class AccountsExportPdfService {
   private static addHeader(doc: PDFKit.PDFDocument, payload: AccountStatementExportPayload): void {
     const isDimensionVentana = payload.metadata.filters.dimension === 'ventana';
 
-    // Título
     doc.fontSize(18).font('Helvetica-Bold').text('Estado de Cuenta', { align: 'center' });
     doc.moveDown(0.5);
 
-    // Metadata
     doc.fontSize(10).font('Helvetica');
     doc.text(`Generado: ${this.formatDateTime(payload.metadata.generatedAt)} (GMT-6)`, {
       align: 'center',
@@ -88,27 +78,23 @@ export class AccountsExportPdfService {
     payload: AccountStatementExportPayload
   ): void {
     const isDimensionVentana = payload.metadata.filters.dimension === 'ventana';
-    const pageWidth = doc.page.width - 100; // Márgenes
+    const pageWidth = doc.page.width - 100;
     const startX = 50;
     let y = doc.y;
 
-    // Encabezados
     const headers = isDimensionVentana
       ? ['Fecha', 'Listero', 'Ventas', 'Premios', 'Com. List.', 'Com. Vend.', 'Balance', 'Saldo']
       : ['Fecha', 'Vendedor', 'Ventas', 'Premios', 'Com. Vend.', 'Com. List.', 'Balance', 'Saldo'];
 
-    // Ajuste de anchos para llenar mejor la página (Letter Landscape ~792pt, margins 50 => ~692pt disponibles)
-    // Aumentar Fecha (0) a 90, Reducir Entidad (1) a 120
-    const colWidths = [90, 120, 80, 80, 75, 75, 85, 85]; // Total: 690
+    const colWidths = [90, 120, 80, 80, 75, 75, 85, 85];
 
-    // Dibujar encabezado
     doc.fontSize(9).font('Helvetica-Bold');
     doc.fillColor('#4472C4').rect(startX, y, pageWidth, 20).fill();
     doc.fillColor('white');
 
     let x = startX;
     headers.forEach((header, i) => {
-      const align = i >= 2 ? 'right' : 'left'; // Alinear encabezados numéricos a la derecha
+      const align = i >= 2 ? 'right' : 'left';
       doc.text(header, x + 5, y + 5, { width: colWidths[i] - 10, align });
       x += colWidths[i];
     });
@@ -116,22 +102,18 @@ export class AccountsExportPdfService {
     y += 20;
     doc.fillColor('black');
 
-    // Datos
     doc.fontSize(8).font('Helvetica');
 
     let rowIndex = 0;
     for (const item of payload.statements) {
       const date = this.formatDate(item.date);
-      
-      //  NUEVO: Detectar si hay agrupación (byVentana o byVendedor presente)
       const hasGrouping = (isDimensionVentana && item.byVentana && item.byVentana.length > 0) ||
-                          (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
+        (!isDimensionVentana && item.byVendedor && item.byVendedor.length > 0);
 
       if (hasGrouping) {
-        //  NUEVO: Fila de total consolidado con "TODOS" y formato destacado
         const totalEntity = 'TODOS';
-        
-        const totalValues = isDimensionVentana
+
+        const totalRowValues = isDimensionVentana
           ? [
             date,
             totalEntity,
@@ -153,15 +135,13 @@ export class AccountsExportPdfService {
             this.formatCurrency(item.remainingBalance),
           ];
 
-        // Calcular altura dinámica
         let maxCellHeight = 0;
-        totalValues.forEach((val, i) => {
+        totalRowValues.forEach((val, i) => {
           const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
           if (h > maxCellHeight) maxCellHeight = h;
         });
         const rowHeight = Math.max(18, maxCellHeight + 8);
 
-        // Verificar si necesitamos nueva página
         if (y + rowHeight > doc.page.height - 50) {
           doc.addPage();
           y = 50;
@@ -171,18 +151,17 @@ export class AccountsExportPdfService {
           doc.fontSize(8).font('Helvetica');
         }
 
-        //  NUEVO: Formato destacado para fila de total (negrita, fondo gris claro)
         doc.fillColor('#D3D3D3').rect(startX, y, pageWidth, rowHeight).fill();
         doc.fillColor('black');
         doc.font('Helvetica-Bold');
 
         x = startX;
-        totalValues.forEach((value, i) => {
+        totalRowValues.forEach((value, i) => {
           const align = i >= 2 ? 'right' : 'left';
           const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
           const topPadding = (rowHeight - cellHeight) / 2;
 
-          if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
+          if (i >= 2 && value.startsWith('-')) {
             doc.fillColor('red');
             doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
             doc.fillColor('black');
@@ -192,16 +171,19 @@ export class AccountsExportPdfService {
           x += colWidths[i];
         });
 
-        doc.font('Helvetica'); // Volver a fuente normal
+        doc.font('Helvetica');
         y += rowHeight;
         rowIndex++;
 
-        //  NUEVO: Filas de desglose por entidad con indentación visual
+        if (item.bySorteo && item.bySorteo.length > 0) {
+          const res = this.addInterleavedRows(doc, item.bySorteo, y, startX, colWidths, false);
+          y = res.y;
+        }
+
         if (isDimensionVentana && item.byVentana) {
           for (const breakdown of item.byVentana) {
             const breakdownEntity = `  - ${breakdown.ventanaName}`;
-            
-            const breakdownValues = [
+            const values = [
               date,
               breakdownEntity,
               this.formatCurrency(breakdown.totalSales),
@@ -212,16 +194,14 @@ export class AccountsExportPdfService {
               this.formatCurrency(breakdown.remainingBalance),
             ];
 
-            // Calcular altura dinámica
-            maxCellHeight = 0;
-            breakdownValues.forEach((val, i) => {
+            let bMaxH = 0;
+            values.forEach((val, i) => {
               const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
-              if (h > maxCellHeight) maxCellHeight = h;
+              if (h > bMaxH) bMaxH = h;
             });
-            const breakdownRowHeight = Math.max(18, maxCellHeight + 8);
+            const bRowH = Math.max(18, bMaxH + 8);
 
-            // Verificar si necesitamos nueva página
-            if (y + breakdownRowHeight > doc.page.height - 50) {
+            if (y + bRowH > doc.page.height - 50) {
               doc.addPage();
               y = 50;
               this.redrawHeader(doc, headers, colWidths, startX, y, pageWidth);
@@ -230,19 +210,18 @@ export class AccountsExportPdfService {
               doc.fontSize(8).font('Helvetica');
             }
 
-            // Fondo alternado
             if (rowIndex % 2 === 1) {
-              doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, breakdownRowHeight).fill();
+              doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, bRowH).fill();
               doc.fillColor('black');
             }
 
             x = startX;
-            breakdownValues.forEach((value, i) => {
+            values.forEach((value, i) => {
               const align = i >= 2 ? 'right' : 'left';
               const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
-              const topPadding = (breakdownRowHeight - cellHeight) / 2;
+              const topPadding = (bRowH - cellHeight) / 2;
 
-              if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
+              if (i >= 2 && value.startsWith('-')) {
                 doc.fillColor('red');
                 doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
                 doc.fillColor('black');
@@ -252,14 +231,18 @@ export class AccountsExportPdfService {
               x += colWidths[i];
             });
 
-            y += breakdownRowHeight;
+            y += bRowH;
             rowIndex++;
+
+            if (breakdown.bySorteo && breakdown.bySorteo.length > 0) {
+              const res = this.addInterleavedRows(doc, breakdown.bySorteo, y, startX, colWidths, true);
+              y = res.y;
+            }
           }
         } else if (!isDimensionVentana && item.byVendedor) {
           for (const breakdown of item.byVendedor) {
             const breakdownEntity = `  - ${breakdown.vendedorName}`;
-            
-            const breakdownValues = [
+            const values = [
               date,
               breakdownEntity,
               this.formatCurrency(breakdown.totalSales),
@@ -270,16 +253,14 @@ export class AccountsExportPdfService {
               this.formatCurrency(breakdown.remainingBalance),
             ];
 
-            // Calcular altura dinámica
-            let maxCellHeight = 0;
-            breakdownValues.forEach((val, i) => {
+            let bMaxH = 0;
+            values.forEach((val, i) => {
               const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
-              if (h > maxCellHeight) maxCellHeight = h;
+              if (h > bMaxH) bMaxH = h;
             });
-            const breakdownRowHeight = Math.max(18, maxCellHeight + 8);
+            const bRowH = Math.max(18, bMaxH + 8);
 
-            // Verificar si necesitamos nueva página
-            if (y + breakdownRowHeight > doc.page.height - 50) {
+            if (y + bRowH > doc.page.height - 50) {
               doc.addPage();
               y = 50;
               this.redrawHeader(doc, headers, colWidths, startX, y, pageWidth);
@@ -288,19 +269,18 @@ export class AccountsExportPdfService {
               doc.fontSize(8).font('Helvetica');
             }
 
-            // Fondo alternado
             if (rowIndex % 2 === 1) {
-              doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, breakdownRowHeight).fill();
+              doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, bRowH).fill();
               doc.fillColor('black');
             }
 
             x = startX;
-            breakdownValues.forEach((value, i) => {
+            values.forEach((value, i) => {
               const align = i >= 2 ? 'right' : 'left';
               const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
-              const topPadding = (breakdownRowHeight - cellHeight) / 2;
+              const topPadding = (bRowH - cellHeight) / 2;
 
-              if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
+              if (i >= 2 && value.startsWith('-')) {
                 doc.fillColor('red');
                 doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
                 doc.fillColor('black');
@@ -310,16 +290,17 @@ export class AccountsExportPdfService {
               x += colWidths[i];
             });
 
-            y += breakdownRowHeight;
+            y += bRowH;
             rowIndex++;
+
+            if (breakdown.bySorteo && breakdown.bySorteo.length > 0) {
+              const res = this.addInterleavedRows(doc, breakdown.bySorteo, y, startX, colWidths, true);
+              y = res.y;
+            }
           }
         }
       } else {
-        //  Comportamiento normal cuando NO hay agrupación
-        const entity = isDimensionVentana
-          ? (item.ventanaName || '-')
-          : (item.vendedorName || '-');
-
+        const entity = isDimensionVentana ? item.ventanaName || '-' : item.vendedorName || '-';
         const values = isDimensionVentana
           ? [
             date,
@@ -342,17 +323,14 @@ export class AccountsExportPdfService {
             this.formatCurrency(item.remainingBalance),
           ];
 
-        //  CRÍTICO: Calcular altura dinámica basada en TODAS las columnas
-        let maxCellHeight = 0;
+        let maxH = 0;
         values.forEach((val, i) => {
           const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
-          if (h > maxCellHeight) maxCellHeight = h;
+          if (h > maxH) maxH = h;
         });
+        const rH = Math.max(18, maxH + 8);
 
-        const rowHeight = Math.max(18, maxCellHeight + 8); // Mínimo 18px, o altura máxima + padding
-
-        // Verificar si necesitamos nueva página
-        if (y + rowHeight > doc.page.height - 50) {
+        if (y + rH > doc.page.height - 50) {
           doc.addPage();
           y = 50;
           this.redrawHeader(doc, headers, colWidths, startX, y, pageWidth);
@@ -361,40 +339,40 @@ export class AccountsExportPdfService {
           doc.fontSize(8).font('Helvetica');
         }
 
-        // Fondo alternado
         if (rowIndex % 2 === 1) {
-          doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, rowHeight).fill();
+          doc.fillColor('#F0F0F0').rect(startX, y, pageWidth, rH).fill();
           doc.fillColor('black');
         }
 
         x = startX;
-
         values.forEach((value, i) => {
           const align = i >= 2 ? 'right' : 'left';
-          // Centrar verticalmente el texto
           const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
-          const topPadding = (rowHeight - cellHeight) / 2;
+          const topPadding = (rH - cellHeight) / 2;
 
-          //  CRÍTICO: Números negativos en rojo
-          if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
+          if (i >= 2 && value.startsWith('-')) {
             doc.fillColor('red');
             doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
             doc.fillColor('black');
           } else {
             doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
           }
-
           x += colWidths[i];
         });
 
-        y += rowHeight;
+        y += rH;
         rowIndex++;
+
+        if (item.bySorteo && item.bySorteo.length > 0) {
+          const res = this.addInterleavedRows(doc, item.bySorteo, y, startX, colWidths, false);
+          y = res.y;
+        }
       }
     }
 
-    // Fila de totales del período
+    // Totales del período
     x = startX;
-    const totalValues = isDimensionVentana
+    const totals = isDimensionVentana
       ? [
         'TOTAL PERÍODO',
         '-',
@@ -416,50 +394,44 @@ export class AccountsExportPdfService {
         this.formatCurrency(payload.totals.totalRemainingBalance),
       ];
 
-    // Calcular altura dinámica para totales
-    let maxTotalHeight = 0;
-    totalValues.forEach((val, i) => {
+    let maxTH = 0;
+    totals.forEach((val, i) => {
       const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
-      if (h > maxTotalHeight) maxTotalHeight = h;
+      if (h > maxTH) maxTH = h;
     });
-    const totalRowHeight = Math.max(20, maxTotalHeight + 10);
+    const tRH = Math.max(20, maxTH + 10);
 
-    if (y + totalRowHeight > doc.page.height - 50) {
+    if (y + tRH > doc.page.height - 50) {
       doc.addPage();
       y = 50;
     }
 
     doc.fontSize(9).font('Helvetica-Bold');
-    doc.fillColor('#203764').rect(startX, y, pageWidth, totalRowHeight).fill();
+    doc.fillColor('#203764').rect(startX, y, pageWidth, tRH).fill();
     doc.fillColor('white');
 
-    totalValues.forEach((value, i) => {
+    totals.forEach((value, i) => {
       const align = i >= 2 ? 'right' : 'left';
-      // Centrar verticalmente
       const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
-      const topPadding = (totalRowHeight - cellHeight) / 2;
+      const topPadding = (tRH - cellHeight) / 2;
 
-      //  CRÍTICO: Números negativos en rojo (aunque font es blanco, usar paréntesis)
-      if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
-        // Para totales con fondo oscuro y texto blanco, usar paréntesis
-        const absValue = value.substring(1); // Quitar el signo menos
+      if (i >= 2 && value.startsWith('-')) {
+        const absValue = value.substring(1);
         doc.text(`(${absValue})`, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
       } else {
         doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
       }
-
       x += colWidths[i];
     });
 
-    y += totalRowHeight;
+    y += tRH;
     doc.fillColor('black');
 
-    // Fila de Saldo a Hoy (acumulado del mes)
+    // Saldo a Hoy
     if (payload.monthlyAccumulated) {
-      y += 5; // Espacio
-
+      y += 5;
       x = startX;
-      const accValues = isDimensionVentana
+      const acc = isDimensionVentana
         ? [
           'SALDO A HOY (MES)',
           '-',
@@ -481,79 +453,142 @@ export class AccountsExportPdfService {
           this.formatCurrency(payload.monthlyAccumulated.totalRemainingBalance),
         ];
 
-      // Calcular altura dinámica para acumulado
-      let maxAccHeight = 0;
-      accValues.forEach((val, i) => {
+      let maxAH = 0;
+      acc.forEach((val, i) => {
         const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
-        if (h > maxAccHeight) maxAccHeight = h;
+        if (h > maxAH) maxAH = h;
       });
-      const accRowHeight = Math.max(20, maxAccHeight + 10);
+      const aRH = Math.max(20, maxAH + 10);
 
-      if (y + accRowHeight > doc.page.height - 50) {
+      if (y + aRH > doc.page.height - 50) {
         doc.addPage();
         y = 50;
       }
 
       doc.fontSize(9).font('Helvetica-Bold');
-      doc.fillColor('#D9E1F2').rect(startX, y, pageWidth, accRowHeight).fill();
+      doc.fillColor('#D9E1F2').rect(startX, y, pageWidth, aRH).fill();
       doc.fillColor('black');
 
-      accValues.forEach((value, i) => {
+      acc.forEach((value, i) => {
         const align = i >= 2 ? 'right' : 'left';
-        // Centrar verticalmente
         const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
-        const topPadding = (accRowHeight - cellHeight) / 2;
+        const topPadding = (aRH - cellHeight) / 2;
 
-        //  CRÍTICO: Números negativos en rojo
-        if (i >= 2 && typeof value === 'string' && value.startsWith('-')) {
+        if (i >= 2 && value.startsWith('-')) {
           doc.fillColor('red');
           doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
           doc.fillColor('black');
         } else {
           doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
         }
-
         x += colWidths[i];
       });
-
-      doc.fillColor('black');
     }
   }
 
-  /**
-   * Agrega pie de página
-   */
+  private static addInterleavedRows(
+    doc: PDFKit.PDFDocument,
+    interleaved: any[],
+    startY: number,
+    startX: number,
+    colWidths: number[],
+    isNested: boolean
+  ): { y: number } {
+    let y = startY;
+    const indent = isNested ? '    ' : '  ';
+    doc.fontSize(7).font('Helvetica-Bold');
+    doc.fillColor('#666666');
+
+    for (const event of interleaved) {
+      const isSorteo = !event.type || event.type === 'sorteo';
+      const timeStr = event.time || '';
+
+      let detailName = '';
+      let salesStr = '';
+      let payoutsStr = '';
+      let balanceStr = this.formatCurrency(event.balance || 0);
+      let listeroComStr = '';
+      let vendedorComStr = '';
+      let accumulatedStr = this.formatCurrency(event.accumulated || 0);
+
+      if (isSorteo) {
+        detailName = `${indent}${timeStr} ${event.loteriaName} - ${event.sorteoName}`;
+        salesStr = this.formatCurrency(event.sales || 0);
+        payoutsStr = this.formatCurrency(event.payouts || 0);
+        listeroComStr = this.formatCurrency(event.listeroCommission || 0);
+        vendedorComStr = this.formatCurrency(event.vendedorCommission || 0);
+      } else {
+        const typeLabel = event.type === 'payment' ? 'PAGO' : (event.type === 'collection' ? 'COBRO' : 'SALDO INI');
+        detailName = `${indent}${timeStr} [${typeLabel}] ${event.sorteoName}${event.notes ? ' - ' + event.notes : ''}`;
+        const amountStr = this.formatCurrency(event.amount || 0);
+        if (event.type === 'payment') listeroComStr = amountStr;
+        else if (event.type === 'collection') vendedorComStr = amountStr;
+      }
+
+      const values = ['', detailName, salesStr, payoutsStr, listeroComStr, vendedorComStr, balanceStr, accumulatedStr];
+
+      let maxH = 0;
+      values.forEach((val, i) => {
+        const h = doc.heightOfString(val, { width: colWidths[i] - 10 });
+        if (h > maxH) maxH = h;
+      });
+      const rH = Math.max(12, maxH + 4);
+
+      if (y + rH > doc.page.height - 50) {
+        doc.addPage();
+        y = 50;
+        doc.fontSize(7).font('Helvetica-Bold');
+        doc.fillColor('#666666');
+      }
+
+      let x = startX;
+      values.forEach((value, i) => {
+        const align = i >= 2 ? 'right' : 'left';
+        const cellHeight = doc.heightOfString(value, { width: colWidths[i] - 10 });
+        const topPadding = (rH - cellHeight) / 2;
+
+        if (i >= 2 && value.startsWith('-')) {
+          doc.fillColor('red');
+          doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
+          doc.fillColor('#666666');
+        } else {
+          doc.text(value, x + 5, y + topPadding, { width: colWidths[i] - 10, align });
+        }
+        x += colWidths[i];
+      });
+      y += rH;
+    }
+
+    doc.fillColor('black');
+    return { y };
+  }
+
+  private static redrawHeader(doc: PDFKit.PDFDocument, headers: string[], colWidths: number[], startX: number, y: number, pageWidth: number): void {
+    doc.fontSize(9).font('Helvetica-Bold');
+    doc.fillColor('#4472C4').rect(startX, y, pageWidth, 20).fill();
+    doc.fillColor('white');
+    let x = startX;
+    headers.forEach((h, i) => {
+      const align = i >= 2 ? 'right' : 'left';
+      doc.text(h, x + 5, y + 5, { width: colWidths[i] - 10, align });
+      x += colWidths[i];
+    });
+    doc.fillColor('black');
+  }
+
   private static addFooter(doc: PDFKit.PDFDocument, payload: AccountStatementExportPayload): void {
     const pages = doc.bufferedPageRange();
     const totalPages = pages.count;
-
     for (let i = 0; i < totalPages; i++) {
-      const pageIndex = pages.start + i;
-      doc.switchToPage(pageIndex);
-
-      //  CRÍTICO: Desactivar márgenes temporalmente para escribir en el pie de página sin generar nueva hoja
+      doc.switchToPage(pages.start + i);
       const oldMargins = doc.page.margins;
       doc.page.margins = { top: 0, bottom: 0, left: 0, right: 0 };
-
-      doc.fontSize(8).font('Helvetica');
-      doc.text(`Página ${i + 1} de ${totalPages}`, 50, doc.page.height - 30, {
-        align: 'center',
-        width: doc.page.width - 100,
-      });
-
-      doc.text('Generado por Sistema de Bancas', 50, doc.page.height - 20, {
-        align: 'center',
-        width: doc.page.width - 100,
-      });
-
-      // Restaurar márgenes
+      doc.fontSize(8).font('Helvetica').text(`Página ${i + 1} de ${totalPages}`, 50, doc.page.height - 30, { align: 'center', width: doc.page.width - 100 });
+      doc.text('Generado por Sistema de Bancas', 50, doc.page.height - 20, { align: 'center', width: doc.page.width - 100 });
       doc.page.margins = oldMargins;
     }
   }
 
-  /**
-   * Formatea fecha de YYYY-MM-DD a DD/MM/YYYY
-   */
   private static formatDate(dateStr: string | Date): string {
     if (dateStr instanceof Date) {
       const year = dateStr.getUTCFullYear();
@@ -565,9 +600,6 @@ export class AccountsExportPdfService {
     return `${day}/${month}/${year}`;
   }
 
-  /**
-   * Formatea fecha y hora
-   */
   private static formatDateTime(date: Date): string {
     const d = new Date(date);
     const day = d.getDate().toString().padStart(2, '0');
@@ -578,39 +610,8 @@ export class AccountsExportPdfService {
     return `${day}/${month}/${year} ${hours}:${minutes}`;
   }
 
-  /**
-   * Formatea número como moneda
-   *  CRÍTICO: Números negativos con paréntesis y signo de menos
-   */
-  /**
-   * Redibuja el encabezado de la tabla en una nueva página
-   */
-  private static redrawHeader(
-    doc: PDFKit.PDFDocument,
-    headers: string[],
-    colWidths: number[],
-    startX: number,
-    y: number,
-    pageWidth: number
-  ): void {
-    doc.fontSize(9).font('Helvetica-Bold');
-    doc.fillColor('#4472C4').rect(startX, y, pageWidth, 20).fill();
-    doc.fillColor('white');
-
-    let x = startX;
-    headers.forEach((header, i) => {
-      const align = i >= 2 ? 'right' : 'left';
-      doc.text(header, x + 5, y + 5, { width: colWidths[i] - 10, align });
-      x += colWidths[i];
-    });
-
-    doc.fillColor('black');
-  }
-
   private static formatCurrency(value: number): string {
-    if (value < 0) {
-      return `-(${Math.abs(value).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')})`;
-    }
+    if (value < 0) return `-(${Math.abs(value).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')})`;
     return value.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   }
 }

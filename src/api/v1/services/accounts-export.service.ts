@@ -15,6 +15,8 @@ import {
 } from '../types/accounts-export.types';
 import { AccountsFilters, DayStatement, StatementResponse } from './accounts/accounts.types';
 import { getSorteoBreakdownBatch } from './accounts/accounts.queries';
+import { intercalateSorteosAndMovements } from './accounts/accounts.intercalate';
+import { getPreviousMonthFinalBalance } from './accounts/accounts.balances';
 import prisma from '../../../core/prismaClient';
 import logger from '../../../core/logger';
 import { resolveDateRange } from '../../../utils/dateRange';
@@ -79,21 +81,13 @@ export class AccountsExportService {
       }
 
       // 5. Obtener breakdown por sorteo y movimientos ANTES de transformar (para incluir en statements cuando no hay agrupación)
-      let breakdown: AccountStatementSorteoItem[] | undefined = undefined;
-      let movements: AccountMovementItem[] | undefined = undefined;
-
-      if (options.includeBreakdown && statements.length > 0) {
-        breakdown = await this.getBreakdown(statements, filters);
-      }
-
-      if (options.includeMovements && statements.length > 0) {
-        movements = await this.getMovements(statements, filters.dimension);
-      }
+      const breakdown = await this.getBreakdown(statements, filters);
+      const movements = await this.getMovements(statements, filters.dimension);
 
       // 6. Transformar statements a formato de exportación (con breakdown y movements para incluir cuando no hay agrupación)
       const exportStatements: AccountStatementExportItem[] = await this.transformStatements(
         statements,
-        filters.dimension,
+        filters,
         breakdown,
         movements
       );
@@ -221,7 +215,7 @@ export class AccountsExportService {
    */
   private static async transformStatements(
     statements: DayStatement[],
-    dimension: 'banca' | 'ventana' | 'vendedor', //  NUEVO: Agregado 'banca'
+    filters: AccountsFilters,
     breakdown?: AccountStatementSorteoItem[],
     movements?: AccountMovementItem[]
   ): Promise<AccountStatementExportItem[]> {
@@ -264,6 +258,8 @@ export class AccountsExportService {
       });
     });
 
+    const dimension = filters.dimension;
+
     const bancaMap = new Map<string, { name: string; code: string | null }>(); //  NUEVO: Mapa de bancas
     const ventanaMap = new Map<string, { name: string; code: string | null }>();
     const vendedorMap = new Map<string, { name: string; code: string | null }>();
@@ -294,15 +290,28 @@ export class AccountsExportService {
       vendedores.forEach((v) => vendedorMap.set(v.id, { name: v.name, code: v.code }));
     }
 
+    //  CRÍTICO: Obtener saldo inicial del período para la intercalación
+    // Solo si el período incluye el día 1, o si necesitamos arrastrar desde el día anterior al inicio del reporte
+    // Para simplificar, calculamos el acumulado progresivamente mientras transformamos
+    let runningAccumulated = 0;
+    const firstStatement = statements[0];
+    if (firstStatement) {
+      // El balance inicial del primer día es: remainingBalance - balance
+      // (Porque balance incluye todo lo que pasó ese día: ventas - premios - comisiones + pagos - cobros)
+      runningAccumulated = (firstStatement.remainingBalance || 0) - (firstStatement.balance || 0);
+    }
+
     // Transformar statements
     return statements.map((s) => {
       const bancaInfo = s.bancaId ? bancaMap.get(s.bancaId) : null; //  NUEVO: Información de banca
       const ventanaInfo = s.ventanaId ? ventanaMap.get(s.ventanaId) : null;
       const vendedorInfo = s.vendedorId ? vendedorMap.get(s.vendedorId) : null;
 
+      const dateKey = this.formatDate(s.date);
+
       const item: any = {
         id: s.id,
-        date: this.formatDate(s.date),
+        date: dateKey,
         month: s.month,
         bancaId: s.bancaId || null, //  NUEVO: ID de banca
         bancaName: bancaInfo?.name || null, //  NUEVO: Nombre de banca
@@ -329,11 +338,67 @@ export class AccountsExportService {
         updatedAt: s.updatedAt ? (s.updatedAt instanceof Date ? s.updatedAt.toISOString() : new Date(s.updatedAt).toISOString()) : new Date().toISOString(),
       };
 
-      //  NUEVO: Transformar byVentana si existe (con bySorteo y movements)
+      //  NUEVO: Intercalar sorteos y movimientos para este statement
+      // Esto se usa tanto para el principal como para los breakdowns
+      const daySorteos = (breakdown || []).filter((b) => b.date === dateKey);
+      const dayMovements = (movements || []).filter((m) => m.statementDate === dateKey);
+
+      // Mapear a formato esperado por intercalateSorteosAndMovements
+      const sorteoInputs = daySorteos.map(s => ({
+        sorteoId: s.sorteoId,
+        sorteoName: s.sorteoName,
+        scheduledAt: s.scheduledAt,
+        sales: s.totalSales,
+        payouts: s.totalPayouts,
+        listeroCommission: s.listeroCommission,
+        vendedorCommission: s.vendedorCommission,
+        balance: s.balance,
+        ticketCount: s.ticketCount,
+        loteriaId: s.loteriaId,
+        loteriaName: s.loteriaName
+      }));
+
+      const movementInputs = dayMovements.map(m => ({
+        id: m.id,
+        type: (m.type === 'PAGO' ? 'payment' : 'collection') as any,
+        amount: m.amount,
+        method: m.method,
+        notes: m.notes || null,
+        isReversed: m.status === 'REVERTIDO',
+        createdAt: m.createdAt.toISOString(),
+        date: m.statementDate
+      }));
+
+      // Intercalar (esta función devuelve el array ordenado DESC y con accumulated calculado)
+      const interleaved = intercalateSorteosAndMovements(
+        sorteoInputs,
+        movementInputs,
+        dateKey,
+        runningAccumulated
+      );
+
+      item.bySorteo = interleaved;
+
+      // Actualizar runningAccumulated para el siguiente día
+      runningAccumulated = s.remainingBalance;
+
+      //  NUEVO: Transformar byVentana si existe (con intercalación específica)
       if (s.byVentana && s.byVentana.length > 0) {
         item.byVentana = s.byVentana.map((bv) => {
           const ventanaInfo = ventanaMap.get(bv.ventanaId);
-          const breakdown: any = {
+          // Filtrar sorteos y movimientos específicos de esta ventana
+          const ventanaSorteos = daySorteos.filter(ds => ds.ventanaId === bv.ventanaId);
+          const ventanaMovements = dayMovements.filter(dm => dm.ventanaId === bv.ventanaId);
+
+          const initialAcc = (bv.remainingBalance || 0) - (bv.balance || 0);
+          const interleavedV = intercalateSorteosAndMovements(
+            ventanaSorteos.map(vs => ({ ...vs, sales: vs.totalSales, payouts: vs.totalPayouts })),
+            ventanaMovements.map(vm => ({ ...vm, type: (vm.type === 'PAGO' ? 'payment' : 'collection') as any, createdAt: vm.createdAt.toISOString() })),
+            dateKey,
+            initialAcc
+          );
+
+          const breakdownItem: any = {
             ventanaId: bv.ventanaId,
             ventanaName: bv.ventanaName,
             ventanaCode: ventanaInfo?.code || null,
@@ -347,28 +412,31 @@ export class AccountsExportService {
             totalPaymentsCollections: (bv.totalPaid || 0) + (bv.totalCollected || 0),
             remainingBalance: bv.remainingBalance,
             ticketCount: bv.ticketCount || 0,
+            bySorteo: interleavedV
           };
 
-          //  NUEVO: Incluir bySorteo del breakdown si existe
-          if (bv.bySorteo && bv.bySorteo.length > 0) {
-            breakdown.bySorteo = bv.bySorteo.map((sorteo) => this.transformSorteoItem(sorteo, this.formatDate(s.date), bv.ventanaName, null, ventanaInfo?.code || null, null, null));
-          }
-
-          //  NUEVO: Incluir movements del breakdown si existen
-          if (bv.movements && bv.movements.length > 0) {
-            breakdown.movements = bv.movements.map((mov) => this.transformMovementItem(mov, this.formatDate(s.date), bv.ventanaName, null, ventanaInfo?.code || null, null, null));
-          }
-
-          return breakdown;
+          return breakdownItem;
         });
       }
 
-      //  NUEVO: Transformar byVendedor si existe (con bySorteo y movements)
+      //  NUEVO: Transformar byVendedor si existe (con intercalación específica)
       if (s.byVendedor && s.byVendedor.length > 0) {
         item.byVendedor = s.byVendedor.map((bv) => {
           const vendedorInfo = vendedorMap.get(bv.vendedorId);
           const ventanaInfo = ventanaMap.get(bv.ventanaId);
-          const breakdown: any = {
+          // Filtrar sorteos y movimientos específicos de este vendedor
+          const vendedorSorteos = daySorteos.filter(ds => ds.vendedorId === bv.vendedorId);
+          const vendedorMovements = dayMovements.filter(dm => dm.vendedorId === bv.vendedorId);
+
+          const initialAcc = (bv.remainingBalance || 0) - (bv.balance || 0);
+          const interleavedV = intercalateSorteosAndMovements(
+            vendedorSorteos.map(vs => ({ ...vs, sales: vs.totalSales, payouts: vs.totalPayouts })),
+            vendedorMovements.map(vm => ({ ...vm, type: (vm.type === 'PAGO' ? 'payment' : 'collection') as any, createdAt: vm.createdAt.toISOString() })),
+            dateKey,
+            initialAcc
+          );
+
+          const breakdownItem: any = {
             vendedorId: bv.vendedorId,
             vendedorName: bv.vendedorName,
             vendedorCode: vendedorInfo?.code || null,
@@ -385,45 +453,11 @@ export class AccountsExportService {
             totalPaymentsCollections: (bv.totalPaid || 0) + (bv.totalCollected || 0),
             remainingBalance: bv.remainingBalance,
             ticketCount: bv.ticketCount || 0,
+            bySorteo: interleavedV
           };
 
-          //  NUEVO: Incluir bySorteo del breakdown si existe
-          if (bv.bySorteo && bv.bySorteo.length > 0) {
-            breakdown.bySorteo = bv.bySorteo.map((sorteo) => this.transformSorteoItem(sorteo, this.formatDate(s.date), bv.ventanaName, bv.vendedorName, ventanaInfo?.code || null, bv.vendedorId, vendedorInfo?.code || null));
-          }
-
-          //  NUEVO: Incluir movements del breakdown si existen
-          if (bv.movements && bv.movements.length > 0) {
-            breakdown.movements = bv.movements.map((mov) => this.transformMovementItem(mov, this.formatDate(s.date), bv.ventanaName, bv.vendedorName, ventanaInfo?.code || null, bv.vendedorId, vendedorInfo?.code || null));
-          }
-
-          return breakdown;
+          return breakdownItem;
         });
-      }
-
-      //  NUEVO: Si NO hay agrupación, incluir bySorteo y movements del statement principal
-      const hasGrouping = (dimension === 'banca' && s.byBanca && s.byBanca.length > 0) ||
-        (dimension === 'ventana' && s.byVentana && s.byVentana.length > 0) ||
-        (dimension === 'vendedor' && s.byVendedor && s.byVendedor.length > 0);
-
-      if (!hasGrouping) {
-        const dateKey = this.formatDate(s.date);
-
-        // Incluir bySorteo del statement principal si está disponible
-        if (breakdown && breakdown.length > 0) {
-          const statementBreakdown = breakdown.filter((b) => b.date === dateKey);
-          if (statementBreakdown.length > 0) {
-            item.bySorteo = statementBreakdown;
-          }
-        }
-
-        // Incluir movements del statement principal si están disponibles
-        if (movements && movements.length > 0) {
-          const statementMovements = movements.filter((m) => m.statementDate === dateKey);
-          if (statementMovements.length > 0) {
-            item.movements = statementMovements;
-          }
-        }
       }
 
       return item;
