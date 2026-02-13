@@ -71,6 +71,25 @@ export async function initRedisClient(): Promise<void> {
                     const data = await response.json();
                     return data.result;
                 },
+                async scan(cursor: string, ...args: any[]) {
+                    let url = `${process.env.REDIS_URL}/scan/${cursor}`;
+
+                    // Standard signature: scan(cursor, 'MATCH', pattern, 'COUNT', count)
+                    // Upstash REST format: /scan/:cursor/MATCH/:pattern/COUNT/:count
+                    for (let i = 0; i < args.length; i += 2) {
+                        const key = args[i];
+                        const value = args[i + 1];
+                        if (key && value !== undefined) {
+                            url += `/${key}/${encodeURIComponent(value.toString())}`;
+                        }
+                    }
+
+                    const response = await fetch(url, {
+                        headers: { 'Authorization': `Bearer ${process.env.REDIS_TOKEN}` }
+                    });
+                    const data = await response.json();
+                    return data.result; // Returns [newCursor, keys[]]
+                },
                 async quit() {
                     // No-op para REST API
                 }
