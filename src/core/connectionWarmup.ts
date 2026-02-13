@@ -1,5 +1,5 @@
 import prisma from "./prismaClient";
-import prismaDirect from "./prismaClientDirect";
+import { getPrismaDirect } from "./prismaClientDirect";
 import logger from "./logger";
 
 export interface WarmupOptions {
@@ -42,7 +42,7 @@ export async function warmupConnection(
     context = "warmup",
   } = options;
 
-  const client = useDirect ? prismaDirect : prisma;
+  const client = useDirect ? getPrismaDirect() : prisma;
   const clientType = useDirect ? "direct" : "pooler";
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -109,7 +109,7 @@ export async function warmupConnection(
  * Útil para health checks rápidos.
  */
 export async function isConnectionAlive(useDirect = false): Promise<boolean> {
-  const client = useDirect ? prismaDirect : prisma;
+  const client = useDirect ? getPrismaDirect() : prisma;
 
   try {
     await client.$queryRaw`SELECT 1`;

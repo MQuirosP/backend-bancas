@@ -35,7 +35,16 @@ function createDirectClient(): PrismaClient {
   });
 }
 
-const prismaDirect = global.__prismaDirect ?? createDirectClient();
-global.__prismaDirect = prismaDirect;
-
-export default prismaDirect;
+/**
+ * Retorna la instancia del cliente directo de forma perezosa (Lazy Load).
+ * Solo se inicializa la primera vez que se invoca.
+ *
+ * NOTA DE ARQUITECTURA: Esto evita que el pool de conexiones directas (puerto 5432)
+ * se levante automáticamente al arrancar la API, ahorrando slots en PgBouncer.
+ */
+export function getPrismaDirect(): PrismaClient {
+  if (!global.__prismaDirect) {
+    global.__prismaDirect = createDirectClient();
+  }
+  return global.__prismaDirect;
+}
