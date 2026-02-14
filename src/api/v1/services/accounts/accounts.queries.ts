@@ -74,14 +74,14 @@ export async function getAggregatedTicketsData(params: {
 
     // Lógica de fecha (Today vs Mes completo)
     if (isToday) {
-        whereConditions.push(Prisma.sql`t."businessDate" = ${startDateCRStr}::date`);
+        whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) = ${startDateCRStr}::date`);
     } else if (monthStartDateForQuery) {
-        whereConditions.push(Prisma.sql`t."businessDate" >= ${monthStartDateForQuery}::date`);
+        whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${monthStartDateForQuery}::date`);
     } else {
-        whereConditions.push(Prisma.sql`t."businessDate" >= ${startDateCRStr}::date`);
+        whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`);
     }
 
-    whereConditions.push(Prisma.sql`t."businessDate" <= ${endDateCRStr}::date`);
+    whereConditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`);
 
     // Excluir tickets de listas bloqueadas
     //  ACTUALIZADO: Excluir por multiplierId si la exclusión lo especifica
@@ -149,10 +149,10 @@ export async function getAggregatedTicketsData(params: {
 
     const groupByClause = shouldGroupByDate
         ? Prisma.sql`
-            t."businessDate",
+            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
             b.id`
         : Prisma.sql`
-            t."businessDate",
+            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))),
             b.id,
             t."ventanaId",
             t."vendedorId"`;
@@ -169,7 +169,7 @@ export async function getAggregatedTicketsData(params: {
             GROUP BY j."ticketId"
         )
         SELECT
-            t."businessDate" as business_date,
+            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) as business_date,
             b.id as banca_id,
             MAX(b.name) as banca_name,
             MAX(b.code) as banca_code,
