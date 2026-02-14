@@ -35,9 +35,10 @@ jest.config.ts
 dist/
 
 # APK files (Android auto-update)
-# Mantener la estructura de carpeta pero no versionar los archivos APK
+# Ignorar todo excepto las releases por ABI
 public/apk/*.apk
-!public/apk/app-release-latest.apk
+!public/apk/app-armeabi-v7a-release.apk
+!public/apk/app-arm64-v8a-release.apk
 !public/apk/.gitkeep
 
 
