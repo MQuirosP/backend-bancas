@@ -71,6 +71,9 @@ export const ListTicketsQuerySchema = z
     //  NUEVO: Búsqueda por número de jugada (1-3 dígitos, búsqueda exacta)
     number: z.string().regex(/^\d{1,3}$/, "El número debe ser de 1-3 dígitos (0-999)").optional(),
 
+    // NUEVO: Búsqueda por número ganador (1-3 dígitos)
+    winningNumber: z.string().regex(/^\d{1,3}$/, "El número ganador debe ser de 1-3 dígitos (0-999)").optional(),
+
     // NUEVO: Filtro por hora programada del sorteo (HH:mm)
     scheduledTime: z.string().regex(/^\d{2}:\d{2}$/, "Formato de hora inválido (HH:mm)").optional(),
 
