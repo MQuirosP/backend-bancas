@@ -54,7 +54,9 @@ function buildSummary(details: Array<any>, source: "body" | "query" | "params") 
 /** Fuerza .strict() y emite AppError con meta {context, details} */
 function validateWith(schema: ZodType<any>, source: "body" | "query" | "params") {
   // Si el schema tiene .strict(), lo aplicamos aquí para rechazar claves extra
-  const strictSchema = typeof (schema as any).strict === "function" ? (schema as any).strict() : schema;
+  // EXCEPT for query params which might have noise from frontend/analytics
+  const shouldBeStrict = source !== "query";
+  const strictSchema = (shouldBeStrict && typeof (schema as any).strict === "function") ? (schema as any).strict() : schema;
 
   return (req: Request, _res: Response, next: NextFunction) => {
     let data = (req as any)[source];

@@ -7,7 +7,7 @@ import { CommissionSnapshot } from "../services/commission/types/CommissionTypes
 import { CommissionContext } from "../services/commission/types/CommissionContext";
 import { commissionService } from "../services/commission/CommissionService";
 import { commissionResolver } from "../services/commission/CommissionResolver";
-import { getBusinessDateCRInfo, getCRDayRangeUTC } from "../utils/businessDate";
+import { getBusinessDateCRInfo, getCRDayRangeUTC, getCRLocalComponents } from "../utils/businessDate";
 import { nowCR, validateDate, formatDateCRWithTZ } from "../utils/datetime";
 import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel } from "./helpers/ticket-restriction.helper";
 
@@ -2114,6 +2114,7 @@ export const TicketRepository = {
       dateTo?: Date;
       winnersOnly?: boolean;
       number?: string; //  NUEVO: Búsqueda por número de jugada (1-2 dígitos)
+      scheduledTime?: string; // NUEVO: Filtro por hora programada (HH:mm)
     } = {}
   ) {
     const skip = (page - 1) * pageSize;
@@ -2139,11 +2140,69 @@ export const TicketRepository = {
         ? {
           createdAt: {
             ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
-            ...(filters.dateTo ? { lt: filters.dateTo } : {}), //  medio-abierto
+            ...(filters.dateTo ? { lte: filters.dateTo } : {}), //  inclusivo
           },
         }
         : {}),
     };
+
+    // NUEVO: Filtro por hora programada del sorteo (scheduledTime: HH:mm)
+    if (filters.scheduledTime) {
+      // 1. Buscar todos los sorteos que coincidan con la hora en el rango de fechas
+      // (Limitamos por fecha para evitar cargar miles de sorteos)
+      const sorteosInRange = await prisma.sorteo.findMany({
+        where: {
+          scheduledAt: {
+            gte: filters.dateFrom,
+            lt: filters.dateTo,
+          },
+          loteriaId: filters.loteriaId,
+        },
+        select: { id: true, scheduledAt: true },
+      });
+
+      // 2. Filtrar por hora exacta en Costa Rica
+      const matchingSorteoIds = sorteosInRange
+        .filter((s) => {
+          const { hour, minute } = getCRLocalComponents(s.scheduledAt);
+          const timeStr = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+          return timeStr === filters.scheduledTime;
+        })
+        .map((s) => s.id);
+
+      // 3. Aplicar filtro sorteoId
+      if (matchingSorteoIds.length === 0) {
+        // Si no hay sorteos que coincidan, retornar resultado vacío inmediatamente
+        return {
+          data: [],
+          meta: {
+            total: 0,
+            page,
+            pageSize,
+            totalPages: 0,
+            hasNextPage: false,
+            hasPrevPage: false,
+          },
+        };
+      }
+
+      if (where.sorteoId) {
+        // Si ya hay un sorteoId filtrado, intersecar
+        if (typeof where.sorteoId === "string") {
+          if (!matchingSorteoIds.includes(where.sorteoId as string)) {
+            return { data: [], meta: { total: 0, page, pageSize, totalPages: 0, hasNextPage: false, hasPrevPage: false } };
+          }
+        } else if ((where.sorteoId as any).in) {
+          where.sorteoId = {
+            in: matchingSorteoIds.filter((id) =>
+              (where.sorteoId as any).in.includes(id)
+            ),
+          };
+        }
+      } else {
+        where.sorteoId = { in: matchingSorteoIds };
+      }
+    }
 
     //  NUEVO: Búsqueda exacta por número de jugada
     // Busca en jugada.number (para NUMERO) y jugada.reventadoNumber (para REVENTADO)

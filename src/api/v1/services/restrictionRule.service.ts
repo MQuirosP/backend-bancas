@@ -326,34 +326,6 @@ export const RestrictionRuleService = {
     try {
       await prisma.$executeRawUnsafe(`SELECT update_auto_date_restrictions();`);
 
-      // Obtener el último log para retornar información
-      const lastLog = await prisma.$queryRaw<Array<{
-        id: string;
-        job_name: string;
-        status: string;
-        executed_at: Date;
-        affected_rows: number | null;
-        effective_number: string | null;
-        error_message: string | null;
-      }>>`
-        SELECT id, job_name, status, executed_at, affected_rows, effective_number, error_message
-        FROM cron_execution_logs
-        WHERE job_name = 'update_auto_restrictions'
-        ORDER BY executed_at DESC
-        LIMIT 1
-      `;
-
-      if (lastLog && lastLog.length > 0) {
-        const log = lastLog[0];
-        return {
-          success: log.status === 'success',
-          executed_at: log.executed_at,
-          affected_rows: log.affected_rows,
-          effective_number: log.effective_number,
-          error_message: log.error_message,
-        };
-      }
-
       return {
         success: true,
         executed_at: new Date(),
@@ -362,25 +334,12 @@ export const RestrictionRuleService = {
         error_message: null,
       };
     } catch (error: any) {
-      // Si hay error, obtener el último log de error
-      const lastErrorLog = await prisma.$queryRaw<Array<{
-        error_message: string | null;
-        executed_at: Date;
-      }>>`
-        SELECT error_message, executed_at
-        FROM cron_execution_logs
-        WHERE job_name = 'update_auto_restrictions'
-          AND status = 'error'
-        ORDER BY executed_at DESC
-        LIMIT 1
-      `;
-
       throw new AppError(
         error.message || 'Error ejecutando cron manualmente',
         500,
         {
-          error_message: lastErrorLog?.[0]?.error_message || error.message,
-          executed_at: lastErrorLog?.[0]?.executed_at || new Date(),
+          error_message: error.message,
+          executed_at: new Date(),
         }
       );
     }
