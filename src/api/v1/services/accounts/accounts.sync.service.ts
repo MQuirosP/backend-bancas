@@ -584,11 +584,11 @@ export class AccountStatementSyncService {
       const bySorteoData = await AccountsService.getBySorteo(dateStr, filters);
 
       if (!bySorteoData || bySorteoData.length === 0) {
-        logger.info({
-          layer: "service",
-          action: "SYNC_FROM_BYSORTEO_NO_EVENTS",
-          payload: { dateStr, dimension, entityId },
-        });
+        // No hay sorteos ni movimientos para este día, pero puede existir un statement carry-forward
+        // que necesita actualizar su remainingBalance/accumulatedBalance desde el día anterior.
+        // Esto ocurre cuando se revierte un pago en un día pasado y los días posteriores
+        // son carry-forwards sin actividad.
+        await this.syncCarryForwardStatement(dateStr, dimension, entityId);
         return;
       }
 
@@ -1087,9 +1087,129 @@ export class AccountStatementSyncService {
   }
 
   /**
+   * Sincroniza un statement carry-forward (sin sorteos ni movimientos) actualizando
+   * remainingBalance y accumulatedBalance desde el día anterior.
+   *
+   * Esto resuelve el caso donde se revierte un pago en un día pasado y los días posteriores
+   * son carry-forwards sin actividad: antes se hacía return sin actualizar, dejando
+   * remainingBalance/accumulatedBalance desactualizados.
+   */
+  private static async syncCarryForwardStatement(
+    dateStr: string,
+    dimension: "banca" | "ventana" | "vendedor",
+    entityId: string
+  ): Promise<void> {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const dateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+
+    // 1. Buscar el statement existente para este día/entidad
+    let existingStmt: any = null;
+    if (dimension === 'vendedor') {
+      existingStmt = await prisma.accountStatement.findFirst({
+        where: { date: dateUTC, vendedorId: entityId },
+      });
+    } else if (dimension === 'ventana') {
+      existingStmt = await prisma.accountStatement.findFirst({
+        where: { date: dateUTC, ventanaId: entityId, vendedorId: null },
+      });
+    } else if (dimension === 'banca') {
+      existingStmt = await prisma.accountStatement.findFirst({
+        where: { date: dateUTC, bancaId: entityId, ventanaId: null, vendedorId: null },
+      });
+    }
+
+    if (!existingStmt) {
+      logger.info({
+        layer: "service",
+        action: "SYNC_CARRY_FORWARD_NO_STATEMENT",
+        payload: { dateStr, dimension, entityId },
+      });
+      return;
+    }
+
+    // 2. Obtener el accumulatedBalance del día anterior
+    let previousDayAccumulated = 0;
+    const isFirstDayOfMonth = day === 1;
+
+    if (isFirstDayOfMonth) {
+      previousDayAccumulated = Number(await getPreviousMonthFinalBalance(
+        monthStr,
+        dimension,
+        dimension === 'ventana' ? entityId : undefined,
+        dimension === 'vendedor' ? entityId : undefined,
+        dimension === 'banca' ? entityId : undefined
+      )) || 0;
+    } else {
+      const previousCriteria: any = {
+        date: { lt: dateUTC, gte: new Date(Date.UTC(year, month - 1, 1)) },
+      };
+
+      if (dimension === 'vendedor') {
+        previousCriteria.vendedorId = entityId;
+      } else if (dimension === 'ventana') {
+        previousCriteria.ventanaId = entityId;
+        previousCriteria.vendedorId = null;
+      } else if (dimension === 'banca') {
+        previousCriteria.bancaId = entityId;
+        previousCriteria.ventanaId = null;
+        previousCriteria.vendedorId = null;
+      }
+
+      const previousStatement = await prisma.accountStatement.findFirst({
+        where: previousCriteria,
+        orderBy: { date: 'desc' },
+        select: { remainingBalance: true, accumulatedBalance: true },
+      });
+
+      if (previousStatement) {
+        previousDayAccumulated = Number(previousStatement.remainingBalance) || Number(previousStatement.accumulatedBalance) || 0;
+      } else {
+        previousDayAccumulated = Number(await getPreviousMonthFinalBalance(
+          monthStr,
+          dimension,
+          dimension === 'ventana' ? entityId : undefined,
+          dimension === 'vendedor' ? entityId : undefined,
+          dimension === 'banca' ? entityId : undefined
+        )) || 0;
+      }
+    }
+
+    // 3. Para un carry-forward sin actividad: remaining = previous accumulated
+    const newRemaining = parseFloat(previousDayAccumulated.toFixed(2));
+
+    if (Math.abs(existingStmt.remainingBalance - newRemaining) > 0.01) {
+      await prisma.accountStatement.update({
+        where: { id: existingStmt.id },
+        data: {
+          remainingBalance: newRemaining,
+          accumulatedBalance: newRemaining,
+        },
+      });
+
+      logger.info({
+        layer: "service",
+        action: "SYNC_CARRY_FORWARD_UPDATED",
+        payload: {
+          dateStr, dimension, entityId,
+          previousRemaining: existingStmt.remainingBalance,
+          newRemaining,
+          previousDayAccumulated,
+        },
+      });
+    } else {
+      logger.info({
+        layer: "service",
+        action: "SYNC_CARRY_FORWARD_NO_CHANGE",
+        payload: { dateStr, dimension, entityId, remainingBalance: existingStmt.remainingBalance },
+      });
+    }
+  }
+
+  /**
    * Propaga un cambio de saldo a los días posteriores del mismo mes
    * Se debe llamar después de registrar o revertir un pago en un día pasado
-   * 
+   *
    * @param startDate - Fecha del cambio (los cambios se propagan a partir del día SIGUIENTE)
    * @param dimension - Dimensión
    * @param entityId - ID de la entidad
