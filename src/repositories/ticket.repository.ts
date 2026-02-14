@@ -2114,6 +2114,7 @@ export const TicketRepository = {
       dateTo?: Date;
       winnersOnly?: boolean;
       number?: string; //  NUEVO: Búsqueda por número de jugada (1-2 dígitos)
+      winningNumber?: string; // NUEVO: Búsqueda por número ganador específico
       scheduledTime?: string; // NUEVO: Filtro por hora programada (HH:mm)
     } = {}
   ) {
@@ -2229,6 +2230,32 @@ export const TicketRepository = {
                 { reventadoNumber: numberStr },
               ],
               deletedAt: null, // Solo jugadas activas
+            },
+          },
+        },
+      ];
+    }
+
+    //  NUEVO: Búsqueda por número ganador específico
+    // Solo retorna tiquetes donde el número especificado resultó ganador
+    if (filters.winningNumber) {
+      const winNumStr = filters.winningNumber.trim();
+      const existingAnd = where.AND
+        ? Array.isArray(where.AND)
+          ? where.AND
+          : [where.AND]
+        : [];
+
+      where.AND = [
+        ...existingAnd,
+        {
+          jugadas: {
+            some: {
+              OR: [
+                { number: winNumStr, isWinner: true },
+                { reventadoNumber: winNumStr, isWinner: true },
+              ],
+              deletedAt: null,
             },
           },
         },
