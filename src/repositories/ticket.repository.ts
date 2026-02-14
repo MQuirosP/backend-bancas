@@ -436,72 +436,14 @@ export const TicketRepository = {
         // 2) Determinar businessDate CR priorizando sorteo.scheduledAt (fallback por cutoff)
         const bd = getBusinessDateCRInfo({ scheduledAt: sorteo.scheduledAt, nowUtc, cutoffHour });
 
-        // 2.1) Incrementar contador diario por (businessDate, ventanaId) y obtener secuencia
-        // Usar upsert atómico con bloqueo de fila para prevenir race conditions
-        let nextNumber: string = '';
-        let seqForLog: number | null = null;
+        // 2.1) Generar folio atómico via secuencia diaria (generate_ticket_number_v3)
+        let nextNumber: string;
 
         try {
-          //  Incrementar contador atómicamente con reintento automático en caso de colisión
-          // Usar loop de reintento máximo 5 veces para manejar race conditions
-          let seq: number = 0;
-          let attempts = 0;
-          const maxAttempts = 5;
-
-          while (attempts < maxAttempts) {
-            attempts++;
-
-            // Incrementar contador atómicamente (global por businessDate)
-            const seqRows = await tx.$queryRaw<{ last: number }[]>(
-              Prisma.sql`
-                INSERT INTO "TicketCounter" ("businessDate", "last")
-                VALUES (${bd.businessDate}::date, 1)
-                ON CONFLICT ("businessDate")
-                DO UPDATE SET "last" = "TicketCounter"."last" + 1
-                RETURNING "last";
-              `
-            );
-
-            seq = (seqRows?.[0]?.last ?? 1) as number;
-            const seqPadded = String(seq).padStart(5, '0');
-            const candidateNumber = `T${bd.prefixYYMMDD}-${seqPadded}`;
-
-            // Verificar que el ticketNumber no exista (doble validación)
-            const existing = await tx.ticket.findUnique({
-              where: { ticketNumber: candidateNumber },
-              select: { id: true },
-            });
-
-            if (!existing) {
-              //  Número disponible - usar este
-              nextNumber = candidateNumber;
-              seqForLog = seq;
-              break;
-            }
-
-            // Colisión detectada - registrar y reintentar
-            logger.warn({
-              layer: 'repository',
-              action: 'TICKET_NUMBER_COLLISION_RETRY',
-              payload: {
-                ticketNumber: candidateNumber,
-                existingId: existing.id,
-                businessDate: bd.businessDate,
-                ventanaId,
-                sequence: seq,
-                attempt: attempts,
-              },
-            });
-
-            // Si es el último intento, lanzar error
-            if (attempts >= maxAttempts) {
-              throw new AppError(
-                `No se pudo generar número de ticket único después de ${maxAttempts} intentos`,
-                500,
-                'TICKET_NUMBER_COLLISION'
-              );
-            }
-          }
+          const [row] = await tx.$queryRaw<{ ticket_number: string }[]>(
+            Prisma.sql`SELECT generate_ticket_number_v3(${bd.businessDate}::date) AS ticket_number`
+          );
+          nextNumber = row.ticket_number;
 
           logger.info({
             layer: 'repository',
@@ -509,48 +451,19 @@ export const TicketRepository = {
             payload: {
               ticketNumber: nextNumber,
               businessDate: bd.businessDate,
-              sequence: seq,
             },
           });
         } catch (error: any) {
-          // Error al generar número de ticket
-          if (error.code === 'TICKET_NUMBER_COLLISION') {
-            throw error; // Re-lanzar colisiones
-          }
-
-          // Verificar si es error de tabla inexistente
-          if (error.message?.includes('TicketCounter') || error.code === '42P01') {
-            logger.error({
-              layer: 'repository',
-              action: 'TICKET_COUNTER_TABLE_MISSING',
-              payload: {
-                error: error.message,
-                note: 'La tabla TicketCounter no existe. Ejecutar migración 20251103121500',
-              },
-            });
-            throw new AppError(
-              'Sistema de numeración no configurado. Contacte al administrador.',
-              500,
-              'TICKET_COUNTER_MISSING'
-            );
-          }
-
-          // Otro error
           logger.error({
             layer: 'repository',
             action: 'TICKET_NUMBER_GENERATION_ERROR',
-            payload: { error: error.message },
+            payload: { error: error.message, code: error.code },
           });
           throw new AppError(
             'Error al generar número de ticket',
             500,
             'TICKET_NUMBER_ERROR'
           );
-        }
-
-        // Asegurar que nextNumber siempre esté asignado
-        if (!nextNumber) {
-          throw new AppError('Failed to generate ticket number', 500, 'SEQ_ERROR');
         }
 
         // 3) Resolver X efectivo y asegurar fila Base
