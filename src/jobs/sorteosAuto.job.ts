@@ -12,6 +12,7 @@
  * Schedule:
  *   - Auto Open: Diariamente a las 7:00 AM UTC (1:00 AM CR)
  *   - Auto Create: Diariamente a las 7:30 AM UTC (1:30 AM CR)
+ *   - Auto Close: Diariamente a las 4:00 AM UTC (10:00 PM CR)
  *
  * NOTA: Estos jobs verifican la configuración antes de ejecutar.
  * Si autoOpenEnabled/autoCreateEnabled están en false, no ejecutan.
@@ -26,7 +27,8 @@ let openInitialTimer: NodeJS.Timeout | null = null;
 let openRecurringTimer: NodeJS.Timeout | null = null;
 let createInitialTimer: NodeJS.Timeout | null = null;
 let createRecurringTimer: NodeJS.Timeout | null = null;
-let closeTimer: NodeJS.Timeout | null = null;
+let closeInitialTimer: NodeJS.Timeout | null = null;
+let closeRecurringTimer: NodeJS.Timeout | null = null;
 
 /**
  * Calcula milisegundos hasta la próxima hora específica en UTC
@@ -377,44 +379,53 @@ async function executeAutoClose(): Promise<void> {
 }
 
 /**
- * Inicia el job de cierre automático (cada 10 minutos)
+ * Inicia el job de cierre automático (diario a las 10:00 PM hora Costa Rica = 4:00 AM UTC)
  */
 function startAutoCloseJob(): void {
-  // Verificar si ya hay un timer activo
-  if (closeTimer) {
-    logger.warn({
-      layer: 'job',
-      action: 'SORTEOS_AUTO_CLOSE_ALREADY_RUNNING',
-      payload: {
-        message: 'Job de cierre automático ya está ejecutándose, omitiendo inicialización',
-      },
-    });
-    return;
+  // Limpiar timers previos si existen
+  if (closeInitialTimer) {
+    clearTimeout(closeInitialTimer);
+    closeInitialTimer = null;
   }
+  if (closeRecurringTimer) {
+    clearInterval(closeRecurringTimer);
+    closeRecurringTimer = null;
+  }
+
+  const delayMs = getMillisecondsUntilNextRun(4, 0); // 4:00 AM UTC = 10:00 PM CR
+  const nextRun = new Date(Date.now() + delayMs);
 
   logger.info({
     layer: 'job',
     action: 'SORTEOS_AUTO_CLOSE_SCHEDULED',
     payload: {
-      interval: '10 minutes',
-      message: 'Iniciando job de cierre automático',
+      nextRun: nextRun.toISOString(),
+      delayMinutes: Math.round(delayMs / 1000 / 60),
+      schedule: 'Daily at 10:00 PM Costa Rica (4:00 AM UTC)',
     },
   });
 
-  // Ejecutar inmediatamente al iniciar
-  executeAutoClose();
+  // Programar primera ejecución
+  closeInitialTimer = setTimeout(() => {
+    executeAutoClose();
+    closeInitialTimer = null;
 
-  // Programar para repetir cada 10 minutos
-  closeTimer = setInterval(executeAutoClose, 10 * 60 * 1000);
+    // Programar para repetir cada 24 horas
+    closeRecurringTimer = setInterval(executeAutoClose, 24 * 60 * 60 * 1000);
+  }, delayMs);
 }
 
 /**
  * Detiene el job de cierre automático
  */
 function stopAutoCloseJob(): void {
-  if (closeTimer) {
-    clearInterval(closeTimer);
-    closeTimer = null;
+  if (closeInitialTimer) {
+    clearTimeout(closeInitialTimer);
+    closeInitialTimer = null;
+  }
+  if (closeRecurringTimer) {
+    clearInterval(closeRecurringTimer);
+    closeRecurringTimer = null;
   }
 
   logger.info({

@@ -7,6 +7,7 @@ import SorteoService from './sorteo.service';
 import LoteriaService from './loteria.service';
 import { startOfLocalDay, addLocalDays } from '../../../utils/datetime';
 import { withConnectionRetry } from '../../../core/withConnectionRetry';
+import { ActivityService } from '../../../core/activity.service';
 
 /**
  * Obtiene o crea la configuración de automatización (singleton)
@@ -226,27 +227,17 @@ export const SorteosAutoService = {
       },
     });
 
-    // Registrar en cron_execution_logs (si existe la tabla)
-    try {
-      await prisma.$executeRawUnsafe(`
-        INSERT INTO cron_execution_logs (id, job_name, status, executed_at, affected_rows, error_message)
-        VALUES (
-          gen_random_uuid(),
-          'sorteos_auto_open',
-          ${errors.length === 0 ? "'success'" : "'partial'"},
-          NOW(),
-          ${openedCount},
-          ${errors.length > 0 ? `'${errors.length} errores'` : 'NULL'}
-        )
-      `);
-    } catch (err) {
-      // Si la tabla no existe, solo loggear
-      logger.debug({
-        layer: 'service',
-        action: 'SORTEOS_AUTO_OPEN_LOG_SKIPPED',
-        payload: { reason: 'cron_execution_logs table may not exist' },
-      });
-    }
+    // Registrar en ActivityLog
+    await ActivityService.log({
+      action: 'SYSTEM_ACTION',
+      targetType: 'CRON_JOB',
+      targetId: 'sorteos_auto_open',
+      details: {
+        status: errors.length === 0 ? 'success' : 'partial',
+        affectedRows: openedCount,
+        errorsCount: errors.length,
+      },
+    });
 
     const executedAt = new Date();
     
@@ -484,26 +475,18 @@ export const SorteosAutoService = {
       },
     });
 
-    // Registrar en cron_execution_logs (si existe la tabla)
-    try {
-      await prisma.$executeRawUnsafe(`
-        INSERT INTO cron_execution_logs (id, job_name, status, executed_at, affected_rows, error_message)
-        VALUES (
-          gen_random_uuid(),
-          'sorteos_auto_create',
-          ${errors.length === 0 ? "'success'" : "'partial'"},
-          NOW(),
-          ${totalCreated},
-          ${errors.length > 0 ? `'${errors.length} errores'` : 'NULL'}
-        )
-      `);
-    } catch (err) {
-      logger.debug({
-        layer: 'service',
-        action: 'SORTEOS_AUTO_CREATE_LOG_SKIPPED',
-        payload: { reason: 'cron_execution_logs table may not exist' },
-      });
-    }
+    // Registrar en ActivityLog
+    await ActivityService.log({
+      action: 'SYSTEM_ACTION',
+      targetType: 'CRON_JOB',
+      targetId: 'sorteos_auto_create',
+      details: {
+        status: errors.length === 0 ? 'success' : 'partial',
+        affectedRows: totalCreated,
+        skipped: totalSkipped,
+        errorsCount: errors.length,
+      },
+    });
 
     const executedAt = new Date();
     
@@ -712,27 +695,17 @@ export const SorteosAutoService = {
       }
     );
 
-    // Registrar en cron_execution_logs (si existe la tabla)
-    try {
-      await prisma.$executeRawUnsafe(`
-        INSERT INTO cron_execution_logs (id, job_name, status, executed_at, affected_rows, error_message)
-        VALUES (
-          gen_random_uuid(),
-          'sorteos_auto_close',
-          ${errors.length === 0 ? "'success'" : (closedCount > 0 ? "'partial'" : "'error'")},
-          NOW(),
-          ${closedCount},
-          ${errors.length > 0 ? `'${errors.length} errores'` : 'NULL'}
-        )
-      `);
-    } catch (err) {
-      // Si la tabla no existe, solo loggear
-      logger.debug({
-        layer: 'service',
-        action: 'SORTEOS_AUTO_CLOSE_LOG_SKIPPED',
-        payload: { reason: 'cron_execution_logs table may not exist' },
-      });
-    }
+    // Registrar en ActivityLog
+    await ActivityService.log({
+      action: 'SYSTEM_ACTION',
+      targetType: 'CRON_JOB',
+      targetId: 'sorteos_auto_close',
+      details: {
+        status: errors.length === 0 ? 'success' : (closedCount > 0 ? 'partial' : 'error'),
+        affectedRows: closedCount,
+        errorsCount: errors.length,
+      },
+    });
 
     const executedAt = new Date();
 
@@ -759,155 +732,31 @@ export const SorteosAutoService = {
    */
   async getHealthStatus() {
     const config = await getOrCreateConfig();
-    
-    // Intentar obtener logs de cron_execution_logs
-    let openStatus: any = null;
-    let createStatus: any = null;
 
-    try {
-      const openLogs = await prisma.$queryRawUnsafe<Array<{
-        executed_at: Date;
-        status: string;
-        affected_rows: number | null;
-      }>>(`
-        SELECT executed_at, status, affected_rows
-        FROM cron_execution_logs
-        WHERE job_name = 'sorteos_auto_open'
-        ORDER BY executed_at DESC
-        LIMIT 1
-      `);
-
-      if (openLogs && openLogs.length > 0) {
-        const log = openLogs[0];
-        const hoursSince = (Date.now() - new Date(log.executed_at).getTime()) / (1000 * 60 * 60);
-        openStatus = {
-          isHealthy: hoursSince < 25, // Debe ejecutarse diariamente
-          lastExecution: log.executed_at,
-          hoursSinceLastRun: Math.round(hoursSince * 100) / 100,
-          lastExecutionCount: log.affected_rows,
-          status: log.status,
+    function buildStatus(lastExecution: Date | null, lastCount: number | null, healthyThresholdHours: number) {
+      if (!lastExecution) {
+        return {
+          isHealthy: false,
+          lastExecution: null,
+          hoursSinceLastRun: null,
+          lastExecutionCount: null,
+          status: 'never_run' as const,
         };
       }
-    } catch (err) {
-      // Tabla puede no existir
-    }
-
-    try {
-      const createLogs = await prisma.$queryRawUnsafe<Array<{
-        executed_at: Date;
-        status: string;
-        affected_rows: number | null;
-      }>>(`
-        SELECT executed_at, status, affected_rows
-        FROM cron_execution_logs
-        WHERE job_name = 'sorteos_auto_create'
-        ORDER BY executed_at DESC
-        LIMIT 1
-      `);
-
-      if (createLogs && createLogs.length > 0) {
-        const log = createLogs[0];
-        const hoursSince = (Date.now() - new Date(log.executed_at).getTime()) / (1000 * 60 * 60);
-        createStatus = {
-          isHealthy: hoursSince < 25, // Debe ejecutarse diariamente
-          lastExecution: log.executed_at,
-          hoursSinceLastRun: Math.round(hoursSince * 100) / 100,
-          lastExecutionCount: log.affected_rows,
-          status: log.status,
-        };
-      }
-    } catch (err) {
-      // Tabla puede no existir
-    }
-
-    // Si no hay logs, usar configuración
-    if (!openStatus && config.lastOpenExecution) {
-      const hoursSince = (Date.now() - config.lastOpenExecution.getTime()) / (1000 * 60 * 60);
-      openStatus = {
-        isHealthy: hoursSince < 25,
-        lastExecution: config.lastOpenExecution,
+      const hoursSince = (Date.now() - lastExecution.getTime()) / (1000 * 60 * 60);
+      return {
+        isHealthy: hoursSince < healthyThresholdHours,
+        lastExecution,
         hoursSinceLastRun: Math.round(hoursSince * 100) / 100,
-        lastExecutionCount: config.lastOpenCount,
-        status: 'unknown',
-      };
-    }
-
-    if (!createStatus && config.lastCreateExecution) {
-      const hoursSince = (Date.now() - config.lastCreateExecution.getTime()) / (1000 * 60 * 60);
-      createStatus = {
-        isHealthy: hoursSince < 25,
-        lastExecution: config.lastCreateExecution,
-        hoursSinceLastRun: Math.round(hoursSince * 100) / 100,
-        lastExecutionCount: config.lastCreateCount,
-        status: 'unknown',
-      };
-    }
-
-    //  NUEVO: Obtener status de auto-close
-    let closeStatus: any = null;
-
-    try {
-      const closeLogs = await prisma.$queryRawUnsafe<Array<{
-        executed_at: Date;
-        status: string;
-        affected_rows: number | null;
-      }>>(`
-        SELECT executed_at, status, affected_rows
-        FROM cron_execution_logs
-        WHERE job_name = 'sorteos_auto_close'
-        ORDER BY executed_at DESC
-        LIMIT 1
-      `);
-
-      if (closeLogs && closeLogs.length > 0) {
-        const log = closeLogs[0];
-        const hoursSince = (Date.now() - new Date(log.executed_at).getTime()) / (1000 * 60 * 60);
-        closeStatus = {
-          isHealthy: hoursSince < 2, // Debe ejecutarse cada 10 minutos (threshold: 2 horas)
-          lastExecution: log.executed_at,
-          hoursSinceLastRun: Math.round(hoursSince * 100) / 100,
-          lastExecutionCount: log.affected_rows,
-          status: log.status,
-        };
-      }
-    } catch (err) {
-      // Tabla puede no existir
-    }
-
-    // Si no hay logs, usar configuración
-    if (!closeStatus && config.lastCloseExecution) {
-      const hoursSince = (Date.now() - config.lastCloseExecution.getTime()) / (1000 * 60 * 60);
-      closeStatus = {
-        isHealthy: hoursSince < 2,
-        lastExecution: config.lastCloseExecution,
-        hoursSinceLastRun: Math.round(hoursSince * 100) / 100,
-        lastExecutionCount: config.lastCloseCount,
-        status: 'unknown',
+        lastExecutionCount: lastCount,
+        status: 'ok' as const,
       };
     }
 
     return {
-      open: openStatus || {
-        isHealthy: false,
-        lastExecution: null,
-        hoursSinceLastRun: null,
-        lastExecutionCount: null,
-        status: 'never_run',
-      },
-      create: createStatus || {
-        isHealthy: false,
-        lastExecution: null,
-        hoursSinceLastRun: null,
-        lastExecutionCount: null,
-        status: 'never_run',
-      },
-      close: closeStatus || {
-        isHealthy: false,
-        lastExecution: null,
-        hoursSinceLastRun: null,
-        lastExecutionCount: null,
-        status: 'never_run',
-      },
+      open: buildStatus(config.lastOpenExecution, config.lastOpenCount, 25),
+      create: buildStatus(config.lastCreateExecution, config.lastCreateCount, 25),
+      close: buildStatus(config.lastCloseExecution, config.lastCloseCount, 25),
       config: {
         autoOpenEnabled: config.autoOpenEnabled,
         autoCreateEnabled: config.autoCreateEnabled,

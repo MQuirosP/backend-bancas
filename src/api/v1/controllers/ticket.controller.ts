@@ -65,7 +65,7 @@ export const TicketController = {
   },
 
   async list(req: AuthenticatedRequest, res: Response) {
-    const { page = 1, pageSize = 10, scope = "mine", date = "today", fromDate, toDate, number, isActive, winnersOnly, ...rest } = req.query as any;
+    const { page = 1, pageSize = 10, scope = "mine", date = "today", fromDate, toDate, number, isActive, winnersOnly, scheduledTime, ...rest } = req.query as any;
 
     const me = req.user!;
 
@@ -105,6 +105,7 @@ export const TicketController = {
         dateTo: dateRange.toAt
       } : {}),
       ...(number ? { number } : {}),
+      ...(scheduledTime ? { scheduledTime } : {}),
       ...(typeof isActive === 'boolean' ? { isActive } : {}),
       ...(typeof winnersOnly === 'boolean' ? { winnersOnly } : {}),
     };

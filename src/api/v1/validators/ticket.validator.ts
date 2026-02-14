@@ -71,14 +71,16 @@ export const ListTicketsQuerySchema = z
     //  NUEVO: Búsqueda por número de jugada (1-3 dígitos, búsqueda exacta)
     number: z.string().regex(/^\d{1,3}$/, "El número debe ser de 1-3 dígitos (0-999)").optional(),
 
+    // NUEVO: Filtro por hora programada del sorteo (HH:mm)
+    scheduledTime: z.string().regex(/^\d{2}:\d{2}$/, "Formato de hora inválido (HH:mm)").optional(),
+
     // Filtros de fecha (STANDARDIZADO - mismo patrón que Venta/Dashboard)
     // Fechas: date (today|yesterday|week|month|year|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
-  })
-  .strict();
+  });
 
 export const validateListTicketsQuery = validateQuery(ListTicketsQuerySchema);
 
@@ -129,12 +131,12 @@ export const NumbersSummaryQuerySchema = z
     sorteoId: z.uuid().optional(),
     multiplierId: z.uuid().optional(), //  NUEVO: Filtrar por multiplicador específico
     status: z.enum(["ACTIVE", "EVALUATED", "PAID", "CANCELLED"]).optional(), //  NUEVO: Filtrar por estado de ticket
+    scheduledTime: z.string().regex(/^\d{2}:\d{2}$/, "Formato de hora inválido (HH:mm)").optional(), // NUEVO
     //  NUEVO: Paginación para MONAZOS (1000 números)
     page: z.coerce.number().int().min(0).max(9).optional(), // 0-9 para 10 centenas (0=000-099, 1=100-199, ..., 9=900-999)
     pageSize: z.coerce.number().int().min(1).max(1000).optional().default(100), // Tamaño de página (default: 100)
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
-  .strict()
   .transform((val) => {
     // Normalizar 'ventana' a 'listero' para consistencia interna
     if (val.dimension === "ventana") {

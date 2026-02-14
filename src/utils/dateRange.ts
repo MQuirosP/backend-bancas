@@ -247,24 +247,21 @@ export function resolveDateRange(
   }
 
   // Convertir a UTC
-  const fromAt = crDateToUtc(fromDateStr);
+  const [fromYear, fromMonth, fromDay] = fromDateStr.split("-").map(Number);
+  const fromUtc = Date.UTC(fromYear, fromMonth - 1, fromDay, 0, 0, 0, 0);
+  const fromAt = new Date(fromUtc - TZ_OFFSET_HOURS * 60 * 60 * 1000);
 
-  // toAt es el final del día (23:59:59.999 CR) = casi 06:00:00 del día siguiente en UTC
-  // Mejor dicho: 00:00:00 del día siguiente en CR = 06:00:00 del día siguiente en UTC - 1ms
-  const toParsed = new Date(serverNow);
-  const [toYear, toMonth, toDay] = toDateStr.split('-').map(Number);
-  toParsed.setUTCFullYear(toYear, toMonth - 1, toDay);
-  toParsed.setUTCHours(0, 0, 0, 0);
-  // Calcular 06:00:00 UTC del día siguiente (00:00:00 CR del día siguiente)
-  const toAtMidnight = new Date(toParsed.getTime() + 24 * 60 * 60 * 1000 - TZ_OFFSET_HOURS * 60 * 60 * 1000);
-  // Restar 1ms para que sea 23:59:59.999 del día actual en CR
-  const toAt = new Date(toAtMidnight.getTime() - 1);
+  // toAt es el final del día en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
+  const [toYear, toMonth, toDay] = toDateStr.split("-").map(Number);
+  const nextDayMidnightUtc = Date.UTC(toYear, toMonth - 1, toDay, 0, 0, 0, 0) + 24 * 60 * 60 * 1000;
+  const nextDayMidnightInCrAsUtc = nextDayMidnightUtc - TZ_OFFSET_HOURS * 60 * 60 * 1000;
+  const toAt = new Date(nextDayMidnightInCrAsUtc - 1);
 
   return {
     fromAt,
     toAt,
     tz: BUSINESS_TZ,
-    description
+    description,
   };
 }
 
@@ -407,23 +404,21 @@ export function resolveDateRangeAllowFuture(
   }
 
   // Convertir a UTC
-  const fromAt = crDateToUtc(fromDateStr);
+  const [fromYear, fromMonth, fromDay] = fromDateStr.split("-").map(Number);
+  const fromUtc = Date.UTC(fromYear, fromMonth - 1, fromDay, 0, 0, 0, 0);
+  const fromAt = new Date(fromUtc - TZ_OFFSET_HOURS * 60 * 60 * 1000);
 
-  // toAt es el final del día (23:59:59.999 CR)
-  const toParsed = new Date(serverNow);
-  const [toYear, toMonth, toDay] = toDateStr.split('-').map(Number);
-  toParsed.setUTCFullYear(toYear, toMonth - 1, toDay);
-  toParsed.setUTCHours(0, 0, 0, 0);
-  // Calcular 06:00:00 UTC del día siguiente (00:00:00 CR del día siguiente)
-  const toAtMidnight = new Date(toParsed.getTime() + 24 * 60 * 60 * 1000 - TZ_OFFSET_HOURS * 60 * 60 * 1000);
-  // Restar 1ms para que sea 23:59:59.999 del día actual en CR
-  const toAt = new Date(toAtMidnight.getTime() - 1);
+  // toAt es el final del día en CR (23:59:59.999 CR = 05:59:59.999 UTC del día siguiente)
+  const [toYear, toMonth, toDay] = toDateStr.split("-").map(Number);
+  const nextDayMidnightUtc = Date.UTC(toYear, toMonth - 1, toDay, 0, 0, 0, 0) + 24 * 60 * 60 * 1000;
+  const nextDayMidnightInCrAsUtc = nextDayMidnightUtc - TZ_OFFSET_HOURS * 60 * 60 * 1000;
+  const toAt = new Date(nextDayMidnightInCrAsUtc - 1);
 
   return {
     fromAt,
     toAt,
     tz: BUSINESS_TZ,
-    description
+    description,
   };
 }
 
