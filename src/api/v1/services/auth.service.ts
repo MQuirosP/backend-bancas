@@ -9,6 +9,7 @@ import { comparePassword, hashPassword } from '../../../utils/crypto';
 import { logger } from '../../../core/logger';
 import ActivityService from '../../../core/activity.service';
 import { ActivityType } from '@prisma/client';
+import { withConnectionRetry } from '../../../core/withConnectionRetry';
 
 const ACCESS_SECRET = config.jwtAccessSecret;
 const REFRESH_SECRET = config.jwtRefreshSecret;
@@ -245,15 +246,21 @@ export const AuthService = {
       throw new AppError('Invalid refresh token', 401);
     }
 
-    const tokenRecord = await prisma.refreshToken.findUnique({
-      where: { token: decoded.tid },
-    });
+    const tokenRecord = await withConnectionRetry(
+      () => prisma.refreshToken.findUnique({
+        where: { token: decoded.tid },
+      }),
+      { context: 'authRefresh.findToken', maxRetries: 2 }
+    );
 
     if (!tokenRecord || tokenRecord.revoked || tokenRecord.expiresAt < new Date()) {
       throw new AppError('Invalid refresh token', 401);
     }
 
-    const user = await prisma.user.findUnique({ where: { id: tokenRecord.userId } });
+    const user = await withConnectionRetry(
+      () => prisma.user.findUnique({ where: { id: tokenRecord.userId } }),
+      { context: 'authRefresh.findUser', maxRetries: 2 }
+    );
     if (!user) throw new AppError('User not found', 404);
 
     // Verificar si el usuario sigue activo
@@ -270,31 +277,36 @@ export const AuthService = {
       throw new AppError('La cuenta está inactiva.', 403, 'USER_INACTIVE');
     }
 
-    // ROTACIÓN: Revocar token actual
-    await prisma.refreshToken.update({
-      where: { id: tokenRecord.id },
-      data: {
-        revoked: true,
-        revokedAt: new Date(),
-        revokedReason: 'rotation',
-      },
-    });
-
-    // Crear nuevo token (heredando datos del dispositivo)
+    // ROTACIÓN ATÓMICA: Revocar token actual + crear nuevo en una sola transacción
+    // Si la DB falla a mitad de camino, la transacción hace rollback
+    // y el token original sigue válido (el usuario puede reintentar)
     const newRefreshTokenId = uuidv4();
-    await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        token: newRefreshTokenId,
-        expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
-        // Heredar datos del dispositivo del token anterior
-        deviceId: tokenRecord.deviceId,
-        deviceName: tokenRecord.deviceName,
-        userAgent: context?.userAgent ?? tokenRecord.userAgent,
-        ipAddress: context?.ipAddress ?? tokenRecord.ipAddress,
-        lastUsedAt: new Date(),
-      },
-    });
+    await withConnectionRetry(
+      () => prisma.$transaction([
+        prisma.refreshToken.update({
+          where: { id: tokenRecord.id },
+          data: {
+            revoked: true,
+            revokedAt: new Date(),
+            revokedReason: 'rotation',
+          },
+        }),
+        prisma.refreshToken.create({
+          data: {
+            userId: user.id,
+            token: newRefreshTokenId,
+            expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
+            // Heredar datos del dispositivo del token anterior
+            deviceId: tokenRecord.deviceId,
+            deviceName: tokenRecord.deviceName,
+            userAgent: context?.userAgent ?? tokenRecord.userAgent,
+            ipAddress: context?.ipAddress ?? tokenRecord.ipAddress,
+            lastUsedAt: new Date(),
+          },
+        }),
+      ]),
+      { context: 'authRefresh.rotateToken', maxRetries: 2 }
+    );
 
     const accessToken = jwt.sign(
       {

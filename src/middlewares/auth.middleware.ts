@@ -5,6 +5,7 @@ import { AppError } from "../core/errors";
 import { AuthenticatedRequest } from "../core/types";
 import { Role } from "@prisma/client";
 import prisma from "../core/prismaClient";
+import { withConnectionRetry } from "../core/withConnectionRetry";
 
 export const protect = async (
   req: AuthenticatedRequest,
@@ -37,11 +38,14 @@ export const protect = async (
     //  Para VENDEDOR: Verificar si ventanaId en JWT coincide con BD
     // Si no coincide o no está en JWT, obtenerlo de la BD (maneja cambio de ventana sin logout/login)
     if (role === Role.VENDEDOR) {
-      const user = await prisma.user.findUnique({
-        where: { id: decoded.sub },
-        select: { ventanaId: true }
-      });
-      
+      const user = await withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id: decoded.sub },
+          select: { ventanaId: true }
+        }),
+        { context: 'authMiddleware.vendedorVentana', maxRetries: 2 }
+      );
+
       // Si el ventanaId en BD es diferente al del JWT, usar el de BD (más actualizado)
       if (user && user.ventanaId !== ventanaId) {
         ventanaId = user.ventanaId;
