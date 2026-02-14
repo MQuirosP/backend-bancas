@@ -1,11 +1,17 @@
 {
-  "versionName": "2.1.0",
-  "versionCode": 12,
-  "buildNumber": 12,
-  "minSupportedVersion": "2.0.0",
+  "versionName": "1.1.0",
+  "versionCode": 2,
+  "buildNumber": 2,
+  "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Formulario de tiquetes mejorado",
-  "releasedAt": "2026-02-10T23:12:00Z",
-  "apkUrl": "https://backend-bancas-yk1i.onrender.com/api/v1/app/download",
-  "sha256": "d6a4a9af08da7780df5d47f0d65a6b05caffffd50e96bcbbdae7ea3dcfcfdb07"
+  "changelog": "Descripcion breve de los cambios",
+  "releasedAt": "2026-02-14T00:00:00Z",
+  "downloads": {
+    "armeabi-v7a": {
+      "sha256": "00d97ed7942e83dd735d4215b60165180bdd1a7dc06a7f2aa7cb8407b46e9604"
+    },
+    "arm64-v8a": {
+      "sha256": "00d97ed7942e83dd735d4215b60165180bdd1a7dc06a7f2aa7cb8407b46e9604"
+    }
+  }
 }
