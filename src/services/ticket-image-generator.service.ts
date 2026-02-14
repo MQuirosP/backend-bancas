@@ -60,13 +60,12 @@ interface Group {
  * Usa hora local de Costa Rica
  */
 function formatDateForThermal(date: Date): string {
-  const { year, month, day, hour, minute } = getCRLocalComponents(date);
+  const { year, month, day } = getCRLocalComponents(date);
   const dayStr = String(day).padStart(2, '0');
   const monthStr = String(month).padStart(2, '0');
   const yearStr = String(year).slice(-2); // Últimos 2 dígitos del año
-  const hourStr = String(hour).padStart(2, '0');
-  const minuteStr = String(minute).padStart(2, '0');
-  return `${dayStr}/${monthStr}/${yearStr} ${hourStr}:${minuteStr}`;
+  const time12h = formatTime12h(date);
+  return `${dayStr}/${monthStr}/${yearStr} ${time12h}`;
 }
 
 /**
@@ -126,28 +125,40 @@ function groupJugadasByAmount(jugadas: Array<{ type: string; number: string; amo
 /**
  * Envuelve texto largo en múltiples líneas
  */
-function wrapText(text: string, maxWidth: number, ctx: any, fontSize: number): string[] {
-  const words = text.split(' ');
-  const lines: string[] = [];
-  let currentLine = '';
+function wrapText(text: string, maxWidth: number, ctx: any, fontSize: number, fontWeight: string = ''): string[] {
+  ctx.font = `${fontWeight ? fontWeight + ' ' : ''}${fontSize}px monospace`;
 
-  ctx.font = `${fontSize}px monospace`;
+  // Respetar saltos de línea explícitos del usuario (\n o \r\n)
+  const paragraphs = text.split(/\r?\n/);
+  const allLines: string[] = [];
 
-  for (const word of words) {
-    const testLine = currentLine ? `${currentLine} ${word}` : word;
-    const metrics = ctx.measureText(testLine);
-    if (metrics.width > maxWidth && currentLine) {
-      lines.push(currentLine);
-      currentLine = word;
-    } else {
-      currentLine = testLine;
+  for (const paragraph of paragraphs) {
+    const trimmed = paragraph.trim();
+    if (trimmed.length === 0) {
+      allLines.push('');
+      continue;
+    }
+
+    // Word-wrap dentro de cada párrafo
+    const words = trimmed.split(' ');
+    let currentLine = '';
+
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      const metrics = ctx.measureText(testLine);
+      if (metrics.width > maxWidth && currentLine) {
+        allLines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+    if (currentLine) {
+      allLines.push(currentLine);
     }
   }
-  if (currentLine) {
-    lines.push(currentLine);
-  }
 
-  return lines.length > 0 ? lines : [text];
+  return allLines.length > 0 ? allLines : [text];
 }
 
 /**
@@ -213,7 +224,7 @@ export async function generateTicketImage(
   const printName = ticketData.ticket.vendedor.printName ?? ticketData.ticket.vendedor.name ?? 'Nombre Vendedor';
   const code = ticketData.ticket.vendedor.code ? ` - ${ticketData.ticket.vendedor.code}` : '';
   const vendedorText = `VENDEDOR: ${printName}${code}`;
-  const vendedorLines = wrapText(vendedorText, canvasWidth - 2 * padding, ctx, 13 * scale);
+  const vendedorLines = wrapText(vendedorText, canvasWidth - 2 * padding, ctx, 13 * scale, '900');
   for (const line of vendedorLines) {
     ctx.fillText(line, padding, y);
     y += 13 * scale + lineGap;
@@ -225,7 +236,7 @@ export async function generateTicketImage(
 
   const clienteNombre = ticketData.ticket.clienteNombre ?? 'CLIENTE CONTADO';
   const clienteText = `CLIENTE: ${clienteNombre}`;
-  const clienteLines = wrapText(clienteText, canvasWidth - 2 * padding, ctx, 13 * scale);
+  const clienteLines = wrapText(clienteText, canvasWidth - 2 * padding, ctx, 13 * scale, '900');
   for (const line of clienteLines) {
     ctx.fillText(line, padding, y);
     y += 13 * scale + lineGap;
@@ -244,15 +255,10 @@ export async function generateTicketImage(
   y += 13 * scale + lineGap;
 
   //  CRÍTICO: Usar getCRLocalComponents para obtener hora correcta en Costa Rica
-  const horaFormateada24 = ticketData.ticket.sorteo.scheduledAt
-    ? (() => {
-      const { hour, minute } = getCRLocalComponents(ticketData.ticket.sorteo.scheduledAt);
-      const hourStr = String(hour).padStart(2, '0');
-      const minuteStr = String(minute).padStart(2, '0');
-      return `${hourStr}:${minuteStr}`;
-    })()
-    : '--:--';
-  ctx.fillText(`TIEMPOS: ${horaFormateada24} hrs`, padding, y);
+  const horaFormateada12 = ticketData.ticket.sorteo.scheduledAt
+    ? formatTime12h(ticketData.ticket.sorteo.scheduledAt)
+    : '--:-- --';
+  ctx.fillText(`TIEMPOS: ${horaFormateada12}`, padding, y);
   y += 13 * scale + lineGap;
 
   const createdAtFormateado = formatDateForThermal(ticketData.ticket.createdAt);
@@ -355,8 +361,8 @@ export async function generateTicketImage(
   if (footerText && typeof footerText === 'string' && footerText.trim().length > 0) {
     ctx.font = `900 ${11 * scale}px monospace`;
     // Envolver texto largo si es necesario
-    const footerLines = wrapText(footerText.trim(), canvasWidth - 2 * padding, ctx, 11 * scale);
-    const footerLineHeight = 13 * scale; // Aumentar line-height para evitar superposición
+    const footerLines = wrapText(footerText.trim(), canvasWidth - 2 * padding, ctx, 11 * scale, '900');
+    const footerLineHeight = 14 * scale;
     for (const line of footerLines) {
       ctx.fillText(line, canvasWidth / 2, y);
       y += footerLineHeight;
@@ -510,9 +516,9 @@ function calculateTicketHeight(
     const tempCtx = tempCanvas.getContext('2d');
     tempCtx.font = `900 ${11 * scale}px monospace`;
     const maxWidth = canvasWidth - 2 * padding;
-    const footerLines = wrapText(footerText.trim(), maxWidth, tempCtx, 11 * scale);
+    const footerLines = wrapText(footerText.trim(), maxWidth, tempCtx, 11 * scale, '900');
     const footerLinesCount = footerLines.length;
-    const footerLineHeight = 13 * scale; // Mismo line-height que en el renderizado
+    const footerLineHeight = 14 * scale;
     height += footerLineHeight * footerLinesCount;
   }
 
