@@ -582,156 +582,97 @@ export const SorteoService = {
         },
       });
 
-      // 3.2 Buscar ganadores NUMERO y REVENTADO en paralelo
-      const ticketFilter = {
-        sorteoId: id,
-        status: { not: "CANCELLED" as const },
-        isActive: true,
-        deletedAt: null,
-        id: { notIn: Array.from(excludedTicketIds) },
-      };
+      const excludedArray = Array.from(excludedTicketIds);
 
-      const [numeroWinners, reventadoWinners] = await Promise.all([
-        // NUMERO winners
-        tx.jugada.findMany({
-          where: {
-            ticket: ticketFilter,
-            type: "NUMERO",
-            number: winningNumber,
-            isActive: true,
-          },
-          select: {
-            id: true,
-            amount: true,
-            finalMultiplierX: true,
-            ticketId: true,
-          },
-        }),
-        // REVENTADO winners (solo si extraX > 0)
-        extraX > 0
-          ? tx.jugada.findMany({
-              where: {
-                ticket: ticketFilter,
-                type: "REVENTADO",
-                reventadoNumber: winningNumber,
-                isActive: true,
-              },
-              select: { id: true, amount: true, ticketId: true },
-            })
-          : Promise.resolve([]),
-      ]);
+      // 3.2 Marcar ganadores por NUMERO usando SQL raw para evitar cargar miles en memoria
+      await tx.$executeRaw`
+        UPDATE "Jugada" j
+        SET "isWinner" = true,
+            "payout" = j."amount" * j."finalMultiplierX"
+        FROM "Ticket" t
+        WHERE j."ticketId" = t.id 
+        AND t."sorteoId" = ${id}::uuid
+        AND t."status" != 'CANCELLED'
+        AND t."isActive" = true
+        AND t."deletedAt" IS NULL
+        AND j."type" = 'NUMERO'
+        AND j."number" = ${winningNumber}
+        AND j."isActive" = true
+        AND t.id NOT IN (SELECT unnest(${excludedArray}::uuid[]))
+      `;
 
-      // 3.3 Actualizar jugadas ganadoras en paralelo por batches
-      const BATCH_SIZE = 100;
-
-      // Updates de NUMERO
-      for (let i = 0; i < numeroWinners.length; i += BATCH_SIZE) {
-        const batch = numeroWinners.slice(i, i + BATCH_SIZE);
-        await Promise.all(
-          batch.map((j) => {
-            const payout = j.amount * j.finalMultiplierX;
-            return tx.jugada.update({
-              where: { id: j.id },
-              data: { isWinner: true, payout },
-            });
-          })
-        );
+      // 3.3 Marcar ganadores por REVENTADO (si aplica)
+      if (extraX > 0) {
+        await tx.$executeRaw`
+          UPDATE "Jugada" j
+          SET "isWinner" = true,
+              "finalMultiplierX" = ${extraX},
+              "payout" = j."amount" * ${extraX},
+              "multiplierId" = ${extraMultiplierId}::uuid
+          FROM "Ticket" t
+          WHERE j."ticketId" = t.id 
+          AND t."sorteoId" = ${id}::uuid
+          AND t."status" != 'CANCELLED'
+          AND t."isActive" = true
+          AND t."deletedAt" IS NULL
+          AND j."type" = 'REVENTADO'
+          AND j."reventadoNumber" = ${winningNumber}
+          AND j."isActive" = true
+          AND t.id NOT IN (SELECT unnest(${excludedArray}::uuid[]))
+        `;
       }
 
-      // Updates de REVENTADO (solo si hay ganadores)
-      for (let i = 0; i < reventadoWinners.length; i += BATCH_SIZE) {
-        const batch = reventadoWinners.slice(i, i + BATCH_SIZE);
-        await Promise.all(
-          batch.map((j) => {
-            const payout = j.amount * extraX;
-            return tx.jugada.update({
-              where: { id: j.id },
-              data: {
-                isWinner: true,
-                finalMultiplierX: extraX,
-                payout,
-                ...(extraMultiplierId
-                  ? { multiplier: { connect: { id: extraMultiplierId } } }
-                  : {}),
-              },
-            });
-          })
-        );
-      }
-
-      // 3.4 Marcar tickets y calcular totalPayout para ganadores
-      // Calcular payouts en memoria para evitar aggregates individuales
-      const payoutsByTicket = new Map<string, number>();
-      for (const j of numeroWinners) {
-        const payout = j.amount * j.finalMultiplierX;
-        payoutsByTicket.set(j.ticketId, (payoutsByTicket.get(j.ticketId) || 0) + payout);
-      }
-      for (const j of reventadoWinners) {
-        const payout = j.amount * extraX;
-        payoutsByTicket.set(j.ticketId, (payoutsByTicket.get(j.ticketId) || 0) + payout);
-      }
-
-      const winningTicketIds = new Set<string>(payoutsByTicket.keys());
-      const winners = winningTicketIds.size;
-
-      // IMPORTANTE: Solo evaluar tickets activos y no cancelados
-      const tickets = await tx.ticket.findMany({
-        where: {
+      // 3.4 Marcar todos los tickets activos como EVALUATED e isWinner=false (base)
+      await tx.ticket.updateMany({
+        where: { 
           sorteoId: id,
-          status: { not: "CANCELLED" },
+          status: { not: 'CANCELLED' },
           isActive: true,
           deletedAt: null,
-          id: { notIn: Array.from(excludedTicketIds) },
+          id: { notIn: excludedArray }
         },
-        select: { id: true },
+        data: { status: "EVALUATED", isWinner: false },
       });
 
-      // Optimización: Separar tickets ganadores y no ganadores
-      const losingTicketIds = tickets
-        .filter((t) => !winningTicketIds.has(t.id))
-        .map((t) => t.id);
-      const winningTickets = tickets.filter((t) => winningTicketIds.has(t.id));
+      // 3.5 Marcar tickets ganadores y calcular totalPayout en una sola operación SQL
+      await tx.$executeRaw`
+        WITH Payouts AS (
+          SELECT "ticketId", SUM("payout") as total
+          FROM "Jugada"
+          WHERE "ticketId" IN (
+            SELECT id FROM "Ticket" 
+            WHERE "sorteoId" = ${id}::uuid 
+            AND id NOT IN (SELECT unnest(${excludedArray}::uuid[]))
+          )
+          AND "isWinner" = true
+          GROUP BY "ticketId"
+        )
+        UPDATE "Ticket" t
+        SET "isWinner" = true,
+            "totalPayout" = p.total,
+            "remainingAmount" = p.total,
+            "totalPaid" = 0
+        FROM Payouts p
+        WHERE t.id = p."ticketId"
+      `;
 
-      // Actualizar todos los tickets no ganadores en una sola operación
-      if (losingTicketIds.length > 0) {
-        await tx.ticket.updateMany({
-          where: { id: { in: losingTicketIds } },
-          data: { status: "EVALUATED", isWinner: false },
-        });
-      }
-
-      // Actualizar tickets ganadores en paralelo por batches
-      for (let i = 0; i < winningTickets.length; i += BATCH_SIZE) {
-        const batch = winningTickets.slice(i, i + BATCH_SIZE);
-        await Promise.all(
-          batch.map((t) => {
-            const totalPayout = payoutsByTicket.get(t.id) || 0;
-            return tx.ticket.update({
-              where: { id: t.id },
-              data: {
-                status: "EVALUATED",
-                isWinner: true,
-                totalPayout,
-                totalPaid: 0,
-                remainingAmount: totalPayout,
-              },
-            });
-          })
-        );
-      }
+      // 3.6 Obtener conteo de ganadores para auditoría
+      const winnersCount = await tx.ticket.count({
+        where: { sorteoId: id, isWinner: true }
+      });
 
       await tx.sorteo.update({
         where: { id },
         data: {
-          hasWinner: winningTicketIds.size > 0,
+          hasWinner: winnersCount > 0,
         },
       });
 
-      // 3.5 Auditoría
+      // 3.7 Auditoría interna
       const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
       const lotName = (existing as any).loteria?.name || 'Lotería';
       const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
-      const evaluationDesc = `Sorteo ${sorteoDesc} EVALUADO. Número ganador: ${winningNumber}${extraOutcomeCode ? ` (${extraOutcomeCode})` : ''}. Ganadores: ${winners}`;
+      const evaluationDesc = `Sorteo ${sorteoDesc} EVALUADO. Número ganador: ${winningNumber}${extraOutcomeCode ? ` (${extraOutcomeCode})` : ''}. Ganadores: ${winnersCount}`;
 
       await tx.activityLog.create({
         data: {
@@ -744,14 +685,14 @@ export const SorteoService = {
             extraMultiplierId,
             extraMultiplierX: extraX,
             extraOutcomeCode,
-            winners,
+            winners: winnersCount,
             description: evaluationDesc
           },
         },
       });
 
-      return { winners, extraMultiplierX: extraX };
-    }, { timeout: 180000 }); // 3 minutos para sorteos con muchos tickets/jugadas
+      return { winners: winnersCount, extraMultiplierX: extraX };
+    }, { timeout: 180000 }); // 3 minutos para sorteos con muchos tickets/jugadas // 3 minutos para sorteos con muchos tickets/jugadas
 
     // 4) Log adicional
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
@@ -1135,6 +1076,8 @@ export const SorteoService = {
     dateFrom?: Date;
     dateTo?: Date;
     groupBy?: "hour" | "loteria-hour";
+    lastId?: string;
+    lastScheduledAt?: Date;
     //  NUEVO: Información del usuario para filtrado por política de comisiones
     userId?: string;
     role?: Role;
@@ -1161,6 +1104,8 @@ export const SorteoService = {
           isActive: params.isActive,
           dateFrom: params.dateFrom,
           dateTo: params.dateTo,
+          lastId: params.lastId,
+          lastScheduledAt: params.lastScheduledAt,
         });
 
         if (cached) {
@@ -1177,6 +1122,8 @@ export const SorteoService = {
         isActive: params.isActive,
         dateFrom: params.dateFrom,
         dateTo: params.dateTo,
+        lastId: params.lastId,
+        lastScheduledAt: params.lastScheduledAt,
       });
 
       //  Aplicar filtrado por política de comisiones solo para VENDEDOR

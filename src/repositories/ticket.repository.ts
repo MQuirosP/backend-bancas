@@ -1118,6 +1118,7 @@ export const TicketRepository = {
         const createdTicket = await tx.ticket.create({
           data: {
             ticketNumber: nextNumber,
+            businessDate: bd.businessDate,
             loteriaId,
             sorteoId,
             ventanaId,
@@ -1134,7 +1135,6 @@ export const TicketRepository = {
           include: { jugadas: true },
         });
 
-        (createdTicket as any).__businessDateInfo = bd;
         (createdTicket as any).__commissionsDetails = commissionsDetails;
         (createdTicket as any).__jugadasCount = jugadasWithCommissions.length;
         // Guardar detalles de jugadas para el ActivityLog
@@ -1156,22 +1156,6 @@ export const TicketRepository = {
         timeoutMs: 20_000,
       }
     );
-
-    // 9.1) Persistir businessDate fuera de la transacción
-    const bdInfo = (ticket as any).__businessDateInfo as ReturnType<typeof getBusinessDateCRInfo> | undefined;
-    if (bdInfo) {
-      try {
-        await prisma.$executeRaw(
-          Prisma.sql`UPDATE "Ticket" SET "businessDate" = ${bdInfo.businessDate}::date WHERE id = ${ticket.id}::uuid`
-        );
-      } catch (e) {
-        logger.warn({
-          layer: 'repository',
-          action: 'BUSINESS_DATE_NOT_PERSISTED',
-          payload: { ticketId: ticket.id, reason: (e as Error).message, businessDateISO: bdInfo.businessDateISO },
-        });
-      }
-    }
 
     // Logging
     logger.info({
@@ -1961,6 +1945,7 @@ export const TicketRepository = {
         const createdTicket = await tx.ticket.create({
           data: {
             ticketNumber: nextNumber,
+            businessDate: bd.businessDate,
             loteriaId,
             sorteoId,
             ventanaId,
@@ -2045,22 +2030,6 @@ export const TicketRepository = {
       }
     );
 
-    // Persistir businessDate fuera de la transacción
-    const bdInfo = (ticket as any).__businessDateInfo as ReturnType<typeof getBusinessDateCRInfo> | undefined;
-    if (bdInfo) {
-      try {
-        await prisma.$executeRaw(
-          Prisma.sql`UPDATE "Ticket" SET "businessDate" = ${bdInfo.businessDate}::date WHERE id = ${ticket.id}::uuid`
-        );
-      } catch (e) {
-        logger.warn({
-          layer: 'repository',
-          action: 'BUSINESS_DATE_NOT_PERSISTED',
-          payload: { ticketId: ticket.id, reason: (e as Error).message, businessDateISO: bdInfo.businessDateISO },
-        });
-      }
-    }
-
     logger.info({
       layer: "repository",
       action: "TICKET_CREATE_OPTIMIZED_SUCCESS",
@@ -2116,10 +2085,10 @@ export const TicketRepository = {
       number?: string; //  NUEVO: Búsqueda por número de jugada (1-2 dígitos)
       winningNumber?: string; // NUEVO: Búsqueda por número ganador específico
       scheduledTime?: string; // NUEVO: Filtro por hora programada (HH:mm)
+      lastId?: string; // Keyset pagination: ID del último elemento
+      lastCreatedAt?: Date; // Keyset pagination: createdAt del último elemento
     } = {}
   ) {
-    const skip = (page - 1) * pageSize;
-
     const where: Prisma.TicketWhereInput = {
       ...(filters.status ? { status: filters.status } : {}),
       ...(typeof filters.isActive === "boolean" ? { isActive: filters.isActive } : {}),
@@ -2139,13 +2108,28 @@ export const TicketRepository = {
       ...(filters.winnersOnly === true ? { isWinner: true } : {}),
       ...(filters.dateFrom || filters.dateTo
         ? {
-          createdAt: {
+          businessDate: {
             ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
-            ...(filters.dateTo ? { lte: filters.dateTo } : {}), //  inclusivo
+            ...(filters.dateTo ? { lte: filters.dateTo } : {}),
           },
         }
         : {}),
     };
+
+    // Keyset pagination: optimizar skip masivos
+    if (filters.lastId && filters.lastCreatedAt) {
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        {
+          OR: [
+            { createdAt: { lt: filters.lastCreatedAt } },
+            { AND: [{ createdAt: filters.lastCreatedAt }, { id: { lt: filters.lastId } }] }
+          ]
+        }
+      ];
+    }
+
+    const skip = filters.lastId ? undefined : (page - 1) * pageSize;
 
     // NUEVO: Filtro por hora programada del sorteo (scheduledTime: HH:mm)
     if (filters.scheduledTime) {
