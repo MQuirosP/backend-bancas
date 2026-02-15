@@ -371,6 +371,97 @@ export const VentasService = {
     myGain?: number;                    //  NUEVO: Ganancia personal (Comisión Listero - Comisión Vendedor)
   }> {
     try {
+      //  FAST PATH: Usar AccountStatement si es consulta de una ventana con fecha
+      if (filters.ventanaId && filters.dateFrom) {
+        const crDate = toCostaRicaDateString(filters.dateFrom);
+        const statement = await prisma.accountStatement.findFirst({
+          where: {
+            date: new Date(crDate + 'T00:00:00.000Z'),
+            ventanaId: filters.ventanaId,
+            vendedorId: null, // Statement consolidado de ventana
+          },
+          select: {
+            totalSales: true,
+            totalPayouts: true,
+            ticketCount: true,
+            listeroCommission: true,
+            vendedorCommission: true,
+          },
+        });
+
+        if (statement) {
+          const ventasTotal = Number(statement.totalSales);
+          const payoutTotal = Number(statement.totalPayouts);
+          const ticketsCount = statement.ticketCount;
+          const commissionListeroTotal = Number(statement.listeroCommission);
+          const commissionVendedorTotal = Number(statement.vendedorCommission);
+          const commissionTotal = commissionListeroTotal + commissionVendedorTotal;
+          const neto = ventasTotal - payoutTotal;
+          const netoDespuesComision = neto - commissionTotal;
+
+          // Queries ligeras a Ticket (sin JOIN a Jugada) para pagos de premios
+          const ticketWhere: Prisma.TicketWhereInput = {
+            ventanaId: filters.ventanaId,
+            businessDate: { gte: filters.dateFrom, ...(filters.dateTo ? { lte: filters.dateTo } : {}) },
+            deletedAt: null,
+            isActive: true,
+            status: { not: 'CANCELLED' },
+            sorteo: { status: 'EVALUATED', deletedAt: null },
+          };
+          const winnerWhere = { ...ticketWhere, isWinner: true };
+
+          const [paymentStats, paidCount, unpaidCount] = await prisma.$transaction([
+            prisma.ticket.aggregate({
+              where: ticketWhere,
+              _sum: { totalPaid: true, remainingAmount: true },
+            }),
+            prisma.ticket.count({
+              where: {
+                ...winnerWhere,
+                OR: [
+                  { status: 'PAID' },
+                  { remainingAmount: 0, totalPaid: { gt: 0 } },
+                ],
+              },
+            }),
+            prisma.ticket.count({
+              where: { ...winnerWhere, remainingAmount: { gt: 0 }, status: { not: 'PAID' } },
+            }),
+          ]);
+
+          const totalPaid = paymentStats._sum.totalPaid ?? 0;
+          const remainingAmount = paymentStats._sum.remainingAmount ?? 0;
+          const balanceDueToBanca = parseFloat((ventasTotal - payoutTotal - commissionListeroTotal).toFixed(2));
+          const myGain = parseFloat((commissionListeroTotal - commissionVendedorTotal).toFixed(2));
+
+          const result: any = {
+            ventasTotal,
+            ticketsCount,
+            jugadasCount: 0,
+            payoutTotal,
+            neto,
+            commissionTotal,
+            netoDespuesComision,
+            lastTicketAt: null,
+            totalPaid,
+            remainingAmount,
+            paidTicketsCount: paidCount,
+            unpaidTicketsCount: unpaidCount,
+          };
+
+          if (options?.role === 'VENTANA' && options?.scope === 'mine') {
+            result.commissionVendedorTotal = commissionVendedorTotal;
+            result.commissionListeroTotal = commissionListeroTotal;
+            result.gananciaNeta = balanceDueToBanca;
+            result.balanceDueToBanca = balanceDueToBanca;
+            result.myGain = myGain;
+          }
+
+          return result;
+        }
+      }
+
+      // FALLBACK: Cálculo completo (ventanas nuevas sin AccountStatement)
       const baseWhere = buildWhereClause(filters);
       const exclusionWhere = await getExclusionsWhere(filters);
 
