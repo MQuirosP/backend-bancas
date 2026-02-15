@@ -218,6 +218,7 @@ model Ticket {
   createdByUser User?           @relation("TicketCreatedBy", fields: [createdBy], references: [id])
   TicketPayment TicketPayment[] // Mantenido para auditoría
 
+  @@index([businessDate])
   @@index([sorteoId])
   @@index([vendedorId, createdAt])
   @@index([status, isWinner])

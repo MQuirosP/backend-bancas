@@ -348,66 +348,41 @@ const SorteoRepository = {
         },
       });
 
-      const paymentsDeleted = await tx.ticketPayment.deleteMany({
-        where: { ticket: { sorteoId: id } },
-      });
+      // 2️⃣ Eliminar pagos de tickets del sorteo
+      const paymentsDeleted = await tx.$executeRaw`
+        DELETE FROM "TicketPayment"
+        WHERE "ticketId" IN (
+          SELECT id FROM "Ticket" WHERE "sorteoId" = ${id}::uuid
+        )
+      `;
 
-      await tx.jugada.updateMany({
-        where: { ticket: { sorteoId: id } },
-        data: {
-          isWinner: false,
-          payout: 0,
-        },
-      });
+      // 3️⃣ Resetear jugadas (ganadoras y multiplicadores reventado)
+      await tx.$executeRaw`
+        UPDATE "Jugada" j
+        SET "isWinner" = false,
+            "payout" = 0,
+            "finalMultiplierX" = CASE WHEN j."type" = 'REVENTADO' THEN 0 ELSE j."finalMultiplierX" END,
+            "multiplierId" = CASE WHEN j."type" = 'REVENTADO' THEN NULL ELSE j."multiplierId" END
+        FROM "Ticket" t
+        WHERE j."ticketId" = t.id AND t."sorteoId" = ${id}::uuid
+      `;
 
-      await tx.jugada.updateMany({
-        where: {
-          ticket: { sorteoId: id },
-          type: "REVENTADO",
-        },
-        data: {
-          finalMultiplierX: 0,
-          multiplierId: null,
-        },
-      });
-
-      await tx.ticket.updateMany({
-        where: {
-          sorteoId: id,
-          status: TicketStatus.EVALUATED,
-        },
-        data: {
-          status: TicketStatus.ACTIVE,
-          isWinner: false,
-          totalPayout: 0,
-          totalPaid: 0,
-          remainingAmount: 0,
-          lastPaymentAt: null,
-          paidById: null,
-          paymentMethod: null,
-          paymentNotes: null,
-          paymentHistory: Prisma.JsonNull,
-        },
-      });
-
-      await tx.ticket.updateMany({
-        where: {
-          sorteoId: id,
-          status: TicketStatus.PAID,
-        },
-        data: {
-          status: TicketStatus.ACTIVE,
-          isWinner: false,
-          totalPayout: 0,
-          totalPaid: 0,
-          remainingAmount: 0,
-          lastPaymentAt: null,
-          paidById: null,
-          paymentMethod: null,
-          paymentNotes: null,
-          paymentHistory: Prisma.JsonNull,
-        },
-      });
+      // 4️⃣ Resetear tickets (status ACTIVE, isWinner false, montos a 0)
+      await tx.$executeRaw`
+        UPDATE "Ticket"
+        SET "status" = 'ACTIVE',
+            "isWinner" = false,
+            "totalPayout" = 0,
+            "totalPaid" = 0,
+            "remainingAmount" = 0,
+            "lastPaymentAt" = NULL,
+            "paidById" = NULL,
+            "paymentMethod" = NULL,
+            "paymentNotes" = NULL,
+            "paymentHistory" = NULL
+        WHERE "sorteoId" = ${id}::uuid 
+        AND "status" IN ('EVALUATED', 'PAID')
+      `;
 
       const ventanaTargets = new Map<string, { ventanaId: string; date: Date }>();
       const vendedorTargets = new Map<string, { vendedorId: string; date: Date }>();
@@ -429,7 +404,7 @@ const SorteoRepository = {
         }
       }
 
-      const statementIds: Array<{ id: string; balance: number }> = [];
+      const statementIds: string[] = [];
 
       if (ventanaTargets.size > 0) {
         const ventanaStatements = await tx.accountStatement.findMany({
@@ -440,9 +415,9 @@ const SorteoRepository = {
               vendedorId: null,
             })),
           },
-          select: { id: true, balance: true },
+          select: { id: true },
         });
-        statementIds.push(...ventanaStatements);
+        statementIds.push(...ventanaStatements.map(s => s.id));
       }
 
       if (vendedorTargets.size > 0) {
@@ -454,39 +429,29 @@ const SorteoRepository = {
               ventanaId: null,
             })),
           },
-          select: { id: true, balance: true },
+          select: { id: true },
         });
-        statementIds.push(...vendedorStatements);
+        statementIds.push(...vendedorStatements.map(s => s.id));
       }
 
       let accountPaymentsDeleted = 0;
       if (statementIds.length > 0) {
-        const ids = statementIds.map((s) => s.id);
-        const res = await tx.accountPayment.deleteMany({
-          where: {
-            accountStatementId: { in: ids },
-          },
-        });
-        accountPaymentsDeleted = res.count;
+        // Eliminar pagos usando UNNEST para evitar IN masivo
+        const res = await tx.$executeRaw`
+          DELETE FROM "AccountPayment"
+          WHERE "accountStatementId" = ANY(UNNEST(${statementIds}::uuid[]))
+        `;
+        accountPaymentsDeleted = res;
 
-        // Optimización: Ejecutar updates en batches
-        const BATCH_SIZE = 100;
-        for (let i = 0; i < statementIds.length; i += BATCH_SIZE) {
-          const batch = statementIds.slice(i, i + BATCH_SIZE);
-          await Promise.all(
-            batch.map((stmt) =>
-              tx.accountStatement.update({
-                where: { id: stmt.id },
-                data: {
-                  totalPaid: 0,
-                  remainingBalance: stmt.balance,
-                  isSettled: false,
-                  canEdit: true,
-                },
-              })
-            )
-          );
-        }
+        // Resetear statements usando UNNEST
+        await tx.$executeRaw`
+          UPDATE "AccountStatement"
+          SET "totalPaid" = 0,
+              "remainingBalance" = "balance",
+              "isSettled" = false,
+              "canEdit" = true
+          WHERE "id" = ANY(UNNEST(${statementIds}::uuid[]))
+        `;
       }
 
       const updated = await tx.sorteo.update({
@@ -518,7 +483,7 @@ const SorteoRepository = {
         action: "SORTEO_REVERT_EVALUATION_DB",
         payload: {
           sorteoId: id,
-          paymentsDeleted: paymentsDeleted.count,
+          paymentsDeleted,
           accountPaymentsDeleted,
         },
       });
@@ -577,88 +542,95 @@ const SorteoRepository = {
         },
       })
 
-      // 3.2) Ganadores por NUMERO
-      const numeroWinners = await tx.jugada.findMany({
-        where: {
-          ticket: { sorteoId: id },
-          type: 'NUMERO',
-          number: winningNumber,
-          isActive: true,
-        },
-        select: { id: true, amount: true, finalMultiplierX: true, ticketId: true },
-      })
+      // 3.2) Marcar ganadores por NUMERO y REVENTADO en una sola operación por tabla
+      // Primero: NUMERO winners
+      await tx.$executeRaw`
+        UPDATE "Jugada" j
+        SET "isWinner" = true,
+            "payout" = j."amount" * j."finalMultiplierX"
+        FROM "Ticket" t
+        WHERE j."ticketId" = t.id 
+        AND t."sorteoId" = ${id}::uuid
+        AND t."status" != 'CANCELLED'
+        AND t."isActive" = true
+        AND t."deletedAt" IS NULL
+        AND j."type" = 'NUMERO'
+        AND j."number" = ${winningNumber}
+        AND j."isActive" = true
+      `;
 
-      for (const j of numeroWinners) {
-        const fx = typeof j.finalMultiplierX === 'number' && j.finalMultiplierX > 0 ? j.finalMultiplierX : 0
-        const payout = j.amount * fx
-        await tx.jugada.update({
-          where: { id: j.id },
-          data: { isWinner: true, payout },
-        })
-      }
-
-      // 3.3) Ganadores por REVENTADO (solo si hay X > 0)
-      let reventadoWinners: { id: string; amount: number; ticketId: string }[] = []
-
+      // Segundo: REVENTADO winners (si aplica)
       if (extraX != null && extraX > 0) {
-        reventadoWinners = await tx.jugada.findMany({
-          where: {
-            ticket: { sorteoId: id },
-            type: 'REVENTADO',
-            reventadoNumber: winningNumber,
-            isActive: true,
-          },
-          select: { id: true, amount: true, ticketId: true },
-        })
-
-        if (reventadoWinners.length > 0 && !extraMultiplierId) {
+        if (!extraMultiplierId) {
           throw new AppError(
-            'Hay jugadas REVENTADO ganadoras: falta extraMultiplierId para asignar multiplierId',
+            'Falta extraMultiplierId para asignar a jugadas REVENTADO ganadoras',
             400
-          )
+          );
         }
-
-        for (const j of reventadoWinners) {
-          const payout = j.amount * (extraX as number)
-          await tx.jugada.update({
-            where: { id: j.id },
-            data: {
-              isWinner: true,
-              finalMultiplierX: extraX as number, // snapshot del X extra
-              payout,
-              ...(extraMultiplierId ? { multiplier: { connect: { id: extraMultiplierId } } } : {}),
-            },
-          })
-        }
+        await tx.$executeRaw`
+          UPDATE "Jugada" j
+          SET "isWinner" = true,
+              "finalMultiplierX" = ${extraX},
+              "payout" = j."amount" * ${extraX},
+              "multiplierId" = ${extraMultiplierId}::uuid
+          FROM "Ticket" t
+          WHERE j."ticketId" = t.id 
+          AND t."sorteoId" = ${id}::uuid
+          AND t."status" != 'CANCELLED'
+          AND t."isActive" = true
+          AND t."deletedAt" IS NULL
+          AND j."type" = 'REVENTADO'
+          AND j."reventadoNumber" = ${winningNumber}
+          AND j."isActive" = true
+        `;
       }
 
-      // 3.4) Marcar tickets evaluados, inactivos y winners
-      const winningTicketIds = new Set<string>([
-        ...numeroWinners.map((j) => j.ticketId),
-        ...reventadoWinners.map((j) => j.ticketId),
-      ])
-
-      const hasWinner = winningTicketIds.size > 0
-
-      // Primero: todos los tickets del sorteo -> evaluados y no-ganadores
+      // 3.4) Marcar todos los tickets como EVALUATED e isWinner=false (base)
       await tx.ticket.updateMany({
-        where: { sorteoId: id },
+        where: { 
+          sorteoId: id,
+          status: { not: 'CANCELLED' },
+          deletedAt: null
+        },
         data: { status: 'EVALUATED', isWinner: false },
-      })
+      });
 
-      // Luego: solo los ganadores -> isWinner = true
-      if (hasWinner) {
-        await tx.ticket.updateMany({
-          where: { id: { in: Array.from(winningTicketIds) } },
-          data: { isWinner: true },
-        })
-      }
+      // 3.5) Marcar tickets ganadores y calcular totalPayout en una sola operación
+      await tx.$executeRaw`
+        WITH Payouts AS (
+          SELECT "ticketId", SUM("payout") as total
+          FROM "Jugada"
+          WHERE "ticketId" IN (SELECT id FROM "Ticket" WHERE "sorteoId" = ${id}::uuid)
+          AND "isWinner" = true
+          GROUP BY "ticketId"
+        )
+        UPDATE "Ticket" t
+        SET "isWinner" = true,
+            "totalPayout" = p.total,
+            "remainingAmount" = p.total,
+            "totalPaid" = 0
+        FROM Payouts p
+        WHERE t.id = p."ticketId"
+      `;
 
-      // 3.5) Actualizar sorteo con hasWinner
-      await tx.sorteo.update({
+      // 3.6) Actualizar sorteo con hasWinner
+      await tx.$executeRaw`
+        UPDATE "Sorteo"
+        SET "hasWinner" = EXISTS (
+          SELECT 1 FROM "Ticket" 
+          WHERE "sorteoId" = ${id}::uuid AND "isWinner" = true
+        )
+        WHERE id = ${id}::uuid
+      `;
+
+      // 3.7) Obtener datos para el log
+      const winnersCount = await tx.ticket.count({
+        where: { sorteoId: id, isWinner: true }
+      });
+      const sorteoFinal = await tx.sorteo.findUnique({
         where: { id },
-        data: { hasWinner },
-      })
+        select: { hasWinner: true }
+      });
 
       // Log útil
       logger.info({
@@ -669,8 +641,8 @@ const SorteoRepository = {
           winningNumber,
           extraMultiplierId,
           extraMultiplierX: extraX,
-          winners: winningTicketIds.size,
-          hasWinner,
+          winners: winnersCount,
+          hasWinner: sorteoFinal?.hasWinner || false,
         },
       })
     })
@@ -694,8 +666,10 @@ const SorteoRepository = {
     isActive?: boolean;
     dateFrom?: Date;
     dateTo?: Date;
+    lastId?: string;
+    lastScheduledAt?: Date;
   }) {
-    const { loteriaId, page, pageSize, status, search, isActive, dateFrom, dateTo } = params;
+    const { loteriaId, page, pageSize, status, search, isActive, dateFrom, dateTo, lastId, lastScheduledAt } = params;
 
     logger.info({
       layer: "repository",
@@ -776,6 +750,19 @@ const SorteoRepository = {
     if (dateTo) {
       whereConditions.push(Prisma.sql`s."scheduledAt" <= ${dateTo}`);
     }
+
+    // Keyset pagination: scheduledAt DESC, createdAt DESC, id DESC
+    if (lastId) {
+      if (lastScheduledAt) {
+        whereConditions.push(Prisma.sql`(
+          s."scheduledAt" < ${lastScheduledAt} OR 
+          (s."scheduledAt" = ${lastScheduledAt} AND s.id < ${lastId}::uuid)
+        )`);
+      } else {
+        whereConditions.push(Prisma.sql`s.id < ${lastId}::uuid`);
+      }
+    }
+
     if (q) {
       whereConditions.push(Prisma.sql`(
         s."name" ILIKE ${`%${q}%`} OR
@@ -843,8 +830,8 @@ const SorteoRepository = {
       INNER JOIN "Loteria" l ON l.id = s."loteriaId"
       LEFT JOIN "LoteriaMultiplier" em ON em.id = s."extraMultiplierId"
       ${whereSql}
-      ORDER BY s."scheduledAt" DESC, s."createdAt" DESC
-      LIMIT ${pageSize} OFFSET ${skip}
+      ORDER BY s."scheduledAt" DESC, s.id DESC
+      LIMIT ${pageSize} OFFSET ${lastId ? 0 : skip}
     `;
 
     const countQuery = Prisma.sql`
