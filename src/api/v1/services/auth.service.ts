@@ -171,11 +171,22 @@ export const AuthService = {
       }
     }
 
+    // Obtener bancaId desde ventana para incluirlo en JWT (evita query en bancaContext middleware)
+    let bancaId: string | null = null;
+    if (user.ventanaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: user.ventanaId },
+        select: { bancaId: true },
+      });
+      bancaId = ventana?.bancaId ?? null;
+    }
+
     const accessToken = jwt.sign(
       {
         sub: user.id,
         role: user.role,
         ventanaId: user.ventanaId ?? null,
+        bancaId,
       },
       ACCESS_SECRET,
       { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
@@ -308,11 +319,22 @@ export const AuthService = {
       { context: 'authRefresh.rotateToken', maxRetries: 2 }
     );
 
+    // Obtener bancaId desde ventana para incluirlo en JWT
+    let bancaId: string | null = null;
+    if (user.ventanaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: user.ventanaId },
+        select: { bancaId: true },
+      });
+      bancaId = ventana?.bancaId ?? null;
+    }
+
     const accessToken = jwt.sign(
       {
         sub: user.id,
         role: user.role,
         ventanaId: user.ventanaId ?? null,
+        bancaId,
       },
       ACCESS_SECRET,
       { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }

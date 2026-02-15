@@ -213,21 +213,14 @@ export async function getMonthlyRemainingBalance(
         where.bancaId = bancaId;
     }
 
-    // Buscar el último statement hasta AYER (para asegurar datos asentados)
-    // O hasta hoy, pero si es de hoy, verificar que sea confiable.
-    //  CRÍTICO: Para el balance "actual", si hay un statement de HOY, 
-    // podría tener datos "sucios" (tickets ACTIVE) si se generó antes de la corrección.
-    // Además, el balance actual debe ser dinámico.
-    const todayCR = crDateService.dateUTCToCRString(new Date());
-
+    //  OPTIMIZADO: Buscar el statement más reciente del mes (incluyendo hoy)
+    // AccountStatement se mantiene sincronizado por los jobs de settlement/sync
     const lastStatement = await prisma.accountStatement.findFirst({
         where: {
             ...where,
-            // Solo usar statements de días anteriores a hoy para el balance base confiable
-            // O si es de hoy, asegurarnos de que queremos usarlo (generalmente no para balance actual dinámico)
             date: {
                 gte: startDate,
-                lt: new Date(todayCR + 'T00:00:00.000Z'), // Excluir hoy
+                lte: endDate,
             }
         },
         orderBy: [
@@ -240,20 +233,9 @@ export async function getMonthlyRemainingBalance(
         },
     });
 
-    // Si encontramos un statement de un día anterior, lo usamos como base y calculamos hoy por aparte
-    // O si no hay ninguno anterior, calculamos todo el mes (fallback)
-
-    //  NOTA: Para simplificar y corregir el error de inmediato, si es el balance actual, 
-    // vamos a dejar que el fallback (getStatementDirect) haga el trabajo completo del mes hasta hoy,
-    // ya que él sí tiene los filtros de EVALUATED unificados.
-
-    /* 
-    Comentamos el retorno directo para forzar el cálculo preciso con getStatementDirect
-    mientras estemos en el día actual. Esto soluciona el problema de los 900 de inmediato.
-    */
-    // if (lastStatement && lastStatement.remainingBalance !== null && lastStatement.remainingBalance !== undefined) {
-    //     return Number(lastStatement.remainingBalance);
-    // }
+    if (lastStatement && lastStatement.remainingBalance !== null && lastStatement.remainingBalance !== undefined) {
+        return Number(lastStatement.remainingBalance);
+    }
 
     //  FALLBACK: Si no hay AccountStatement, calcular con getStatementDirect (lento pero necesario)
     // Solo se ejecuta si no hay datos en AccountStatement

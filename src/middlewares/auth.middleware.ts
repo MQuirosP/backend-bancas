@@ -6,6 +6,7 @@ import { AuthenticatedRequest } from "../core/types";
 import { Role } from "@prisma/client";
 import prisma from "../core/prismaClient";
 import { withConnectionRetry } from "../core/withConnectionRetry";
+import { CacheService } from "../core/cache.service";
 
 export const protect = async (
   req: AuthenticatedRequest,
@@ -35,26 +36,38 @@ export const protect = async (
     //  Extraer ventanaId del JWT si está presente
     let ventanaId: string | null | undefined = decoded.ventanaId ?? null;
     
-    //  Para VENDEDOR: Verificar si ventanaId en JWT coincide con BD
-    // Si no coincide o no está en JWT, obtenerlo de la BD (maneja cambio de ventana sin logout/login)
+    //  Para VENDEDOR: Verificar si ventanaId en JWT coincide con BD (con cache Redis)
+    // Nota: se cachea como objeto { v: string|null } para evitar doble serialización
+    // (CacheService.set hace JSON.stringify y el cliente Upstash REST también)
     if (role === Role.VENDEDOR) {
-      const user = await withConnectionRetry(
-        () => prisma.user.findUnique({
-          where: { id: decoded.sub },
-          select: { ventanaId: true }
-        }),
-        { context: 'authMiddleware.vendedorVentana', maxRetries: 2 }
-      );
+      const cacheKey = `auth:ventana:${decoded.sub}`;
+      const cached = await CacheService.get<{ v: string | null }>(cacheKey);
 
-      // Si el ventanaId en BD es diferente al del JWT, usar el de BD (más actualizado)
-      if (user && user.ventanaId !== ventanaId) {
-        ventanaId = user.ventanaId;
-        // Log para debugging - el usuario debería hacer logout/login para actualizar el JWT
-        console.warn(`[AUTH] VENDEDOR ${decoded.sub} cambió de ventana. JWT tiene ${decoded.ventanaId}, BD tiene ${user.ventanaId}. Usando BD.`);
+      if (cached !== null) {
+        // Cache hit
+        if (cached.v !== ventanaId) {
+          ventanaId = cached.v;
+        }
+      } else {
+        // Cache miss — consultar BD y cachear 5 min
+        const user = await withConnectionRetry(
+          () => prisma.user.findUnique({
+            where: { id: decoded.sub },
+            select: { ventanaId: true }
+          }),
+          { context: 'authMiddleware.vendedorVentana', maxRetries: 2 }
+        );
+
+        const dbVentanaId = user?.ventanaId ?? null;
+        await CacheService.set(cacheKey, { v: dbVentanaId }, 300);
+
+        if (dbVentanaId !== ventanaId) {
+          ventanaId = dbVentanaId;
+        }
       }
     }
     
-    req.user = { id: decoded.sub, role, ventanaId };
+    req.user = { id: decoded.sub, role, ventanaId, bancaId: decoded.bancaId ?? null };
     next();
   } catch {
     throw new AppError("Invalid token", 401);

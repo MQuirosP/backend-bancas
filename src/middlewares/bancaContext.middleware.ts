@@ -26,9 +26,19 @@ export async function bancaContextMiddleware(
       return next();
     }
 
-    // Para VENTANA/VENDEDOR, usar su banca a través de ventanaId
+    // Para VENTANA/VENDEDOR, usar bancaId del JWT si disponible (evita query a BD)
     if (user.role !== Role.ADMIN) {
-      // Si ventanaId no viene en el token (req.user), buscarlo en BD
+      if (user.bancaId) {
+        // bancaId ya viene en el JWT — sin query
+        req.bancaContext = {
+          bancaId: user.bancaId,
+          userId: user.id,
+          hasAccess: true,
+        };
+        return next();
+      }
+
+      // Fallback: JWT viejo sin bancaId — resolver desde BD
       let ventanaId = user.ventanaId;
 
       if (!ventanaId) {
@@ -38,7 +48,6 @@ export async function bancaContextMiddleware(
         });
         ventanaId = userWithVentana?.ventanaId;
 
-        // Actualizar req.user para futuros middlewares
         if (ventanaId && req.user) {
           req.user.ventanaId = ventanaId;
         }

@@ -7,6 +7,7 @@ import { Role, ActivityType } from '@prisma/client';
 import { normalizePhone } from "../../../utils/phoneNormalizer";
 import ActivityService from '../../../core/activity.service';
 import { parseCommissionPolicy, CommissionRule } from '../../../services/commission.resolver';
+import { CacheService } from '../../../core/cache.service';
 
 /**
  * Deep merge de configuraciones (parcial)
@@ -333,6 +334,11 @@ export const UserService = {
     }
 
     const updated = await UserRepository.update(id, toUpdate);
+
+    // Invalidar cache de auth si cambió ventanaId
+    if (toUpdate.ventanaId !== undefined) {
+      await CacheService.del(`auth:ventana:${id}`);
+    }
 
     // Respuesta coherente (incluye username)
     const result = await prisma.user.findUnique({
