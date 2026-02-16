@@ -901,32 +901,22 @@ export const SorteoService = {
   },
 
   /**
-   *  Helper: Obtener política de comisiones (USER → VENTANA fallback)
+   * Helper: Obtener política de comisiones del VENDEDOR (solo nivel USER).
+   * La política de VENTANA NO se usa como fallback para filtrado de sorteos/multiplicadores.
+   * La política de VENTANA solo se usa para registrar la comisión de la ventana en ticket/jugadas.
    */
   async getCommissionPolicy(userId: string, ventanaId: string | null | undefined): Promise<CommissionPolicy | null> {
-    if (!ventanaId) {
-      return null;
-    }
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { commissionPolicyJson: true },
+    });
 
-    // Obtener políticas en paralelo
-    const [user, ventana] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: userId },
-        select: { commissionPolicyJson: true },
-      }),
-      prisma.ventana.findUnique({
-        where: { id: ventanaId },
-        select: { commissionPolicyJson: true },
-      }),
-    ]);
-
-    // Prioridad: USER → VENTANA
-    const policyJson = user?.commissionPolicyJson ?? ventana?.commissionPolicyJson ?? null;
+    const policyJson = user?.commissionPolicyJson ?? null;
     if (!policyJson) {
       return null;
     }
 
-    return parseCommissionPolicy(policyJson, user?.commissionPolicyJson ? 'USER' : 'VENTANA');
+    return parseCommissionPolicy(policyJson, 'USER');
   },
 
   /**
