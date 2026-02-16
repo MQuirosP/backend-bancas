@@ -1555,8 +1555,8 @@ export const DashboardService = {
     // 🟡 CHECKPOINT: Antes de Promise.all
     monitor.checkpoint('BEFORE_PARALLEL_QUERIES');
 
-    // Medir cada operación individualmente
-    const measured = await Promise.all([
+    // FASE 1: Datos críticos (los que el usuario ve primero)
+    const measuredPhase1 = await Promise.all([
       measureAsync('calculateGanancia', () => this.calculateGanancia(filters, role).then((r) => {
         queryCount += 2;
         return r;
@@ -1573,6 +1573,10 @@ export const DashboardService = {
         queryCount += 1;
         return r;
       })),
+    ]);
+
+    // FASE 2: Datos complementarios (gráficas, comparativas)
+    const measuredPhase2 = await Promise.all([
       measureAsync('getTimeSeries', () => this.getTimeSeries({ ...filters, interval: filters.interval || 'day' }).then((r) => {
         queryCount += 1;
         return r;
@@ -1586,6 +1590,8 @@ export const DashboardService = {
         return r;
       })),
     ]);
+
+    const measured = [...measuredPhase1, ...measuredPhase2];
 
     // Extraer resultados
     const [ganancia, cxc, cxp, summary, timeSeries, exposure, previousPeriod] = measured.map(m => m.result);
