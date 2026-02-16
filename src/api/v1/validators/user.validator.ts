@@ -83,17 +83,17 @@ export const createUserSchema = z
 
 export const updateUserSchema = z
   .object({
-    name: z.string().trim().min(2).max(100).optional(),
+    name: z.string().trim().min(2).max(100).nullable().optional(),
     email: emailOptional,
     phone: phoneOptional,
-    username: z.string().trim().min(3).max(32).optional(),
-    password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').optional(),
-    role: z.enum(['ADMIN', 'VENTANA', 'VENDEDOR']).optional(),
+    username: z.string().trim().min(3).max(32).nullable().optional(),
+    password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').nullable().optional(),
+    role: z.enum(['ADMIN', 'VENTANA', 'VENDEDOR']).nullable().optional(),
     ventanaId: z
       .uuid('ventanaId inválido')
       .nullable()
       .optional(),
-    isActive: z.boolean().optional(),
+    isActive: z.boolean().nullable().optional(),
     code: z.string().trim().min(2).max(32).nullable().optional(),
     settings: UserSettingsSchema.nullable().optional(),
   })
