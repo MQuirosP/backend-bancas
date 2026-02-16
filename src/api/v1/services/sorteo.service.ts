@@ -939,9 +939,10 @@ export const SorteoService = {
     activeMultipliers: Array<{ id: string; valueX: number }>,
     commissionPolicy: CommissionPolicy
   ): Promise<boolean> {
-    // Si la lotería no tiene multiplicadores activos, siempre mostrar
+    // Si la lotería no tiene multiplicadores activos, NO mostrar
+    // (vendedores solo ven sorteos con multiplicador Y esquema de comisiones)
     if (!activeMultipliers || activeMultipliers.length === 0) {
-      return true;
+      return false;
     }
 
     // Verificar si AL MENOS UN multiplicador tiene regla específica
@@ -994,32 +995,21 @@ export const SorteoService = {
     // Obtener política de comisiones
     const commissionPolicy = await this.getCommissionPolicy(userId, ventanaId);
 
-    // Si no hay política, ocultar todos los sorteos con multiplicadores activos
+    // Si no hay política, no mostrar ningún sorteo al vendedor
     if (!commissionPolicy) {
-      const sorteosWithoutMultipliers: Array<{ id: string; loteriaId: string }> = [];
-
-      for (const sorteo of sorteos) {
-        const multipliers = await this.getActiveMultipliers(sorteo.loteriaId);
-        // Solo mostrar si no tiene multiplicadores activos
-        if (multipliers.length === 0) {
-          sorteosWithoutMultipliers.push(sorteo);
-        } else {
-          logger.debug({
-            layer: "service",
-            action: "SORTEO_FILTERED_NO_POLICY",
-            payload: {
-              sorteoId: sorteo.id,
-              loteriaId: sorteo.loteriaId,
-              userId,
-              reason: "NO_COMMISSION_POLICY",
-            },
-          });
-        }
-      }
+      logger.debug({
+        layer: "service",
+        action: "SORTEO_FILTERED_NO_POLICY",
+        payload: {
+          userId,
+          reason: "NO_COMMISSION_POLICY",
+          hiddenCount: sorteos.length,
+        },
+      });
 
       return {
-        filteredSorteos: sorteosWithoutMultipliers,
-        filteredTotal: sorteosWithoutMultipliers.length,
+        filteredSorteos: [],
+        filteredTotal: 0,
       };
     }
 
