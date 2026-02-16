@@ -78,7 +78,7 @@ export const restrictTo = (...roles: Role[]) => {
   return (req: Request, _res: Response, next: NextFunction) => {
     const role = (req as any)?.user?.role as Role | undefined;
     if (!role || !roles.includes(role)) {
-      throw new AppError("Forbidden", 403);
+      throw new AppError("No tienes permisos para acceder a este recurso", 403);
     }
     next();
   };
@@ -97,7 +97,7 @@ export const restrictToAdminOrSelf = (req: Request, _res: Response, next: NextFu
   const isSelf = user.id === userId;
 
   if (!isAdmin && !isSelf) {
-    throw new AppError("Forbidden", 403);
+    throw new AppError("No tienes permisos para modificar este usuario", 403);
   }
 
   next();
@@ -124,7 +124,7 @@ export const restrictToAdminSelfOrVentanaVendor = async (
   }
 
   if (authUser.role !== Role.VENTANA) {
-    throw new AppError("Forbidden", 403);
+    throw new AppError("No tienes permisos para realizar esta acción", 403);
   }
 
   const actor = await prisma.user.findUnique({
@@ -177,7 +177,7 @@ export const restrictToCommissionAdminSelfOrVentanaVendor = async (
   }
 
   if (authUser.role !== Role.VENTANA) {
-    throw new AppError("Forbidden", 403);
+    throw new AppError("No tienes permisos para realizar esta acción", 403);
   }
 
   const actor = await prisma.user.findUnique({
@@ -236,7 +236,7 @@ export const restrictToAdminOrVentanaSelf = async (
 
   // VENTANA solo puede gestionar su propia ventana
   if (authUser.role !== Role.VENTANA) {
-    throw new AppError("Forbidden", 403);
+    throw new AppError("No tienes permisos para acceder a este recurso", 403);
   }
 
   // Obtener la ventana del usuario autenticado
