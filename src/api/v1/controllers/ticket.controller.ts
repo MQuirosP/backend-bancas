@@ -4,7 +4,7 @@ import { TicketService } from "../services/ticket.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { Role } from "@prisma/client";
-import { resolveDateRange } from "../../../utils/dateRange";
+import { resolveDateRange, DateRangeResolution } from "../../../utils/dateRange";
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 
 export const TicketController = {
@@ -86,7 +86,7 @@ export const TicketController = {
     const hasSorteoId = effectiveFilters.sorteoId;
     const hasExplicitDateRange = fromDate || toDate;
 
-    let dateRange: { fromAt: Date; toAt: Date; tz: string; description?: string } | null = null;
+    let dateRange: DateRangeResolution | null = null;
 
     if (hasSorteoId && !hasExplicitDateRange) {
       // NO aplicar filtro de fecha cuando hay sorteoId y no hay fechas explícitas
@@ -102,7 +102,9 @@ export const TicketController = {
       ...effectiveFilters,
       ...(dateRange ? {
         dateFrom: dateRange.fromAt,
-        dateTo: dateRange.toAt
+        dateTo: dateRange.toAt,
+        businessDateFrom: dateRange.fromBusinessDate,
+        businessDateTo: dateRange.toBusinessDate,
       } : {}),
       ...(number ? { number } : {}),
       ...(winningNumber ? { winningNumber } : {}),
@@ -281,7 +283,7 @@ export const TicketController = {
     const hasSorteoId = effectiveFilters.sorteoId;
     const hasExplicitDateRange = fromDate || toDate;
 
-    let dateRange: { fromAt: Date; toAt: Date; tz: string; description?: string } | null = null;
+    let dateRange: DateRangeResolution | null = null;
 
     if (hasSorteoId && !hasExplicitDateRange) {
       // NO aplicar filtro de fecha cuando hay sorteoId y no hay fechas explícitas

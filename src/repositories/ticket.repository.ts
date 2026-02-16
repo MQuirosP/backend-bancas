@@ -2081,6 +2081,8 @@ export const TicketRepository = {
       userId?: string;
       dateFrom?: Date;
       dateTo?: Date;
+      businessDateFrom?: Date;
+      businessDateTo?: Date;
       winnersOnly?: boolean;
       number?: string; //  NUEVO: Búsqueda por número de jugada (1-2 dígitos)
       winningNumber?: string; // NUEVO: Búsqueda por número ganador específico
@@ -2106,11 +2108,11 @@ export const TicketRepository = {
       ...(filters.userId ? { vendedorId: filters.userId } : {}),
       ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
       ...(filters.winnersOnly === true ? { isWinner: true } : {}),
-      ...(filters.dateFrom || filters.dateTo
+      ...(filters.businessDateFrom || filters.businessDateTo
         ? {
           businessDate: {
-            ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
-            ...(filters.dateTo ? { lte: filters.dateTo } : {}),
+            ...(filters.businessDateFrom ? { gte: filters.businessDateFrom } : {}),
+            ...(filters.businessDateTo ? { lte: filters.businessDateTo } : {}),
           },
         }
         : {}),
