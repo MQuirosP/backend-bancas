@@ -514,19 +514,19 @@ export const RestrictionRuleRepository = {
   },
 
   /**
-   * LÓGICA DE CUTOFF CONSOLIDADA
+   * LÓGICA DE CUTOFF CONSOLIDADA (v2 — query única + scoring)
    *
-   * Concepto: Jerarquía de anulación (Override)
-   * Prioridad (el primero que se encuentre gana):
-   * 1. RestrictionRule.USER (Regla específica del vendedor)
-   * 2. RestrictionRule.VENTANA (Regla específica de la ventana)
-   * 3. RestrictionRule.BANCA (Regla específica de la banca)
-   * 4. Banca.salesCutoffMinutes (Ajuste directo en la tabla Banca)
-   * 5. DEFAULT = 1 minuto (Fallback general)
+   * Jerarquía de prioridad (score más alto gana):
+   *   100  RestrictionRule con userId  exacto  → USER
+   *    10  RestrictionRule con ventanaId exacto → VENTANA
+   *     5  RestrictionRule con bancaId directo  → BANCA
+   *     1  RestrictionRule en otra ventana de la misma banca → BANCA (fallback)
+   *   ---  Banca.salesCutoffMinutes (tabla)     → BANCA
+   *   ---  DEFAULT = 1 minuto
    *
-   * Nota: Se abandona el uso de Math.max() para permitir que reglas específicas
-   * puedan reducir el tiempo de cutoff si así se desea, y para que las
-   * restricciones explícitas (ej. 2 min) prevalezcan sobre defaults de tabla (ej. 5 min).
+   * Ventaja vs v1: una restricción creada con ventanaId (sin bancaId)
+   * ahora se resuelve como fallback para TODOS los usuarios de la banca,
+   * no solo para los de esa ventana específica.
    */
   async resolveSalesCutoff(params: {
     bancaId: string;
@@ -546,41 +546,16 @@ export const RestrictionRuleRepository = {
     const hour = at.getHours();
     const dateOnly = new Date(at.getFullYear(), at.getMonth(), at.getDate());
 
-    const whereTime = {
-      AND: [
-        { OR: [{ appliesToDate: null }, { appliesToDate: dateOnly }] },
-        { OR: [{ appliesToHour: null }, { appliesToHour: hour }] },
-      ],
-    };
+    const timeFilters = [
+      { OR: [{ appliesToDate: null }, { appliesToDate: dateOnly }] },
+      { OR: [{ appliesToHour: null }, { appliesToHour: hour }] },
+    ];
 
-    const baseWhere = (extra: any) => ({
-      ...extra,
-      isActive: true,
-      salesCutoffMinutes: { not: null },
-      number: null,
-      ...whereTime,
-    });
-
-    // Buscar TODAS las restricciones en paralelo (RestrictionRule + Banca tabla)
-    const [userRule, ventanaRule, bancaRule, bancaTable] = await Promise.all([
-      userId
-        ? prisma.restrictionRule.findFirst({
-          where: baseWhere({ userId }),
-          orderBy: { updatedAt: "desc" },
-          select: { salesCutoffMinutes: true },
-        })
-        : null,
-      ventanaId
-        ? prisma.restrictionRule.findFirst({
-          where: baseWhere({ ventanaId }),
-          orderBy: { updatedAt: "desc" },
-          select: { salesCutoffMinutes: true },
-        })
-        : null,
-      prisma.restrictionRule.findFirst({
-        where: baseWhere({ bancaId }),
-        orderBy: { updatedAt: "desc" },
-        select: { salesCutoffMinutes: true },
+    // ── Round 1: ventana IDs de la banca + valor de tabla Banca (en paralelo)
+    const [bancaVentanas, bancaTable] = await Promise.all([
+      prisma.ventana.findMany({
+        where: { bancaId },
+        select: { id: true },
       }),
       prisma.banca.findUnique({
         where: { id: bancaId, isActive: true },
@@ -588,20 +563,63 @@ export const RestrictionRuleRepository = {
       }),
     ]);
 
-    // Aplicar Jerarquía (Override Pattern)
+    const allVentanaIds = bancaVentanas.map(v => v.id);
+
+    // ── Round 2: query consolidada de candidatos
+    const orConditions: any[] = [{ bancaId }];
+    if (allVentanaIds.length > 0) {
+      orConditions.push({ ventanaId: { in: allVentanaIds } });
+    }
+    if (userId) orConditions.push({ userId });
+
+    const candidates = await prisma.restrictionRule.findMany({
+      where: {
+        isActive: true,
+        salesCutoffMinutes: { not: null },
+        number: null,
+        OR: orConditions,
+        AND: timeFilters,
+      },
+      select: {
+        salesCutoffMinutes: true,
+        userId: true,
+        ventanaId: true,
+        bancaId: true,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    // ── Scoring por especificidad
+    const scored = candidates
+      .map(r => {
+        if (r.userId) {
+          if (r.userId === userId) return { r, score: 100, source: 'USER' as CutoffSource };
+          return null; // regla de otro usuario, ignorar
+        }
+        if (r.ventanaId) {
+          if (r.ventanaId === ventanaId) return { r, score: 10, source: 'VENTANA' as CutoffSource };
+          // ventana de la misma banca → fallback nivel BANCA
+          return { r, score: 1, source: 'BANCA' as CutoffSource };
+        }
+        if (r.bancaId) {
+          return { r, score: 5, source: 'BANCA' as CutoffSource };
+        }
+        return null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => b.score - a.score);
+
+    // ── Jerarquía: scored rules → bancaTable → default
     let result: EffectiveSalesCutoffDetailed;
 
-    if (userRule?.salesCutoffMinutes != null) {
-      result = { minutes: userRule.salesCutoffMinutes, source: "USER" };
-    } else if (ventanaRule?.salesCutoffMinutes != null) {
-      result = { minutes: ventanaRule.salesCutoffMinutes, source: "VENTANA" };
-    } else if (bancaRule?.salesCutoffMinutes != null) {
-      result = { minutes: bancaRule.salesCutoffMinutes, source: "BANCA" };
+    if (scored.length > 0) {
+      const winner = scored[0];
+      result = { minutes: winner.r.salesCutoffMinutes!, source: winner.source };
     } else if (bancaTable?.salesCutoffMinutes != null) {
-      result = { minutes: bancaTable.salesCutoffMinutes, source: "BANCA" };
+      result = { minutes: bancaTable.salesCutoffMinutes, source: 'BANCA' };
     } else {
       const safeDefault = (typeof defaultCutoff === 'number' && !isNaN(defaultCutoff)) ? defaultCutoff : 1;
-      result = { minutes: Math.max(0, safeDefault), source: "DEFAULT" };
+      result = { minutes: Math.max(0, safeDefault), source: 'DEFAULT' };
     }
 
     logger.info({
@@ -613,14 +631,16 @@ export const RestrictionRuleRepository = {
         userId,
         result,
         hierarchy: {
-          user: userRule?.salesCutoffMinutes,
-          ventana: ventanaRule?.salesCutoffMinutes,
-          bancaRule: bancaRule?.salesCutoffMinutes,
+          rules: scored.map(({ r, score, source }) => ({
+            salesCutoffMinutes: r.salesCutoffMinutes,
+            source,
+            score,
+          })),
           bancaTable: bancaTable?.salesCutoffMinutes,
-          default: defaultCutoff
+          default: defaultCutoff,
         },
-        message: `Resolved cutoff: ${result.minutes} min from ${result.source}`
-      }
+        message: `Resolved cutoff: ${result.minutes} min from ${result.source}`,
+      },
     });
 
     await setCachedCutoff({ bancaId, ventanaId, userId }, result);

@@ -9,7 +9,7 @@ import { isWithinSalesHours, validateTicketAgainstRules } from "../../../utils/l
 import { commissionService } from "../../../services/commission/CommissionService";
 import { CommissionContext } from "../../../services/commission/types/CommissionContext";
 import { getExclusionWhereCondition } from "./sorteo-listas.helpers";
-import { resolveDateRange } from "../../../utils/dateRange";
+import { resolveDateRange, DateRangeResolution } from "../../../utils/dateRange";
 import { UserService } from "./user.service";
 import { nowCR, validateDate, formatDateCRWithTZ } from "../../../utils/datetime";
 import { getCRLocalComponents } from "../../../utils/businessDate";
@@ -1074,7 +1074,7 @@ export const TicketService = {
       const hasSorteoId = !!params.sorteoId;
       const hasExplicitDateRange = !!(params.fromDate || params.toDate);
 
-      let dateRange: { fromAt: Date; toAt: Date } | null = null;
+      let dateRange: DateRangeResolution | null = null;
 
       if (hasSorteoId && !hasExplicitDateRange) {
         // NO aplicar filtro de fecha cuando hay sorteoId y no hay fechas explícitas
@@ -1093,9 +1093,9 @@ export const TicketService = {
         deletedAt: null,
         //  FIX: Solo aplicar filtro de fecha si dateRange no es null
         ...(dateRange ? {
-          createdAt: {
-            gte: dateRange.fromAt,
-            lte: dateRange.toAt,
+          businessDate: {
+            gte: dateRange.fromBusinessDate,
+            lte: dateRange.toBusinessDate,
           },
         } : {}),
         // Excluir tickets CANCELLED por defecto
@@ -1904,8 +1904,8 @@ export const TicketService = {
           params.fromDate,
           params.toDate
         );
-        dateFrom = dateRange.fromAt;
-        dateTo = dateRange.toAt;
+        dateFrom = dateRange.fromBusinessDate;
+        dateTo = dateRange.toBusinessDate;
       }
 
       // Construir where clause para tickets
@@ -1927,9 +1927,9 @@ export const TicketService = {
 
       // Aplicar filtros de fecha
       if (dateFrom || dateTo) {
-        where.createdAt = {};
-        if (dateFrom) where.createdAt.gte = dateFrom;
-        if (dateTo) where.createdAt.lt = dateTo;
+        where.businessDate = {};
+        if (dateFrom) where.businessDate.gte = dateFrom;
+        if (dateTo) where.businessDate.lte = dateTo;
       }
 
       // Aplicar filtro de estado
@@ -2298,8 +2298,8 @@ export const TicketService = {
           params.fromDate,
           params.toDate
         );
-        dateFrom = dateRange.fromAt;
-        dateTo = dateRange.toAt;
+        dateFrom = dateRange.fromBusinessDate;
+        dateTo = dateRange.toBusinessDate;
       }
 
       // Construir where clause para tickets
@@ -2321,9 +2321,9 @@ export const TicketService = {
 
       // Aplicar filtros de fecha
       if (dateFrom || dateTo) {
-        where.createdAt = {};
-        if (dateFrom) where.createdAt.gte = dateFrom;
-        if (dateTo) where.createdAt.lt = dateTo;
+        where.businessDate = {};
+        if (dateFrom) where.businessDate.gte = dateFrom;
+        if (dateTo) where.businessDate.lte = dateTo;
       }
 
       // Aplicar filtros opcionales (para mostrar solo opciones que cumplen estos filtros)

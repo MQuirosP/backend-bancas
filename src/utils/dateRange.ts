@@ -74,6 +74,8 @@ function isValidDateFormat(dateStr: string): boolean {
 export interface DateRangeResolution {
   fromAt: Date;     // UTC instant (inicio del rango, inclusivo)
   toAt: Date;       // UTC instant (fin del rango, exclusivo: inicio del día siguiente)
+  fromBusinessDate: Date; // UTC midnight del primer día (para filtrar por @db.Date)
+  toBusinessDate: Date;   // UTC midnight del último día (para filtrar por @db.Date)
   tz: string;       // 'America/Costa_Rica'
   description: string; // Descripción legible
 }
@@ -257,9 +259,15 @@ export function resolveDateRange(
   const nextDayMidnightInCrAsUtc = nextDayMidnightUtc - TZ_OFFSET_HOURS * 60 * 60 * 1000;
   const toAt = new Date(nextDayMidnightInCrAsUtc - 1);
 
+  // businessDate es @db.Date (midnight UTC sin offset de TZ)
+  const fromBusinessDate = new Date(Date.UTC(fromYear, fromMonth - 1, fromDay));
+  const toBusinessDate = new Date(Date.UTC(toYear, toMonth - 1, toDay));
+
   return {
     fromAt,
     toAt,
+    fromBusinessDate,
+    toBusinessDate,
     tz: BUSINESS_TZ,
     description,
   };
@@ -414,9 +422,14 @@ export function resolveDateRangeAllowFuture(
   const nextDayMidnightInCrAsUtc = nextDayMidnightUtc - TZ_OFFSET_HOURS * 60 * 60 * 1000;
   const toAt = new Date(nextDayMidnightInCrAsUtc - 1);
 
+  const fromBusinessDate = new Date(Date.UTC(fromYear, fromMonth - 1, fromDay));
+  const toBusinessDate = new Date(Date.UTC(toYear, toMonth - 1, toDay));
+
   return {
     fromAt,
     toAt,
+    fromBusinessDate,
+    toBusinessDate,
     tz: BUSINESS_TZ,
     description,
   };
