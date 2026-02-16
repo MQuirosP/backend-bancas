@@ -108,8 +108,21 @@ export async function applyRbacFilters(
   if (context.role === Role.VENDEDOR) {
     // VENDEDOR: siempre solo sus propias ventas
     effective.vendedorId = context.userId;
-    delete effective.ventanaId; // ignorar cualquier ventanaId
+
+    //  NUEVO: Inferir ventanaId para vendedores para ayudar con la indexación en DB
+    let ventanaId = context.ventanaId;
+    if (!ventanaId) {
+      const user = await prisma.user.findUnique({
+        where: { id: context.userId },
+        select: { ventanaId: true }
+      });
+      ventanaId = user?.ventanaId;
+    }
+    if (ventanaId) {
+      effective.ventanaId = ventanaId;
+    }
   } else if (context.role === Role.VENTANA) {
+
     // VENTANA: todas las ventas de su ventana
     // CRITICAL: Si ventanaId no está en JWT, buscar en BD
     let ventanaId = context.ventanaId;

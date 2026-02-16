@@ -21,6 +21,7 @@
  */
 
 import prisma from '../core/prismaClient';
+import { warmupConnection } from '../core/connectionWarmup';
 import { AccountStatementRepository } from '../repositories/accountStatement.repository';
 import logger from '../core/logger';
 import { activeOperationsService } from '../core/activeOperations.service';
@@ -98,6 +99,24 @@ export async function executeSettlement(userId?: string): Promise<{
 
   try {
     activeOperationsService.register(operationId, 'job', 'Account Statement Settlement Job');
+
+    // 🔥 F3.1: Warmup del Pooler (puerto 6543) antes de empezar
+    const isReady = await warmupConnection({ useDirect: false, context: 'settlement' });
+    if (!isReady) {
+      logger.error({
+        layer: 'job',
+        action: 'SETTLEMENT_SKIP',
+        payload: { reason: 'Connection warmup failed' }
+      });
+      return {
+        success: false,
+        settledCount: 0,
+        skippedCount: 0,
+        errorCount: 1,
+        executedAt: new Date(),
+        errors: [{ statementId: 'CONNECTION', error: 'Connection warmup failed' }]
+      };
+    }
   } catch (error) {
     // Si el servidor está cerrando, rechazar la operación
     logger.warn({
@@ -180,20 +199,22 @@ export async function executeSettlement(userId?: string): Promise<{
     const cutoffDateCR = new Date(todayCR);
     cutoffDateCR.setUTCDate(cutoffDateCR.getUTCDate() - config.settlementAgeDays);
 
-    //  DIAGNÓSTICO: Contar estados para entender qué está pasando
-    const totalStatements = await prisma.accountStatement.count();
-    const settledStatementsCount = await prisma.accountStatement.count({
-      where: { isSettled: true }
-    });
-    const notSettledCount = await prisma.accountStatement.count({
-      where: { isSettled: false }
-    });
-    const notSettledOldEnoughCount = await prisma.accountStatement.count({
-      where: {
-        isSettled: false,
-        date: { lt: cutoffDateCR }
-      }
-    });
+    // 📊 DIAGNÓSTICO: Obtener métricas consolidadas en una sola query (F2.1)
+    const diagnosticsResult = await prisma.$queryRaw<any[]>`
+      SELECT 
+        COUNT(*)::int as "totalStatements",
+        COUNT(*) FILTER (WHERE "isSettled" = true)::int as "settledStatementsCount",
+        COUNT(*) FILTER (WHERE "isSettled" = false)::int as "notSettledCount",
+        COUNT(*) FILTER (WHERE "isSettled" = false AND "date" < ${cutoffDateCR})::int as "notSettledOldEnoughCount"
+      FROM "AccountStatement"
+    `;
+
+    const {
+      totalStatements,
+      settledStatementsCount,
+      notSettledCount,
+      notSettledOldEnoughCount
+    } = diagnosticsResult[0];
 
     logger.info({
       layer: 'job',
@@ -212,11 +233,7 @@ export async function executeSettlement(userId?: string): Promise<{
       }
     });
 
-    //  CRÍTICO: Buscar todos los statements antiguos (con o sin actividad)
-    // Criterios actualizados para Universal Settlement:
-    // 1. date < (today - settlementAgeDays días)
-    // 2. isSettled = false
-    // 3. NO requiere actividad (permite cerrar días vacíos del historial)
+    // 🚀 CRÍTICO: Buscar todos los statements antiguos (F2.2: Optimización de memoria - quitar include)
     const statementsToSettle = await prisma.accountStatement.findMany({
       where: {
         isSettled: false,
@@ -224,18 +241,39 @@ export async function executeSettlement(userId?: string): Promise<{
           lt: cutoffDateCR
         }
       },
-      include: {
-        payments: {
-          where: {
-            isReversed: false
-          }
-        }
-      },
       orderBy: {
         date: 'asc' // Procesar desde más antiguo a más reciente
       },
       take: safeBatchSize // ← Usar safeBatchSize validado
     });
+
+    // ⚡ OPTIMIZACIÓN (F2.2): Obtener totales de pagos agrupados por accountStatementId en un solo query
+    const statementIds = statementsToSettle.map(s => s.id);
+    const paymentTotals = statementIds.length > 0 
+      ? await prisma.accountPayment.groupBy({
+          by: ['accountStatementId', 'type'],
+          where: {
+            accountStatementId: { in: statementIds },
+            isReversed: false
+          },
+          _sum: {
+            amount: true
+          }
+        })
+      : [];
+
+    // Mapear totales a un objeto para búsqueda rápida
+    const totalsMap = paymentTotals.reduce((acc, curr) => {
+      if (!acc[curr.accountStatementId]) {
+        acc[curr.accountStatementId] = { totalPaid: 0, totalCollected: 0 };
+      }
+      if (curr.type === 'payment') {
+        acc[curr.accountStatementId].totalPaid = curr._sum.amount || 0;
+      } else if (curr.type === 'collection') {
+        acc[curr.accountStatementId].totalCollected = curr._sum.amount || 0;
+      }
+      return acc;
+    }, {} as Record<string, { totalPaid: number, totalCollected: number }>);
 
     // ✅ ADVERTENCIA: Si llegamos al límite del batch, hay más registros pendientes
     if (statementsToSettle.length === safeBatchSize) {
@@ -256,15 +294,8 @@ export async function executeSettlement(userId?: string): Promise<{
 
     for (const statement of statementsToSettle) {
       try {
-        //  CRÍTICO: Recalcular totalPaid y totalCollected desde movimientos activos
-        // Esto asegura que los totales estén actualizados si hubo cambios en los movimientos
-        const totalPaid = statement.payments
-          .filter(p => p.type === 'payment' && !p.isReversed)
-          .reduce((sum, p) => sum + p.amount, 0);
-        
-        const totalCollected = statement.payments
-          .filter(p => p.type === 'collection' && !p.isReversed)
-          .reduce((sum, p) => sum + p.amount, 0);
+        // ⚡ OPTIMIZACIÓN (F2.2): Usar totales pre-calculados del mapa
+        const { totalPaid = 0, totalCollected = 0 } = totalsMap[statement.id] || {};
 
         //  CORRECCIÓN CRÍTICA: NO recalcular remainingBalance
         // El remainingBalance ya está calculado correctamente cuando se creó/actualizó el statement
@@ -399,241 +430,142 @@ export async function executeSettlement(userId?: string): Promise<{
         })
       ]);
 
-      // Procesar BANCAS (nivel más alto de consolidación)
-      for (const banca of activeBancas) {
-        try {
-          // Verificar si ya existe statement para hoy (banca consolidada: ventanaId=null, vendedorId=null)
-          const existingToday = await prisma.accountStatement.findFirst({
-            where: {
-              date: todayCR,
-              bancaId: banca.id,
-              ventanaId: null,
-              vendedorId: null,
-            }
-          });
+      // 🚀 OPTIMIZACIÓN (F2.3): Arrastre de saldos por Lotes (Batch Carry Forward)
+      // 1. Obtener statements existentes hoy para evitar duplicados
+      const existingToday = await prisma.accountStatement.findMany({
+        where: { date: todayCR },
+        select: { bancaId: true, ventanaId: true, vendedorId: true }
+      });
+      
+      const existingKeySet = new Set(existingToday.map(s => 
+        `${s.bancaId}-${s.ventanaId || 'null'}-${s.vendedorId || 'null'}`
+      ));
 
-          if (existingToday) {
-            carryForwardSkipped++;
-            continue;
-          }
+      // 2. Obtener el último statement para cada entidad usando DISTINCT ON (Optimización Postgres)
+      // --- BANCAS ---
+      const latestBancaStatements = await prisma.$queryRaw<any[]>`
+        SELECT DISTINCT ON ("bancaId") *
+        FROM "AccountStatement"
+        WHERE "ventanaId" IS NULL AND "vendedorId" IS NULL AND "date" < ${todayCR}
+        ORDER BY "bancaId", "date" DESC
+      `;
 
-          // Buscar el statement de banca consolidada más reciente
-          const latestStatement = await prisma.accountStatement.findFirst({
-            where: {
-              bancaId: banca.id,
-              ventanaId: null,
-              vendedorId: null,
-              date: { lt: todayCR }
-            },
-            orderBy: { date: 'desc' }
-          });
+      // --- VENTANAS ---
+      const latestVentanaStatements = await prisma.$queryRaw<any[]>`
+        SELECT DISTINCT ON ("ventanaId") *
+        FROM "AccountStatement"
+        WHERE "ventanaId" IS NOT NULL AND "vendedorId" IS NULL AND "date" < ${todayCR}
+        ORDER BY "ventanaId", "date" DESC
+      `;
 
-          if (!latestStatement || Number(latestStatement.remainingBalance) === 0) {
-            carryForwardSkipped++;
-            continue;
-          }
+      // --- VENDEDORES ---
+      const latestVendedorStatements = await prisma.$queryRaw<any[]>`
+        SELECT DISTINCT ON ("vendedorId") *
+        FROM "AccountStatement"
+        WHERE "vendedorId" IS NOT NULL AND "date" < ${todayCR}
+        ORDER BY "vendedorId", "date" DESC
+      `;
 
-          // Crear statement de arrastre para banca
-          // Nota: El índice unique parcial es account_statements_date_banca_unique
-          // y solo aplica cuando ventanaId IS NULL AND vendedorId IS NULL
-          const effectiveMonth = todayCRStr.substring(0, 7);
+      const toCreate: any[] = [];
+      const effectiveMonth = todayCRStr.substring(0, 7);
 
-          // Usar create con try/catch para manejar conflictos del índice parcial
-          try {
-            await prisma.accountStatement.create({
-              data: {
-                date: todayCR,
-                month: effectiveMonth,
-                bancaId: banca.id,
-                ventanaId: null,
-                vendedorId: null,
-                ticketCount: 0,
-                totalSales: 0,
-                totalPayouts: 0,
-                listeroCommission: 0,
-                vendedorCommission: 0,
-                balance: 0,
-                totalPaid: 0,
-                totalCollected: 0,
-                remainingBalance: Number(latestStatement.remainingBalance),
-                accumulatedBalance: Number(latestStatement.accumulatedBalance || latestStatement.remainingBalance),
-                isSettled: false,
-                canEdit: true,
-              }
-            });
-            carryForwardCreated++;
-          } catch (createError: any) {
-            // Si es error de constraint único, el registro ya existe (race condition)
-            if (createError.code === 'P2002') {
-              carryForwardSkipped++;
-            } else {
-              throw createError;
-            }
-          }
-        } catch (error) {
-          carryForwardErrors.push({
-            entityId: `banca:${banca.id}`,
-            error: (error as Error).message
-          });
-        }
+      const activeBancaIds = new Set(activeBancas.map(b => b.id));
+      const activeVentanaIds = new Set(activeVentanas.map(v => v.id));
+      const activeVendedorIds = new Set(activeVendedores.map(v => v.id));
+
+      // Procesar Bancas
+      for (const ls of latestBancaStatements) {
+        if (!activeBancaIds.has(ls.bancaId)) continue;
+        const key = `${ls.bancaId}-null-null`;
+        if (existingKeySet.has(key)) continue;
+        if (Number(ls.remainingBalance) === 0) continue;
+        
+        toCreate.push({
+          date: todayCR,
+          month: effectiveMonth,
+          bancaId: ls.bancaId,
+          ventanaId: null,
+          vendedorId: null,
+          ticketCount: 0,
+          totalSales: 0,
+          totalPayouts: 0,
+          listeroCommission: 0,
+          vendedorCommission: 0,
+          balance: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+          remainingBalance: Number(ls.remainingBalance),
+          accumulatedBalance: Number(ls.accumulatedBalance || ls.remainingBalance),
+          isSettled: false,
+          canEdit: true
+        });
       }
 
-      // Procesar VENTANAS
-      for (const ventana of activeVentanas) {
-        try {
-          // Verificar si ya existe statement para hoy (ventana consolidada)
-          const existingToday = await prisma.accountStatement.findFirst({
-            where: {
-              date: todayCR,
-              ventanaId: ventana.id,
-              vendedorId: null,
-            }
-          });
-
-          if (existingToday) {
-            carryForwardSkipped++;
-            continue;
-          }
-
-          // Buscar el statement consolidado de ventana más reciente (vendedorId = null)
-          const latestStatement = await prisma.accountStatement.findFirst({
-            where: {
-              ventanaId: ventana.id,
-              vendedorId: null,
-              date: { lt: todayCR }
-            },
-            orderBy: { date: 'desc' }
-          });
-
-          if (!latestStatement) {
-            // No hay statements anteriores para esta ventana consolidada
-            carryForwardSkipped++;
-            continue;
-          }
-
-          if (Number(latestStatement.remainingBalance) === 0) {
-            // Saldo es exactamente 0, no hay nada que arrastrar
-            carryForwardSkipped++;
-            continue;
-          }
-
-          // Crear statement de arrastre con manejo de conflictos
-          const effectiveMonth = todayCRStr.substring(0, 7);
-          try {
-            await prisma.accountStatement.create({
-              data: {
-                date: todayCR,
-                month: effectiveMonth,
-                bancaId: ventana.bancaId,
-                ventanaId: ventana.id,
-                vendedorId: null,
-                ticketCount: 0,
-                totalSales: 0,
-                totalPayouts: 0,
-                listeroCommission: 0,
-                vendedorCommission: 0,
-                balance: 0,
-                totalPaid: 0,
-                totalCollected: 0,
-                remainingBalance: Number(latestStatement.remainingBalance),
-                accumulatedBalance: Number(latestStatement.accumulatedBalance || latestStatement.remainingBalance),
-                isSettled: false,
-                canEdit: true,
-              }
-            });
-            carryForwardCreated++;
-          } catch (createError: any) {
-            // Si es error de constraint único, el registro ya existe (race condition)
-            if (createError.code === 'P2002') {
-              carryForwardSkipped++;
-            } else {
-              throw createError;
-            }
-          }
-        } catch (error) {
-          carryForwardErrors.push({
-            entityId: `ventana:${ventana.id}`,
-            error: (error as Error).message
-          });
-        }
+      // Procesar Ventanas
+      for (const ls of latestVentanaStatements) {
+        if (!activeVentanaIds.has(ls.ventanaId)) continue;
+        const key = `${ls.bancaId}-${ls.ventanaId}-null`;
+        if (existingKeySet.has(key)) continue;
+        if (Number(ls.remainingBalance) === 0) continue;
+        
+        toCreate.push({
+          date: todayCR,
+          month: effectiveMonth,
+          bancaId: ls.bancaId,
+          ventanaId: ls.ventanaId,
+          vendedorId: null,
+          ticketCount: 0,
+          totalSales: 0,
+          totalPayouts: 0,
+          listeroCommission: 0,
+          vendedorCommission: 0,
+          balance: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+          remainingBalance: Number(ls.remainingBalance),
+          accumulatedBalance: Number(ls.accumulatedBalance || ls.remainingBalance),
+          isSettled: false,
+          canEdit: true
+        });
       }
 
-      // Procesar VENDEDORES (con o sin ventana - cada uno tiene su propio saldo)
-      for (const vendedor of activeVendedores) {
-        try {
-          // Buscar statement existente para hoy (usando el constraint único: date + vendedorId)
-          const existingToday = await prisma.accountStatement.findFirst({
-            where: {
-              date: todayCR,
-              vendedorId: vendedor.id,
-            }
-          });
-
-          if (existingToday) {
-            carryForwardSkipped++;
-            continue;
-          }
-
-          const latestStatement = await prisma.accountStatement.findFirst({
-            where: {
-              vendedorId: vendedor.id,
-              date: { lt: todayCR }
-            },
-            orderBy: { date: 'desc' }
-          });
-
-          if (!latestStatement || Number(latestStatement.remainingBalance) === 0) {
-            carryForwardSkipped++;
-            continue;
-          }
-
-          const effectiveMonth = todayCRStr.substring(0, 7);
-          // NOTA: bancaId se infiere del statement anterior, no del vendedor actual
-          // porque el vendedor puede haber cambiado de ventana/banca
-          const bancaId = latestStatement.bancaId;
-
-          // Crear statement de arrastre con manejo de conflictos
-          // CRÍTICO: ventanaId debe ser NULL para statements de vendedor
-          // El modelo de datos usa ventanaId=null para vendedores individuales
-          // y ventanaId!=null solo para statements consolidados de ventana
-          try {
-            await prisma.accountStatement.create({
-              data: {
-                date: todayCR,
-                month: effectiveMonth,
-                bancaId: bancaId || null,
-                ventanaId: null, // CRÍTICO: Siempre null para vendedores
-                vendedorId: vendedor.id,
-                ticketCount: 0,
-                totalSales: 0,
-                totalPayouts: 0,
-                listeroCommission: 0,
-                vendedorCommission: 0,
-                balance: 0,
-                totalPaid: 0,
-                totalCollected: 0,
-                remainingBalance: Number(latestStatement.remainingBalance),
-                accumulatedBalance: Number(latestStatement.accumulatedBalance || latestStatement.remainingBalance),
-                isSettled: false,
-                canEdit: true,
-              }
-            });
-            carryForwardCreated++;
-          } catch (createError: any) {
-            // Si es error de constraint único, el registro ya existe (race condition)
-            if (createError.code === 'P2002') {
-              carryForwardSkipped++;
-            } else {
-              throw createError;
-            }
-          }
-        } catch (error) {
-          carryForwardErrors.push({
-            entityId: `vendedor:${vendedor.id}`,
-            error: (error as Error).message
-          });
-        }
+      // Procesar Vendedores
+      for (const ls of latestVendedorStatements) {
+        if (!activeVendedorIds.has(ls.vendedorId)) continue;
+        const key = `${ls.bancaId}-null-${ls.vendedorId}`;
+        if (existingKeySet.has(key)) continue;
+        if (Number(ls.remainingBalance) === 0) continue;
+        
+        toCreate.push({
+          date: todayCR,
+          month: effectiveMonth,
+          bancaId: ls.bancaId,
+          ventanaId: null,
+          vendedorId: ls.vendedorId,
+          ticketCount: 0,
+          totalSales: 0,
+          totalPayouts: 0,
+          listeroCommission: 0,
+          vendedorCommission: 0,
+          balance: 0,
+          totalPaid: 0,
+          totalCollected: 0,
+          remainingBalance: Number(ls.remainingBalance),
+          accumulatedBalance: Number(ls.accumulatedBalance || ls.remainingBalance),
+          isSettled: false,
+          canEdit: true
+        });
       }
+
+      if (toCreate.length > 0) {
+        const result = await prisma.accountStatement.createMany({
+          data: toCreate,
+          skipDuplicates: true
+        });
+        carryForwardCreated = result.count;
+      }
+
+      carryForwardSkipped = (activeBancas.length + activeVentanas.length + activeVendedores.length) - carryForwardCreated;
 
       logger.info({
         layer: 'job',

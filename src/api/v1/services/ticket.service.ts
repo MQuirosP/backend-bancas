@@ -103,9 +103,16 @@ export const TicketService = {
       let ventanaId: string;
 
       if (requestedVendedorId) {
-        if (actor.role !== Role.ADMIN && actor.role !== Role.VENTANA) {
-          throw new AppError("vendedorId no permitido para este rol", 403);
+        // Permitir que el VENDEDOR mande su propio ID (algunos FE lo hacen para evitar errores de validación)
+        if (actor.role === Role.VENDEDOR && requestedVendedorId !== actor.id) {
+          throw new AppError("No tienes permiso para vender a nombre de otro usuario", 403);
         }
+
+        // Si no es VENDEDOR, validar permisos de impersonación usuales para ADMIN/VENTANA
+        if (actor.role !== Role.VENDEDOR && actor.role !== Role.ADMIN && actor.role !== Role.VENTANA) {
+          throw new AppError("No tienes permisos para realizar esta acción", 403);
+        }
+
         const target = await prisma.user.findUnique({
           where: { id: requestedVendedorId },
           select: { id: true, role: true, ventanaId: true, isActive: true },

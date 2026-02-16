@@ -10,6 +10,7 @@ const JugadaNumeroSchema = z.object({
   amount: z.number().positive(),
   multiplierId: z.uuid().optional(),
   finalMultiplierX: z.number().optional(),
+
   isActive: z.coerce.boolean().optional(),
 });
 
@@ -24,10 +25,12 @@ export const CreateTicketSchema = z
   .object({
     loteriaId: z.uuid("loteriaId inválido"),
     sorteoId: z.uuid("sorteoId inválido"),
-    ventanaId: z.uuid("ventanaId inválido").optional(),
+    ventanaId: z.uuid("ventanaId inválido").optional().nullable(),
     clienteNombre: z.string().trim().min(1).max(100, "clienteNombre debe tener máximo 100 caracteres").nullable().optional(),
     jugadas: z.array(z.union([JugadaNumeroSchema, JugadaReventadoSchema])).min(1),
-  }).merge(z.object({ vendedorId: z.string().uuid("vendedorId inválido").optional() }))
+    vendedorId: z.uuid("vendedorId inválido").optional().nullable(),
+  })
+
   .superRefine((val, ctx) => {
     const numeros = new Set(val.jugadas.filter(j => j.type === "NUMERO").map(j => j.number));
     for (const [i, j] of val.jugadas.entries()) {
