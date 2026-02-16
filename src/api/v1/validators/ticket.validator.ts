@@ -32,10 +32,17 @@ export const CreateTicketSchema = z
   })
 
   .superRefine((val, ctx) => {
-    const numeros = new Set(val.jugadas.filter(j => j.type === "NUMERO").map(j => j.number));
+    // Mapa de montos totales por número para jugadas NUMERO
+    const numeroAmounts = new Map<string, number>();
+    for (const j of val.jugadas) {
+      if (j.type === "NUMERO") {
+        numeroAmounts.set(j.number, (numeroAmounts.get(j.number) ?? 0) + j.amount);
+      }
+    }
+
     for (const [i, j] of val.jugadas.entries()) {
       if (j.type === "REVENTADO") {
-        if (!numeros.has(j.reventadoNumber)) {
+        if (!numeroAmounts.has(j.reventadoNumber)) {
           ctx.addIssue({
             code: "custom",
             path: ["jugadas", i, "reventadoNumber"],
@@ -47,6 +54,14 @@ export const CreateTicketSchema = z
             code: "custom",
             path: ["jugadas", i, "number"],
             message: `En REVENTADO, ${j.number} debe ser igual a reventadoNumber`,
+          });
+        }
+        const numeroAmount = numeroAmounts.get(j.reventadoNumber) ?? 0;
+        if (j.amount > numeroAmount) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["jugadas", i, "amount"],
+            message: `El monto del reventado (${j.amount}) no puede ser mayor al monto apostado al número ${j.reventadoNumber} (${numeroAmount})`,
           });
         }
       }
