@@ -1572,69 +1572,159 @@ gs."hour24" ASC
         },
       };
 
-      // Obtener sorteos (EVALUATED y/o OPEN) ordenados por scheduledAt ASC (más antiguo primero)
-      // para calcular el acumulado correctamente del más antiguo hacia el más reciente
-      const sorteos = await prisma.sorteo.findMany({
-        where: sorteoWhere,
-        include: {
-          loteria: {
-            select: {
-              id: true,
-              name: true,
+      //  C3.4 OPTIMIZACIÓN: Resolver rango mensual una sola vez (se usa en monthlyAccumulated)
+      const monthlyRange = resolveDateRange("month");
+      const monthlyStartDate = monthlyRange.fromAt;
+      const monthlyEndDate = monthlyRange.toAt;
+
+      // Determinar mes efectivo para previousMonthBalance
+      const fromAtComponents = getCRLocalComponents(dateRange.fromAt);
+      const rangeEffectiveMonth = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}`;
+
+      //  C3.4 OPTIMIZACIÓN: Fase 1 — Queries independientes en paralelo
+      // sorteos depende de sorteoWhere, movements y previousMonthBalance no dependen de sorteoIds
+      const [sorteos, movementsByDate, rangePreviousMonthBalance] = await Promise.all([
+        prisma.sorteo.findMany({
+          where: sorteoWhere,
+          include: {
+            loteria: {
+              select: {
+                id: true,
+                name: true,
+              },
             },
           },
-        },
-        orderBy: [
-          { scheduledAt: "asc" }, // ASC para calcular acumulado del más antiguo al más reciente
-          { loteriaId: "asc" }, // Orden secundario por loteriaId para consistencia cuando hay misma hora
-          { id: "asc" }, // Orden terciario por ID para garantizar orden consistente
-        ],
-      });
+          orderBy: [
+            { scheduledAt: "asc" },
+            { loteriaId: "asc" },
+            { id: "asc" },
+          ],
+        }),
+        AccountPaymentRepository.findMovementsByDateRange(
+          dateRange.fromAt,
+          dateRange.toAt,
+          "vendedor",
+          undefined,
+          vendedorId
+        ),
+        getPreviousMonthFinalBalance(
+          rangeEffectiveMonth,
+          "vendedor",
+          undefined,
+          vendedorId,
+          undefined
+        ),
+      ]);
 
-      // Obtener datos financieros agregados por sorteo
       const sorteoIds = sorteos.map((s) => s.id);
 
-      // Obtener todas las jugadas con sus multiplicadores para el desglose
-      // El multiplicador está en Jugada, no en Ticket
-      const jugadas = await prisma.jugada.findMany({
-        where: {
-          ticket: {
+      // Para tickets pagados, siempre mostrar los que tengan status PAID o PAGADO
+      const paidStatusFilter: Prisma.EnumTicketStatusFilter = {
+        in: [TicketStatus.PAID, TicketStatus.PAGADO]
+      };
+
+      //  C3.4 OPTIMIZACIÓN: Fase 2 — Queries que dependen de sorteoIds, en paralelo
+      const [jugadas, financialData, prizesData, winningTicketsData, paidTicketsData] = await Promise.all([
+        // Jugadas con multiplicadores para desglose
+        prisma.jugada.findMany({
+          where: {
+            ticket: {
+              sorteoId: { in: sorteoIds },
+              vendedorId,
+              deletedAt: null,
+              isActive: ticketIsActive,
+            },
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            ticketId: true,
+            ticket: {
+              select: {
+                id: true,
+                sorteoId: true,
+                totalAmount: true,
+                totalCommission: true,
+                totalPayout: true,
+                isWinner: true,
+                status: true,
+              },
+            },
+            multiplierId: true,
+            multiplier: {
+              select: {
+                id: true,
+                name: true,
+                valueX: true,
+              },
+            },
+            amount: true,
+            commissionAmount: true,
+            payout: true,
+            isWinner: true,
+            type: true,
+          },
+        }),
+        // Datos financieros agregados por sorteo
+        prisma.ticket.groupBy({
+          by: ["sorteoId"],
+          where: {
             sorteoId: { in: sorteoIds },
             vendedorId,
             deletedAt: null,
             isActive: ticketIsActive,
           },
-          deletedAt: null,
-        },
-        select: {
-          id: true,
-          ticketId: true,
-          ticket: {
-            select: {
-              id: true,
-              sorteoId: true,
-              totalAmount: true,
-              totalCommission: true,
-              totalPayout: true,
-              isWinner: true,
-              status: true,
-            },
+          _sum: {
+            totalAmount: true,
+            totalCommission: true,
+            totalPayout: true,
           },
-          multiplierId: true,
-          multiplier: {
-            select: {
-              id: true,
-              name: true,
-              valueX: true,
-            },
+          _count: {
+            id: true,
           },
-          amount: true,
-          commissionAmount: true,
-          payout: true,
-          isWinner: true,
-          type: true, //  NUEVO: Tipo de jugada (NUMERO o REVENTADO) para desglose de comisión
-        },
-      });
+        }),
+        // Premios de tickets ganadores
+        prisma.ticket.groupBy({
+          by: ["sorteoId"],
+          where: {
+            sorteoId: { in: sorteoIds },
+            vendedorId,
+            isWinner: true,
+            deletedAt: null,
+            isActive: ticketIsActive,
+          },
+          _sum: {
+            totalPayout: true,
+          },
+        }),
+        // Conteo de tickets ganadores
+        prisma.ticket.groupBy({
+          by: ["sorteoId"],
+          where: {
+            sorteoId: { in: sorteoIds },
+            vendedorId,
+            isWinner: true,
+            deletedAt: null,
+            isActive: ticketIsActive,
+          },
+          _count: {
+            id: true,
+          },
+        }),
+        // Conteo de tickets pagados
+        prisma.ticket.groupBy({
+          by: ["sorteoId"],
+          where: {
+            sorteoId: { in: sorteoIds },
+            vendedorId,
+            status: paidStatusFilter,
+            deletedAt: null,
+          },
+          _count: {
+            id: true,
+          },
+        }),
+      ]);
 
       // Log de depuración
       logger.info({
@@ -1645,73 +1735,6 @@ gs."hour24" ASC
           sorteoIdsCount: sorteoIds.length,
           jugadasFound: jugadas.length,
           message: "Jugadas encontradas para los sorteos",
-        },
-      });
-
-      // Agregar datos financieros por sorteo (todos los tickets)
-      const financialData = await prisma.ticket.groupBy({
-        by: ["sorteoId"],
-        where: {
-          sorteoId: { in: sorteoIds },
-          vendedorId,
-          deletedAt: null,
-          isActive: ticketIsActive,
-        },
-        _sum: {
-          totalAmount: true,
-          totalCommission: true,
-          totalPayout: true,
-        },
-        _count: {
-          id: true,
-        },
-      });
-
-      // Obtener premios ganados solo de tickets ganadores
-      const prizesData = await prisma.ticket.groupBy({
-        by: ["sorteoId"],
-        where: {
-          sorteoId: { in: sorteoIds },
-          vendedorId,
-          isWinner: true,
-          deletedAt: null,
-          isActive: ticketIsActive,
-        },
-        _sum: {
-          totalPayout: true,
-        },
-      });
-
-      // Obtener conteos de tickets ganadores y pagados
-      const winningTicketsData = await prisma.ticket.groupBy({
-        by: ["sorteoId"],
-        where: {
-          sorteoId: { in: sorteoIds },
-          vendedorId,
-          isWinner: true,
-          deletedAt: null,
-          isActive: ticketIsActive,
-        },
-        _count: {
-          id: true,
-        },
-      });
-
-      // Para tickets pagados, siempre mostrar los que tengan status PAID o PAGADO
-      const paidStatusFilter: Prisma.EnumTicketStatusFilter = {
-        in: [TicketStatus.PAID, TicketStatus.PAGADO]
-      };
-
-      const paidTicketsData = await prisma.ticket.groupBy({
-        by: ["sorteoId"],
-        where: {
-          sorteoId: { in: sorteoIds },
-          vendedorId,
-          status: paidStatusFilter,
-          deletedAt: null,
-        },
-        _count: {
-          id: true,
         },
       });
 
@@ -1772,26 +1795,7 @@ gs."hour24" ASC
         ticketsBySorteo.get(sorteoId)!.add(ticketId);
       }
 
-      //  PASO 1: Obtener movimientos de pago/cobro del vendedor ANTES de calcular accumulated
-      const movementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
-        dateRange.fromAt,
-        dateRange.toAt,
-        "vendedor",
-        undefined,
-        vendedorId
-      );
-
-      //  NUEVO: Obtener saldo del mes anterior para agregarlo como movimiento especial
-      // Determinar el mes efectivo del rango de fechas usando componentes CR
-      const fromAtComponents = getCRLocalComponents(dateRange.fromAt);
-      const rangeEffectiveMonth = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}`;
-      const rangePreviousMonthBalance = await getPreviousMonthFinalBalance(
-        rangeEffectiveMonth,
-        "vendedor",
-        undefined,
-        vendedorId,
-        undefined
-      );
+      //  PASO 1: movementsByDate y rangePreviousMonthBalance ya resueltos en Fase 1 (Promise.all)
 
       //  CRÍTICO: Agregar movimiento especial del saldo del mes anterior al primer día del rango
       // Solo si el primer día es el día 1 del mes (inicio del mes)
@@ -2163,20 +2167,21 @@ gs."hour24" ASC
         };
       });
 
-      //  NUEVO: Calcular rango de fechas para monthlyAccumulated (desde inicio del mes hasta hoy)
-      //  CRÍTICO: Usar resolveDateRange para garantizar consistencia con el timezone de CR
-      const monthlyRange = resolveDateRange("month");
-      const monthlyStartDate = monthlyRange.fromAt;
-      const monthlyEndDate = monthlyRange.toAt;
+      //  C3.1 OPTIMIZACIÓN: monthlyRange ya resuelto en Fase 1
 
-      //  NUEVO: Obtener movimientos del mes completo para monthlyAccumulated
-      const monthlyMovementsByDate = await AccountPaymentRepository.findMovementsByDateRange(
-        monthlyStartDate,
-        monthlyEndDate,
-        "vendedor",
-        undefined,
-        vendedorId
-      );
+      //  C3.1 OPTIMIZACIÓN: Detectar si podemos reusar resultados del rango principal
+      // Cuando date=month sin filtro de lotería, las queries mensuales son idénticas a las principales
+      const isMonthRange = (params.date === 'month') && !params.fromDate && !params.toDate;
+      const canReuseMonthlyMovements = isMonthRange; // movements no dependen de loteriaId
+      const monthlyMovementsByDate = canReuseMonthlyMovements
+        ? movementsByDate
+        : await AccountPaymentRepository.findMovementsByDateRange(
+            monthlyStartDate,
+            monthlyEndDate,
+            "vendedor",
+            undefined,
+            vendedorId
+          );
 
       //  ACTUALIZADO: Agrupar todos los eventos (sorteos + movimientos) por día
       //  CRÍTICO: Usar dataWithAccumulated (no allEvents) para que tengan el accumulated calculado
@@ -2323,142 +2328,156 @@ gs."hour24" ASC
         totalSubtotal: daysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0), //  DEPRECATED: igual a totalRemainingBalance
       };
 
-      //  NUEVO: Calcular monthlyAccumulated (acumulado del mes completo hasta hoy)
-      // Obtener todos los sorteos evaluados del mes completo
-      //  CRÍTICO: NO filtrar por loteriaId - el acumulado mensual debe incluir TODOS los sorteos del vendedor
-      // independientemente de los filtros aplicados al reporte actual
-      const monthlySorteoWhere: Prisma.SorteoWhereInput = {
-        status: SorteoStatus.EVALUATED, //  FIX: Usar solo EVALUATED para consistencia con accounts.service
-        scheduledAt: {
-          gte: monthlyStartDate,
-          lte: monthlyEndDate,
-        },
-        //  FIX: NO aplicar filtro de loteriaId - monthlyAccumulated debe reflejar el total real del mes
-        tickets: {
-          some: {
-            vendedorId,
-            deletedAt: null,
-            isActive: true, //  FIX: Siempre usar true para consistencia con accounts.service
-          },
-        },
-      };
+      //  C3.1 OPTIMIZACIÓN: Calcular monthlyAccumulated
+      // Cuando date=month sin filtro de lotería ni isActive=false, los datos son idénticos
+      // al rango principal → reusar directamente y ahorrar ~4 queries + 1 findMany
+      const canSkipMonthlyQueries = isMonthRange && !params.loteriaId && ticketIsActive;
 
-      const monthlySorteos = await prisma.sorteo.findMany({
-        where: monthlySorteoWhere,
-        select: {
-          id: true,
-        },
-      });
-
-      const monthlySorteoIds = monthlySorteos.map((s) => s.id);
-
-      // Obtener datos financieros del mes completo
-      const monthlyFinancialData = await prisma.ticket.groupBy({
-        by: ["sorteoId"],
-        where: {
-          sorteoId: { in: monthlySorteoIds },
-          vendedorId,
-          deletedAt: null,
-          isActive: true, //  FIX: Usar true para consistencia con monthlySorteoWhere
-        },
-        _sum: {
-          totalAmount: true,
-          totalCommission: true,
-          totalPayout: true,
-        },
-        _count: {
-          id: true,
-        },
-      });
-
-      const monthlyPrizesData = await prisma.ticket.groupBy({
-        by: ["sorteoId"],
-        where: {
-          sorteoId: { in: monthlySorteoIds },
-          vendedorId,
-          isWinner: true,
-          deletedAt: null,
-          isActive: true, //  FIX: Usar true para consistencia con monthlySorteoWhere
-        },
-        _sum: {
-          totalPayout: true,
-        },
-      });
-
-      // Calcular totales del mes completo
-      const monthlyTotalSales = monthlyFinancialData.reduce((sum, f) => sum + (f._sum.totalAmount || 0), 0);
-      const monthlyTotalCommission = monthlyFinancialData.reduce((sum, f) => sum + (f._sum.totalCommission || 0), 0);
-      const monthlyTotalPrizes = monthlyPrizesData.reduce((sum, p) => sum + (p._sum.totalPayout || 0), 0);
-      const monthlyTotalTickets = monthlyFinancialData.reduce((sum, f) => sum + f._count.id, 0);
-
-      //  NUEVO: Calcular totalPaid y totalCollected del mes completo desde movimientos
-      let monthlyTotalPaid = 0;
-      let monthlyTotalCollected = 0;
-      for (const movements of monthlyMovementsByDate.values()) {
-        monthlyTotalPaid += movements
-          .filter((m: any) => m.type === "payment" && !m.isReversed)
-          .reduce((sum: number, m: any) => sum + m.amount, 0);
-        monthlyTotalCollected += movements
-          .filter((m: any) => m.type === "collection" && !m.isReversed)
-          .reduce((sum: number, m: any) => sum + m.amount, 0);
-      }
-
-      //  NUEVO: Calcular comisiones por tipo del mes completo
-      const monthlyJugadas = await prisma.jugada.findMany({
-        where: {
-          ticket: {
-            sorteoId: { in: monthlySorteoIds },
-            vendedorId,
-            deletedAt: null,
-            isActive: true, //  FIX: Usar true para consistencia con monthlySorteoWhere
-          },
-          deletedAt: null,
-        },
-        select: {
-          commissionAmount: true,
-          type: true,
-        },
-      });
-
-      const monthlyCommissionByNumber = monthlyJugadas
-        .filter((j) => j.type === "NUMERO")
-        .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
-      const monthlyCommissionByReventado = monthlyJugadas
-        .filter((j) => j.type === "REVENTADO")
-        .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
-
-      // Calcular balance y remainingBalance del mes completo
-      const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPrizes - monthlyTotalCommission;
-      const monthlyTotalRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
-
-      //  NUEVO: Obtener saldo final del mes anterior para este vendedor
-      //  CRÍTICO: Obtener el mes efectivo desde los componentes de monthlyStartDate
+      //  CRÍTICO: previousMonthBalance se necesita siempre para monthlyAccumulated
+      // Cuando date=month, rangeEffectiveMonth === effectiveMonth, así que reusamos rangePreviousMonthBalance
       const monthlyStartComponents = getCRLocalComponents(monthlyStartDate);
       const effectiveMonth = `${monthlyStartComponents.year}-${String(monthlyStartComponents.month).padStart(2, '0')}`;
-      const previousMonthBalance = await getPreviousMonthFinalBalance(
-        effectiveMonth,
-        "vendedor",
-        undefined,
-        vendedorId,
-        undefined
-      );
-
-      // Sumar saldo del mes anterior al acumulado del mes actual
-      //  CRÍTICO: Usar Number() para garantizar sumas numéricas (evitar concatenación de strings)
+      const previousMonthBalance = isMonthRange
+        ? rangePreviousMonthBalance  // Mismo mes → reusar
+        : await getPreviousMonthFinalBalance(effectiveMonth, "vendedor", undefined, vendedorId, undefined);
       const numericPreviousMonthBalance = Number(previousMonthBalance) || 0;
-      const monthlyAccumulated = {
-        totalSales: monthlyTotalSales,
-        totalCommission: monthlyTotalCommission,
-        commissionByNumber: monthlyCommissionByNumber,
-        commissionByReventado: monthlyCommissionByReventado,
-        totalPrizes: monthlyTotalPrizes,
-        totalTickets: monthlyTotalTickets,
-        totalPaid: monthlyTotalPaid,
-        totalCollected: monthlyTotalCollected,
-        totalBalance: numericPreviousMonthBalance + monthlyTotalBalance,
-        totalRemainingBalance: numericPreviousMonthBalance + monthlyTotalRemainingBalance,
-        totalSubtotal: numericPreviousMonthBalance + monthlyTotalRemainingBalance, //  DEPRECATED: igual a totalRemainingBalance
-      };
+
+      let monthlyAccumulated;
+
+      if (canSkipMonthlyQueries) {
+        //  C3.1: date=month sin filtros → reusar totals del rango principal (ahorra 4+ queries)
+        // Calcular totalPaid y totalCollected desde movimientos (ya disponibles)
+        let monthlyTotalPaid = 0;
+        let monthlyTotalCollected = 0;
+        for (const movements of monthlyMovementsByDate.values()) {
+          monthlyTotalPaid += movements
+            .filter((m: any) => m.type === "payment" && !m.isReversed)
+            .reduce((sum: number, m: any) => sum + m.amount, 0);
+          monthlyTotalCollected += movements
+            .filter((m: any) => m.type === "collection" && !m.isReversed)
+            .reduce((sum: number, m: any) => sum + m.amount, 0);
+        }
+
+        // Reusar comisiones por tipo desde jugadas ya cargadas
+        const monthlyCommissionByNumber = jugadas
+          .filter((j) => j.type === "NUMERO")
+          .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
+        const monthlyCommissionByReventado = jugadas
+          .filter((j) => j.type === "REVENTADO")
+          .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
+
+        const monthlyTotalBalance = totals.totalSales - totals.totalPrizes - totals.totalCommission;
+        const monthlyTotalRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
+
+        monthlyAccumulated = {
+          totalSales: totals.totalSales,
+          totalCommission: totals.totalCommission,
+          commissionByNumber: monthlyCommissionByNumber,
+          commissionByReventado: monthlyCommissionByReventado,
+          totalPrizes: totals.totalPrizes,
+          totalTickets: totals.totalTickets,
+          totalPaid: monthlyTotalPaid,
+          totalCollected: monthlyTotalCollected,
+          totalBalance: numericPreviousMonthBalance + monthlyTotalBalance,
+          totalRemainingBalance: numericPreviousMonthBalance + monthlyTotalRemainingBalance,
+          totalSubtotal: numericPreviousMonthBalance + monthlyTotalRemainingBalance,
+        };
+      } else {
+        //  Caso general: queries mensuales necesarias (diferente rango o filtro de lotería)
+        const monthlySorteoWhere: Prisma.SorteoWhereInput = {
+          status: SorteoStatus.EVALUATED,
+          scheduledAt: { gte: monthlyStartDate, lte: monthlyEndDate },
+          tickets: {
+            some: { vendedorId, deletedAt: null, isActive: true },
+          },
+        };
+
+        const monthlySorteos = await prisma.sorteo.findMany({
+          where: monthlySorteoWhere,
+          select: { id: true },
+        });
+        const monthlySorteoIds = monthlySorteos.map((s) => s.id);
+
+        //  C3.2 OPTIMIZACIÓN: Ejecutar queries mensuales en paralelo
+        // Y reemplazar jugadas findMany con groupBy (solo necesita commission por tipo)
+        const [monthlyFinancialData, monthlyPrizesData, monthlyJugadaCommissions] = await Promise.all([
+          prisma.ticket.groupBy({
+            by: ["sorteoId"],
+            where: {
+              sorteoId: { in: monthlySorteoIds },
+              vendedorId,
+              deletedAt: null,
+              isActive: true,
+            },
+            _sum: { totalAmount: true, totalCommission: true, totalPayout: true },
+            _count: { id: true },
+          }),
+          prisma.ticket.groupBy({
+            by: ["sorteoId"],
+            where: {
+              sorteoId: { in: monthlySorteoIds },
+              vendedorId,
+              isWinner: true,
+              deletedAt: null,
+              isActive: true,
+            },
+            _sum: { totalPayout: true },
+          }),
+          //  C3.2: groupBy en vez de findMany (2 filas vs ~1500+ filas)
+          prisma.jugada.groupBy({
+            by: ["type"],
+            where: {
+              ticket: {
+                sorteoId: { in: monthlySorteoIds },
+                vendedorId,
+                deletedAt: null,
+                isActive: true,
+              },
+              deletedAt: null,
+            },
+            _sum: { commissionAmount: true },
+          }),
+        ]);
+
+        const monthlyTotalSales = monthlyFinancialData.reduce((sum, f) => sum + (f._sum.totalAmount || 0), 0);
+        const monthlyTotalCommission = monthlyFinancialData.reduce((sum, f) => sum + (f._sum.totalCommission || 0), 0);
+        const monthlyTotalPrizes = monthlyPrizesData.reduce((sum, p) => sum + (p._sum.totalPayout || 0), 0);
+        const monthlyTotalTickets = monthlyFinancialData.reduce((sum, f) => sum + f._count.id, 0);
+
+        let monthlyTotalPaid = 0;
+        let monthlyTotalCollected = 0;
+        for (const movements of monthlyMovementsByDate.values()) {
+          monthlyTotalPaid += movements
+            .filter((m: any) => m.type === "payment" && !m.isReversed)
+            .reduce((sum: number, m: any) => sum + m.amount, 0);
+          monthlyTotalCollected += movements
+            .filter((m: any) => m.type === "collection" && !m.isReversed)
+            .reduce((sum: number, m: any) => sum + m.amount, 0);
+        }
+
+        //  C3.2: Leer comisiones por tipo desde groupBy (ya no carga filas individuales)
+        const monthlyCommissionByNumber = monthlyJugadaCommissions
+          .find((j) => j.type === "NUMERO")?._sum.commissionAmount || 0;
+        const monthlyCommissionByReventado = monthlyJugadaCommissions
+          .find((j) => j.type === "REVENTADO")?._sum.commissionAmount || 0;
+
+        const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPrizes - monthlyTotalCommission;
+        const monthlyTotalRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
+
+        monthlyAccumulated = {
+          totalSales: monthlyTotalSales,
+          totalCommission: monthlyTotalCommission,
+          commissionByNumber: monthlyCommissionByNumber,
+          commissionByReventado: monthlyCommissionByReventado,
+          totalPrizes: monthlyTotalPrizes,
+          totalTickets: monthlyTotalTickets,
+          totalPaid: monthlyTotalPaid,
+          totalCollected: monthlyTotalCollected,
+          totalBalance: numericPreviousMonthBalance + monthlyTotalBalance,
+          totalRemainingBalance: numericPreviousMonthBalance + monthlyTotalRemainingBalance,
+          totalSubtotal: numericPreviousMonthBalance + monthlyTotalRemainingBalance,
+        };
+      }
       const result = {
         data: daysArray,
         meta: {
