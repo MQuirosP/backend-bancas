@@ -420,13 +420,14 @@ export const UserService = {
     loteriaId: string,
     betType: 'NUMERO' | 'REVENTADO' = 'NUMERO'
   ) {
-    // Optimización: Hacer todas las queries en paralelo
+    // Obtener usuario, lotería, multiplicadores y ventana en paralelo
     const [user, loteria, activeMultipliers] = await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
         select: {
           id: true,
           role: true,
+          ventanaId: true,
           commissionPolicyJson: true,
         },
       }),
@@ -472,11 +473,14 @@ export const UserService = {
 
     const totalActiveMultipliers = activeMultipliers.length;
 
-    // Obtener política de comisión del vendedor
+    // Obtener política de comisión: solo nivel USER (sin fallback a VENTANA).
+    // La política de VENTANA solo se usa para registrar la comisión de la ventana en ticket/jugadas.
     const policyJson = user.commissionPolicyJson;
+    const policySource: 'USER' | 'VENTANA' = 'USER';
+
     const policyExists = !!policyJson;
 
-    // Si no hay política, retornar vacío
+    // Si el vendedor no tiene política propia, retornar vacío
     if (!policyJson) {
       return {
         data: [],
@@ -490,7 +494,7 @@ export const UserService = {
     }
 
     // Parsear política usando la función existente
-    const policy = parseCommissionPolicy(policyJson, 'USER');
+    const policy = parseCommissionPolicy(policyJson, policySource);
 
     // Si la política no es válida o no tiene reglas, retornar vacío
     if (!policy || !policy.rules || policy.rules.length === 0) {
