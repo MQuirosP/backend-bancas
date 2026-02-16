@@ -17,6 +17,7 @@
  */
 
 import prisma from '../core/prismaClient';
+import { warmupConnection } from '../core/connectionWarmup';
 import {
     processMonthlyClosingForVendedores,
     calculateRealMonthBalance,
@@ -86,6 +87,24 @@ export async function executeMonthlyClosing(userId?: string, specificMonth?: str
 
     try {
         activeOperationsService.register(operationId, 'job', 'Monthly Closing Job');
+
+        // 🔥 F3.1: Warmup del Pooler (puerto 6543) antes de empezar
+        const isReady = await warmupConnection({ useDirect: false, context: 'monthlyClosing' });
+        if (!isReady) {
+            logger.error({
+                layer: 'job',
+                action: 'MONTHLY_CLOSING_SKIP',
+                payload: { reason: 'Connection warmup failed' }
+            });
+            return {
+                success: false,
+                closingMonth: specificMonth || 'UNKNOWN',
+                vendedores: { success: 0, errors: 0 },
+                ventanas: { success: 0, errors: 0 },
+                bancas: { success: 0, errors: 0 },
+                executedAt: new Date()
+            };
+        }
     } catch (error) {
         // Si el servidor está cerrando, rechazar la operación
         logger.warn({

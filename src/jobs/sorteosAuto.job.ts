@@ -59,8 +59,8 @@ async function executeAutoOpen(): Promise<void> {
       payload: { timestamp: new Date().toISOString() },
     });
 
-    // Warmup de conexión antes de ejecutar (usa DIRECT_URL para evitar cold starts)
-    const isReady = await warmupConnection({ useDirect: true, context: 'autoOpen' });
+    // Warmup de conexión antes de ejecutar (🔥 F3.1: Usa Pooler puerto 6543)
+    const isReady = await warmupConnection({ useDirect: false, context: 'autoOpen' });
     if (!isReady) {
       logger.error({
         layer: 'job',
@@ -117,8 +117,8 @@ async function executeAutoCreate(): Promise<void> {
       payload: { timestamp: new Date().toISOString() },
     });
 
-    // Warmup de conexión antes de ejecutar (usa DIRECT_URL para evitar cold starts)
-    const isReady = await warmupConnection({ useDirect: true, context: 'autoCreate' });
+    // Warmup de conexión antes de ejecutar (🔥 F3.1: Usa Pooler puerto 6543)
+    const isReady = await warmupConnection({ useDirect: false, context: 'autoCreate' });
     if (!isReady) {
       logger.error({
         layer: 'job',
@@ -320,8 +320,8 @@ async function executeAutoClose(): Promise<void> {
       payload: { timestamp: new Date().toISOString() },
     });
 
-    // Warmup de conexión antes de ejecutar (usa DIRECT_URL para evitar cold starts)
-    const isReady = await warmupConnection({ useDirect: true, context: 'autoClose' });
+    // Warmup de conexión antes de ejecutar (🔥 F3.1: Usa Pooler puerto 6543)
+    const isReady = await warmupConnection({ useDirect: false, context: 'autoClose' });
     if (!isReady) {
       logger.error({
         layer: 'job',

@@ -13,6 +13,8 @@
  */
 
 import ActivityLogService from '../api/v1/services/activityLog.service';
+import { warmupConnection } from '../core/connectionWarmup';
+import logger from '../core/logger';
 
 // Simplified scheduler (no external dependencies)
 // If you want to use a library like node-cron or agenda, replace this
@@ -45,6 +47,13 @@ async function executeCleanup(): Promise<void> {
   const RETENTION_DAYS = 45;
 
   try {
+    // 🔥 F3.1: Warmup del Pooler (puerto 6543) antes de empezar
+    const isReady = await warmupConnection({ useDirect: false, context: 'activityLogCleanup' });
+    if (!isReady) {
+      console.error('[Activity Log Cleanup] Connection warmup failed, skipping cleanup');
+      return;
+    }
+
     console.log(`[Activity Log Cleanup] Starting cleanup job at ${new Date().toISOString()}`);
     console.log(`[Activity Log Cleanup] Deleting logs older than ${RETENTION_DAYS} days...`);
 
