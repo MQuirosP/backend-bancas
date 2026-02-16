@@ -228,6 +228,8 @@ model Ticket {
   //  OPTIMIZACIÓN: Índices para cálculo de límite dinámico (calculateDynamicLimit)
   @@index([ventanaId, createdAt, deletedAt]) // Para aggregate por ventana
   @@index([vendedorId, createdAt, deletedAt]) // Para aggregate por vendedor
+  @@index([vendedorId, sorteoId, deletedAt, isActive]) // B1.3: groupBy en evaluatedSummary
+  @@index([ventanaId, businessDate, deletedAt]) // B1.4: summary por ventana y fecha
 }
 
 /// Contador global diario de tickets basado en businessDate (CR)
@@ -300,6 +302,7 @@ model Jugada {
   @@index([reventadoNumber])
   @@index([isActive, isExcluded]) //  Para filtros rápidos
   @@index([multiplierId, isExcluded]) //  Para exclusión por multiplicador
+  @@index([ticketId, deletedAt]) // B1.2: jugadas filtradas por deletedAt IS NULL
 }
 
 model Sorteo {
@@ -339,6 +342,7 @@ model Sorteo {
   @@index([winningNumber])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_name_trgm", type: Gin)
   @@index([winningNumber(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_winning_trgm", type: Gin)
+  @@index([status, scheduledAt]) // B1.1: evaluatedSummary filtra status + scheduledAt
 }
 
 model SorteoListaExclusion {
@@ -714,6 +718,7 @@ model AccountStatement {
   @@index([isSettled])
   @@index([isSettled, date]) // Para queries del cron job
   @@index([month, isSettled, date]) //  NUEVO: Para queries eficientes de accumulatedBalance
+  @@index([vendedorId, date]) // B1.5: evaluatedSummary y balance por vendedor+fecha
 }
 
 model AccountPayment {
