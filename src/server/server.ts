@@ -3,6 +3,7 @@ import app from './app'
 import logger from '../core/logger'
 import { config } from '../config'
 import prisma from '../core/prismaClient'
+import { getPrismaDirect } from '../core/prismaClientDirect'
 import { startSorteosAutoJobs, stopSorteosAutoJobs } from '../jobs/sorteosAuto.job'
 import { startAccountStatementSettlementJob, stopAccountStatementSettlementJob } from '../jobs/accountStatementSettlement.job'
 import { startMonthlyClosingJob, stopMonthlyClosingJob } from '../jobs/monthlyClosing.job'
@@ -254,6 +255,20 @@ const gracefulShutdown = async (signal: string) => {
         meta: { error: (err as Error).message },
       })
       process.exit(1)
+    }
+
+    try {
+      // Desconectar prismaDirect si fue inicializado (lazy load)
+      if ((global as any).__prismaDirect) {
+        await getPrismaDirect().$disconnect()
+        logger.info({ layer: 'server', action: 'PRISMA_DIRECT_DISCONNECTED' })
+      }
+    } catch (e) {
+      logger.warn({
+        layer: 'server',
+        action: 'PRISMA_DIRECT_DISCONNECT_ERROR',
+        meta: { error: (e as Error).message },
+      })
     }
 
     try {

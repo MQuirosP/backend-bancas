@@ -22,6 +22,25 @@ import { getPreviousMonthFinalBalance } from "./accounts.balances";
 import { getExcludedTicketIdsForDate } from "./accounts.calculations";
 import { intercalateSorteosAndMovements } from "./accounts.intercalate";
 
+const SYNC_BATCH_SIZE = 5;
+
+/**
+ * Ejecuta promesas en batches de tamaño fijo.
+ * Equivalente a p-limit pero sin dependencia externa.
+ */
+async function batchedAllSettled<T>(
+  tasks: (() => Promise<T>)[],
+  batchSize: number
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = [];
+  for (let i = 0; i < tasks.length; i += batchSize) {
+    const batch = tasks.slice(i, i + batchSize);
+    const batchResults = await Promise.allSettled(batch.map(fn => fn()));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 /**
  * Servicio de sincronización de AccountStatement
  * 
@@ -845,27 +864,27 @@ export class AccountStatementSyncService {
       const [year, month, day] = sorteoDateStrCR.split('-').map(Number);
       const sorteoDateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 
-      const syncPromises: Promise<void>[] = [];
+      const syncTasks: (() => Promise<void>)[] = [];
       const dateStr = crDateService.postgresDateToCRString(sorteoDateUTC);
 
       for (const vendedorId of Array.from(uniqueVendedores)) {
-        syncPromises.push(
-          this.syncDayStatementFromBySorteo(dateStr, "vendedor", vendedorId)
+        syncTasks.push(
+          () => this.syncDayStatementFromBySorteo(dateStr, "vendedor", vendedorId)
         );
       }
       for (const ventanaId of Array.from(uniqueVentanas)) {
-        syncPromises.push(
-          this.syncDayStatementFromBySorteo(dateStr, "ventana", ventanaId)
+        syncTasks.push(
+          () => this.syncDayStatementFromBySorteo(dateStr, "ventana", ventanaId)
         );
       }
       for (const bancaId of Array.from(uniqueBancas)) {
-        syncPromises.push(
-          this.syncDayStatementFromBySorteo(dateStr, "banca", bancaId)
+        syncTasks.push(
+          () => this.syncDayStatementFromBySorteo(dateStr, "banca", bancaId)
         );
       }
 
-      // Ejecutar TODOS los syncs aunque alguno falle (allSettled)
-      const syncResults = await Promise.allSettled(syncPromises);
+      // Ejecutar en batches de SYNC_BATCH_SIZE para no saturar el pool
+      const syncResults = await batchedAllSettled(syncTasks, SYNC_BATCH_SIZE);
       const syncFailures = syncResults.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
 
       if (syncFailures.length > 0) {
@@ -891,18 +910,18 @@ export class AccountStatementSyncService {
           payload: { sorteoId, sorteoDateStrCR, todayCR }
         });
 
-        const propagationPromises: Promise<void>[] = [];
+        const propagationTasks: (() => Promise<void>)[] = [];
         for (const vendedorId of Array.from(uniqueVendedores)) {
-          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "vendedor", vendedorId));
+          propagationTasks.push(() => this.propagateBalanceChange(sorteoDateUTC, "vendedor", vendedorId));
         }
         for (const ventanaId of Array.from(uniqueVentanas)) {
-          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "ventana", ventanaId));
+          propagationTasks.push(() => this.propagateBalanceChange(sorteoDateUTC, "ventana", ventanaId));
         }
         for (const bancaId of Array.from(uniqueBancas)) {
-          propagationPromises.push(this.propagateBalanceChange(sorteoDateUTC, "banca", bancaId));
+          propagationTasks.push(() => this.propagateBalanceChange(sorteoDateUTC, "banca", bancaId));
         }
 
-        const propResults = await Promise.allSettled(propagationPromises);
+        const propResults = await batchedAllSettled(propagationTasks, SYNC_BATCH_SIZE);
         const propFailures = propResults.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
 
         if (propFailures.length > 0) {
