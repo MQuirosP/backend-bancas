@@ -112,8 +112,11 @@ export const validateListTicketsQuery = validateQuery(ListTicketsQuerySchema);
  */
 export const RegisterPaymentSchema = z.object({
   amountPaid: z.number().positive("El monto pagado debe ser mayor a 0"),
-  method: z.enum(["cash", "transfer", "check", "other"]).default("cash"),
-  notes: z.string().max(500).optional(),
+  // FE puede no enviar method o enviar valores inesperados → default "cash"
+  method: z.string().optional().default("cash").transform((v) =>
+    ["cash", "transfer", "check", "other"].includes(v ?? "") ? v : "cash"
+  ),
+  notes: z.string().max(500).optional().default(""),
   isFinal: z.boolean().default(false),
   idempotencyKey: z.string().min(8).max(100).optional(),
 }).passthrough(); // Permitir campos adicionales del frontend sin causar error
