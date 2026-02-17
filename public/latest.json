@@ -8,10 +8,10 @@
   "releasedAt": "2026-02-16T21:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "dc59267fed83efddd55ae9c83c3443bf3b4c37b1abb0282d7bf4e7a74ece455b"
+      "sha256": "244c77305372b59d9b27f48f36aab59a9fe2f98d7ce444019c0df3a913793f85"
     },
     "arm64-v8a": {
-      "sha256": "dc59267fed83efddd55ae9c83c3443bf3b4c37b1abb0282d7bf4e7a74ece455b"
+      "sha256": "244c77305372b59d9b27f48f36aab59a9fe2f98d7ce444019c0df3a913793f85"
     }
   }
 }
