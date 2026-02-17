@@ -733,6 +733,16 @@ export const TicketRepository = {
             );
           }
           if (multiplier.loteriaId !== loteriaId) {
+            logger.error({
+              layer: 'repository',
+              action: 'MULTIPLIER_LOTERIA_MISMATCH',
+              payload: {
+                multiplierId: j.multiplierId,
+                multiplierLoteriaId: multiplier.loteriaId,
+                requestLoteriaId: loteriaId,
+                multiplierName: multiplier.name,
+              },
+            });
             throw new AppError(
               `Multiplicador no pertenece a la lotería`,
               400,
@@ -1224,9 +1234,15 @@ export const TicketRepository = {
       layer: 'repository',
       action: 'TICKET_CREATE_OPTIMIZED_START',
       payload: {
+        loteriaId,
+        sorteoId,
+        ventanaId,
         jugadasCount: jugadas.length,
         dynamicTimeout,
         hasCommissionContext: !!commissionContext,
+        multiplierIds: jugadas
+          .filter((j) => j.type === 'NUMERO' && j.multiplierId)
+          .map((j) => j.multiplierId),
       },
     });
 
@@ -1559,6 +1575,16 @@ export const TicketRepository = {
             throw new AppError(`Multiplicador incompatible con jugada NUMERO`, 400, "INVALID_MULTIPLIER_KIND");
           }
           if (multiplier.loteriaId !== loteriaId) {
+            logger.error({
+              layer: 'repository',
+              action: 'MULTIPLIER_LOTERIA_MISMATCH',
+              payload: {
+                multiplierId: j.multiplierId,
+                multiplierLoteriaId: multiplier.loteriaId,
+                requestLoteriaId: loteriaId,
+                multiplierName: multiplier.name,
+              },
+            });
             throw new AppError(`Multiplicador no pertenece a la lotería`, 400, "INVALID_MULTIPLIER_LOTERIA");
           }
           if (!multiplier.isActive) {
