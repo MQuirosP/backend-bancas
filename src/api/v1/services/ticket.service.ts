@@ -1737,6 +1737,7 @@ export const TicketService = {
           sorteoId: true,
           loteriaId: true,
           createdAt: true,
+          clienteNombre: true,
           jugadas: {
             where: {
               deletedAt: null, // Solo jugadas no eliminadas
@@ -1843,6 +1844,7 @@ export const TicketService = {
         jugadas,
         sorteoId: ticket.sorteoId,
         loteriaId: ticket.loteriaId,
+        clienteNombre: ticket.clienteNombre,
         createdAt: ticket.createdAt.toISOString(),
       };
     } catch (err: any) {
