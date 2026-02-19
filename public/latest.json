@@ -1,17 +1,17 @@
 {
   "versionName": "1.0.1",
-  "versionCode": 4,
-  "buildNumber": 4,
+  "versionCode": 5,
+  "buildNumber": 5,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Nuevas funciones en creación de tickets, mejoras en la interfaz de usuario, mejoras en la copia de tickets y corrección de errores menores.",
-  "releasedAt": "2026-02-16T21:00:00Z",
+  "changelog": "Mejoras en la navegación entre pantallas y creación y copia de tickets.",
+  "releasedAt": "2026-02-19T18:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "89736beb6c64d485cfed42e706be5f7a4f2470788825295b29feedc85cd6a35d"
+      "sha256": "312b44690abd0d0612312edf8a3f2bb3c95b953f830501fd41edec1e4075b422"
     },
     "arm64-v8a": {
-      "sha256": "89736beb6c64d485cfed42e706be5f7a4f2470788825295b29feedc85cd6a35d"
+      "sha256": "312b44690abd0d0612312edf8a3f2bb3c95b953f830501fd41edec1e4075b422"
     }
   }
 }
