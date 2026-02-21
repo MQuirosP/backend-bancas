@@ -337,17 +337,6 @@ const SorteoRepository = {
         throw new AppError("Solo se puede revertir un sorteo evaluado", 409);
       }
 
-      const tickets = await tx.ticket.findMany({
-        where: { sorteoId: id },
-        select: {
-          id: true,
-          ventanaId: true,
-          vendedorId: true,
-          businessDate: true,
-          createdAt: true,
-        },
-      });
-
       // 2️⃣ Eliminar pagos de tickets del sorteo
       const paymentsDeleted = await tx.$executeRaw`
         DELETE FROM "TicketPayment"
@@ -384,77 +373,6 @@ const SorteoRepository = {
         AND "status" IN ('EVALUATED', 'PAID')
       `;
 
-      const ventanaTargets = new Map<string, { ventanaId: string; date: Date }>();
-      const vendedorTargets = new Map<string, { vendedorId: string; date: Date }>();
-
-      for (const ticket of tickets) {
-        const baseDate = ticket.businessDate ? new Date(ticket.businessDate) : new Date(ticket.createdAt);
-        baseDate.setUTCHours(0, 0, 0, 0);
-        if (ticket.ventanaId) {
-          const key = `${ticket.ventanaId}-${baseDate.toISOString()}`;
-          if (!ventanaTargets.has(key)) {
-            ventanaTargets.set(key, { ventanaId: ticket.ventanaId, date: baseDate });
-          }
-        }
-        if (ticket.vendedorId) {
-          const key = `${ticket.vendedorId}-${baseDate.toISOString()}`;
-          if (!vendedorTargets.has(key)) {
-            vendedorTargets.set(key, { vendedorId: ticket.vendedorId, date: baseDate });
-          }
-        }
-      }
-
-      const statementIds: string[] = [];
-
-      if (ventanaTargets.size > 0) {
-        const ventanaStatements = await tx.accountStatement.findMany({
-          where: {
-            OR: Array.from(ventanaTargets.values()).map(({ ventanaId, date }) => ({
-              date,
-              ventanaId,
-              vendedorId: null,
-            })),
-          },
-          select: { id: true },
-        });
-        statementIds.push(...ventanaStatements.map(s => s.id));
-      }
-
-      if (vendedorTargets.size > 0) {
-        const vendedorStatements = await tx.accountStatement.findMany({
-          where: {
-            OR: Array.from(vendedorTargets.values()).map(({ vendedorId, date }) => ({
-              date,
-              vendedorId,
-              ventanaId: null,
-            })),
-          },
-          select: { id: true },
-        });
-        statementIds.push(...vendedorStatements.map(s => s.id));
-      }
-
-      let accountPaymentsDeleted = 0;
-      if (statementIds.length > 0) {
-        // Eliminar pagos usando IN con lista parametrizada
-        const statementIdList = Prisma.join(statementIds.map(sid => Prisma.sql`${sid}::uuid`));
-        const res = await tx.$executeRaw`
-          DELETE FROM "AccountPayment"
-          WHERE "accountStatementId" IN (${statementIdList})
-        `;
-        accountPaymentsDeleted = res;
-
-        // Resetear statements usando IN con lista parametrizada
-        await tx.$executeRaw`
-          UPDATE "AccountStatement"
-          SET "totalPaid" = 0,
-              "remainingBalance" = "balance",
-              "isSettled" = false,
-              "canEdit" = true
-          WHERE "id" IN (${statementIdList})
-        `;
-      }
-
       const updated = await tx.sorteo.update({
         where: { id },
         data: {
@@ -485,7 +403,6 @@ const SorteoRepository = {
         payload: {
           sorteoId: id,
           paymentsDeleted,
-          accountPaymentsDeleted,
         },
       });
 
