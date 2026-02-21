@@ -475,11 +475,13 @@ export const AccountsController = {
       targetId: payment.id,
       details: {
         date,
+        time: payment.time,
         amount,
         type,
         method,
         ventanaId: effectiveVentanaId || null,
         vendedorId: effectiveVendedorId || null,
+        notes: notes || null,
         isFinal,
         cached: isCached,
       },
