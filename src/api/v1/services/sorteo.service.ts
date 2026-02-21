@@ -2341,10 +2341,10 @@ gs."hour24" ASC
         let monthlyTotalCollected = 0;
         for (const movements of monthlyMovementsByDate.values()) {
           monthlyTotalPaid += movements
-            .filter((m: any) => m.type === "payment" && !m.isReversed)
+            .filter((m: any) => m.type === "payment" && !m.isReversed && !m.id?.startsWith('previous-month-balance-'))
             .reduce((sum: number, m: any) => sum + m.amount, 0);
           monthlyTotalCollected += movements
-            .filter((m: any) => m.type === "collection" && !m.isReversed)
+            .filter((m: any) => m.type === "collection" && !m.isReversed && !m.id?.startsWith('previous-month-balance-'))
             .reduce((sum: number, m: any) => sum + m.amount, 0);
         }
 
@@ -2438,10 +2438,10 @@ gs."hour24" ASC
         let monthlyTotalCollected = 0;
         for (const movements of monthlyMovementsByDate.values()) {
           monthlyTotalPaid += movements
-            .filter((m: any) => m.type === "payment" && !m.isReversed)
+            .filter((m: any) => m.type === "payment" && !m.isReversed && !m.id?.startsWith('previous-month-balance-'))
             .reduce((sum: number, m: any) => sum + m.amount, 0);
           monthlyTotalCollected += movements
-            .filter((m: any) => m.type === "collection" && !m.isReversed)
+            .filter((m: any) => m.type === "collection" && !m.isReversed && !m.id?.startsWith('previous-month-balance-'))
             .reduce((sum: number, m: any) => sum + m.amount, 0);
         }
 
