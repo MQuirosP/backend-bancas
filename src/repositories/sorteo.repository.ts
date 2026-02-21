@@ -436,21 +436,22 @@ const SorteoRepository = {
 
       let accountPaymentsDeleted = 0;
       if (statementIds.length > 0) {
-        // Eliminar pagos usando UNNEST para evitar IN masivo
+        // Eliminar pagos usando IN con lista parametrizada
+        const statementIdList = Prisma.join(statementIds.map(sid => Prisma.sql`${sid}::uuid`));
         const res = await tx.$executeRaw`
           DELETE FROM "AccountPayment"
-          WHERE "accountStatementId" = ANY(UNNEST(${statementIds}::uuid[]))
+          WHERE "accountStatementId" IN (${statementIdList})
         `;
         accountPaymentsDeleted = res;
 
-        // Resetear statements usando UNNEST
+        // Resetear statements usando IN con lista parametrizada
         await tx.$executeRaw`
           UPDATE "AccountStatement"
           SET "totalPaid" = 0,
               "remainingBalance" = "balance",
               "isSettled" = false,
               "canEdit" = true
-          WHERE "id" = ANY(UNNEST(${statementIds}::uuid[]))
+          WHERE "id" IN (${statementIdList})
         `;
       }
 
