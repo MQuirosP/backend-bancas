@@ -885,6 +885,9 @@ export const TicketController = {
       fromDate,
       toDate,
       status,
+      loteriaId,
+      sorteoId,
+      multiplierId,
     } = req.query as any;
 
     const me = req.user!;
@@ -899,6 +902,9 @@ export const TicketController = {
           fromDate,
           toDate,
           status,
+          loteriaId,
+          sorteoId,
+          multiplierId,
         },
         {
           userId: me.id,
