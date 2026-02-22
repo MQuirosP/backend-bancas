@@ -1881,6 +1881,9 @@ export const TicketService = {
     fromDate?: string;
     toDate?: string;
     status?: string;
+    loteriaId?: string;
+    sorteoId?: string;
+    multiplierId?: string;
   }, context: {
     userId: string;
     role: Role;
@@ -1904,17 +1907,23 @@ export const TicketService = {
       });
 
       // Construir filtros de fecha si se proporcionan
+      // Regla: cuando hay sorteoId y no hay fechas explícitas, no aplicar filtro de fecha
       let dateFrom: Date | undefined;
       let dateTo: Date | undefined;
 
-      if (params.date || params.fromDate || params.toDate) {
-        const dateRange = resolveDateRange(
-          params.date || 'today',
-          params.fromDate,
-          params.toDate
-        );
-        dateFrom = dateRange.fromBusinessDate;
-        dateTo = dateRange.toBusinessDate;
+      const hasSorteoId = !!params.sorteoId;
+      const hasExplicitDateRange = !!(params.fromDate || params.toDate);
+
+      if (!hasSorteoId || hasExplicitDateRange) {
+        if (params.date || params.fromDate || params.toDate) {
+          const dateRange = resolveDateRange(
+            params.date || 'today',
+            params.fromDate,
+            params.toDate
+          );
+          dateFrom = dateRange.fromBusinessDate;
+          dateTo = dateRange.toBusinessDate;
+        }
       }
 
       // Construir where clause para tickets
@@ -1932,6 +1941,23 @@ export const TicketService = {
       }
       if (effectiveFilters.bancaId) {
         where.ventana = { bancaId: effectiveFilters.bancaId };
+      }
+
+      // Aplicar filtros de lotería, sorteo y multiplicador
+      if (params.loteriaId) {
+        where.loteriaId = params.loteriaId;
+      }
+      if (params.sorteoId) {
+        where.sorteoId = params.sorteoId;
+      }
+      if (params.multiplierId) {
+        where.jugadas = {
+          some: {
+            multiplierId: params.multiplierId,
+            deletedAt: null,
+            isActive: true,
+          },
+        };
       }
 
       // Aplicar filtros de fecha
