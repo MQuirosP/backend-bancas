@@ -185,10 +185,11 @@ async function getExclusionsWhere(filters: VentasFilters): Promise<Prisma.Ticket
 
   const exclusions = await prisma.sorteoListaExclusion.findMany({
     where: whereExclusion,
-    include: {
-      ventana: {
-        select: { ventanaId: true } // ventana es User, obtenemos su ventanaId real
-      }
+    select: {
+      sorteoId: true,
+      ventanaId: true,
+      vendedorId: true,
+      multiplierId: true,
     }
   });
 
@@ -197,11 +198,10 @@ async function getExclusionsWhere(filters: VentasFilters): Promise<Prisma.Ticket
   }
 
   const notConditions: Prisma.TicketWhereInput[] = exclusions
-    .filter(ex => ex.ventana?.ventanaId) // Asegurar que tenemos el ID real de la ventana
     .map(ex => {
       const condition: Prisma.TicketWhereInput = {
         sorteoId: ex.sorteoId,
-        ventanaId: ex.ventana!.ventanaId!, // ID real de la ventana
+        ventanaId: ex.ventanaId,
         ...(ex.vendedorId ? { vendedorId: ex.vendedorId } : {}) // Si es específico de vendedor
       };
 

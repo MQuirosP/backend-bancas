@@ -65,6 +65,7 @@ model Ventana {
   accountStatements      AccountStatement[]
   accountPayments        AccountPayment[]
   monthlyClosingBalances MonthlyClosingBalance[] @relation("MonthlyClosingBalanceVentana")
+  sorteoListaExclusiones SorteoListaExclusion[]  @relation("ExclusionVentana")
 
   @@index([code])
   @@index([email])
@@ -119,7 +120,6 @@ model User {
   accountStatementsSettled                AccountStatement[]                 @relation("AccountStatementSettledBy")
   accountStatementSettlementConfigUpdated AccountStatementSettlementConfig[] @relation("AccountStatementSettlementConfigUpdatedBy")
   monthlyClosingBalances                  MonthlyClosingBalance[]            @relation("MonthlyClosingBalanceVendedor")
-  exclusionsAsVentana                     SorteoListaExclusion[]             @relation("ExclusionVentana")
   exclusionsAsVendedor                    SorteoListaExclusion[]             @relation("ExclusionVendedor")
   exclusionsCreated                       SorteoListaExclusion[]             @relation("ExclusionExcludedBy")
   jugadasExcluded                         Jugada[]                           @relation("JugadaExcludedBy")
@@ -358,7 +358,7 @@ model SorteoListaExclusion {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   sorteo         Sorteo             @relation(fields: [sorteoId], references: [id], onDelete: Cascade)
-  ventana        User               @relation("ExclusionVentana", fields: [ventanaId], references: [id])
+  ventana        Ventana            @relation("ExclusionVentana", fields: [ventanaId], references: [id])
   vendedor       User?              @relation("ExclusionVendedor", fields: [vendedorId], references: [id])
   excludedByUser User               @relation("ExclusionExcludedBy", fields: [excludedBy], references: [id])
   multiplier     LoteriaMultiplier? @relation("ExclusionMultiplier", fields: [multiplierId], references: [id])

@@ -13,9 +13,6 @@ export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string
             ventanaId: true,
             vendedorId: true,
             multiplierId: true,
-            ventana: {
-                select: { ventanaId: true },
-            },
         },
     });
 
@@ -25,12 +22,9 @@ export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string
 
     // Construir condiciones WHERE para tickets excluidos
     const orConditions = exclusions.map((exclusion) => {
-        const realVentanaId = exclusion.ventana?.ventanaId;
-        if (!realVentanaId) return null;
-
         const baseCondition: any = {
             sorteoId,
-            ventanaId: realVentanaId,
+            ventanaId: exclusion.ventanaId,
         };
 
         // Si vendedorId es NULL -> excluir toda la ventana
@@ -79,9 +73,6 @@ export async function getExclusionWhereCondition(sorteoId: string): Promise<any>
             ventanaId: true,
             vendedorId: true,
             multiplierId: true,
-            ventana: {
-                select: { ventanaId: true },
-            },
         },
     });
 
@@ -91,11 +82,8 @@ export async function getExclusionWhereCondition(sorteoId: string): Promise<any>
 
     // Construir condición NOT para excluir tickets
     const orConditions = exclusions.map((exclusion) => {
-        const realVentanaId = exclusion.ventana?.ventanaId;
-        if (!realVentanaId) return null;
-
         const condition: any = {
-            ventanaId: realVentanaId,
+            ventanaId: exclusion.ventanaId,
         };
 
         if (exclusion.vendedorId !== null) {

@@ -103,6 +103,12 @@ export interface VendedorSummary {
   multiplierId?: string | null;
   multiplierName?: string | null;
   multiplierValue?: number | null; // Renamed from multiplierValueX for FE compatibility
+  // 'ventana' = toda la ventana fue excluida (include debe mandar vendedorId: null)
+  // 'vendedor' = este vendedor fue excluido individualmente (include debe mandar vendedorId: UUID)
+  // null = no excluido
+  exclusionScope: 'ventana' | 'vendedor' | null;
+  // ID real del registro en sorteo_lista_exclusion (usar para identificar el include exacto)
+  exclusionRecordId: string | null;
 }
 
 export interface ListeroSummary {
