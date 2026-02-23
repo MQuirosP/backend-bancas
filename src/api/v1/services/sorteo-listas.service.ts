@@ -138,7 +138,36 @@ export const SorteoListasService = {
             },
         });
 
-        // 3. Agrupar tickets por ventana, vendedor y multiplicador
+        // 3. Cargar registros de exclusión de la tabla (fuente de verdad del scope)
+        //    Se usan para calcular exclusionScope en cada VendedorSummary
+        const exclusionRecords = await prisma.sorteoListaExclusion.findMany({
+            where: { sorteoId },
+            select: { id: true, ventanaId: true, vendedorId: true, multiplierId: true },
+        });
+
+        // Índice rápido: para cada ventana, ¿hay exclusión de ventana completa (vendedorId null)?
+        // ventanaExclusionsMap: ventanaId → registros de exclusión donde vendedorId IS NULL
+        const ventanaLevelExclusions = new Map<string, { id: string; multiplierId: string | null }[]>();
+        // vendedorLevelExclusions: vendedorId → registros de exclusión donde vendedorId IS NOT NULL
+        const vendedorLevelExclusions = new Map<string, { id: string; ventanaId: string; multiplierId: string | null }[]>();
+
+        for (const rec of exclusionRecords) {
+            if (rec.vendedorId === null) {
+                // Exclusión de ventana completa
+                if (!ventanaLevelExclusions.has(rec.ventanaId)) {
+                    ventanaLevelExclusions.set(rec.ventanaId, []);
+                }
+                ventanaLevelExclusions.get(rec.ventanaId)!.push({ id: rec.id, multiplierId: rec.multiplierId });
+            } else {
+                // Exclusión de vendedor específico
+                if (!vendedorLevelExclusions.has(rec.vendedorId)) {
+                    vendedorLevelExclusions.set(rec.vendedorId, []);
+                }
+                vendedorLevelExclusions.get(rec.vendedorId)!.push({ id: rec.id, ventanaId: rec.ventanaId, multiplierId: rec.multiplierId });
+            }
+        }
+
+        // 4. Agrupar tickets por ventana, vendedor y multiplicador
         //  NUEVO: La exclusión ahora viene a nivel de jugada, no hay tabla separada
         const ventanasMap = new Map<string, {
             ventanaId: string;
@@ -342,6 +371,24 @@ export const SorteoListasService = {
                         collapsedCommissionReventado += entry.commissionByReventado;
                     }
 
+                    // Determinar exclusionScope desde la tabla de exclusiones
+                    let collapsedScope: 'ventana' | 'vendedor' | null = null;
+                    let collapsedRecordId: string | null = null;
+                    // ¿Hay exclusión de ventana completa que cubra a este vendedor?
+                    const ventanaMatches = ventanaLevelExclusions.get(ventanaId) || [];
+                    const ventanaMatch = ventanaMatches.find(e => e.multiplierId === null);
+                    if (ventanaMatch) {
+                        collapsedScope = 'ventana';
+                        collapsedRecordId = ventanaMatch.id;
+                    } else if (first.vendedorId) {
+                        const vendedorMatches = vendedorLevelExclusions.get(first.vendedorId) || [];
+                        const vendedorMatch = vendedorMatches.find(e => e.ventanaId === ventanaId && e.multiplierId === null);
+                        if (vendedorMatch) {
+                            collapsedScope = 'vendedor';
+                            collapsedRecordId = vendedorMatch.id;
+                        }
+                    }
+
                     vendedores.push({
                         vendedorId: first.vendedorId,
                         vendedorName: first.vendedorName,
@@ -355,11 +402,13 @@ export const SorteoListasService = {
                         commissionByNumber: collapsedCommissionNumber,
                         commissionByReventado: collapsedCommissionReventado,
                         isExcluded: true,
-                        exclusionId: null, // No hay un ID único cuando se colapsa
+                        exclusionId: null,
                         exclusionReason: first.excludedReason,
                         excludedAt: first.excludedAt ? first.excludedAt.toISOString() : null,
                         excludedBy: first.excludedBy,
                         excludedByName: first.excludedByName,
+                        exclusionScope: collapsedScope,
+                        exclusionRecordId: collapsedRecordId,
                     });
 
                     totalExcluded++;
@@ -396,6 +445,31 @@ export const SorteoListasService = {
                         continue;
                     }
 
+                    // Determinar exclusionScope desde la tabla de exclusiones
+                    let itemScope: 'ventana' | 'vendedor' | null = null;
+                    let itemRecordId: string | null = null;
+                    if (isExcludedItem) {
+                        // ¿Hay exclusión de ventana completa (o con este multiplicador)?
+                        const ventanaMatches = ventanaLevelExclusions.get(ventanaId) || [];
+                        const ventanaMatch = ventanaMatches.find(e =>
+                            e.multiplierId === null || e.multiplierId === data.multiplierId
+                        );
+                        if (ventanaMatch) {
+                            itemScope = 'ventana';
+                            itemRecordId = ventanaMatch.id;
+                        } else if (data.vendedorId) {
+                            const vendedorMatches = vendedorLevelExclusions.get(data.vendedorId) || [];
+                            const vendedorMatch = vendedorMatches.find(e =>
+                                e.ventanaId === ventanaId &&
+                                (e.multiplierId === null || e.multiplierId === data.multiplierId)
+                            );
+                            if (vendedorMatch) {
+                                itemScope = 'vendedor';
+                                itemRecordId = vendedorMatch.id;
+                            }
+                        }
+                    }
+
                     vendedores.push({
                         vendedorId: data.vendedorId,
                         vendedorName: data.vendedorName,
@@ -409,11 +483,13 @@ export const SorteoListasService = {
                         commissionByNumber: data.commissionByNumber,
                         commissionByReventado: data.commissionByReventado,
                         isExcluded: isExcludedItem,
-                        exclusionId: null, // No hay un ID único, la exclusión está distribuida en jugadas
+                        exclusionId: null,
                         exclusionReason: data.excludedReason,
                         excludedAt: data.excludedAt ? data.excludedAt.toISOString() : null,
                         excludedBy: data.excludedBy,
                         excludedByName: data.excludedByName,
+                        exclusionScope: itemScope,
+                        exclusionRecordId: itemRecordId,
                     });
 
                     // Solo sumar a los totales si NO está excluido
@@ -961,6 +1037,17 @@ export const SorteoListasService = {
         data: IncludeListaDTO,
         userId: string
     ): Promise<{ success: boolean; message: string }> {
+        logger.info({
+            layer: "service",
+            action: "INCLUDE_LISTA_REQUEST",
+            payload: {
+                sorteoId,
+                ventanaId: data.ventanaId,
+                vendedorId: data.vendedorId ?? null,
+                multiplierId: data.multiplierId ?? null,
+            }
+        });
+
         // Verificar que el sorteo existe y está en estado OPEN
         const sorteo = await prisma.sorteo.findUnique({
             where: { id: sorteoId },
@@ -976,6 +1063,28 @@ export const SorteoListasService = {
                 `Solo se puede revertir exclusiones cuando el sorteo está en estado OPEN (actual: ${sorteo.status})`,
                 400
             );
+        }
+
+        // Resolver ventanaId igual que en excludeLista: el cliente puede mandar
+        // un Ventana.id o un User.id (listero); normalizamos a Ventana.id
+        let ventanaInclude = await prisma.ventana.findUnique({
+            where: { id: data.ventanaId },
+            select: { id: true },
+        });
+
+        if (!ventanaInclude) {
+            const user = await prisma.user.findUnique({
+                where: { id: data.ventanaId },
+                select: { role: true, ventana: { select: { id: true } } },
+            });
+            if (user?.role === 'VENTANA' && user.ventana) {
+                ventanaInclude = user.ventana;
+                data.ventanaId = user.ventana.id;
+            }
+        }
+
+        if (!ventanaInclude) {
+            throw new AppError("Ventana no encontrada", 404);
         }
 
         //  PASO 1: Eliminar registro de sorteo_lista_exclusion (tabla de auditoría)
@@ -1183,7 +1292,11 @@ export const SorteoListasService = {
     /**
      * Obtiene todas las listas excluidas con filtros
      * GET /api/v1/listas-excluidas
-     *  NUEVO: Consulta jugadas excluidas agrupadas con información completa
+     *
+     * Lee directamente de sorteo_lista_exclusion (fuente de verdad de las reglas).
+     * El vendedorId de cada registro refleja exactamente lo que se debe mandar en /include:
+     *   null    → la ventana completa fue excluida
+     *   UUID    → un vendedor específico fue excluido
      */
     async getExcludedListas(filters: {
         sorteoId?: string;
@@ -1194,190 +1307,146 @@ export const SorteoListasService = {
         toDate?: Date;
         loteriaId?: string;
     }): Promise<ListaExclusionResponse[]> {
-        // Construir WHERE dinámico
-        const ticketWhere: any = {
-            deletedAt: null,
-        };
+        // Construir WHERE sobre la tabla de exclusiones
+        const exclusionWhere: any = {};
 
         if (filters.sorteoId) {
-            ticketWhere.sorteoId = filters.sorteoId;
+            exclusionWhere.sorteoId = filters.sorteoId;
         }
 
         if (filters.ventanaId) {
-            ticketWhere.ventanaId = filters.ventanaId;
+            exclusionWhere.ventanaId = filters.ventanaId;
         }
 
         if (filters.vendedorId) {
-            ticketWhere.vendedorId = filters.vendedorId;
+            exclusionWhere.vendedorId = filters.vendedorId;
+        }
+
+        if (filters.multiplierId) {
+            exclusionWhere.multiplierId = filters.multiplierId;
         }
 
         if (filters.loteriaId) {
-            ticketWhere.sorteo = {
-                loteriaId: filters.loteriaId,
-            };
+            exclusionWhere.sorteo = { loteriaId: filters.loteriaId };
         }
 
-        // Filtro de fechas
+        // fromDate/toDate se aplican sobre excludedAt del registro
         if (filters.fromDate || filters.toDate) {
-            ticketWhere.createdAt = {};
-            if (filters.fromDate) {
-                ticketWhere.createdAt.gte = filters.fromDate;
-            }
-            if (filters.toDate) {
-                ticketWhere.createdAt.lte = filters.toDate;
-            }
+            exclusionWhere.excludedAt = {};
+            if (filters.fromDate) exclusionWhere.excludedAt.gte = filters.fromDate;
+            if (filters.toDate)   exclusionWhere.excludedAt.lte = filters.toDate;
         }
 
-        const jugadaWhere: any = {
-            deletedAt: null,
-            isExcluded: true,
-        };
-
-        if (filters.multiplierId) {
-            jugadaWhere.multiplierId = filters.multiplierId;
-        }
-
-        // Obtener jugadas excluidas con toda la información
-        const excludedJugadas = await prisma.jugada.findMany({
-            where: {
-                ticket: ticketWhere,
-                ...jugadaWhere,
-            },
+        const exclusionRecords = await prisma.sorteoListaExclusion.findMany({
+            where: exclusionWhere,
             select: {
                 id: true,
-                amount: true,
+                sorteoId: true,
+                ventanaId: true,
+                vendedorId: true,
                 multiplierId: true,
                 excludedAt: true,
                 excludedBy: true,
-                excludedReason: true,
-                ticket: {
+                reason: true,
+                createdAt: true,
+                updatedAt: true,
+                sorteo: {
                     select: {
-                        sorteoId: true,
-                        vendedorId: true,
-                        ventanaId: true,
-                        createdAt: true,
-                        sorteo: {
-                            select: {
-                                name: true,
-                                loteriaId: true,
-                                loteria: {
-                                    select: {
-                                        name: true,
-                                    },
-                                },
-                            },
-                        },
-                        ventana: {
-                            select: {
-                                name: true,
-                                code: true,
-                            },
-                        },
-                        vendedor: {
-                            select: {
-                                name: true,
-                                code: true,
-                            },
-                        },
+                        name: true,
+                        loteriaId: true,
+                        loteria: { select: { name: true } },
                     },
+                },
+                ventana: {
+                    select: { name: true, code: true },
+                },
+                vendedor: {
+                    select: { name: true, code: true },
                 },
                 multiplier: {
-                    select: {
-                        id: true,
-                        name: true,
-                        valueX: true,
-                    },
+                    select: { name: true, valueX: true },
                 },
                 excludedByUser: {
-                    select: {
-                        name: true,
-                    },
+                    select: { name: true },
                 },
+            },
+            orderBy: { excludedAt: 'desc' },
+        });
+
+        if (exclusionRecords.length === 0) {
+            return [];
+        }
+
+        // Calcular totalJugadas / totalAmount agrupando las jugadas excluidas del sorteo
+        // Clave: ventanaId:vendedorId|null:multiplierId|null
+        const jugadaTotals = new Map<string, { totalJugadas: number; totalAmount: number }>();
+
+        const jugadaTicketWhere: any = { deletedAt: null };
+        if (filters.sorteoId) jugadaTicketWhere.sorteoId = filters.sorteoId;
+        if (filters.ventanaId) jugadaTicketWhere.ventanaId = filters.ventanaId;
+        if (filters.vendedorId) jugadaTicketWhere.vendedorId = filters.vendedorId;
+
+        const rawJugadas = await prisma.jugada.findMany({
+            where: {
+                ticket: jugadaTicketWhere,
+                isExcluded: true,
+                deletedAt: null,
+                ...(filters.multiplierId ? { multiplierId: filters.multiplierId } : {}),
+            },
+            select: {
+                amount: true,
+                multiplierId: true,
+                ticket: { select: { ventanaId: true, vendedorId: true } },
             },
         });
 
-        // Agrupar por sorteo + ventana + vendedor + multiplier
-        const grouped = new Map<string, {
-            sorteoId: string;
-            sorteoName: string;
-            loteriaId: string;
-            loteriaName: string;
-            ventanaId: string;
-            ventanaName: string;
-            ventanaCode: string;
-            vendedorId: string | null;
-            vendedorName: string | null;
-            vendedorCode: string | null;
-            multiplierId: string | null;
-            multiplierName: string | null;
-            multiplierValue: number | null;
-            excludedAt: Date | null;
-            excludedBy: string | null;
-            excludedByName: string | null;
-            reason: string | null;
-            createdAt: Date | null;
-            totalJugadas: number;
-            totalAmount: number;
-        }>();
+        for (const j of rawJugadas) {
+            // Clave para exclusiones de vendedor específico
+            const keyVendedor = `${j.ticket.ventanaId}:${j.ticket.vendedorId || 'null'}:${j.multiplierId || 'null'}`;
+            // Clave para exclusiones de ventana completa (vendedorId null)
+            const keyVentana = `${j.ticket.ventanaId}:null:${j.multiplierId || 'null'}`;
 
-        for (const jugada of excludedJugadas) {
-            const key = `${jugada.ticket.sorteoId}:${jugada.ticket.ventanaId}:${jugada.ticket.vendedorId || 'null'}:${jugada.multiplierId || 'null'}`;
-
-            if (!grouped.has(key)) {
-                grouped.set(key, {
-                    sorteoId: jugada.ticket.sorteoId,
-                    sorteoName: jugada.ticket.sorteo.name,
-                    loteriaId: jugada.ticket.sorteo.loteriaId,
-                    loteriaName: jugada.ticket.sorteo.loteria.name,
-                    ventanaId: jugada.ticket.ventanaId,
-                    ventanaName: jugada.ticket.ventana.name,
-                    ventanaCode: jugada.ticket.ventana.code,
-                    vendedorId: jugada.ticket.vendedorId,
-                    vendedorName: jugada.ticket.vendedor?.name || null,
-                    vendedorCode: jugada.ticket.vendedor?.code || null,
-                    multiplierId: jugada.multiplierId,
-                    multiplierName: jugada.multiplier?.name || null,
-                    multiplierValue: jugada.multiplier?.valueX || null,
-                    excludedAt: jugada.excludedAt,
-                    excludedBy: jugada.excludedBy,
-                    excludedByName: jugada.excludedByUser?.name || null,
-                    reason: jugada.excludedReason,
-                    createdAt: jugada.ticket.createdAt,
-                    totalJugadas: 0,
-                    totalAmount: 0,
-                });
+            for (const key of [keyVendedor, keyVentana]) {
+                const existing = jugadaTotals.get(key);
+                if (existing) {
+                    existing.totalJugadas++;
+                    existing.totalAmount += j.amount;
+                } else {
+                    jugadaTotals.set(key, { totalJugadas: 1, totalAmount: j.amount });
+                }
             }
-
-            const group = grouped.get(key)!;
-            group.totalJugadas++;
-            group.totalAmount += jugada.amount;
         }
 
-        // Convertir a array de respuestas
-        return Array.from(grouped.values()).map((ex) => ({
-            id: `excluded-${ex.sorteoId}-${ex.ventanaId}-${ex.vendedorId || 'all'}-${ex.multiplierId || 'all'}`,
-            sorteoId: ex.sorteoId,
-            sorteoName: ex.sorteoName,
-            loteriaId: ex.loteriaId,
-            loteriaName: ex.loteriaName,
-            ventanaId: ex.ventanaId,
-            ventanaName: ex.ventanaName,
-            ventanaCode: ex.ventanaCode,
-            vendedorId: ex.vendedorId,
-            vendedorName: ex.vendedorName,
-            vendedorCode: ex.vendedorCode,
-            multiplierId: ex.multiplierId,
-            multiplierName: ex.multiplierName,
-            multiplierValue: ex.multiplierValue,
-            totalJugadas: ex.totalJugadas,
-            totalAmount: ex.totalAmount,
-            excludedAt: ex.excludedAt ? ex.excludedAt.toISOString() : null,
-            excludedBy: ex.excludedBy,
-            excludedByName: ex.excludedByName,
-            reason: ex.reason,
-            createdAt: ex.createdAt ? ex.createdAt.toISOString() : null,
-            updatedAt: ex.excludedAt ? ex.excludedAt.toISOString() : null,
-        }));
+        return exclusionRecords.map((ex) => {
+            // La clave de lookup depende del registro: si vendedorId es null → clave de ventana
+            const lookupKey = `${ex.ventanaId}:${ex.vendedorId || 'null'}:${ex.multiplierId || 'null'}`;
+            const totals = jugadaTotals.get(lookupKey) || { totalJugadas: 0, totalAmount: 0 };
+
+            return {
+                id: ex.id,
+                sorteoId: ex.sorteoId,
+                sorteoName: ex.sorteo.name,
+                loteriaId: ex.sorteo.loteriaId,
+                loteriaName: ex.sorteo.loteria.name,
+                ventanaId: ex.ventanaId,
+                ventanaName: ex.ventana.name,
+                ventanaCode: ex.ventana.code,
+                vendedorId: ex.vendedorId,
+                vendedorName: ex.vendedor?.name || null,
+                vendedorCode: ex.vendedor?.code || null,
+                multiplierId: ex.multiplierId,
+                multiplierName: ex.multiplier?.name || null,
+                multiplierValue: ex.multiplier?.valueX || null,
+                totalJugadas: totals.totalJugadas,
+                totalAmount: totals.totalAmount,
+                excludedAt: ex.excludedAt.toISOString(),
+                excludedBy: ex.excludedBy,
+                excludedByName: ex.excludedByUser?.name || null,
+                reason: ex.reason,
+                createdAt: ex.createdAt.toISOString(),
+                updatedAt: ex.updatedAt.toISOString(),
+            };
+        });
     },
 };
 
