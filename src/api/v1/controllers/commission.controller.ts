@@ -4,6 +4,95 @@ import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
+import { Prisma } from "@prisma/client";
+
+type MultiplierEmbed = {
+  id: string;
+  name: string;
+  valueX: number;
+  kind: string;
+  loteriaId: string;
+  isActive: boolean;
+};
+
+type RuleWithEmbed = {
+  loteriaId?: string | null;
+  betType?: string | null;
+  multiplierRange?: { min: number; max: number };
+  multiplier?: MultiplierEmbed | null;
+  [key: string]: unknown;
+};
+
+/**
+ * Embebe el objeto multiplier en cada regla de la política para que el FE
+ * no tenga que lanzar N queries a /multipliers al hidratar el formulario.
+ * Resolución: 1 query a LoteriaMultiplier con todos los pares (loteriaId, valueX).
+ * Si la regla tiene min !== max o loteriaId null, multiplier queda null.
+ */
+async function embedMultipliersInPolicy(
+  policyJson: Prisma.JsonValue | null
+): Promise<Prisma.JsonValue | null> {
+  if (!policyJson || typeof policyJson !== "object" || Array.isArray(policyJson)) {
+    return policyJson;
+  }
+
+  const policy = policyJson as { rules?: unknown[] };
+  if (!Array.isArray(policy.rules) || policy.rules.length === 0) {
+    return policyJson;
+  }
+
+  const rules = policy.rules as RuleWithEmbed[];
+
+  // Reglas elegibles: tienen loteriaId y multiplicador específico (min === max)
+  const eligibleRules = rules.filter(
+    (r) =>
+      r.loteriaId &&
+      r.multiplierRange &&
+      r.multiplierRange.min === r.multiplierRange.max
+  );
+
+  if (eligibleRules.length === 0) return policyJson;
+
+  const loteriaIds = [...new Set(eligibleRules.map((r) => r.loteriaId as string))];
+
+  // Un solo query para todos los multiplicadores base activos de las loterías presentes
+  const multipliers = await prisma.loteriaMultiplier.findMany({
+    where: {
+      loteriaId: { in: loteriaIds },
+      isActive: true,
+      appliesToDate: null,
+      appliesToSorteoId: null,
+    },
+    select: {
+      id: true,
+      name: true,
+      valueX: true,
+      kind: true,
+      loteriaId: true,
+      isActive: true,
+    },
+  });
+
+  // Índice: "${loteriaId}:${valueX}:${kind}" → primer multiplicador encontrado
+  const lookup = new Map<string, MultiplierEmbed>();
+  for (const m of multipliers) {
+    const key = `${m.loteriaId}:${m.valueX}:${m.kind}`;
+    if (!lookup.has(key)) lookup.set(key, m);
+  }
+
+  const enrichedRules = rules.map((rule): RuleWithEmbed => {
+    if (!rule.loteriaId || !rule.multiplierRange || rule.multiplierRange.min !== rule.multiplierRange.max) {
+      return { ...rule, multiplier: null };
+    }
+    const valueX = rule.multiplierRange.min;
+    // betType null → intentar con NUMERO como fallback
+    const kind = rule.betType ?? "NUMERO";
+    const multiplier = lookup.get(`${rule.loteriaId}:${valueX}:${kind}`) ?? null;
+    return { ...rule, multiplier };
+  });
+
+  return { ...policy, rules: enrichedRules } as Prisma.JsonValue;
+}
 
 export const CommissionController = {
   /**
@@ -68,7 +157,8 @@ export const CommissionController = {
       payload: { bancaId: id },
     });
 
-    return success(res, banca);
+    const commissionPolicyJson = await embedMultipliersInPolicy(banca.commissionPolicyJson);
+    return success(res, { ...banca, commissionPolicyJson });
   },
 
   /**
@@ -135,7 +225,8 @@ export const CommissionController = {
       payload: { ventanaId: id },
     });
 
-    return success(res, ventana);
+    const commissionPolicyJson = await embedMultipliersInPolicy(ventana.commissionPolicyJson);
+    return success(res, { ...ventana, commissionPolicyJson });
   },
 
   /**
@@ -202,7 +293,8 @@ export const CommissionController = {
       payload: { userId: id },
     });
 
-    return success(res, user);
+    const commissionPolicyJson = await embedMultipliersInPolicy(user.commissionPolicyJson);
+    return success(res, { ...user, commissionPolicyJson });
   },
 };
 

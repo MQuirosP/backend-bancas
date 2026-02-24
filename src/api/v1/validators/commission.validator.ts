@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 
 /**
  * Schema para MultiplierRange
- * min <= max, ambos inclusivos
+ * min === max (el FE siempre guarda un multiplicador específico, no un rango)
  */
 const MultiplierRangeSchema = z
   .object({
@@ -14,8 +14,8 @@ const MultiplierRangeSchema = z
     max: z.number(),
   })
   .strict()
-  .refine((data) => data.min <= data.max, {
-    message: "min must be less than or equal to max",
+  .refine((data) => data.min === data.max, {
+    message: "min must equal max — solo se permiten multiplicadores específicos (no rangos)",
     path: ["min"],
   });
 
@@ -24,8 +24,9 @@ const MultiplierRangeSchema = z
  * - id: string no vacío (si falta, se genera UUID en backend)
  * - loteriaId: UUID | null
  * - betType: "NUMERO" | "REVENTADO" | null
- * - multiplierRange: { min, max } con min <= max
+ * - multiplierRange: { min, max } con min === max
  * - percent: 0..100, máximo 2 decimales
+ * - multiplier: de solo lectura — el BE lo embebe en GET y lo ignora en PUT
  */
 const CommissionRuleSchema = z
   .object({
@@ -37,6 +38,7 @@ const CommissionRuleSchema = z
       (val) => /^\d+(\.\d{1,2})?$/.test(val.toString()),
       { message: "Percentage must have maximum 2 decimal places" }
     ),
+    multiplier: z.unknown().optional(), // De solo lectura: aceptado pero descartado en PUT
   })
   .strict();
 
@@ -128,10 +130,10 @@ export const CommissionPolicySchema = z
     }
   )
   .transform((data) => {
-    // Generar UUIDs para reglas sin ID
+    // Generar UUIDs para reglas sin ID y descartar el campo multiplier (de solo lectura)
     return {
       ...data,
-      rules: data.rules.map((rule) => ({
+      rules: data.rules.map(({ multiplier: _ignored, ...rule }) => ({
         ...rule,
         id: rule.id || uuidv4(),
       })),
