@@ -33,6 +33,7 @@ const CommissionRuleSchema = z
     id: z.string().min(1).optional(), // Opcional, se genera si falta
     loteriaId: z.string().uuid().nullable(),
     betType: z.nativeEnum(BetType).nullable(),
+    multiplierId: z.string().uuid().nullable().optional(), // Nuevo: para distinguir multiplicadores con mismo valor
     multiplierRange: MultiplierRangeSchema,
     percent: z.number().min(0).max(100).refine(
       (val) => /^\d+(\.\d{1,2})?$/.test(val.toString()),
@@ -43,49 +44,33 @@ const CommissionRuleSchema = z
   .strict();
 
 /**
- * Valida que no existan reglas duplicadas con la misma combinación de:
- * - loteriaId (mismo o ambas null)
- * - betType (mismo o una null y otra específica - solapamiento)
- * - multiplierRange donde min === max (mismo multiplicador específico)
+ * Valida que no existan reglas duplicadas en el payload.
+ * Un duplicado es el mismo loteriaId, mismo betType Y mismo multiplicador (por ID o valor).
  */
 function validateNoDuplicateRules(rules: Array<{
   id?: string;
   loteriaId: string | null;
   betType: BetType | null;
+  multiplierId?: string | null;
   multiplierRange: { min: number; max: number };
 }>) {
-  // Solo considerar reglas con multiplicador específico (min === max)
-  const specificMultiplierRules = rules.filter(
-    (rule) => rule.multiplierRange.min === rule.multiplierRange.max
-  );
+  const keys = new Set<string>();
 
-  for (let i = 0; i < specificMultiplierRules.length; i++) {
-    const rule1 = specificMultiplierRules[i];
+  for (const rule of rules) {
+    // Solo validar duplicados de multiplicadores específicos (min === max)
+    if (rule.multiplierRange.min !== rule.multiplierRange.max) continue;
+
+    const loteriaIdKey = rule.loteriaId ?? "global";
+    const betTypeKey = rule.betType ?? "all";
+    const multiplierKey = rule.multiplierId ?? `val-${rule.multiplierRange.min}`;
     
-    for (let j = i + 1; j < specificMultiplierRules.length; j++) {
-      const rule2 = specificMultiplierRules[j];
-      
-      // Mismo loteriaId (ambas null o mismo valor)
-      const sameLoteriaId = 
-        (rule1.loteriaId === null && rule2.loteriaId === null) ||
-        (rule1.loteriaId !== null && rule2.loteriaId !== null && rule1.loteriaId === rule2.loteriaId);
-      
-      // Mismo betType o solapamiento (una null y otra específica, o ambas iguales)
-      const sameBetType =
-        (rule1.betType === null && rule2.betType === null) ||
-        (rule1.betType !== null && rule2.betType !== null && rule1.betType === rule2.betType) ||
-        (rule1.betType === null && rule2.betType !== null) ||
-        (rule1.betType !== null && rule2.betType === null);
-      
-      // Mismo multiplicador específico
-      const sameMultiplier = 
-        rule1.multiplierRange.min === rule2.multiplierRange.min &&
-        rule1.multiplierRange.max === rule2.multiplierRange.max;
-      
-      if (sameLoteriaId && sameBetType && sameMultiplier) {
-        return false; // Duplicado encontrado
-      }
+    // La llave es la combinación única de estos 3 factores
+    const key = `${loteriaIdKey}:${betTypeKey}:${multiplierKey}`;
+
+    if (keys.has(key)) {
+      return false; // Duplicado encontrado
     }
+    keys.add(key);
   }
   
   return true; // No hay duplicados
