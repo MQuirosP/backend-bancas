@@ -2335,7 +2335,7 @@ export const TicketRepository = {
           createdByRole: true,
           loteria: { select: { id: true, name: true } },
           sorteo: {
-            select: { id: true, name: true, status: true, scheduledAt: true },
+            select: { id: true, name: true, status: true, scheduledAt: true, extraOutcomeCode: true, extraMultiplierX: true },
           },
           ventana: { select: { id: true, name: true } },
           vendedor: { select: { id: true, name: true, role: true } },
