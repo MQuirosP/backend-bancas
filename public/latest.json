@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.1",
-  "versionCode": 5,
-  "buildNumber": 5,
+  "versionName": "1.0.2",
+  "versionCode": 7,
+  "buildNumber": 7,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Mejoras en la navegación entre pantallas y creación y copia de tickets.",
+  "changelog": "Mejoras en la copia de tickets. Listas de premios con indicador de reventado. Compatibilidad con nuevos dispositivos Sunmi.",
   "releasedAt": "2026-02-19T18:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "44fb5f7f35bcc6d6134561352b8c4d623c144e2102bf6493d49194b29d2f4331"
+      "sha256": "6091c45dae230579bb6f3fa079746651b0dfae562514bbcbe79d3ec3f748479e"
     },
     "arm64-v8a": {
-      "sha256": "44fb5f7f35bcc6d6134561352b8c4d623c144e2102bf6493d49194b29d2f4331"
+      "sha256": "6091c45dae230579bb6f3fa079746651b0dfae562514bbcbe79d3ec3f748479e"
     }
   }
 }
