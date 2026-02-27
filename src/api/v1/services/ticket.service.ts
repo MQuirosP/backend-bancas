@@ -1968,8 +1968,14 @@ export const TicketService = {
       }
 
       // Aplicar filtro de estado
+      // WINNERS_PENDING es un valor sintético del FE que se traduce a isWinner=true + status=EVALUATED
       if (params.status) {
-        where.status = params.status;
+        if (params.status === 'WINNERS_PENDING') {
+          where.isWinner = true;
+          where.status = 'EVALUATED';
+        } else {
+          where.status = params.status;
+        }
       }
 
       // Obtener tickets con relaciones necesarias
