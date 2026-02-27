@@ -26,52 +26,59 @@ export const protect = async (
   }
 
   const token = header.split(" ")[1];
+
+  // 1) Verificar firma y expiración del JWT.
+  //    Solo errores JWT genuinos deben resultar en 401.
+  //    Separar este bloque evita que fallos de BD/Redis sean convertidos en 401.
+  let decoded: any;
   try {
-    const decoded = jwt.verify(token, config.jwtAccessSecret) as any;
-    const role = decoded.role as Role;
-    if (!decoded.sub || !role) {
-      throw new AppError("Invalid token", 401);
-    }
-    
-    //  Extraer ventanaId del JWT si está presente
-    let ventanaId: string | null | undefined = decoded.ventanaId ?? null;
-    
-    //  Para VENDEDOR: Verificar si ventanaId en JWT coincide con BD (con cache Redis)
-    // Nota: se cachea como objeto { v: string|null } para evitar doble serialización
-    // (CacheService.set hace JSON.stringify y el cliente Upstash REST también)
-    if (role === Role.VENDEDOR) {
-      const cacheKey = `auth:ventana:${decoded.sub}`;
-      const cached = await CacheService.get<{ v: string | null }>(cacheKey);
-
-      if (cached !== null) {
-        // Cache hit
-        if (cached.v !== ventanaId) {
-          ventanaId = cached.v;
-        }
-      } else {
-        // Cache miss — consultar BD y cachear 5 min
-        const user = await withConnectionRetry(
-          () => prisma.user.findUnique({
-            where: { id: decoded.sub },
-            select: { ventanaId: true }
-          }),
-          { context: 'authMiddleware.vendedorVentana', maxRetries: 2 }
-        );
-
-        const dbVentanaId = user?.ventanaId ?? null;
-        await CacheService.set(cacheKey, { v: dbVentanaId }, 300);
-
-        if (dbVentanaId !== ventanaId) {
-          ventanaId = dbVentanaId;
-        }
-      }
-    }
-    
-    req.user = { id: decoded.sub, role, ventanaId, bancaId: decoded.bancaId ?? null };
-    next();
+    decoded = jwt.verify(token, config.jwtAccessSecret);
   } catch {
     throw new AppError("Invalid token", 401);
   }
+
+  const role = decoded.role as Role;
+  if (!decoded.sub || !role) {
+    throw new AppError("Invalid token", 401);
+  }
+
+  // 2) Operaciones de infraestructura (Redis / BD).
+  //    Si fallan después de los reintentos, el error se propaga como 500,
+  //    no como 401. Esto evita que un blip de Supabase desloguee a todos
+  //    los usuarios simultáneamente.
+  //    Nota: CacheService ya tiene graceful degradation interna (devuelve null si falla).
+  let ventanaId: string | null | undefined = decoded.ventanaId ?? null;
+
+  if (role === Role.VENDEDOR) {
+    const cacheKey = `auth:ventana:${decoded.sub}`;
+    const cached = await CacheService.get<{ v: string | null }>(cacheKey);
+
+    if (cached !== null) {
+      // Cache hit
+      if (cached.v !== ventanaId) {
+        ventanaId = cached.v;
+      }
+    } else {
+      // Cache miss — consultar BD y cachear 5 min
+      const user = await withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id: decoded.sub },
+          select: { ventanaId: true }
+        }),
+        { context: 'authMiddleware.vendedorVentana', maxRetries: 2 }
+      );
+
+      const dbVentanaId = user?.ventanaId ?? null;
+      await CacheService.set(cacheKey, { v: dbVentanaId }, 300);
+
+      if (dbVentanaId !== ventanaId) {
+        ventanaId = dbVentanaId;
+      }
+    }
+  }
+
+  req.user = { id: decoded.sub, role, ventanaId, bancaId: decoded.bancaId ?? null };
+  next();
 };
 
 export const restrictTo = (...roles: Role[]) => {
