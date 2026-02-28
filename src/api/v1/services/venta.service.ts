@@ -759,10 +759,11 @@ export const VentasService = {
             jugada_stats AS (
               SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
               FROM "Jugada" j
+              JOIN filtered_tickets ft ON ft.id = j."ticketId"
               WHERE j."deletedAt" IS NULL
               GROUP BY j."ticketId"
             )
-            SELECT 
+            SELECT
                 v.id as key,
                 v.name as name,
                 SUM(ft."totalAmount") as "ventasTotal",
@@ -814,16 +815,18 @@ export const VentasService = {
             jugada_stats AS (
               SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
               FROM "Jugada" j
+              JOIN filtered_tickets ft ON ft.id = j."ticketId"
               WHERE j."deletedAt" IS NULL
               GROUP BY j."ticketId"
             ),
             payment_stats AS (
               SELECT tp."ticketId", SUM(tp."amountPaid") as paid
               FROM "TicketPayment" tp
+              JOIN filtered_tickets ft ON ft.id = tp."ticketId"
               WHERE tp."isReversed" = false
               GROUP BY tp."ticketId"
             )
-            SELECT 
+            SELECT
                 u.id as key,
                 u.name as name,
                 u.code as "vendedorCode",
@@ -896,10 +899,11 @@ export const VentasService = {
             jugada_stats AS (
               SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
               FROM "Jugada" j
+              JOIN filtered_tickets ft ON ft.id = j."ticketId"
               WHERE j."deletedAt" IS NULL
               GROUP BY j."ticketId"
             )
-            SELECT 
+            SELECT
                 l.id as key,
                 l.name as name,
                 SUM(ft."totalAmount") as "ventasTotal",
@@ -951,10 +955,11 @@ export const VentasService = {
             jugada_stats AS (
               SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
               FROM "Jugada" j
+              JOIN filtered_tickets ft ON ft.id = j."ticketId"
               WHERE j."deletedAt" IS NULL
               GROUP BY j."ticketId"
             )
-            SELECT 
+            SELECT
                 s.id as key,
                 s.name as name,
                 SUM(ft."totalAmount") as "ventasTotal",
