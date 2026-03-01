@@ -34,8 +34,28 @@ function nextDelayMs(attempt: number, backoffMinMs: number, backoffMaxMs: number
 }
 
 /**
+ * Errores de conexión del pooler (Supavisor) que merecen reintento completo.
+ * La transacción nunca se ejecutó, por lo que reintentar es idempotente.
+ */
+function isPoolerConnectionError(code: string | undefined, msg: string): boolean {
+  return (
+    code === "P1001" || // Can't reach database server
+    code === "P1008" || // Operations timed out
+    code === "P2024" || // Timed out fetching a new connection from the pool
+    /can't reach database/i.test(msg) ||
+    /connection pool timeout/i.test(msg)
+  );
+}
+
+/** Backoff lineal fijo para errores de conexión: 500ms, 1000ms, 1500ms */
+function connectionBackoffMs(attempt: number): number {
+  return Math.min(attempt * 500, 1500);
+}
+
+/**
  * Ejecuta una función dentro de una *transacción interactiva* de Prisma con reintentos
  * ante conflictos de escritura, deadlocks o cierres prematuros de la transacción.
+ * También reintenta ante rechazos temporales del pooler (P1001, P1008, P2024).
  */
 export async function withTransactionRetry<T>(
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
@@ -62,6 +82,28 @@ export async function withTransactionRetry<T>(
       const msg = String(error?.message ?? "");
       const code = error?.code as string | undefined;
 
+      // Errores de conexión/pooler: backoff lineal más largo
+      if (isPoolerConnectionError(code, msg)) {
+        if (attempt < maxRetries) {
+          const backoff = connectionBackoffMs(attempt);
+          logger.warn({
+            layer: "transaction",
+            action: "RETRY_CONNECTION",
+            payload: { attempt, backoffMs: backoff, code,
+              message: msg.length > 150 ? msg.substring(0, 150) + "..." : msg },
+          });
+          await sleep(backoff);
+          continue;
+        }
+        logger.error({
+          layer: "transaction",
+          action: "FAIL_CONNECTION",
+          payload: { attempt, code, error: msg.length > 200 ? msg.substring(0, 200) + "..." : msg },
+        });
+        throw error;
+      }
+
+      // Errores de serialización/deadlock: backoff exponencial corto (comportamiento previo)
       const retryable =
         code === "P2034" || // deadlock / write-conflict (pg "could not serialize")
         code === "P2028" || // error de API de transacción (iniciar/recuperar tx)
