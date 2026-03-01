@@ -128,72 +128,86 @@ export class CierreService {
   ): Promise<CierreAggregateRow[]> {
     const whereConditions = this.buildWhereConditions(filters);
 
+    // OPTIMIZACIÓN: Dos CTEs eliminan los subqueries correlacionados O(n×m):
+    // ① lm_active: materializa LoteriaMultiplier una sola vez → hash lookup en EXISTS
+    // ② numero_bandas: pre-calcula bandas NUMERO por (ticketId, number) → LEFT JOIN para REVENTADO
     const query = Prisma.sql`
-      WITH base AS (
-        SELECT
-          j.id                AS "jugadaId",
-          j.type              AS type,
-          j."finalMultiplierX" AS "finalMultiplierX",
-          j.amount            AS amount,
-          j.payout            AS payout,
-          j."listeroCommissionAmount" AS "listeroCommissionAmount",
-          t.id                AS "ticketId",
-          t."ventanaId"       AS "ventanaId",
-          t."loteriaId"       AS "loteriaId",
-          t."sorteoId"        AS "sorteoId",
-          t."createdAt"       AS "ticketCreatedAt",
-          s."scheduledAt"     AS "scheduledAt",
-          CASE
-            -- Jugadas NUMERO: usar su multiplicador como banda
-            --  VALIDACIÓN DE RANGOS: Verifica que el multiplicador esté activo y aplicable al momento/ticket
-            -- - appliesToDate: Si está definido, el ticket debe haberse creado DESPUÉS de esa fecha
-            -- - appliesToSorteoId: Si está definido, debe coincidir exactamente con el sorteo del ticket
-            WHEN j.type = 'NUMERO' AND EXISTS (
-              SELECT 1 FROM "LoteriaMultiplier" lm
-              WHERE lm."loteriaId" = t."loteriaId"
-                AND lm."kind" = 'NUMERO'
-                AND lm."valueX" = j."finalMultiplierX"
-                AND lm."isActive" = true
-                AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-                AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-            ) THEN j."finalMultiplierX"
+      WITH
+        lm_active AS MATERIALIZED (
+          SELECT
+            lm."loteriaId",
+            lm."valueX",
+            lm."appliesToDate",
+            lm."appliesToSorteoId"
+          FROM "LoteriaMultiplier" lm
+          WHERE lm."kind" = 'NUMERO'
+            AND lm."isActive" = true
+        ),
+        numero_bandas AS MATERIALIZED (
+          SELECT
+            j."ticketId",
+            j.number,
+            MIN(j."finalMultiplierX") AS banda
+          FROM "Jugada" j
+          WHERE j.type = 'NUMERO'
+            AND j."isActive" = true
+            AND j."deletedAt" IS NULL
+          GROUP BY j."ticketId", j.number
+        ),
+        base AS (
+          SELECT
+            j.id                AS "jugadaId",
+            j.type              AS type,
+            j."finalMultiplierX" AS "finalMultiplierX",
+            j.amount            AS amount,
+            j.payout            AS payout,
+            j."listeroCommissionAmount" AS "listeroCommissionAmount",
+            t.id                AS "ticketId",
+            t."ventanaId"       AS "ventanaId",
+            t."loteriaId"       AS "loteriaId",
+            t."sorteoId"        AS "sorteoId",
+            t."createdAt"       AS "ticketCreatedAt",
+            s."scheduledAt"     AS "scheduledAt",
+            CASE
+              -- NUMERO: EXISTS contra CTE materializado (hash lookup, no escaneo de tabla)
+              WHEN j.type = 'NUMERO' AND EXISTS (
+                SELECT 1 FROM lm_active lm
+                WHERE lm."loteriaId" = t."loteriaId"
+                  AND lm."valueX" = j."finalMultiplierX"
+                  AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
+                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
+              ) THEN j."finalMultiplierX"
 
-            -- Jugadas REVENTADO: heredar banda de la jugada NUMERO del mismo ticket+número
-            WHEN j.type = 'REVENTADO' THEN (
-              SELECT jnum."finalMultiplierX"
-              FROM "Jugada" jnum
-              WHERE jnum."ticketId" = j."ticketId"
-                AND jnum.number = j.number
-                AND jnum.type = 'NUMERO'
-                AND jnum."isActive" = true
-                AND jnum."deletedAt" IS NULL
-              LIMIT 1
-            )
+              -- REVENTADO: LEFT JOIN al CTE pre-calculado (hash join, elimina scalar subquery)
+              WHEN j.type = 'REVENTADO' THEN nb.banda
 
-            ELSE NULL
-          END AS banda
-        FROM "Jugada" j
-        INNER JOIN "Ticket" t ON j."ticketId" = t.id
-        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-        WHERE
-          t."deletedAt" IS NULL
-          AND j."deletedAt" IS NULL
-          AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
-          AND t."isActive" = true  -- SOLO tickets activos
-          AND j."isActive" = true  -- SOLO jugadas activas
-          AND s."status" = 'EVALUATED'  -- SOLO sorteos evaluados
-          ${whereConditions}
-      )
+              ELSE NULL
+            END AS banda
+          FROM "Jugada" j
+          INNER JOIN "Ticket" t ON j."ticketId" = t.id
+          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+          LEFT JOIN numero_bandas nb ON nb."ticketId" = j."ticketId"
+            AND nb.number = j.number
+            AND j.type = 'REVENTADO'
+          WHERE
+            t."deletedAt" IS NULL
+            AND j."deletedAt" IS NULL
+            AND t."status" != 'CANCELLED'
+            AND t."isActive" = true
+            AND j."isActive" = true
+            AND s."status" = 'EVALUATED'
+            ${whereConditions}
+        )
       SELECT
         CAST(base.banda AS INT) AS banda,
         base.type AS tipo,
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'YYYY-MM-DD') as fecha,
         l.id as "loteriaId",
         l.name as "loteriaNombre",
-        base."sorteoId" as "sorteoId", --  NUEVO: ID del sorteo para agrupar
+        base."sorteoId" as "sorteoId",
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') as turno,
-        MIN(base."scheduledAt") as "scheduledAt", --  NUEVO: Fecha/hora programada del sorteo (MIN porque es el mismo sorteo)
+        MIN(base."scheduledAt") as "scheduledAt",
         COALESCE(SUM(base.amount), 0)::FLOAT as "totalVendida",
         COALESCE(SUM(base.payout), 0)::FLOAT as ganado,
         COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT as "comisionTotal",
@@ -209,7 +223,7 @@ export class CierreService {
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'YYYY-MM-DD'),
         l.id,
         l.name,
-        base."sorteoId", --  NUEVO: Agrupar por sorteoId
+        base."sorteoId",
         TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI')
       ORDER BY
         l.name ASC,
@@ -218,7 +232,11 @@ export class CierreService {
         CAST(base.banda AS INT) ASC
     `;
 
-    const result = await prisma.$queryRaw<CierreAggregateRow[]>(query);
+    // statement_timeout dentro de $transaction para que SET LOCAL sea efectivo con PgBouncer
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL statement_timeout = '30000'`;
+      return tx.$queryRaw<CierreAggregateRow[]>(query);
+    });
 
     return result.map((row: any) => ({
       ...row,
@@ -235,29 +253,37 @@ export class CierreService {
   ): Promise<VendedorAggregateRow[]> {
     const whereConditions = this.buildWhereConditions(filters);
 
+    // OPTIMIZACIÓN: CTE materializado elimina el EXISTS que se evaluaba 3 veces por fila
+    // (en SELECT, WHERE y GROUP BY). Ahora PostgreSQL construye el hash table una sola vez.
     const query = Prisma.sql`
+      WITH lm_active AS MATERIALIZED (
+        SELECT
+          lm."loteriaId",
+          lm."valueX",
+          lm."appliesToDate",
+          lm."appliesToSorteoId"
+        FROM "LoteriaMultiplier" lm
+        WHERE lm."kind" = 'NUMERO'
+          AND lm."isActive" = true
+      )
       SELECT
         u.id as "vendedorId",
         u.name as "vendedorNombre",
         v.id as "ventanaId",
         v.name as "ventanaNombre",
 
-        -- Banda (opcional, para desglose)
         CASE
           WHEN j.type = 'REVENTADO' THEN 200
           WHEN EXISTS (
-            SELECT 1 FROM "LoteriaMultiplier" lm
+            SELECT 1 FROM lm_active lm
             WHERE lm."loteriaId" = t."loteriaId"
-              AND lm."kind" = 'NUMERO'
               AND lm."valueX" = j."finalMultiplierX"
-              AND lm."isActive" = true
               AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
               AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
           ) THEN j."finalMultiplierX"
           ELSE NULL
         END as banda,
 
-        -- Métricas
         COALESCE(SUM(j.amount), 0)::FLOAT as "totalVendida",
         COALESCE(SUM(j.payout), 0)::FLOAT as ganado,
         COALESCE(SUM(j."listeroCommissionAmount"), 0)::FLOAT as "comisionTotal",
@@ -274,19 +300,17 @@ export class CierreService {
       WHERE
         t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
-        AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
-        AND t."isActive" = true  -- SOLO tickets activos
-        AND j."isActive" = true  -- SOLO jugadas activas
-        AND s."status" = 'EVALUATED'  -- SOLO sorteos evaluados
+        AND t."status" != 'CANCELLED'
+        AND t."isActive" = true
+        AND j."isActive" = true
+        AND s."status" = 'EVALUATED'
         ${whereConditions}
         AND (
           j.type = 'REVENTADO' OR (
             j.type = 'NUMERO' AND EXISTS (
-              SELECT 1 FROM "LoteriaMultiplier" lm
+              SELECT 1 FROM lm_active lm
               WHERE lm."loteriaId" = t."loteriaId"
-                AND lm."kind" = 'NUMERO'
                 AND lm."valueX" = j."finalMultiplierX"
-                AND lm."isActive" = true
                 AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
                 AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
             )
@@ -301,11 +325,9 @@ export class CierreService {
         CASE
           WHEN j.type = 'REVENTADO' THEN 200
           WHEN EXISTS (
-            SELECT 1 FROM "LoteriaMultiplier" lm
+            SELECT 1 FROM lm_active lm
             WHERE lm."loteriaId" = t."loteriaId"
-              AND lm."kind" = 'NUMERO'
               AND lm."valueX" = j."finalMultiplierX"
-              AND lm."isActive" = true
               AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
               AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
           ) THEN j."finalMultiplierX"
@@ -317,7 +339,10 @@ export class CierreService {
         banda ASC
     `;
 
-    const result = await prisma.$queryRaw<VendedorAggregateRow[]>(query);
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL statement_timeout = '30000'`;
+      return tx.$queryRaw<VendedorAggregateRow[]>(query);
+    });
 
     return result.map((row: any) => ({
       ...row,
@@ -899,7 +924,22 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
   if (filters.vendedorId) conditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
   const whereConditions = conditions.length ? Prisma.sql`AND ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
 
+  // OPTIMIZACIÓN: CTE materializado compartido entre count y sample queries
+  const lmActiveCte = Prisma.sql`
+    lm_active AS MATERIALIZED (
+      SELECT
+        lm."loteriaId",
+        lm."valueX",
+        lm."appliesToDate",
+        lm."appliesToSorteoId"
+      FROM "LoteriaMultiplier" lm
+      WHERE lm."kind" = 'NUMERO'
+        AND lm."isActive" = true
+    )
+  `;
+
   const countQuery = Prisma.sql`
+    WITH ${lmActiveCte}
     SELECT COUNT(*)::INT as cnt
     FROM "Jugada" j
     INNER JOIN "Ticket" t ON j."ticketId" = t.id
@@ -907,18 +947,16 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
     WHERE
       t."deletedAt" IS NULL
       AND j."deletedAt" IS NULL
-      AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
-      AND t."isActive" = true  -- SOLO tickets activos
-      AND j."isActive" = true  -- SOLO jugadas activas
-      AND s."status" = 'EVALUATED'  -- SOLO sorteos evaluados
+      AND t."status" != 'CANCELLED'
+      AND t."isActive" = true
+      AND j."isActive" = true
+      AND s."status" = 'EVALUATED'
       ${whereConditions}
       AND j.type = 'NUMERO'
       AND NOT EXISTS (
-        SELECT 1 FROM "LoteriaMultiplier" lm
+        SELECT 1 FROM lm_active lm
         WHERE lm."loteriaId" = t."loteriaId"
-          AND lm."kind" = 'NUMERO'
           AND lm."valueX" = j."finalMultiplierX"
-          AND lm."isActive" = true
           AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
           AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
       )
@@ -929,6 +967,7 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
   let examples: AnomaliesResult['examples'] = [];
   if (cnt > 0) {
     const sampleQuery = Prisma.sql`
+      WITH ${lmActiveCte}
       SELECT
         j.id as "jugadaId",
         t.id as "ticketId",
@@ -944,18 +983,16 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
       WHERE
         t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
-        AND t."status" != 'CANCELLED'  -- Excluir tickets anulados
-        AND t."isActive" = true  -- SOLO tickets activos
-        AND j."isActive" = true  -- SOLO jugadas activas
-        AND s."status" = 'EVALUATED'  -- SOLO sorteos evaluados
+        AND t."status" != 'CANCELLED'
+        AND t."isActive" = true
+        AND j."isActive" = true
+        AND s."status" = 'EVALUATED'
         ${whereConditions}
         AND j.type = 'NUMERO'
         AND NOT EXISTS (
-          SELECT 1 FROM "LoteriaMultiplier" lm
+          SELECT 1 FROM lm_active lm
           WHERE lm."loteriaId" = t."loteriaId"
-            AND lm."kind" = 'NUMERO'
             AND lm."valueX" = j."finalMultiplierX"
-            AND lm."isActive" = true
             AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
             AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
         )
