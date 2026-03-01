@@ -265,6 +265,7 @@ export class AccountStatementSyncService {
             where: {
               deletedAt: null,
               isActive: true,
+              isExcluded: false,
             },
             select: {
               amount: true,
@@ -301,6 +302,7 @@ export class AccountStatementSyncService {
             where: {
               deletedAt: null,
               isActive: true,
+              isExcluded: false,
             },
             select: {
               amount: true,
