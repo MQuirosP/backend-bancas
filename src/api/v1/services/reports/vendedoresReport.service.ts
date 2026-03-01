@@ -78,9 +78,7 @@ export const VendedoresReportService = {
           t."vendedorId",
           t."totalAmount"
         FROM "Ticket" t
-        WHERE (
-            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
-          ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+        WHERE t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           AND t."deletedAt" IS NULL
           AND t."isActive" = true
           ${ticketStatusFilter}
@@ -208,9 +206,7 @@ export const VendedoresReportService = {
           t."isWinner",
           t."createdAt"
         FROM "Ticket" t
-        WHERE (
-            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
-          ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+        WHERE t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND t."isActive" = true
           AND t."deletedAt" IS NULL

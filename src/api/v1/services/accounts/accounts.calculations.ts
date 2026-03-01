@@ -2964,8 +2964,7 @@ export async function getStatementDirect(
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
         Prisma.sql`t."status" != 'CANCELLED'`, // Mantener seguridad extra
-        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${monthStartDateCRStr}::date`,
-        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${monthEndDateCRStr}::date`,
+        Prisma.sql`t."businessDate" BETWEEN ${monthStartDateCRStr}::date AND ${monthEndDateCRStr}::date`,
         //  CRÍTICO: Usar EL MISMO filtro de sorteos que la query principal (SOLO EVALUATED)
         // Esto asegura que totals y monthlyAccumulated usen exactamente los mismos datos
         Prisma.sql`EXISTS (

@@ -45,8 +45,7 @@ export async function calculateRealMonthBalance(
             Prisma.sql`t."isActive" = true`,
             Prisma.sql`t."status" != 'CANCELLED'`,
             Prisma.sql`EXISTS (SELECT 1 FROM "Sorteo" s WHERE s.id = t."sorteoId" AND s.status = 'EVALUATED')`,
-            Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${firstDayCRStr}::date`,
-            Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${lastDayCRStr}::date`,
+            Prisma.sql`t."businessDate" BETWEEN ${firstDayCRStr}::date AND ${lastDayCRStr}::date`,
         ];
 
         // Aplicar filtros por dimensión

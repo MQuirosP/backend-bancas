@@ -214,9 +214,7 @@ export const LoteriasReportService = {
         WHERE t."deletedAt" IS NULL
           AND t."isActive" = true
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-          AND (
-            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
-          ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
       ),
       jugadas_count_per_loteria AS (

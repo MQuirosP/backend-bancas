@@ -141,14 +141,12 @@ export const CommissionsService = {
           WHERE s.id = t."sorteoId" 
           AND s.status = 'EVALUATED'
         )`,
-        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
-        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
+        Prisma.sql`t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date`,
         //  NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
         Prisma.sql`NOT EXISTS (
           SELECT 1 FROM "sorteo_lista_exclusion" sle
-          JOIN "User" u ON u.id = sle.ventana_id
           WHERE sle.sorteo_id = t."sorteoId"
-          AND u."ventanaId" = t."ventanaId"
+          AND sle.ventana_id = t."ventanaId"
           AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
           AND sle.multiplier_id IS NULL
         )`,
@@ -210,10 +208,7 @@ export const CommissionsService = {
           }>
         >`
           SELECT
-            COALESCE(
-              t."businessDate",
-              DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
-            ) as business_date,
+            t."businessDate" as business_date,
             v.id as ventana_id,
             v.name as ventana_name,
             COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
@@ -325,9 +320,8 @@ export const CommissionsService = {
             AND j."isExcluded" IS FALSE
             AND NOT EXISTS (
               SELECT 1 FROM "sorteo_lista_exclusion" sle
-              JOIN "User" u_ex ON u_ex.id = sle.ventana_id
               WHERE sle.sorteo_id = t."sorteoId"
-              AND u_ex."ventanaId" = t."ventanaId"
+              AND sle.ventana_id = t."ventanaId"
               AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
               AND sle.multiplier_id = j."multiplierId"
             )
@@ -590,9 +584,8 @@ export const CommissionsService = {
             AND j."isExcluded" IS FALSE
             AND NOT EXISTS (
               SELECT 1 FROM "sorteo_lista_exclusion" sle
-              JOIN "User" u_ex ON u_ex.id = sle.ventana_id
               WHERE sle.sorteo_id = t."sorteoId"
-              AND u_ex."ventanaId" = t."ventanaId"
+              AND sle.ventana_id = t."ventanaId"
               AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
               AND sle.multiplier_id = j."multiplierId"
             )
@@ -859,10 +852,7 @@ export const CommissionsService = {
           }>
         >`
           SELECT
-            COALESCE(
-              t."businessDate",
-              DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
-            ) as business_date,
+            t."businessDate" as business_date,
             t."vendedorId" as vendedor_id,
             u.name as vendedor_name,
             v.id as ventana_id,
@@ -879,9 +869,8 @@ export const CommissionsService = {
           ${whereClause}
           AND NOT EXISTS (
             SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u_ex ON u_ex.id = sle.ventana_id
             WHERE sle.sorteo_id = t."sorteoId"
-            AND u_ex."ventanaId" = t."ventanaId"
+            AND sle.ventana_id = t."ventanaId"
             AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
             AND sle.multiplier_id = j."multiplierId"
           )
@@ -1084,10 +1073,7 @@ export const CommissionsService = {
           }>
         >`
           SELECT
-            COALESCE(
-              t."businessDate",
-              DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
-            ) as business_date,
+            t."businessDate" as business_date,
             COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
             COALESCE(SUM(t."totalPayout"), 0)::text as total_payouts,
             COUNT(DISTINCT t.id)::text as total_tickets,
@@ -1190,14 +1176,12 @@ export const CommissionsService = {
           WHERE s.id = t."sorteoId"
           AND s.status = 'EVALUATED'
         )`,
-        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
-        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
+        Prisma.sql`t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date`,
         //  NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
         Prisma.sql`NOT EXISTS (
           SELECT 1 FROM "sorteo_lista_exclusion" sle
-          JOIN "User" u ON u.id = sle.ventana_id
           WHERE sle.sorteo_id = t."sorteoId"
-          AND u."ventanaId" = t."ventanaId"
+          AND sle.ventana_id = t."ventanaId"
           AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
           AND sle.multiplier_id IS NULL
         )`,
@@ -1278,9 +1262,8 @@ export const CommissionsService = {
           ${whereClause}
           AND NOT EXISTS (
             SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u_ex ON u_ex.id = sle.ventana_id
             WHERE sle.sorteo_id = t."sorteoId"
-            AND u_ex."ventanaId" = t."ventanaId"
+            AND sle.ventana_id = t."ventanaId"
             AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
             AND sle.multiplier_id = j."multiplierId"
           )
@@ -1809,8 +1792,7 @@ export const CommissionsService = {
           WHERE s.id = t."sorteoId"
           AND s.status = 'EVALUATED'
         )`,
-        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${fromDateStr}::date`,
-        Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${toDateStr}::date`,
+        Prisma.sql`t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date`,
         Prisma.sql`t."loteriaId" = ${loteriaId}::uuid`,
       ];
 
