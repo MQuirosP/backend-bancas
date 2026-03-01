@@ -331,10 +331,9 @@ export class CierreService {
   private static buildWhereConditions(filters: CierreFilters): Prisma.Sql {
     const conditions: Prisma.Sql[] = [];
 
-    // Rango de fechas (obligatorio) usando businessDate (prioridad) o createdAt->CR (fallback)
+    // Rango de fechas (obligatorio) usando businessDate directamente (siempre poblado)
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
-    conditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`);
-    conditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`);
+    conditions.push(Prisma.sql`t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date`);
 
     // Filtro de ventana
     // Filtrar por banca activa (para ADMIN multibanca)
@@ -886,13 +885,12 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
   // Construir condiciones WHERE (repetimos lógica para uso fuera de la clase)
   const conditions: Prisma.Sql[] = [];
   const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
-  conditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) >= ${startDateCRStr}::date`);
-  conditions.push(Prisma.sql`COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) <= ${endDateCRStr}::date`);
+  conditions.push(Prisma.sql`t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date`);
   // Filtrar por banca activa (para ADMIN multibanca)
   if (filters.bancaId) {
     conditions.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "Ventana" v 
-      WHERE v.id = t."ventanaId" 
+      SELECT 1 FROM "Ventana" v
+      WHERE v.id = t."ventanaId"
       AND v."bancaId" = ${filters.bancaId}::uuid
     )`);
   }

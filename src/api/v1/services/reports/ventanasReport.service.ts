@@ -242,7 +242,7 @@ export const VentanasReportService = {
           t."totalAmount",
           t."totalPayout",
           t."isWinner",
-          COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))) as business_date
+          t."businessDate" as business_date
         FROM "Ticket" t
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
         WHERE t."deletedAt" IS NULL
@@ -250,9 +250,7 @@ export const VentanasReportService = {
           AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
           AND s.status = 'EVALUATED'
           AND s."deletedAt" IS NULL
-          AND (
-            COALESCE(t."businessDate", DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')))
-          ) BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
       ),
       ventana_stats AS (
