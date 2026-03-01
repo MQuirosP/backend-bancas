@@ -538,6 +538,62 @@ export const DashboardController = {
     return success(res, dashboard);
   },
 
+  /**
+   * GET /api/v1/admin/dashboard/summary
+   * KPIs del período + monthToDate + byVentana con CxC/CxP/saldo.
+   * Fuente: AccountStatement. Reemplaza: /ganancia, /cxc(ventana), /cxp(ventana),
+   * /ganancia/month-to-date, /accumulated-balances?dimension=ventana.
+   */
+  async getDashboardSummary(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    if (req.user.role === Role.VENDEDOR) {
+      throw new AppError("No autorizado para ver dashboard", 403);
+    }
+
+    const query = req.query as any;
+    const date = query.date || 'today';
+    const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+
+    const result = await DashboardService.calculateDashboardSummary({
+      fromDate: dateRange.fromAt,
+      toDate:   dateRange.toAt,
+      ventanaId,
+      bancaId,
+    });
+
+    return success(res, result);
+  },
+
+  /**
+   * GET /api/v1/admin/dashboard/entities
+   * Desglose por vendedor con balances acumulados.
+   * Fuente: AccountStatement. Reemplaza: /cxc(vendedor), /cxp(vendedor),
+   * /vendedores, /accumulated-balances?dimension=vendedor.
+   */
+  async getDashboardEntities(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    if (req.user.role === Role.VENDEDOR) {
+      throw new AppError("No autorizado para ver dashboard", 403);
+    }
+
+    const query = req.query as any;
+    const date = query.date || 'today';
+    const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
+    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+
+    const result = await DashboardService.calculateDashboardEntities({
+      fromDate: dateRange.fromAt,
+      toDate:   dateRange.toAt,
+      ventanaId,
+      bancaId,
+    });
+
+    return success(res, result);
+  },
+
 };
 
 export default DashboardController;

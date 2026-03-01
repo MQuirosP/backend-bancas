@@ -25,7 +25,11 @@ router.get("/ganancia", validateDashboardQuery, DashboardController.getGanancia)
 router.get("/cxc", validateDashboardQuery, DashboardController.getCxC);
 router.get("/cxp", validateDashboardQuery, DashboardController.getCxP);
 
-// Nuevos endpoints
+// Endpoints consolidados (reemplazan múltiples requests del FE)
+router.get("/summary", validateDashboardQuery, DashboardController.getDashboardSummary);
+router.get("/entities", validateDashboardQuery, DashboardController.getDashboardEntities);
+
+// Endpoints legacy (se mantienen para compatibilidad hasta que el FE migre)
 router.get("/timeseries", validateDashboardQuery, DashboardController.getTimeSeries);
 router.get("/exposure", validateDashboardQuery, DashboardController.getExposure);
 router.get("/vendedores", validateDashboardQuery, DashboardController.getVendedores);
