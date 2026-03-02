@@ -8,6 +8,7 @@
 import { Role } from '@prisma/client';
 import { AppError } from '../core/errors';
 import prisma from '../core/prismaClient';
+import { withConnectionRetry } from '../core/withConnectionRetry';
 import logger from '../core/logger';
 
 export interface AuthContext {
@@ -52,10 +53,13 @@ export async function validateVentanaUser(role: Role, ventanaId?: string | null,
       }
     });
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { ventanaId: true }
-    });
+    const user = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id: userId },
+        select: { ventanaId: true }
+      }),
+      { context: 'rbac.validateVentanaUser' }
+    );
 
     if (!user?.ventanaId) {
       // Usuario no tiene ventanaId en BD tampoco - error crítico
@@ -112,10 +116,13 @@ export async function applyRbacFilters(
     //  NUEVO: Inferir ventanaId para vendedores para ayudar con la indexación en DB
     let ventanaId = context.ventanaId;
     if (!ventanaId) {
-      const user = await prisma.user.findUnique({
-        where: { id: context.userId },
-        select: { ventanaId: true }
-      });
+      const user = await withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id: context.userId },
+          select: { ventanaId: true }
+        }),
+        { context: 'rbac.applyRbacFilters.vendedorVentana' }
+      );
       ventanaId = user?.ventanaId;
     }
     if (ventanaId) {
@@ -138,10 +145,13 @@ export async function applyRbacFilters(
         }
       });
 
-      const user = await prisma.user.findUnique({
-        where: { id: context.userId },
-        select: { ventanaId: true }
-      });
+      const user = await withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id: context.userId },
+          select: { ventanaId: true }
+        }),
+        { context: 'rbac.applyRbacFilters.ventanaVentana' }
+      );
 
       if (!user?.ventanaId) {
         // Usuario no tiene ventanaId en BD tampoco - error crítico
@@ -173,10 +183,13 @@ export async function applyRbacFilters(
 
     // Si solicita un vendedorId específico, validar que pertenezca a la ventana
     if (requestFilters.vendedorId) {
-      const vendedor = await prisma.user.findUnique({
-        where: { id: requestFilters.vendedorId },
-        select: { ventanaId: true }
-      });
+      const vendedor = await withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id: requestFilters.vendedorId! },
+          select: { ventanaId: true }
+        }),
+        { context: 'rbac.applyRbacFilters.vendedorValidate' }
+      );
 
       if (!vendedor || vendedor.ventanaId !== ventanaId) {
         throw new AppError('Cannot access that vendedor', 403, {
@@ -218,10 +231,13 @@ export async function applyRbacFilters(
       effective.bancaId = effectiveBancaId;
       // Si también hay ventanaId en request, validar que pertenece a la banca activa
       if (requestFilters.ventanaId) {
-        const ventana = await prisma.ventana.findUnique({
-          where: { id: requestFilters.ventanaId },
-          select: { bancaId: true },
-        });
+        const ventana = await withConnectionRetry(
+          () => prisma.ventana.findUnique({
+            where: { id: requestFilters.ventanaId! },
+            select: { bancaId: true },
+          }),
+          { context: 'rbac.applyRbacFilters.adminVentana' }
+        );
         if (!ventana || ventana.bancaId !== effectiveBancaId) {
           throw new AppError('Cannot access that ventana', 403, {
             code: 'RBAC_004',
@@ -236,10 +252,13 @@ export async function applyRbacFilters(
       }
       // Si también hay vendedorId en request, validar que pertenece a la banca activa
       if (requestFilters.vendedorId) {
-        const vendedor = await prisma.user.findUnique({
-          where: { id: requestFilters.vendedorId },
-          select: { ventana: { select: { bancaId: true } } },
-        });
+        const vendedor = await withConnectionRetry(
+          () => prisma.user.findUnique({
+            where: { id: requestFilters.vendedorId! },
+            select: { ventana: { select: { bancaId: true } } },
+          }),
+          { context: 'rbac.applyRbacFilters.adminVendedor' }
+        );
         if (!vendedor || vendedor.ventana?.bancaId !== effectiveBancaId) {
           throw new AppError('Cannot access that vendedor', 403, {
             code: 'RBAC_005',

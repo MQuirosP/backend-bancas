@@ -1,4 +1,5 @@
 import { ActivityType, Role } from "@prisma/client";
+import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import TicketRepository from "../../../repositories/ticket.repository";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
@@ -91,10 +92,13 @@ export const TicketService = {
       if (!loteriaId || !sorteoId) throw new AppError("Missing loteriaId/sorteoId", 400);
 
       // Actor autenticado
-      const actor = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { id: true, role: true, ventanaId: true, isActive: true },
-      });
+      const actor = await withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id: userId },
+          select: { id: true, role: true, ventanaId: true, isActive: true },
+        }),
+        { context: 'TicketService.create.actor' }
+      );
       if (!actor) throw new AppError("Authenticated user not found", 401);
 
       // Resolver vendedor efectivo (impersonación opcional para ADMIN/VENTANA)
@@ -113,10 +117,13 @@ export const TicketService = {
           throw new AppError("No tienes permisos para realizar esta acción", 403);
         }
 
-        const target = await prisma.user.findUnique({
-          where: { id: requestedVendedorId },
-          select: { id: true, role: true, ventanaId: true, isActive: true },
-        });
+        const target = await withConnectionRetry(
+          () => prisma.user.findUnique({
+            where: { id: requestedVendedorId },
+            select: { id: true, role: true, ventanaId: true, isActive: true },
+          }),
+          { context: 'TicketService.create.targetVendedor' }
+        );
         if (!target || !target.isActive) throw new AppError("Vendedor no encontrado o inactivo", 404);
         if (target.role !== Role.VENDEDOR) throw new AppError("vendedorId debe pertenecer a un usuario con rol VENDEDOR", 400);
         if (!target.ventanaId) throw new AppError("El vendedor seleccionado no tiene Ventana asignada", 400);
@@ -138,24 +145,30 @@ export const TicketService = {
       }
 
       // Ventana válida
-      const ventana = await prisma.ventana.findUnique({
-        where: { id: ventanaId },
-        select: { id: true, bancaId: true, isActive: true },
-      });
+      const ventana = await withConnectionRetry(
+        () => prisma.ventana.findUnique({
+          where: { id: ventanaId },
+          select: { id: true, bancaId: true, isActive: true },
+        }),
+        { context: 'TicketService.create.ventana' }
+      );
       if (!ventana || !ventana.isActive) throw new AppError("La Ventana no existe o está inactiva", 404);
 
       // Sorteo válido + obtener lotería desde sorteo
-      const sorteo = await prisma.sorteo.findUnique({
-        where: { id: sorteoId },
-        select: {
-          id: true,
-          name: true, //  Incluir name para formatear con hora
-          scheduledAt: true,
-          status: true,
-          loteriaId: true,
-          loteria: { select: { id: true, name: true, rulesJson: true } },
-        },
-      });
+      const sorteo = await withConnectionRetry(
+        () => prisma.sorteo.findUnique({
+          where: { id: sorteoId },
+          select: {
+            id: true,
+            name: true, //  Incluir name para formatear con hora
+            scheduledAt: true,
+            status: true,
+            loteriaId: true,
+            loteria: { select: { id: true, name: true, rulesJson: true } },
+          },
+        }),
+        { context: 'TicketService.create.sorteo' }
+      );
       if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
 
       //  NUEVA VALIDACIÓN: Verificar que el sorteo no esté cerrado
@@ -313,34 +326,37 @@ export const TicketService = {
 
       //  OPTIMIZACIÓN: Pre-calcular comisiones fuera de la transacción
       // Obtener políticas de comisión (una sola vez)
-      const [user, ventanaWithBanca, listeroUser] = await Promise.all([
-        prisma.user.findUnique({
-          where: { id: effectiveVendedorId },
-          select: { commissionPolicyJson: true },
-        }),
-        prisma.ventana.findUnique({
-          where: { id: ventanaId },
-          select: {
-            commissionPolicyJson: true,
-            banca: {
-              select: {
-                commissionPolicyJson: true,
+      const [user, ventanaWithBanca, listeroUser] = await withConnectionRetry(
+        () => Promise.all([
+          prisma.user.findUnique({
+            where: { id: effectiveVendedorId },
+            select: { commissionPolicyJson: true },
+          }),
+          prisma.ventana.findUnique({
+            where: { id: ventanaId },
+            select: {
+              commissionPolicyJson: true,
+              banca: {
+                select: {
+                  commissionPolicyJson: true,
+                },
               },
             },
-          },
-        }),
-        //  Fetch listero user (Role.VENTANA) for this ventana
-        prisma.user.findFirst({
-          where: {
-            role: Role.VENTANA,
-            ventanaId: ventanaId,
-            isActive: true,
-            deletedAt: null,
-          },
-          select: { commissionPolicyJson: true, id: true },
-          orderBy: { updatedAt: "desc" },
-        }),
-      ]);
+          }),
+          //  Fetch listero user (Role.VENTANA) for this ventana
+          prisma.user.findFirst({
+            where: {
+              role: Role.VENTANA,
+              ventanaId: ventanaId,
+              isActive: true,
+              deletedAt: null,
+            },
+            select: { commissionPolicyJson: true, id: true },
+            orderBy: { updatedAt: "desc" },
+          }),
+        ]),
+        { context: 'TicketService.create.policies' }
+      );
 
       // Preparar contexto de comisiones (parsear y cachear políticas)
       const commissionContext = await commissionService.prepareContext(
@@ -403,14 +419,19 @@ export const TicketService = {
       );
 
       // ️ Obtener configuraciones de impresión del vendedor y ventana
-      const vendedor = await prisma.user.findUnique({
-        where: { id: effectiveVendedorId },
-        select: { name: true, phone: true, settings: true },
-      });
-      const ventanaData = await prisma.ventana.findUnique({
-        where: { id: ventanaId },
-        select: { name: true, phone: true, settings: true },
-      });
+      const [vendedor, ventanaData] = await withConnectionRetry(
+        () => Promise.all([
+          prisma.user.findUnique({
+            where: { id: effectiveVendedorId },
+            select: { name: true, phone: true, settings: true },
+          }),
+          prisma.ventana.findUnique({
+            where: { id: ventanaId },
+            select: { name: true, phone: true, settings: true },
+          }),
+        ]),
+        { context: 'TicketService.create.printConfigs' }
+      );
 
       //  Formatear sorteo.name concatenando la hora (requerido por frontend)
       // El ticket de createOptimized no incluye sorteo, así que lo obtenemos por separado
@@ -533,14 +554,19 @@ export const TicketService = {
     }
 
     // ️ Obtener configuraciones de impresión del vendedor y ventana
-    const vendedor = await prisma.user.findUnique({
-      where: { id: ticket.vendedorId },
-      select: { name: true, phone: true, settings: true },
-    });
-    const ventanaData = await prisma.ventana.findUnique({
-      where: { id: ticket.ventanaId },
-      select: { name: true, phone: true, settings: true },
-    });
+    const [vendedor, ventanaData] = await withConnectionRetry(
+      () => Promise.all([
+        prisma.user.findUnique({
+          where: { id: ticket.vendedorId },
+          select: { name: true, phone: true, settings: true },
+        }),
+        prisma.ventana.findUnique({
+          where: { id: ticket.ventanaId },
+          select: { name: true, phone: true, settings: true },
+        }),
+      ]),
+      { context: 'TicketService.reprint.printConfigs' }
+    );
 
     //  Formatear sorteo.name concatenando la hora (requerido por frontend)
     const sorteoWithFormattedName = {
@@ -639,10 +665,13 @@ export const TicketService = {
   ) {
     try {
       // Verificar que el ticket existe y es ganador
-      const ticket = await prisma.ticket.findUnique({
-        where: { id: ticketId },
-        include: { jugadas: true, vendedor: true, ventana: true, sorteo: { select: { id: true, status: true } } },
-      });
+      const ticket = await withConnectionRetry(
+        () => prisma.ticket.findUnique({
+          where: { id: ticketId },
+          include: { jugadas: true, vendedor: true, ventana: true, sorteo: { select: { id: true, status: true } } },
+        }),
+        { context: 'TicketService.registerPayment.fetchTicket' }
+      );
 
       if (!ticket) throw new AppError("Ticket no encontrado", 404);
       if (!ticket.isWinner) throw new AppError("El ticket no es ganador", 409);
@@ -678,10 +707,13 @@ export const TicketService = {
 
       // Idempotencia: si ya existe un pago con esta llave, retornar el existente
       if (data.idempotencyKey) {
-        const existing = await prisma.ticketPayment.findUnique({
-          where: { idempotencyKey: data.idempotencyKey },
-          include: { ticket: true },
-        });
+        const existing = await withConnectionRetry(
+          () => prisma.ticketPayment.findUnique({
+            where: { idempotencyKey: data.idempotencyKey },
+            include: { ticket: true },
+          }),
+          { context: 'TicketService.registerPayment.idempotency' }
+        );
         if (existing) {
           logger.info({
             layer: "service",
@@ -705,7 +737,10 @@ export const TicketService = {
       const currentHistory = (ticket.paymentHistory as any[]) || [];
 
       // Crear entrada para historial
-      const user = await prisma.user.findUnique({ where: { id: userId } });
+      const user = await withConnectionRetry(
+        () => prisma.user.findUnique({ where: { id: userId } }),
+        { context: 'TicketService.registerPayment.fetchUser' }
+      );
       const historyEntry: PaymentHistoryEntry = {
         id: crypto.randomUUID(),
         amountPaid: data.amountPaid,
@@ -719,48 +754,51 @@ export const TicketService = {
       };
 
       // Actualizar en transacción
-      const updated = await prisma.$transaction(async (tx) => {
-        // Crear registro de auditoría en TicketPayment
-        await tx.ticketPayment.create({
-          data: {
-            ticketId,
-            amountPaid: data.amountPaid,
-            paidById: userId,
-            method: data.method ?? "cash",
-            notes: data.notes,
-            isPartial,
-            remainingAmount,
-            isFinal: data.isFinal ?? false,
-            isReversed: false, // Explícitamente false para nuevo pago
-            completedAt: shouldMarkPaid ? new Date() : null,
-            idempotencyKey: data.idempotencyKey,
-          },
-        });
+      const updated = await withConnectionRetry(
+        () => prisma.$transaction(async (tx) => {
+          // Crear registro de auditoría en TicketPayment
+          await tx.ticketPayment.create({
+            data: {
+              ticketId,
+              amountPaid: data.amountPaid,
+              paidById: userId,
+              method: data.method ?? "cash",
+              notes: data.notes,
+              isPartial,
+              remainingAmount,
+              isFinal: data.isFinal ?? false,
+              isReversed: false, // Explícitamente false para nuevo pago
+              completedAt: shouldMarkPaid ? new Date() : null,
+              idempotencyKey: data.idempotencyKey,
+            },
+          });
 
-        // Actualizar ticket con información consolidada
-        return await tx.ticket.update({
-          where: { id: ticketId },
-          data: {
-            totalPayout,
-            totalPaid: newTotal,
-            remainingAmount,
-            lastPaymentAt: new Date(),
-            paidById: userId,
-            paymentMethod: data.method ?? "cash",
-            paymentNotes: data.notes,
-            paymentHistory: [...currentHistory, historyEntry] as any,
-            status: shouldMarkPaid ? "PAID" : ticket.status,
-          },
-          include: {
-            jugadas: true,
-            vendedor: true,
-            ventana: true,
-            paidBy: true,
-            loteria: true,
-            sorteo: true,
-          },
-        });
-      });
+          // Actualizar ticket con información consolidada
+          return tx.ticket.update({
+            where: { id: ticketId },
+            data: {
+              totalPayout,
+              totalPaid: newTotal,
+              remainingAmount,
+              lastPaymentAt: new Date(),
+              paidById: userId,
+              paymentMethod: data.method ?? "cash",
+              paymentNotes: data.notes,
+              paymentHistory: [...currentHistory, historyEntry] as any,
+              status: shouldMarkPaid ? "PAID" : ticket.status,
+            },
+            include: {
+              jugadas: true,
+              vendedor: true,
+              ventana: true,
+              paidBy: true,
+              loteria: true,
+              sorteo: true,
+            },
+          });
+        }),
+        { context: 'TicketService.registerPayment.transaction' }
+      );
 
       // Log de actividad
       await ActivityService.log({
@@ -815,10 +853,13 @@ export const TicketService = {
    */
   async reversePayment(ticketId: string, userId: string, reason?: string, requestId?: string) {
     try {
-      const ticket = await prisma.ticket.findUnique({
-        where: { id: ticketId },
-        include: { jugadas: true },
-      });
+      const ticket = await withConnectionRetry(
+        () => prisma.ticket.findUnique({
+          where: { id: ticketId },
+          include: { jugadas: true },
+        }),
+        { context: 'TicketService.reversePayment.fetchTicket' }
+      );
 
       if (!ticket) throw new AppError("Ticket no encontrado", 404);
 
@@ -1178,10 +1219,13 @@ export const TicketService = {
 
       //  NUEVO: Obtener nombre del multiplicador si está presente
       if (params.multiplierId) {
-        const multiplier = await prisma.loteriaMultiplier.findUnique({
-          where: { id: params.multiplierId },
-          select: { name: true },
-        });
+        const multiplier = await withConnectionRetry(
+          () => prisma.loteriaMultiplier.findUnique({
+            where: { id: params.multiplierId! },
+            select: { name: true },
+          }),
+          { context: 'TicketService.numbersSummary.multiplier' }
+        );
         multiplierName = multiplier?.name || '';
       }
 
@@ -1200,18 +1244,23 @@ export const TicketService = {
       } | undefined = undefined;
 
       if (params.sorteoId) {
-        const sorteo = await prisma.sorteo.findUnique({
-          where: { id: params.sorteoId },
-          select: {
-            id: true,
-            name: true,
-            status: true,
-            winningNumber: true, //  NUEVO: Obtener número ganador
-            loteria: {
-              select: { rulesJson: true }
-            }
-          },
-        });
+        const sorteo = await withConnectionRetry(
+          () => prisma.sorteo.findUnique({
+            where: { id: params.sorteoId! },
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              winningNumber: true, //  NUEVO: Obtener número ganador
+              loteria: {
+                select: {
+                  rulesJson: true,
+                },
+              },
+            },
+          }),
+          { context: 'TicketService.numbersSummary.sorteo' }
+        );
         sorteoName = sorteo?.name || '';
 
         // Extraer reventadoEnabled y digits de loteriaRules
@@ -1979,51 +2028,54 @@ export const TicketService = {
       }
 
       // Obtener tickets con relaciones necesarias
-      const tickets = await prisma.ticket.findMany({
-        where,
-        select: {
-          id: true,
-          loteriaId: true,
-          sorteoId: true,
-          vendedorId: true,
-          jugadas: {
-            where: {
-              deletedAt: null,
-              isActive: true,
+      const tickets = await withConnectionRetry(
+        () => prisma.ticket.findMany({
+          where,
+          select: {
+            id: true,
+            loteriaId: true,
+            sorteoId: true,
+            vendedorId: true,
+            jugadas: {
+              where: {
+                deletedAt: null,
+                isActive: true,
+              },
+              select: {
+                multiplierId: true,
+              },
             },
-            select: {
-              multiplierId: true,
+            loteria: {
+              select: {
+                id: true,
+                name: true,
+              },
             },
-          },
-          loteria: {
-            select: {
-              id: true,
-              name: true,
+            sorteo: {
+              select: {
+                id: true,
+                name: true,
+                scheduledAt: true,
+                loteriaId: true,
+              },
             },
-          },
-          sorteo: {
-            select: {
-              id: true,
-              name: true,
-              scheduledAt: true,
-              loteriaId: true,
-            },
-          },
-          vendedor: {
-            select: {
-              id: true,
-              name: true,
-              ventanaId: true,
-              ventana: {
-                select: {
-                  id: true,
-                  name: true,
+            vendedor: {
+              select: {
+                id: true,
+                name: true,
+                ventanaId: true,
+                ventana: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
                 },
               },
             },
           },
-        },
-      });
+        }),
+        { context: 'TicketService.getFilterOptions' }
+      );
 
       const totalTickets = tickets.length;
 
@@ -2389,57 +2441,60 @@ export const TicketService = {
       }
 
       // Obtener tickets con relaciones necesarias
-      const tickets = await prisma.ticket.findMany({
-        where,
-        select: {
-          id: true,
-          loteriaId: true,
-          sorteoId: true,
-          vendedorId: true,
-          ventanaId: true, //  Necesario para agrupar por ventana
-          status: true,
-          jugadas: {
-            where: jugadaWhere,
-            select: {
-              multiplierId: true,
+      const tickets = await withConnectionRetry(
+        () => prisma.ticket.findMany({
+          where,
+          select: {
+            id: true,
+            loteriaId: true,
+            sorteoId: true,
+            vendedorId: true,
+            ventanaId: true, //  Necesario para agrupar por ventana
+            status: true,
+            jugadas: {
+              where: jugadaWhere,
+              select: {
+                multiplierId: true,
+              },
             },
-          },
-          loteria: {
-            select: {
-              id: true,
-              name: true,
+            loteria: {
+              select: {
+                id: true,
+                name: true,
+              },
             },
-          },
-          sorteo: {
-            select: {
-              id: true,
-              name: true,
-              scheduledAt: true,
-              loteriaId: true,
+            sorteo: {
+              select: {
+                id: true,
+                name: true,
+                scheduledAt: true,
+                loteriaId: true,
+              },
             },
-          },
-          ventana: {
-            select: {
-              id: true,
-              name: true,
-              code: true,
+            ventana: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+              },
             },
-          },
-          vendedor: {
-            select: {
-              id: true,
-              name: true,
-              ventanaId: true,
-              ventana: {
-                select: {
-                  id: true,
-                  name: true,
+            vendedor: {
+              select: {
+                id: true,
+                name: true,
+                ventanaId: true,
+                ventana: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
                 },
               },
             },
           },
-        },
-      });
+        }),
+        { context: 'TicketService.getNumbersSummaryFilterOptions' }
+      );
 
       const totalTickets = tickets.length;
 

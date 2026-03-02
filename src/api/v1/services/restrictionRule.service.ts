@@ -7,6 +7,7 @@ import {
 } from "../dto/restrictionRule.dto";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 import prisma from "../../../core/prismaClient";
+import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import { getCRLocalComponents } from "../../../utils/businessDate";
 
 /**
@@ -72,15 +73,18 @@ export const RestrictionRuleService = {
         );
       }
 
-      const multiplier = await prisma.loteriaMultiplier.findUnique({
-        where: { id: data.multiplierId },
-        select: {
-          id: true,
-          loteriaId: true,
-          isActive: true,
-          name: true,
-        },
-      });
+      const multiplier = await withConnectionRetry(
+        () => prisma.loteriaMultiplier.findUnique({
+          where: { id: data.multiplierId! },
+          select: {
+            id: true,
+            loteriaId: true,
+            isActive: true,
+            name: true,
+          },
+        }),
+        { context: 'RestrictionRuleService.create.multiplier' }
+      );
 
       if (!multiplier) {
         throw new AppError("Multiplicador no encontrado", 404);
@@ -190,15 +194,18 @@ export const RestrictionRuleService = {
         );
       }
 
-      const multiplier = await prisma.loteriaMultiplier.findUnique({
-        where: { id: multiplierId },
-        select: {
-          id: true,
-          loteriaId: true,
-          isActive: true,
-          name: true,
-        },
-      });
+      const multiplier = await withConnectionRetry(
+        () => prisma.loteriaMultiplier.findUnique({
+          where: { id: multiplierId! },
+          select: {
+            id: true,
+            loteriaId: true,
+            isActive: true,
+            name: true,
+          },
+        }),
+        { context: 'RestrictionRuleService.update.multiplier' }
+      );
 
       if (!multiplier) {
         throw new AppError("Multiplicador no encontrado", 404);

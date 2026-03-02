@@ -134,19 +134,25 @@ export const restrictToAdminSelfOrVentanaVendor = async (
     throw new AppError("No tienes permisos para realizar esta acción", 403);
   }
 
-  const actor = await prisma.user.findUnique({
-    where: { id: authUser.id },
-    select: { ventanaId: true },
-  });
+  const actor = await withConnectionRetry(
+    () => prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { ventanaId: true },
+    }),
+    { context: 'restrictToAdminSelfOrVentanaVendor.actor' }
+  );
 
   if (!actor?.ventanaId) {
     throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
   }
 
-  const target = await prisma.user.findUnique({
-    where: { id: targetId },
-    select: { role: true, ventanaId: true },
-  });
+  const target = await withConnectionRetry(
+    () => prisma.user.findUnique({
+      where: { id: targetId },
+      select: { role: true, ventanaId: true },
+    }),
+    { context: 'restrictToAdminSelfOrVentanaVendor.target' }
+  );
 
   if (!target) {
     throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
@@ -187,19 +193,25 @@ export const restrictToCommissionAdminSelfOrVentanaVendor = async (
     throw new AppError("No tienes permisos para realizar esta acción", 403);
   }
 
-  const actor = await prisma.user.findUnique({
-    where: { id: authUser.id },
-    select: { ventanaId: true },
-  });
+  const actor = await withConnectionRetry(
+    () => prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { ventanaId: true },
+    }),
+    { context: 'restrictToCommissionAdminSelfOrVentanaVendor.actor' }
+  );
 
   if (!actor?.ventanaId) {
     throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
   }
 
-  const target = await prisma.user.findUnique({
-    where: { id: targetId },
-    select: { role: true, ventanaId: true },
-  });
+  const target = await withConnectionRetry(
+    () => prisma.user.findUnique({
+      where: { id: targetId },
+      select: { role: true, ventanaId: true },
+    }),
+    { context: 'restrictToCommissionAdminSelfOrVentanaVendor.target' }
+  );
 
   if (!target) {
     throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
@@ -247,10 +259,13 @@ export const restrictToAdminOrVentanaSelf = async (
   }
 
   // Obtener la ventana del usuario autenticado
-  const actor = await prisma.user.findUnique({
-    where: { id: authUser.id },
-    select: { ventanaId: true },
-  });
+  const actor = await withConnectionRetry(
+    () => prisma.user.findUnique({
+      where: { id: authUser.id },
+      select: { ventanaId: true },
+    }),
+    { context: 'restrictToAdminOrVentanaSelf.actor' }
+  );
 
   if (!actor?.ventanaId) {
     throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");

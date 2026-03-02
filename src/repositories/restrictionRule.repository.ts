@@ -1,5 +1,6 @@
 // src/repositories/restrictionRule.repository.ts
 import prisma from "../core/prismaClient";
+import { withConnectionRetry } from "../core/withConnectionRetry";
 import logger from "../core/logger";
 import { Role } from "@prisma/client";
 import { getCRLocalComponents } from "../utils/businessDate";
@@ -71,10 +72,13 @@ export const RestrictionRuleRepository = {
       multiplierId: data.multiplierId ?? null,
     };
 
-    const rule = await prisma.restrictionRule.create({
-      data: validData,
-      include: includeLabels,
-    });
+    const rule = await withConnectionRetry(
+      () => prisma.restrictionRule.create({
+        data: validData,
+        include: includeLabels,
+      }),
+      { context: 'RestrictionRuleRepository.create' }
+    );
 
     //  OPTIMIZACIÓN: Invalidar caché cuando se crea una restricción
     await invalidateRestrictionCaches({
@@ -87,11 +91,14 @@ export const RestrictionRuleRepository = {
   },
 
   async update(id: string, data: any) {
-    const rule = await prisma.restrictionRule.update({
-      where: { id },
-      data,
-      include: includeLabels,
-    });
+    const rule = await withConnectionRetry(
+      () => prisma.restrictionRule.update({
+        where: { id },
+        data,
+        include: includeLabels,
+      }),
+      { context: 'RestrictionRuleRepository.update' }
+    );
 
     //  OPTIMIZACIÓN: Invalidar caché cuando se actualiza una restricción
     await invalidateRestrictionCaches({
@@ -105,11 +112,14 @@ export const RestrictionRuleRepository = {
 
   async softDelete(id: string, _actorId: string, _reason?: string) {
     // baja lógica: isActive = false
-    const rule = await prisma.restrictionRule.update({
-      where: { id },
-      data: { isActive: false, updatedAt: new Date() },
-      include: includeLabels,
-    });
+    const rule = await withConnectionRetry(
+      () => prisma.restrictionRule.update({
+        where: { id },
+        data: { isActive: false, updatedAt: new Date() },
+        include: includeLabels,
+      }),
+      { context: 'RestrictionRuleRepository.softDelete' }
+    );
 
     //  OPTIMIZACIÓN: Invalidar caché cuando se elimina (inactiva) una restricción
     await invalidateRestrictionCaches({
@@ -122,11 +132,14 @@ export const RestrictionRuleRepository = {
   },
 
   async restore(id: string) {
-    const rule = await prisma.restrictionRule.update({
-      where: { id },
-      data: { isActive: true },
-      include: includeLabels,
-    });
+    const rule = await withConnectionRetry(
+      () => prisma.restrictionRule.update({
+        where: { id },
+        data: { isActive: true },
+        include: includeLabels,
+      }),
+      { context: 'RestrictionRuleRepository.restore' }
+    );
 
     //  OPTIMIZACIÓN: Invalidar caché cuando se restaura una restricción
     await invalidateRestrictionCaches({
@@ -139,10 +152,13 @@ export const RestrictionRuleRepository = {
   },
 
   async findById(id: string) {
-    return prisma.restrictionRule.findUnique({
-      where: { id },
-      include: includeLabels, // ← incluye banca/ventana/user para mostrar nombre/código
-    });
+    return withConnectionRetry(
+      () => prisma.restrictionRule.findUnique({
+        where: { id },
+        include: includeLabels, // ← incluye banca/ventana/user para mostrar nombre/código
+      }),
+      { context: 'RestrictionRuleRepository.findById' }
+    );
   },
 
   /**
@@ -185,19 +201,25 @@ export const RestrictionRuleRepository = {
     //  CORRECCIÓN: Inferir bancaId cuando se consulta por bancaId pero las restricciones solo tienen ventanaId/vendedorId
     if (bancaId) {
         // Obtener ventanas y vendedores de esta banca para incluir sus restricciones
-        const ventanas = await prisma.ventana.findMany({
-            where: { bancaId },
-            select: { id: true },
-        });
+        const ventanas = await withConnectionRetry(
+            () => prisma.ventana.findMany({
+                where: { bancaId },
+                select: { id: true },
+            }),
+            { context: 'RestrictionRuleRepository.list.fetchVentanas' }
+        );
         const ventanaIds = ventanas.map(v => v.id);
         
-        const vendedores = ventanaIds.length > 0 ? await prisma.user.findMany({
-            where: {
-                ventanaId: { in: ventanaIds },
-                role: Role.VENDEDOR,
-            },
-            select: { id: true },
-        }) : [];
+        const vendedores = ventanaIds.length > 0 ? await withConnectionRetry(
+            () => prisma.user.findMany({
+                where: {
+                    ventanaId: { in: ventanaIds },
+                    role: Role.VENDEDOR,
+                },
+                select: { id: true },
+            }),
+            { context: 'RestrictionRuleRepository.list.fetchVendedores' }
+        ) : [];
         const vendedorIds = vendedores.map(u => u.id);
         
         // Buscar restricciones que:
@@ -297,16 +319,19 @@ export const RestrictionRuleRepository = {
     }
 
     // Optimización: Usar Promise.all en lugar de $transaction para mejor performance
-    const [data, total] = await Promise.all([
-      prisma.restrictionRule.findMany({
-        where,
-        orderBy: [{ updatedAt: "desc" }],
-        skip,
-        take,
-        include: includeLabels,
-      }),
-      prisma.restrictionRule.count({ where }),
-    ]);
+    const [data, total] = await withConnectionRetry(
+      () => Promise.all([
+        prisma.restrictionRule.findMany({
+          where,
+          orderBy: [{ updatedAt: "desc" }],
+          skip,
+          take,
+          include: includeLabels,
+        }),
+        prisma.restrictionRule.count({ where }),
+      ]),
+      { context: 'RestrictionRuleRepository.list' }
+    );
 
     return {
       data,
@@ -342,15 +367,18 @@ export const RestrictionRuleRepository = {
       orConditions.push({ ventanaId });
     }
 
-    return prisma.restrictionRule.findMany({
-      where: {
-        isActive: true,
-        userId: null, // Solo reglas generales (sin usuario específico)
-        OR: orConditions,
-      },
-      orderBy: { updatedAt: "desc" },
-      include: includeLabels,
-    });
+    return withConnectionRetry(
+      () => prisma.restrictionRule.findMany({
+        where: {
+          isActive: true,
+          userId: null, // Solo reglas generales (sin usuario específico)
+          OR: orConditions,
+        },
+        orderBy: { updatedAt: "desc" },
+        include: includeLabels,
+      }),
+      { context: 'RestrictionRuleRepository.findGeneralRules' }
+    );
   },
 
   /**
@@ -387,22 +415,25 @@ export const RestrictionRuleRepository = {
     const dateOnly = new Date(at.getFullYear(), at.getMonth(), at.getDate());
 
     // 1. Obtener candidatos (Global, Banca, Ventana, Usuario)
-    const candidateRules = await prisma.restrictionRule.findMany({
-      where: {
-        isActive: true,
-        OR: [
-          { userId },
-          { ventanaId },
-          { bancaId },
-          // Reglas globales (incluyendo específicas de lotería sin scope de usuario)
-          { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] }
-        ],
-      },
-      include: {
-        loteria: true,
-        multiplier: true,
-      }
-    });
+    const candidateRules = await withConnectionRetry(
+      () => prisma.restrictionRule.findMany({
+        where: {
+          isActive: true,
+          OR: [
+            { userId },
+            { ventanaId },
+            { bancaId },
+            // Reglas globales (incluyendo específicas de lotería sin scope de usuario)
+            { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] }
+          ],
+        },
+        include: {
+          loteria: true,
+          multiplier: true,
+        }
+      }),
+      { context: 'RestrictionRuleRepository.getEffectiveLimits.candidateRules' }
+    );
 
     // 2. Filtrar y Puntuar reglas
     const applicable = candidateRules
