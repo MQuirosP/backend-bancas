@@ -4,6 +4,7 @@ import UserService from '../services/user.service';
 import ActivityService from '../../../core/activity.service';
 import { logger } from '../../../core/logger';
 import prisma from '../../../core/prismaClient';
+import { withConnectionRetry } from '../../../core/withConnectionRetry';
 import { ActivityType, Role } from '@prisma/client';
 import { success, created } from '../../../utils/responses';
 import { RequestContext } from '../dto/auth.dto';
@@ -76,20 +77,23 @@ export const AuthController = {
   async me(req: Request, res: Response) {
     const userId = (req as any).user?.id;
     const userRole = (req as any).user?.role;
-    const u = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        username: true,
-        name: true,
-        role: true,
-        ventanaId: true,
-        settings: true,
-        platform: true,
-        appVersion: true,
-      },
-    });
+    const u = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          name: true,
+          role: true,
+          ventanaId: true,
+          settings: true,
+          platform: true,
+          appVersion: true,
+        },
+      }),
+      { context: 'AuthController.me.user' }
+    );
 
     if (!u) {
       return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
@@ -106,21 +110,24 @@ export const AuthController = {
 
     if (userRole === Role.ADMIN) {
       // Obtener todas las bancas activas (sin asignación)
-      const allBancas = await prisma.banca.findMany({
-        where: {
-          isActive: true,
-          deletedAt: null,
-        },
-        select: {
-          id: true,
-          name: true,
-          code: true,
-          isActive: true,
-        },
-        orderBy: {
-          name: 'asc',
-        },
-      });
+      const allBancas = await withConnectionRetry(
+        () => prisma.banca.findMany({
+          where: {
+            isActive: true,
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            isActive: true,
+          },
+          orderBy: {
+            name: 'asc',
+          },
+        }),
+        { context: 'AuthController.me.bancas' }
+      );
 
       bancas = allBancas.map(b => ({
         id: b.id,
@@ -176,15 +183,18 @@ export const AuthController = {
     }
 
     // Validar que la banca existe y está activa (sin validar asignación)
-    const banca = await prisma.banca.findUnique({
-      where: { id: bancaId },
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        isActive: true,
-      },
-    });
+    const banca = await withConnectionRetry(
+      () => prisma.banca.findUnique({
+        where: { id: bancaId },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          isActive: true,
+        },
+      }),
+      { context: 'AuthController.setActiveBanca' }
+    );
 
     if (!banca) {
       return res.status(404).json({

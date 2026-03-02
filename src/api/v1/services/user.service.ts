@@ -1,4 +1,5 @@
 import prisma from '../../../core/prismaClient';
+import { withConnectionRetry } from '../../../core/withConnectionRetry';
 import { AppError } from '../../../core/errors';
 import { CreateUserDTO, UpdateUserDTO } from '../dto/user.dto';
 import { hashPassword, comparePassword } from '../../../utils/crypto';
@@ -44,19 +45,25 @@ function deepMergeSettings(
 }
 
 async function ensureVentanaActiveOrThrow(ventanaId: string) {
-  const v = await prisma.ventana.findUnique({
-    where: { id: ventanaId },
-    select: { id: true, isActive: true, banca: { select: { id: true, isActive: true } } },
-  });
+  const v = await withConnectionRetry(
+    () => prisma.ventana.findUnique({
+      where: { id: ventanaId },
+      select: { id: true, isActive: true, banca: { select: { id: true, isActive: true } } },
+    }),
+    { context: 'UserService.ensureVentanaActiveOrThrow' }
+  );
   if (!v || !v.isActive) throw new AppError('Ventana not found or inactive', 404);
   if (!v.banca || !v.banca.isActive) throw new AppError('Parent Banca inactive', 409);
 }
 
 async function getActorVentanaId(actorId: string) {
-  const actor = await prisma.user.findUnique({
-    where: { id: actorId },
-    select: { ventanaId: true },
-  });
+  const actor = await withConnectionRetry(
+    () => prisma.user.findUnique({
+      where: { id: actorId },
+      select: { ventanaId: true },
+    }),
+    { context: 'UserService.getActorVentanaId' }
+  );
   if (!actor || !actor.ventanaId) {
     throw new AppError('No tienes una ventana asignada', 403);
   }
@@ -111,18 +118,27 @@ export const UserService = {
     }
 
     // Unicidad username
-    const userByUsername = await prisma.user.findUnique({ where: { username }, select: { id: true } });
+    const userByUsername = await withConnectionRetry(
+      () => prisma.user.findUnique({ where: { username }, select: { id: true } }),
+      { context: 'UserService.create.checkUsername' }
+    );
     if (userByUsername) throw new AppError('Username already in use', 409);
 
     // Unicidad email (si viene)
     if (email) {
-      const userByEmail = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+      const userByEmail = await withConnectionRetry(
+        () => prisma.user.findUnique({ where: { email }, select: { id: true } }),
+        { context: 'UserService.create.checkEmail' }
+      );
       if (userByEmail) throw new AppError('Email already in use', 409);
     }
 
     // Unicidad code (si viene) – Prisma ya es unique, pero damos error claro
     if (code) {
-      const userByCode = await prisma.user.findFirst({ where: { code }, select: { id: true } });
+      const userByCode = await withConnectionRetry(
+        () => prisma.user.findFirst({ where: { code }, select: { id: true } }),
+        { context: 'UserService.create.checkCode' }
+      );
       if (userByCode) throw new AppError('Code already in use', 409);
     }
 
@@ -140,14 +156,17 @@ export const UserService = {
       isActive: actingRole === Role.VENTANA ? true : isActive,             
     });
 
-    const result = await prisma.user.findUnique({
-      where: { id: created.id },
-      select: {
-        id: true, name: true, username: true, email: true, role: true,
-        ventanaId: true, isActive: true, code: true,
-        createdAt: true, settings: true, platform: true, appVersion: true,
-      },
-    });
+    const result = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id: created.id },
+        select: {
+          id: true, name: true, username: true, email: true, role: true,
+          ventanaId: true, isActive: true, code: true,
+          createdAt: true, settings: true, platform: true, appVersion: true,
+        },
+      }),
+      { context: 'UserService.create.fetchResult' }
+    );
 
     // Log de auditoría
     if (result && actorId) {
@@ -169,14 +188,17 @@ export const UserService = {
   },
 
   async getById(id: string) {
-    const user = await prisma.user.findUnique({
-      where: { id },
-      select: {
-        id: true, name: true, email: true, username: true, role: true,
-        ventanaId: true, isActive: true, code: true,
-        createdAt: true, settings: true, platform: true, appVersion: true,
-      },
-    });
+    const user = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id },
+        select: {
+          id: true, name: true, email: true, username: true, role: true,
+          ventanaId: true, isActive: true, code: true,
+          createdAt: true, settings: true, platform: true, appVersion: true,
+        },
+      }),
+      { context: 'UserService.getById' }
+    );
     if (!user) throw new AppError('User not found', 404);
     return user;
   },
@@ -215,12 +237,15 @@ export const UserService = {
     const editingSelf = actorId === id;
 
     // Cargar actual para comparaciones
-    const current = await prisma.user.findUnique({
-      where: { id },
-      select: {
-        id: true, username: true, email: true, role: true, ventanaId: true, code: true,
-      },
-    });
+    const current = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id },
+        select: {
+          id: true, username: true, email: true, role: true, ventanaId: true, code: true,
+        },
+      }),
+      { context: 'UserService.update.fetchCurrent' }
+    );
     if (!current) throw new AppError('User not found', 404);
 
     if (actingRole === Role.VENTANA) {
@@ -243,7 +268,10 @@ export const UserService = {
     // username (unicidad si cambia)
     if (dto.username && dto.username.trim() !== current.username) {
       const newUsername = dto.username.trim();
-      const dup = await prisma.user.findUnique({ where: { username: newUsername }, select: { id: true } });
+      const dup = await withConnectionRetry(
+        () => prisma.user.findUnique({ where: { username: newUsername }, select: { id: true } }),
+        { context: 'UserService.update.checkUsername' }
+      );
       if (dup && dup.id !== id) throw new AppError('Username already in use', 409);
       toUpdate.username = newUsername;
     }
@@ -253,7 +281,10 @@ export const UserService = {
       const e = dto.email === null ? null : dto.email.trim().toLowerCase();
       if (e !== current.email) {
         if (e) {
-          const dupEmail = await prisma.user.findUnique({ where: { email: e }, select: { id: true } });
+          const dupEmail = await withConnectionRetry(
+            () => prisma.user.findUnique({ where: { email: e }, select: { id: true } }),
+            { context: 'UserService.update.checkEmail' }
+          );
           if (dupEmail && dupEmail.id !== id) throw new AppError('Email already in use', 409);
         }
         toUpdate.email = e;
@@ -316,10 +347,13 @@ export const UserService = {
     // VENTANA puede modificar settings de usuarios de su ventana (validación de ventana ya aplicada arriba)
     if (dto.settings !== undefined) {
       // Obtener settings actuales (pueden ser null)
-      const currentUser = await prisma.user.findUnique({
-        where: { id },
-        select: { settings: true },
-      });
+      const currentUser = await withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id },
+          select: { settings: true },
+        }),
+        { context: 'UserService.update.fetchSettings' }
+      );
 
       const currentSettings = currentUser?.settings as Record<string, any> | null || {};
 
@@ -341,14 +375,17 @@ export const UserService = {
     }
 
     // Respuesta coherente (incluye username)
-    const result = await prisma.user.findUnique({
-      where: { id: updated.id },
-      select: {
-        id: true, name: true, username: true, email: true, role: true,
-        ventanaId: true, isActive: true, createdAt: true, settings: true,
-        platform: true, appVersion: true,
-      },
-    });
+    const result = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id: updated.id },
+        select: {
+          id: true, name: true, username: true, email: true, role: true,
+          ventanaId: true, isActive: true, createdAt: true, settings: true,
+          platform: true, appVersion: true,
+        },
+      }),
+      { context: 'UserService.update.fetchResult' }
+    );
 
     // Log de auditoría
     if (result && actorId && Object.keys(toUpdate).length > 0) {
@@ -421,39 +458,42 @@ export const UserService = {
     betType: 'NUMERO' | 'REVENTADO' = 'NUMERO'
   ) {
     // Obtener usuario, lotería, multiplicadores y ventana en paralelo
-    const [user, loteria, activeMultipliers] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          role: true,
-          ventanaId: true,
-          commissionPolicyJson: true,
-        },
-      }),
-      prisma.loteria.findUnique({
-        where: { id: loteriaId },
-        select: { id: true, isActive: true },
-      }),
-      prisma.loteriaMultiplier.findMany({
-        where: {
-          loteriaId,
-          isActive: true,
-          kind: betType,
-        },
-        select: {
-          id: true,
-          loteriaId: true,
-          name: true,
-          valueX: true,
-          kind: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-    ]);
+    const [user, loteria, activeMultipliers] = await withConnectionRetry(
+      () => Promise.all([
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            id: true,
+            role: true,
+            ventanaId: true,
+            commissionPolicyJson: true,
+          },
+        }),
+        prisma.loteria.findUnique({
+          where: { id: loteriaId },
+          select: { id: true, isActive: true },
+        }),
+        prisma.loteriaMultiplier.findMany({
+          where: {
+            loteriaId,
+            isActive: true,
+            kind: betType,
+          },
+          select: {
+            id: true,
+            loteriaId: true,
+            name: true,
+            valueX: true,
+            kind: true,
+            isActive: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        }),
+      ]),
+      { context: 'UserService.getAllowedMultipliers' }
+    );
 
     // Validaciones
     if (!user) {

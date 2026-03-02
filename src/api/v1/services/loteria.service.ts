@@ -1,4 +1,5 @@
 import prisma from "../../../core/prismaClient";
+import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import { ActivityType, Prisma } from "@prisma/client";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
@@ -16,13 +17,16 @@ export const LoteriaService = {
     requestId?: string
   ) {
     try {
-      const loteria = await prisma.loteria.create({
-        data: {
-          name: data.name,
-          rulesJson: data.rulesJson ?? {},
-          isActive: data.isActive ?? true,
-        },
-      });
+      const loteria = await withConnectionRetry(
+        () => prisma.loteria.create({
+          data: {
+            name: data.name,
+            rulesJson: data.rulesJson ?? {},
+            isActive: data.isActive ?? true,
+          },
+        }),
+        { context: 'LoteriaService.create' }
+      );
 
       logger.info({
         layer: "service",
@@ -59,9 +63,12 @@ export const LoteriaService = {
   },
 
   async getById(id: string) {
-    const loteria = await prisma.loteria.findUnique({
-      where: { id },
-    });
+    const loteria = await withConnectionRetry(
+      () => prisma.loteria.findUnique({
+        where: { id },
+      }),
+      { context: "LoteriaService.getById" }
+    );
 
     if (!loteria) {
       throw new AppError("Lotería not found", 404);
@@ -125,7 +132,10 @@ export const LoteriaService = {
     userId: string,
     requestId?: string
   ) {
-    const existing = await prisma.loteria.findUnique({ where: { id } });
+    const existing = await withConnectionRetry(
+      () => prisma.loteria.findUnique({ where: { id } }),
+      { context: 'LoteriaService.update.checkExisting' }
+    );
     if (!existing) throw new AppError("Lotería not found", 404);
 
     // Detectar cambio en isActive para activar cascada
@@ -135,30 +145,33 @@ export const LoteriaService = {
 
     // Si hay cambio en isActive, usar transacción para cascada
     if (isActiveChanged) {
-      const result = await prisma.$transaction(async (tx) => {
-        // 1. Actualizar la lotería
-        const updated = await tx.loteria.update({
-          where: { id },
-          data: {
-            name: data.name ?? existing.name,
-            rulesJson:
-              (data.rulesJson as Prisma.InputJsonValue) ?? existing.rulesJson,
-            isActive: data.isActive ?? existing.isActive,
-          },
-        });
+      const result = await withConnectionRetry(
+        () => prisma.$transaction(async (tx) => {
+          // 1. Actualizar la lotería
+          const updated = await tx.loteria.update({
+            where: { id },
+            data: {
+              name: data.name ?? existing.name,
+              rulesJson:
+                (data.rulesJson as Prisma.InputJsonValue) ?? existing.rulesJson,
+              isActive: data.isActive ?? existing.isActive,
+            },
+          });
 
-        // 2. Aplicar cascada según el cambio (solo cambiar isActive, sin soft delete)
-        let cascadeResult = { count: 0, sorteosIds: [] as string[] };
-        if (isBeingInactivated) {
-          // Inactivar sorteos asociados (solo isActive=false)
-          cascadeResult = await SorteoRepository.setInactiveSorteosByLoteria(id, tx);
-        } else if (isBeingRestored) {
-          // Restaurar sorteos que fueron inactivados por cascada (solo isActive=true)
-          cascadeResult = await SorteoRepository.setActiveSorteosByLoteria(id, tx);
-        }
+          // 2. Aplicar cascada según el cambio (solo cambiar isActive, sin soft delete)
+          let cascadeResult = { count: 0, sorteosIds: [] as string[] };
+          if (isBeingInactivated) {
+            // Inactivar sorteos asociados (solo isActive=false)
+            cascadeResult = await SorteoRepository.setInactiveSorteosByLoteria(id, tx);
+          } else if (isBeingRestored) {
+            // Restaurar sorteos que fueron inactivados por cascada (solo isActive=true)
+            cascadeResult = await SorteoRepository.setActiveSorteosByLoteria(id, tx);
+          }
 
-        return { updated, cascadeResult };
-      });
+          return { updated, cascadeResult };
+        }),
+        { context: 'LoteriaService.update.transaction' }
+      );
 
       logger.info({
         layer: "service",
@@ -195,15 +208,18 @@ export const LoteriaService = {
     }
 
     // Si no hay cambio en isActive, actualización normal sin cascada
-    const updated = await prisma.loteria.update({
-      where: { id },
-      data: {
-        name: data.name ?? existing.name,
-        rulesJson:
-          (data.rulesJson as Prisma.InputJsonValue) ?? existing.rulesJson,
-        isActive: data.isActive ?? existing.isActive,
-      },
-    });
+    const updated = await withConnectionRetry(
+      () => prisma.loteria.update({
+        where: { id },
+        data: {
+          name: data.name ?? existing.name,
+          rulesJson:
+            (data.rulesJson as Prisma.InputJsonValue) ?? existing.rulesJson,
+          isActive: data.isActive ?? existing.isActive,
+        },
+      }),
+      { context: 'LoteriaService.update.normal' }
+    );
 
     logger.info({
       layer: "service",

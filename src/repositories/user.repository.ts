@@ -1,23 +1,36 @@
 // src/repositories/user.repository.ts
+import { withConnectionRetry } from '../core/withConnectionRetry';
 import prisma from '../core/prismaClient';
 import logger from '../core/logger';
 import { Prisma, Role } from '@prisma/client';
 
 export const UserRepository = {
   findById: (id: string) =>
-    prisma.user.findUnique({ where: { id } }),
+    withConnectionRetry(
+      () => prisma.user.findUnique({ where: { id } }),
+      { context: 'UserRepository.findById' }
+    ),
 
   findByUsername: (username: string) =>
-    prisma.user.findUnique({ where: { username } }),
+    withConnectionRetry(
+      () => prisma.user.findUnique({ where: { username } }),
+      { context: 'UserRepository.findByUsername' }
+    ),
 
   findByEmail: (email: string) =>
-    prisma.user.findUnique({ where: { email } }),
+    withConnectionRetry(
+      () => prisma.user.findUnique({ where: { email } }),
+      { context: 'UserRepository.findByEmail' }
+    ),
 
   findActiveVendedorById: (id: string) =>
-    prisma.user.findFirst({
-      where: { id, role: Role.VENDEDOR, isActive: true },
-      select: { id: true, role: true, ventanaId: true, isActive: true },
-    }),
+    withConnectionRetry(
+      () => prisma.user.findFirst({
+        where: { id, role: Role.VENDEDOR, isActive: true },
+        select: { id: true, role: true, ventanaId: true, isActive: true },
+      }),
+      { context: 'UserRepository.findActiveVendedorById' }
+    ),
 
   //  admitir code e isActive en create
   create: (data: {
@@ -31,25 +44,31 @@ export const UserRepository = {
     code?: string | null;
     isActive?: boolean;
   }) =>
-    prisma.user.create({
-      data: {
-        name: data.name,
-        email: data.email,
-        username: data.username,
-        phone: data.phone ?? null,
-        password: data.password,
-        role: data.role,
-        ventanaId: data.ventanaId ?? null,
-        ...(data.code !== undefined ? { code: data.code } : {}),
-        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
-      },
-    }),
+    withConnectionRetry(
+      () => prisma.user.create({
+        data: {
+          name: data.name,
+          email: data.email,
+          username: data.username,
+          phone: data.phone ?? null,
+          password: data.password,
+          role: data.role,
+          ventanaId: data.ventanaId ?? null,
+          ...(data.code !== undefined ? { code: data.code } : {}),
+          ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+        },
+      }),
+      { context: 'UserRepository.create' }
+    ),
 
   update: (id: string, data: Partial<{
     name: string; email: string | null; username: string; password: string;
     role: Role; ventanaId: string | null; isActive: boolean; code: string | null; phone: string | null; settings: any;
   }>) =>
-    prisma.user.update({ where: { id }, data }),
+    withConnectionRetry(
+      () => prisma.user.update({ where: { id }, data }),
+      { context: 'UserRepository.update' }
+    ),
 
   async listPaged(args: {
     page: number;
@@ -87,28 +106,31 @@ export const UserRepository = {
       ];
     }
 
-    const [rawData, total] = await prisma.$transaction([
-      prisma.user.findMany({
-        where,
-        skip,
-        take: pageSize,
-        select: select ?? {
-          id: true, name: true, email: true, username: true, role: true,
-          ventanaId: true, isActive: true, code: true,
-          createdAt: true, updatedAt: true, settings: true,
-          platform: true, appVersion: true,
-          ventana: {
-            select: {
-              id: true,
-              name: true,
-              banca: { select: { id: true, name: true } },
-            }
+    const [rawData, total] = await withConnectionRetry(
+      () => prisma.$transaction([
+        prisma.user.findMany({
+          where,
+          skip,
+          take: pageSize,
+          select: select ?? {
+            id: true, name: true, email: true, username: true, role: true,
+            ventanaId: true, isActive: true, code: true,
+            createdAt: true, updatedAt: true, settings: true,
+            platform: true, appVersion: true,
+            ventana: {
+              select: {
+                id: true,
+                name: true,
+                banca: { select: { id: true, name: true } },
+              }
+            },
           },
-        },
-        orderBy: orderBy ?? { createdAt: 'desc' },
-      }),
-      prisma.user.count({ where }),
-    ]);
+          orderBy: orderBy ?? { createdAt: 'desc' },
+        }),
+        prisma.user.count({ where }),
+      ]),
+      { context: 'UserRepository.listPaged' }
+    );
 
     // Aplanar banca al mismo nivel que ventana
     const data = rawData.map((user: any) => {

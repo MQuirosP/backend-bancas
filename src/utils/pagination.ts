@@ -1,4 +1,5 @@
 // src/utils/pagination.ts
+import { withConnectionRetry } from '../core/withConnectionRetry';
 
 /**
  * Parámetros de entrada para paginación
@@ -103,17 +104,20 @@ export async function paginateOffset<T>(
   const { page, pageSize } = sanitizePagination(options?.pagination);
   const { skip, take } = getSkipTake(page, pageSize);
 
-  const [data, total] = await Promise.all([
-    model.findMany({
-      where: options?.where,
-      include: options?.include,
-      select: options?.select,
-      orderBy: options?.orderBy ?? { createdAt: 'desc' }, // todos tus modelos tienen createdAt
-      skip,
-      take,
-    }),
-    model.count({ where: options?.where }),
-  ]);
+  const [data, total] = await withConnectionRetry(
+    () => Promise.all([
+      model.findMany({
+        where: options?.where,
+        include: options?.include,
+        select: options?.select,
+        orderBy: options?.orderBy ?? { createdAt: 'desc' }, // todos tus modelos tienen createdAt
+        skip,
+        take,
+      }),
+      model.count({ where: options?.where }),
+    ]),
+    { context: 'pagination.paginateOffset' }
+  );
 
   return { data, meta: buildMeta(total, page, pageSize) };
 }
@@ -156,7 +160,10 @@ export async function paginateCursor<T extends Record<string, any>>(
     query.skip = 1; // evita incluir el registro del cursor en el siguiente batch
   }
 
-  const rows = await model.findMany(query);
+  const rows = await withConnectionRetry(
+    () => model.findMany(query),
+    { context: 'pagination.paginateCursor' }
+  );
 
   const hasNextPage = rows.length > pageSize;
   const data = hasNextPage ? rows.slice(0, pageSize) : rows;

@@ -1,5 +1,6 @@
 import prisma from "../core/prismaClient";
 import { Prisma, TicketStatus, Role } from "@prisma/client";
+import { withConnectionRetry } from "../core/withConnectionRetry";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { withTransactionRetry } from "../core/withTransactionRetry";
@@ -2003,19 +2004,22 @@ export const TicketRepository = {
   },
 
   async getById(id: string) {
-    return prisma.ticket.findUnique({
-      where: { id },
-      include: {
-        jugadas: true,
-        loteria: true,
-        sorteo: true,
-        ventana: true,
-        vendedor: true,
-        createdByUser: {
-          select: { id: true, name: true, role: true },
+    return withConnectionRetry(
+      () => prisma.ticket.findUnique({
+        where: { id },
+        include: {
+          jugadas: true,
+          loteria: true,
+          sorteo: true,
+          ventana: true,
+          vendedor: true,
+          createdByUser: {
+            select: { id: true, name: true, role: true },
+          },
         },
-      },
-    });
+      }),
+      { context: 'TicketRepository.getById' }
+    );
   },
 
   async list(
@@ -2088,16 +2092,19 @@ export const TicketRepository = {
     if (filters.scheduledTime) {
       // 1. Buscar todos los sorteos que coincidan con la hora en el rango de fechas
       // (Limitamos por fecha para evitar cargar miles de sorteos)
-      const sorteosInRange = await prisma.sorteo.findMany({
-        where: {
-          scheduledAt: {
-            gte: filters.dateFrom,
-            lt: filters.dateTo,
+      const sorteosInRange = await withConnectionRetry(
+        () => prisma.sorteo.findMany({
+          where: {
+            scheduledAt: {
+              gte: filters.dateFrom,
+              lt: filters.dateTo,
+            },
+            loteriaId: filters.loteriaId,
           },
-          loteriaId: filters.loteriaId,
-        },
-        select: { id: true, scheduledAt: true },
-      });
+          select: { id: true, scheduledAt: true },
+        }),
+        { context: 'TicketRepository.list.sorteosInRange' }
+      );
 
       // 2. Filtrar por hora exacta en Costa Rica
       const matchingSorteoIds = sorteosInRange
@@ -2228,74 +2235,77 @@ export const TicketRepository = {
     }
 
     // Optimización: Usar select en lugar de include para mejor performance
-    const [data, total] = await Promise.all([
-      prisma.ticket.findMany({
-        where,
-        skip,
-        take: pageSize,
-        select: {
-          id: true,
-          ticketNumber: true,
-          businessDate: true,
-          loteriaId: true,
-          ventanaId: true,
-          vendedorId: true,
-          totalAmount: true,
-          status: true,
-          isActive: true,
-          isWinner: true,
-          sorteoId: true,
-          clienteNombre: true,
-          totalPayout: true,
-          totalPaid: true,
-          remainingAmount: true,
-          totalCommission: true,
-          lastPaymentAt: true,
-          paidById: true,
-          paymentMethod: true,
-          paymentNotes: true,
-          createdAt: true,
-          updatedAt: true,
-          createdBy: true,
-          createdByRole: true,
-          loteria: { select: { id: true, name: true } },
-          sorteo: {
-            select: { id: true, name: true, status: true, scheduledAt: true, extraOutcomeCode: true, extraMultiplierX: true },
-          },
-          ventana: { select: { id: true, name: true } },
-          vendedor: { select: { id: true, name: true, role: true } },
-          createdByUser: { select: { id: true, name: true, role: true } },
-          jugadas: {
-            select: {
-              id: true,
-              number: true,
-              amount: true,
-              finalMultiplierX: true,
-              payout: true,
-              isActive: true,
-              isWinner: true,
-              multiplierId: true,
-              reventadoNumber: true,
-              type: true,
-              commissionPercent: true,
-              commissionAmount: true,
-              commissionOrigin: true,
-              multiplier: {
-                select: {
-                  id: true,
-                  name: true,
-                  valueX: true,
-                  kind: true,
-                  isActive: true,
+    const [data, total] = await withConnectionRetry(
+      () => Promise.all([
+        prisma.ticket.findMany({
+          where,
+          skip,
+          take: pageSize,
+          select: {
+            id: true,
+            ticketNumber: true,
+            businessDate: true,
+            loteriaId: true,
+            ventanaId: true,
+            vendedorId: true,
+            totalAmount: true,
+            status: true,
+            isActive: true,
+            isWinner: true,
+            sorteoId: true,
+            clienteNombre: true,
+            totalPayout: true,
+            totalPaid: true,
+            remainingAmount: true,
+            totalCommission: true,
+            lastPaymentAt: true,
+            paidById: true,
+            paymentMethod: true,
+            paymentNotes: true,
+            createdAt: true,
+            updatedAt: true,
+            createdBy: true,
+            createdByRole: true,
+            loteria: { select: { id: true, name: true } },
+            sorteo: {
+              select: { id: true, name: true, status: true, scheduledAt: true, extraOutcomeCode: true, extraMultiplierX: true },
+            },
+            ventana: { select: { id: true, name: true } },
+            vendedor: { select: { id: true, name: true, role: true } },
+            createdByUser: { select: { id: true, name: true, role: true } },
+            jugadas: {
+              select: {
+                id: true,
+                number: true,
+                amount: true,
+                finalMultiplierX: true,
+                payout: true,
+                isActive: true,
+                isWinner: true,
+                multiplierId: true,
+                reventadoNumber: true,
+                type: true,
+                commissionPercent: true,
+                commissionAmount: true,
+                commissionOrigin: true,
+                multiplier: {
+                  select: {
+                    id: true,
+                    name: true,
+                    valueX: true,
+                    kind: true,
+                    isActive: true,
+                  },
                 },
               },
             },
           },
-        },
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.ticket.count({ where }),
-    ]);
+          orderBy: { createdAt: "desc" },
+        }),
+        prisma.ticket.count({ where }),
+      ]),
+      { context: 'TicketRepository.list' }
+    );
 
     const totalPages = Math.ceil(total / pageSize);
     const meta = {

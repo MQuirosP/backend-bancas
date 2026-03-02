@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from "../../../core/types";
 import { RestrictionRuleService } from "../services/restrictionRule.service";
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 import prisma from "../../../core/prismaClient";
+import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import logger from "../../../core/logger";
 
 export const RestrictionRuleController = {
@@ -132,17 +133,20 @@ export const RestrictionRuleController = {
     if (effectiveVendorId !== me.id) {
       // Estamos impersonalizando - obtener contexto del vendedor seleccionado
       try {
-        const vendor = await prisma.user.findUnique({
-          where: { id: effectiveVendorId },
-          select: {
-            ventanaId: true,
-            ventana: {
-              select: {
-                bancaId: true,
+        const vendor = await withConnectionRetry(
+          () => prisma.user.findUnique({
+            where: { id: effectiveVendorId },
+            select: {
+              ventanaId: true,
+              ventana: {
+                select: {
+                  bancaId: true,
+                },
               },
             },
-          },
-        });
+          }),
+          { context: 'RestrictionRuleController.myRestrictions.vendor' }
+        );
 
         if (vendor) {
           effectiveVentanaId = vendor.ventanaId;
