@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.2",
-  "versionCode": 8,
-  "buildNumber": 8,
+  "versionName": "1.0.3",
+  "versionCode": 9,
+  "buildNumber": 9,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Corrección de errores de inicio de sesión. Botón refrescar en premios y lista de tickets",
-  "releasedAt": "2026-02-27T18:00:00Z",
+  "changelog": "Corrección de doble toque en generar ticket. Llave idempotente para creación única de tickets.",
+  "releasedAt": "2026-03-23T20:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "35a3555f01f42ec162456b99fb017fecd0ed07eaa77ca8d02730f111f5f7644f"
+      "sha256": "25807f89bfd81ea66e2148e0323d25bf1f5cdd7d02bba8096a036dbe6c5dffa3"
     },
     "arm64-v8a": {
-      "sha256": "35a3555f01f42ec162456b99fb017fecd0ed07eaa77ca8d02730f111f5f7644f"
+      "sha256": "25807f89bfd81ea66e2148e0323d25bf1f5cdd7d02bba8096a036dbe6c5dffa3"
     }
   }
 }
