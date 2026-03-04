@@ -29,6 +29,7 @@ export const CreateTicketSchema = z
     clienteNombre: z.string().trim().min(1).max(100, "clienteNombre debe tener máximo 100 caracteres").nullable().optional(),
     jugadas: z.array(z.union([JugadaNumeroSchema, JugadaReventadoSchema])).min(1),
     vendedorId: z.uuid("vendedorId inválido").optional().nullable(),
+    requestId: z.string().uuid().optional(),
   })
 
   .superRefine((val, ctx) => {

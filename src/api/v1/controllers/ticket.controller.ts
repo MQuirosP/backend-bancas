@@ -7,15 +7,40 @@ import { Role } from "@prisma/client";
 import { resolveDateRange, DateRangeResolution } from "../../../utils/dateRange";
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 
+const _idempotencyCache = new Map<string, { data: any; expiresAt: number }>();
+
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
     const userId = req.user!.id;
+    const clientRequestId: string | undefined = req.body.requestId;
+
+    if (clientRequestId) {
+      const cached = _idempotencyCache.get(clientRequestId);
+      if (cached && cached.expiresAt > Date.now()) {
+        req.logger?.info({
+          layer: "controller",
+          action: "TICKET_CREATE_IDEMPOTENCY_HIT",
+          payload: { clientRequestId, userId },
+        });
+        return success(res, cached.data);
+      }
+    }
+
     const result = await TicketService.create(
       req.body,
       userId,
       req.requestId,
       req.user!.role
     );
+
+    if (clientRequestId) {
+      _idempotencyCache.set(clientRequestId, {
+        data: result,
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      });
+      setTimeout(() => _idempotencyCache.delete(clientRequestId), 5 * 60 * 1000);
+    }
+
     return success(res, result);
   },
 
