@@ -112,6 +112,78 @@ export class CommissionSnapshotService {
   }
 
   /**
+   * Lee snapshots de comisiones usando un TicketWhereInput directamente.
+   * Evita el patrón dos-pasos (ticket IDs → IN clause masiva) empujando
+   * el filtro al JOIN de Prisma. Retorna el mismo Map que getSnapshotsForTickets.
+   */
+  async getSnapshotsForTicketWhere(
+    ticketWhere: Prisma.TicketWhereInput
+  ): Promise<Map<string, SnapshotWithTicket[]>> {
+    const jugadas = await prisma.jugada.findMany({
+      where: {
+        deletedAt: null,
+        ticket: ticketWhere,
+      },
+      select: {
+        id: true,
+        ticketId: true,
+        amount: true,
+        commissionAmount: true,
+        commissionPercent: true,
+        commissionOrigin: true,
+        commissionRuleId: true,
+        listeroCommissionAmount: true,
+        ticket: {
+          select: {
+            loteriaId: true,
+            ventanaId: true,
+            vendedorId: true,
+          },
+        },
+      },
+    });
+
+    const result = new Map<string, SnapshotWithTicket[]>();
+
+    for (const jugada of jugadas) {
+      const snapshot: CommissionSnapshot = {
+        commissionPercent: jugada.commissionPercent ?? 0,
+        commissionAmount: jugada.commissionAmount ?? 0,
+        commissionOrigin: (jugada.commissionOrigin as "USER" | "VENTANA" | "BANCA" | null) ?? null,
+        commissionRuleId: jugada.commissionRuleId ?? null,
+      };
+
+      const listeroSnapshot: CommissionSnapshot = {
+        commissionPercent: jugada.listeroCommissionAmount && jugada.amount > 0
+          ? (jugada.listeroCommissionAmount / jugada.amount) * 100
+          : 0,
+        commissionAmount: jugada.listeroCommissionAmount ?? 0,
+        commissionOrigin: jugada.listeroCommissionAmount && jugada.listeroCommissionAmount > 0
+          ? "VENTANA"
+          : null,
+        commissionRuleId: null,
+      };
+
+      const snapshotWithTicket: SnapshotWithTicket = {
+        ticketId: jugada.ticketId,
+        jugadaId: jugada.id,
+        snapshot,
+        listeroSnapshot,
+        amount: jugada.amount,
+        loteriaId: jugada.ticket.loteriaId,
+        ventanaId: jugada.ticket.ventanaId,
+        vendedorId: jugada.ticket.vendedorId,
+      };
+
+      const existing = result.get(jugada.ticketId) || [];
+      existing.push(snapshotWithTicket);
+      result.set(jugada.ticketId, existing);
+    }
+
+    return result;
+  }
+
+  /**
    * Lee snapshots de comisiones para un periodo específico
    * Usa filtros flexibles para diferentes casos de uso
    */

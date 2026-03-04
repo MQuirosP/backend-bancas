@@ -1,5 +1,4 @@
-import { Prisma, Role } from "@prisma/client";
-import prisma from "../../../../core/prismaClient";
+import { Prisma } from "@prisma/client";
 import { commissionSnapshotService } from "../../../../services/commission/CommissionSnapshotService";
 import { resolveCommission } from "../../../../services/commission.resolver"; // Mantener para fallback
 
@@ -24,20 +23,8 @@ export async function computeListeroCommissionsForWhere(
 ): Promise<Map<string, number>> {
     const result = new Map<string, number>();
 
-    //  OPTIMIZACIÓN: Obtener tickets que cumplen el WHERE para luego leer snapshots
-    const tickets = await prisma.ticket.findMany({
-        where: ticketWhere,
-        select: { id: true },
-    });
-
-    if (tickets.length === 0) {
-        return result;
-    }
-
-    const ticketIds = tickets.map((t) => t.id);
-
-    //  USAR SNAPSHOTS: Leer snapshots directamente de BD en lugar de recalcular
-    const snapshotsByTicket = await commissionSnapshotService.getSnapshotsForTickets(ticketIds);
+    //  OPTIMIZACIÓN: Query única con JOIN en lugar del patrón dos-pasos (ticket IDs → IN masiva)
+    const snapshotsByTicket = await commissionSnapshotService.getSnapshotsForTicketWhere(ticketWhere);
 
     // Agregar por ventana usando snapshots
     for (const [ticketId, snapshots] of snapshotsByTicket.entries()) {
