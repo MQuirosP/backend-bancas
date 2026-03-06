@@ -1,4 +1,4 @@
-import { ActivityType, Role } from "@prisma/client";
+import { ActivityType, Role, TicketStatus } from "@prisma/client";
 import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import TicketRepository from "../../../repositories/ticket.repository";
 import ActivityService from "../../../core/activity.service";
@@ -15,6 +15,9 @@ import { UserService } from "./user.service";
 import { nowCR, validateDate, formatDateCRWithTZ } from "../../../utils/datetime";
 import { getCRLocalComponents } from "../../../utils/businessDate";
 import { PDFDocument } from "pdf-lib";
+import { ConcurrencyManager } from "../../../utils/concurrency";
+import { CacheService } from "../../../core/cache.service";
+import crypto from 'crypto';
 
 const CUTOFF_GRACE_MS = 1000;
 // Updated: Added clienteNombre field support
@@ -418,6 +421,12 @@ export const TicketService = {
         }
       );
 
+      //  FASE BE-2: Invalidar caché del vendedor (summary)
+      // Usamos fire-and-forget para no bloquear el flujo de venta
+      CacheService.invalidateTag(`vendedor:${effectiveVendedorId}`).catch(err => {
+        logger.warn({ layer: 'cache', action: 'INVALIDATE_ERROR_ON_CREATE', payload: { vendedorId: effectiveVendedorId, error: err.message } });
+      });
+
       // ️ Obtener configuraciones de impresión del vendedor y ventana
       const [vendedor, ventanaData] = await withConnectionRetry(
         () => Promise.all([
@@ -596,6 +605,13 @@ export const TicketService = {
 
   async cancel(id: string, userId: string, requestId?: string) {
     const ticket = await TicketRepository.cancel(id, userId);
+
+    //  FASE BE-2: Invalidar caché del vendedor
+    if (ticket.vendedorId) {
+      CacheService.invalidateTag(`vendedor:${ticket.vendedorId}`).catch(err => {
+        logger.warn({ layer: 'cache', action: 'INVALIDATE_ERROR_ON_CANCEL', payload: { vendedorId: ticket.vendedorId, error: err.message } });
+      });
+    }
 
     await ActivityService.log({
       userId,
@@ -1939,406 +1955,273 @@ export const TicketService = {
     ventanaId?: string | null;
     bancaId?: string | null;
   }) {
-    try {
-      // Aplicar RBAC filters para determinar qué tickets puede ver el usuario
-      const { applyRbacFilters } = require('../../../utils/rbac');
-      const authContext = {
-        userId: context.userId,
-        role: context.role,
-        ventanaId: context.ventanaId,
-        bancaId: context.bancaId,
-      };
+    //  FASE BE-2: Implementación de Cache-Aside con Coalescing
+    const cacheKey = `banca:${context.bancaId || 'all'}:ventana:${context.ventanaId || 'all'}:user:${context.userId}:filters:${crypto
+      .createHash('md5')
+      .update(JSON.stringify({ params, context }))
+      .digest('hex')}`;
 
-      const effectiveFilters = await applyRbacFilters(authContext, {
-        scope: params.scope || 'mine',
-        vendedorId: params.vendedorId,
-        ventanaId: params.ventanaId,
-      });
+    const tags = ['ticket:filter-options', `user:${context.userId}`];
+    if (context.bancaId) tags.push(`banca:${context.bancaId}`);
+    if (params.sorteoId) tags.push(`sorteo:${params.sorteoId}`);
 
-      // Construir filtros de fecha si se proporcionan
-      // Regla: cuando hay sorteoId y no hay fechas explícitas, no aplicar filtro de fecha
-      let dateFrom: Date | undefined;
-      let dateTo: Date | undefined;
+    return CacheService.wrap(
+      cacheKey,
+      async () => {
+        try {
+          // Aplicar RBAC filters para determinar qué tickets puede ver el usuario
+          const { applyRbacFilters } = require('../../../utils/rbac');
+          const authContext = {
+            userId: context.userId,
+            role: context.role,
+            ventanaId: context.ventanaId,
+            bancaId: context.bancaId,
+          };
 
-      const hasSorteoId = !!params.sorteoId;
-      const hasExplicitDateRange = !!(params.fromDate || params.toDate);
+          const effectiveFilters = await applyRbacFilters(authContext, {
+            scope: params.scope || 'mine',
+            vendedorId: params.vendedorId,
+            ventanaId: params.ventanaId,
+          });
 
-      if (!hasSorteoId || hasExplicitDateRange) {
-        if (params.date || params.fromDate || params.toDate) {
-          const dateRange = resolveDateRange(
-            params.date || 'today',
-            params.fromDate,
-            params.toDate
-          );
-          dateFrom = dateRange.fromBusinessDate;
-          dateTo = dateRange.toBusinessDate;
-        }
-      }
+          // Construir filtros de fecha si se proporcionan
+          // Regla: cuando hay sorteoId y no hay fechas explícitas, no aplicar filtro de fecha
+          let dateFrom: Date | undefined;
+          let dateTo: Date | undefined;
 
-      // Construir where clause para tickets
-      const where: any = {
-        deletedAt: null,
-        isActive: true,
-      };
+          const hasSorteoId = !!params.sorteoId;
+          const hasExplicitDateRange = !!(params.fromDate || params.toDate);
 
-      // Aplicar filtros RBAC
-      if (effectiveFilters.vendedorId) {
-        where.vendedorId = effectiveFilters.vendedorId;
-      }
-      if (effectiveFilters.ventanaId) {
-        where.ventanaId = effectiveFilters.ventanaId;
-      }
-      if (effectiveFilters.bancaId) {
-        where.ventana = { bancaId: effectiveFilters.bancaId };
-      }
+          if (!hasSorteoId || hasExplicitDateRange) {
+            if (params.date || params.fromDate || params.toDate) {
+              const dateRange = resolveDateRange(
+                params.date || 'today',
+                params.fromDate,
+                params.toDate
+              );
+              dateFrom = dateRange.fromBusinessDate;
+              dateTo = dateRange.toBusinessDate;
+            }
+          }
 
-      // Aplicar filtros de lotería, sorteo y multiplicador
-      if (params.loteriaId) {
-        where.loteriaId = params.loteriaId;
-      }
-      if (params.sorteoId) {
-        where.sorteoId = params.sorteoId;
-      }
-      if (params.multiplierId) {
-        where.jugadas = {
-          some: {
-            multiplierId: params.multiplierId,
+          // Construir where clause para tickets
+          const where: any = {
             deletedAt: null,
             isActive: true,
-          },
-        };
-      }
+          };
 
-      // Aplicar filtros de fecha
-      if (dateFrom || dateTo) {
-        where.businessDate = {};
-        if (dateFrom) where.businessDate.gte = dateFrom;
-        if (dateTo) where.businessDate.lte = dateTo;
-      }
+          // Aplicar filtros RBAC
+          if (effectiveFilters.vendedorId) {
+            where.vendedorId = effectiveFilters.vendedorId;
+          }
+          if (effectiveFilters.ventanaId) {
+            where.ventanaId = effectiveFilters.ventanaId;
+          }
+          if (effectiveFilters.bancaId) {
+            where.ventana = { bancaId: effectiveFilters.bancaId };
+          }
 
-      // Aplicar filtro de estado
-      // WINNERS_PENDING es un valor sintético del FE que se traduce a isWinner=true + status=EVALUATED
-      if (params.status) {
-        if (params.status === 'WINNERS_PENDING') {
-          where.isWinner = true;
-          where.status = 'EVALUATED';
-        } else {
-          where.status = params.status;
-        }
-      }
-
-      // Obtener tickets con relaciones necesarias
-      const tickets = await withConnectionRetry(
-        () => prisma.ticket.findMany({
-          where,
-          select: {
-            id: true,
-            loteriaId: true,
-            sorteoId: true,
-            vendedorId: true,
-            jugadas: {
-              where: {
+          // Aplicar filtros de lotería, sorteo y multiplicador
+          if (params.loteriaId) {
+            where.loteriaId = params.loteriaId;
+          }
+          if (params.sorteoId) {
+            where.sorteoId = params.sorteoId;
+          }
+          if (params.multiplierId) {
+            where.jugadas = {
+              some: {
+                multiplierId: params.multiplierId,
                 deletedAt: null,
                 isActive: true,
               },
-              select: {
-                multiplierId: true,
-              },
-            },
-            loteria: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-            sorteo: {
-              select: {
-                id: true,
-                name: true,
-                scheduledAt: true,
-                loteriaId: true,
-              },
-            },
-            vendedor: {
-              select: {
-                id: true,
-                name: true,
-                ventanaId: true,
-                ventana: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
-                },
-              },
-            },
-          },
-        }),
-        { context: 'TicketService.getFilterOptions' }
-      );
-
-      const totalTickets = tickets.length;
-
-      // Agrupar por lotería
-      const loteriaMap = new Map<string, { id: string; name: string; count: number }>();
-      tickets.forEach((ticket) => {
-        if (ticket.loteria) {
-          const existing = loteriaMap.get(ticket.loteria.id);
-          if (existing) {
-            existing.count++;
-          } else {
-            loteriaMap.set(ticket.loteria.id, {
-              id: ticket.loteria.id,
-              name: ticket.loteria.name,
-              count: 1,
-            });
+            };
           }
-        }
-      });
 
-      // Agrupar por sorteo
-      const sorteoMap = new Map<string, {
-        id: string;
-        name: string;
-        loteriaId: string;
-        loteriaName: string;
-        scheduledAt: Date;
-        count: number;
-      }>();
-      tickets.forEach((ticket) => {
-        if (ticket.sorteo) {
-          const existing = sorteoMap.get(ticket.sorteo.id);
-          if (existing) {
-            existing.count++;
-          } else {
-            sorteoMap.set(ticket.sorteo.id, {
-              id: ticket.sorteo.id,
-              name: ticket.sorteo.name,
-              loteriaId: ticket.sorteo.loteriaId,
-              loteriaName: ticket.loteria?.name || '',
-              scheduledAt: ticket.sorteo.scheduledAt,
-              count: 1,
-            });
+          // Aplicar filtros de fecha
+          if (dateFrom || dateTo) {
+            where.businessDate = {};
+            if (dateFrom) where.businessDate.gte = dateFrom;
+            if (dateTo) where.businessDate.lte = dateTo;
           }
-        }
-      });
 
-      // Agrupar por multiplicador (de jugadas)
-      // IMPORTANTE: Contar TICKETS únicos, no jugadas
-      const multiplierMap = new Map<string, {
-        id: string;
-        ticketIds: Set<string>; // Set de ticket IDs únicos
-        loteriaIds: Set<string>;
-      }>();
-      tickets.forEach((ticket) => {
-        // Obtener multiplicadores únicos de este ticket
-        const ticketMultiplierIds = new Set<string>();
-        ticket.jugadas.forEach((jugada) => {
-          if (jugada.multiplierId) {
-            ticketMultiplierIds.add(jugada.multiplierId);
-          }
-        });
-
-        // Para cada multiplicador único en este ticket, agregar el ticket ID
-        ticketMultiplierIds.forEach((multiplierId) => {
-          const existing = multiplierMap.get(multiplierId);
-          if (existing) {
-            existing.ticketIds.add(ticket.id);
-            if (ticket.loteriaId) {
-              existing.loteriaIds.add(ticket.loteriaId);
-            }
-          } else {
-            multiplierMap.set(multiplierId, {
-              id: multiplierId,
-              ticketIds: new Set([ticket.id]),
-              loteriaIds: new Set(ticket.loteriaId ? [ticket.loteriaId] : []),
-            });
-          }
-        });
-      });
-
-      // Obtener información de multiplicadores
-      const multiplierIds = Array.from(multiplierMap.keys());
-      const multipliers = multiplierIds.length > 0
-        ? await prisma.loteriaMultiplier.findMany({
-          where: {
-            id: { in: multiplierIds },
-            isActive: true,
-          },
-          select: {
-            id: true,
-            name: true,
-            valueX: true,
-            loteriaId: true,
-            loteria: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        })
-        : [];
-
-      // Para vendedores, filtrar multiplicadores según política de comisión
-      let allowedMultiplierIds: Set<string> | null = null;
-      if (context.role === Role.VENDEDOR) {
-        // Obtener multiplicadores permitidos para el vendedor
-        const loteriasConMultipliers = new Set<string>();
-        multipliers.forEach((m) => {
-          if (m.loteriaId) {
-            loteriasConMultipliers.add(m.loteriaId);
-          }
-        });
-
-        // Para cada lotería, obtener multiplicadores permitidos
-        allowedMultiplierIds = new Set<string>();
-        for (const loteriaId of loteriasConMultipliers) {
-          try {
-            const allowedResult = await UserService.getAllowedMultipliers(
-              context.userId,
-              loteriaId,
-              'NUMERO'
-            );
-            allowedResult.data.forEach((m) => {
-              allowedMultiplierIds!.add(m.id);
-            });
-
-            // También obtener para REVENTADO
-            const allowedReventadoResult = await UserService.getAllowedMultipliers(
-              context.userId,
-              loteriaId,
-              'REVENTADO'
-            );
-            allowedReventadoResult.data.forEach((m) => {
-              allowedMultiplierIds!.add(m.id);
-            });
-          } catch (err) {
-            // Si hay error (ej: usuario no encontrado), continuar
-            logger.warn({
-              layer: 'service',
-              action: 'FILTER_OPTIONS_ALLOWED_MULTIPLIERS_ERROR',
-              payload: {
-                userId: context.userId,
-                loteriaId,
-                error: (err as Error).message,
-              },
-            });
-          }
-        }
-      }
-
-      // Agrupar por vendedor (solo para ADMIN y VENTANA)
-      const vendedorMap = new Map<string, {
-        id: string;
-        name: string;
-        ventanaId?: string;
-        ventanaName?: string;
-        count: number;
-      }>();
-      if (context.role === Role.ADMIN || context.role === Role.VENTANA) {
-        tickets.forEach((ticket) => {
-          if (ticket.vendedor) {
-            const existing = vendedorMap.get(ticket.vendedor.id);
-            if (existing) {
-              existing.count++;
+          // Aplicar filtro de estado
+          // WINNERS_PENDING es un valor sintético del FE que se traduce a isWinner=true + status=EVALUATED
+          if (params.status) {
+            if (params.status === 'WINNERS_PENDING') {
+              where.isWinner = true;
+              where.status = 'EVALUATED';
             } else {
-              vendedorMap.set(ticket.vendedor.id, {
-                id: ticket.vendedor.id,
-                name: ticket.vendedor.name,
-                ventanaId: ticket.vendedor.ventanaId || undefined,
-                ventanaName: ticket.vendedor.ventana?.name,
-                count: 1,
-              });
+              where.status = params.status;
             }
           }
-        });
-      }
 
-      // Construir respuesta
-      const loterias = Array.from(loteriaMap.values())
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((l) => ({
-          id: l.id,
-          name: l.name,
-          ticketCount: l.count,
-        }));
+          //  C3.4 OPTIMIZACIÓN: Evitar cargar todos los tickets en memoria para agrupar (Hardening BE-1).
+          // Usar ConcurrencyManager para ejecutar queries de agregación en paralelo limitado.
+          const initialTasks: (() => Promise<any>)[] = [
+            () => prisma.ticket.count({ where }),
+            () => prisma.ticket.groupBy({
+              by: ['loteriaId'],
+              where,
+              _count: { id: true }
+            }),
+            () => prisma.ticket.groupBy({
+              by: ['sorteoId'],
+              where,
+              _count: { id: true }
+            })
+          ];
 
-      const sorteos = Array.from(sorteoMap.values())
-        .sort((a, b) => b.scheduledAt.getTime() - a.scheduledAt.getTime())
-        .map((s) => ({
-          id: s.id,
-          name: s.name,
-          loteriaId: s.loteriaId,
-          loteriaName: s.loteriaName,
-          scheduledAt: s.scheduledAt.toISOString(),
-          ticketCount: s.count,
-        }));
-
-      // Filtrar multiplicadores según política de comisión para vendedores
-      const multipliersFiltered = multipliers
-        .filter((m) => {
-          // Para vendedores, solo incluir multiplicadores permitidos
-          if (context.role === Role.VENDEDOR && allowedMultiplierIds) {
-            return allowedMultiplierIds.has(m.id);
+          if (context.role === Role.ADMIN || context.role === Role.VENTANA) {
+            initialTasks.push(() => prisma.ticket.groupBy({
+              by: ['vendedorId'],
+              where,
+              _count: { id: true }
+            }));
           }
-          // Para otros roles, incluir todos los multiplicadores que tienen tickets
-          return multiplierMap.has(m.id);
-        })
-        .map((m) => {
-          const multiplierData = multiplierMap.get(m.id);
-          // ticketCount es el número de tickets únicos que tienen este multiplicador
-          const ticketCount = multiplierData?.ticketIds.size || 0;
+
+          initialTasks.push(() => prisma.jugada.groupBy({
+            by: ['multiplierId'],
+            where: {
+              ticket: { ...where },
+              deletedAt: null,
+              isActive: true,
+              type: 'NUMERO',
+              multiplierId: { not: null }
+            },
+            _count: { ticketId: true }
+          }));
+
+          const results = await ConcurrencyManager.runLimited(initialTasks, { limit: 2, label: 'ticket-filter-options-init' });
+          
+          const totalTickets = results[0] as number;
+          const loteriaGroups = results[1] as any[];
+          const sorteoGroups = results[2] as any[];
+          let nextIdx = 3;
+          const vendedorGroups = (context.role === Role.ADMIN || context.role === Role.VENTANA) ? results[nextIdx++] as any[] : [];
+          const multiplierGroups = results[nextIdx] as any[];
+
+          // Fase 2: Obtener información de las entidades maestras en paralelo limitado
+          const masterTasks: (() => Promise<any>)[] = [
+            () => prisma.loteria.findMany({
+              where: { id: { in: loteriaGroups.map(g => g.loteriaId).filter(id => !!id) } },
+              select: { id: true, name: true }
+            }),
+            () => prisma.sorteo.findMany({
+              where: { id: { in: sorteoGroups.map(g => g.sorteoId).filter(id => !!id) } },
+              select: { id: true, name: true, scheduledAt: true, loteriaId: true, loteria: { select: { name: true } } }
+            }),
+            () => prisma.loteriaMultiplier.findMany({
+              where: { id: { in: multiplierGroups.map(g => g.multiplierId).filter(id => !!id) }, isActive: true },
+              select: { id: true, name: true, valueX: true, loteriaId: true, loteria: { select: { id: true, name: true } } }
+            })
+          ];
+
+          if (vendedorGroups.length > 0) {
+            masterTasks.push(() => prisma.user.findMany({
+              where: { id: { in: vendedorGroups.map(g => g.vendedorId).filter(id => !!id) } },
+              select: { id: true, name: true, ventanaId: true, ventana: { select: { id: true, name: true } } }
+            }));
+          }
+
+          const masterResults = await ConcurrencyManager.runLimited(masterTasks, { limit: 2, label: 'ticket-filter-options-masters' });
+          const loteriasMaster = masterResults[0] as any[];
+          const sorteosMaster = masterResults[1] as any[];
+          const multipliers = masterResults[2] as any[];
+          const vendedoresMaster = (vendedorGroups.length > 0) ? masterResults[3] as any[] : [];
+
+          // Fase 3: Para vendedores, filtrar multiplicadores según política de comisión
+          let allowedMultiplierIds: Set<string> | null = null;
+          if (context.role === Role.VENDEDOR && multipliers.length > 0) {
+            const loteriasConMultipliers = Array.from(new Set(multipliers.map(m => m.loteriaId).filter(id => !!id)));
+            allowedMultiplierIds = new Set<string>();
+
+            const allowedTasks: (() => Promise<any>)[] = [];
+            loteriasConMultipliers.forEach(loteriaId => {
+              allowedTasks.push(() => UserService.getAllowedMultipliers(context.userId, loteriaId as string, 'NUMERO'));
+              allowedTasks.push(() => UserService.getAllowedMultipliers(context.userId, loteriaId as string, 'REVENTADO'));
+            });
+
+            const allowedResults = await ConcurrencyManager.runLimited(allowedTasks, { limit: 2, label: 'ticket-filter-options-allowed' });
+            allowedResults.forEach(res => {
+              res.data.forEach((m: any) => allowedMultiplierIds!.add(m.id));
+            });
+          }
+
+          // Fase 4: Construir respuesta mapeando los counts de las agrupaciones
+          const loterias = loteriasMaster.map(l => ({
+            id: l.id,
+            name: l.name,
+            ticketCount: loteriaGroups.find(g => g.loteriaId === l.id)?._count.id || 0
+          })).sort((a, b) => a.name.localeCompare(b.name));
+
+          const sorteos = sorteosMaster.map(s => ({
+            id: s.id,
+            name: s.name,
+            loteriaId: s.loteriaId,
+            loteriaName: s.loteria?.name || '',
+            scheduledAt: s.scheduledAt.toISOString(),
+            ticketCount: sorteoGroups.find(g => g.sorteoId === s.id)?._count.id || 0
+          })).sort((a, b) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime());
+
+          const multipliersFiltered = multipliers
+            .filter((m: any) => {
+              if (context.role === Role.VENDEDOR && allowedMultiplierIds) {
+                return allowedMultiplierIds.has(m.id);
+              }
+              return true;
+            })
+            .map((m: any) => ({
+              id: m.id,
+              name: m.name,
+              valueX: m.valueX,
+              loteriaId: m.loteriaId,
+              loteriaName: m.loteria?.name || '',
+              ticketCount: multiplierGroups.find(g => g.multiplierId === m.id)?._count.ticketId || 0
+            }))
+            .sort((a, b) => a.valueX - b.valueX);
+
+          const vendedores = vendedoresMaster.map(v => ({
+            id: v.id,
+            name: v.name,
+            ventanaId: v.ventanaId,
+            ventanaName: v.ventana?.name,
+            ticketCount: vendedorGroups.find(g => g.vendedorId === v.id)?._count.id || 0
+          })).sort((a, b) => a.name.localeCompare(b.name));
+
           return {
-            id: m.id,
-            name: m.name,
-            valueX: m.valueX,
-            loteriaId: m.loteriaId,
-            loteriaName: m.loteria?.name || '',
-            ticketCount, //  Ahora cuenta tickets únicos, no jugadas
+            loterias,
+            sorteos,
+            multipliers: multipliersFiltered,
+            vendedores,
+            meta: {
+              totalTickets,
+            },
           };
-        })
-        .sort((a, b) => a.valueX - b.valueX);
+        } catch (err: any) {
+          logger.error({
+            layer: 'service',
+            action: 'TICKET_FILTER_OPTIONS_FAIL',
+            payload: {
+              params,
+              error: err.message,
+            },
+          });
 
-      const vendedores = Array.from(vendedorMap.values())
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((v) => ({
-          id: v.id,
-          name: v.name,
-          ventanaId: v.ventanaId,
-          ventanaName: v.ventanaName,
-          ticketCount: v.count,
-        }));
+          if (err instanceof AppError) {
+            throw err;
+          }
 
-      return {
-        loterias,
-        sorteos,
-        multipliers: multipliersFiltered,
-        vendedores,
-        meta: {
-          totalTickets,
-        },
-      };
-    } catch (err: any) {
-      logger.error({
-        layer: 'service',
-        action: 'TICKET_FILTER_OPTIONS_FAIL',
-        payload: {
-          params,
-          error: err.message,
-        },
-      });
-
-      if (err instanceof AppError) {
-        throw err;
-      }
-
-      throw new AppError(
-        'Error al obtener opciones de filtros',
-        500,
-        'INTERNAL_ERROR'
-      );
-    }
+          throw new AppError(
+            'Error al obtener opciones de filtros',
+            500,
+            'INTERNAL_ERROR'
+          );
+        }
+      },
+      300, // 5 min TTL para filtros
+      tags
+    );
   },
 
   /**
@@ -2430,351 +2313,178 @@ export const TicketService = {
         where.status = params.status;
       }
 
-      // Si hay filtro por multiplicador, filtrar jugadas
-      const jugadaWhere: any = {
-        deletedAt: null,
-        isActive: true,
-      };
+      // Si hay filtro por multiplicador, aplicarlo al where de tickets vía subrelación
       if (params.multiplierId) {
-        jugadaWhere.multiplierId = params.multiplierId;
-        jugadaWhere.type = 'NUMERO'; // Solo jugadas NUMERO tienen multiplicador
+        where.jugadas = {
+          some: {
+            multiplierId: params.multiplierId,
+            deletedAt: null,
+            isActive: true,
+            type: 'NUMERO',
+          },
+        };
       }
 
-      // Obtener tickets con relaciones necesarias
-      const tickets = await withConnectionRetry(
-        () => prisma.ticket.findMany({
+      // Fase 1: queries de agregación en paralelo — evita cargar tickets en memoria
+      // y previene el límite de 32767 bind variables de PostgreSQL
+      const initialTasks: (() => Promise<any>)[] = [
+        () => prisma.ticket.count({ where }),
+        () => prisma.ticket.groupBy({ by: ['loteriaId'], where, _count: { id: true } }),
+        () => prisma.ticket.groupBy({ by: ['sorteoId'], where, _count: { id: true } }),
+      ];
+
+      if (context.role === Role.ADMIN || context.role === Role.VENTANA) {
+        initialTasks.push(() => prisma.ticket.groupBy({
+          by: ['vendedorId'],
           where,
-          select: {
-            id: true,
-            loteriaId: true,
-            sorteoId: true,
-            vendedorId: true,
-            ventanaId: true, //  Necesario para agrupar por ventana
-            status: true,
-            jugadas: {
-              where: jugadaWhere,
-              select: {
-                multiplierId: true,
-              },
-            },
-            loteria: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-            sorteo: {
-              select: {
-                id: true,
-                name: true,
-                scheduledAt: true,
-                loteriaId: true,
-              },
-            },
-            ventana: {
-              select: {
-                id: true,
-                name: true,
-                code: true,
-              },
-            },
-            vendedor: {
-              select: {
-                id: true,
-                name: true,
-                ventanaId: true,
-                ventana: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
-                },
-              },
-            },
-          },
+          _count: { id: true },
+        }));
+      }
+
+      if (context.role === Role.ADMIN) {
+        initialTasks.push(() => prisma.ticket.groupBy({
+          by: ['ventanaId'],
+          where,
+          _count: { id: true },
+        }));
+      }
+
+      initialTasks.push(() => prisma.jugada.groupBy({
+        by: ['multiplierId'],
+        where: {
+          ticket: { ...where },
+          deletedAt: null,
+          isActive: true,
+          type: 'NUMERO',
+          multiplierId: { not: null },
+          ...(params.multiplierId && { multiplierId: params.multiplierId }),
+        },
+        _count: { ticketId: true },
+      }));
+
+      const results = await ConcurrencyManager.runLimited(initialTasks, { limit: 2, label: 'numbers-summary-filter-options-init' });
+
+      const totalTickets = results[0] as number;
+      const loteriaGroups = results[1] as any[];
+      const sorteoGroups = results[2] as any[];
+      let nextIdx = 3;
+      const vendedorGroups = (context.role === Role.ADMIN || context.role === Role.VENTANA) ? results[nextIdx++] as any[] : [];
+      const ventanaGroups = (context.role === Role.ADMIN) ? results[nextIdx++] as any[] : [];
+      const multiplierGroups = results[nextIdx] as any[];
+
+      // Fase 2: fetch entidades maestras a partir de los IDs agrupados (listas pequeñas, sin riesgo de 32767)
+      const masterTasks: (() => Promise<any>)[] = [
+        () => prisma.loteria.findMany({
+          where: { id: { in: loteriaGroups.map((g: any) => g.loteriaId).filter(Boolean) } },
+          select: { id: true, name: true },
         }),
-        { context: 'TicketService.getNumbersSummaryFilterOptions' }
-      );
-
-      const totalTickets = tickets.length;
-
-      // Agrupar por lotería
-      const loteriaMap = new Map<string, { id: string; name: string; count: number }>();
-      tickets.forEach((ticket) => {
-        if (ticket.loteria) {
-          const existing = loteriaMap.get(ticket.loteria.id);
-          if (existing) {
-            existing.count++;
-          } else {
-            loteriaMap.set(ticket.loteria.id, {
-              id: ticket.loteria.id,
-              name: ticket.loteria.name,
-              count: 1,
-            });
-          }
-        }
-      });
-
-      // Agrupar por sorteo
-      const sorteoMap = new Map<string, {
-        id: string;
-        name: string;
-        loteriaId: string;
-        loteriaName: string;
-        scheduledAt: Date;
-        count: number;
-      }>();
-      tickets.forEach((ticket) => {
-        if (ticket.sorteo) {
-          const existing = sorteoMap.get(ticket.sorteo.id);
-          if (existing) {
-            existing.count++;
-          } else {
-            sorteoMap.set(ticket.sorteo.id, {
-              id: ticket.sorteo.id,
-              name: ticket.sorteo.name,
-              loteriaId: ticket.sorteo.loteriaId,
-              loteriaName: ticket.loteria?.name || '',
-              scheduledAt: ticket.sorteo.scheduledAt,
-              count: 1,
-            });
-          }
-        }
-      });
-
-      // Agrupar por multiplicador (de jugadas NUMERO)
-      // IMPORTANTE: Contar TICKETS únicos, no jugadas
-      const multiplierMap = new Map<string, {
-        id: string;
-        ticketIds: Set<string>; // Set de ticket IDs únicos
-        loteriaIds: Set<string>;
-      }>();
-      tickets.forEach((ticket) => {
-        // Obtener multiplicadores únicos de este ticket
-        const ticketMultiplierIds = new Set<string>();
-        ticket.jugadas.forEach((jugada) => {
-          if (jugada.multiplierId) {
-            ticketMultiplierIds.add(jugada.multiplierId);
-          }
-        });
-
-        // Para cada multiplicador único en este ticket, agregar el ticket ID
-        ticketMultiplierIds.forEach((multiplierId) => {
-          const existing = multiplierMap.get(multiplierId);
-          if (existing) {
-            existing.ticketIds.add(ticket.id);
-            if (ticket.loteriaId) {
-              existing.loteriaIds.add(ticket.loteriaId);
-            }
-          } else {
-            multiplierMap.set(multiplierId, {
-              id: multiplierId,
-              ticketIds: new Set([ticket.id]),
-              loteriaIds: new Set(ticket.loteriaId ? [ticket.loteriaId] : []),
-            });
-          }
-        });
-      });
-
-      // Obtener información de multiplicadores
-      const multiplierIds = Array.from(multiplierMap.keys());
-      const multipliers = multiplierIds.length > 0
-        ? await prisma.loteriaMultiplier.findMany({
+        () => prisma.sorteo.findMany({
+          where: { id: { in: sorteoGroups.map((g: any) => g.sorteoId).filter(Boolean) } },
+          select: { id: true, name: true, scheduledAt: true, loteriaId: true, loteria: { select: { name: true } } },
+        }),
+        () => prisma.loteriaMultiplier.findMany({
           where: {
-            id: { in: multiplierIds },
+            id: { in: multiplierGroups.map((g: any) => g.multiplierId).filter(Boolean) },
             isActive: true,
           },
-          select: {
-            id: true,
-            name: true,
-            valueX: true,
-            loteriaId: true,
-            loteria: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        })
-        : [];
+          select: { id: true, name: true, valueX: true, loteriaId: true, loteria: { select: { id: true, name: true } } },
+        }),
+      ];
 
-      // Para vendedores, filtrar multiplicadores según política de comisión
+      if (vendedorGroups.length > 0) {
+        masterTasks.push(() => prisma.user.findMany({
+          where: { id: { in: vendedorGroups.map((g: any) => g.vendedorId).filter(Boolean) } },
+          select: { id: true, name: true, ventanaId: true, ventana: { select: { id: true, name: true } } },
+        }));
+      }
+
+      if (ventanaGroups.length > 0) {
+        masterTasks.push(() => prisma.ventana.findMany({
+          where: { id: { in: ventanaGroups.map((g: any) => g.ventanaId).filter(Boolean) } },
+          select: { id: true, name: true, code: true },
+        }));
+      }
+
+      const masterResults = await ConcurrencyManager.runLimited(masterTasks, { limit: 2, label: 'numbers-summary-filter-options-masters' });
+      const loteriasMaster = masterResults[0] as any[];
+      const sorteosMaster = masterResults[1] as any[];
+      const multipliers = masterResults[2] as any[];
+      let masterNextIdx = 3;
+      const vendedoresMaster = (vendedorGroups.length > 0) ? masterResults[masterNextIdx++] as any[] : [];
+      const ventanasMaster = (ventanaGroups.length > 0) ? masterResults[masterNextIdx] as any[] : [];
+
+      // Fase 3: Para vendedores, filtrar multiplicadores según política de comisión
       let allowedMultiplierIds: Set<string> | null = null;
-      if (context.role === Role.VENDEDOR) {
-        // Obtener multiplicadores permitidos para el vendedor
-        const loteriasConMultipliers = new Set<string>();
-        multipliers.forEach((m) => {
-          if (m.loteriaId) {
-            loteriasConMultipliers.add(m.loteriaId);
-          }
-        });
-
-        // Para cada lotería, obtener multiplicadores permitidos
+      if (context.role === Role.VENDEDOR && multipliers.length > 0) {
+        const loteriasConMultipliers = Array.from(new Set(multipliers.map((m: any) => m.loteriaId).filter(Boolean)));
         allowedMultiplierIds = new Set<string>();
-        for (const loteriaId of loteriasConMultipliers) {
-          try {
-            const allowedResult = await UserService.getAllowedMultipliers(
-              context.userId,
-              loteriaId,
-              'NUMERO'
-            );
-            allowedResult.data.forEach((m) => {
-              allowedMultiplierIds!.add(m.id);
-            });
 
-            // También obtener para REVENTADO
-            const allowedReventadoResult = await UserService.getAllowedMultipliers(
-              context.userId,
-              loteriaId,
-              'REVENTADO'
-            );
-            allowedReventadoResult.data.forEach((m) => {
-              allowedMultiplierIds!.add(m.id);
-            });
-          } catch (err) {
-            // Si hay error (ej: usuario no encontrado), continuar
-            logger.warn({
-              layer: 'service',
-              action: 'NUMBERS_SUMMARY_FILTER_OPTIONS_ALLOWED_MULTIPLIERS_ERROR',
-              payload: {
-                userId: context.userId,
-                loteriaId,
-                error: (err as Error).message,
-              },
-            });
-          }
-        }
-      }
+        const allowedTasks: (() => Promise<any>)[] = [];
+        loteriasConMultipliers.forEach((loteriaId) => {
+          allowedTasks.push(() => UserService.getAllowedMultipliers(context.userId, loteriaId as string, 'NUMERO'));
+          allowedTasks.push(() => UserService.getAllowedMultipliers(context.userId, loteriaId as string, 'REVENTADO'));
+        });
 
-      // Agrupar por vendedor (solo para ADMIN y VENTANA)
-      const vendedorMap = new Map<string, {
-        id: string;
-        name: string;
-        ventanaId?: string;
-        ventanaName?: string;
-        count: number;
-      }>();
-      if (context.role === Role.ADMIN || context.role === Role.VENTANA) {
-        tickets.forEach((ticket) => {
-          if (ticket.vendedor) {
-            const existing = vendedorMap.get(ticket.vendedor.id);
-            if (existing) {
-              existing.count++;
-            } else {
-              vendedorMap.set(ticket.vendedor.id, {
-                id: ticket.vendedor.id,
-                name: ticket.vendedor.name,
-                ventanaId: ticket.vendedor.ventanaId || undefined,
-                ventanaName: ticket.vendedor.ventana?.name,
-                count: 1,
-              });
-            }
-          }
+        const allowedResults = await ConcurrencyManager.runLimited(allowedTasks, { limit: 2, label: 'numbers-summary-filter-options-allowed' });
+        allowedResults.forEach((res: any) => {
+          res.data.forEach((m: any) => allowedMultiplierIds!.add(m.id));
         });
       }
 
-      // Agrupar por ventana (solo para ADMIN)
-      const ventanaMap = new Map<string, {
-        id: string;
-        name: string;
-        code?: string;
-        count: number;
-      }>();
-      if (context.role === Role.ADMIN) {
-        tickets.forEach((ticket) => {
-          // Usar ventanaId directo del ticket o del vendedor
-          const ventanaId = ticket.ventanaId || ticket.vendedor?.ventanaId;
-          if (ventanaId) {
-            // Priorizar ventana directa del ticket, sino usar la del vendedor
-            const ventana = ticket.ventana || ticket.vendedor?.ventana;
-            if (ventana) {
-              const existing = ventanaMap.get(ventanaId);
-              if (existing) {
-                existing.count++;
-              } else {
-                ventanaMap.set(ventanaId, {
-                  id: ventanaId,
-                  name: ventana.name,
-                  code: 'code' in ventana ? ventana.code || undefined : undefined,
-                  count: 1,
-                });
-              }
-            }
-          }
-        });
-      }
+      // Fase 4: Construir respuesta mapeando los counts de las agrupaciones
+      const loterias = loteriasMaster.map((l: any) => ({
+        id: l.id,
+        name: l.name,
+        ticketCount: loteriaGroups.find((g: any) => g.loteriaId === l.id)?._count.id || 0,
+      })).sort((a: any, b: any) => a.name.localeCompare(b.name));
 
-      // Construir respuesta
-      const loterias = Array.from(loteriaMap.values())
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((l) => ({
-          id: l.id,
-          name: l.name,
-          ticketCount: l.count,
-        }));
+      const sorteos = sorteosMaster.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        loteriaId: s.loteriaId,
+        loteriaName: s.loteria?.name || '',
+        scheduledAt: s.scheduledAt.toISOString(),
+        ticketCount: sorteoGroups.find((g: any) => g.sorteoId === s.id)?._count.id || 0,
+      })).sort((a: any, b: any) => new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime());
 
-      const sorteos = Array.from(sorteoMap.values())
-        .sort((a, b) => b.scheduledAt.getTime() - a.scheduledAt.getTime())
-        .map((s) => ({
-          id: s.id,
-          name: s.name,
-          loteriaId: s.loteriaId,
-          loteriaName: s.loteriaName,
-          scheduledAt: s.scheduledAt.toISOString(),
-          ticketCount: s.count,
-        }));
-
-      // Filtrar multiplicadores según política de comisión para vendedores
       const multipliersFiltered = multipliers
-        .filter((m) => {
-          // Para vendedores, solo incluir multiplicadores permitidos
+        .filter((m: any) => {
           if (context.role === Role.VENDEDOR && allowedMultiplierIds) {
             return allowedMultiplierIds.has(m.id);
           }
-          // Para otros roles, incluir todos los multiplicadores que tienen tickets
-          return multiplierMap.has(m.id);
+          return true;
         })
-        .map((m) => {
-          const multiplierData = multiplierMap.get(m.id);
-          // ticketCount es el número de tickets únicos que tienen este multiplicador
-          const ticketCount = multiplierData?.ticketIds.size || 0;
-          return {
-            id: m.id,
-            name: m.name,
-            valueX: m.valueX,
-            loteriaId: m.loteriaId,
-            loteriaName: m.loteria?.name || '',
-            ticketCount, //  Cuenta tickets únicos, no jugadas
-          };
-        })
-        .sort((a, b) => a.valueX - b.valueX);
+        .map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          valueX: m.valueX,
+          loteriaId: m.loteriaId,
+          loteriaName: m.loteria?.name || '',
+          ticketCount: multiplierGroups.find((g: any) => g.multiplierId === m.id)?._count.ticketId || 0,
+        }))
+        .sort((a: any, b: any) => a.valueX - b.valueX);
 
-      const vendedores = Array.from(vendedorMap.values())
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((v) => ({
-          id: v.id,
-          name: v.name,
-          ventanaId: v.ventanaId,
-          ventanaName: v.ventanaName,
-          ticketCount: v.count,
-        }));
+      const vendedores = vendedoresMaster.map((v: any) => ({
+        id: v.id,
+        name: v.name,
+        ventanaId: v.ventanaId,
+        ventanaName: v.ventana?.name,
+        ticketCount: vendedorGroups.find((g: any) => g.vendedorId === v.id)?._count.id || 0,
+      })).sort((a: any, b: any) => a.name.localeCompare(b.name));
 
-      const ventanas = Array.from(ventanaMap.values())
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((v) => ({
-          id: v.id,
-          name: v.name,
-          code: v.code,
-          ticketCount: v.count,
-        }));
+      const ventanas = ventanasMaster.map((v: any) => ({
+        id: v.id,
+        name: v.name,
+        code: v.code,
+        ticketCount: ventanaGroups.find((g: any) => g.ventanaId === v.id)?._count.id || 0,
+      })).sort((a: any, b: any) => a.name.localeCompare(b.name));
 
       return {
         loterias,
         sorteos,
         multipliers: multipliersFiltered,
         vendedores,
-        ventanas, //  NUEVO: Ventanas para filtro de Admin
+        ventanas,
         meta: {
           totalTickets,
         },

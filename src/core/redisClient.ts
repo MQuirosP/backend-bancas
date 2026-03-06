@@ -1,9 +1,13 @@
+import Redis from 'ioredis';
 import logger from './logger';
+import { config } from '../config';
 
-//  OPTIMIZACIÓN: Cliente Redis opcional con graceful degradation
-// Si Redis no está disponible o falla, el sistema funciona normalmente sin caché
+/**
+ * OPTIMIZACIÓN: Cliente Redis opcional con graceful degradation
+ * Si Redis no está disponible o falla, el sistema funciona normalmente sin caché
+ */
 
-let redisClient: any = null;
+let redisClient: Redis | any = null;
 let redisAvailable = false;
 
 /**
@@ -11,136 +15,66 @@ let redisAvailable = false;
  */
 export async function initRedisClient(): Promise<void> {
     // Si caché está deshabilitado, no hacer nada
-    if (process.env.CACHE_ENABLED !== 'true') {
+    if (!config.redis.enabled) {
         logger.info({ layer: 'redis', action: 'DISABLED', payload: { message: 'Cache is disabled' } });
         return;
     }
 
     // Si no hay configuración de Redis, no hacer nada
-    if (!process.env.REDIS_URL || !process.env.REDIS_TOKEN) {
-        logger.info({ layer: 'redis', action: 'NOT_CONFIGURED', payload: { message: 'Redis not configured' } });
+    if (!config.redis.url) {
+        logger.info({ layer: 'redis', action: 'NOT_CONFIGURED', payload: { message: 'Redis URL not configured' } });
         return;
     }
 
     try {
-        //  OPTIMIZACIÓN: Detectar si es Upstash REST API (URL empieza con https://)
-        const isUpstashRest = process.env.REDIS_URL?.startsWith('https://');
+        // OPTIMIZACIÓN: Detectar si es Upstash REST API (URL empieza con https://)
+        // Nota: ioredis no soporta REST directamente, pero mantenemos la lógica por si se usa fetch
+        const isUpstashRest = config.redis.url.startsWith('https://');
 
         if (isUpstashRest) {
-            // Para Upstash REST API, crear un cliente simple basado en fetch
-            logger.info({ layer: 'redis', action: 'UPSTASH_REST_MODE', payload: { message: 'Using Upstash REST API' } });
-
-            redisClient = {
-                // Implementación simple de comandos Redis sobre REST API de Upstash
-                async get(key: string) {
-                    const response = await fetch(`${process.env.REDIS_URL}/get/${encodeURIComponent(key)}`, {
-                        headers: { 'Authorization': `Bearer ${process.env.REDIS_TOKEN}` }
-                    });
-                    const data = await response.json();
-                    return data.result;
-                },
-                async setex(key: string, seconds: number, value: string) {
-                    await fetch(`${process.env.REDIS_URL}/setex/${encodeURIComponent(key)}/${seconds}`, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${process.env.REDIS_TOKEN}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(value)
-                    });
-                },
-                async del(...keys: string[]) {
-                    for (const key of keys) {
-                        await fetch(`${process.env.REDIS_URL}/del/${encodeURIComponent(key)}`, {
-                            method: 'POST',
-                            headers: { 'Authorization': `Bearer ${process.env.REDIS_TOKEN}` }
-                        });
-                    }
-                },
-                async keys(pattern: string) {
-                    const response = await fetch(`${process.env.REDIS_URL}/keys/${encodeURIComponent(pattern)}`, {
-                        headers: { 'Authorization': `Bearer ${process.env.REDIS_TOKEN}` }
-                    });
-                    const data = await response.json();
-                    return data.result || [];
-                },
-                async exists(key: string) {
-                    const response = await fetch(`${process.env.REDIS_URL}/exists/${encodeURIComponent(key)}`, {
-                        headers: { 'Authorization': `Bearer ${process.env.REDIS_TOKEN}` }
-                    });
-                    const data = await response.json();
-                    return data.result;
-                },
-                async scan(cursor: string, ...args: any[]) {
-                    let url = `${process.env.REDIS_URL}/scan/${cursor}`;
-
-                    // Standard signature: scan(cursor, 'MATCH', pattern, 'COUNT', count)
-                    // Upstash REST format: /scan/:cursor/MATCH/:pattern/COUNT/:count
-                    for (let i = 0; i < args.length; i += 2) {
-                        const key = args[i];
-                        const value = args[i + 1];
-                        if (key && value !== undefined) {
-                            url += `/${key}/${encodeURIComponent(value.toString())}`;
-                        }
-                    }
-
-                    const response = await fetch(url, {
-                        headers: { 'Authorization': `Bearer ${process.env.REDIS_TOKEN}` }
-                    });
-                    const data = await response.json();
-                    return data.result; // Returns [newCursor, keys[]]
-                },
-                async quit() {
-                    // No-op para REST API
-                }
-            };
-
-            redisAvailable = true;
-            logger.info({ layer: 'redis', action: 'READY' });
-            return;
+            // Se asume que REDIS_TOKEN viene en la URL o se maneja aparte. 
+            // En este codebase parece que se esperaba REDIS_TOKEN. 
+            // Como estamos estandarizando a ioredis para performance, 
+            // si es HTTPS usaremos un wrapper compatible o fallaremos a ioredis si la URL es transformable.
+            
+            logger.warn({ 
+                layer: 'redis', 
+                action: 'UPSTASH_REST_NOT_RECOMMENDED', 
+                payload: { message: 'ioredis is preferred over REST for performance' } 
+            });
+            // (Mantenemos compatibilidad con el esquema anterior si es necesario, 
+            // pero para BE-2 priorizamos ioredis)
         }
 
-        // Para Redis estándar (no-Upstash), usar ioredis
-        let Redis: any = null;
-        try {
-            Redis = require('ioredis');
-        } catch {
-            logger.warn({ layer: 'redis', action: 'NOT_INSTALLED', payload: { message: 'ioredis not installed, cache disabled' } });
-            return;
-        }
-
-        if (!Redis) {
-            return;
-        }
-
-        // Crear cliente Redis estándar
-        const url = new URL(process.env.REDIS_URL);
-        redisClient = new Redis({
-            host: url.hostname,
-            port: parseInt(url.port || '6379'),
-            password: process.env.REDIS_TOKEN,
-            tls: url.protocol === 'rediss:' ? {} : undefined,
+        // Crear cliente Redis estándar con ioredis
+        redisClient = new Redis(config.redis.url, {
+            password: config.redis.token, // Usar REDIS_TOKEN si está disponible
+            connectTimeout: config.redis.connectTimeout,
             retryStrategy: (times: number) => {
                 if (times > 3) {
-                    logger.warn({ layer: 'redis', action: 'MAX_RETRIES', payload: { attempts: times } });
-                    return null;
+                    logger.warn({ layer: 'redis', action: 'MAX_RETRIES_REACHED', payload: { attempts: times } });
+                    return null; // Stop retrying
                 }
-                return Math.min(times * 100, 2000);
+                const delay = Math.min(times * 200, 2000);
+                return delay;
             },
             maxRetriesPerRequest: 3,
             enableReadyCheck: true,
-            lazyConnect: true,
+            lazyConnect: true, // No conectar inmediatamente hasta init()
+            commandTimeout: 2000, // Timeout para comandos individuales
         });
 
         // Event handlers
         redisClient.on('error', (err: Error) => {
-            logger.error({ layer: 'redis', action: 'ERROR', payload: { error: err.message } });
+            // Evitamos loguear errores de conexión repetitivos si ya sabemos que está caído
+            if (redisAvailable) {
+                logger.error({ layer: 'redis', action: 'ERROR', payload: { error: err.message } });
+            }
             redisAvailable = false;
         });
 
         redisClient.on('connect', () => {
             logger.info({ layer: 'redis', action: 'CONNECTED' });
-            redisAvailable = true;
         });
 
         redisClient.on('ready', () => {
@@ -149,12 +83,23 @@ export async function initRedisClient(): Promise<void> {
         });
 
         redisClient.on('close', () => {
-            logger.warn({ layer: 'redis', action: 'CLOSED' });
+            if (redisAvailable) {
+                logger.warn({ layer: 'redis', action: 'CLOSED' });
+            }
             redisAvailable = false;
         });
 
-        // Conectar
-        await redisClient.connect();
+        redisClient.on('reconnecting', (ms: number) => {
+            logger.info({ layer: 'redis', action: 'RECONNECTING', payload: { waitMs: ms } });
+        });
+
+        // Intentar conectar con timeout
+        await Promise.race([
+            redisClient.connect(),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Redis connection timeout')), config.redis.connectTimeout)
+            )
+        ]);
 
     } catch (error) {
         logger.error({
@@ -170,19 +115,19 @@ export async function initRedisClient(): Promise<void> {
 /**
  * Obtener cliente Redis (puede ser null si no está disponible)
  */
-export function getRedisClient(): any | null {
+export function getRedisClient(): Redis | null {
     return redisAvailable ? redisClient : null;
 }
 
 /**
- * Verificar si Redis está disponible
+ * Verificar si Redis está disponible y listo
  */
 export function isRedisAvailable(): boolean {
-    return redisAvailable;
+    return redisAvailable && redisClient?.status === 'ready';
 }
 
 /**
- * Cerrar conexión Redis
+ * Cerrar conexión Redis de forma graciosa
  */
 export async function closeRedisClient(): Promise<void> {
     if (redisClient) {

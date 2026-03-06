@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from 'express';
+import * as Sentry from "@sentry/node";
 import { AppError } from '../core/errors';
 import logger from '../core/logger';
 import { error as errorResponse } from '../utils/responses';
@@ -6,6 +7,11 @@ import { error as errorResponse } from '../utils/responses';
 export const errorHandler = (err: any, req: Request, res: Response, _next: NextFunction) => {
   const requestId = (req as any)?.requestId ?? null;
   const userId = (req as any)?.user?.id ?? null;
+
+  // Enriquecer Sentry con el contexto del usuario si está disponible
+  if (userId) {
+    Sentry.setUser({ id: userId });
+  }
 
   // App-specific operational errors
   if (err instanceof AppError) {
@@ -81,6 +87,8 @@ export const errorHandler = (err: any, req: Request, res: Response, _next: NextF
   }
 
   // fallback - unexpected errors
+  Sentry.captureException(err); // Captura manual para mayor seguridad en el fallback
+
   logger.error({
     layer: 'middleware',
     action: 'UNHANDLED_ERROR',

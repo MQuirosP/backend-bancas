@@ -1,15 +1,23 @@
 // src/api/v1/services/accounts-export-excel.service.ts
 import ExcelJS from 'exceljs';
 import { AccountStatementExportPayload } from '../types/accounts-export.types';
+import { ResilienceService } from '../../../core/resilience.service';
 
 /**
  * Servicio para exportar estados de cuenta a Excel (.xlsx)
  */
 export class AccountsExportExcelService {
   /**
-   * Genera workbook de Excel
+   * Genera workbook de Excel (Envuelto en Circuit Breaker)
    */
   static async generate(payload: AccountStatementExportPayload): Promise<Buffer> {
+    return ResilienceService.runPrisma(() => this.generateInternal(payload));
+  }
+
+  /**
+   * Genera workbook de Excel (Lógica interna)
+   */
+  private static async generateInternal(payload: AccountStatementExportPayload): Promise<Buffer> {
     const workbook = new ExcelJS.Workbook();
 
     workbook.creator = 'Sistema de Bancas';

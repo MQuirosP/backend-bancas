@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { config } from "../config";
 import prisma from "./prismaClient";
 import logger from "./logger";
+import { ResilienceService } from "./resilience.service";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -73,10 +74,13 @@ export async function withTransactionRetry<T>(
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await prisma.$transaction(fn, {
-        isolationLevel,
-        maxWait: maxWaitMs,
-        timeout: timeoutMs,
+      // Hardening: Ejecutar a través del Circuit Breaker de Prisma
+      return await ResilienceService.runPrisma(async () => {
+        return await prisma.$transaction(fn, {
+          isolationLevel,
+          maxWait: maxWaitMs,
+          timeout: timeoutMs,
+        });
       });
     } catch (error: any) {
       const msg = String(error?.message ?? "");

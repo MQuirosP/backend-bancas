@@ -2,15 +2,23 @@
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import { CommissionExportPayload } from '../types/commissions-export.types';
+import { ResilienceService } from '../../../core/resilience.service';
 
 /**
  * Servicio para exportar comisiones a PDF
  */
 export class CommissionsExportPdfService {
   /**
-   * Genera PDF
+   * Genera PDF (Envuelto en Circuit Breaker)
    */
   static async generate(payload: CommissionExportPayload): Promise<Buffer> {
+    return ResilienceService.runPrisma(() => this.generateInternal(payload));
+  }
+
+  /**
+   * Genera PDF (Lógica interna)
+   */
+  private static async generateInternal(payload: CommissionExportPayload): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({

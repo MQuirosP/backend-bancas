@@ -1,15 +1,23 @@
 // src/api/v1/services/commissions-export-excel.service.ts
 import ExcelJS from 'exceljs';
 import { CommissionExportPayload } from '../types/commissions-export.types';
+import { ResilienceService } from '../../../core/resilience.service';
 
 /**
  * Servicio para exportar comisiones a Excel (.xlsx)
  */
 export class CommissionsExportExcelService {
   /**
-   * Genera workbook de Excel
+   * Genera workbook de Excel (Envuelto en Circuit Breaker)
    */
   static async generate(payload: CommissionExportPayload): Promise<Buffer> {
+    return ResilienceService.runPrisma(() => this.generateInternal(payload));
+  }
+
+  /**
+   * Genera workbook de Excel (Lógica interna)
+   */
+  private static async generateInternal(payload: CommissionExportPayload): Promise<Buffer> {
     const workbook = new ExcelJS.Workbook();
 
     workbook.creator = 'Sistema de Bancas';
