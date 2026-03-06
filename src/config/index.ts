@@ -4,10 +4,14 @@ import path from 'path'
 import { EnvSchema } from './env.schema'
 import { parseCorsOrigins } from '../utils/cors'
 
-dotenvSafe.config({
-  example: path.resolve(process.cwd(), '.env.example'),
-  allowEmptyValues: true, // Permite variables opcionales como REDIS_URL, REDIS_TOKEN
-})
+// dotenv-safe solo aplica en desarrollo/test para detectar variables faltantes en .env
+// En producción las variables ya vienen del entorno del servidor (Render, etc.)
+if (process.env.NODE_ENV !== 'production') {
+  dotenvSafe.config({
+    example: path.resolve(process.cwd(), '.env.example'),
+    allowEmptyValues: true, // Permite variables opcionales como REDIS_URL, REDIS_TOKEN
+  })
+}
 
 const parsed = EnvSchema.safeParse(process.env)
 if (!parsed.success) {
@@ -41,4 +45,31 @@ export const config = {
     isolationLevel: 'Serializable' as const,
   },
   trustProxy: parsed.data.TRUST_PROXY ?? 1, // Por defecto: 1 proxy (Render, Heroku, etc.)
+  
+  // Redis configuration
+  redis: {
+    url: parsed.data.REDIS_URL,
+    token: parsed.data.REDIS_TOKEN,
+    enabled: parsed.data.CACHE_ENABLED,
+    connectTimeout: parsed.data.REDIS_CONNECT_TIMEOUT,
+    ttlCutoff: parsed.data.CACHE_TTL_CUTOFF,
+    ttlRestrictions: parsed.data.CACHE_TTL_RESTRICTIONS,
+  },
+  resilience: {
+    enabled: parsed.data.RESILIENCE_ENABLED,
+    errorThresholdPercentage: parsed.data.CB_ERROR_THRESHOLD_PERCENTAGE,
+    resetTimeoutMs: parsed.data.CB_RESET_TIMEOUT_MS,
+  },
+  sentry: {
+    dsn: parsed.data.SENTRY_DSN,
+    tracesSampleRate: parsed.data.SENTRY_TRACES_SAMPLE_RATE,
+    profilesSampleRate: parsed.data.SENTRY_PROFILES_SAMPLE_RATE,
+  },
+  hardening: {
+    maxConcurrentRequests: parsed.data.MAX_CONCURRENT_REQUESTS,
+    eventLoopLagThresholdMs: parsed.data.EVENT_LOOP_LAG_THRESHOLD_MS,
+    requestTimeoutMs: parsed.data.REQUEST_TIMEOUT_MS,
+    prismaCbResetMs: parsed.data.PRISMA_CB_RESET_MS,
+    redisCbResetMs: parsed.data.REDIS_CB_RESET_MS,
+  },
 }

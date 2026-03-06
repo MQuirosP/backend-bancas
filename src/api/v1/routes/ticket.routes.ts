@@ -10,6 +10,7 @@ import {
   validateNumbersSummaryQuery,
   validateTicketNumberParam
 } from "../validators/ticket.validator";
+import { salesRateLimiter } from "../../../middlewares/rateLimit.middleware";
 import { protect, restrictTo } from "../../../middlewares/auth.middleware";
 import { Role } from "@prisma/client";
 
@@ -19,10 +20,10 @@ router.use(protect);
 router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.ADMIN));
 
 // Ticket CRUD
-router.post("/", validateBody(CreateTicketSchema), TicketController.create);
+router.post("/", salesRateLimiter, validateBody(CreateTicketSchema), TicketController.create);
 // IMPORTANTE: Las rutas literales deben ir ANTES de las rutas con parámetros
 router.get("/filter-options", TicketController.getFilterOptions);
-router.get("/numbers-summary/filter-options", TicketController.getNumbersSummaryFilterOptions);
+router.get("/numbers-summary/filter-options", validateNumbersSummaryQuery, TicketController.getNumbersSummaryFilterOptions);
 router.get("/numbers-summary", validateNumbersSummaryQuery, TicketController.numbersSummary);
 router.post("/numbers-summary/pdf", TicketController.numbersSummaryPdf);
 router.post("/numbers-summary/pdf/batch", TicketController.numbersSummaryPdfBatch);

@@ -2,15 +2,23 @@
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import { AccountStatementExportPayload } from '../types/accounts-export.types';
+import { ResilienceService } from '../../../core/resilience.service';
 
 /**
  * Servicio para exportar estados de cuenta a PDF
  */
 export class AccountsExportPdfService {
   /**
-   * Genera PDF
+   * Genera PDF (Envuelto en Circuit Breaker)
    */
   static async generate(payload: AccountStatementExportPayload): Promise<Buffer> {
+    return ResilienceService.runPrisma(() => this.generateInternal(payload));
+  }
+
+  /**
+   * Genera PDF (Lógica interna)
+   */
+  private static async generateInternal(payload: AccountStatementExportPayload): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({

@@ -19,6 +19,8 @@ import { parseCommissionPolicy, CommissionPolicy, CommissionRule } from "../../.
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { crDateService } from "../../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts/accounts.balances";
+import { CacheService } from "../../../core/cache.service";
+import crypto from 'crypto';
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
@@ -718,6 +720,11 @@ export const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+
+    //  FASE BE-2: Invalidar cache de resúmenes (evaluación cambia premios)
+    CacheService.invalidateTag(`sorteo:${id}`).catch(err => {
+      logger.warn({ layer: 'cache', action: 'INVALIDATE_ERROR_ON_EVALUATE', payload: { sorteoId: id, error: err.message } });
+    });
 
     //  CRÍTICO: Sincronizar AccountStatement de todos los días afectados cuando se evalúa un sorteo
     // La evaluación marca jugadas como ganadoras, afectando totalPayouts del statement
@@ -1511,11 +1518,29 @@ gs."hour24" ASC
       loteriaId?: string;
       status?: string;
       isActive?: string;
+      ventanaId?: string;
+      bancaId?: string;
+      sorteoId?: string;
     },
-    vendedorId: string
+    vendedorId?: string
   ) {
-    try {
-      // Resolver rango de fechas
+    //  FASE BE-2: Implementación de Cache-Aside con Coalescing
+    const cacheKey = `banca:${params.bancaId || 'all'}:ventana:${params.ventanaId || 'all'}:vendedor:${vendedorId || 'all'}:summary:${crypto
+      .createHash('md5')
+      .update(JSON.stringify({ ...params, vendedorId }))
+      .digest('hex')}`;
+
+    const tags = ['report:summary'];
+    if (vendedorId) tags.push(`vendedor:${vendedorId}`);
+    if (params.ventanaId) tags.push(`ventana:${params.ventanaId}`);
+    if (params.bancaId) tags.push(`banca:${params.bancaId}`);
+    if (params.sorteoId) tags.push(`sorteo:${params.sorteoId}`);
+
+    return CacheService.wrap(
+      cacheKey,
+      async () => {
+        try {
+          // Resolver rango de fechas
       const dateRange = resolveDateRange(
         params.date || "today",
         params.fromDate,
@@ -1542,25 +1567,22 @@ gs."hour24" ASC
       // Filtro de isActive: si no se proporciona, se asume true (solo tickets activos)
       const ticketIsActive = params.isActive !== 'false' && params.isActive !== '0';
 
-      // Construir filtro para sorteos EVALUATED y/o OPEN
-      const sorteoWhere: Prisma.SorteoWhereInput = {
-        status: {
-          in: allowedStatuses,
-        },
-        scheduledAt: {
-          gte: dateRange.fromAt,
-          lte: dateRange.toAt,
-        },
-        ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
-        // Solo sorteos donde el vendedor tiene tickets (aplicar filtro de isActive)
-        tickets: {
-          some: {
-            vendedorId,
-            deletedAt: null,
-            isActive: ticketIsActive,
-          },
-        },
-      };
+      //  C3.4 OPTIMIZACIÓN: FASE 1 - Construcción dinámica de condiciones para optimización de índices
+      const ticketConditions: Prisma.Sql[] = [
+        Prisma.sql`t."deletedAt" IS NULL`,
+        Prisma.sql`t."isActive" = ${ticketIsActive}`,
+        Prisma.sql`s.status = 'EVALUATED'`,
+        Prisma.sql`s."scheduledAt" >= ${dateRange.fromAt}`,
+        Prisma.sql`s."scheduledAt" <= ${dateRange.toAt}`
+      ];
+
+      // Aplicar filtros RBAC dinámicos (Vendedor, Ventana, Banca)
+      if (vendedorId) ticketConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+      if (params.ventanaId) ticketConditions.push(Prisma.sql`t."ventanaId" = ${params.ventanaId}::uuid`);
+      if (params.bancaId) ticketConditions.push(Prisma.sql`v."bancaId" = ${params.bancaId}::uuid`);
+      if (params.loteriaId) ticketConditions.push(Prisma.sql`s."loteriaId" = ${params.loteriaId}::uuid`);
+
+      const whereClause = Prisma.join(ticketConditions, ' AND ');
 
       //  C3.4 OPTIMIZACIÓN: Resolver rango mensual una sola vez (se usa en monthlyAccumulated)
       const monthlyRange = resolveDateRange("month");
@@ -1571,25 +1593,77 @@ gs."hour24" ASC
       const fromAtComponents = getCRLocalComponents(dateRange.fromAt);
       const rangeEffectiveMonth = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}`;
 
-      //  C3.4 OPTIMIZACIÓN: Fase 1 — Queries independientes en paralelo
-      // sorteos depende de sorteoWhere, movements y previousMonthBalance no dependen de sorteoIds
-      const [sorteos, movementsByDate, rangePreviousMonthBalance] = await Promise.all([
-        prisma.sorteo.findMany({
-          where: sorteoWhere,
-          include: {
-            loteria: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-          orderBy: [
-            { scheduledAt: "asc" },
-            { loteriaId: "asc" },
-            { id: "asc" },
-          ],
-        }),
+      //  FASE 1 - Ejecutar la query consolidada de métricas y las de soporte (movimientos/balance anterior)
+      const [consolidatedMetrics, movementsByDate, rangePreviousMonthBalance] = await Promise.all([
+        prisma.$queryRaw<any[]>(Prisma.sql`
+          WITH base_tickets AS (
+            SELECT 
+              t.id, t."sorteoId", t."totalAmount", t."totalCommission", t."totalPayout", t."isWinner", t.status,
+              s."scheduledAt", s."loteriaId", s.name as "sorteoName", s."extraMultiplierId", s."extraMultiplierX",
+              l.name as "loteriaName"
+            FROM "Ticket" t
+            JOIN "Sorteo" s ON t."sorteoId" = s.id
+            JOIN "Loteria" l ON s."loteriaId" = l.id
+            LEFT JOIN "Ventana" v ON t."ventanaId" = v.id
+            WHERE ${whereClause}
+          ),
+          sorteo_metrics AS (
+            SELECT 
+              "sorteoId", "scheduledAt", "loteriaId", "sorteoName", "extraMultiplierId", "extraMultiplierX", "loteriaName",
+              SUM("totalAmount") as "totalSales",
+              SUM("totalCommission") as "totalCommission",
+              SUM(CASE WHEN "isWinner" THEN "totalPayout" ELSE 0 END) as "totalPrizes",
+              COUNT(id) as "ticketCount",
+              COUNT(CASE WHEN "isWinner" THEN 1 END) as "winningTicketsCount",
+              COUNT(CASE WHEN status IN ('PAID', 'PAGADO') THEN 1 END) as "paidTicketsCount"
+            FROM base_tickets
+            GROUP BY "sorteoId", "scheduledAt", "loteriaId", "sorteoName", "extraMultiplierId", "extraMultiplierX", "loteriaName"
+          ),
+          multiplier_summary AS (
+            SELECT 
+              bt."sorteoId",
+              j."multiplierId",
+              m.name as "multiplierName",
+              m."valueX" as "multiplierValue",
+              SUM(j.amount) as "mSales",
+              SUM(j."commissionAmount") as "mCommission",
+              SUM(CASE WHEN j.type = 'NUMERO' THEN j."commissionAmount" ELSE 0 END) as "mCommNum",
+              SUM(CASE WHEN j.type = 'REVENTADO' THEN j."commissionAmount" ELSE 0 END) as "mCommRev",
+              SUM(CASE WHEN j."isWinner" THEN j.payout ELSE 0 END) as "mPrizes",
+              COUNT(DISTINCT bt.id) as "mTickets",
+              COUNT(CASE WHEN j."isWinner" THEN 1 END) as "mWinningTickets",
+              COUNT(CASE WHEN bt.status IN ('PAID', 'PAGADO') THEN 1 END) as "mPaidTickets"
+            FROM base_tickets bt
+            JOIN "Jugada" j ON bt.id = j."ticketId"
+            LEFT JOIN "LoteriaMultiplier" m ON j."multiplierId" = m.id
+            WHERE j."deletedAt" IS NULL
+            GROUP BY bt."sorteoId", j."multiplierId", m.name, m."valueX"
+          ),
+          multiplier_json AS (
+            SELECT 
+              "sorteoId",
+              JSON_AGG(JSON_BUILD_OBJECT(
+                'multiplierId', "multiplierId",
+                'multiplierName', COALESCE("multiplierName", 'x1'),
+                'multiplierValue', COALESCE("multiplierValue", 1),
+                'totalSales', "mSales",
+                'totalCommission', "mCommission",
+                'commissionByNumber', "mCommNum",
+                'commissionByReventado', "mCommRev",
+                'totalPrizes', "mPrizes",
+                'ticketCount', "mTickets",
+                'winningTicketsCount', "mWinningTickets",
+                'paidTicketsCount', "mPaidTickets",
+                'unpaidTicketsCount', "mWinningTickets" - "mPaidTickets"
+              ) ORDER BY "multiplierValue" ASC) as by_multiplier
+            FROM multiplier_summary
+            GROUP BY "sorteoId"
+          )
+          SELECT sm.*, mj.by_multiplier
+          FROM sorteo_metrics sm
+          LEFT JOIN multiplier_json mj ON sm."sorteoId" = mj."sorteoId"
+          ORDER BY sm."scheduledAt" ASC, sm."loteriaId" ASC, sm."sorteoId" ASC
+        `),
         AccountPaymentRepository.findMovementsByDateRange(
           dateRange.fromAt,
           dateRange.toAt,
@@ -1606,374 +1680,84 @@ gs."hour24" ASC
         ),
       ]);
 
-      const sorteoIds = sorteos.map((s) => s.id);
+      //  PASO 2: Construir datos de sorteos SIN calcular accumulated aún
+      const sorteoData = consolidatedMetrics.map((row) => {
+        // Calcular isReventado
+        const isReventado =
+          (row.extraMultiplierId !== null &&
+            row.extraMultiplierId !== undefined) ||
+          (row.extraMultiplierX !== null &&
+            row.extraMultiplierX !== undefined &&
+            row.extraMultiplierX > 0);
 
-      // Para tickets pagados, siempre mostrar los que tengan status PAID o PAGADO
-      const paidStatusFilter: Prisma.EnumTicketStatusFilter = {
-        in: [TicketStatus.PAID, TicketStatus.PAGADO]
-      };
+        // Calcular subtotal
+        const subtotal =
+          Number(row.totalSales) -
+          Number(row.totalCommission) -
+          Number(row.totalPrizes);
 
-      //  C3.4 OPTIMIZACIÓN: Fase 2 — Queries que dependen de sorteoIds, en paralelo
-      const [jugadas, financialData, prizesData, winningTicketsData, paidTicketsData] = await Promise.all([
-        // Jugadas con multiplicadores para desglose
-        prisma.jugada.findMany({
-          where: {
-            ticket: {
-              sorteoId: { in: sorteoIds },
-              vendedorId,
-              deletedAt: null,
-              isActive: ticketIsActive,
-            },
-            deletedAt: null,
-          },
-          select: {
-            id: true,
-            ticketId: true,
-            ticket: {
-              select: {
-                id: true,
-                sorteoId: true,
-                totalAmount: true,
-                totalCommission: true,
-                totalPayout: true,
-                isWinner: true,
-                status: true,
-              },
-            },
-            multiplierId: true,
-            multiplier: {
-              select: {
-                id: true,
-                name: true,
-                valueX: true,
-              },
-            },
-            amount: true,
-            commissionAmount: true,
-            payout: true,
-            isWinner: true,
-            type: true,
-          },
-        }),
-        // Datos financieros agregados por sorteo
-        prisma.ticket.groupBy({
-          by: ["sorteoId"],
-          where: {
-            sorteoId: { in: sorteoIds },
-            vendedorId,
-            deletedAt: null,
-            isActive: ticketIsActive,
-          },
-          _sum: {
-            totalAmount: true,
-            totalCommission: true,
-            totalPayout: true,
-          },
-          _count: {
-            id: true,
-          },
-        }),
-        // Premios de tickets ganadores
-        prisma.ticket.groupBy({
-          by: ["sorteoId"],
-          where: {
-            sorteoId: { in: sorteoIds },
-            vendedorId,
-            isWinner: true,
-            deletedAt: null,
-            isActive: ticketIsActive,
-          },
-          _sum: {
-            totalPayout: true,
-          },
-        }),
-        // Conteo de tickets ganadores
-        prisma.ticket.groupBy({
-          by: ["sorteoId"],
-          where: {
-            sorteoId: { in: sorteoIds },
-            vendedorId,
-            isWinner: true,
-            deletedAt: null,
-            isActive: ticketIsActive,
-          },
-          _count: {
-            id: true,
-          },
-        }),
-        // Conteo de tickets pagados
-        prisma.ticket.groupBy({
-          by: ["sorteoId"],
-          where: {
-            sorteoId: { in: sorteoIds },
-            vendedorId,
-            status: paidStatusFilter,
-            deletedAt: null,
-          },
-          _count: {
-            id: true,
-          },
-        }),
-      ]);
+        const winningCount = Number(row.winningTicketsCount) || 0;
+        const paidCount = Number(row.paidTicketsCount) || 0;
+        const unpaidCount = winningCount - paidCount;
+
+        // Mapear byMultiplier desde el JSON de la query
+        const byMultiplierRaw = row.by_multiplier || [];
+        const byMultiplier = byMultiplierRaw.map((m: any) => ({
+          multiplierId: m.multiplierId,
+          multiplierName: m.multiplierName,
+          multiplierValue: Number(m.multiplierValue),
+          totalSales: Number(m.totalSales),
+          totalCommission: Number(m.totalCommission),
+          commissionByNumber: Number(m.commissionByNumber),
+          commissionByReventado: Number(m.commissionByReventado),
+          totalPrizes: Number(m.totalPrizes),
+          ticketCount: Number(m.ticketCount),
+          subtotal: Number(m.totalSales) - Number(m.totalCommission) - Number(m.totalPrizes),
+          winningTicketsCount: Number(m.winningTicketsCount),
+          paidTicketsCount: Number(m.paidTicketsCount),
+          unpaidTicketsCount: Number(m.unpaidTicketsCount),
+        }));
+
+        // NUEVO: Calcular comisiones por tipo agregadas desde multiplicadores
+        const commissionByNumber = byMultiplier.reduce((sum: number, m: any) => sum + m.commissionByNumber, 0);
+        const commissionByReventado = byMultiplier.reduce((sum: number, m: any) => sum + m.commissionByReventado, 0);
+
+        return {
+          sorteoId: row.sorteoId,
+          sorteoName: row.sorteoName,
+          scheduledAt: row.scheduledAt, // Guardar Date para ordenar después
+          date: formatDateOnly(new Date(row.scheduledAt)),
+          time: formatTime12h(new Date(row.scheduledAt)),
+          loteriaId: row.loteriaId,
+          loteriaName: row.loteriaName || "Desconocida",
+          winningNumber: null, // No se necesita en este resumen
+          isReventado,
+          totalSales: Number(row.totalSales),
+          totalCommission: Number(row.totalCommission),
+          commissionByNumber,
+          commissionByReventado,
+          totalPrizes: Number(row.totalPrizes),
+          ticketCount: Number(row.ticketCount),
+          subtotal,
+          accumulated: 0, // Se calculará después junto con movimientos
+          chronologicalIndex: 0,
+          totalChronological: consolidatedMetrics.length,
+          winningTicketsCount: winningCount,
+          paidTicketsCount: paidCount,
+          unpaidTicketsCount: unpaidCount,
+          byMultiplier,
+        };
+      });
 
       // Log de depuración
       logger.info({
         layer: "service",
-        action: "SORTEO_EVALUATED_SUMMARY_JUGADAS_DEBUG",
+        action: "SORTEO_EVALUATED_SUMMARY_CONSOLIDATED_SUCCESS",
         payload: {
           vendedorId,
-          sorteoIdsCount: sorteoIds.length,
-          jugadasFound: jugadas.length,
-          message: "Jugadas encontradas para los sorteos",
+          sorteosFound: consolidatedMetrics.length,
+          message: "Resumen evaluado generado mediante query consolidada",
         },
-      });
-
-      // Crear mapas para acceso rápido
-      const prizesMap = new Map(
-        prizesData.map((p) => [p.sorteoId, p._sum.totalPayout || 0])
-      );
-
-      const financialMap = new Map(
-        financialData.map((f) => [
-          f.sorteoId,
-          {
-            totalSales: f._sum.totalAmount || 0,
-            totalCommission: f._sum.totalCommission || 0,
-            totalPrizes: prizesMap.get(f.sorteoId) || 0, // Usar premios solo de tickets ganadores
-            ticketCount: f._count.id,
-          },
-        ])
-      );
-
-      const winningMap = new Map(
-        winningTicketsData.map((w) => [w.sorteoId, w._count.id])
-      );
-
-      const paidMap = new Map(
-        paidTicketsData.map((p) => [p.sorteoId, p._count.id])
-      );
-
-      // Agrupar jugadas por sorteo y multiplicador para el desglose
-      // Un ticket puede tener múltiples jugadas con diferentes multiplicadores
-      type JugadaWithMultiplier = typeof jugadas[0];
-      const jugadasBySorteoAndMultiplier = new Map<string, Map<string | null, JugadaWithMultiplier[]>>();
-
-      for (const jugada of jugadas) {
-        const sorteoId = jugada.ticket.sorteoId;
-        const multiplierId = jugada.multiplierId || null;
-
-        if (!jugadasBySorteoAndMultiplier.has(sorteoId)) {
-          jugadasBySorteoAndMultiplier.set(sorteoId, new Map());
-        }
-
-        const multiplierMap = jugadasBySorteoAndMultiplier.get(sorteoId)!;
-        if (!multiplierMap.has(multiplierId)) {
-          multiplierMap.set(multiplierId, []);
-        }
-
-        multiplierMap.get(multiplierId)!.push(jugada);
-      }
-
-      // Crear un mapa de tickets únicos por sorteo para contar tickets por multiplicador
-      const ticketsBySorteo = new Map<string, Set<string>>();
-      for (const jugada of jugadas) {
-        const sorteoId = jugada.ticket.sorteoId;
-        const ticketId = jugada.ticketId;
-        if (!ticketsBySorteo.has(sorteoId)) {
-          ticketsBySorteo.set(sorteoId, new Set());
-        }
-        ticketsBySorteo.get(sorteoId)!.add(ticketId);
-      }
-
-      //  PASO 1: movementsByDate y rangePreviousMonthBalance ya resueltos en Fase 1 (Promise.all)
-
-      //  CRÍTICO: Agregar movimiento especial del saldo del mes anterior al primer día del rango
-      // Solo si el primer día es el día 1 del mes (inicio del mes)
-      const firstDayOfRange = formatDateOnly(dateRange.fromAt);
-      const [yearFirst, monthFirst, dayFirst] = firstDayOfRange.split('-').map(Number);
-
-      if (dayFirst === 1) {
-        const firstDayMovements = movementsByDate.get(firstDayOfRange) || [];
-        const movementId = `previous-month-balance-${vendedorId}`;
-        const alreadyExists = firstDayMovements.some((m: any) => m.id === movementId);
-
-        // Solo agregar si no existe ya y si el saldo es diferente de 0
-        // CRÍTICO: Usar Number() para asegurar comparación numérica (evitar "0" !== 0)
-        const numericPreviousBalance = Number(rangePreviousMonthBalance) || 0;
-        if (!alreadyExists && numericPreviousBalance !== 0) {
-          // Agregar movimiento especial al inicio del día
-          firstDayMovements.unshift({
-            id: movementId,
-            type: "payment" as const,
-            amount: numericPreviousBalance,
-            method: "Saldo del mes anterior",
-            notes: `Saldo arrastrado del mes anterior`,
-            isReversed: false,
-            createdAt: new Date(`${firstDayOfRange}T00:00:00.000Z`).toISOString(),
-            date: firstDayOfRange,
-          });
-          movementsByDate.set(firstDayOfRange, firstDayMovements);
-        }
-      }
-
-
-      //  PASO 2: Construir datos de sorteos SIN calcular accumulated aún
-      const sorteoData = sorteos.map((sorteo, index) => {
-        const financial = financialMap.get(sorteo.id) || {
-          totalSales: 0,
-          totalCommission: 0,
-          totalPrizes: 0,
-          ticketCount: 0,
-        };
-
-        // Calcular isReventado
-        const isReventado =
-          (sorteo.extraMultiplierId !== null &&
-            sorteo.extraMultiplierId !== undefined) ||
-          (sorteo.extraMultiplierX !== null &&
-            sorteo.extraMultiplierX !== undefined &&
-            sorteo.extraMultiplierX > 0);
-
-        // Calcular subtotal
-        const subtotal =
-          financial.totalSales -
-          financial.totalCommission -
-          financial.totalPrizes;
-
-        const winningCount = winningMap.get(sorteo.id) || 0;
-        const paidCount = paidMap.get(sorteo.id) || 0;
-        const unpaidCount = winningCount - paidCount;
-
-        //  NUEVO: Calcular comisiones por tipo (NUMERO vs REVENTADO) a nivel de sorteo
-        const jugadasDelSorteo = jugadas.filter(j => j.ticket.sorteoId === sorteo.id);
-        const commissionByNumber = jugadasDelSorteo
-          .filter(j => j.type === 'NUMERO')
-          .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
-        const commissionByReventado = jugadasDelSorteo
-          .filter(j => j.type === 'REVENTADO')
-          .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
-
-        // Calcular desglose por multiplicador
-        // Agrupar por jugadas (no tickets) porque un ticket puede tener múltiples multiplicadores
-        const multiplierMap = jugadasBySorteoAndMultiplier.get(sorteo.id) || new Map();
-        const byMultiplier: Array<{
-          multiplierId: string | null;
-          multiplierName: string;
-          multiplierValue: number;
-          totalSales: number;
-          totalCommission: number;
-          commissionByNumber: number; //  NUEVO
-          commissionByReventado: number; //  NUEVO
-          totalPrizes: number;
-          ticketCount: number;
-          subtotal: number;
-          winningTicketsCount: number;
-          paidTicketsCount: number;
-          unpaidTicketsCount: number;
-        }> = [];
-
-        for (const [multiplierId, jugadasGroup] of multiplierMap.entries()) {
-          const multiplier = jugadasGroup[0]?.multiplier;
-
-          // Calcular totales por multiplicador (suma de jugadas)
-          const multTotalSales = jugadasGroup.reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.amount || 0), 0);
-          const multTotalCommission = jugadasGroup.reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
-
-          //  NUEVO: Calcular comisiones por tipo a nivel de multiplicador
-          const multCommissionByNumber = jugadasGroup
-            .filter((j: JugadaWithMultiplier) => j.type === 'NUMERO')
-            .reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
-          const multCommissionByReventado = jugadasGroup
-            .filter((j: JugadaWithMultiplier) => j.type === 'REVENTADO')
-            .reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.commissionAmount || 0), 0);
-
-          const multTotalPrizes = jugadasGroup
-            .filter((j: JugadaWithMultiplier) => j.isWinner)
-            .reduce((sum: number, j: JugadaWithMultiplier) => sum + (j.payout || 0), 0);
-
-          // Contar tickets únicos con este multiplicador en este sorteo
-          const ticketIdsWithThisMultiplier = new Set(jugadasGroup.map((j: JugadaWithMultiplier) => j.ticketId));
-          const multTicketCount = ticketIdsWithThisMultiplier.size;
-
-          const multSubtotal = multTotalSales - multTotalCommission - multTotalPrizes;
-
-          // Contar tickets ganadores y pagados con este multiplicador
-          const winningTicketIds = new Set(
-            jugadasGroup
-              .filter((j: JugadaWithMultiplier) => j.isWinner)
-              .map((j: JugadaWithMultiplier) => j.ticketId)
-          );
-          const multWinningCount = winningTicketIds.size;
-
-          // Obtener tickets pagados (necesitamos verificar el status del ticket)
-          const paidTicketIds = new Set(
-            jugadasGroup
-              .filter((j: JugadaWithMultiplier) =>
-                j.ticket.status === TicketStatus.PAID || j.ticket.status === TicketStatus.PAGADO
-              )
-              .map((j: JugadaWithMultiplier) => j.ticketId)
-          );
-          const multPaidCount = paidTicketIds.size;
-          const multUnpaidCount = multWinningCount - multPaidCount;
-
-          // Determinar información del multiplicador
-          let multiplierName = "Sin multiplicador";
-          let multiplierValue = 1;
-
-          if (multiplier) {
-            multiplierName = multiplier.name || `x${multiplier.valueX} `;
-            multiplierValue = multiplier.valueX || 1;
-          } else if (multiplierId) {
-            // Si hay multiplierId pero no hay relación cargada, usar valores por defecto
-            multiplierName = "x1";
-            multiplierValue = 1;
-          }
-
-          byMultiplier.push({
-            multiplierId,
-            multiplierName,
-            multiplierValue,
-            totalSales: multTotalSales,
-            totalCommission: multTotalCommission,
-            commissionByNumber: multCommissionByNumber, //  NUEVO
-            commissionByReventado: multCommissionByReventado, //  NUEVO
-            totalPrizes: multTotalPrizes,
-            ticketCount: multTicketCount,
-            subtotal: multSubtotal,
-            winningTicketsCount: multWinningCount,
-            paidTicketsCount: multPaidCount,
-            unpaidTicketsCount: multUnpaidCount,
-          });
-        }
-
-        // Ordenar multiplicadores por multiplierValue ascendente (menor a mayor)
-        byMultiplier.sort((a, b) => a.multiplierValue - b.multiplierValue);
-
-        return {
-          sorteoId: sorteo.id,
-          sorteoName: sorteo.name,
-          scheduledAt: sorteo.scheduledAt, // Guardar Date para ordenar después
-          date: formatDateOnly(sorteo.scheduledAt),
-          time: formatTime12h(sorteo.scheduledAt),
-          loteriaId: sorteo.loteriaId,
-          loteriaName: sorteo.loteria?.name || "Desconocida",
-          winningNumber: sorteo.winningNumber,
-          isReventado,
-          totalSales: financial.totalSales,
-          totalCommission: financial.totalCommission,
-          commissionByNumber, //  NUEVO: Comisión por jugadas tipo NÚMERO
-          commissionByReventado, //  NUEVO: Comisión por jugadas tipo REVENTADO
-          totalPrizes: financial.totalPrizes,
-          ticketCount: financial.ticketCount,
-          subtotal,
-          accumulated: 0, // Se calculará después junto con movimientos
-          chronologicalIndex: index + 1, // Índice cronológico: 1 = más antiguo, n = más reciente
-          totalChronological: sorteos.length, // Total de sorteos para referencia del FE
-          winningTicketsCount: winningCount,
-          paidTicketsCount: paidCount,
-          unpaidTicketsCount: unpaidCount,
-          byMultiplier, //  NUEVO: Desglose por multiplicador
-        };
       });
 
       //  PASO 3: Convertir movimientos a items con la misma estructura que sorteos
@@ -2348,13 +2132,9 @@ gs."hour24" ASC
             .reduce((sum: number, m: any) => sum + m.amount, 0);
         }
 
-        // Reusar comisiones por tipo desde jugadas ya cargadas
-        const monthlyCommissionByNumber = jugadas
-          .filter((j) => j.type === "NUMERO")
-          .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
-        const monthlyCommissionByReventado = jugadas
-          .filter((j) => j.type === "REVENTADO")
-          .reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
+        // Reusar comisiones por tipo desde sorteoData (ya calculados en Paso 2)
+        const monthlyCommissionByNumber = sorteoData.reduce((sum, s) => sum + s.commissionByNumber, 0);
+        const monthlyCommissionByReventado = sorteoData.reduce((sum, s) => sum + s.commissionByReventado, 0);
 
         const monthlyTotalBalance = totals.totalSales - totals.totalPrizes - totals.totalCommission;
         const monthlyTotalRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
@@ -2476,7 +2256,7 @@ gs."hour24" ASC
           dateFilter: params.date || "today",
           ...(params.fromDate ? { fromDate: params.fromDate } : {}),
           ...(params.toDate ? { toDate: params.toDate } : {}),
-          totalSorteos: sorteos.length,
+          totalSorteos: sorteoData.length,
           totalDays: daysArray.length,
         },
       };
@@ -2487,7 +2267,7 @@ gs."hour24" ASC
         action: "SORTEO_EVALUATED_SUMMARY_RESULT",
         payload: {
           vendedorId,
-          totalSorteos: sorteos.length,
+          totalSorteos: sorteoData.length,
           totalDays: daysArray.length,
           totalTickets: totals.totalTickets,
           message: "Resultado final del resumen evaluado",
@@ -2503,7 +2283,8 @@ gs."hour24" ASC
       });
       throw err;
     }
-  },
+  }, 30, tags);
+},
 };
 
 export default SorteoService;

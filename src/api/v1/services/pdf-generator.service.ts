@@ -2,6 +2,7 @@
 import PDFDocument from 'pdfkit';
 import { Readable } from 'stream';
 import logger from '../../../core/logger';
+import { ResilienceService } from '../../../core/resilience.service';
 
 interface NumbersSummaryData {
   meta: {
@@ -34,9 +35,9 @@ function formatCurrency(amount: number): string {
 }
 
 /**
- * Genera un PDF con la lista de números 00-99
+ * Genera un PDF con la lista de números 00-99 (Implementación)
  */
-export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promise<Buffer> {
+async function generateNumbersSummaryPDFInternal(data: NumbersSummaryData): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({
@@ -344,4 +345,11 @@ export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promi
       reject(err);
     }
   });
+}
+
+/**
+ * Genera un PDF con la lista de números 00-99 (Envuelto en Circuit Breaker)
+ */
+export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promise<Buffer> {
+  return ResilienceService.runPrisma(() => generateNumbersSummaryPDFInternal(data));
 }

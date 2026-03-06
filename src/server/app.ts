@@ -2,20 +2,24 @@
 import express from 'express'
 import 'express-async-errors'
 import helmet from 'helmet'
+import hpp from 'hpp'
 import morgan from 'morgan'
 import path from 'path'
 import compression from 'express-compression'
 
 import { config } from '../config'
 import logger from '../core/logger'
+import Sentry, { initSentry } from '../core/sentry'
 import { requestIdMiddleware } from '../middlewares/requestId.middleware'
-import { rateLimitMiddleware } from '../middlewares/rateLimit.middleware'
+import { globalRateLimiter } from '../middlewares/rateLimit.middleware'
 import { errorHandler } from '../middlewares/error.middleware'
 import { corsMiddleware } from '../middlewares/cors.middleware'
 import { attachRequestLogger } from '../middlewares/attachLogger.middleware'
 import { apiV1Router } from '../api/v1/routes'
 import { requireJson } from '../middlewares/contentTypeJson.middleware'
-import { bancaContextMiddleware } from '../middlewares/bancaContext.middleware'
+import { resilienceMiddleware } from '../middlewares/resilience.middleware'
+import { metricsService } from '../core/metrics.service'
+import { ResilienceService } from '../core/resilience.service'
 
 const app = express()
 
@@ -33,6 +37,12 @@ if ((app as any)[MIDDLEWARES_CONFIGURED_SYMBOL]) {
   // Marcar como configurado
   (app as any)[MIDDLEWARES_CONFIGURED_SYMBOL] = true;
 
+  // Iniciar ResilienceService
+  ResilienceService.init();
+
+  // Iniciar Sentry lo más pronto posible
+  initSentry();
+
 // Trust proxy: configuración segura para rate limiting
 // Número de proxies confiables (0 = deshabilitado, 1 = un proxy como Render/Heroku, 2 = nginx + load balancer)
 // Por defecto: 1 (común en Render, Heroku, etc.)
@@ -42,6 +52,7 @@ app.set('trust proxy', config.trustProxy)
 // middlewares (order matters)
 app.use(requestIdMiddleware)
 app.use(attachRequestLogger)
+app.use(resilienceMiddleware) // Hardening: Global Admission Control & CB
 app.use(helmet())
 
 // ️ CORS antes de parsers / rateLimit / requireJson
@@ -49,6 +60,7 @@ app.use(corsMiddleware)
 app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
 app.use(express.json({ limit: '200kb' }))
+app.use(hpp()) // Protección contra HTTP Parameter Pollution
 app.use(requireJson) // asegurarte que ignora OPTIONS
 app.use(express.urlencoded({ extended: true }))
 // Compresión gzip/br con umbral bajo para acelerar primera carga de listas
@@ -56,7 +68,7 @@ app.use(compression({
   brotli: { enabled: true, zlib: {} },
   threshold: 1024, // 1KB
 }));
-app.use(rateLimitMiddleware)
+app.use(globalRateLimiter)
 
 // dev logging
 if (config.nodeEnv !== 'production') {
@@ -66,10 +78,18 @@ if (config.nodeEnv !== 'production') {
 // health check (public, before auth)
 app.get('/api/v1/healthz', (_req, res) => res.status(200).json({ status: 'ok' }))
 
+// Metrics check (public, basic in-memory metrics)
+app.get('/metrics', (_req, res) => res.status(200).json(metricsService.getMetrics()))
+
 
 
 // routes
 app.use('/api/v1', apiV1Router)
+
+// Sentry: setup error handler (debe ir después de las rutas y antes de otros error handlers)
+if (config.sentry.dsn) {
+  Sentry.setupExpressErrorHandler(app);
+}
 
 // global error handler (last)
 app.use(errorHandler)
