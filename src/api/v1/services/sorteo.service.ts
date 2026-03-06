@@ -1599,7 +1599,7 @@ gs."hour24" ASC
           WITH base_tickets AS (
             SELECT 
               t.id, t."sorteoId", t."totalAmount", t."totalCommission", t."totalPayout", t."isWinner", t.status,
-              s."scheduledAt", s."loteriaId", s.name as "sorteoName", s."extraMultiplierId", s."extraMultiplierX",
+              s."scheduledAt", s."loteriaId", s.name as "sorteoName", s."extraMultiplierId", s."extraMultiplierX", s."winningNumber",
               l.name as "loteriaName"
             FROM "Ticket" t
             JOIN "Sorteo" s ON t."sorteoId" = s.id
@@ -1609,7 +1609,7 @@ gs."hour24" ASC
           ),
           sorteo_metrics AS (
             SELECT 
-              "sorteoId", "scheduledAt", "loteriaId", "sorteoName", "extraMultiplierId", "extraMultiplierX", "loteriaName",
+              "sorteoId", "scheduledAt", "loteriaId", "sorteoName", "extraMultiplierId", "extraMultiplierX", "winningNumber", "loteriaName",
               SUM("totalAmount") as "totalSales",
               SUM("totalCommission") as "totalCommission",
               SUM(CASE WHEN "isWinner" THEN "totalPayout" ELSE 0 END) as "totalPrizes",
@@ -1617,7 +1617,7 @@ gs."hour24" ASC
               COUNT(CASE WHEN "isWinner" THEN 1 END) as "winningTicketsCount",
               COUNT(CASE WHEN status IN ('PAID', 'PAGADO') THEN 1 END) as "paidTicketsCount"
             FROM base_tickets
-            GROUP BY "sorteoId", "scheduledAt", "loteriaId", "sorteoName", "extraMultiplierId", "extraMultiplierX", "loteriaName"
+            GROUP BY "sorteoId", "scheduledAt", "loteriaId", "sorteoName", "extraMultiplierId", "extraMultiplierX", "winningNumber", "loteriaName"
           ),
           multiplier_summary AS (
             SELECT 
@@ -1730,7 +1730,7 @@ gs."hour24" ASC
           time: formatTime12h(new Date(row.scheduledAt)),
           loteriaId: row.loteriaId,
           loteriaName: row.loteriaName || "Desconocida",
-          winningNumber: null, // No se necesita en este resumen
+          winningNumber: row.winningNumber ?? null,
           isReventado,
           totalSales: Number(row.totalSales),
           totalCommission: Number(row.totalCommission),
