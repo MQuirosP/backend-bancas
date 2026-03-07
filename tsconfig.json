@@ -14,7 +14,7 @@
     "declaration": true,
     "noImplicitAny": true,
 
-    "typeRoots": ["./node_modules/@types"]
+    "typeRoots": ["./src/core", "./src/types", "./node_modules/@types"]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "src/scripts/**/*"]

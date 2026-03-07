@@ -13,15 +13,20 @@ export class CacheService {
     static async get<T>(key: string): Promise<T | null> {
         if (!isRedisAvailable()) return null;
 
-        return ResilienceService.runRedis(key, async () => {
-            const redis = getRedisClient();
-            if (!redis) return null;
+        try {
+            const result = await ResilienceService.runRedis(key, async () => {
+                const redis = getRedisClient();
+                if (!redis) return null;
 
-            const cached = await redis.get(key);
-            if (!cached) return null;
+                const cached = await redis.get(key);
+                if (!cached) return null;
 
-            return JSON.parse(cached) as T;
-        });
+                return JSON.parse(cached) as T;
+            });
+            return result ?? null;
+        } catch {
+            return null;
+        }
     }
 
     /**

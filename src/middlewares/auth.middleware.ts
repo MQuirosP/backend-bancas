@@ -53,7 +53,7 @@ export const protect = async (
     const cacheKey = `auth:ventana:${decoded.sub}`;
     const cached = await CacheService.get<{ v: string | null }>(cacheKey);
 
-    if (cached !== null) {
+    if (cached != null) {
       // Cache hit
       if (cached.v !== ventanaId) {
         ventanaId = cached.v;
