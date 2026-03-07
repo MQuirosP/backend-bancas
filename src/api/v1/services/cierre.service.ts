@@ -266,91 +266,96 @@ export class CierreService {
     filters: CierreFilters
   ): Promise<VendedorAggregateRow[]> {
     const whereConditions = this.buildWhereConditions(filters);
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
 
-    // OPTIMIZACIÓN: CTE materializado elimina el EXISTS que se evaluaba 3 veces por fila
-    // (en SELECT, WHERE y GROUP BY). Ahora PostgreSQL construye el hash table una sola vez.
+    // OPTIMIZACIÓN: Tres CTEs eliminan el Seq Scan completo de Jugada y el EXISTS triple:
+    // ① relevant_tickets: pre-filtra tickets del periodo → reduce Jugada de 867K a ~5K filas/día
+    // ② lm_active: materializa LoteriaMultiplier una sola vez → hash lookup en EXISTS
+    // ③ base: computa banda una sola vez por jugada → el GROUP BY/ORDER BY externo la referencia
+    //    directamente sin re-evaluar EXISTS (antes se evaluaba 3 veces: SELECT, WHERE, GROUP BY)
     const query = Prisma.sql`
-      WITH lm_active AS MATERIALIZED (
-        SELECT
-          lm."loteriaId",
-          lm."valueX",
-          lm."appliesToDate",
-          lm."appliesToSorteoId"
-        FROM "LoteriaMultiplier" lm
-        WHERE lm."kind" = 'NUMERO'
-          AND lm."isActive" = true
-      )
-      SELECT
-        u.id as "vendedorId",
-        u.name as "vendedorNombre",
-        v.id as "ventanaId",
-        v.name as "ventanaNombre",
-
-        CASE
-          WHEN j.type = 'REVENTADO' THEN 200
-          WHEN EXISTS (
-            SELECT 1 FROM lm_active lm
-            WHERE lm."loteriaId" = t."loteriaId"
-              AND lm."valueX" = j."finalMultiplierX"
-              AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-              AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-          ) THEN j."finalMultiplierX"
-          ELSE NULL
-        END as banda,
-
-        COALESCE(SUM(j.amount), 0)::FLOAT as "totalVendida",
-        COALESCE(SUM(j.payout), 0)::FLOAT as ganado,
-        COALESCE(SUM(j."listeroCommissionAmount"), 0)::FLOAT as "comisionTotal",
-        0::FLOAT as refuerzos,
-        COUNT(DISTINCT t.id)::INT as "ticketsCount",
-        COUNT(j.id)::INT as "jugadasCount"
-
-      FROM "Jugada" j
-      INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-      INNER JOIN "User" u ON t."vendedorId" = u.id
-      INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-
-      WHERE
-        t."deletedAt" IS NULL
-        AND j."deletedAt" IS NULL
-        AND t."status" != 'CANCELLED'
-        AND t."isActive" = true
-        AND j."isActive" = true
-        AND s."status" = 'EVALUATED'
-        ${whereConditions}
-        AND (
-          j.type = 'REVENTADO' OR (
-            j.type = 'NUMERO' AND EXISTS (
-              SELECT 1 FROM lm_active lm
-              WHERE lm."loteriaId" = t."loteriaId"
-                AND lm."valueX" = j."finalMultiplierX"
-                AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-                AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-            )
-          )
+      WITH
+        relevant_tickets AS MATERIALIZED (
+          SELECT t.id
+          FROM "Ticket" t
+          WHERE
+            t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
+            AND t."isActive" = true
+            AND t."deletedAt" IS NULL
+            AND t."status" != 'CANCELLED'
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+        ),
+        lm_active AS MATERIALIZED (
+          SELECT
+            lm."loteriaId",
+            lm."valueX",
+            lm."appliesToDate",
+            lm."appliesToSorteoId"
+          FROM "LoteriaMultiplier" lm
+          WHERE lm."kind" = 'NUMERO'
+            AND lm."isActive" = true
+        ),
+        base AS (
+          SELECT
+            u.id          AS uid,
+            u.name        AS uname,
+            v.id          AS vid,
+            v.name        AS vname,
+            t.id          AS "ticketId",
+            j.amount,
+            j.payout,
+            j."listeroCommissionAmount",
+            CASE
+              WHEN j.type = 'REVENTADO' THEN 200
+              WHEN EXISTS (
+                SELECT 1 FROM lm_active lm
+                WHERE lm."loteriaId" = t."loteriaId"
+                  AND lm."valueX" = j."finalMultiplierX"
+                  AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
+                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
+              ) THEN j."finalMultiplierX"
+              ELSE NULL
+            END AS banda
+          FROM "Jugada" j
+          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
+          INNER JOIN "Ticket" t ON j."ticketId" = t.id
+          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+          INNER JOIN "User" u ON t."vendedorId" = u.id
+          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+          WHERE
+            t."deletedAt" IS NULL
+            AND j."deletedAt" IS NULL
+            AND t."status" != 'CANCELLED'
+            AND t."isActive" = true
+            AND j."isActive" = true
+            AND s."status" = 'EVALUATED'
+            ${whereConditions}
         )
-
+      SELECT
+        base.uid          AS "vendedorId",
+        base.uname        AS "vendedorNombre",
+        base.vid          AS "ventanaId",
+        base.vname        AS "ventanaNombre",
+        base.banda,
+        COALESCE(SUM(base.amount), 0)::FLOAT                        AS "totalVendida",
+        COALESCE(SUM(base.payout), 0)::FLOAT                        AS ganado,
+        COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT      AS "comisionTotal",
+        0::FLOAT                                                     AS refuerzos,
+        COUNT(DISTINCT base."ticketId")::INT                        AS "ticketsCount",
+        COUNT(*)::INT                                               AS "jugadasCount"
+      FROM base
+      WHERE base.banda IS NOT NULL
       GROUP BY
-        u.id,
-        u.name,
-        v.id,
-        v.name,
-        CASE
-          WHEN j.type = 'REVENTADO' THEN 200
-          WHEN EXISTS (
-            SELECT 1 FROM lm_active lm
-            WHERE lm."loteriaId" = t."loteriaId"
-              AND lm."valueX" = j."finalMultiplierX"
-              AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-              AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-          ) THEN j."finalMultiplierX"
-          ELSE NULL
-        END
-
+        base.uid,
+        base.uname,
+        base.vid,
+        base.vname,
+        base.banda
       ORDER BY
-        u.name ASC,
-        banda ASC
+        base.uname ASC,
+        base.banda ASC
     `;
 
     const result = await prisma.$transaction(async (tx) => {
