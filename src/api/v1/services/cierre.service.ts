@@ -127,12 +127,25 @@ export class CierreService {
     filters: CierreFilters
   ): Promise<CierreAggregateRow[]> {
     const whereConditions = this.buildWhereConditions(filters);
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
 
-    // OPTIMIZACIÓN: Dos CTEs eliminan los subqueries correlacionados O(n×m):
-    // ① lm_active: materializa LoteriaMultiplier una sola vez → hash lookup en EXISTS
-    // ② numero_bandas: pre-calcula bandas NUMERO por (ticketId, number) → LEFT JOIN para REVENTADO
+    // OPTIMIZACIÓN: Tres CTEs eliminan el Seq Scan completo de Jugada:
+    // ① relevant_tickets: pre-filtra tickets del periodo → reduce Jugada de 867K a ~5K filas/día
+    // ② lm_active: materializa LoteriaMultiplier una sola vez → hash lookup en EXISTS
+    // ③ numero_bandas: JOIN contra relevant_tickets en lugar de scan global de Jugada
     const query = Prisma.sql`
       WITH
+        relevant_tickets AS MATERIALIZED (
+          SELECT t.id
+          FROM "Ticket" t
+          WHERE
+            t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
+            AND t."isActive" = true
+            AND t."deletedAt" IS NULL
+            AND t."status" != 'CANCELLED'
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        ),
         lm_active AS MATERIALIZED (
           SELECT
             lm."loteriaId",
@@ -149,6 +162,7 @@ export class CierreService {
             j.number,
             MIN(j."finalMultiplierX") AS banda
           FROM "Jugada" j
+          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
           WHERE j.type = 'NUMERO'
             AND j."isActive" = true
             AND j."deletedAt" IS NULL

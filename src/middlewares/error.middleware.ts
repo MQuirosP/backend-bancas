@@ -5,6 +5,8 @@ import logger from '../core/logger';
 import { error as errorResponse } from '../utils/responses';
 
 export const errorHandler = (err: any, req: Request, res: Response, _next: NextFunction) => {
+  if (res.headersSent) return _next(err);
+
   const requestId = (req as any)?.requestId ?? null;
   const userId = (req as any)?.user?.id ?? null;
 
