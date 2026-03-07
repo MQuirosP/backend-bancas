@@ -1760,6 +1760,28 @@ gs."hour24" ASC
         },
       });
 
+      // Inyectar movimiento sintético "Saldo del mes anterior" si el rango empieza el día 1
+      const firstDayOfRange = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}-${String(fromAtComponents.day).padStart(2, '0')}`;
+      if (fromAtComponents.day === 1) {
+        const firstDayMovements = movementsByDate.get(firstDayOfRange) || [];
+        const movementId = `previous-month-balance-${vendedorId}`;
+        const alreadyExists = firstDayMovements.some((m: any) => m.id === movementId);
+        const numericPreviousBalance = Number(rangePreviousMonthBalance) || 0;
+        if (!alreadyExists && numericPreviousBalance !== 0) {
+          firstDayMovements.unshift({
+            id: movementId,
+            type: "payment" as const,
+            amount: numericPreviousBalance,
+            method: "Saldo del mes anterior",
+            notes: `Saldo arrastrado del mes anterior`,
+            isReversed: false,
+            createdAt: new Date(`${firstDayOfRange}T00:00:00.000Z`).toISOString(),
+            date: firstDayOfRange,
+          });
+          movementsByDate.set(firstDayOfRange, firstDayMovements);
+        }
+      }
+
       //  PASO 3: Convertir movimientos a items con la misma estructura que sorteos
       const movementItems: any[] = [];
       for (const [dateStr, movements] of movementsByDate.entries()) {
