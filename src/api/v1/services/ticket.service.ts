@@ -2283,7 +2283,7 @@ export const TicketService = {
       const where: any = {
         deletedAt: null,
         isActive: true,
-        sorteo: { status: "EVALUATED" },
+        // sorteo: { status: "EVALUATED" },
       };
 
       // Aplicar filtros RBAC
