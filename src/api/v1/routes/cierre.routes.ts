@@ -90,4 +90,20 @@ router.get(
   CierreController.exportXLSX
 );
 
+/**
+ * GET /api/v1/cierres/export.csv
+ * Exporta cierre por vendedor a CSV plano
+ *
+ * Query params: mismos que export.xlsx (view=seller requerido para columnas banda/vendedor)
+ *
+ * Response:
+ * - Content-Type: text/csv; charset=utf-8
+ * - Content-Disposition: attachment; filename="cierre-operativo-YYYY-MM-DD-YYYY-MM-DD.csv"
+ */
+router.get(
+  '/export.csv',
+  validateCierreExportQuery,
+  CierreController.exportCSV
+);
+
 export default router;

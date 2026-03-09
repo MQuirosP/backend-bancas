@@ -1,4 +1,5 @@
 import prisma from "../../../core/prismaClient";
+import { isExclusionListEmpty } from "../../../core/exclusionListCache";
 
 /**
  * Obtiene los IDs de tickets excluidos para un sorteo
@@ -6,6 +7,9 @@ import prisma from "../../../core/prismaClient";
  * Soporta exclusión por multiplierId
  */
 export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string>> {
+    // Optimización: tabla vacía → sin exclusiones, evitar query
+    if (await isExclusionListEmpty()) return new Set();
+
     //  OPTIMIZED: Single query with include to get ventana relation
     const exclusions = await prisma.sorteoListaExclusion.findMany({
         where: { sorteoId },
@@ -66,6 +70,9 @@ export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string
  * Soporta exclusión por multiplierId
  */
 export async function getExclusionWhereCondition(sorteoId: string): Promise<any> {
+    // Optimización: tabla vacía → sin exclusiones, evitar query
+    if (await isExclusionListEmpty()) return {};
+
     //  OPTIMIZED: Single query with include to get ventana relation
     const exclusions = await prisma.sorteoListaExclusion.findMany({
         where: { sorteoId },

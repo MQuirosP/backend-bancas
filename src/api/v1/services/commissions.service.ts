@@ -9,6 +9,7 @@ import { commissionSnapshotService, CommissionSnapshotFilters } from "../../../s
 import { commissionAggregationService } from "../../../services/commission/CommissionAggregationService";
 import { crDateService } from "../../../utils/crDateService";
 const { dateRangeUTCToCRStrings, postgresDateToCRString, isDateInCRRange } = crDateService;
+import { isExclusionListEmpty } from "../../../core/exclusionListCache";
 
 /**
  * Filtros para queries de comisiones
@@ -142,21 +143,24 @@ export const CommissionsService = {
           AND s.status = 'EVALUATED'
         )`,
         Prisma.sql`t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date`,
-        //  NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
-        Prisma.sql`NOT EXISTS (
+      ];
+
+      // Excluir tickets de listas bloqueadas (solo si hay exclusiones activas)
+      if (!await isExclusionListEmpty()) {
+        whereConditions.push(Prisma.sql`NOT EXISTS (
           SELECT 1 FROM "sorteo_lista_exclusion" sle
           WHERE sle.sorteo_id = t."sorteoId"
           AND sle.ventana_id = t."ventanaId"
           AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
           AND sle.multiplier_id IS NULL
-        )`,
-      ];
+        )`);
+      }
 
       // Filtrar por banca activa (para ADMIN multibanca)
       if (filters.bancaId) {
         whereConditions.push(Prisma.sql`EXISTS (
-          SELECT 1 FROM "Ventana" v 
-          WHERE v.id = t."ventanaId" 
+          SELECT 1 FROM "Ventana" v
+          WHERE v.id = t."ventanaId"
           AND v."bancaId" = ${filters.bancaId}::uuid
         )`);
       }
@@ -181,6 +185,17 @@ export const CommissionsService = {
       }
 
       const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`;
+
+      // Filtro de exclusión por jugada (solo si hay exclusiones activas)
+      const exclusionJugadaFilter = await isExclusionListEmpty()
+        ? Prisma.empty
+        : Prisma.sql`AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND sle.ventana_id = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )`;
 
       // Si dimension=ventana, obtener la política de comisiones del usuario VENTANA
       let ventanaUserPolicy: any = null;
@@ -318,13 +333,7 @@ export const CommissionsService = {
             INNER JOIN "Ventana" v ON v.id = t."ventanaId"
             ${whereClause}
             AND j."isExcluded" IS FALSE
-            AND NOT EXISTS (
-              SELECT 1 FROM "sorteo_lista_exclusion" sle
-              WHERE sle.sorteo_id = t."sorteoId"
-              AND sle.ventana_id = t."ventanaId"
-              AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-              AND sle.multiplier_id = j."multiplierId"
-            )
+            ${exclusionJugadaFilter}
           `;
 
           //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
@@ -582,13 +591,7 @@ export const CommissionsService = {
             INNER JOIN "Ventana" v ON v.id = t."ventanaId"
             ${whereClause}
             AND j."isExcluded" IS FALSE
-            AND NOT EXISTS (
-              SELECT 1 FROM "sorteo_lista_exclusion" sle
-              WHERE sle.sorteo_id = t."sorteoId"
-              AND sle.ventana_id = t."ventanaId"
-              AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-              AND sle.multiplier_id = j."multiplierId"
-            )
+            ${exclusionJugadaFilter}
           `;
 
           //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
@@ -867,13 +870,7 @@ export const CommissionsService = {
           INNER JOIN "User" u ON u.id = t."vendedorId"
           INNER JOIN "Ventana" v ON v.id = t."ventanaId"
           ${whereClause}
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND sle.ventana_id = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
+          ${exclusionJugadaFilter}
         `;
 
         //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
@@ -1177,21 +1174,24 @@ export const CommissionsService = {
           AND s.status = 'EVALUATED'
         )`,
         Prisma.sql`t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date`,
-        //  NUEVO: Excluir tickets de listas bloqueadas (Exclusión TOTAL)
-        Prisma.sql`NOT EXISTS (
+      ];
+
+      // Excluir tickets de listas bloqueadas (solo si hay exclusiones activas)
+      if (!await isExclusionListEmpty()) {
+        whereConditions.push(Prisma.sql`NOT EXISTS (
           SELECT 1 FROM "sorteo_lista_exclusion" sle
           WHERE sle.sorteo_id = t."sorteoId"
           AND sle.ventana_id = t."ventanaId"
           AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
           AND sle.multiplier_id IS NULL
-        )`,
-      ];
+        )`);
+      }
 
       // Filtrar por banca activa (para ADMIN multibanca)
       if (filters.bancaId) {
         whereConditions.push(Prisma.sql`EXISTS (
-          SELECT 1 FROM "Ventana" v 
-          WHERE v.id = t."ventanaId" 
+          SELECT 1 FROM "Ventana" v
+          WHERE v.id = t."ventanaId"
           AND v."bancaId" = ${filters.bancaId}::uuid
         )`);
       }
@@ -1212,6 +1212,17 @@ export const CommissionsService = {
       }
 
       const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`;
+
+      // Filtro de exclusión por jugada (solo si hay exclusiones activas)
+      const exclusionJugadaFilter = await isExclusionListEmpty()
+        ? Prisma.empty
+        : Prisma.sql`AND NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            WHERE sle.sorteo_id = t."sorteoId"
+            AND sle.ventana_id = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+            AND sle.multiplier_id = j."multiplierId"
+          )`;
 
       // Si dimension=ventana, obtener la política de comisiones del usuario VENTANA
       let ventanaUserPolicy: any = null;
@@ -1260,13 +1271,7 @@ export const CommissionsService = {
           INNER JOIN "Loteria" l ON l.id = t."loteriaId"
           LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
           ${whereClause}
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND sle.ventana_id = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
+          ${exclusionJugadaFilter}
         `;
 
         // Agrupar por lotería y multiplicador, calculando comisiones jugada por jugada

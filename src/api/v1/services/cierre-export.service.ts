@@ -2,6 +2,9 @@ import ExcelJS from 'exceljs';
 import {
   CierreWeeklyData,
   CierreBySellerData,
+  CierreBySellerExportData,
+  BandExportData,
+  SellerLoteriaRow,
   CierreView,
   LoteriaMetrics,
   CeldaMetrics,
@@ -29,7 +32,7 @@ export class CierreExportService {
    * @param sellerData Datos por vendedor para incluir como pestaña adicional (opcional)
    */
   static async generateWorkbook(
-    data: CierreWeeklyData | CierreBySellerData,
+    data: CierreWeeklyData | CierreBySellerData | CierreBySellerExportData,
     view: CierreView,
     isExtendedPeriod: boolean = false,
     sellerData?: CierreBySellerData | null
@@ -40,10 +43,12 @@ export class CierreExportService {
     workbook.created = new Date();
     workbook.modified = new Date();
 
-    // Si es vista por vendedor, solo generar esa pestaña
+    // Vista por vendedor: una pestaña por banda con vendedores agrupados por día
     if (view === 'seller') {
-      const sellerData = data as CierreBySellerData;
-      this.addSellerSheet(workbook, sellerData);
+      const exportData = data as CierreBySellerExportData;
+      for (const bandData of exportData.bands) {
+        this.addSellerBandSheet(workbook, bandData, isExtendedPeriod);
+      }
       return workbook;
     }
 
@@ -298,6 +303,208 @@ export class CierreExportService {
     target.refuerzos += source.refuerzos;
     target.ticketsCount += source.ticketsCount;
     target.jugadasCount += source.jugadasCount;
+  }
+
+  /**
+   * Agrega pestaña pivot para una banda
+   *
+   * Layout:
+   *   Fila 1 (grupos de fecha): Vendedor | Ventana | Lotería | Turno | [fecha1 ×4] | [fecha2 ×4] | … | [TOTAL ×4]
+   *   Fila 2 (sub-headers):      mismo   |  mismo  |  mismo  | mismo | V P C N     | V P C N     | … | V P C N
+   *   Filas de datos: una por (vendedor, lotería, turno)
+   *   Subtotal por vendedor
+   *   Fila TOTAL BANDA
+   */
+  private static addSellerBandSheet(
+    workbook: ExcelJS.Workbook,
+    bandData: BandExportData,
+    _isExtendedPeriod: boolean
+  ): void {
+    const sheet = workbook.addWorksheet(`Banda ${bandData.band}`);
+
+    const FIXED = 5; // Vendedor, Ventana, Lotería, Turno, Tipo
+    const METRICS = 4; // Venta, Premios, Comisión, Neto
+    const { fechas, rows } = bandData;
+    const totalCols = FIXED + (fechas.length + 1) * METRICS; // +1 para TOTAL
+
+    // ── Fila 1: grupo-headers de fecha ──────────────────────────────────────
+    const groupHeaderValues: (string | number)[] = ['', '', '', '', ''];
+    for (const fecha of fechas) {
+      groupHeaderValues.push(fecha, '', '', '');
+    }
+    groupHeaderValues.push('TOTAL', '', '', '');
+
+    const groupRow = sheet.addRow(groupHeaderValues);
+    groupRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    groupRow.height = 20;
+
+    // Merge la celda fija (columnas 1-4 en fila 1) — solo decorativa
+    if (FIXED > 1) {
+      sheet.mergeCells(groupRow.number, 1, groupRow.number, FIXED);
+    }
+    groupRow.getCell(1).value = `Banda ${bandData.band}`;
+    groupRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    groupRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF203764' } };
+
+    // Merge y estilo de cada grupo de fecha
+    for (let i = 0; i < fechas.length; i++) {
+      const startCol = FIXED + 1 + i * METRICS;
+      sheet.mergeCells(groupRow.number, startCol, groupRow.number, startCol + METRICS - 1);
+      const cell = groupRow.getCell(startCol);
+      cell.value = fechas[i];
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    }
+
+    // Merge y estilo del grupo TOTAL
+    const totalGroupStart = FIXED + 1 + fechas.length * METRICS;
+    sheet.mergeCells(groupRow.number, totalGroupStart, groupRow.number, totalGroupStart + METRICS - 1);
+    const totalGroupCell = groupRow.getCell(totalGroupStart);
+    totalGroupCell.value = 'TOTAL';
+    totalGroupCell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    totalGroupCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF70AD47' } };
+    totalGroupCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+    // ── Fila 2: sub-headers de métricas ─────────────────────────────────────
+    const SUB = ['Venta', 'Premios', 'Comisión', 'Neto'];
+    const subHeaderValues: string[] = ['Vendedor', 'Ventana', 'Lotería', 'Turno', 'Tipo'];
+    for (let i = 0; i <= fechas.length; i++) {
+      subHeaderValues.push(...SUB);
+    }
+
+    const subRow = sheet.addRow(subHeaderValues);
+    subRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    subRow.height = 18;
+    subRow.eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF595959' } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    });
+
+    // Congelar las dos filas de encabezado y las 4 columnas fijas
+    sheet.views = [{ state: 'frozen', xSplit: FIXED, ySplit: 2 }];
+
+    // ── Filas de datos (pivot) ───────────────────────────────────────────────
+    const CURRENCY_FMT = '₡#,##0.00;-₡#,##0.00';
+
+    const addMetricCells = (row: ExcelJS.Row, colStart: number, m: CeldaMetrics | undefined) => {
+      const vals = m
+        ? [m.totalVendida, m.ganado, m.comisionTotal, m.netoDespuesComision]
+        : [0, 0, 0, 0];
+      for (let i = 0; i < METRICS; i++) {
+        const cell = row.getCell(colStart + i);
+        cell.value = vals[i];
+        cell.numFmt = CURRENCY_FMT;
+        cell.alignment = { horizontal: 'right' };
+      }
+    };
+
+    // Agrupar filas por vendedor para añadir subtotales
+    let currentVendedorId = '';
+    const vendedorDayTotals: Record<string, CeldaMetrics> = {};
+    let vendedorTotal = this.createEmptyMetrics();
+    let vendedorNombre = '';
+    let ventanaNombre = '';
+
+    const flushVendedorSubtotal = () => {
+      if (!currentVendedorId) return;
+      const subtotalValues: (string | number)[] = [vendedorNombre + ' — SUBTOTAL', ventanaNombre, '', '', ''];
+      for (const fecha of fechas) {
+        const m = vendedorDayTotals[fecha] ?? this.createEmptyMetrics();
+        subtotalValues.push(m.totalVendida, m.ganado, m.comisionTotal, m.netoDespuesComision);
+      }
+      subtotalValues.push(vendedorTotal.totalVendida, vendedorTotal.ganado, vendedorTotal.comisionTotal, vendedorTotal.netoDespuesComision);
+
+      const subtotalRow = sheet.addRow(subtotalValues);
+      subtotalRow.font = { bold: true };
+      subtotalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE7E6E6' } };
+      subtotalRow.eachCell({ includeEmpty: false }, (cell) => {
+        if (typeof cell.value === 'number') cell.numFmt = CURRENCY_FMT;
+      });
+    };
+
+    for (const loteriaRow of rows) {
+      if (loteriaRow.vendedorId !== currentVendedorId) {
+        flushVendedorSubtotal();
+        currentVendedorId = loteriaRow.vendedorId;
+        vendedorNombre = loteriaRow.vendedorNombre;
+        ventanaNombre = loteriaRow.ventanaNombre;
+        vendedorTotal = this.createEmptyMetrics();
+        for (const key of Object.keys(vendedorDayTotals)) delete vendedorDayTotals[key];
+      }
+
+      const dataRowValues: (string | number)[] = [
+        loteriaRow.vendedorNombre,
+        loteriaRow.ventanaNombre,
+        loteriaRow.loteriaNombre,
+        loteriaRow.turno,
+        loteriaRow.tipo === 'NUMERO' ? 'Número' : 'Reventado',
+      ];
+      for (const fecha of fechas) {
+        const m = loteriaRow.dias[fecha];
+        dataRowValues.push(
+          m?.totalVendida ?? 0,
+          m?.ganado ?? 0,
+          m?.comisionTotal ?? 0,
+          m?.netoDespuesComision ?? 0
+        );
+        if (m) {
+          if (!vendedorDayTotals[fecha]) vendedorDayTotals[fecha] = this.createEmptyMetrics();
+          this.accumulateMetrics(vendedorDayTotals[fecha], m);
+        }
+      }
+      dataRowValues.push(
+        loteriaRow.total.totalVendida,
+        loteriaRow.total.ganado,
+        loteriaRow.total.comisionTotal,
+        loteriaRow.total.netoDespuesComision
+      );
+      this.accumulateMetrics(vendedorTotal, loteriaRow.total);
+
+      const dataRow = sheet.addRow(dataRowValues);
+      dataRow.alignment = { vertical: 'middle' };
+      dataRow.eachCell({ includeEmpty: false }, (cell) => {
+        if (typeof cell.value === 'number') cell.numFmt = CURRENCY_FMT;
+      });
+    }
+
+    flushVendedorSubtotal();
+
+    // ── Fila TOTAL BANDA ────────────────────────────────────────────────────
+    const bandTotalValues: (string | number)[] = ['TOTAL BANDA', '', '', '', ''];
+    const bandDayTotals: Record<string, CeldaMetrics> = {};
+    for (const loteriaRow of rows) {
+      for (const fecha of fechas) {
+        const m = loteriaRow.dias[fecha];
+        if (m) {
+          if (!bandDayTotals[fecha]) bandDayTotals[fecha] = this.createEmptyMetrics();
+          this.accumulateMetrics(bandDayTotals[fecha], m);
+        }
+      }
+    }
+    for (const fecha of fechas) {
+      const m = bandDayTotals[fecha] ?? this.createEmptyMetrics();
+      bandTotalValues.push(m.totalVendida, m.ganado, m.comisionTotal, m.netoDespuesComision);
+    }
+    bandTotalValues.push(
+      bandData.total.totalVendida,
+      bandData.total.ganado,
+      bandData.total.comisionTotal,
+      bandData.total.netoDespuesComision
+    );
+
+    const totalRow = sheet.addRow(bandTotalValues);
+    this.styleGrandTotalRow(totalRow);
+
+    // ── Anchos de columna ───────────────────────────────────────────────────
+    sheet.getColumn(1).width = 28; // Vendedor
+    sheet.getColumn(2).width = 18; // Ventana
+    sheet.getColumn(3).width = 16; // Lotería
+    sheet.getColumn(4).width = 8;  // Turno
+    sheet.getColumn(5).width = 12; // Tipo
+    for (let c = FIXED + 1; c <= totalCols; c++) {
+      sheet.getColumn(c).width = 13;
+    }
   }
 
   /**

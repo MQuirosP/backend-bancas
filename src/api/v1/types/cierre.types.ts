@@ -89,6 +89,7 @@ export interface VendedorMetrics extends CeldaMetrics {
   ventanaId: string;
   ventanaNombre: string;
   bands?: Record<number, CeldaMetrics>; // desglose por banda (dinámico)
+  loterias?: CierreLoteriaGroup[];      // desglose por lotería → sorteo → banda
 }
 
 /**
@@ -232,6 +233,52 @@ export interface CierreExportQuery extends CierreWeeklyQuery {
  * Tipo de jugada
  */
 export type JugadaTipo = 'NUMERO' | 'REVENTADO';
+
+// ─── Tipos para export Excel por vendedor ───────────────────────────────────
+
+/**
+ * Fila raw de vendedor con dimensiones de fecha, lotería y turno (para query de export)
+ */
+export interface VendedorAggregateRowWithDate extends VendedorAggregateRow {
+  fecha: string;       // 'YYYY-MM-DD'
+  loteriaId: string;
+  loteriaNombre: string;
+  turno: string;       // 'HH:MM'
+  tipo: JugadaTipo;    // 'NUMERO' | 'REVENTADO'
+}
+
+/**
+ * Fila pivot: una combinación (vendedor, lotería, turno, tipo) con métricas por día
+ */
+export interface SellerLoteriaRow {
+  vendedorId: string;
+  vendedorNombre: string;
+  ventanaNombre: string;
+  loteriaId: string;
+  loteriaNombre: string;
+  turno: string;
+  tipo: JugadaTipo;
+  dias: Record<string, CeldaMetrics>; // fecha → métricas
+  total: CeldaMetrics;
+}
+
+/**
+ * Datos de una banda para el Excel pivot
+ */
+export interface BandExportData {
+  band: number;
+  fechas: string[];           // fechas únicas ordenadas (columna-grupos)
+  rows: SellerLoteriaRow[];   // ordenados por vendedor → lotería → turno
+  total: CeldaMetrics;
+}
+
+/**
+ * Estructura raíz para export Excel de cierre por vendedor
+ */
+export interface CierreBySellerExportData {
+  bands: BandExportData[];
+  total: CeldaMetrics;
+}
 
 /**
  * Datos agregados por banda, lotería, sorteo, tipo (query raw)

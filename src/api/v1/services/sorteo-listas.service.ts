@@ -16,6 +16,7 @@ import {
     MultiplierTotalSummary,
 } from "../dto/sorteo-listas.dto";
 import logger from "../../../core/logger";
+import { invalidateExclusionListCache } from "../../../core/exclusionListCache";
 import { formatIsoLocal } from "../../../utils/datetime";
 
 export const SorteoListasService = {
@@ -819,6 +820,9 @@ export const SorteoListasService = {
             }
         });
 
+        // Invalidar cache — la tabla ya no está vacía
+        invalidateExclusionListCache();
+
         //  PASO 2: Actualizar jugadas Y tickets para marcarlos como excluidos (marcado denormalizado)
         // Construir el where para buscar las jugadas/tickets a excluir
         const ticketWhere: any = {
@@ -1113,6 +1117,9 @@ export const SorteoListasService = {
                 message: "Registro eliminado de sorteo_lista_exclusion"
             }
         });
+
+        // Invalidar cache — la tabla puede haber quedado vacía
+        invalidateExclusionListCache();
 
         //  PASO 2: Actualizar jugadas Y tickets para desmarcarlos como excluidos (marcado denormalizado)
         const ticketWhere: any = {

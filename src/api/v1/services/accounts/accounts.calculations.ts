@@ -15,6 +15,7 @@ import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from
 import { getCachedDayStatement, setCachedDayStatement, getCachedBySorteo, setCachedBySorteo, getCachedPreviousMonthBalance, setCachedPreviousMonthBalance } from "../../../../utils/accountStatementCache";
 import { intercalateSorteosAndMovements, SorteoOrMovement } from "./accounts.intercalate";
 import { getAccountStatementIfValid, getAccountStatementIfExists } from "./accounts.statement-reader";
+import { isExclusionListEmpty } from "../../../../core/exclusionListCache";
 
 /**
  * ============================================================================
@@ -2972,14 +2973,17 @@ export async function getStatementDirect(
             WHERE s.id = t."sorteoId"
             AND s.status = 'EVALUATED'
         )`,
-        //  NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
-        Prisma.sql`NOT EXISTS (
+    ];
+
+    // Excluir tickets de listas bloqueadas (solo si hay exclusiones activas)
+    if (!await isExclusionListEmpty()) {
+        monthlyWhereConditions.push(Prisma.sql`NOT EXISTS (
             SELECT 1 FROM "sorteo_lista_exclusion" sle
             WHERE sle.sorteo_id = t."sorteoId"
             AND sle.ventana_id = t."ventanaId"
             AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-        )`,
-    ];
+        )`);
+    }
 
     // Reutilizar filtros RBAC/banca
     if (bancaId) {
@@ -4148,6 +4152,9 @@ export async function getStatementDirect(
  * Basado en la tabla sorteo_lista_exclusion
  */
 export async function getExcludedTicketIdsForDate(date: Date): Promise<string[]> {
+    // Optimización: tabla vacía → sin exclusiones, evitar query
+    if (await isExclusionListEmpty()) return [];
+
     // Convertir fecha a string YYYY-MM-DD para comparación SQL
     // Nota: date viene como objeto Date UTC (00:00:00Z) que representa el día
     const dateStr = crDateService.dateUTCToCRString(date);

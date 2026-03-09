@@ -328,41 +328,29 @@ export const CierreController = {
       req.bancaContext?.bancaId || null
     );
 
-    // Obtener datos según la vista
-    let result;
-    let sellerResult: any = null;
-
-    if (view === 'seller') {
-      const top = query.top ? parseInt(query.top, 10) : undefined;
-      const orderBy = query.orderBy || 'totalVendida';
-      result = await CierreService.aggregateBySeller(filters, top, orderBy);
-    } else {
-      result = await CierreService.aggregateWeekly(filters);
-      //  NUEVO: También obtener datos por vendedor para incluir en el export
-      const top = query.top ? parseInt(query.top, 10) : undefined;
-      const orderBy = query.orderBy || 'totalVendida';
-      sellerResult = await CierreService.aggregateBySeller(filters, top, orderBy);
-    }
-
-    // Remover _performance antes de exportar
-    const { _performance, _metaExtras, ...data } = result as any;
-    let sellerData: any = null;
-    if (sellerResult) {
-      const { _performance: _sellerPerformance, _metaExtras: _sellerMetaExtras, ...sellerDataOnly } = sellerResult as any;
-      sellerData = sellerDataOnly;
-    }
-
     // Calcular si el periodo es extenso (más de un día)
     const daysDiff = Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24));
     const isExtendedPeriod = daysDiff > 1;
 
-    // Generar workbook de Excel
-    const workbook = await CierreExportService.generateWorkbook(
-      data as any,
-      view,
-      isExtendedPeriod,
-      sellerData
-    );
+    // Obtener datos según la vista y generar workbook
+    let workbook;
+
+    if (view === 'seller') {
+      // Vista por vendedor: datos por banda × día × vendedor
+      const exportData = await CierreService.aggregateBySellerForExport(filters);
+      workbook = await CierreExportService.generateWorkbook(exportData, view, isExtendedPeriod);
+    } else {
+      // Vista weekly: pestañas por banda + pestaña de vendedores al final
+      const result = await CierreService.aggregateWeekly(filters);
+      const { _performance, _metaExtras, ...weeklyData } = result as any;
+
+      const top = query.top ? parseInt(query.top, 10) : undefined;
+      const orderBy = query.orderBy || 'totalVendida';
+      const sellerResult = await CierreService.aggregateBySeller(filters, top, orderBy);
+      const { _performance: _sp, _metaExtras: _sm, ...sellerData } = sellerResult as any;
+
+      workbook = await CierreExportService.generateWorkbook(weeklyData, view, isExtendedPeriod, sellerData);
+    }
 
     // Configurar headers de respuesta
     res.setHeader(
@@ -377,5 +365,89 @@ export const CierreController = {
     // Escribir workbook directamente a la respuesta
     await workbook.xlsx.write(res);
     res.end();
+  },
+
+  /**
+   * GET /api/v1/cierres/export.csv
+   * Exporta cierre por vendedor a CSV plano (view=seller)
+   */
+  async exportCSV(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) {
+      throw new AppError('Unauthorized', 401);
+    }
+
+    if (req.user.role === Role.VENDEDOR) {
+      throw new AppError('No autorizado para exportar cierres', 403);
+    }
+
+    const query = req.query as any;
+
+    if (!query.from || !query.to || !query.view) {
+      throw new AppError(
+        'Parámetros "from", "to" y "view" son obligatorios',
+        400
+      );
+    }
+
+    validateDateRange(query.from, query.to);
+
+    const fromDate = parseDateCR(query.from, 'start');
+    const toDate = parseDateCR(query.to, 'end');
+
+    const filters = await applyRbacToFilters(
+      req.user,
+      fromDate,
+      toDate,
+      query.ventanaId,
+      query.scope,
+      req.bancaContext?.bancaId || null
+    );
+
+    const exportData = await CierreService.aggregateBySellerForExport(filters);
+
+    const csvEscape = (val: string): string => {
+      if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+        return `"${val.replace(/"/g, '""')}"`;
+      }
+      return val;
+    };
+
+    const lines: string[] = [
+      'banda,vendedor,ventana,loteria,turno,tipo,fecha,venta,premios,comision,neto',
+    ];
+
+    for (const band of exportData.bands) {
+      for (const row of band.rows) {
+        for (const fecha of band.fechas) {
+          const metrics = row.dias[fecha];
+          if (!metrics || metrics.totalVendida === 0) continue;
+
+          lines.push(
+            [
+              band.band,
+              csvEscape(row.vendedorNombre),
+              csvEscape(row.ventanaNombre),
+              csvEscape(row.loteriaNombre),
+              row.turno,
+              row.tipo,
+              fecha,
+              metrics.totalVendida.toFixed(2),
+              metrics.ganado.toFixed(2),
+              metrics.comisionTotal.toFixed(2),
+              metrics.netoDespuesComision.toFixed(2),
+            ].join(',')
+          );
+        }
+      }
+    }
+
+    const csv = '\uFEFF' + lines.join('\r\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="cierre-operativo-${query.from}-${query.to}.csv"`
+    );
+    res.send(csv);
   },
 };
