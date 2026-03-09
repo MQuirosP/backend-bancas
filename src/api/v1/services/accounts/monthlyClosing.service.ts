@@ -7,6 +7,7 @@ import prisma from "../../../../core/prismaClient";
 import { Prisma } from "@prisma/client";
 import logger from "../../../../core/logger";
 import { crDateService } from "../../../../utils/crDateService";
+import { isExclusionListEmpty } from "../../../../core/exclusionListCache";
 
 interface MonthBalanceResult {
     remainingBalance: number;
@@ -64,6 +65,17 @@ export async function calculateRealMonthBalance(
 
         const ticketWhereClause = Prisma.sql`WHERE ${Prisma.join(ticketConditions, " AND ")}`;
 
+        // Filtro de exclusión de listas (solo si hay exclusiones activas)
+        const exclusionFilter = await isExclusionListEmpty()
+            ? Prisma.empty
+            : Prisma.sql`AND NOT EXISTS (
+                SELECT 1 FROM "sorteo_lista_exclusion" sle
+                WHERE sle."sorteo_id" = t."sorteoId"
+                AND sle."ventana_id" = t."ventanaId"
+                AND (sle."vendedor_id" IS NULL OR sle."vendedor_id" = t."vendedorId")
+                AND sle."multiplier_id" IS NULL
+            )`;
+
         // 1. Ventas (desde jugadas)
         const salesResult = await prisma.$queryRaw<Array<{ total_sales: number; ticket_count: bigint }>>(
             Prisma.sql`
@@ -74,13 +86,7 @@ export async function calculateRealMonthBalance(
                 INNER JOIN "Jugada" j ON j."ticketId" = t.id
                 ${ticketWhereClause}
                 AND j."deletedAt" IS NULL
-                AND NOT EXISTS (
-                    SELECT 1 FROM "sorteo_lista_exclusion" sle
-                    WHERE sle."sorteo_id" = t."sorteoId"
-                    AND sle."ventana_id" = t."ventanaId"
-                    AND (sle."vendedor_id" IS NULL OR sle."vendedor_id" = t."vendedorId")
-                    AND sle."multiplier_id" IS NULL
-                )
+                ${exclusionFilter}
             `
         );
 
@@ -111,13 +117,7 @@ export async function calculateRealMonthBalance(
                 INNER JOIN "Jugada" j ON j."ticketId" = t.id
                 ${ticketWhereClause}
                 AND j."deletedAt" IS NULL
-                AND NOT EXISTS (
-                    SELECT 1 FROM "sorteo_lista_exclusion" sle
-                    WHERE sle."sorteo_id" = t."sorteoId"
-                    AND sle."ventana_id" = t."ventanaId"
-                    AND (sle."vendedor_id" IS NULL OR sle."vendedor_id" = t."vendedorId")
-                    AND sle."multiplier_id" IS NULL
-                )
+                ${exclusionFilter}
             `
             : Prisma.sql`
                 SELECT
@@ -126,13 +126,7 @@ export async function calculateRealMonthBalance(
                 INNER JOIN "Jugada" j ON j."ticketId" = t.id
                 ${ticketWhereClause}
                 AND j."deletedAt" IS NULL
-                AND NOT EXISTS (
-                    SELECT 1 FROM "sorteo_lista_exclusion" sle
-                    WHERE sle."sorteo_id" = t."sorteoId"
-                    AND sle."ventana_id" = t."ventanaId"
-                    AND (sle."vendedor_id" IS NULL OR sle."vendedor_id" = t."vendedorId")
-                    AND sle."multiplier_id" IS NULL
-                )
+                ${exclusionFilter}
             `
         );
 

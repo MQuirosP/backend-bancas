@@ -1168,6 +1168,7 @@ export const TicketService = {
           ? params.status
           : { notIn: ["CANCELLED", "EXCLUDED"] }, // Excluir CANCELLED si no se especifica
         isActive: true,
+        // sorteo: { status: "EVALUATED" },
         ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
         ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
       };
@@ -2282,6 +2283,7 @@ export const TicketService = {
       const where: any = {
         deletedAt: null,
         isActive: true,
+        sorteo: { status: "EVALUATED" },
       };
 
       // Aplicar filtros RBAC

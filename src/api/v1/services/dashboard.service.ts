@@ -9,6 +9,7 @@ import { getMonthlyRemainingBalance, getMonthlyRemainingBalancesBatch } from "./
 import { resolveDateRange } from "../../../utils/dateRange";
 import { crDateService } from "../../../utils/crDateService";
 import { PerformanceMonitor, measureAsync } from "../../../utils/performanceMonitor";
+import { isExclusionListEmpty } from "../../../core/exclusionListCache";
 
 /**
  * Dashboard Service
@@ -299,7 +300,8 @@ function buildTicketBaseFilters(
   alias: string,
   filters: DashboardFilters,
   fromDateStr: string,
-  toDateStr: string
+  toDateStr: string,
+  skipExclusion: boolean = false
 ) {
   const conditions: Prisma.Sql[] = [
     Prisma.sql`${Prisma.raw(`${alias}."deletedAt"`)} IS NULL`,
@@ -312,20 +314,19 @@ function buildTicketBaseFilters(
       WHERE s.id = ${Prisma.raw(`${alias}."sorteoId"`)}
       AND s.status = 'EVALUATED'
     )`,
-    //  NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
-    // NOTA: Debido al workaround del esquema, sle.ventana_id contiene el ID del USUARIO listero.
-    // Debemos hacer JOIN con User para obtener el ID real de la ventana y compararlo con el ticket.
-    //  FIX: Solo excluir el ticket completo si la exclusión es TOTAL (multiplier_id IS NULL).
-    // Las exclusiones parciales (por multiplicador) se manejan en jugada_agg.
-    Prisma.sql`NOT EXISTS (
+  ];
+
+  // Excluir tickets de listas bloqueadas (solo si hay exclusiones activas)
+  if (!skipExclusion) {
+    conditions.push(Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "sorteo_lista_exclusion" sle
       JOIN "User" u ON u.id = sle.ventana_id
       WHERE sle.sorteo_id = ${Prisma.raw(`${alias}."sorteoId"`)}
       AND u."ventanaId" = ${Prisma.raw(`${alias}."ventanaId"`)}
       AND (sle.vendedor_id IS NULL OR sle.vendedor_id = ${Prisma.raw(`${alias}."vendedorId"`)})
       AND sle.multiplier_id IS NULL
-    )`,
-  ];
+    )`);
+  }
 
   if (filters.ventanaId) {
     conditions.push(Prisma.sql`${Prisma.raw(`${alias}."ventanaId"`)} = ${filters.ventanaId}::uuid`);
@@ -358,7 +359,16 @@ function buildTicketBaseFilters(
  * Sin MATERIALIZED: el planner puede elegir hash anti-join (O(n)) en lugar de
  * sequential scan O(n×m) contra una tabla temporal.
  */
-function buildExclusionCTEsPreamble(): Prisma.Sql {
+function buildExclusionCTEsPreamble(skipExclusion: boolean = false): Prisma.Sql {
+  if (skipExclusion) {
+    // Stub vacío — sin scan a sorteo_lista_exclusion, NOT EXISTS siempre retorna vacío (sin efecto)
+    return Prisma.sql`
+      jugada_exclusions AS (
+        SELECT NULL::uuid AS sorteo_id, NULL::uuid AS "ventanaId", NULL::uuid AS vendedor_id, NULL::uuid AS multiplier_id
+        WHERE 1 = 0
+      ),
+    `;
+  }
   return Prisma.sql`
     jugada_exclusions AS (
       SELECT sle.sorteo_id, u."ventanaId", sle.vendedor_id, sle.multiplier_id
@@ -587,7 +597,8 @@ export const DashboardService = {
    */
   async calculateGanancia(filters: DashboardFilters, role?: Role): Promise<GananciaResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const skipExclusion = await isExclusionListEmpty();
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
     //  CAMBIO: NO llamamos a computeVentanaCommissionFromPolicies()
     // Las comisiones ya vienen del SQL snapshot (SUM(listeroCommissionAmount))
 
@@ -605,7 +616,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH ${buildExclusionCTEsPreamble()}
+        WITH ${buildExclusionCTEsPreamble(skipExclusion)}
         tickets_in_range AS MATERIALIZED (
           SELECT
             t.id,
@@ -687,7 +698,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH ${buildExclusionCTEsPreamble()}
+        WITH ${buildExclusionCTEsPreamble(skipExclusion)}
         tickets_in_range AS MATERIALIZED (
           SELECT
             t.id,
@@ -900,7 +911,13 @@ export const DashboardService = {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const skipExclusion = await isExclusionListEmpty();
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
+    const jugadaExclusionFilter = skipExclusion ? Prisma.empty : Prisma.sql`AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
+        )`;
 
     // SQL consolidada para evitar picos de memoria y múltiples round-trips
     const ventanaData = await prisma.$queryRaw<any[]>(Prisma.sql`
@@ -918,11 +935,7 @@ export const DashboardService = {
         FROM tickets_in_range t
         JOIN "Jugada" j ON j."ticketId" = t.id
         WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
-        AND NOT EXISTS (
-          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
-          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
-          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
-        )
+        ${jugadaExclusionFilter}
         GROUP BY t."ventanaId"
       ),
       statements_agg AS (
@@ -1022,7 +1035,13 @@ export const DashboardService = {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const skipExclusion = await isExclusionListEmpty();
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
+    const jugadaExclusionFilter = skipExclusion ? Prisma.empty : Prisma.sql`AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
+        )`;
 
     const vendedorData = await prisma.$queryRaw<any[]>(Prisma.sql`
       WITH tickets_in_range AS (
@@ -1039,11 +1058,7 @@ export const DashboardService = {
         FROM tickets_in_range t
         JOIN "Jugada" j ON j."ticketId" = t.id
         WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
-        AND NOT EXISTS (
-          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
-          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
-          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
-        )
+        ${jugadaExclusionFilter}
         GROUP BY t."vendedorId"
       ),
       statements_agg AS (
@@ -1153,7 +1168,13 @@ export const DashboardService = {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const skipExclusion = await isExclusionListEmpty();
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
+    const jugadaExclusionFilter = skipExclusion ? Prisma.empty : Prisma.sql`AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
+        )`;
 
     // SQL consolidada para evitar picos de memoria y múltiples round-trips
     const ventanaData = await prisma.$queryRaw<any[]>(Prisma.sql`
@@ -1171,11 +1192,7 @@ export const DashboardService = {
         FROM tickets_in_range t
         JOIN "Jugada" j ON j."ticketId" = t.id
         WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
-        AND NOT EXISTS (
-          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
-          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
-          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
-        )
+        ${jugadaExclusionFilter}
         GROUP BY t."ventanaId"
       ),
       statements_agg AS (
@@ -1277,7 +1294,13 @@ export const DashboardService = {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const rangeStart = parseDateStart(fromDateStr);
     const rangeEnd = parseDateEnd(toDateStr);
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const skipExclusion = await isExclusionListEmpty();
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
+    const jugadaExclusionFilter = skipExclusion ? Prisma.empty : Prisma.sql`AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
+        )`;
 
     const vendedorData = await prisma.$queryRaw<any[]>(Prisma.sql`
       WITH tickets_in_range AS (
@@ -1294,11 +1317,7 @@ export const DashboardService = {
         FROM tickets_in_range t
         JOIN "Jugada" j ON j."ticketId" = t.id
         WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
-        AND NOT EXISTS (
-          SELECT 1 FROM "sorteo_lista_exclusion" sle JOIN "User" u ON u.id = sle.ventana_id
-          WHERE sle.sorteo_id = t."sorteoId" AND u."ventanaId" = t."ventanaId"
-          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId") AND sle.multiplier_id = j."multiplierId"
-        )
+        ${jugadaExclusionFilter}
         GROUP BY t."vendedorId"
       ),
       statements_agg AS (
@@ -1429,7 +1448,8 @@ export const DashboardService = {
    */
   async getSummary(filters: DashboardFilters, role?: Role): Promise<DashboardSummary> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const skipExclusion = await isExclusionListEmpty();
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
     //  NOTE: Commission already included in SQL snapshot
     // No need to call computeVentanaCommissionFromPolicies
 
@@ -1668,7 +1688,8 @@ export const DashboardService = {
     }
 
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const skipExclusion = await isExclusionListEmpty();
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
 
     // Determinar formato de fecha según interval
     const dateFormat =
@@ -1755,7 +1776,7 @@ export const DashboardService = {
         compare: false, // Evitar recursión infinita
       };
       const { fromDateStr: prevFromDateStr, toDateStr: prevToDateStr } = getBusinessDateRangeStrings(previousFilters);
-      const prevBaseFilters = buildTicketBaseFilters("t", previousFilters, prevFromDateStr, prevToDateStr);
+      const prevBaseFilters = buildTicketBaseFilters("t", previousFilters, prevFromDateStr, prevToDateStr, skipExclusion);
 
       const prevResult = await prisma.$queryRaw<
         Array<{
@@ -1838,7 +1859,8 @@ export const DashboardService = {
     const topLimit = filters.top || 10;
 
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const skipExclusion = await isExclusionListEmpty();
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
 
     const topNumbers = await prisma.$queryRaw<
       Array<{
@@ -2007,7 +2029,16 @@ export const DashboardService = {
     const orderDirection = order === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
 
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr);
+    const skipExclusion = await isExclusionListEmpty();
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
+    const jugadaExclusionFilter = skipExclusion ? Prisma.empty : Prisma.sql`AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle
+          JOIN "User" u ON u.id = sle.ventana_id
+          WHERE sle.sorteo_id = t."sorteoId"
+          AND u."ventanaId" = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+          AND sle.multiplier_id = j."multiplierId"
+        )`;
 
     const result = await prisma.$queryRaw<
       Array<{
@@ -2048,14 +2079,7 @@ export const DashboardService = {
           JOIN "Jugada" j ON j."ticketId" = t.id
           WHERE j."deletedAt" IS NULL
           AND j."isExcluded" = false
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u ON u.id = sle.ventana_id
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND u."ventanaId" = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
+          ${jugadaExclusionFilter}
           GROUP BY t."vendedorId"
         ),
         commissions_per_vendedor AS (
@@ -2067,14 +2091,7 @@ export const DashboardService = {
           JOIN "Jugada" j ON j."ticketId" = t.id
           WHERE j."deletedAt" IS NULL
           AND j."isExcluded" = false
-          AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            JOIN "User" u ON u.id = sle.ventana_id
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND u."ventanaId" = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )
+          ${jugadaExclusionFilter}
           GROUP BY t."vendedorId"
         ),
         vendedor_summary AS (
@@ -2198,7 +2215,8 @@ export const DashboardService = {
     };
 
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(previousFilters);
-    const baseFilters = buildTicketBaseFilters("t", previousFilters, fromDateStr, toDateStr);
+    const skipExclusion = await isExclusionListEmpty();
+    const baseFilters = buildTicketBaseFilters("t", previousFilters, fromDateStr, toDateStr, skipExclusion);
 
     //  NOTE: Commission already included in SQL snapshot for previous period
     // No need to call computeVentanaCommissionFromPolicies

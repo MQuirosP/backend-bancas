@@ -12,15 +12,42 @@ import {
   VendedorMetrics,
   CierreAggregateRow,
   VendedorAggregateRow,
+  VendedorAggregateRowWithDate,
+  CierreBySellerExportData,
+  BandExportData,
+  SellerLoteriaRow,
   LoteriaType,
   CierreLoteriaGroup,
   CierreSorteoGroup,
   CierreBandData,
+  JugadaTipo,
 } from '../types/cierre.types';
 import { CierreMetaExtras, BandsUsedMetadata } from '../types/cierre.types';
 import { createHash } from 'crypto';
 import logger from '../../../core/logger';
 import { crDateService } from '../../../utils/crDateService';
+import { isExclusionListEmpty } from '../../../core/exclusionListCache';
+
+/** Fila interna para el desglose vendedor × lotería × sorteo × tipo × banda */
+interface SellerSorteoAggregateRow {
+  vendedorId: string;
+  vendedorNombre: string;
+  ventanaId: string;
+  ventanaNombre: string;
+  loteriaId: string;
+  loteriaNombre: string;
+  sorteoId: string;
+  turno: string;
+  scheduledAt: Date;
+  tipo: JugadaTipo;
+  banda: number;
+  totalVendida: number;
+  ganado: number;
+  comisionTotal: number;
+  refuerzos: number;
+  ticketsCount: number;
+  jugadasCount: number;
+}
 
 /**
  * Servicio para Cierre Operativo
@@ -86,15 +113,21 @@ export class CierreService {
     const startTime = Date.now();
     let queryCount = 0;
 
-    // Ejecutar agregación por vendedor
+    // Ejecutar agregación por vendedor (resumen de totales y bandas)
     const rawData = await this.executeSellerAggregation(filters);
     queryCount += 1;
+
+    // Ejecutar agregación por vendedor × sorteo (para loterias[])
+    const sorteoData = await this.executeSellerAggregationBySorteo(filters);
+    queryCount += 1;
+    const sellerLoterias = this.buildSellerLoterias(sorteoData);
 
     // Transformar datos
     const { totals, vendedores } = this.transformSellerData(
       rawData,
       top,
-      orderBy
+      orderBy,
+      sellerLoterias
     );
 
     // bandsUsed desde datos de vendedor
@@ -121,12 +154,221 @@ export class CierreService {
   }
 
   /**
+   * Agrega datos por vendedor con desglose por banda y día — para export Excel
+   * REVENTADO hereda la banda de su NUMERO asociado (igual que el weekly)
+   */
+  static async aggregateBySellerForExport(
+    filters: CierreFilters
+  ): Promise<CierreBySellerExportData> {
+    const rawData = await this.executeSellerAggregationByDay(filters);
+    return this.transformSellerDataForExport(rawData);
+  }
+
+  /**
+   * Query de vendedores por día, lotería y turno con banda correcta para REVENTADO
+   * Agrega por (vendedor, ventana, lotería, turno, banda, fecha)
+   */
+  private static async executeSellerAggregationByDay(
+    filters: CierreFilters
+  ): Promise<VendedorAggregateRowWithDate[]> {
+    const whereConditions = await this.buildWhereConditions(filters);
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
+
+    const query = Prisma.sql`
+      WITH
+        relevant_tickets AS MATERIALIZED (
+          SELECT t.id
+          FROM "Ticket" t
+          WHERE
+            t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
+            AND t."isActive" = true
+            AND t."deletedAt" IS NULL
+            AND t."status" != 'CANCELLED'
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+        ),
+        lm_active AS MATERIALIZED (
+          SELECT
+            lm."loteriaId",
+            lm."valueX",
+            lm."appliesToDate",
+            lm."appliesToSorteoId"
+          FROM "LoteriaMultiplier" lm
+          WHERE lm."kind" = 'NUMERO'
+            AND lm."isActive" = true
+        ),
+        numero_bandas AS MATERIALIZED (
+          SELECT
+            j."ticketId",
+            j.number,
+            MIN(j."finalMultiplierX") AS banda
+          FROM "Jugada" j
+          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
+          WHERE j.type = 'NUMERO'
+            AND j."isActive" = true
+            AND j."deletedAt" IS NULL
+          GROUP BY j."ticketId", j.number
+        ),
+        base AS (
+          SELECT
+            u.id          AS uid,
+            u.name        AS uname,
+            v.id          AS vid,
+            v.name        AS vname,
+            l.id          AS "loteriaId",
+            l.name        AS "loteriaNombre",
+            t.id          AS "ticketId",
+            t."businessDate" AS "businessDate",
+            TO_CHAR(s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') AS turno,
+            j.type          AS tipo,
+            j.amount,
+            j.payout,
+            j."listeroCommissionAmount",
+            CASE
+              WHEN j.type = 'NUMERO' AND EXISTS (
+                SELECT 1 FROM lm_active lm
+                WHERE lm."loteriaId" = t."loteriaId"
+                  AND lm."valueX" = j."finalMultiplierX"
+                  AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
+                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
+              ) THEN j."finalMultiplierX"
+              WHEN j.type = 'REVENTADO' THEN nb.banda
+              ELSE NULL
+            END AS banda
+          FROM "Jugada" j
+          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
+          INNER JOIN "Ticket" t ON j."ticketId" = t.id
+          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+          INNER JOIN "Loteria" l ON l.id = t."loteriaId"
+          INNER JOIN "User" u ON t."vendedorId" = u.id
+          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+          LEFT JOIN numero_bandas nb ON nb."ticketId" = j."ticketId"
+            AND nb.number = j.number
+            AND j.type = 'REVENTADO'
+          WHERE
+            t."deletedAt" IS NULL
+            AND j."deletedAt" IS NULL
+            AND t."status" != 'CANCELLED'
+            AND t."isActive" = true
+            AND j."isActive" = true
+            AND s."status" = 'EVALUATED'
+            ${whereConditions}
+        )
+      SELECT
+        base.uid             AS "vendedorId",
+        base.uname           AS "vendedorNombre",
+        base.vid             AS "ventanaId",
+        base.vname           AS "ventanaNombre",
+        base."loteriaId",
+        base."loteriaNombre",
+        base.turno,
+        base.tipo,
+        base.banda,
+        TO_CHAR(base."businessDate", 'YYYY-MM-DD')                  AS fecha,
+        COALESCE(SUM(base.amount), 0)::FLOAT                        AS "totalVendida",
+        COALESCE(SUM(base.payout), 0)::FLOAT                        AS ganado,
+        COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT      AS "comisionTotal",
+        0::FLOAT                                                     AS refuerzos,
+        COUNT(DISTINCT base."ticketId")::INT                        AS "ticketsCount",
+        COUNT(*)::INT                                               AS "jugadasCount"
+      FROM base
+      WHERE base.banda IS NOT NULL
+      GROUP BY
+        base.uid, base.uname, base.vid, base.vname,
+        base."loteriaId", base."loteriaNombre",
+        base.turno, base.tipo, base.banda,
+        TO_CHAR(base."businessDate", 'YYYY-MM-DD')
+      ORDER BY
+        base.uname ASC,
+        base."loteriaNombre" ASC,
+        base.turno ASC,
+        base.tipo ASC,
+        base.banda ASC,
+        TO_CHAR(base."businessDate", 'YYYY-MM-DD') ASC
+    `;
+
+    const result = await prisma.$queryRaw<VendedorAggregateRowWithDate[]>(query);
+
+    return result.map((row: any) => ({
+      ...row,
+      banda: row.banda != null ? Number(row.banda) : undefined,
+    }));
+  }
+
+  /**
+   * Transforma filas raw (vendedor × lotería × turno × banda × día) en estructura pivot por banda
+   */
+  private static transformSellerDataForExport(
+    rawData: VendedorAggregateRowWithDate[]
+  ): CierreBySellerExportData {
+    // banda → (vendedorId|loteriaId|turno) → SellerLoteriaRow
+    const bandMap = new Map<number, {
+      rowMap: Map<string, SellerLoteriaRow>;
+      fechasSet: Set<string>;
+      total: CeldaMetrics;
+    }>();
+    const grandTotal = this.createEmptyMetrics();
+
+    for (const row of rawData) {
+      if (row.banda == null) continue;
+      const banda = Number(row.banda);
+
+      if (!bandMap.has(banda)) {
+        bandMap.set(banda, { rowMap: new Map(), fechasSet: new Set(), total: this.createEmptyMetrics() });
+      }
+      const bandEntry = bandMap.get(banda)!;
+      bandEntry.fechasSet.add(row.fecha);
+
+      const rowKey = `${row.vendedorId}|${row.loteriaId}|${row.turno}|${row.tipo}`;
+      if (!bandEntry.rowMap.has(rowKey)) {
+        bandEntry.rowMap.set(rowKey, {
+          vendedorId: row.vendedorId,
+          vendedorNombre: row.vendedorNombre,
+          ventanaNombre: row.ventanaNombre,
+          loteriaId: row.loteriaId,
+          loteriaNombre: row.loteriaNombre,
+          turno: row.turno,
+          tipo: row.tipo,
+          dias: {},
+          total: this.createEmptyMetrics(),
+        });
+      }
+
+      const loteriaRow = bandEntry.rowMap.get(rowKey)!;
+      const metrics = this.rowToMetrics(row);
+
+      loteriaRow.dias[row.fecha] = metrics;
+      this.accumulateMetrics(loteriaRow.total, metrics);
+      this.accumulateMetrics(bandEntry.total, metrics);
+      this.accumulateMetrics(grandTotal, metrics);
+    }
+
+    // Construir array de bandas ordenadas
+    const bands: BandExportData[] = Array.from(bandMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([band, { rowMap, fechasSet, total }]) => {
+        const fechas = Array.from(fechasSet).sort();
+        const rows = Array.from(rowMap.values())
+          .sort((a, b) =>
+            a.vendedorNombre.localeCompare(b.vendedorNombre) ||
+            a.loteriaNombre.localeCompare(b.loteriaNombre) ||
+            a.turno.localeCompare(b.turno) ||
+            a.tipo.localeCompare(b.tipo)
+          );
+        return { band, fechas, rows, total };
+      });
+
+    return { bands, total: grandTotal };
+  }
+
+  /**
    * Ejecuta agregación SQL para datos semanales
    */
   private static async executeWeeklyAggregation(
     filters: CierreFilters
   ): Promise<CierreAggregateRow[]> {
-    const whereConditions = this.buildWhereConditions(filters);
+    const whereConditions = await this.buildWhereConditions(filters);
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
 
     // OPTIMIZACIÓN: Tres CTEs eliminan el Seq Scan completo de Jugada:
@@ -250,7 +492,7 @@ export class CierreService {
     const result = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SET LOCAL statement_timeout = '30000'`;
       return tx.$queryRaw<CierreAggregateRow[]>(query);
-    });
+    }, { timeout: 35000 });
 
     return result.map((row: any) => ({
       ...row,
@@ -265,7 +507,7 @@ export class CierreService {
   private static async executeSellerAggregation(
     filters: CierreFilters
   ): Promise<VendedorAggregateRow[]> {
-    const whereConditions = this.buildWhereConditions(filters);
+    const whereConditions = await this.buildWhereConditions(filters);
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
 
     // OPTIMIZACIÓN: Tres CTEs eliminan el Seq Scan completo de Jugada y el EXISTS triple:
@@ -361,7 +603,7 @@ export class CierreService {
     const result = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SET LOCAL statement_timeout = '30000'`;
       return tx.$queryRaw<VendedorAggregateRow[]>(query);
-    });
+    }, { timeout: 35000 });
 
     return result.map((row: any) => ({
       ...row,
@@ -370,9 +612,267 @@ export class CierreService {
   }
 
   /**
+   * Agrega por (vendedor, ventana, lotería, sorteo, turno, tipo, banda) para construir
+   * el desglose loterias[] dentro de cada VendedorMetrics.
+   * Usa herencia de banda para REVENTADO (igual que weekly).
+   */
+  private static async executeSellerAggregationBySorteo(
+    filters: CierreFilters
+  ): Promise<SellerSorteoAggregateRow[]> {
+    const whereConditions = await this.buildWhereConditions(filters);
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
+
+    const query = Prisma.sql`
+      WITH
+        relevant_tickets AS MATERIALIZED (
+          SELECT t.id
+          FROM "Ticket" t
+          WHERE
+            t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
+            AND t."isActive" = true
+            AND t."deletedAt" IS NULL
+            AND t."status" != 'CANCELLED'
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+        ),
+        lm_active AS MATERIALIZED (
+          SELECT
+            lm."loteriaId",
+            lm."valueX",
+            lm."appliesToDate",
+            lm."appliesToSorteoId"
+          FROM "LoteriaMultiplier" lm
+          WHERE lm."kind" = 'NUMERO'
+            AND lm."isActive" = true
+        ),
+        numero_bandas AS MATERIALIZED (
+          SELECT
+            j."ticketId",
+            j.number,
+            MIN(j."finalMultiplierX") AS banda
+          FROM "Jugada" j
+          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
+          WHERE j.type = 'NUMERO'
+            AND j."isActive" = true
+            AND j."deletedAt" IS NULL
+          GROUP BY j."ticketId", j.number
+        ),
+        base AS (
+          SELECT
+            u.id          AS uid,
+            u.name        AS uname,
+            v.id          AS vid,
+            v.name        AS vname,
+            j.id          AS "jugadaId",
+            j.type        AS type,
+            j.amount,
+            j.payout,
+            j."listeroCommissionAmount",
+            t.id          AS "ticketId",
+            t."loteriaId" AS "loteriaId",
+            t."sorteoId"  AS "sorteoId",
+            s."scheduledAt" AS "scheduledAt",
+            CASE
+              WHEN j.type = 'NUMERO' AND EXISTS (
+                SELECT 1 FROM lm_active lm
+                WHERE lm."loteriaId" = t."loteriaId"
+                  AND lm."valueX" = j."finalMultiplierX"
+                  AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
+                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
+              ) THEN j."finalMultiplierX"
+              WHEN j.type = 'REVENTADO' THEN nb.banda
+              ELSE NULL
+            END AS banda
+          FROM "Jugada" j
+          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
+          INNER JOIN "Ticket" t ON j."ticketId" = t.id
+          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+          INNER JOIN "User" u ON t."vendedorId" = u.id
+          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+          LEFT JOIN numero_bandas nb ON nb."ticketId" = j."ticketId"
+            AND nb.number = j.number
+            AND j.type = 'REVENTADO'
+          WHERE
+            t."deletedAt" IS NULL
+            AND j."deletedAt" IS NULL
+            AND t."status" != 'CANCELLED'
+            AND t."isActive" = true
+            AND j."isActive" = true
+            AND s."status" = 'EVALUATED'
+            ${whereConditions}
+        )
+      SELECT
+        base.uid          AS "vendedorId",
+        base.uname        AS "vendedorNombre",
+        base.vid          AS "ventanaId",
+        base.vname        AS "ventanaNombre",
+        CAST(base.banda AS INT) AS banda,
+        base.type AS tipo,
+        l.id AS "loteriaId",
+        l.name AS "loteriaNombre",
+        base."sorteoId" AS "sorteoId",
+        TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') AS turno,
+        MIN(base."scheduledAt") AS "scheduledAt",
+        COALESCE(SUM(base.amount), 0)::FLOAT AS "totalVendida",
+        COALESCE(SUM(base.payout), 0)::FLOAT AS ganado,
+        COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT AS "comisionTotal",
+        0::FLOAT AS refuerzos,
+        COUNT(DISTINCT base."ticketId")::INT AS "ticketsCount",
+        COUNT(base."jugadaId")::INT AS "jugadasCount"
+      FROM base
+      INNER JOIN "Loteria" l ON l.id = base."loteriaId"
+      WHERE base.banda IS NOT NULL
+      GROUP BY
+        base.uid, base.uname, base.vid, base.vname,
+        CAST(base.banda AS INT),
+        base.type,
+        l.id, l.name,
+        base."sorteoId",
+        TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI')
+      ORDER BY
+        base.uname ASC,
+        l.name ASC,
+        turno ASC,
+        base.type ASC,
+        CAST(base.banda AS INT) ASC
+    `;
+
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SET LOCAL statement_timeout = '30000'`;
+      return tx.$queryRaw<SellerSorteoAggregateRow[]>(query);
+    }, { timeout: 35000 });
+
+    return result.map((row: any) => ({
+      ...row,
+      banda: Number(row.banda),
+      scheduledAt: row.scheduledAt ? new Date(row.scheduledAt) : undefined,
+    }));
+  }
+
+  /**
+   * Agrupa filas de vendedor×sorteo en Map<vendedorId, CierreLoteriaGroup[]>
+   * con la misma estructura jerárquica que el endpoint /weekly.
+   */
+  private static buildSellerLoterias(
+    rawData: SellerSorteoAggregateRow[]
+  ): Map<string, CierreLoteriaGroup[]> {
+    // vendedorId → loteriaId → sorteoKey → { loteria, sorteo, bands, subtotals }
+    const vendedorMap = new Map<string, Map<string, {
+      loteria: { id: string; name: string };
+      sorteos: Map<string, {
+        sorteo: { id: string; turno: string; scheduledAt?: string };
+        bands: Map<string, CierreBandData>;
+        subtotal: CeldaMetrics;
+      }>;
+      subtotal: CeldaMetrics;
+    }>>();
+
+    for (const row of rawData) {
+      const { vendedorId, loteriaId, sorteoId, tipo } = row;
+      const sorteoKey = `${sorteoId}|${tipo}`;
+      const bandaKey = String(row.banda);
+
+      if (!vendedorMap.has(vendedorId)) {
+        vendedorMap.set(vendedorId, new Map());
+      }
+      const loteriaMap = vendedorMap.get(vendedorId)!;
+
+      if (!loteriaMap.has(loteriaId)) {
+        loteriaMap.set(loteriaId, {
+          loteria: { id: loteriaId, name: row.loteriaNombre },
+          sorteos: new Map(),
+          subtotal: this.createEmptyMetrics(),
+        });
+      }
+      const loteriaGroup = loteriaMap.get(loteriaId)!;
+
+      if (!loteriaGroup.sorteos.has(sorteoKey)) {
+        loteriaGroup.sorteos.set(sorteoKey, {
+          sorteo: {
+            id: sorteoId,
+            turno: `${row.turno} ${tipo === 'NUMERO' ? 'Numero' : 'Reventado'}`,
+            scheduledAt: row.scheduledAt?.toISOString(),
+          },
+          bands: new Map(),
+          subtotal: this.createEmptyMetrics(),
+        });
+      }
+      const sorteoGroup = loteriaGroup.sorteos.get(sorteoKey)!;
+
+      const metrics = this.rowToMetrics(row);
+
+      if (!sorteoGroup.bands.has(bandaKey)) {
+        sorteoGroup.bands.set(bandaKey, {
+          band: row.banda,
+          totalVendida: 0,
+          ganado: 0,
+          comisionTotal: 0,
+          netoDespuesComision: 0,
+          ticketsCount: 0,
+          refuerzos: 0,
+          numero: undefined,
+          reventado: undefined,
+        });
+      }
+      const bandRef = sorteoGroup.bands.get(bandaKey)!;
+      bandRef.totalVendida += metrics.totalVendida;
+      bandRef.ganado += metrics.ganado;
+      bandRef.comisionTotal += metrics.comisionTotal;
+      bandRef.netoDespuesComision += metrics.netoDespuesComision;
+      bandRef.ticketsCount += metrics.ticketsCount;
+      bandRef.refuerzos = (bandRef.refuerzos || 0) + (metrics.refuerzos || 0);
+      if (tipo === 'NUMERO') {
+        if (!bandRef.numero) bandRef.numero = this.createEmptyMetrics();
+        this.accumulateMetrics(bandRef.numero, metrics);
+      } else if (tipo === 'REVENTADO') {
+        if (!bandRef.reventado) bandRef.reventado = this.createEmptyMetrics();
+        this.accumulateMetrics(bandRef.reventado, metrics);
+      }
+
+      this.accumulateMetrics(sorteoGroup.subtotal, metrics);
+      this.accumulateMetrics(loteriaGroup.subtotal, metrics);
+    }
+
+    // Serializar a CierreLoteriaGroup[] por vendedor
+    const result = new Map<string, CierreLoteriaGroup[]>();
+
+    for (const [vendedorId, loteriaMap] of Array.from(vendedorMap.entries())) {
+      const loterias: CierreLoteriaGroup[] = [];
+
+      for (const [, loteriaGroup] of Array.from(loteriaMap.entries())) {
+        const sorteos: CierreSorteoGroup[] = [];
+
+        for (const [, sorteoGroup] of Array.from(loteriaGroup.sorteos.entries())) {
+          const bands: Record<string, CierreBandData> = {};
+          for (const [bandaKey, bandData] of Array.from(sorteoGroup.bands.entries())) {
+            bands[bandaKey] = bandData;
+          }
+          sorteos.push({ sorteo: sorteoGroup.sorteo, bands, subtotal: sorteoGroup.subtotal });
+        }
+
+        sorteos.sort((a, b) => {
+          if (a.sorteo.scheduledAt && b.sorteo.scheduledAt) {
+            const diff = new Date(a.sorteo.scheduledAt).getTime() - new Date(b.sorteo.scheduledAt).getTime();
+            if (diff !== 0) return diff;
+          }
+          return a.sorteo.turno.localeCompare(b.sorteo.turno);
+        });
+
+        loterias.push({ loteria: loteriaGroup.loteria, sorteos, subtotal: loteriaGroup.subtotal });
+      }
+
+      loterias.sort((a, b) => a.loteria.name.localeCompare(b.loteria.name));
+      result.set(vendedorId, loterias);
+    }
+
+    return result;
+  }
+
+  /**
    * Construye condiciones WHERE dinámicas
    */
-  private static buildWhereConditions(filters: CierreFilters): Prisma.Sql {
+  private static async buildWhereConditions(filters: CierreFilters): Promise<Prisma.Sql> {
     const conditions: Prisma.Sql[] = [];
 
     // Rango de fechas (obligatorio) usando businessDate directamente (siempre poblado)
@@ -400,12 +900,14 @@ export class CierreService {
     }
 
     //  NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
-    conditions.push(Prisma.sql`NOT EXISTS (
-      SELECT 1 FROM "sorteo_lista_exclusion" sle
-      WHERE sle.sorteo_id = t."sorteoId"
-      AND sle.ventana_id = t."ventanaId"
-      AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-    )`);
+    if (!await isExclusionListEmpty()) {
+      conditions.push(Prisma.sql`NOT EXISTS (
+        SELECT 1 FROM "sorteo_lista_exclusion" sle
+        WHERE sle.sorteo_id = t."sorteoId"
+        AND sle.ventana_id = t."ventanaId"
+        AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+      )`);
+    }
 
     // Combinar condiciones con AND
     if (conditions.length === 0) {
@@ -699,7 +1201,8 @@ export class CierreService {
   private static transformSellerData(
     rawData: VendedorAggregateRow[],
     top?: number,
-    orderBy: 'totalVendida' | 'ganado' | 'netoDespuesComision' = 'totalVendida'
+    orderBy: 'totalVendida' | 'ganado' | 'netoDespuesComision' = 'totalVendida',
+    sellerLoterias?: Map<string, CierreLoteriaGroup[]>
   ): {
     totals: CeldaMetrics;
     vendedores: VendedorMetrics[];
@@ -734,8 +1237,14 @@ export class CierreService {
       }
     }
 
-    // Convertir a array
+    // Convertir a array e inyectar loterias[] si están disponibles
     let vendedores = Array.from(vendedorMap.values());
+    if (sellerLoterias) {
+      for (const vendedor of vendedores) {
+        const loterias = sellerLoterias.get(vendedor.vendedorId);
+        if (loterias) vendedor.loterias = loterias;
+      }
+    }
 
     // Ordenar
     vendedores.sort((a, b) => {

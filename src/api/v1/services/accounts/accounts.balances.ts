@@ -3,6 +3,7 @@ import prisma from "../../../../core/prismaClient";
 import logger from "../../../../core/logger";
 import { getCachedPreviousMonthBalance, setCachedPreviousMonthBalance } from "../../../../utils/accountStatementCache";
 import { crDateService } from "../../../../utils/crDateService";
+import { isExclusionListEmpty } from "../../../../core/exclusionListCache";
 
 /**
  * Interface para los parámetros de cálculo de saldo anterior desde fuente
@@ -59,13 +60,17 @@ async function calculatePreviousMonthBalanceFromSource(
             Prisma.sql`t."status" != 'CANCELLED'`,
             Prisma.sql`EXISTS (SELECT 1 FROM "Sorteo" s WHERE s.id = t."sorteoId" AND s.status = 'EVALUATED')`,
             Prisma.sql`t."businessDate" BETWEEN ${firstDayCRStr}::date AND ${lastDayCRStr}::date`,
-            Prisma.sql`NOT EXISTS (
+        ];
+
+        // Excluir tickets de listas bloqueadas (solo si hay exclusiones activas)
+        if (!await isExclusionListEmpty()) {
+            ticketConditions.push(Prisma.sql`NOT EXISTS (
                 SELECT 1 FROM "sorteo_lista_exclusion" sle
                 WHERE sle.sorteo_id = t."sorteoId"
                 AND sle.ventana_id = t."ventanaId"
                 AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            )`,
-        ];
+            )`);
+        }
 
         // Aplicar filtros según dimensión
         if (filters.bancaId) {

@@ -15,6 +15,7 @@ import prisma from '../../../core/prismaClient';
 import { resolveDateRange } from '../../../utils/dateRange';
 import { Prisma } from '@prisma/client';
 import logger from '../../../core/logger';
+import { isExclusionListEmpty } from '../../../core/exclusionListCache';
 
 /**
  * Servicio orquestador para exportación de comisiones
@@ -204,14 +205,6 @@ export class CommissionsExportService {
       )`,
       Prisma.sql`t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date`,
       Prisma.sql`j."isExcluded" IS FALSE`,
-      // Excluir tickets de listas bloqueadas (ticket-level: multiplier_id IS NULL)
-      Prisma.sql`NOT EXISTS (
-        SELECT 1 FROM "sorteo_lista_exclusion" sle
-        WHERE sle.sorteo_id = t."sorteoId"
-        AND sle.ventana_id = t."ventanaId"
-        AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-        AND sle.multiplier_id IS NULL
-      )`,
     ];
 
     // Filtrar por banca activa (para ADMIN multibanca)
@@ -237,7 +230,29 @@ export class CommissionsExportService {
       }
     }
 
+    // Excluir tickets de listas bloqueadas a nivel ticket (solo si hay exclusiones activas)
+    if (!await isExclusionListEmpty()) {
+      whereConditions.push(Prisma.sql`NOT EXISTS (
+        SELECT 1 FROM "sorteo_lista_exclusion" sle
+        WHERE sle.sorteo_id = t."sorteoId"
+        AND sle.ventana_id = t."ventanaId"
+        AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+        AND sle.multiplier_id IS NULL
+      )`);
+    }
+
     const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, ' AND ')}`;
+
+    // Filtro de exclusión por jugada (solo si hay exclusiones activas)
+    const exclusionJugadaFilter = await isExclusionListEmpty()
+      ? Prisma.empty
+      : Prisma.sql`AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle
+          WHERE sle.sorteo_id = t."sorteoId"
+          AND sle.ventana_id = t."ventanaId"
+          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+          AND sle.multiplier_id = j."multiplierId"
+        )`;
 
     // Query para obtener breakdown
     const result = await prisma.$queryRaw<
@@ -280,13 +295,7 @@ export class CommissionsExportService {
       LEFT JOIN "User" u ON u.id = t."vendedorId"
       LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
       ${whereClause}
-      AND NOT EXISTS (
-        SELECT 1 FROM "sorteo_lista_exclusion" sle
-        WHERE sle.sorteo_id = t."sorteoId"
-        AND sle.ventana_id = t."ventanaId"
-        AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-        AND sle.multiplier_id = j."multiplierId"
-      )
+      ${exclusionJugadaFilter}
       GROUP BY business_date, v.name, u.name, l.name, s."scheduledAt", lm.name, lm."valueX", lm.kind
       ORDER BY business_date DESC, l.name ASC, s."scheduledAt" ASC
     `;
@@ -342,7 +351,9 @@ export class CommissionsExportService {
   ): Promise<CommissionWarning[]> {
     const warnings: CommissionWarning[] = [];
 
-    // Detectar exclusiones activas
+    // Detectar exclusiones activas (omitir si la tabla está vacía)
+    if (await isExclusionListEmpty()) return warnings;
+
     const exclusionesActivas = await prisma.$queryRaw<
       Array<{ sorteo_name: string; ventana_name: string; multiplier_name: string | null }>
     >`
