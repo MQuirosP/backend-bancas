@@ -8,6 +8,7 @@ import { resolveDateRange, DateRangeResolution } from "../../../utils/dateRange"
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 
 const _idempotencyCache = new Map<string, { data: any; expiresAt: number }>();
+const _inflightRequests = new Map<string, Promise<any>>();
 
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
@@ -24,9 +25,22 @@ export const TicketController = {
         });
         return success(res, cached.data);
       }
+
+      // Si hay un request en vuelo con el mismo clientRequestId, esperar ese resultado
+      // en lugar de crear un ticket duplicado
+      const inflight = _inflightRequests.get(clientRequestId);
+      if (inflight) {
+        req.logger?.info({
+          layer: "controller",
+          action: "TICKET_CREATE_IDEMPOTENCY_INFLIGHT",
+          payload: { clientRequestId, userId },
+        });
+        const result = await inflight;
+        return success(res, result);
+      }
     }
 
-    const result = await TicketService.create(
+    const promise = TicketService.create(
       req.body,
       userId,
       req.requestId,
@@ -34,6 +48,19 @@ export const TicketController = {
     );
 
     if (clientRequestId) {
+      _inflightRequests.set(clientRequestId, promise);
+    }
+
+    let result: any;
+    try {
+      result = await promise;
+    } catch (err) {
+      if (clientRequestId) _inflightRequests.delete(clientRequestId);
+      throw err;
+    }
+
+    if (clientRequestId) {
+      _inflightRequests.delete(clientRequestId);
       _idempotencyCache.set(clientRequestId, {
         data: result,
         expiresAt: Date.now() + 5 * 60 * 1000,
