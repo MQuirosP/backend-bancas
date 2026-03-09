@@ -12,6 +12,7 @@ import { startSorteoCacheCleanup, stopSorteoCacheCleanup } from '../utils/sorteo
 import { startCommissionCacheCleanup, stopCommissionCacheCleanup } from '../utils/commissionCache'
 import { restrictionCacheV2 } from '../utils/restrictionCacheV2'
 import { activeOperationsService } from '../core/activeOperations.service'
+import { isExclusionListEmpty } from '../core/exclusionListCache'
 
 const server = http.createServer(app)
 
@@ -120,6 +121,24 @@ server.listen(config.port, async () => {
     logger.error({
       layer: 'server',
       action: 'COMMISSION_CACHE_CLEANUP_START_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
+  // Pre-cargar cache de lista de exclusión (evita scans en caliente)
+  try {
+    await isExclusionListEmpty()
+    logger.info({
+      layer: 'server',
+      action: 'EXCLUSION_LIST_CACHE_WARMED',
+      requestId: null,
+      payload: { message: 'Cache de lista de exclusión inicializado' },
+    })
+  } catch (error: any) {
+    logger.warn({
+      layer: 'server',
+      action: 'EXCLUSION_LIST_CACHE_WARM_ERROR',
       requestId: null,
       meta: { error: error instanceof Error ? error.message : String(error) },
     })
