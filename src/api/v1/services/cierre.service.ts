@@ -1,5 +1,18 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../../../core/prismaClient';
+import { CacheService } from '../../../core/cache.service';
+import crypto from 'crypto';
+
+const _cierreInFlight = new Map<string, Promise<any>>();
+
+function cierreWrap<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T> {
+  const inFlight = _cierreInFlight.get(key);
+  if (inFlight) return inFlight;
+  const promise = CacheService.wrap(key, fn, ttl, [`cierre:${key}`]);
+  _cierreInFlight.set(key, promise);
+  promise.finally(() => _cierreInFlight.delete(key));
+  return promise;
+}
 import {
   CierreFilters,
   CierreWeeklyData,
@@ -63,42 +76,49 @@ export class CierreService {
   static async aggregateWeekly(
     filters: CierreFilters
   ): Promise<CierreWeeklyData & { _performance: CierrePerformance; _metaExtras: CierreMetaExtras }> {
-    const startTime = Date.now();
-    let queryCount = 0;
+    const cacheKey = `cierre:weekly:${crypto.createHash('md5').update(JSON.stringify({
+      from: filters.fromDate.toISOString(),
+      to: filters.toDate.toISOString(),
+      scope: filters.scope,
+      ventanaId: filters.ventanaId || null,
+      bancaId: filters.bancaId || null,
+      loteriaId: filters.loteriaId || null,
+    })).digest('hex')}`;
 
-    // Ejecutar agregación principal
-    const rawData = await this.executeWeeklyAggregation(filters);
-    queryCount += 1;
+    return cierreWrap(cacheKey, 120, async () => {
+      const startTime = Date.now();
+      let queryCount = 0;
 
-    // Transformar datos en estructura jerárquica (Lotería → Sorteo → Tipo → Banda)
-    const { loterias, totals, orphanedDataCount } = this.transformWeeklyDataByLoteriaSorteo(rawData);
+      // Ejecutar agregación principal y anomalías en paralelo
+      const [rawData, anomalies] = await Promise.all([
+        this.executeWeeklyAggregation(filters).then(d => { queryCount += 1; return d; }),
+        computeAnomalies(filters).then(a => { queryCount += 2; return a; }),
+      ]);
 
-    // Calcular anomalías (jugadas fuera de banda)
-    const anomalies = await computeAnomalies(filters);
-    queryCount += 2; // count + sample
+      // Transformar datos en estructura jerárquica (Lotería → Sorteo → Tipo → Banda)
+      const { loterias, totals, orphanedDataCount } = this.transformWeeklyDataByLoteriaSorteo(rawData);
 
-    // Agregar orphanedDataCount a las anomalías si existe
-    if (orphanedDataCount !== undefined && orphanedDataCount > 0) {
-      anomalies.orphanedDataCount = orphanedDataCount;
-    }
+      if (orphanedDataCount !== undefined && orphanedDataCount > 0) {
+        anomalies.orphanedDataCount = orphanedDataCount;
+      }
 
-    // Calcular bandsUsed y configHash
-    const bandsUsed = computeBandsUsedFromWeekly(rawData);
-    const configHash = hashConfig(bandsUsed);
+      const bandsUsed = computeBandsUsedFromWeekly(rawData);
+      const configHash = hashConfig(bandsUsed);
 
-    return {
-      loterias,
-      totals,
-      _performance: {
-        queryExecutionTime: Date.now() - startTime,
-        totalQueries: queryCount,
-      },
-      _metaExtras: {
-        bandsUsed,
-        configHash,
-        anomalies,
-      },
-    };
+      return {
+        loterias,
+        totals,
+        _performance: {
+          queryExecutionTime: Date.now() - startTime,
+          totalQueries: queryCount,
+        },
+        _metaExtras: {
+          bandsUsed,
+          configHash,
+          anomalies,
+        },
+      };
+    });
   }
 
   /**
@@ -110,47 +130,47 @@ export class CierreService {
     top?: number,
     orderBy: 'totalVendida' | 'ganado' | 'netoDespuesComision' = 'totalVendida'
   ): Promise<CierreBySellerData & { _performance: CierrePerformance; _metaExtras: CierreMetaExtras }> {
-    const startTime = Date.now();
-    let queryCount = 0;
-
-    // Ejecutar agregación por vendedor (resumen de totales y bandas)
-    const rawData = await this.executeSellerAggregation(filters);
-    queryCount += 1;
-
-    // Ejecutar agregación por vendedor × sorteo (para loterias[])
-    const sorteoData = await this.executeSellerAggregationBySorteo(filters);
-    queryCount += 1;
-    const sellerLoterias = this.buildSellerLoterias(sorteoData);
-
-    // Transformar datos
-    const { totals, vendedores } = this.transformSellerData(
-      rawData,
-      top,
+    const cacheKey = `cierre:by-seller:${crypto.createHash('md5').update(JSON.stringify({
+      from: filters.fromDate.toISOString(),
+      to: filters.toDate.toISOString(),
+      scope: filters.scope,
+      ventanaId: filters.ventanaId || null,
+      bancaId: filters.bancaId || null,
+      loteriaId: filters.loteriaId || null,
+      top: top || null,
       orderBy,
-      sellerLoterias
-    );
+    })).digest('hex')}`;
 
-    // bandsUsed desde datos de vendedor
-    const bandsUsed = computeBandsUsedFromSeller(rawData);
-    const configHash = hashConfig(bandsUsed);
+    return cierreWrap(cacheKey, 120, async () => {
+      const startTime = Date.now();
+      let queryCount = 0;
 
-    // Anomalías comunes al periodo
-    const anomalies = await computeAnomalies(filters);
-    queryCount += 2;
+      // Tres queries independientes en paralelo
+      const [rawData, sorteoData, anomalies] = await Promise.all([
+        this.executeSellerAggregation(filters).then(d => { queryCount += 1; return d; }),
+        this.executeSellerAggregationBySorteo(filters).then(d => { queryCount += 1; return d; }),
+        computeAnomalies(filters).then(a => { queryCount += 2; return a; }),
+      ]);
 
-    return {
-      totals,
-      vendedores,
-      _performance: {
-        queryExecutionTime: Date.now() - startTime,
-        totalQueries: queryCount,
-      },
-      _metaExtras: {
-        bandsUsed,
-        configHash,
-        anomalies,
-      },
-    };
+      const sellerLoterias = this.buildSellerLoterias(sorteoData);
+      const { totals, vendedores } = this.transformSellerData(rawData, top, orderBy, sellerLoterias);
+      const bandsUsed = computeBandsUsedFromSeller(rawData);
+      const configHash = hashConfig(bandsUsed);
+
+      return {
+        totals,
+        vendedores,
+        _performance: {
+          queryExecutionTime: Date.now() - startTime,
+          totalQueries: queryCount,
+        },
+        _metaExtras: {
+          bandsUsed,
+          configHash,
+          anomalies,
+        },
+      };
+    });
   }
 
   /**

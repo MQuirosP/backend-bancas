@@ -1,4 +1,4 @@
-import { ActivityType, Role, TicketStatus } from "@prisma/client";
+import { ActivityType, Prisma, Role, TicketStatus } from "@prisma/client";
 import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import TicketRepository from "../../../repositories/ticket.repository";
 import ActivityService from "../../../core/activity.service";
@@ -21,6 +21,10 @@ import crypto from 'crypto';
 
 const CUTOFF_GRACE_MS = 1000;
 // Updated: Added clienteNombre field support
+
+// In-flight deduplication para getNumbersSummaryFilterOptions
+// Evita que N requests concurrentes con los mismos parámetros lancen N rondas de queries
+const _filterOptionsInFlight = new Map<string, Promise<any>>();
 
 /**
  * Extrae la configuración de impresión de un usuario/ventana
@@ -2314,7 +2318,10 @@ export const TicketService = {
     if (context.bancaId) tags.push(`banca:${context.bancaId}`);
     if (params.sorteoId) tags.push(`sorteo:${params.sorteoId}`);
 
-    return CacheService.wrap(
+    const inFlight = _filterOptionsInFlight.get(cacheKey);
+    if (inFlight) return inFlight;
+
+    const promise = CacheService.wrap(
       cacheKey,
       async () => {
     try {
@@ -2388,64 +2395,131 @@ export const TicketService = {
         where.status = params.status;
       }
 
-      // Si hay filtro por multiplicador, aplicarlo al where de tickets vía subrelación
-      if (params.multiplierId) {
-        where.jugadas = {
-          some: {
-            multiplierId: params.multiplierId,
-            deletedAt: null,
-            isActive: true,
-            type: 'NUMERO',
-          },
-        };
-      }
+      // Fase 1: 1 único raw SQL con CTEs — todas las agregaciones en 1 roundtrip/conexión
+      // Antes: 5-6 queries Prisma separadas (ConcurrencyManager limit:2 → 3 lotes de 2 conexiones)
+      // Ahora: 1 $queryRaw → 1 conexión, sin importar cuántos filtros estén activos
 
-      // Fase 1: queries de agregación en paralelo — evita cargar tickets en memoria
-      // y previene el límite de 32767 bind variables de PostgreSQL
-      const initialTasks: (() => Promise<any>)[] = [
-        () => prisma.ticket.count({ where }),
-        () => prisma.ticket.groupBy({ by: ['loteriaId'], where, _count: { id: true } }),
-        () => prisma.ticket.groupBy({ by: ['sorteoId'], where, _count: { id: true } }),
+      // Construir JOINs condicionales
+      const sqlJoins: Prisma.Sql[] = [];
+      if (params.sorteoStatus) {
+        sqlJoins.push(Prisma.sql`INNER JOIN "Sorteo" s ON t."sorteoId" = s.id`);
+      }
+      if (effectiveFilters.bancaId) {
+        sqlJoins.push(Prisma.sql`INNER JOIN "Ventana" v ON t."ventanaId" = v.id`);
+      }
+      const joinsSQL = sqlJoins.length > 0 ? Prisma.join(sqlJoins, ' ') : Prisma.empty;
+
+      // Construir condiciones WHERE
+      const sqlConditions: Prisma.Sql[] = [
+        Prisma.sql`t."deletedAt" IS NULL`,
+        Prisma.sql`t."isActive" = true`,
       ];
-
-      if (context.role === Role.ADMIN || context.role === Role.VENTANA) {
-        initialTasks.push(() => prisma.ticket.groupBy({
-          by: ['vendedorId'],
-          where,
-          _count: { id: true },
-        }));
+      if (params.sorteoStatus) {
+        sqlConditions.push(Prisma.sql`s.status::text = ${params.sorteoStatus}`);
       }
-
-      if (context.role === Role.ADMIN) {
-        initialTasks.push(() => prisma.ticket.groupBy({
-          by: ['ventanaId'],
-          where,
-          _count: { id: true },
-        }));
+      if (effectiveFilters.bancaId) {
+        sqlConditions.push(Prisma.sql`v."bancaId" = ${effectiveFilters.bancaId}::uuid`);
       }
+      if (effectiveFilters.vendedorId) {
+        sqlConditions.push(Prisma.sql`t."vendedorId" = ${effectiveFilters.vendedorId}::uuid`);
+      }
+      if (effectiveFilters.ventanaId) {
+        sqlConditions.push(Prisma.sql`t."ventanaId" = ${effectiveFilters.ventanaId}::uuid`);
+      }
+      if (dateFrom) {
+        sqlConditions.push(Prisma.sql`t."businessDate" >= ${dateFrom}`);
+      }
+      if (dateTo) {
+        sqlConditions.push(Prisma.sql`t."businessDate" <= ${dateTo}`);
+      }
+      if (params.loteriaId) {
+        sqlConditions.push(Prisma.sql`t."loteriaId" = ${params.loteriaId}::uuid`);
+      }
+      if (params.sorteoId) {
+        sqlConditions.push(Prisma.sql`t."sorteoId" = ${params.sorteoId}::uuid`);
+      }
+      if (params.status) {
+        sqlConditions.push(Prisma.sql`t.status::text = ${params.status}`);
+      }
+      if (params.multiplierId) {
+        sqlConditions.push(Prisma.sql`EXISTS (
+          SELECT 1 FROM "Jugada" jf
+          WHERE jf."ticketId" = t.id
+            AND jf."multiplierId" = ${params.multiplierId}::uuid
+            AND jf."deletedAt" IS NULL
+            AND jf."isActive" = true
+            AND jf.type::text = 'NUMERO'
+        )`);
+      }
+      const whereSQL = Prisma.join(sqlConditions, ' AND ');
 
-      initialTasks.push(() => prisma.jugada.groupBy({
-        by: ['multiplierId'],
-        where: {
-          ticket: { ...where },
-          deletedAt: null,
-          isActive: true,
-          type: 'NUMERO',
-          multiplierId: { not: null },
-          ...(params.multiplierId && { multiplierId: params.multiplierId }),
-        },
-        _count: { ticketId: true },
-      }));
+      // CTEs opcionales según rol
+      const multiplierFilter = params.multiplierId
+        ? Prisma.sql`AND j."multiplierId" = ${params.multiplierId}::uuid`
+        : Prisma.empty;
+      const vendedorCte = (context.role === Role.ADMIN || context.role === Role.VENTANA)
+        ? Prisma.sql`, vendedor_counts AS (SELECT "vendedorId"::text AS id, COUNT(*)::int AS cnt FROM filtered_tickets GROUP BY "vendedorId")`
+        : Prisma.empty;
+      const ventanaCte = context.role === Role.ADMIN
+        ? Prisma.sql`, ventana_counts AS (SELECT "ventanaId"::text AS id, COUNT(*)::int AS cnt FROM filtered_tickets GROUP BY "ventanaId")`
+        : Prisma.empty;
+      const vendedorSelect = (context.role === Role.ADMIN || context.role === Role.VENTANA)
+        ? Prisma.sql`, (SELECT COALESCE(json_agg(json_build_object('id', id, 'cnt', cnt)), '[]'::json) FROM vendedor_counts) AS vendedor_groups`
+        : Prisma.sql`, '[]'::json AS vendedor_groups`;
+      const ventanaSelect = context.role === Role.ADMIN
+        ? Prisma.sql`, (SELECT COALESCE(json_agg(json_build_object('id', id, 'cnt', cnt)), '[]'::json) FROM ventana_counts) AS ventana_groups`
+        : Prisma.sql`, '[]'::json AS ventana_groups`;
 
-      const results = await ConcurrencyManager.runLimited(initialTasks, { limit: 2, label: 'numbers-summary-filter-options-init' });
+      type RawAggGroup = { id: string; cnt: number };
+      type RawAggResult = {
+        total_tickets: bigint;
+        loteria_groups: RawAggGroup[] | null;
+        sorteo_groups: RawAggGroup[] | null;
+        multiplier_groups: RawAggGroup[] | null;
+        vendedor_groups: RawAggGroup[] | null;
+        ventana_groups: RawAggGroup[] | null;
+      };
 
-      const totalTickets = results[0] as number;
-      const loteriaGroups = results[1] as any[];
-      const sorteoGroups = results[2] as any[];
-      let nextIdx = 3;
-      const vendedorGroups = (context.role === Role.ADMIN || context.role === Role.VENTANA) ? results[nextIdx++] as any[] : [];
-      const ventanaGroups = (context.role === Role.ADMIN) ? results[nextIdx++] as any[] : [];
-      const multiplierGroups = results[nextIdx] as any[];
+      const [rawAgg] = await prisma.$queryRaw<RawAggResult[]>`
+        WITH filtered_tickets AS (
+          SELECT t.id, t."loteriaId", t."sorteoId", t."vendedorId", t."ventanaId"
+          FROM "Ticket" t
+          ${joinsSQL}
+          WHERE ${whereSQL}
+        ),
+        loteria_counts AS (
+          SELECT "loteriaId"::text AS id, COUNT(*)::int AS cnt FROM filtered_tickets GROUP BY "loteriaId"
+        ),
+        sorteo_counts AS (
+          SELECT "sorteoId"::text AS id, COUNT(*)::int AS cnt FROM filtered_tickets GROUP BY "sorteoId"
+        ),
+        multiplier_counts AS (
+          SELECT j."multiplierId"::text AS id, COUNT(DISTINCT j."ticketId")::int AS cnt
+          FROM "Jugada" j
+          INNER JOIN filtered_tickets ft ON j."ticketId" = ft.id
+          WHERE j."deletedAt" IS NULL AND j."isActive" = true
+            AND j.type::text = 'NUMERO' AND j."multiplierId" IS NOT NULL
+            ${multiplierFilter}
+          GROUP BY j."multiplierId"
+        )
+        ${vendedorCte}
+        ${ventanaCte}
+        SELECT
+          (SELECT COUNT(*) FROM filtered_tickets)::bigint AS total_tickets,
+          (SELECT COALESCE(json_agg(json_build_object('id', id, 'cnt', cnt)), '[]'::json) FROM loteria_counts)    AS loteria_groups,
+          (SELECT COALESCE(json_agg(json_build_object('id', id, 'cnt', cnt)), '[]'::json) FROM sorteo_counts)     AS sorteo_groups,
+          (SELECT COALESCE(json_agg(json_build_object('id', id, 'cnt', cnt)), '[]'::json) FROM multiplier_counts) AS multiplier_groups
+          ${vendedorSelect}
+          ${ventanaSelect}
+      `;
+
+      // Mapear a la misma interfaz que usaban los Prisma groupBy (Fase 2, 3, 4 no cambian)
+      const totalTickets = Number(rawAgg.total_tickets);
+      const loteriaGroups   = (rawAgg.loteria_groups    || []).map(g => ({ loteriaId:    g.id, _count: { id:       g.cnt } }));
+      const sorteoGroups    = (rawAgg.sorteo_groups     || []).map(g => ({ sorteoId:     g.id, _count: { id:       g.cnt } }));
+      const multiplierGroups = (rawAgg.multiplier_groups || []).map(g => ({ multiplierId: g.id, _count: { ticketId: g.cnt } }));
+      const vendedorGroups  = (rawAgg.vendedor_groups   || []).map(g => ({ vendedorId:   g.id, _count: { id:       g.cnt } }));
+      const ventanaGroups   = (rawAgg.ventana_groups    || []).map(g => ({ ventanaId:    g.id, _count: { id:       g.cnt } }));
 
       // Fase 2: fetch entidades maestras a partir de los IDs agrupados (listas pequeñas, sin riesgo de 32767)
       const masterTasks: (() => Promise<any>)[] = [
@@ -2585,9 +2659,13 @@ export const TicketService = {
       );
     }
       },
-      60, // TTL 60s: datos de conteos cambian con cada venta
+      300, // TTL 300s: el cache tiene invalidación por tags (banca/sorteo/user), 5min es seguro
       tags
     );
+
+    _filterOptionsInFlight.set(cacheKey, promise);
+    promise.finally(() => _filterOptionsInFlight.delete(cacheKey));
+    return promise;
   },
 
   /**

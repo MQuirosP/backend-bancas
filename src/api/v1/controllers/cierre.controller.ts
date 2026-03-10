@@ -167,6 +167,9 @@ export const CierreController = {
     if (filters.ventanaId) effectiveFilters.ventanaId = filters.ventanaId;
     if (filters.loteriaId) effectiveFilters.loteriaId = filters.loteriaId;
 
+    // Timeout middleware pudo haber enviado 503 mientras el query corría
+    if (res.headersSent) return;
+
     // ETag y cache headers
     const etagRawKey = `${filters.fromDate.toISOString()}:${filters.toDate.toISOString()}:${filters.scope}:${filters.ventanaId || ''}:${_metaExtras.configHash}`;
     const etagVal = `W/"${createHash('sha1').update(etagRawKey).digest('hex')}"`;
@@ -254,6 +257,9 @@ export const CierreController = {
     };
     if (filters.ventanaId) effectiveFilters.ventanaId = filters.ventanaId;
     if (filters.loteriaId) effectiveFilters.loteriaId = filters.loteriaId;
+
+    // Timeout middleware pudo haber enviado 503 mientras el query corría
+    if (res.headersSent) return;
 
     // ETag y cache headers
     const etagRawKey = `${filters.fromDate.toISOString()}:${filters.toDate.toISOString()}:${filters.scope}:${filters.ventanaId || ''}:${_metaExtras.configHash}:seller:${top || ''}:${orderBy}`;
