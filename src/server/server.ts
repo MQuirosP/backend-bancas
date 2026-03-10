@@ -13,6 +13,7 @@ import { startCommissionCacheCleanup, stopCommissionCacheCleanup } from '../util
 import { restrictionCacheV2 } from '../utils/restrictionCacheV2'
 import { activeOperationsService } from '../core/activeOperations.service'
 import { isExclusionListEmpty } from '../core/exclusionListCache'
+import { warmupConnection } from '../core/connectionWarmup'
 
 const server = http.createServer(app)
 
@@ -23,6 +24,9 @@ server.listen(config.port, async () => {
     requestId: null,
     payload: { port: config.port },
   })
+
+  // Esperar conexión a DB antes de iniciar jobs y caches que la requieren
+  await warmupConnection({ context: 'server.startup', maxAttempts: 5, baseDelayMs: 2000 });
 
   //  OPTIMIZACIÓN: Inicializar Redis (opcional, no bloquea el servidor)
   try {
