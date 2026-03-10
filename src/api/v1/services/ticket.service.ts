@@ -1127,6 +1127,7 @@ export const TicketService = {
       sorteoId?: string;
       multiplierId?: string; //  NUEVO
       status?: string; //  NUEVO
+      sorteoStatus?: string; // Filtrar por estado del sorteo asociado
       page?: number; //  NUEVO: Paginación (0-9 para MONAZOS)
       pageSize?: number; //  NUEVO: Tamaño de página (default: 100)
     },
@@ -1168,7 +1169,7 @@ export const TicketService = {
           ? params.status
           : { notIn: ["CANCELLED", "EXCLUDED"] }, // Excluir CANCELLED si no se especifica
         isActive: true,
-        // sorteo: { status: "EVALUATED" },
+        ...(params.sorteoStatus ? { sorteo: { status: params.sorteoStatus } } : {}),
         ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
         ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
       };
@@ -2241,12 +2242,25 @@ export const TicketService = {
     sorteoId?: string;
     multiplierId?: string;
     status?: string;
+    sorteoStatus?: string;
   }, context: {
     userId: string;
     role: Role;
     ventanaId?: string | null;
     bancaId?: string | null;
   }) {
+    const cacheKey = `banca:${context.bancaId || 'all'}:ventana:${context.ventanaId || 'all'}:user:${context.userId}:numbers-summary-filters:${crypto
+      .createHash('md5')
+      .update(JSON.stringify({ params, context }))
+      .digest('hex')}`;
+
+    const tags = ['ticket:numbers-summary-filter-options', `user:${context.userId}`];
+    if (context.bancaId) tags.push(`banca:${context.bancaId}`);
+    if (params.sorteoId) tags.push(`sorteo:${params.sorteoId}`);
+
+    return CacheService.wrap(
+      cacheKey,
+      async () => {
     try {
       // Aplicar RBAC filters para determinar qué tickets puede ver el usuario
       const { applyRbacFilters } = require('../../../utils/rbac');
@@ -2283,8 +2297,11 @@ export const TicketService = {
       const where: any = {
         deletedAt: null,
         isActive: true,
-        // sorteo: { status: "EVALUATED" },
       };
+
+      if (params.sorteoStatus) {
+        where.sorteo = { status: params.sorteoStatus };
+      }
 
       // Aplicar filtros RBAC
       if (effectiveFilters.vendedorId) {
@@ -2511,6 +2528,10 @@ export const TicketService = {
         'INTERNAL_ERROR'
       );
     }
+      },
+      60, // TTL 60s: datos de conteos cambian con cada venta
+      tags
+    );
   },
 
   /**
