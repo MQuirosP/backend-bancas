@@ -30,6 +30,7 @@ export const CreateTicketSchema = z
     jugadas: z.array(z.union([JugadaNumeroSchema, JugadaReventadoSchema])).min(1),
     vendedorId: z.uuid("vendedorId inválido").optional().nullable(),
     requestId: z.string().uuid().optional(),
+    idempotencyKey: z.string().min(8).max(100).optional(),
   })
 
   .superRefine((val, ctx) => {
