@@ -1215,6 +1215,7 @@ export const TicketRepository = {
       scheduledAt?: Date | null;
       createdBy?: string;
       createdByRole?: Role;
+      idempotencyKey?: string;
     }
   ) {
     const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
@@ -1909,6 +1910,7 @@ export const TicketRepository = {
             clienteNombre: normalizedClienteNombre,
             createdBy: options?.createdBy ?? null,
             createdByRole: options?.createdByRole ?? null,
+            idempotencyKey: options?.idempotencyKey ?? null,
           },
         });
 

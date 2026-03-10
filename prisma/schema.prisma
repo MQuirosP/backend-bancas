@@ -209,6 +209,7 @@ model Ticket {
 
   //  NUEVO: Cascada de cierre de sorteo
   isSorteoClosed Boolean @default(false) // Marca si el sorteo fue cerrado (para exclusión de reportes)
+  idempotencyKey String? @unique
 
   jugadas       Jugada[]
   loteria       Loteria         @relation(fields: [loteriaId], references: [id])

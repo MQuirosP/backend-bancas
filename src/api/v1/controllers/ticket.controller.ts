@@ -13,7 +13,7 @@ const _inflightRequests = new Map<string, Promise<any>>();
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
     const userId = req.user!.id;
-    const clientRequestId: string | undefined = req.body.requestId;
+    const clientRequestId: string | undefined = req.body.idempotencyKey ?? req.body.requestId;
 
     if (clientRequestId) {
       const cached = _idempotencyCache.get(clientRequestId);

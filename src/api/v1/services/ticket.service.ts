@@ -402,24 +402,80 @@ export const TicketService = {
         createdByRole = actor.role;
       }
 
-      //  Crear ticket con método optimizado
-      const { ticket, warnings } = await TicketRepository.createOptimized(
-        {
-          loteriaId,
-          sorteoId,
-          ventanaId,
-          clienteNombre: data.clienteNombre ?? null,
-          jugadas: normalizedJugadas,
-        },
-        effectiveVendedorId,
-        {
-          actorRole,
-          commissionContext, // Pasar contexto para cálculo rápido
-          createdBy,
-          createdByRole,
-          scheduledAt: sorteo.scheduledAt,
+      //  Idempotencia a nivel DB: verificar si ya existe un ticket con esta key
+      const clientIdempotencyKey: string | undefined = data.idempotencyKey ?? data.requestId;
+      if (clientIdempotencyKey) {
+        const existing = await withConnectionRetry(
+          () => prisma.$queryRaw<{ id: string }[]>`
+            SELECT id FROM "Ticket"
+            WHERE "idempotencyKey" = ${clientIdempotencyKey}
+              AND "deletedAt" IS NULL
+            LIMIT 1
+          `,
+          { context: 'TicketService.create.idempotencyCheck' }
+        );
+        if (existing.length > 0) {
+          logger.info({
+            layer: 'service',
+            action: 'TICKET_CREATE_DB_IDEMPOTENCY_HIT',
+            userId,
+            requestId,
+            payload: { idempotencyKey: clientIdempotencyKey, existingId: existing[0].id },
+          });
+          return TicketRepository.getById(existing[0].id);
         }
-      );
+      }
+
+      //  Crear ticket con método optimizado
+      let ticket: any;
+      let warnings: any[];
+      try {
+        ({ ticket, warnings } = await TicketRepository.createOptimized(
+          {
+            loteriaId,
+            sorteoId,
+            ventanaId,
+            clienteNombre: data.clienteNombre ?? null,
+            jugadas: normalizedJugadas,
+          },
+          effectiveVendedorId,
+          {
+            actorRole,
+            commissionContext, // Pasar contexto para cálculo rápido
+            createdBy,
+            createdByRole,
+            scheduledAt: sorteo.scheduledAt,
+            idempotencyKey: clientIdempotencyKey,
+          }
+        ));
+      } catch (err: any) {
+        // P2002 en idempotencyKey = carrera entre procesos con el mismo key
+        if (
+          err?.code === 'P2002' &&
+          (err?.meta?.target as string[] | undefined)?.includes('idempotencyKey')
+        ) {
+          const row = await withConnectionRetry(
+            () => prisma.$queryRaw<{ id: string }[]>`
+              SELECT id FROM "Ticket"
+              WHERE "idempotencyKey" = ${clientIdempotencyKey}
+                AND "deletedAt" IS NULL
+              LIMIT 1
+            `,
+            { context: 'TicketService.create.idempotencyRaceRecover' }
+          );
+          if (row.length > 0) {
+            logger.info({
+              layer: 'service',
+              action: 'TICKET_CREATE_DB_IDEMPOTENCY_RACE_HIT',
+              userId,
+              requestId,
+              payload: { idempotencyKey: clientIdempotencyKey },
+            });
+            return TicketRepository.getById(row[0].id);
+          }
+        }
+        throw err;
+      }
 
       //  FASE BE-2: Invalidar caché del vendedor (summary)
       // Usamos fire-and-forget para no bloquear el flujo de venta
