@@ -80,7 +80,10 @@ export const AuthService = {
     const { username, password } = data;
     const { ipAddress, userAgent } = context || {};
 
-    const user = await prisma.user.findUnique({ where: { username } });
+    const user = await withConnectionRetry(
+      () => prisma.user.findUnique({ where: { username } }),
+      { context: 'auth.login' }
+    );
     
     if (!user) {
       await ActivityService.log({

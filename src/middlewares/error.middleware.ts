@@ -47,6 +47,22 @@ export const errorHandler = (err: any, req: Request, res: Response, _next: NextF
     return errorResponse(res, err.message, err.statusCode, err.meta ?? undefined);
   }
 
+  // PrismaClientInitializationError — no tiene .code, se detecta por nombre o errorCode
+  const isInitError = err?.constructor?.name === 'PrismaClientInitializationError'
+    || err?.errorCode?.startsWith('P1')
+    || (typeof err?.message === 'string' && err.message.includes("Can't reach database server"));
+
+  if (isInitError) {
+    logger.error({
+      layer: 'middleware',
+      action: 'PRISMA_CONNECTION_ERROR',
+      userId,
+      requestId,
+      meta: { message: err.message, errorCode: err.errorCode ?? null, database_location: err.message?.match(/at `(.+)`/)?.[1] ?? null },
+    });
+    return errorResponse(res, 'Servicio de base de datos temporalmente no disponible', 503);
+  }
+
   // PrismaClientKnownRequestError (has code property)
   if (err?.code) {
     switch (err.code) {
