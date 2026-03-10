@@ -1,4 +1,5 @@
 import logger from "./logger";
+import { ResilienceService } from "./resilience.service";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -119,6 +120,14 @@ export async function withConnectionRetry<T>(
 
       // Solo reintentar si es un error de conexión y no hemos alcanzado el límite
       if (isConnectionErr && attempt < maxRetries) {
+        // Reportar la falla al circuit breaker para que pueda abrirse durante outages
+        if (!isJob) ResilienceService.reportPrismaConnectionError();
+
+        // Si el circuit breaker ya abrió (por acumulación de fallas), no seguir reintentando
+        if (!isJob && ResilienceService.isPrismaOpen()) {
+          throw error;
+        }
+
         const backoff = nextDelayMs(attempt, backoffMinMs, backoffMaxMs);
         logger.warn({
           layer: "connection",
@@ -141,6 +150,9 @@ export async function withConnectionRetry<T>(
 
       // Si no es un error de conexión o ya agotamos los reintentos, lanzar el error
       if (isConnectionErr) {
+        // Reportar al circuit breaker en el intento final también
+        if (!isJob) ResilienceService.reportPrismaConnectionError();
+
         logger.error({
           layer: "connection",
           action: "FAIL_AFTER_RETRIES",
