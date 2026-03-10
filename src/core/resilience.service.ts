@@ -148,4 +148,15 @@ export class ResilienceService {
         this.ensureInitialized();
         return this.prismaBreaker.opened;
     }
+
+    /**
+     * Reporta un error de conexión al circuit breaker de Prisma.
+     * Llamar desde withConnectionRetry cuando se detecta P1001/P1017/etc.
+     * para que el breaker pueda abrirse durante outages de Supabase.
+     */
+    static reportPrismaConnectionError(): void {
+        if (!this.initialized) return;
+        // Fire a rejected promise to feed the failure into the breaker's rolling window
+        this.prismaBreaker.fire(() => Promise.reject(new Error('db_unreachable'))).catch(() => {});
+    }
 }
