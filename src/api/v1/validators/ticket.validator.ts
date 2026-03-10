@@ -156,6 +156,7 @@ export const NumbersSummaryQuerySchema = z
     sorteoId: z.uuid().optional(),
     multiplierId: z.uuid().optional(), //  NUEVO: Filtrar por multiplicador específico
     status: z.enum(["ACTIVE", "EVALUATED", "PAID", "CANCELLED"]).optional(), //  NUEVO: Filtrar por estado de ticket
+    sorteoStatus: z.enum(["SCHEDULED", "OPEN", "EVALUATED", "CLOSED"]).optional(), // Filtrar por estado del sorteo asociado
     scheduledTime: z.string().regex(/^\d{2}:\d{2}$/, "Formato de hora inválido (HH:mm)").optional(), // NUEVO
     //  NUEVO: Paginación para MONAZOS (1000 números)
     page: z.coerce.number().int().min(0).max(9).optional(), // 0-9 para 10 centenas (0=000-099, 1=100-199, ..., 9=900-999)
