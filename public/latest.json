@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.3",
-  "versionCode": 9,
-  "buildNumber": 9,
+  "versionName": "1.0.4",
+  "versionCode": 10,
+  "buildNumber": 10,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Corrección de doble toque en generar ticket. Llave idempotente para creación única de tickets.",
-  "releasedAt": "2026-03-23T20:00:00Z",
+  "changelog": "Llave idempotente para creación única de tickets. Mejoras visuales de reventado",
+  "releasedAt": "2026-03-09T23:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "25807f89bfd81ea66e2148e0323d25bf1f5cdd7d02bba8096a036dbe6c5dffa3"
+      "sha256": "78b0121824c9f26100a1b13f80938a65b3d1c1cde6c63068831a0ffcde1e8291"
     },
     "arm64-v8a": {
-      "sha256": "25807f89bfd81ea66e2148e0323d25bf1f5cdd7d02bba8096a036dbe6c5dffa3"
+      "sha256": "78b0121824c9f26100a1b13f80938a65b3d1c1cde6c63068831a0ffcde1e8291"
     }
   }
 }
