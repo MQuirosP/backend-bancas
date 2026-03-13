@@ -6,6 +6,21 @@ import { getCRLocalComponents } from "../../utils/businessDate";
 import { restrictionCacheV2 } from "../../utils/restrictionCacheV2";
 
 /**
+ * Caché interno para optimizar validaciones durante una transacción de creación de ticket.
+ * Evita repetir queries agregadas (SUM) para el mismo ámbito o números.
+ */
+export interface ScopeCache {
+  // Totales de venta por sorteo (para calculateDynamicLimit)
+  // Key: "scopeType:scopeId" (ej: "USER:uuid", "VENTANA:uuid")
+  salesTotals: Map<string, number>;
+
+  // Acumulados por número y alcance (para validateMaxTotal)
+  // Key: "scopeType:scopeId:sorteoId:multiplierKey"
+  // multiplierKey = multiplierId | "REVENTADO" | "NONE"
+  numberTotals: Map<string, Map<string, number>>;
+}
+
+/**
  * Calcula los acumulados del sorteo para múltiples números y alcance en una sola query
  * ️ IMPORTANTE: El acumulado es independiente por sorteo, no se mezcla entre sorteos diferentes
  * 
@@ -30,13 +45,35 @@ export async function calculateAccumulatedByNumbersAndScope(
       id: string;
       kind: 'NUMERO' | 'REVENTADO';
     } | null;
+    cache?: ScopeCache;
   }
 ): Promise<Map<string, number>> {
-  const { numbers, scopeType, scopeId, sorteoId, multiplierFilter } = params;
+  const { numbers, scopeType, scopeId, sorteoId, multiplierFilter, cache } = params;
 
   // Si no hay números, retornar map vacío
   if (numbers.length === 0) {
     return new Map();
+  }
+
+  // 1. Intentar obtener de caché si existe
+  const multiplierId = multiplierFilter ? (multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : multiplierFilter.id) : 'NONE';
+  const cacheKey = `${scopeType}:${scopeId}:${sorteoId}:${multiplierId}`;
+  
+  if (cache) {
+    const cachedMap = cache.numberTotals.get(cacheKey);
+    if (cachedMap) {
+      const result = new Map<string, number>();
+      let allCached = true;
+      for (const num of numbers) {
+        if (cachedMap.has(num)) {
+          result.set(num, cachedMap.get(num)!);
+        } else {
+          allCached = false;
+          break;
+        }
+      }
+      if (allCached) return result;
+    }
   }
 
   try {
@@ -144,6 +181,18 @@ export async function calculateAccumulatedByNumbersAndScope(
       },
     });
 
+    // Guardar en caché si existe
+    if (cache) {
+      let cachedMap = cache.numberTotals.get(cacheKey);
+      if (!cachedMap) {
+        cachedMap = new Map<string, number>();
+        cache.numberTotals.set(cacheKey, cachedMap);
+      }
+      for (const [num, total] of accumulatedMap) {
+        cachedMap.set(num, total);
+      }
+    }
+
     return accumulatedMap;
   } catch (error: any) {
     logger.error({
@@ -188,6 +237,7 @@ export async function calculateAccumulatedByNumberAndScope(
       id: string;
       kind: 'NUMERO' | 'REVENTADO';
     } | null;
+    cache?: ScopeCache;
   }
 ): Promise<number> {
   //  OPTIMIZACIÓN: Usar función optimizada que calcula múltiples números en una query
@@ -197,6 +247,7 @@ export async function calculateAccumulatedByNumberAndScope(
     scopeId: params.scopeId,
     sorteoId: params.sorteoId,
     multiplierFilter: params.multiplierFilter,
+    cache: params.cache, // Propagar caché si existe
   });
 
   return accumulatedMap.get(params.number) ?? 0;
@@ -302,9 +353,10 @@ export async function validateMaxTotalForNumbers(
       id: string;
       kind: 'NUMERO' | 'REVENTADO';
     } | null;
+    cache?: ScopeCache;
   }
 ): Promise<void> {
-  const { numbers, rule, sorteoId, dynamicLimit, multiplierFilter } = params;
+  const { numbers, rule, sorteoId, dynamicLimit, multiplierFilter, cache } = params;
 
   // Si no hay números, no validar
   if (numbers.length === 0) {
@@ -343,6 +395,7 @@ export async function validateMaxTotalForNumbers(
     scopeId,
     sorteoId,
     multiplierFilter, //  Pasar filtro al cálculo
+    cache,            //  Propagar caché
   });
 
   //  CRÍTICO: Validar cada número INDIVIDUALMENTE (no por total del ticket)
@@ -423,8 +476,9 @@ export async function validateMaxTotalForNumbers(
       });
 
       //  CRÍTICO: Mensaje claro - maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
+      // Límite máximo: ₡${effectiveMaxTotal.toFixed(2)}. 
       throw new AppError(
-        `El número ${number}${isAutoDateLabel}: Límite máximo: ₡${effectiveMaxTotal.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
+        `El número ${number}${isAutoDateLabel}: Disponible: ₡${available.toFixed(2)}`,
         400,
         {
           code: "NUMBER_MAXTOTAL_EXCEEDED",
@@ -491,6 +545,7 @@ export async function validateMaxTotalForNumber(
       id: string;
       kind: 'NUMERO' | 'REVENTADO';
     } | null;
+    cache?: ScopeCache;
   }
 ): Promise<void> {
   return validateMaxTotalForNumbers(tx, {
@@ -499,6 +554,7 @@ export async function validateMaxTotalForNumber(
     sorteoId: params.sorteoId,
     dynamicLimit: params.dynamicLimit,
     multiplierFilter: params.multiplierFilter,
+    cache: params.cache,
   });
 }
 
@@ -616,6 +672,7 @@ async function executeValidationTask(
   context: {
     sorteoId: string;
     numbers: Array<{ number: string; amountForNumber: number }>;
+    cache?: ScopeCache;
   }
 ): Promise<ValidationResult> {
   const startTime = Date.now();
@@ -660,8 +717,9 @@ async function executeValidationTask(
               },
             });
 
+            //  `El número ${num}${multiplierContext}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
             throw new AppError(
-              `El número ${num}${multiplierContext}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
+              `El número ${num}${multiplierContext}${isAutoDatePrefix}: Disponible: ₡${available.toFixed(2)}`,
               400,
               {
                 code: "NUMBER_MAXAMOUNT_EXCEEDED",
@@ -697,7 +755,8 @@ async function executeValidationTask(
             rule: { ...rule, maxTotal: effectiveMaxTotal },
             sorteoId: context.sorteoId,
             dynamicLimit: task.dynamicLimit,
-            multiplierFilter
+            multiplierFilter,
+            cache: context.cache
           });
         }
       }
@@ -735,8 +794,9 @@ async function executeValidationTask(
               },
             });
 
+            // Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}.
             throw new AppError(
-              `El número ${num}${isAutoDatePrefix}: Límite máximo: ₡${effectiveMaxAmount.toFixed(2)}. Disponible: ₡${available.toFixed(2)}`,
+              `El número ${num}${isAutoDatePrefix}: Disponible: ₡${available.toFixed(2)}`,
               400,
               {
                 code: "NUMBER_MAXAMOUNT_EXCEEDED",
@@ -772,7 +832,8 @@ async function executeValidationTask(
             rule: { ...rule, maxTotal: effectiveMaxTotal },
             sorteoId: context.sorteoId,
             dynamicLimit: task.dynamicLimit,
-            multiplierFilter
+            multiplierFilter,
+            cache: context.cache
           });
         }
       }
@@ -814,9 +875,10 @@ export async function validateRulesInParallel(
     numbers: Array<{ number: string; amountForNumber: number }>; // Números y montos del ticket
     sorteoId: string;
     dynamicLimits?: Map<string, number>; // Map de ruleId -> dynamicLimit
+    cache?: ScopeCache;
   }
 ): Promise<void> {
-  const { rules, numbers, sorteoId, dynamicLimits = new Map() } = params;
+  const { rules, numbers, sorteoId, dynamicLimits = new Map(), cache } = params;
 
   if (rules.length === 0) {
     return; // Nada que validar
@@ -850,7 +912,7 @@ export async function validateRulesInParallel(
         dynamicLimit: dynamicLimits.get(group[0].ruleId) || null,
       };
 
-      const result = await executeValidationTask(tx, task, { sorteoId, numbers });
+      const result = await executeValidationTask(tx, task, { sorteoId, numbers, cache } as any);
       allResults.push(result);
 
       if (!result.success && result.error) {
@@ -863,7 +925,7 @@ export async function validateRulesInParallel(
           ...task,
           dynamicLimit: dynamicLimits.get(task.ruleId) || null,
         };
-        return executeValidationTask(tx, enhancedTask, { sorteoId, numbers });
+        return executeValidationTask(tx, enhancedTask, { sorteoId, numbers, cache } as any);
       });
 
       const groupResults = await Promise.all(groupPromises);
