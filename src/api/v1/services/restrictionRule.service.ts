@@ -359,35 +359,44 @@ export const RestrictionRuleService = {
    * - **vendorSpecific**: reglas cuyo `userId` coincide con el vendedor.
    */
   async forVendor(vendorId: string, bancaId: string, ventanaId: string | null) {
-    // 1️⃣ Restricciones generales (Globales + Banca + Ventana)
-    const general = await RestrictionRuleRepository.findGeneralRules(bancaId, ventanaId);
+  // 1️⃣ Obtener las reglas desde el repositorio
+  const general = await RestrictionRuleRepository.findGeneralRules(bancaId, ventanaId);
+  const vendorSpecific = await RestrictionRuleRepository.list({
+    userId: vendorId,
+  });
 
-    // 2️⃣ Restricciones específicas del vendedor
-    const vendorSpecific = await RestrictionRuleRepository.list({
-      userId: vendorId,
-    });
-
-    // Agregar campo 'scope' con el nombre específico en lugar de "Ventana", "Banca", etc.
-    const mapScope = (rule: any) => {
-      let scope = 'Global';
-
-      if (rule.ventana?.name) {
-        scope = rule.ventana.name; // "JJ Listero" en lugar de "Ventana"
-      } else if (rule.banca?.name) {
-        scope = rule.banca.name; // "Grupo JJ" en lugar de "Banca"
-      } else if (rule.user?.name) {
-        scope = rule.user.name; // "Mario Quirós" en lugar de "Usuario"
-      }
-
-      return {
-        ...rule,
-        scope  // Campo nuevo con el nombre específico
-      };
-    };
-
+  // 2️⃣ Función de limpieza
+  const cleanRule = (rule: any) => {
     return {
-      general: general.map(mapScope),
-      vendorSpecific: vendorSpecific.data.map(mapScope),
+      ...rule,
+      // Forzamos scope vacío para evitar que aparezca el nombre arriba a la derecha
+      scope: "", 
+      
+      // Si existe el objeto banca, vaciamos sus campos descriptivos
+      banca: rule.banca ? { 
+        ...rule.banca, 
+        name: "", 
+        code: "" 
+      } : null,
+
+      // Si existe el objeto ventana, vaciamos sus campos descriptivos
+      ventana: rule.ventana ? { 
+        ...rule.ventana, 
+        name: "", 
+        code: "" 
+      } : null,
+      
+      // Opcional: limpiar también el objeto user si fuera necesario
+      user: rule.user ? { 
+        ...rule.user, 
+        name: "" 
+      } : null
     };
-  },
+  };
+
+  return {
+    general: general.map(cleanRule),
+    vendorSpecific: vendorSpecific.data.map(cleanRule),
+  };
+},
 };
