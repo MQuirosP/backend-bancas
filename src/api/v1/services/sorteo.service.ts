@@ -565,214 +565,39 @@ export const SorteoService = {
       extraOutcomeCode = (extraOutcomeCodeInput ?? mul.name ?? null) || null;
     }
 
-    //  NUEVO: Obtener tickets excluidos ANTES de evaluar
-    const excludedTicketIds = await getExcludedTicketIds(id);
 
-    // 3) Transacción (timeout aumentado para sorteos con muchos ganadores)
-    const evaluationResult = await prisma.$transaction(async (tx) => {
-      // 3.1 Snapshot del sorteo
-      await tx.sorteo.update({
-        where: { id },
-        data: {
-          status: "EVALUATED",
-          winningNumber,
-          extraOutcomeCode,
-          ...(extraMultiplierId
-            ? { extraMultiplier: { connect: { id: extraMultiplierId } } }
-            : { extraMultiplier: { disconnect: true } }),
-          extraMultiplierX: extraX,
-        },
+    // 3. Ejecutar evaluación síncrona (Marcado de tickets y ganadores)
+    const evaluated = await SorteoRepository.evaluate(id, {
+      winningNumber,
+      extraOutcomeCode,
+      extraMultiplierId,
+    });
+
+    // 4. Sincronización de Cuentas en SEGUNDO PLANO (Fire-and-Forget)
+    const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
+    AccountStatementSyncService.syncSorteoStatements(id, existing.scheduledAt).catch(err => {
+      logger.error({
+        layer: 'service',
+        action: 'ACCOUNT_STATEMENT_SYNC_BACKGROUND_ERROR',
+        payload: { sorteoId: id, error: (err as Error).message }
       });
+    });
 
-      const excludedArray = Array.from(excludedTicketIds);
-
-      // 3.2 Marcar ganadores por NUMERO usando SQL raw para evitar cargar miles en memoria
-      await tx.$executeRaw`
-        UPDATE "Jugada" j
-        SET "isWinner" = true,
-            "payout" = j."amount" * j."finalMultiplierX"
-        FROM "Ticket" t
-        WHERE j."ticketId" = t.id 
-        AND t."sorteoId" = ${id}::uuid
-        AND t."status" != 'CANCELLED'
-        AND t."isActive" = true
-        AND t."deletedAt" IS NULL
-        AND j."type" = 'NUMERO'
-        AND j."number" = ${winningNumber}
-        AND j."isActive" = true
-        AND t.id NOT IN (SELECT unnest(${excludedArray}::uuid[]))
-      `;
-
-      // 3.3 Marcar ganadores por REVENTADO (si aplica)
-      if (extraX > 0) {
-        await tx.$executeRaw`
-          UPDATE "Jugada" j
-          SET "isWinner" = true,
-              "finalMultiplierX" = ${extraX},
-              "payout" = j."amount" * ${extraX},
-              "multiplierId" = ${extraMultiplierId}::uuid
-          FROM "Ticket" t
-          WHERE j."ticketId" = t.id 
-          AND t."sorteoId" = ${id}::uuid
-          AND t."status" != 'CANCELLED'
-          AND t."isActive" = true
-          AND t."deletedAt" IS NULL
-          AND j."type" = 'REVENTADO'
-          AND j."reventadoNumber" = ${winningNumber}
-          AND j."isActive" = true
-          AND t.id NOT IN (SELECT unnest(${excludedArray}::uuid[]))
-        `;
-      }
-
-      // 3.4 Marcar todos los tickets activos como EVALUATED e isWinner=false (base)
-      await tx.ticket.updateMany({
-        where: { 
-          sorteoId: id,
-          status: { not: 'CANCELLED' },
-          isActive: true,
-          deletedAt: null,
-          id: { notIn: excludedArray }
-        },
-        data: { status: "EVALUATED", isWinner: false },
-      });
-
-      // 3.5 Marcar tickets ganadores y calcular totalPayout en una sola operación SQL
-      await tx.$executeRaw`
-        WITH Payouts AS (
-          SELECT "ticketId", SUM("payout") as total
-          FROM "Jugada"
-          WHERE "ticketId" IN (
-            SELECT id FROM "Ticket" 
-            WHERE "sorteoId" = ${id}::uuid 
-            AND id NOT IN (SELECT unnest(${excludedArray}::uuid[]))
-          )
-          AND "isWinner" = true
-          GROUP BY "ticketId"
-        )
-        UPDATE "Ticket" t
-        SET "isWinner" = true,
-            "totalPayout" = p.total,
-            "remainingAmount" = p.total,
-            "totalPaid" = 0
-        FROM Payouts p
-        WHERE t.id = p."ticketId"
-      `;
-
-      // 3.6 Obtener conteo de ganadores para auditoría
-      const winnersCount = await tx.ticket.count({
-        where: { sorteoId: id, isWinner: true }
-      });
-
-      await tx.sorteo.update({
-        where: { id },
-        data: {
-          hasWinner: winnersCount > 0,
-        },
-      });
-
-      // 3.7 Auditoría interna
-      const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
-      const lotName = (existing as any).loteria?.name || 'Lotería';
-      const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
-      const evaluationDesc = `Sorteo ${sorteoDesc} EVALUADO. Número ganador: ${winningNumber}${extraOutcomeCode ? ` (${extraOutcomeCode})` : ''}. Ganadores: ${winnersCount}`;
-
-      await tx.activityLog.create({
-        data: {
-          userId,
-          action: "SORTEO_EVALUATE",
-          targetType: "SORTEO",
-          targetId: id,
-          details: {
-            winningNumber,
-            extraMultiplierId,
-            extraMultiplierX: extraX,
-            extraOutcomeCode,
-            winners: winnersCount,
-            description: evaluationDesc
-          },
-        },
-      });
-
-      return { winners: winnersCount, extraMultiplierX: extraX };
-    }, { timeout: 180000 }); // 3 minutos para sorteos con muchos tickets/jugadas // 3 minutos para sorteos con muchos tickets/jugadas
-
-    // 4) Log adicional
-    const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
-    const lotName = (existing as any).loteria?.name || 'Lotería';
-    const sorteoDesc = `${existing.name || 'Sorteo'} (${lotName}) del ${sFormattedAt}`;
-    const evaluationDesc = `Sorteo ${sorteoDesc} EVALUADO. Número ganador: ${winningNumber}${extraOutcomeCode ? ` (${extraOutcomeCode})` : ''}. Ganadores: ${evaluationResult.winners}`;
+    // 5. Logs y Limpieza
+    const { clearSorteoCache } = require('../../../utils/sorteoCache');
+    clearSorteoCache();
 
     await ActivityService.log({
       userId,
       action: ActivityType.SORTEO_EVALUATE,
       targetType: "SORTEO",
       targetId: id,
-      details: {
-        winningNumber,
-        extraMultiplierId,
-        extraMultiplierX: evaluationResult.extraMultiplierX,
-        extraOutcomeCode,
-        winners: evaluationResult.winners,
-        description: evaluationDesc
-      },
+      details: { winningNumber, extraMultiplierId, hasWinner: (evaluated as any)?.hasWinner } as Prisma.InputJsonObject,
     });
 
-    // Invalidar cache de sorteos
-    const { clearSorteoCache } = require('../../../utils/sorteoCache');
-    clearSorteoCache();
+    if (!evaluated) throw new AppError('Error al recuperar el sorteo evaluado', 500);
 
-    //  FASE BE-2: Invalidar cache de resúmenes (evaluación cambia premios)
-    CacheService.invalidateTag(`sorteo:${id}`).catch(err => {
-      logger.warn({ layer: 'cache', action: 'INVALIDATE_ERROR_ON_EVALUATE', payload: { sorteoId: id, error: err.message } });
-    });
-
-    //  CRÍTICO: Sincronizar AccountStatement de todos los días afectados cuando se evalúa un sorteo
-    // La evaluación marca jugadas como ganadoras, afectando totalPayouts del statement
-    // Los sorteos se evalúan conforme van sucediendo, y es ahí cuando los tickets se toman en cuenta
-    // ️ IMPORTANTE: Usar el nuevo servicio de sincronización que actualiza accumulatedBalance
-    let syncError: string | null = null;
-    try {
-      const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
-
-      // ️ CRÍTICO: Convertir scheduledAt a fecha CR antes de sincronizar
-      const { crDateService } = await import('../../../utils/crDateService');
-      const sorteoDateCR = crDateService.dateUTCToCRString(existing.scheduledAt);
-      const [year, month, day] = sorteoDateCR.split('-').map(Number);
-      const sorteoDateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-
-      await AccountStatementSyncService.syncSorteoStatements(id, sorteoDateUTC);
-
-      logger.info({
-        layer: 'service',
-        action: 'ACCOUNT_STATEMENT_SYNCED_ON_SORTEO_EVALUATE',
-        payload: {
-          sorteoId: id,
-          sorteoDateCR,
-        }
-      });
-    } catch (err) {
-      syncError = (err as Error).message;
-      logger.error({
-        layer: 'service',
-        action: 'ACCOUNT_STATEMENT_SYNC_ERROR_ON_SORTEO_EVALUATE',
-        payload: {
-          error: syncError,
-          sorteoId: id,
-        }
-      });
-      // No relanzar - la evaluación ya commiteó, pero el error se incluye en la respuesta
-    }
-
-    // 5) Obtener sorteo evaluado para devolver
-    const evaluated = await SorteoRepository.findById(id);
-    const result = evaluated ? serializeSorteo(evaluated) : evaluated;
-
-    // Incluir warning de sync si hubo error (el frontend puede mostrarlo)
-    if (syncError && result) {
-      (result as any).syncWarning = `Statement sync falló: ${syncError}`;
-    }
-
-    return result;
+    return serializeSorteo(evaluated);
   },
 
   async remove(id: string, userId: string, reason?: string) {
@@ -827,38 +652,19 @@ export const SorteoService = {
 
     const reverted = await SorteoRepository.revertEvaluation(id);
 
-    // Sincronizar AccountStatements después de revertir
-    let syncError: string | null = null;
+    // Sincronizar AccountStatements después de revertir - SEGUNDO PLANO
     try {
       const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
-      const { crDateService } = await import('../../../utils/crDateService');
-      const sorteoDateCR = crDateService.dateUTCToCRString(existing.scheduledAt);
-      const [year, month, day] = sorteoDateCR.split('-').map(Number);
-      const sorteoDateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-
-      await AccountStatementSyncService.syncSorteoStatements(id, sorteoDateUTC);
-
-      logger.info({
-        layer: 'service',
-        action: 'ACCOUNT_STATEMENT_SYNCED_ON_SORTEO_REVERT',
-        payload: {
-          sorteoId: id,
-          sorteoDateCR,
-        }
+      AccountStatementSyncService.syncSorteoStatements(id, existing.scheduledAt).catch(err => {
+        logger.error({
+          layer: 'service',
+          action: 'ACCOUNT_STATEMENT_SYNC_REVERT_BACKGROUND_ERROR',
+          payload: { sorteoId: id, error: (err as Error).message }
+        });
       });
     } catch (err) {
-      syncError = (err as Error).message;
-      logger.error({
-        layer: 'service',
-        action: 'ACCOUNT_STATEMENT_SYNC_ERROR_ON_SORTEO_REVERT',
-        payload: {
-          sorteoId: id,
-          error: syncError,
-        }
-      });
-      // No relanzar - la reversión ya commiteó, pero el error se incluye en la respuesta
+      logger.warn({ layer: 'service', action: 'SYNC_IMPORT_ERROR', payload: { error: (err as Error).message } });
     }
-
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
@@ -881,10 +687,6 @@ export const SorteoService = {
     });
 
     const result = serializeSorteo(reverted);
-
-    if (syncError) {
-      (result as any).syncWarning = `Statement sync falló: ${syncError}`;
-    }
 
     return result;
   },

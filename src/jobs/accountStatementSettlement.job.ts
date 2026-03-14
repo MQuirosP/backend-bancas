@@ -474,11 +474,13 @@ export async function executeSettlement(userId?: string): Promise<{
       const activeVendedorIds = new Set(activeVendedores.map(v => v.id));
 
       // Procesar Bancas
+      // ✅ ETAPA 2: NO filtramos entidades con saldo 0.
+      // Necesitamos que TODAS existan para que getBySorteo encuentre lastDayAccumulated
+      // sin disparar el fallback costoso de getStatementDirect.
       for (const ls of latestBancaStatements) {
         if (!activeBancaIds.has(ls.bancaId)) continue;
         const key = `${ls.bancaId}-null-null`;
         if (existingKeySet.has(key)) continue;
-        if (Number(ls.remainingBalance) === 0) continue;
         
         toCreate.push({
           date: todayCR,
@@ -506,7 +508,6 @@ export async function executeSettlement(userId?: string): Promise<{
         if (!activeVentanaIds.has(ls.ventanaId)) continue;
         const key = `${ls.bancaId}-${ls.ventanaId}-null`;
         if (existingKeySet.has(key)) continue;
-        if (Number(ls.remainingBalance) === 0) continue;
         
         toCreate.push({
           date: todayCR,
@@ -534,7 +535,6 @@ export async function executeSettlement(userId?: string): Promise<{
         if (!activeVendedorIds.has(ls.vendedorId)) continue;
         const key = `${ls.bancaId}-null-${ls.vendedorId}`;
         if (existingKeySet.has(key)) continue;
-        if (Number(ls.remainingBalance) === 0) continue;
         
         toCreate.push({
           date: todayCR,
@@ -557,7 +557,74 @@ export async function executeSettlement(userId?: string): Promise<{
         });
       }
 
+      // ✅ ETAPA 2 – SEGUNDA PASADA: Entidades sin historial previo
+      // La consulta DISTINCT ON solo devuelve entidades que ya tienen algún AccountStatement.
+      // Si una entidad es nueva y nunca tuvo actividad, nunca aparece en los resultados anteriores
+      // y getBySorteo seguiría disparando el fallback costoso.
+      // Aquí creamos un registro inicial de saldo cero para garantizar continuidad.
+      const seenBancaIds = new Set(latestBancaStatements.map((s: any) => s.bancaId));
+      const seenVentanaIds = new Set(latestVentanaStatements.map((s: any) => s.ventanaId));
+      const seenVendedorIds = new Set(latestVendedorStatements.map((s: any) => s.vendedorId));
+
+      for (const banca of activeBancas) {
+        if (seenBancaIds.has(banca.id)) continue; // ya procesada en la primera pasada
+        const key = `${banca.id}-null-null`;
+        if (existingKeySet.has(key)) continue;
+        toCreate.push({
+          date: todayCR,
+          month: effectiveMonth,
+          bancaId: banca.id,
+          ventanaId: null,
+          vendedorId: null,
+          ticketCount: 0, totalSales: 0, totalPayouts: 0,
+          listeroCommission: 0, vendedorCommission: 0, balance: 0,
+          totalPaid: 0, totalCollected: 0,
+          remainingBalance: 0, accumulatedBalance: 0,
+          isSettled: false, canEdit: true,
+        });
+      }
+
+      for (const ventana of activeVentanas) {
+        if (seenVentanaIds.has(ventana.id)) continue;
+        const key = `${ventana.bancaId}-${ventana.id}-null`;
+        if (existingKeySet.has(key)) continue;
+        toCreate.push({
+          date: todayCR,
+          month: effectiveMonth,
+          bancaId: ventana.bancaId,
+          ventanaId: ventana.id,
+          vendedorId: null,
+          ticketCount: 0, totalSales: 0, totalPayouts: 0,
+          listeroCommission: 0, vendedorCommission: 0, balance: 0,
+          totalPaid: 0, totalCollected: 0,
+          remainingBalance: 0, accumulatedBalance: 0,
+          isSettled: false, canEdit: true,
+        });
+      }
+
+      for (const vendor of activeVendedores) {
+        if (seenVendedorIds.has(vendor.id)) continue;
+        const bancaIdForVendor = vendor.ventana?.bancaId ?? null;
+        // Si el vendedor no tiene ventana, omitir (no podemos inferir la banca)
+        if (!bancaIdForVendor) continue;
+        const key = `${bancaIdForVendor}-null-${vendor.id}`;
+        if (existingKeySet.has(key)) continue;
+        toCreate.push({
+          date: todayCR,
+          month: effectiveMonth,
+          bancaId: bancaIdForVendor,
+          ventanaId: null,
+          vendedorId: vendor.id,
+          ticketCount: 0, totalSales: 0, totalPayouts: 0,
+          listeroCommission: 0, vendedorCommission: 0, balance: 0,
+          totalPaid: 0, totalCollected: 0,
+          remainingBalance: 0, accumulatedBalance: 0,
+          isSettled: false, canEdit: true,
+        });
+      }
+
       if (toCreate.length > 0) {
+
         const result = await prisma.accountStatement.createMany({
           data: toCreate,
           skipDuplicates: true

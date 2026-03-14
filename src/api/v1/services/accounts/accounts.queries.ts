@@ -2,11 +2,11 @@ import { Role, Prisma } from "@prisma/client";
 import prisma from "../../../../core/prismaClient";
 import logger from "../../../../core/logger";
 import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";
-import { resolveCommission } from "../../../../services/commission.resolver";
-import { resolveCommissionFromPolicy } from "../../../../services/commission/commission.resolver";
 import { buildTicketDateFilter } from "./accounts.dates.utils";
 import { crDateService } from "../../../../utils/crDateService";
 import { isExclusionListEmpty } from "../../../../core/exclusionListCache";
+
+
 
 /**
  * Interface para los resultados de la consulta agregada de tickets
@@ -369,286 +369,145 @@ export async function getSorteoBreakdownBatch(
         return new Map();
     }
 
-    // Construir filtro de fechas combinado
-    const dateFilters = dates.map(date => buildTicketDateFilter(date));
-    const where: any = {
-        OR: dateFilters,
-        deletedAt: null,
-        status: { notIn: ["CANCELLED", "EXCLUDED"] },
-        //  CORRECCIÓN: Filtrar estrictamente solo sorteos EVALUADOS (no CERRADOS)
-        sorteo: {
-            status: "EVALUATED"
-        },
-    };
+    // 🚀 SQL-FIRST REFACTOR (Etapa 1):
+    // Delegamos TODO el cálculo a PostgreSQL con una única $queryRaw.
+    // Esto elimina la carga de hasta 10.000 tickets + jugadas en el Heap de Node.js.
+    //
+    // Columnas de agregación:
+    //   total_sales    → SUM(j.amount)       columna ya snapshot-eada por jugada
+    //   total_payouts  → SUM(j.payout) WHERE isWinner   (antes se iteraba en Node.js)
+    //   commission_listero  → SUM(j."listeroCommissionAmount")  snapshot inmutable
+    //   commission_vendedor → SUM(j."commissionAmount") WHERE "commissionOrigin"='USER'
+    //
+    // Filtros de dimensión:
+    //   banca   → JOIN Ventana v WHERE v."bancaId" = :bancaId (o sin filtro si scope=all)
+    //   ventana → t."ventanaId" = :ventanaId    (+ JOIN Ventana igual para bancaId cuando va junto)
+    //   vendedor→ t."vendedorId" = :vendedorId  (+ t."ventanaId" cuando ventanaId está presente)
+    //
+    // Exclusiones: NOT EXISTS contra sorteo_lista_exclusion (con multiplierId IS NULL)
+    //
+    // Agrupación:
+    //   banca   → GROUP BY businessDate, banca.id, sorteo.id
+    //   ventana → GROUP BY businessDate, t.ventanaId, sorteo.id
+    //   vendedor→ GROUP BY businessDate, t.vendedorId, sorteo.id
 
-    // Filtrar por banca activa (para ADMIN multibanca)
-    if (bancaId) {
-        where.ventana = {
-            bancaId: bancaId,
-        };
-    }
+    // ── 1. Construir array de fechas para el IN clause ──────────────────────────
+    // businessDate es tipo DATE en Postgres. Usamos la fecha UTC como YYYY-MM-DD string.
+    const dateStrings = dates.map(d => d.toISOString().split('T')[0]);
 
-    if (dimension === "ventana" && ventanaId) {
-        where.ventanaId = ventanaId;
-    } else if (dimension === "vendedor") {
-        if (vendedorId) {
-            where.vendedorId = vendedorId;
+    // ── 2. Construir condiciones WHERE dinámicas ──────────────────────────────────
+    const whereClauses: Prisma.Sql[] = [
+        Prisma.sql`t."deletedAt" IS NULL`,
+        Prisma.sql`t."isActive" = true`,
+        Prisma.sql`t."status" NOT IN ('CANCELLED', 'EXCLUDED')`,
+        Prisma.sql`s.status = 'EVALUATED'`,
+        Prisma.sql`j."deletedAt" IS NULL`,
+        // Filtramos businessDate con IN sobre las fechas YYYY-MM-DD
+        Prisma.sql`t."businessDate" = ANY(${dateStrings}::date[])`,
+    ];
+
+    // ── 3. Filtros de dimensión ───────────────────────────────────────────────────
+    if (dimension === 'banca') {
+        if (bancaId) {
+            // Banca específica: los tickets pertenecen a ventanas de esa banca
+            whereClauses.push(Prisma.sql`v."bancaId" = ${bancaId}::uuid`);
         }
-        //  NUEVO: Filtrar por ventanaId cuando está presente (para agrupamiento por "Todos")
+        // scope=all: sin filtro adicional, incluye todas las bancas
+    } else if (dimension === 'ventana') {
         if (ventanaId) {
-            where.ventanaId = ventanaId;
+            whereClauses.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+        }
+        if (bancaId) {
+            whereClauses.push(Prisma.sql`v."bancaId" = ${bancaId}::uuid`);
+        }
+    } else { // vendedor
+        if (vendedorId) {
+            whereClauses.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+        }
+        if (ventanaId) {
+            // Vendedores de una ventana específica
+            whereClauses.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+        }
+        if (bancaId) {
+            whereClauses.push(Prisma.sql`v."bancaId" = ${bancaId}::uuid`);
         }
     }
 
-    //  OPTIMIZACIÓN: Una sola query para todos los días
-    //  CRÍTICO: Agregar límite para prevenir picos de memoria (512 MB en producción)
-    // Límite razonable: 10000 tickets. Si se alcanza, agregar log para monitoreo
-    const MAX_TICKETS_FOR_BREAKDOWN = 10000;
-    const tickets = await prisma.ticket.findMany({
-        where,
-        take: MAX_TICKETS_FOR_BREAKDOWN,
-        select: {
-            id: true,
-            totalAmount: true,
-            sorteoId: true,
-            businessDate: true,
-            createdAt: true,
-            ventanaId: true,
-            vendedorId: true,
-            loteriaId: true,
-            ventana: { //  NUEVO: Incluir relación con ventana para obtener bancaId y políticas
-                select: {
-                    bancaId: true,
-                    commissionPolicyJson: true,
-                    banca: {
-                        select: {
-                            commissionPolicyJson: true,
-                        },
-                    },
-                },
-            },
-            sorteo: {
-                select: {
-                    id: true,
-                    name: true,
-                    scheduledAt: true,
-                    loteria: {
-                        select: {
-                            id: true,
-                            name: true,
-                        },
-                    },
-                },
-            },
-            jugadas: {
-                where: { deletedAt: null },
-                select: {
-                    payout: true,
-                    isWinner: true,
-                    amount: true,
-                    type: true,
-                    finalMultiplierX: true,
-                    commissionAmount: true,
-                    commissionOrigin: true,
-                    listeroCommissionAmount: true, //  Snapshot (puede ser 0)
-                },
-            },
-        },
-    });
-
-    //  CRÍTICO: Log si se alcanza el límite (para monitoreo)
-    if (tickets.length >= MAX_TICKETS_FOR_BREAKDOWN) {
-        logger.warn({
-            layer: "service",
-            action: "SORTEO_BREAKDOWN_LIMIT_REACHED",
-            payload: {
-                dates: dates.map(d => d.toISOString().split('T')[0]),
-                dimension,
-                ventanaId,
-                vendedorId,
-                bancaId,
-                ticketCount: tickets.length,
-                limit: MAX_TICKETS_FOR_BREAKDOWN,
-                message: "Se alcanzó el límite de tickets para desglose por sorteo. Puede haber datos incompletos."
-            }
-        });
+    // ── 4. Exclusión de listas bloqueadas (WHERE NOT EXISTS) ──────────────────────
+    // Solo agregamos el NOT EXISTS si hay exclusiones activas (optimización de corto-circuito)
+    const exclusionExists = await isExclusionListEmpty();
+    if (!exclusionExists) {
+        whereClauses.push(Prisma.sql`NOT EXISTS (
+            SELECT 1 FROM "sorteo_lista_exclusion" sle
+            WHERE sle.sorteo_id = t."sorteoId"
+              AND sle.ventana_id = t."ventanaId"
+              AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+              AND sle.multiplier_id IS NULL
+        )`);
     }
 
-    //  CRÍTICO: Obtener usuarios VENTANA con sus políticas (igual que getSorteoBreakdown)
-    const ventanaIds = Array.from(new Set(tickets.map(t => t.ventanaId).filter((id): id is string => id !== null)));
-    const ventanaUsers = ventanaIds.length > 0
-        ? await prisma.user.findMany({
-            where: {
-                role: Role.VENTANA,
-                isActive: true,
-                deletedAt: null,
-                ventanaId: { in: ventanaIds },
-            },
-            select: {
-                id: true,
-                ventanaId: true,
-                commissionPolicyJson: true,
-                updatedAt: true,
-            },
-            orderBy: { updatedAt: "desc" },
-        })
-        : [];
+    const whereClause = Prisma.join(whereClauses, ' AND ');
 
-    // Mapa de políticas de usuario VENTANA por ventana (tomar el más reciente)
-    const userPolicyByVentana = new Map<string, any>();
-    const ventanaUserIdByVentana = new Map<string, string>();
-    for (const user of ventanaUsers) {
-        if (!user.ventanaId) continue;
-        if (!userPolicyByVentana.has(user.ventanaId)) {
-            userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
-            ventanaUserIdByVentana.set(user.ventanaId, user.id);
-        }
+    // ── 5. Columna de agrupación por dimensión ────────────────────────────────────
+    // entity_id: el ID de la entidad principal según la dimensión
+    // Para 'banca': es b.id (la banca de la ventana)
+    // Para 'ventana': es t."ventanaId"
+    // Para 'vendedor': es t."vendedorId"
+    const entityIdExpr: Prisma.Sql =
+        dimension === 'banca' ? Prisma.sql`b.id` :
+        dimension === 'ventana' ? Prisma.sql`t."ventanaId"` :
+        Prisma.sql`t."vendedorId"`;
+
+    // ── 6. Query final ─────────────────────────────────────────────────────────────
+    interface SorteoAggRow {
+        business_date: Date;
+        entity_id: string;
+        sorteo_id: string;
+        sorteo_name: string;
+        sorteo_scheduled_at: Date;
+        loteria_id: string;
+        loteria_name: string;
+        total_sales: number;
+        total_payouts: number;
+        commission_listero: number;
+        commission_vendedor: number;
+        ticket_count: bigint;
     }
 
-    //  CRÍTICO: Crear Map por fecha Y dimensión (ventanaId/vendedorId)
-    // Clave: `${dateKey}_${ventanaId}` o `${dateKey}_${vendedorId}`
-    const resultMap = new Map<string, Map<string, {
-        sorteoId: string;
-        sorteoName: string;
-        loteriaId: string;
-        loteriaName: string;
-        scheduledAt: Date;
-        sales: number;
-        payouts: number;
-        listeroCommission: number;
-        vendedorCommission: number;
-        ticketCount: number;
-    }>>();
+    const rows = await prisma.$queryRaw<SorteoAggRow[]>`
+        SELECT
+            t."businessDate"                                                        AS business_date,
+            ${entityIdExpr}                                                         AS entity_id,
+            s.id                                                                    AS sorteo_id,
+            s.name                                                                  AS sorteo_name,
+            s."scheduledAt"                                                         AS sorteo_scheduled_at,
+            l.id                                                                    AS loteria_id,
+            l.name                                                                  AS loteria_name,
+            COALESCE(SUM(j.amount),  0)                                             AS total_sales,
+            COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j.payout ELSE 0 END), 0) AS total_payouts,
+            COALESCE(SUM(j."listeroCommissionAmount"), 0)                            AS commission_listero,
+            COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER'
+                              THEN j."commissionAmount" ELSE 0 END), 0)             AS commission_vendedor,
+            COUNT(DISTINCT t.id)                                                    AS ticket_count
+        FROM "Ticket"  t
+        JOIN "Sorteo"  s  ON s.id  = t."sorteoId"
+        JOIN "Loteria" l  ON l.id  = s."loteriaId"
+        JOIN "Ventana" v  ON v.id  = t."ventanaId"
+        JOIN "Banca"   b  ON b.id  = v."bancaId"
+        JOIN "Jugada"  j  ON j."ticketId" = t.id
+        WHERE ${whereClause}
+        GROUP BY
+            t."businessDate",
+            ${entityIdExpr},
+            s.id,
+            s.name,
+            s."scheduledAt",
+            l.id,
+            l.name
+        ORDER BY t."businessDate" ASC, s."scheduledAt" DESC
+    `;
 
-    // Inicializar mapas por fecha y dimensión
-    for (const date of dates) {
-        const dateKey = date.toISOString().split("T")[0];
-        // Si hay filtro específico, crear solo una entrada
-        if (dimension === "banca" && bancaId) {
-            //  NUEVO: Crear entrada para banca específica
-            resultMap.set(`${dateKey}_${bancaId}`, new Map());
-        } else if (dimension === "ventana" && ventanaId) {
-            resultMap.set(`${dateKey}_${ventanaId}`, new Map());
-        } else if (dimension === "vendedor") {
-            if (vendedorId) {
-                resultMap.set(`${dateKey}_${vendedorId}`, new Map());
-            } else if (ventanaId) {
-                //  NUEVO: Cuando hay ventanaId pero no vendedorId, crear entradas por vendedor dentro de esa ventana
-                // Se crearán dinámicamente cuando se procesen los tickets
-            } else {
-                // Sin filtros específicos
-            }
-        } else {
-            // Si scope=all, necesitamos crear entradas para cada banca/ventana/vendedor que tenga tickets
-            // Pero no sabemos cuáles son hasta procesar los tickets, así que inicializamos dinámicamente
-        }
-    }
-
-    //  OPTIMIZACIÓN: Fetch exclusions for the relevant sorteos to prevent "choque" with logic
-    const uniqueSorteoIds = Array.from(new Set(tickets.map(t => t.sorteoId)));
-    const exclusions = uniqueSorteoIds.length > 0
-        ? await prisma.sorteoListaExclusion.findMany({
-            where: {
-                sorteoId: { in: uniqueSorteoIds },
-            },
-        })
-        : [];
-
-    // Helper to check exclusion
-    const isExcluded = (t: typeof tickets[0]) => {
-        return exclusions.some(e =>
-            e.sorteoId === t.sorteoId &&
-            e.ventanaId === t.ventanaId &&
-            (e.vendedorId === null || e.vendedorId === t.vendedorId) &&
-            (e.multiplierId === null) // Lists are usually excluded entirely, but handle multiplier if needed? 
-            // The prompt implies "Listas Excluidas" (entire list), so multiplierId is usually null or handled at jugada level.
-            // But SorteoListaExclusion can have multiplierId.
-            // If the exclusion has a multiplierId, it only excludes specific jugadas, NOT the whole ticket/list from the view?
-            // "Listas Excluidas" usually refers to the whole list for a vendor.
-            // If e.multiplierId is null, it excludes the whole list.
-            && e.multiplierId === null
-        );
-    };
-
-    // Agrupar tickets por fecha, dimensión y sorteo
-    for (const ticket of tickets) {
-        if (!ticket.sorteoId || !ticket.sorteo) continue;
-
-        //  NUEVO: Verificar exclusión
-        if (isExcluded(ticket)) continue;
-
-        // Determinar la fecha del ticket
-        const ticketDate = ticket.businessDate !== null
-            ? new Date(ticket.businessDate as Date)
-            : new Date(ticket.createdAt);
-        ticketDate.setUTCHours(0, 0, 0, 0);
-        const dateKey = ticketDate.toISOString().split("T")[0];
-
-        //  CRÍTICO: Determinar la clave según dimensión
-        let mapKey: string;
-        if (dimension === "banca") {
-            //  NUEVO: Agrupar por banca
-            const targetBancaId = bancaId || (ticket.ventana as any)?.bancaId;
-            if (!targetBancaId) continue;
-            mapKey = `${dateKey}_${targetBancaId}`;
-        } else if (dimension === "ventana") {
-            const targetVentanaId = ventanaId || ticket.ventanaId;
-            if (!targetVentanaId) continue;
-            mapKey = `${dateKey}_${targetVentanaId}`;
-        } else {
-            const targetVendedorId = vendedorId || ticket.vendedorId;
-            if (!targetVendedorId) continue;
-            mapKey = `${dateKey}_${targetVendedorId}`;
-        }
-
-        let sorteoMap = resultMap.get(mapKey);
-        if (!sorteoMap) {
-            // Crear mapa si no existe (para scope=all)
-            sorteoMap = new Map();
-            resultMap.set(mapKey, sorteoMap);
-        }
-
-        const sorteoId = ticket.sorteo.id;
-        let entry = sorteoMap.get(sorteoId);
-
-        if (!entry) {
-            entry = {
-                sorteoId,
-                sorteoName: ticket.sorteo.name,
-                loteriaId: ticket.sorteo.loteria.id,
-                loteriaName: ticket.sorteo.loteria.name,
-                scheduledAt: ticket.sorteo.scheduledAt,
-                sales: 0,
-                payouts: 0,
-                listeroCommission: 0,
-                vendedorCommission: 0,
-                ticketCount: 0,
-            };
-            sorteoMap.set(sorteoId, entry);
-        }
-
-        entry.sales += ticket.totalAmount || 0;
-        entry.ticketCount += 1;
-
-        //  CRÍTICO: Calcular comisiones usando el snapshot inmutable en Jugada
-        for (const jugada of ticket.jugadas) {
-            // Payouts
-            if (jugada.isWinner) {
-                entry.payouts += jugada.payout || 0;
-            }
-
-            // Comisión del vendedor (usar snapshot)
-            if (jugada.commissionOrigin === "USER") {
-                entry.vendedorCommission += jugada.commissionAmount || 0;
-            }
-
-            // Comisión del listero (usar snapshot)
-            entry.listeroCommission += jugada.listeroCommissionAmount || 0;
-        }
-    }
-
-    // Convertir a formato de respuesta
-    //  CRÍTICO: Mantener clave `${dateKey}_${ventanaId}` o `${dateKey}_${vendedorId}`
+    // ── 7. Construir el Map de salida (misma firma que antes) ─────────────────────
     const finalMap = new Map<string, Array<{
         sorteoId: string;
         sorteoName: string;
@@ -663,29 +522,59 @@ export async function getSorteoBreakdownBatch(
         ticketCount: number;
     }>>();
 
-    for (const [mapKey, sorteoMap] of resultMap.entries()) {
-        const result = Array.from(sorteoMap.values())
-            .map((entry) => ({
-                sorteoId: entry.sorteoId,
-                sorteoName: entry.sorteoName,
-                loteriaId: entry.loteriaId,
-                loteriaName: entry.loteriaName,
-                scheduledAt: entry.scheduledAt.toISOString(),
-                sales: entry.sales,
-                payouts: entry.payouts,
-                listeroCommission: entry.listeroCommission,
-                vendedorCommission: entry.vendedorCommission,
-                //  CORRECCIÓN: Calcular balance según dimensión O vendedorId
-                // Si dimension='vendedor' O vendedorId está presente → usar vendedorCommission
-                balance: (dimension === "vendedor" || vendedorId)
-                    ? entry.sales - entry.payouts - entry.vendedorCommission
-                    : entry.sales - entry.payouts - entry.listeroCommission,
-                ticketCount: entry.ticketCount,
-            }))
-            .sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt)); //  DESC para consistencia con sorteo module
+    for (const row of rows) {
+        // La fecha de businessDate viene como DATE de Postgres → tomamos YYYY-MM-DD
+        const dateKey = row.business_date.toISOString().split('T')[0];
+        const entityId = row.entity_id;
+        const mapKey = `${dateKey}_${entityId}`;
 
-        finalMap.set(mapKey, result);
+        if (!finalMap.has(mapKey)) {
+            finalMap.set(mapKey, []);
+        }
+
+        const sales = Number(row.total_sales);
+        const payouts = Number(row.total_payouts);
+        const commissionListero = Number(row.commission_listero);
+        const commissionVendedor = Number(row.commission_vendedor);
+
+        // Balance: usa comisión del vendedor si dimension='vendedor' o si vendedorId está presente
+        const balance = (dimension === 'vendedor' || !!vendedorId)
+            ? sales - payouts - commissionVendedor
+            : sales - payouts - commissionListero;
+
+        finalMap.get(mapKey)!.push({
+            sorteoId: row.sorteo_id,
+            sorteoName: row.sorteo_name,
+            loteriaId: row.loteria_id,
+            loteriaName: row.loteria_name,
+            scheduledAt: row.sorteo_scheduled_at.toISOString(),
+            sales,
+            payouts,
+            listeroCommission: commissionListero,
+            vendedorCommission: commissionVendedor,
+            balance,
+            ticketCount: Number(row.ticket_count),
+        });
     }
+
+    // Ordenar cada lista DESC por scheduledAt (ya viene DESC del ORDER BY,
+    // pero re-ordenamos para garantizar consistencia en caso de ties)
+    for (const [, arr] of finalMap) {
+        arr.sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt));
+    }
+
+    logger.info({
+        layer: 'service',
+        action: 'SORTEO_BREAKDOWN_BATCH_SQL_FIRST',
+        payload: {
+            dimension,
+            bancaId: bancaId ?? null,
+            ventanaId: ventanaId ?? null,
+            vendedorId: vendedorId ?? null,
+            dates: dateStrings,
+            rowsReturned: rows.length,
+        },
+    });
 
     return finalMap;
 }
