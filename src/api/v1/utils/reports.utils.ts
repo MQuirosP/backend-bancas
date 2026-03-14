@@ -3,16 +3,7 @@
  */
 
 import { DateToken, DateRange } from '../types/reports.types';
-import { startOfLocalDay, addLocalDays, endOfLocalDay } from '../../../utils/datetime';
-
-function nowInCostaRica(): Date {
-  return new Date(
-    new Date().toLocaleString('en-US', {
-      timeZone: 'America/Costa_Rica',
-    })
-  );
-}
-
+import { startOfLocalDay, addLocalDays, endOfLocalDay, nowCR } from '../../../utils/datetime';
 
 /**
  * Resuelve un token de fecha a un rango de fechas en hora de Costa Rica
@@ -22,7 +13,7 @@ export function resolveDateRange(
   fromDate?: string,
   toDate?: string
 ): DateRange {
-  const now = nowInCostaRica();
+  const now = nowCR();
   let start: Date;
   let end: Date;
 
@@ -40,7 +31,13 @@ export function resolveDateRange(
     }
 
     case 'week': {
-      const dayOfWeek = now.getDay(); // 0 dom, 1 lun
+      const startOfToday = startOfLocalDay(now);
+      // startOfLocalDay ya nos da un Date en UTC que representa las 00:00 CR
+      // shiftToCostaRica en datetime.ts es el que maneja el offset.
+      // Pero para obtener el día de la semana en CR, necesitamos ver el Date "movido"
+      // datetime.ts usa shiftToCostaRica internamente en startOfLocalDay
+      
+      const dayOfWeek = getCostaRicaDayOfWeek(now);
       const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
       start = startOfLocalDay(addLocalDays(now, -daysToMonday));
       end = endOfLocalDay(now);
@@ -48,20 +45,10 @@ export function resolveDateRange(
     }
 
     case 'month': {
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-
-      const fromString = `${year}-${month}-01`;
-      const toString = formatDateOnly(now);
-
-      return {
-        from: new Date(`${fromString}T00:00:00-06:00`),
-        to: new Date(`${toString}T23:59:59-06:00`),
-        fromString,
-        toString,
-      };
+      start = startOfLocalMonth(now);
+      end = endOfLocalDay(now);
+      break;
     }
-
 
     case 'year':
       start = startOfLocalDay(addLocalDays(now, -364));
@@ -72,12 +59,8 @@ export function resolveDateRange(
       if (!fromDate || !toDate) {
         throw new Error('fromDate y toDate son requeridos cuando date=range');
       }
-      start = startOfLocalDay(
-        new Date(`${fromDate}T00:00:00`)
-      );
-      end = endOfLocalDay(
-        new Date(`${toDate}T23:59:59`)
-      );
+      start = startOfLocalDay(fromDate);
+      end = endOfLocalDay(toDate);
       break;
 
     default:
@@ -90,6 +73,28 @@ export function resolveDateRange(
     fromString: formatDateOnly(start),
     toString: formatDateOnly(end),
   };
+}
+
+/**
+ * Helpers internos para manejar la lógica de CR sin duplicar desplazamientos
+ */
+
+function getCostaRicaDayOfWeek(date: Date): number {
+  // Obtenemos el día de la semana interpretando el Date en CR
+  const CR_OFFSET = -6;
+  const crDate = new Date(date.getTime() + CR_OFFSET * 60 * 60 * 1000);
+  return crDate.getUTCDay();
+}
+
+function startOfLocalMonth(date: Date): Date {
+  const CR_OFFSET = -6;
+  const crDate = new Date(date.getTime() + CR_OFFSET * 60 * 60 * 1000);
+  const year = crDate.getUTCFullYear();
+  const month = crDate.getUTCMonth();
+  
+  // Crear el primer día del mes en UTC y "des-desplazarlo" para obtener el Date real que representa las 00:00 CR
+  const startOfMonthCR = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+  return new Date(startOfMonthCR.getTime() - CR_OFFSET * 60 * 60 * 1000);
 }
 
 /**

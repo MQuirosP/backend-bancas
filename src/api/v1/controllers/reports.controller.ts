@@ -63,6 +63,25 @@ export const ReportsController = {
   },
 
   /**
+   * GET /api/v1/reports/tickets/numbers-analysis/detail
+   * Detalle desglosado de un número (Drill-down)
+   */
+  async getNumbersAnalysisDetail(req: AuthenticatedRequest, res: Response) {
+    const query = req.query as any;
+
+    const result = await TicketsReportService.getNumbersAnalysisDetail({
+      number: query.number,
+      loteriaId: query.loteriaId,
+      date: query.date || 'today',
+      fromDate: query.fromDate,
+      toDate: query.toDate,
+      betType: query.betType || 'all',
+    });
+
+    return success(res, result.data, result.meta);
+  },
+
+  /**
    * GET /api/v1/reports/tickets/cancelled
    * Reporte de tickets cancelados
    */
