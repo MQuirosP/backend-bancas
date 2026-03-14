@@ -2140,6 +2140,13 @@ export const TicketService = {
               where,
               _count: { id: true }
             }));
+            
+            //  NUEVO: GroupBy por ventanaId para el filtro de Listeros
+            initialTasks.push(() => prisma.ticket.groupBy({
+              by: ['ventanaId'],
+              where,
+              _count: { id: true }
+            }));
           }
 
           initialTasks.push(() => prisma.jugada.groupBy({
@@ -2160,7 +2167,13 @@ export const TicketService = {
           const loteriaGroups = results[1] as any[];
           const sorteoGroups = results[2] as any[];
           let nextIdx = 3;
-          const vendedorGroups = (context.role === Role.ADMIN || context.role === Role.VENTANA) ? results[nextIdx++] as any[] : [];
+          let vendedorGroups: any[] = [];
+          let ventanaGroups: any[] = [];
+          
+          if (context.role === Role.ADMIN || context.role === Role.VENTANA) {
+            vendedorGroups = results[nextIdx++] as any[];
+            ventanaGroups = results[nextIdx++] as any[];
+          }
           const multiplierGroups = results[nextIdx] as any[];
 
           // Fase 2: Obtener información de las entidades maestras en paralelo limitado
@@ -2186,11 +2199,20 @@ export const TicketService = {
             }));
           }
 
+          if (ventanaGroups.length > 0) {
+            masterTasks.push(() => prisma.ventana.findMany({
+              where: { id: { in: ventanaGroups.map(g => g.ventanaId).filter(id => !!id) } },
+              select: { id: true, name: true, code: true }
+            }));
+          }
+
           const masterResults = await ConcurrencyManager.runLimited(masterTasks, { limit: 2, label: 'ticket-filter-options-masters' });
           const loteriasMaster = masterResults[0] as any[];
           const sorteosMaster = masterResults[1] as any[];
           const multipliers = masterResults[2] as any[];
-          const vendedoresMaster = (vendedorGroups.length > 0) ? masterResults[3] as any[] : [];
+          let masterNextIdx = 3;
+          const vendedoresMaster = (vendedorGroups.length > 0) ? masterResults[masterNextIdx++] as any[] : [];
+          const ventanasMaster = (ventanaGroups.length > 0) ? masterResults[masterNextIdx] as any[] : [];
 
           // Fase 3: Para vendedores, filtrar multiplicadores según política de comisión
           let allowedMultiplierIds: Set<string> | null = null;
@@ -2251,11 +2273,19 @@ export const TicketService = {
             ticketCount: vendedorGroups.find(g => g.vendedorId === v.id)?._count.id || 0
           })).sort((a, b) => a.name.localeCompare(b.name));
 
+          const ventanas = ventanasMaster.map(v => ({
+            id: v.id,
+            name: v.name,
+            code: v.code,
+            ticketCount: ventanaGroups.find(g => g.ventanaId === v.id)?._count.id || 0
+          })).sort((a, b) => a.name.localeCompare(b.name));
+
           return {
             loterias,
             sorteos,
             multipliers: multipliersFiltered,
             vendedores,
+            ventanas,
             meta: {
               totalTickets,
             },

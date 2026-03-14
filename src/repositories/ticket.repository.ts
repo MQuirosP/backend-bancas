@@ -10,7 +10,7 @@ import { commissionService } from "../services/commission/CommissionService";
 import { commissionResolver } from "../services/commission/CommissionResolver";
 import { getBusinessDateCRInfo, getCRDayRangeUTC, getCRLocalComponents } from "../utils/businessDate";
 import { nowCR, validateDate, formatDateCRWithTZ } from "../utils/datetime";
-import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel } from "./helpers/ticket-restriction.helper";
+import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel, ScopeCache, calculateAccumulatedByNumbersAndScope } from "./helpers/ticket-restriction.helper";
 
 /**
  * Calcula el límite dinámico basado en baseAmount y salesPercentage
@@ -53,6 +53,7 @@ async function calculateDynamicLimit(
     bancaId: string;
     sorteoId: string;  //  NUEVO: sorteoId requerido para calcular sobre el sorteo
     at: Date;
+    cache?: ScopeCache;
   }
 ): Promise<number> {
   let dynamicLimit = 0;
@@ -106,6 +107,16 @@ async function calculateDynamicLimit(
       where.ventanaId = context.ventanaId;
     }
 
+    // 2. Intentar obtener de caché
+    const cacheKey = rule.appliesToVendedor ? `USER:${context.userId}` : `VENTANA:${context.ventanaId}`;
+    if (context.cache) {
+      const cached = context.cache.salesTotals.get(cacheKey);
+      if (cached !== undefined) {
+        dynamicLimit += (cached * rule.salesPercentage) / 100;
+        return Math.max(0, dynamicLimit);
+      }
+    }
+
     // Calcular ventas del sorteo
     const result = await tx.ticket.aggregate({
       _sum: { totalAmount: true },
@@ -113,6 +124,11 @@ async function calculateDynamicLimit(
     });
 
     const sorteoSales = Number(result._sum.totalAmount) || 0;
+
+    // Guardar en caché
+    if (context.cache) {
+      context.cache.salesTotals.set(cacheKey, sorteoSales);
+    }
     const percentageAmount = (sorteoSales * rule.salesPercentage) / 100;
     dynamicLimit += percentageAmount;
 
@@ -1592,6 +1608,12 @@ export const TicketRepository = {
         //  CRÍTICO: maxTotal se valida por número individual acumulado en el sorteo
         // ️ NUNCA se valida sobre total del ticket ni sobre total diario
 
+        // Inicializar caché para optimizar queries en esta transacción
+        const cache: ScopeCache = {
+          salesTotals: new Map(),
+          numberTotals: new Map(),
+        };
+
         // Preparar números del ticket para validación paralela
         const ticketNumbers: Array<{ number: string; amountForNumber: number }> = [];
         const uniqueNumbers = [...new Set(preparedJugadas.map(j => j.type === 'NUMERO' ? j.number : j.reventadoNumber))].filter((n): n is string => !!n);
@@ -1620,6 +1642,42 @@ export const TicketRepository = {
           }
         }
 
+        //  OPTIMIZACIÓN: Precargar acumulados por ámbito y números del ticket en paralelo
+        const preloadingPromises = [];
+        const uniqueNumberStrings = ticketNumbers.map(n => n.number);
+        const scopesToPreload = new Set<string>();
+
+        for (const rule of applicable) {
+          if (rule.maxTotal != null) {
+            const scopeType = rule.userId ? 'USER' : rule.ventanaId ? 'VENTANA' : rule.bancaId ? 'BANCA' : null;
+            const scopeId = rule.userId || rule.ventanaId || rule.bancaId;
+            const multiplierId = rule.multiplierId ? (rule.multiplier?.kind === 'REVENTADO' ? 'REVENTADO' : rule.multiplierId) : 'NONE';
+            if (scopeType && scopeId) {
+              scopesToPreload.add(`${scopeType}:${scopeId}:${multiplierId}`);
+            }
+          }
+        }
+
+        for (const scopeKey of scopesToPreload) {
+          const [scopeType, scopeId, multiplierKey] = scopeKey.split(':');
+          const multiplierFilter = multiplierKey === 'NONE' ? null : 
+                                 multiplierKey === 'REVENTADO' ? { id: 'REVENTADO', kind: 'REVENTADO' as any } :
+                                 { id: multiplierKey, kind: 'NUMERO' as any };
+          
+          preloadingPromises.push(calculateAccumulatedByNumbersAndScope(tx, {
+            numbers: uniqueNumberStrings,
+            scopeType: scopeType as any,
+            scopeId,
+            sorteoId,
+            multiplierFilter,
+            cache,
+          }));
+        }
+
+        if (preloadingPromises.length > 0) {
+          await Promise.all(preloadingPromises);
+        }
+
         // Calcular límites dinámicos para todas las reglas que los necesiten
         const dynamicLimits = new Map<string, number>();
         const rulesNeedingDynamicLimits = applicable.filter((rule: any) =>
@@ -1642,6 +1700,7 @@ export const TicketRepository = {
                 bancaId,
                 sorteoId,  //  CRÍTICO: Pasar sorteoId para calcular sobre el sorteo
                 at: now,
+                cache,     //  OPTIMIZACIÓN: Pasar caché
               });
               return { ruleId: rule.id, limit };
             } catch (error) {
@@ -1703,6 +1762,7 @@ export const TicketRepository = {
           numbers: ticketNumbers,
           sorteoId,
           dynamicLimits,
+          cache, //  OPTIMIZACIÓN: Pasar caché
         });
 
         //  LOGGING: Registrar finalización de validación paralela

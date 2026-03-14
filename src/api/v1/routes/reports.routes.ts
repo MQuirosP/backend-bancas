@@ -20,6 +20,7 @@ import {
   VendedoresRankingQuerySchema,
   WinnersListQuerySchema,
   WinnersListParamsSchema,
+  NumbersAnalysisDetailQuerySchema,
 } from '../validators/reports.validator';
 
 const router = Router();
@@ -40,6 +41,13 @@ router.get(
   requireAdmin,
   validateQuery(NumbersAnalysisQuerySchema),
   ReportsController.getNumbersAnalysis
+);
+
+router.get(
+  '/tickets/numbers-analysis/detail',
+  requireAdmin,
+  validateQuery(NumbersAnalysisDetailQuerySchema),
+  ReportsController.getNumbersAnalysisDetail
 );
 
 router.get(

@@ -2291,5 +2291,147 @@ export const TicketsReportService = {
       }
     };
   },
+
+  /**
+   * Detalle desglosado de un número (Drill-down)
+   * GET /api/v1/reports/tickets/numbers-analysis/detail
+   */
+  async getNumbersAnalysisDetail(filters: {
+    number: string;
+    loteriaId: string;
+    date?: DateToken;
+    fromDate?: string;
+    toDate?: string;
+    betType?: 'NUMERO' | 'REVENTADO' | 'all';
+  }): Promise<any> {
+    const dateRange = resolveDateRange(
+      filters.date || 'today',
+      filters.fromDate,
+      filters.toDate
+    );
+
+    // 1. Obtener información de la lotería
+    const loteria = await prisma.loteria.findUnique({
+      where: { id: filters.loteriaId },
+      select: { id: true, name: true },
+    });
+
+    if (!loteria) {
+      throw new AppError('Lotería no encontrada', 404);
+    }
+
+    // 2. Query optimizada para el desglose
+    const detailQuery = Prisma.sql`
+      WITH filtered_jugadas AS (
+        SELECT
+          t."sorteoId",
+          s.name as sorteo_name,
+          t."vendedorId",
+          u.name as vendedor_name,
+          j.amount,
+          j."ticketId"
+        FROM "Jugada" j
+        INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        INNER JOIN "User" u ON t."vendedorId" = u.id
+        WHERE t."loteriaId" = ${filters.loteriaId}::uuid
+          AND j.number = ${filters.number}
+          AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND t."isActive" = true
+          AND t."deletedAt" IS NULL
+          AND j."deletedAt" IS NULL
+          ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
+      ),
+      sorteo_agg AS (
+        SELECT
+          "sorteoId",
+          sorteo_name,
+          SUM(amount) as total_amount,
+          COUNT(DISTINCT "ticketId") as tickets_count,
+          COUNT(*) as jugadas_count
+        FROM filtered_jugadas
+        GROUP BY "sorteoId", sorteo_name
+      ),
+      vendedor_agg AS (
+        SELECT
+          "sorteoId",
+          "vendedorId",
+          vendedor_name,
+          SUM(amount) as total_amount,
+          COUNT(DISTINCT "ticketId") as tickets_count
+        FROM filtered_jugadas
+        GROUP BY "sorteoId", "vendedorId", vendedor_name
+      )
+      SELECT
+        sa.*,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'vendedorId', va."vendedorId",
+              'vendedorName', va.vendedor_name,
+              'totalAmount', va.total_amount,
+              'ticketsCount', va.tickets_count
+            ) ORDER BY va.total_amount DESC
+          ) FILTER (WHERE va."vendedorId" IS NOT NULL),
+          '[]'::json
+        ) as by_vendedor
+      FROM sorteo_agg sa
+      LEFT JOIN vendedor_agg va ON sa."sorteoId" = va."sorteoId"
+      GROUP BY sa."sorteoId", sa.sorteo_name, sa.total_amount, sa.tickets_count, sa.jugadas_count
+      ORDER BY sa.total_amount DESC
+    `;
+
+    const rawResults = await prisma.$queryRaw<any[]>(detailQuery);
+
+    // 3. Formatear resultados
+    let totalAmount = 0;
+    let totalTicketsCount = 0;
+    let totalJugadasCount = 0;
+
+    const bySorteo = rawResults.map(row => {
+      const sorteoAmount = Number(row.total_amount);
+      const sorteoTickets = Number(row.tickets_count);
+      const sorteoJugadas = Number(row.jugadas_count);
+
+      totalAmount += sorteoAmount;
+      totalTicketsCount += sorteoTickets;
+      totalJugadasCount += sorteoJugadas;
+
+      return {
+        sorteoId: row.sorteoId,
+        sorteoName: row.sorteo_name,
+        totalAmount: sorteoAmount,
+        ticketsCount: sorteoTickets,
+        jugadasCount: sorteoJugadas,
+        byVendedor: (row.by_vendedor || []).map((v: any) => ({
+          vendedorId: v.vendedorId,
+          vendedorName: v.vendedorName,
+          totalAmount: Number(v.totalAmount),
+          ticketsCount: Number(v.ticketsCount),
+        })),
+      };
+    });
+
+    return {
+      data: {
+        number: filters.number,
+        loteriaId: loteria.id,
+        loteriaName: loteria.name,
+        summary: {
+          totalAmount,
+          ticketsCount: totalTicketsCount,
+          jugadasCount: totalJugadasCount,
+        },
+        bySorteo,
+      },
+      meta: {
+        dateRange: {
+          from: formatDateOnly(dateRange.from),
+          to: formatDateOnly(dateRange.to),
+        },
+      },
+    };
+  },
 };
 
