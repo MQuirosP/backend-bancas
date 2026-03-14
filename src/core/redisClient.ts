@@ -62,6 +62,7 @@ export async function initRedisClient(): Promise<void> {
             enableReadyCheck: true,
             lazyConnect: true, // No conectar inmediatamente hasta init()
             commandTimeout: 2000, // Timeout para comandos individuales
+            enableOfflineQueue: false, //  EVITAR MEMORY LEAK: No encolar comandos en memoria si Redis está caído
         });
 
         // Event handlers

@@ -414,18 +414,15 @@ export const AccountsService = {
         let resolvedVentanaName = null;
         let resolvedVendedorName = null;
 
-        if (bancaId) {
-            const b = await prisma.banca.findUnique({ where: { id: bancaId }, select: { name: true } });
-            resolvedBancaName = b?.name || null;
-        }
-        if (ventanaId) {
-            const v = await prisma.ventana.findUnique({ where: { id: ventanaId }, select: { name: true } });
-            resolvedVentanaName = v?.name || null;
-        }
-        if (vendedorId) {
-            const u = await prisma.user.findUnique({ where: { id: vendedorId }, select: { name: true } });
-            resolvedVendedorName = u?.name || null;
-        }
+        const [b, v, u] = await Promise.all([
+            bancaId ? prisma.banca.findUnique({ where: { id: bancaId }, select: { name: true } }) : Promise.resolve(null),
+            ventanaId ? prisma.ventana.findUnique({ where: { id: ventanaId }, select: { name: true } }) : Promise.resolve(null),
+            vendedorId ? prisma.user.findUnique({ where: { id: vendedorId }, select: { name: true } }) : Promise.resolve(null)
+        ]);
+
+        resolvedBancaName = b?.name || null;
+        resolvedVentanaName = v?.name || null;
+        resolvedVendedorName = u?.name || null;
 
         //  OPTIMIZACIÓN V3: Usar AccountStatement como ÚNICA fuente de verdad
         //  Estrategia: Data-First. Confiamos en que la tabla se actualiza en tiempo real.

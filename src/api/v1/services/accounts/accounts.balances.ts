@@ -284,9 +284,8 @@ export async function getPreviousMonthFinalBalancesBatch(
 ): Promise<Map<string, number>> {
     const balancesMap = new Map<string, number>();
     
-    // Implementación batch real para mejor rendimiento
-    // Por simplicidad en este paso usamos el loop, pero en una versión final se debería optimizar con IN queries
-    for (const entityId of entityIds) {
+    // Implementación batch real para mejor rendimiento usando Promise.all
+    const promises = entityIds.map(async (entityId) => {
         const balance = await getPreviousMonthFinalBalance(
             effectiveMonth,
             dimension,
@@ -294,6 +293,11 @@ export async function getPreviousMonthFinalBalancesBatch(
             dimension === "vendedor" ? entityId : null,
             bancaId
         );
+        return { entityId, balance };
+    });
+
+    const results = await Promise.all(promises);
+    for (const { entityId, balance } of results) {
         balancesMap.set(entityId, balance);
     }
     

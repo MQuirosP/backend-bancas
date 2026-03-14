@@ -1,0 +1,13 @@
+{
+  "watch": ["src"],
+  "ext": "ts,js,json",
+  "ignore": [
+    "node_modules",
+    "dist",
+    "logs/*",
+    "*.log",
+    "test-worker-error.ts",
+    "prisma/seed.ts"
+  ],
+  "exec": "npx dotenv-cli -e .env.local -- ts-node src/index.ts"
+}

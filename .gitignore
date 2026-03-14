@@ -85,6 +85,7 @@ src/scripts/*backfill*.ts
 
 # Scripts manuales (no versionar)
 scripts/
+tmp/
 
 # Respaldos y backups
 backups/
@@ -99,3 +100,12 @@ docs/
 # Archivos relacionados con problemas específicos (no versionar)
 problema_Cristina/
 **/problema_Cristina/
+check-db.js
+check-db.ts
+check-eval-state.ts
+check-eval-status.ts
+check-recent-sorteos.ts
+diff2.js
+process.exit(0))
+verify-eval-fix.ts
+.tmp/backfill-dryrun.ts

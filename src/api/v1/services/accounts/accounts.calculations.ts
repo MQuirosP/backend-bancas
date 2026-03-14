@@ -802,18 +802,15 @@ export async function getStatementDirect(
     let resolvedVendedorName: string | null = null;
     let resolvedVendedorCode: string | null = null;
 
-    if (bancaId) {
-        const b = await prisma.banca.findUnique({ where: { id: bancaId }, select: { name: true, code: true } });
-        if (b) { resolvedBancaName = b.name; resolvedBancaCode = b.code; }
-    }
-    if (ventanaId) {
-        const v = await prisma.user.findUnique({ where: { id: ventanaId }, select: { name: true, code: true } });
-        if (v) { resolvedVentanaName = v.name; resolvedVentanaCode = v.code as string | null; }
-    }
-    if (vendedorId) {
-        const ven = await prisma.user.findUnique({ where: { id: vendedorId }, select: { name: true, code: true } });
-        if (ven) { resolvedVendedorName = ven.name; resolvedVendedorCode = ven.code as string | null; }
-    }
+    const [b, v, ven] = await Promise.all([
+        bancaId ? prisma.banca.findUnique({ where: { id: bancaId }, select: { name: true, code: true } }) : Promise.resolve(null),
+        ventanaId ? prisma.user.findUnique({ where: { id: ventanaId }, select: { name: true, code: true } }) : Promise.resolve(null),
+        vendedorId ? prisma.user.findUnique({ where: { id: vendedorId }, select: { name: true, code: true } }) : Promise.resolve(null)
+    ]);
+
+    if (b) { resolvedBancaName = b.name; resolvedBancaCode = b.code; }
+    if (v) { resolvedVentanaName = v.name; resolvedVentanaCode = v.code as string | null; }
+    if (ven) { resolvedVendedorName = ven.name; resolvedVendedorCode = ven.code as string | null; }
 
     //  DEBUG: Log para verificar agrupación y rendimiento
     const functionStartTime = Date.now();
