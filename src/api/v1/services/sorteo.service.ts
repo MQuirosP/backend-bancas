@@ -575,7 +575,20 @@ export const SorteoService = {
 
     // 4. Sincronización de Cuentas en SEGUNDO PLANO (Fire-and-Forget)
     const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
-    AccountStatementSyncService.syncSorteoStatements(id, existing.scheduledAt).catch(err => {
+    
+    logger.info({
+      layer: 'service',
+      action: 'SORTEO_EVALUATE_TRIGGERING_SYNC',
+      payload: { sorteoId: id, scheduledAt: existing.scheduledAt }
+    });
+
+    AccountStatementSyncService.syncSorteoStatements(id, existing.scheduledAt).then(() => {
+      logger.info({
+        layer: 'service',
+        action: 'SORTEO_EVALUATE_SYNC_QUEUED_OR_COMPLETED',
+        payload: { sorteoId: id }
+      });
+    }).catch(err => {
       logger.error({
         layer: 'service',
         action: 'ACCOUNT_STATEMENT_SYNC_BACKGROUND_ERROR',

@@ -81,6 +81,37 @@ export const RestrictionRuleController = {
     res.json({ success: true, data: result });
   },
 
+  async listGrouped(req: AuthenticatedRequest, res: Response) {
+    const query = req.query as any;
+
+    if (req.user!.role === 'ADMIN' && req.bancaContext?.bancaId && req.bancaContext.hasAccess) {
+      query.bancaId = req.bancaContext.bancaId;
+    }
+
+    const result = await RestrictionRuleService.listGrouped(query);
+    res.json({ success: true, data: result.data, meta: result.meta });
+  },
+
+  async bulkUpdate(req: AuthenticatedRequest, res: Response) {
+    const { ids, data } = req.body;
+    const result = await RestrictionRuleService.bulkUpdate(
+      req.user!.id,
+      ids,
+      data
+    );
+    res.json({ success: true, data: result });
+  },
+
+  async bulkDelete(req: AuthenticatedRequest, res: Response) {
+    const { ids, reason } = req.body;
+    const result = await RestrictionRuleService.bulkRemove(
+      req.user!.id,
+      ids,
+      reason
+    );
+    res.json({ success: true, data: result });
+  },
+
   /**
    * GET /api/v1/restrictions/me
    * Obtiene restricciones del usuario autenticado o del vendedor especificado (impersonalización)
