@@ -439,7 +439,7 @@ const SorteoRepository = {
     }
 
     // 2) Validar y obtener X del multiplicador extra (si viene)
-    let extraX: number | null = null
+    let extraX: number = 0
     if (extraMultiplierId) {
       extraX = await resolveExtraMultiplierX(extraMultiplierId, existing.loteriaId, prisma)
     }

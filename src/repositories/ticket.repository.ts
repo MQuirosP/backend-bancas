@@ -346,11 +346,22 @@ async function ensureBaseMultiplierRow(
 // ────────────────────────────────────────────────────────────────────────────────
 
 export const TicketRepository = {
+  /**
+   * @deprecated Use createOptimized instead. This method is kept for backward compatibility but is no longer used in the main flow.
+   */
   async create(
     data: CreateTicketInput,
     userId: string,
     options?: { actorRole?: Role; createdBy?: string; createdByRole?: Role }
   ) {
+    logger.warn({
+      layer: 'repository',
+      action: 'TICKET_CREATE_DEPRECATED_CALLED',
+      payload: { 
+        userId,
+        message: 'The standard create method is deprecated. Use createOptimized instead.' 
+      }
+    });
     const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
     const actorRole = options?.actorRole ?? Role.VENDEDOR;
 
@@ -974,9 +985,8 @@ export const TicketRepository = {
         // Calcular límites dinámicos para todas las reglas que los necesiten
         const dynamicLimits = new Map<string, number>();
         const rulesNeedingDynamicLimits = applicable.filter((rule: any) =>
-          (rule.maxAmount != null || rule.maxTotal != null) &&
-          ((rule.baseAmount != null && rule.baseAmount > 0) ||
-           (rule.salesPercentage != null && rule.salesPercentage > 0))
+          (rule.baseAmount != null && rule.baseAmount > 0) ||
+          (rule.salesPercentage != null && rule.salesPercentage > 0)
         );
 
         if (rulesNeedingDynamicLimits.length > 0) {
@@ -1373,7 +1383,13 @@ export const TicketRepository = {
         const candidateRules = await tx.restrictionRule.findMany({
           where: {
             isActive: true,
-            OR: [{ userId }, { ventanaId }, { bancaId }],
+            OR: [
+              { userId },
+              { ventanaId },
+              { bancaId },
+              //  Incluir reglas globales (sin scope específico)
+              { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] }
+            ],
           },
           include: {
             loteria: true,
@@ -1681,9 +1697,8 @@ export const TicketRepository = {
         // Calcular límites dinámicos para todas las reglas que los necesiten
         const dynamicLimits = new Map<string, number>();
         const rulesNeedingDynamicLimits = applicable.filter((rule: any) =>
-          (rule.maxAmount != null || rule.maxTotal != null) &&
-          ((rule.baseAmount != null && rule.baseAmount > 0) ||
-           (rule.salesPercentage != null && rule.salesPercentage > 0))
+          (rule.baseAmount != null && rule.baseAmount > 0) ||
+          (rule.salesPercentage != null && rule.salesPercentage > 0)
         );
 
         if (rulesNeedingDynamicLimits.length > 0) {

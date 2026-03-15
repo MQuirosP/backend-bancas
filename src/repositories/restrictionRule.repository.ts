@@ -39,6 +39,14 @@ type ListParams = {
   hasAutoDate?: boolean | string;
   loteriaId?: string;
   multiplierId?: string;
+  appliesToDate?: Date | string | null;
+  appliesToHour?: number | string | null;
+  baseAmount?: number | string | null;
+  salesPercentage?: number | string | null;
+  maxAmount?: number | string | null;
+  maxTotal?: number | string | null;
+  salesCutoffMinutes?: number | string | null;
+  isAutoDate?: boolean | string;
 };
 
 const includeLabels = {
@@ -257,9 +265,28 @@ export const RestrictionRuleRepository = {
         where.isAutoDate = _hasAutoDate;
       }
 
-      // Filtros de lotería/multiplicador
-      if (loteriaId) where.loteriaId = loteriaId;
-      if (multiplierId) where.multiplierId = multiplierId;
+    // Filtros de lotería/multiplicador
+    if (loteriaId) where.loteriaId = loteriaId;
+    if (multiplierId) where.multiplierId = multiplierId;
+
+    // Filtros exactos para agrupación
+    const parseNumeric = (v: any) => (v === 'null' || v === null) ? null : Number(v);
+    
+    if (params.baseAmount !== undefined) where.baseAmount = parseNumeric(params.baseAmount);
+    if (params.salesPercentage !== undefined) where.salesPercentage = parseNumeric(params.salesPercentage);
+    if (params.maxAmount !== undefined) where.maxAmount = parseNumeric(params.maxAmount);
+    if (params.maxTotal !== undefined) where.maxTotal = parseNumeric(params.maxTotal);
+    if (params.appliesToHour !== undefined) where.appliesToHour = parseNumeric(params.appliesToHour);
+    if (params.salesCutoffMinutes !== undefined) where.salesCutoffMinutes = parseNumeric(params.salesCutoffMinutes);
+    
+    if (params.isAutoDate !== undefined) {
+      where.isAutoDate = params.isAutoDate === 'true' || params.isAutoDate === true;
+    }
+    if (params.appliesToDate !== undefined) {
+      where.appliesToDate = (params.appliesToDate === 'null' || params.appliesToDate === null) 
+        ? null 
+        : new Date(params.appliesToDate as string);
+    }
 
       //  CRÍTICO: Combinar filtros de tipo con filtros de banca/ventana existentes
       // Si ya hay un OR de bancaId, necesitamos combinar con AND

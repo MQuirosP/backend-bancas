@@ -138,29 +138,58 @@ export const RestrictionRuleService = {
       basePayload.message = data.message?.trim() ?? null;
     }
 
-    // 4. Creación de Reglas
+    // 4. Creación de Reglas Transaccional con check de unicidad
     let createdRules: any[] = [];
 
-    if (data.isAutoDate || numbers.length === 0) {
-      // Caso A: Una sola regla (isAutoDate o Global para todos los números)
-      const rule = await RestrictionRuleRepository.create({
-        ...basePayload,
-        number: null,
-      });
-      createdRules.push(rule);
-    } else {
-      // Caso B: Una regla por cada número
-      createdRules = await Promise.all(
-        numbers.map((num) =>
-          RestrictionRuleRepository.create({
+    await prisma.$transaction(async (tx) => {
+      const numbersToProcess = data.isAutoDate ? [null] : numbers.length === 0 ? [null] : numbers;
+
+      for (const num of numbersToProcess) {
+        //  PRE-VUELO: Check de unicidad (regla activa idéntica)
+        const existing = await tx.restrictionRule.findFirst({
+          where: {
+            isActive: true,
+            number: num,
+            userId: basePayload.userId,
+            ventanaId: basePayload.ventanaId,
+            bancaId: basePayload.bancaId,
+            loteriaId: basePayload.loteriaId,
+            multiplierId: basePayload.multiplierId,
+          },
+          select: { id: true }
+        });
+
+        if (existing) {
+          throw new AppError(
+            `Ya existe una regla activa para el número ${num || 'Global'} en este ámbito.`,
+            409
+          );
+        }
+
+        const rule = await tx.restrictionRule.create({
+          data: {
             ...basePayload,
             number: num,
-          })
-        )
-      );
+          }
+        });
+        createdRules.push(rule);
+      }
+    });
+
+    // 5. Invalidar caché e Invalidar logs (fuera de la transacción para no bloquear)
+    // invalidateRestrictionCaches ya es llamado por el repository, pero como usamos tx aquí, 
+    // debemos asegurarnos de invalidar después.
+    const first = createdRules[0];
+    if (first) {
+      const { invalidateRestrictionCaches } = require("../../../utils/restrictionCache");
+      await invalidateRestrictionCaches({
+        bancaId: first.bancaId || undefined,
+        ventanaId: first.ventanaId || undefined,
+        userId: first.userId || undefined,
+      });
     }
 
-    // 5. Registro de Actividad
+    // 6. Registro de Actividad
     await Promise.all(
       createdRules.map((rule) =>
         ActivityService.log({
@@ -174,7 +203,6 @@ export const RestrictionRuleService = {
       )
     );
 
-    // Retornar todas las reglas creadas (soporte para batch de números)
     return createdRules;
   },
 
@@ -246,6 +274,88 @@ export const RestrictionRuleService = {
     return updated;
   },
 
+  /**
+   * Actualización masiva transaccional
+   */
+  async bulkUpdate(actorId: string, ids: string[], data: UpdateRestrictionRuleInput) {
+    if (!ids || ids.length === 0) throw new AppError("No ids provided", 400);
+
+    const updatedRules = await prisma.$transaction(async (tx) => {
+      const results: any[] = [];
+      for (const id of ids) {
+        const rule = await tx.restrictionRule.update({
+          where: { id },
+          data: data as any
+        });
+        results.push(rule);
+      }
+      return results;
+    });
+
+    // Invalidar caché
+    const first = updatedRules[0];
+    if (first) {
+      const { invalidateRestrictionCaches } = require("../../../utils/restrictionCache");
+      await invalidateRestrictionCaches({
+        bancaId: first.bancaId || undefined,
+        ventanaId: first.ventanaId || undefined,
+        userId: first.userId || undefined,
+      });
+    }
+
+    await ActivityService.log({
+      userId: actorId,
+      action: ActivityType.SYSTEM_ACTION,
+      targetType: "RESTRICTION_RULE",
+      targetId: ids[0], // Referencia al primero
+      details: { bulkUpdate: true, count: ids.length, ids, data },
+      layer: "service",
+    });
+
+    return updatedRules;
+  },
+
+  /**
+   * Borrado masivo (desactivación lógica)
+   */
+  async bulkRemove(actorId: string, ids: string[], reason?: string) {
+    if (!ids || ids.length === 0) throw new AppError("No ids provided", 400);
+
+    const deletedRules = await prisma.$transaction(async (tx) => {
+      const results: any[] = [];
+      for (const id of ids) {
+        const rule = await tx.restrictionRule.update({
+          where: { id },
+          data: { isActive: false }
+        });
+        results.push(rule);
+      }
+      return results;
+    });
+
+    // Invalidar caché
+    const first = deletedRules[0];
+    if (first) {
+      const { invalidateRestrictionCaches } = require("../../../utils/restrictionCache");
+      await invalidateRestrictionCaches({
+        bancaId: first.bancaId || undefined,
+        ventanaId: first.ventanaId || undefined,
+        userId: first.userId || undefined,
+      });
+    }
+
+    await ActivityService.log({
+      userId: actorId,
+      action: ActivityType.SOFT_DELETE,
+      targetType: "RESTRICTION_RULE",
+      targetId: ids[0],
+      details: { bulkDelete: true, count: ids.length, ids, reason },
+      layer: "service",
+    });
+
+    return deletedRules;
+  },
+
   async remove(actorId: string, id: string, reason?: string) {
     const deleted = await RestrictionRuleRepository.softDelete(
       id,
@@ -284,6 +394,136 @@ export const RestrictionRuleService = {
 
   async list(query: any) {
     return RestrictionRuleRepository.list(query);
+  },
+
+  /**
+   * Visualización Agrupada
+   * Agrupa reglas que comparten la misma configuración pero diferentes números.
+   */
+  async listGrouped(query: any) {
+    let repoQuery = { ...query, page: 1, pageSize: 2000 };
+
+    // Si viene un groupKey, lo usamos para filtrar directamente los atributos en el repo
+    // Esto es mucho más eficiente y "congruente" que buscar por un solo ID
+    // Si viene un groupKey, lo usamos para filtrar directamente los atributos en el repo
+    if (query.groupKey) {
+        const parts = query.groupKey.split('|');
+        if (parts.length >= 14) {
+            const [
+                userId, ventanaId, bancaId, loteriaId, multiplierId,
+                baseAmount, salesPercentage, maxAmount, maxTotal,
+                isActive, isAutoDate, appliesToDate, appliesToHour, salesCutoffMinutes
+            ] = parts;
+
+            repoQuery = {
+                ...repoQuery,
+                userId: userId === 'null' ? null : userId,
+                ventanaId: ventanaId === 'null' ? null : ventanaId,
+                bancaId: bancaId === 'null' ? null : bancaId,
+                loteriaId: loteriaId === 'null' ? null : loteriaId,
+                multiplierId: multiplierId === 'null' ? null : multiplierId,
+                baseAmount: baseAmount === 'null' ? null : parseFloat(baseAmount),
+                salesPercentage: salesPercentage === 'null' ? null : parseFloat(salesPercentage),
+                maxAmount: maxAmount === 'null' ? null : parseFloat(maxAmount),
+                maxTotal: maxTotal === 'null' ? null : parseFloat(maxTotal),
+                isActive: isActive === 'true',
+                isAutoDate: isAutoDate === 'true',
+                appliesToDate: appliesToDate === 'null' ? null : appliesToDate, // Pasar string directamente al repo
+                appliesToHour: appliesToHour === 'null' ? null : parseInt(appliesToHour, 10),
+                salesCutoffMinutes: salesCutoffMinutes === 'null' ? null : parseInt(salesCutoffMinutes, 10)
+            };
+        }
+    } else if (query.id) {
+        // Fallback: búsqueda por ID para identificar el grupo (manteniendo compatibilidad)
+        const targetRule = await RestrictionRuleRepository.findById(query.id);
+        if (targetRule) {
+            repoQuery = {
+                ...repoQuery,
+                bancaId: targetRule.bancaId || null,
+                ventanaId: targetRule.ventanaId || null,
+                userId: targetRule.userId || null,
+                loteriaId: targetRule.loteriaId || null,
+                multiplierId: targetRule.multiplierId || null,
+                isActive: targetRule.isActive,
+                isAutoDate: targetRule.isAutoDate,
+                baseAmount: targetRule.baseAmount,
+                salesPercentage: targetRule.salesPercentage,
+                maxAmount: targetRule.maxAmount,
+                maxTotal: targetRule.maxTotal,
+                salesCutoffMinutes: targetRule.salesCutoffMinutes,
+                appliesToHour: targetRule.appliesToHour,
+            };
+        }
+    }
+
+    const { data } = await RestrictionRuleRepository.list(repoQuery);
+    const groups = new Map<string, any>();
+
+    for (const rule of data) {
+        // Generar Key de Agrupación consistente
+        const groupKey = [
+            rule.userId || 'null',
+            rule.ventanaId || 'null',
+            rule.bancaId || 'null',
+            rule.loteriaId || 'null',
+            rule.multiplierId || 'null',
+            rule.baseAmount ?? 'null',
+            rule.salesPercentage ?? 'null',
+            rule.maxAmount ?? 'null',
+            rule.maxTotal ?? 'null',
+            rule.isActive,
+            rule.isAutoDate,
+            rule.appliesToDate ? new Date(rule.appliesToDate).toISOString().split('T')[0] : 'null',
+            rule.appliesToHour ?? 'null',
+            rule.salesCutoffMinutes ?? 'null'
+        ].join('|');
+
+        if (groups.has(groupKey)) {
+            const entry = groups.get(groupKey);
+            entry.ids.push(rule.id);
+            if (rule.number) {
+                entry.numbers.push(rule.number);
+                // Consolidar en el campo 'number' para compatibilidad con el form de edición
+                entry.number = entry.numbers.join(', ');
+            }
+        } else {
+            groups.set(groupKey, {
+                ...rule,
+                groupKey,      // incluir la llave para que el FE pueda navegar por grupo
+                ids: [rule.id],
+                numbers: rule.number ? [rule.number] : [],
+                number: rule.number,
+                updatedAt: rule.updatedAt
+            });
+        }
+    }
+
+    let groupedData = Array.from(groups.values()).sort((a: any, b: any) => 
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    );
+
+    // ✅ FILTRO CRÍTICO: Si se pidió un groupKey específico, asegurar que solo devolvemos ESE grupo.
+    // Aunque el repoQuery debería hacer el trabajo pesado, el Map/Map Key garantiza la exactitud final.
+    if (query.groupKey) {
+        groupedData = groupedData.filter(g => g.groupKey === query.groupKey);
+    }
+
+    // PAGINACIÓN sobre los datos agrupados
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.max(1, Number(query.pageSize) || 20);
+    const total = groupedData.length;
+    const pages = Math.ceil(total / pageSize);
+    const slice = groupedData.slice((page - 1) * pageSize, page * pageSize);
+
+    return {
+        data: slice,
+        meta: {
+            page,
+            pageSize,
+            total,
+            pages
+        }
+    };
   },
 
   async getCronHealth() {

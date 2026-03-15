@@ -37,12 +37,15 @@ const NUMBER_VALIDATOR = z.union([
 // --- Helpers lógicos ---
 const hasScope = (d: any) => !!(d.bancaId || d.ventanaId || d.userId);
 const isAmountRule = (d: any) =>
-  d.maxAmount != null ||
-  d.maxTotal != null ||
-  d.baseAmount != null ||
-  d.salesPercentage != null;
-const isCutoffRule = (d: any) => d.salesCutoffMinutes != null;
+  (d.maxAmount != null && d.maxAmount > 0) ||
+  (d.maxTotal != null && d.maxTotal > 0) ||
+  (d.baseAmount != null && d.baseAmount >= 0) ||
+  (d.salesPercentage != null && d.salesPercentage >= 0);
+const isCutoffRule = (d: any) => d.salesCutoffMinutes != null && d.salesCutoffMinutes >= 0;
 const isLotteryMultiplierRule = (d: any) => d.loteriaId != null || d.multiplierId != null;
+
+// Helper para procesar números que pueden venir como null o string vacío desde el FE
+const preprocessNumber = (val: any) => (val === null || val === "" ? undefined : val);
 
 // CREATE
 export const CreateRestrictionRuleSchema = z
@@ -55,12 +58,12 @@ export const CreateRestrictionRuleSchema = z
 
     isAutoDate: z.coerce.boolean().optional(), // Si true, number se actualiza automáticamente al día del mes
     number: NUMBER_VALIDATOR.optional(),
-    maxAmount: z.coerce.number().positive().optional(),
-    maxTotal: z.coerce.number().positive().optional(),
-    baseAmount: z.coerce.number().nonnegative().optional(), // Monto base (>= 0)
-    salesPercentage: z.coerce.number().min(0).max(100).optional(), // Porcentaje 0-100
+    maxAmount: z.preprocess(preprocessNumber, z.coerce.number().positive().optional()),
+    maxTotal: z.preprocess(preprocessNumber, z.coerce.number().positive().optional()),
+    baseAmount: z.preprocess(preprocessNumber, z.coerce.number().nonnegative().optional()), // Monto base (>= 0)
+    salesPercentage: z.preprocess(preprocessNumber, z.coerce.number().min(0).max(100).optional()), // Porcentaje 0-100
     appliesToVendedor: z.coerce.boolean().optional(), // Si aplica por vendedor
-    salesCutoffMinutes: z.coerce.number().int().min(0).max(30).optional(),
+    salesCutoffMinutes: z.preprocess(preprocessNumber, z.coerce.number().int().min(0).max(30).optional()),
 
     appliesToDate: z.coerce.date().optional(),
     appliesToHour: z.coerce.number().int().min(0).max(23).optional(),
@@ -138,6 +141,16 @@ export const CreateRestrictionRuleSchema = z
     }
 
     // 5. Validaciones Generales de consistencia
+    
+    // EXCLUSIVIDAD DE ÁMBITO: No puede tener más de uno
+    const scopesCount = [data.bancaId, data.ventanaId, data.userId].filter(Boolean).length;
+    if (scopesCount > 1) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["(root)"],
+        message: "Una regla solo puede pertenecer a un ámbito a la vez (Banca OR Ventana OR Vendedor).",
+      });
+    }
 
     // isAutoDate solo con montos (ya cubierto arriba parcialmente, reforzamos)
     if (data.isAutoDate && !amount) {
@@ -206,12 +219,12 @@ export const UpdateRestrictionRuleSchema = z.object({
   isActive: z.coerce.boolean().optional(), // Estado activo/inactivo
   isAutoDate: z.coerce.boolean().optional(), // Si true, number se actualiza automáticamente al día del mes
   number: NUMBER_0_999.optional(), //  Solo string en PATCH, no array (soporta 0-999)
-  maxAmount: z.coerce.number().positive().optional(),
-  maxTotal: z.coerce.number().positive().optional(),
-  baseAmount: z.coerce.number().nonnegative().optional(), // Monto base (>= 0)
-  salesPercentage: z.coerce.number().min(0).max(100).optional(), // Porcentaje 0-100
+  maxAmount: z.preprocess(preprocessNumber, z.coerce.number().positive().optional().nullable()),
+  maxTotal: z.preprocess(preprocessNumber, z.coerce.number().positive().optional().nullable()),
+  baseAmount: z.preprocess(preprocessNumber, z.coerce.number().nonnegative().optional().nullable()), // Monto base (>= 0)
+  salesPercentage: z.preprocess(preprocessNumber, z.coerce.number().min(0).max(100).optional().nullable()), // Porcentaje 0-100
   appliesToVendedor: z.coerce.boolean().optional(), // Si aplica por vendedor
-  salesCutoffMinutes: z.coerce.number().int().min(0).max(30).optional(),
+  salesCutoffMinutes: z.preprocess(preprocessNumber, z.coerce.number().int().min(0).max(30).optional().nullable()),
 
   appliesToDate: z.coerce.date().optional(),
   appliesToHour: z.coerce.number().int().min(0).max(23).optional(),
@@ -224,6 +237,16 @@ export const UpdateRestrictionRuleSchema = z.object({
     const amount = isAmountRule(data);
     const cutoff = isCutoffRule(data);
     const lotteryMult = isLotteryMultiplierRule(data);
+
+    // EXCLUSIVIDAD DE ÁMBITO: No puede tener más de uno
+    const scopesCount = [data.bancaId, data.ventanaId, data.userId].filter(Boolean).length;
+    if (scopesCount > 1) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["(root)"],
+        message: "Una regla solo puede pertenecer a un ámbito a la vez (Banca OR Ventana OR Vendedor).",
+      });
+    }
 
     // 1. Validar combinaciones prohibidas
     if (cutoff && (amount || lotteryMult)) {
@@ -294,23 +317,33 @@ export const UpdateRestrictionRuleSchema = z.object({
   });
 
 
+// BULK UPDATE
+export const BulkUpdateRestrictionRuleSchema = z.object({
+  ids: z.array(z.uuid()).min(1),
+  data: UpdateRestrictionRuleSchema
+}).strict();
+
+
 // LIST (query)   acepta hasAmount / hasCutoff / hasAutoDate y usa isActive
 export const ListRestrictionRuleQuerySchema = z.object({
-  bancaId: z.uuid().optional(),
-  ventanaId: z.uuid().optional(),
-  userId: z.uuid().optional(),
+  bancaId: z.string().uuid().optional(),
+  ventanaId: z.string().uuid().optional(),
+  userId: z.string().uuid().optional(),
   number: z.string().trim().min(1).optional(),
+  id: z.string().uuid().optional(), // Búsqueda de grupo por ID de integrante
+  groupKey: z.string().optional(),  // Búsqueda directa por llave de grupo
 
   // Parseo explícito de booleanos desde string (evita problemas con z.coerce.boolean)
   isActive: z.enum(["true", "false"]).transform(v => v === "true").optional(),
   hasCutoff: z.enum(["true", "false"]).transform(v => v === "true").optional(),
   hasAmount: z.enum(["true", "false"]).transform(v => v === "true").optional(),
   hasAutoDate: z.enum(["true", "false"]).transform(v => v === "true").optional(),
+  hasLotteryMultiplier: z.enum(["true", "false"]).transform(v => v === "true").optional(),
 
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   _: z.string().optional(), // Para evitar caché del navegador (ignorado)
-}).strict();
+});
 
 // opcional: body para delete/restore
 export const ReasonBodySchema = z.object({

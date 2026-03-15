@@ -25,12 +25,24 @@ router.use(bancaContextMiddleware);
  * LIBERADOS (solo requieren estar autenticado)
  * GET /api/v1/restrictions
  * GET /api/v1/restrictions/:id
+ * @deprecated Use /grouped for consolidated view
  */
 router.get(
   "/",
-  requireAuth,                          // ← antes requireAdmin
+  requireAuth,
   validateQuery(ListRestrictionRuleQuerySchema),
   RestrictionRuleController.list
+);
+
+/**
+ * GET /api/v1/restrictions/grouped
+ * Nueva vista consolidada para el frontend
+ */
+router.get(
+  "/grouped",
+  requireAuth,
+  validateQuery(ListRestrictionRuleQuerySchema),
+  RestrictionRuleController.listGrouped
 );
 
 /**
@@ -66,7 +78,7 @@ router.get(
 
 router.get(
   "/:id",
-  requireAuth,                          // ← antes requireAdmin
+  requireAuth,
   validateParams(RestrictionRuleIdParamSchema),
   RestrictionRuleController.findById
 );
@@ -79,6 +91,27 @@ router.post(
   requireAdmin,
   validateBody(CreateRestrictionRuleSchema),
   RestrictionRuleController.create
+);
+
+/**
+ * PUT /api/v1/restrictions/bulk
+ * Edición masiva de reglas
+ */
+router.put(
+  "/bulk",
+  requireAdmin,
+  // validateBody(BulkUpdateRestrictionRuleSchema), // Opcional, ya se valida en el service si es necesario
+  RestrictionRuleController.bulkUpdate
+);
+
+/**
+ * DELETE /api/v1/restrictions/bulk
+ * Borrado masivo (desactivación lógica)
+ */
+router.delete(
+  "/bulk",
+  requireAdmin,
+  RestrictionRuleController.bulkDelete
 );
 
 router.patch(

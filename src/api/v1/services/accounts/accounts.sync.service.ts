@@ -21,6 +21,7 @@ import { crDateService } from "../../../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
 import { getExcludedTicketIdsForDate } from "./accounts.calculations";
 import { intercalateSorteosAndMovements } from "./accounts.intercalate";
+import { KeyedTaskQueue } from "../../../../core/keyedTaskQueue";
 
 const SYNC_BATCH_SIZE = 5;
 
@@ -174,6 +175,11 @@ export class AccountStatementSyncService {
             vendedorId: null,
           },
         });
+      }
+
+      // ️ CRÍTICO: Bloquear la fila si existe para evitar condiciones de carrera entre procesos (SELECT FOR UPDATE)
+      if (statement) {
+        await tx.$executeRaw`SELECT 1 FROM "AccountStatement" WHERE id = ${statement.id} FOR UPDATE`;
       }
 
       // 2. Si no existe y force=false, no hacer nada (puede que el día no tenga actividad)
@@ -587,9 +593,18 @@ export class AccountStatementSyncService {
     dimension: "banca" | "ventana" | "vendedor",
     entityId: string
   ): Promise<void> {
-    try {
-      // 1. Llamar a getBySorteo para obtener los eventos del día
-      const { AccountsService } = await import('./accounts.service');
+    const queueKey = `sync-${dimension}-${entityId}-${dateStr}`;
+
+    return KeyedTaskQueue.enqueue(queueKey, async () => {
+      try {
+        logger.info({
+          layer: "service",
+          action: "SYNC_DAY_STATEMENT_FROM_BY_SORTEO_START",
+          payload: { dateStr, dimension, entityId }
+        });
+
+        // 1. Llamar a getBySorteo para obtener los eventos del día
+        const { AccountsService } = await import('./accounts.service');
 
       const filters: {
         dimension: "banca" | "ventana" | "vendedor";
@@ -772,7 +787,7 @@ export class AccountStatementSyncService {
     } catch (error) {
       logger.error({
         layer: "service",
-        action: "SYNC_FROM_BYSORTEO_ERROR",
+        action: "SYNC_DAY_STATEMENT_FROM_BY_SORTEO_ERROR",
         payload: {
           dateStr, dimension, entityId,
           error: (error as Error).message,
@@ -780,6 +795,7 @@ export class AccountStatementSyncService {
       });
       throw error; // Propagar — el caller (syncSorteoStatements) decide qué hacer
     }
+    }); // Cierre de KeyedTaskQueue.enqueue
   }
 
   /**
@@ -796,8 +812,15 @@ export class AccountStatementSyncService {
     sorteoId: string,
     sorteoDate: Date // Date UTC que representa día calendario en CR
   ): Promise<void> {
-    // ️ CRÍTICO: Convertir scheduledAt a fecha CR
-    const sorteoDateStrCR = crDateService.postgresDateToCRString(sorteoDate);
+    // ️ CRÍTICO: Convertir scheduledAt a fecha CR usando dateUTCToCRString
+    // postgresDateToCRString es solo para fechas que ya vienen sin hora de la DB.
+    const sorteoDateStrCR = crDateService.dateUTCToCRString(sorteoDate);
+
+    logger.info({
+      layer: "service",
+      action: "SYNC_SORTEO_STATEMENTS_START",
+      payload: { sorteoId, sorteoDate, sorteoDateStrCR }
+    });
 
     try {
       // 1. Obtener todos los tickets afectados por el sorteo
@@ -979,10 +1002,10 @@ export class AccountStatementSyncService {
   /**
    * Recalcula accumulatedBalance para un rango de días
    * Útil para correcciones masivas o migración de datos
-   * 
+   *
    * ️ CRÍTICO: Procesa días en orden cronológico ASC para asegurar que accumulatedBalance
    * se calcule correctamente día a día
-   * 
+   *
    * @param startDate - Fecha inicio (Date UTC que representa día calendario en CR)
    * @param endDate - Fecha fin (Date UTC que representa día calendario en CR)
    * @param dimension - Dimensión
@@ -1241,8 +1264,11 @@ export class AccountStatementSyncService {
     entityId?: string
   ): Promise<void> {
     const dateStrCR = crDateService.postgresDateToCRString(startDate);
-    const [year, month] = dateStrCR.split('-').map(Number);
-    const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+    const queueKey = `propagate-${dimension}-${entityId}-${dateStrCR}`;
+
+    return KeyedTaskQueue.enqueue(queueKey, async () => {
+      const [year, month] = dateStrCR.split('-').map(Number);
+      const monthStr = `${year}-${String(month).padStart(2, '0')}`;
 
     logger.info({
       layer: "service",
@@ -1316,5 +1342,6 @@ export class AccountStatementSyncService {
         statementsUpdated: statementsToUpdate.length,
       },
     });
+    }); // Cierre de KeyedTaskQueue.enqueue
   }
 }
