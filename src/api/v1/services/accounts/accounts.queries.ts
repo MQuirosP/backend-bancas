@@ -109,36 +109,36 @@ export async function getAggregatedTicketsData(params: {
             whereConditions.push(Prisma.sql`EXISTS (
                 SELECT 1 FROM "Ventana" v 
                 WHERE v.id = t."ventanaId" 
-                AND v."bancaId" = ${bancaId}::uuid
+                AND v."bancaId" = CAST(${bancaId} AS uuid)
             )`);
         }
         if (ventanaId) {
-            whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+            whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         }
         if (vendedorId) {
-            whereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+            whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
         }
     } else if (dimension === "vendedor") {
-        if (vendedorId) whereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
-        if (ventanaId) whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+        if (vendedorId) whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
+        if (ventanaId) whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         if (bancaId) {
             whereConditions.push(Prisma.sql`EXISTS (
                 SELECT 1 FROM "Ventana" v 
                 JOIN "User" u ON u."ventanaId" = v.id
                 WHERE u.id = t."vendedorId"
-                AND v."bancaId" = ${bancaId}::uuid
+                AND v."bancaId" = CAST(${bancaId} AS uuid)
             )`);
         }
     } else if (dimension === "ventana") {
-        if (ventanaId) whereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+        if (ventanaId) whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         if (bancaId) {
             whereConditions.push(Prisma.sql`EXISTS (
                 SELECT 1 FROM "Ventana" v 
                 WHERE v.id = t."ventanaId" 
-                AND v."bancaId" = ${bancaId}::uuid
+                AND v."bancaId" = CAST(${bancaId} AS uuid)
             )`);
         }
-        if (vendedorId) whereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+        if (vendedorId) whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
     }
 
     const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`;
@@ -170,10 +170,10 @@ export async function getAggregatedTicketsData(params: {
             b.id as banca_id,
             MAX(b.name) as banca_name,
             MAX(b.code) as banca_code,
-            ${shouldGroupByDate ? Prisma.sql`NULL::uuid` : Prisma.sql`t."ventanaId"`} as ventana_id,
+            ${shouldGroupByDate ? Prisma.sql`CAST(NULL AS uuid)` : Prisma.sql`t."ventanaId"`} as ventana_id,
             MAX(v.name) as ventana_name,
             MAX(v.code) as ventana_code,
-            ${shouldGroupByDate ? Prisma.sql`NULL::uuid` : (dimension === "ventana" && ventanaId ? Prisma.sql`NULL::uuid` : Prisma.sql`t."vendedorId"`)} as vendedor_id,
+            ${shouldGroupByDate ? Prisma.sql`CAST(NULL AS uuid)` : (dimension === "ventana" && ventanaId ? Prisma.sql`CAST(NULL AS uuid)` : Prisma.sql`t."vendedorId"`)} as vendedor_id,
             MAX(u.name) as vendedor_name,
             MAX(u.code) as vendedor_code,
             COALESCE(SUM(ja.total_amount), 0) as total_sales,
@@ -244,23 +244,23 @@ export async function getDailySummariesFromMaterializedView(
         if (dimension === "banca") {
             if (bancaId) {
                 // Filtrar por ventanas de esta banca específica
-                conditions.push(`"ventanaId" IN (SELECT id FROM "Ventana" WHERE "bancaId" = '${bancaId}'::uuid)`);
+                conditions.push(`"ventanaId" IN (SELECT id FROM "Ventana" WHERE "bancaId" = CAST('${bancaId}' AS uuid))`);
             }
             if (ventanaId) {
-                conditions.push(`"ventanaId" = '${ventanaId}'::uuid`);
+                conditions.push(`"ventanaId" = CAST('${ventanaId}' AS uuid)`);
             }
             if (vendedorId) {
-                conditions.push(`"vendedorId" = '${vendedorId}'::uuid`);
+                conditions.push(`"vendedorId" = CAST('${vendedorId}' AS uuid)`);
             }
             // Para dimension='banca', no filtramos por vendedorId IS NULL porque puede haber vendedores
         } else if (dimension === "ventana" && ventanaId) {
-            conditions.push(`"ventanaId" = '${ventanaId}'::uuid`);
+            conditions.push(`"ventanaId" = CAST('${ventanaId}' AS uuid)`);
             conditions.push(`"vendedorId" IS NULL`);
         } else if (dimension === "ventana") {
             conditions.push(`"ventanaId" IS NOT NULL`);
             conditions.push(`"vendedorId" IS NULL`);
         } else if (dimension === "vendedor" && vendedorId) {
-            conditions.push(`"vendedorId" = '${vendedorId}'::uuid`);
+            conditions.push(`"vendedorId" = CAST('${vendedorId}' AS uuid)`);
             conditions.push(`"ventanaId" IS NULL`);
         } else if (dimension === "vendedor") {
             conditions.push(`"vendedorId" IS NOT NULL`);
@@ -410,26 +410,26 @@ export async function getSorteoBreakdownBatch(
     if (dimension === 'banca') {
         if (bancaId) {
             // Banca específica: los tickets pertenecen a ventanas de esa banca
-            whereClauses.push(Prisma.sql`v."bancaId" = ${bancaId}::uuid`);
+            whereClauses.push(Prisma.sql`v."bancaId" = CAST(${bancaId} AS uuid)`);
         }
         // scope=all: sin filtro adicional, incluye todas las bancas
     } else if (dimension === 'ventana') {
         if (ventanaId) {
-            whereClauses.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+            whereClauses.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         }
         if (bancaId) {
-            whereClauses.push(Prisma.sql`v."bancaId" = ${bancaId}::uuid`);
+            whereClauses.push(Prisma.sql`v."bancaId" = CAST(${bancaId} AS uuid)`);
         }
     } else { // vendedor
         if (vendedorId) {
-            whereClauses.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+            whereClauses.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
         }
         if (ventanaId) {
             // Vendedores de una ventana específica
-            whereClauses.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+            whereClauses.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         }
         if (bancaId) {
-            whereClauses.push(Prisma.sql`v."bancaId" = ${bancaId}::uuid`);
+            whereClauses.push(Prisma.sql`v."bancaId" = CAST(${bancaId} AS uuid)`);
         }
     }
 

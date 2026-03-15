@@ -212,21 +212,21 @@ export class CommissionsExportService {
       whereConditions.push(Prisma.sql`EXISTS (
         SELECT 1 FROM "Ventana" v
         WHERE v.id = t."ventanaId"
-        AND v."bancaId" = ${filters.bancaId}::uuid
+        AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
       )`);
     }
 
     // Aplicar filtros de RBAC según dimension
     if (filters.dimension === 'vendedor') {
       if (filters.vendedorId) {
-        whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+        whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
       }
       if (filters.ventanaId) {
-        whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+        whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
       }
     } else if (filters.dimension === 'ventana') {
       if (filters.ventanaId) {
-        whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+        whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
       }
     }
 
@@ -368,7 +368,7 @@ export class CommissionsExportService {
       LEFT JOIN "LoteriaMultiplier" lm ON lm.id = sle.multiplier_id
       WHERE s."scheduledAt"::date >= ${fromDateStr}::date
         AND s."scheduledAt"::date <= ${toDateStr}::date
-        ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+        ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
     `;
 
     for (const row of exclusionesActivas) {
@@ -405,10 +405,10 @@ export class CommissionsExportService {
       const whereConditions: string[] = [];
 
       if (filters.ventanaId) {
-        whereConditions.push(`v.id = '${filters.ventanaId}'::uuid`);
+        whereConditions.push(`v.id = CAST('${filters.ventanaId}' AS uuid)`);
       }
       if (filters.bancaId) {
-        whereConditions.push(`v."bancaId" = '${filters.bancaId}'::uuid`);
+        whereConditions.push(`v."bancaId" = CAST('${filters.bancaId}' AS uuid)`);
       }
 
       const whereClause = whereConditions.length > 0
@@ -474,13 +474,13 @@ export class CommissionsExportService {
       let whereClause = Prisma.sql`WHERE u.role = 'VENDEDOR'`;
 
       if (filters.vendedorId) {
-        whereClause = Prisma.sql`${whereClause} AND u.id = ${filters.vendedorId}::uuid`;
+        whereClause = Prisma.sql`${whereClause} AND u.id = CAST(${filters.vendedorId} AS uuid)`;
       }
       if (filters.ventanaId) {
-        whereClause = Prisma.sql`${whereClause} AND u."ventanaId" = ${filters.ventanaId}::uuid`;
+        whereClause = Prisma.sql`${whereClause} AND u."ventanaId" = CAST(${filters.ventanaId} AS uuid)`;
       }
       if (filters.bancaId) {
-        whereClause = Prisma.sql`${whereClause} AND v."bancaId" = ${filters.bancaId}::uuid`;
+        whereClause = Prisma.sql`${whereClause} AND v."bancaId" = CAST(${filters.bancaId} AS uuid)`;
       }
 
       const vendedores = await prisma.$queryRaw<

@@ -51,16 +51,16 @@ export async function calculateRealMonthBalance(
 
         // Aplicar filtros por dimensión
         if (dimension === "vendedor" && vendedorId) {
-            ticketConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+            ticketConditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
         }
         if (dimension === "vendedor" && ventanaId) {
-            ticketConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+            ticketConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         }
         if (dimension === "ventana" && ventanaId) {
-            ticketConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+            ticketConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         }
         if (dimension === "banca" && bancaId) {
-            ticketConditions.push(Prisma.sql`EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = ${bancaId}::uuid)`);
+            ticketConditions.push(Prisma.sql`EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${bancaId} AS uuid))`);
         }
 
         const ticketWhereClause = Prisma.sql`WHERE ${Prisma.join(ticketConditions, " AND ")}`;

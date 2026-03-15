@@ -204,9 +204,9 @@ export class CierreService {
             AND t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
         ),
         lm_active AS MATERIALIZED (
           SELECT
@@ -405,8 +405,8 @@ export class CierreService {
             AND t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
         ),
         lm_active AS MATERIALIZED (
           SELECT
@@ -545,9 +545,9 @@ export class CierreService {
             AND t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
         ),
         lm_active AS MATERIALIZED (
           SELECT
@@ -652,9 +652,9 @@ export class CierreService {
             AND t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
         ),
         lm_active AS MATERIALIZED (
           SELECT
@@ -902,21 +902,21 @@ export class CierreService {
     // Filtro de ventana
     // Filtrar por banca activa (para ADMIN multibanca)
     if (filters.bancaId) {
-      conditions.push(Prisma.sql`v."bancaId" = ${filters.bancaId}::uuid`);
+      conditions.push(Prisma.sql`v."bancaId" = CAST(${filters.bancaId} AS uuid)`);
     }
 
     if (filters.ventanaId) {
-      conditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+      conditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
     }
 
     // Filtro de lotería (opcional)
     if (filters.loteriaId) {
-      conditions.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+      conditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
     }
 
     // Filtro de vendedor (opcional)
     if (filters.vendedorId) {
-      conditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+      conditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
     }
 
     //  NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
@@ -1464,12 +1464,12 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
     conditions.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "Ventana" v
       WHERE v.id = t."ventanaId"
-      AND v."bancaId" = ${filters.bancaId}::uuid
+      AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
     )`);
   }
-  if (filters.ventanaId) conditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
-  if (filters.loteriaId) conditions.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
-  if (filters.vendedorId) conditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+  if (filters.ventanaId) conditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
+  if (filters.loteriaId) conditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
+  if (filters.vendedorId) conditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
   const whereConditions = conditions.length ? Prisma.sql`AND ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
 
   // OPTIMIZACIÓN: CTE materializado compartido entre count y sample queries

@@ -113,7 +113,7 @@ export const VendedoresReportService = {
       LEFT JOIN ventas_por_vendedor v ON v."vendedorId" = u.id
       LEFT JOIN comisiones_por_vendedor c ON c."vendedorId" = u.id
       WHERE u.role = 'VENDEDOR'
-        AND u."ventanaId" = ${filters.ventanaId}::uuid
+        AND u."ventanaId" = CAST(${filters.ventanaId} AS uuid)
         AND u."isActive" = true
       ORDER BY u.name ASC
     `;
@@ -210,7 +210,7 @@ export const VendedoresReportService = {
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
       ),
       ventas_por_vendedor AS (
         SELECT
@@ -254,7 +254,7 @@ export const VendedoresReportService = {
       LEFT JOIN comisiones_por_vendedor c ON c."vendedorId" = u.id
       WHERE u.role = 'VENDEDOR'
         AND u."isActive" = true
-        ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+        ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
         ${!filters.includeInactive ? Prisma.sql`AND v.ventas IS NOT NULL AND v.ventas > 0` : Prisma.empty}
     `;
 

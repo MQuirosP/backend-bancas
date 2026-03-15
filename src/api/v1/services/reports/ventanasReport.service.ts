@@ -251,7 +251,7 @@ export const VentanasReportService = {
           AND s.status = 'EVALUATED'
           AND s."deletedAt" IS NULL
           AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-          ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
       ),
       ventana_stats AS (
         SELECT 

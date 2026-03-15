@@ -77,14 +77,14 @@ async function calculatePreviousMonthBalanceFromSource(
             ticketConditions.push(Prisma.sql`EXISTS (
                 SELECT 1 FROM "Ventana" v
                 WHERE v.id = t."ventanaId"
-                AND v."bancaId" = ${filters.bancaId}::uuid
+                AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
             )`);
         }
         if (filters.ventanaId) {
-            ticketConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+            ticketConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
         if (filters.vendedorId) {
-            ticketConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+            ticketConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
         }
 
         const ticketWhereClause = Prisma.sql`WHERE ${Prisma.join(ticketConditions, " AND ")}`;

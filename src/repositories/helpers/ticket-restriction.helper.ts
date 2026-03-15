@@ -81,11 +81,11 @@ export async function calculateAccumulatedByNumbersAndScope(
     let scopeCondition: Prisma.Sql;
 
     if (scopeType === 'USER') {
-      scopeCondition = Prisma.sql`t."vendedorId" = ${scopeId}::uuid`;
+      scopeCondition = Prisma.sql`t."vendedorId" = CAST(${scopeId} AS uuid)`;
     } else if (scopeType === 'VENTANA') {
-      scopeCondition = Prisma.sql`t."ventanaId" = ${scopeId}::uuid`;
+      scopeCondition = Prisma.sql`t."ventanaId" = CAST(${scopeId} AS uuid)`;
     } else if (scopeType === 'BANCA') {
-      scopeCondition = Prisma.sql`v."bancaId" = ${scopeId}::uuid`;
+      scopeCondition = Prisma.sql`v."bancaId" = CAST(${scopeId} AS uuid)`;
     } else {
       throw new Error(`Invalid scopeType: ${scopeType}`);
     }
@@ -98,7 +98,7 @@ export async function calculateAccumulatedByNumbersAndScope(
         multiplierCondition = Prisma.sql`AND j."type" = 'REVENTADO'`;
       } else {
         // Para NUMERO, filtramos por el ID del multiplicador específico
-        multiplierCondition = Prisma.sql`AND j."multiplierId" = ${multiplierFilter.id}::uuid`;
+        multiplierCondition = Prisma.sql`AND j."multiplierId" = CAST(${multiplierFilter.id} AS uuid)`;
       }
     }
 
@@ -143,7 +143,7 @@ export async function calculateAccumulatedByNumbersAndScope(
         }
         WHERE 
           ${scopeCondition}
-          AND t."sorteoId" = ${sorteoId}::uuid
+          AND t."sorteoId" = CAST(${sorteoId} AS uuid)
           AND t."status" != 'CANCELLED'
           AND t."isActive" = true  --  Exclusivo activos
           AND t."deletedAt" IS NULL

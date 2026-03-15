@@ -341,7 +341,7 @@ const SorteoRepository = {
       const paymentsDeleted = await tx.$executeRaw`
         DELETE FROM "TicketPayment"
         WHERE "ticketId" IN (
-          SELECT id FROM "Ticket" WHERE "sorteoId" = ${id}::uuid
+          SELECT id FROM "Ticket" WHERE "sorteoId" = CAST(${id} AS uuid)
         )
       `;
 
@@ -353,7 +353,7 @@ const SorteoRepository = {
             "finalMultiplierX" = CASE WHEN j."type" = 'REVENTADO' THEN 0 ELSE j."finalMultiplierX" END,
             "multiplierId" = CASE WHEN j."type" = 'REVENTADO' THEN NULL ELSE j."multiplierId" END
         FROM "Ticket" t
-        WHERE j."ticketId" = t.id AND t."sorteoId" = ${id}::uuid
+        WHERE j."ticketId" = t.id AND t."sorteoId" = CAST(${id} AS uuid)
       `;
 
       // 4️⃣ Resetear tickets (status ACTIVE, isWinner false, montos a 0)
@@ -369,7 +369,7 @@ const SorteoRepository = {
             "paymentMethod" = NULL,
             "paymentNotes" = NULL,
             "paymentHistory" = NULL
-        WHERE "sorteoId" = ${id}::uuid 
+        WHERE "sorteoId" = CAST(${id} AS uuid) 
         AND "status" IN ('EVALUATED', 'PAID')
       `;
 
@@ -468,7 +468,7 @@ const SorteoRepository = {
             "payout" = j."amount" * j."finalMultiplierX"
         FROM "Ticket" t
         WHERE j."ticketId" = t.id 
-        AND t."sorteoId" = ${id}::uuid
+        AND t."sorteoId" = CAST(${id} AS uuid)
         AND t."status" != 'CANCELLED'
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
@@ -490,10 +490,10 @@ const SorteoRepository = {
           SET "isWinner" = true,
               "finalMultiplierX" = ${extraX},
               "payout" = j."amount" * ${extraX},
-              "multiplierId" = ${extraMultiplierId}::uuid
+              "multiplierId" = CAST(${extraMultiplierId} AS uuid)
           FROM "Ticket" t
           WHERE j."ticketId" = t.id 
-          AND t."sorteoId" = ${id}::uuid
+          AND t."sorteoId" = CAST(${id} AS uuid)
           AND t."status" != 'CANCELLED'
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
@@ -518,7 +518,7 @@ const SorteoRepository = {
         WITH Payouts AS (
           SELECT "ticketId", SUM("payout") as total
           FROM "Jugada"
-          WHERE "ticketId" IN (SELECT id FROM "Ticket" WHERE "sorteoId" = ${id}::uuid)
+          WHERE "ticketId" IN (SELECT id FROM "Ticket" WHERE "sorteoId" = CAST(${id} AS uuid))
           AND "isWinner" = true
           GROUP BY "ticketId"
         )
@@ -536,9 +536,9 @@ const SorteoRepository = {
         UPDATE "Sorteo"
         SET "hasWinner" = EXISTS (
           SELECT 1 FROM "Ticket" 
-          WHERE "sorteoId" = ${id}::uuid AND "isWinner" = true
+          WHERE "sorteoId" = CAST(${id} AS uuid) AND "isWinner" = true
         )
-        WHERE id = ${id}::uuid
+        WHERE id = CAST(${id} AS uuid)
       `;
 
       // 3.7) Obtener datos para el log
@@ -650,7 +650,7 @@ const SorteoRepository = {
     ];
 
     if (loteriaId) {
-      whereConditions.push(Prisma.sql`s."loteriaId" = ${loteriaId}::uuid`);
+      whereConditions.push(Prisma.sql`s."loteriaId" = CAST(${loteriaId} AS uuid)`);
     }
     if (status) {
       //  Convertir enum a string literal para PostgreSQL
@@ -674,10 +674,10 @@ const SorteoRepository = {
       if (lastScheduledAt) {
         whereConditions.push(Prisma.sql`(
           s."scheduledAt" < ${lastScheduledAt} OR 
-          (s."scheduledAt" = ${lastScheduledAt} AND s.id < ${lastId}::uuid)
+          (s."scheduledAt" = ${lastScheduledAt} AND s.id < CAST(${lastId} AS uuid))
         )`);
       } else {
-        whereConditions.push(Prisma.sql`s.id < ${lastId}::uuid`);
+        whereConditions.push(Prisma.sql`s.id < CAST(${lastId} AS uuid)`);
       }
     }
 

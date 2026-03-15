@@ -161,7 +161,7 @@ export const CommissionsService = {
         whereConditions.push(Prisma.sql`EXISTS (
           SELECT 1 FROM "Ventana" v
           WHERE v.id = t."ventanaId"
-          AND v."bancaId" = ${filters.bancaId}::uuid
+          AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
         )`);
       }
 
@@ -169,17 +169,17 @@ export const CommissionsService = {
       if (filters.dimension === "vendedor") {
         if (filters.vendedorId) {
           // Filtrar por vendedor específico (ADMIN con filtro)
-          whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+          whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
         }
         // Si scope=mine, el RBAC ya aplicó el filtro de vendedorId
         // También aplicar ventanaId si está presente (para filtrar vendedores de una ventana específica)
         if (filters.ventanaId) {
-          whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
       } else if (filters.dimension === "ventana") {
         if (filters.ventanaId) {
           // Filtrar por ventana específica (ADMIN con filtro)
-          whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
         // Si scope=mine, el RBAC ya aplicó el filtro de ventanaId
       }
@@ -1192,22 +1192,22 @@ export const CommissionsService = {
         whereConditions.push(Prisma.sql`EXISTS (
           SELECT 1 FROM "Ventana" v
           WHERE v.id = t."ventanaId"
-          AND v."bancaId" = ${filters.bancaId}::uuid
+          AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
         )`);
       }
 
       // Aplicar filtros de RBAC según dimension
       if (filters.dimension === "vendedor") {
         if (filters.vendedorId) {
-          whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+          whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
         }
         // También aplicar ventanaId si está presente (para filtrar vendedores de una ventana específica)
         if (filters.ventanaId) {
-          whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
       } else if (filters.dimension === "ventana") {
         if (filters.ventanaId) {
-          whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
       }
 
@@ -1798,28 +1798,28 @@ export const CommissionsService = {
           AND s.status = 'EVALUATED'
         )`,
         Prisma.sql`t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date`,
-        Prisma.sql`t."loteriaId" = ${loteriaId}::uuid`,
+        Prisma.sql`t."loteriaId" = CAST(${loteriaId} AS uuid)`,
       ];
 
       // Manejar multiplierId: "unknown" significa NULL (REVENTADO sin multiplicador)
       if (multiplierId === "unknown") {
         whereConditions.push(Prisma.sql`j."multiplierId" IS NULL`);
       } else {
-        whereConditions.push(Prisma.sql`j."multiplierId" = ${multiplierId}::uuid`);
+        whereConditions.push(Prisma.sql`j."multiplierId" = CAST(${multiplierId} AS uuid)`);
       }
 
       // Aplicar filtros de RBAC según dimension
       if (filters.dimension === "vendedor") {
         if (filters.vendedorId) {
-          whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+          whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
         }
         // También aplicar ventanaId si está presente (para filtrar vendedores de una ventana específica)
         if (filters.ventanaId) {
-          whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
       } else if (filters.dimension === "ventana") {
         if (filters.ventanaId) {
-          whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
       }
 

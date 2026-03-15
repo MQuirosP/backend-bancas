@@ -1249,7 +1249,7 @@ gs."hour24",
             s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
             'HH24:MI'
           ) = gs."hour24"
-            ${params.loteriaId ? Prisma.sql`AND s2."loteriaId" = ${params.loteriaId}::uuid` : Prisma.empty}
+            ${params.loteriaId ? Prisma.sql`AND s2."loteriaId" = CAST(${params.loteriaId} AS uuid)` : Prisma.empty}
             ${params.dateFrom ? Prisma.sql`AND s2."scheduledAt" >= ${params.dateFrom}` : Prisma.empty}
             ${params.dateTo ? Prisma.sql`AND s2."scheduledAt" <= ${params.dateTo}` : Prisma.empty}
           ORDER BY s2."scheduledAt" DESC
@@ -1392,10 +1392,10 @@ gs."hour24" ASC
       ];
 
       // Aplicar filtros RBAC dinámicos (Vendedor, Ventana, Banca)
-      if (vendedorId) ticketConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
-      if (params.ventanaId) ticketConditions.push(Prisma.sql`t."ventanaId" = ${params.ventanaId}::uuid`);
-      if (params.bancaId) ticketConditions.push(Prisma.sql`v."bancaId" = ${params.bancaId}::uuid`);
-      if (params.loteriaId) ticketConditions.push(Prisma.sql`s."loteriaId" = ${params.loteriaId}::uuid`);
+      if (vendedorId) ticketConditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
+      if (params.ventanaId) ticketConditions.push(Prisma.sql`t."ventanaId" = CAST(${params.ventanaId} AS uuid)`);
+      if (params.bancaId) ticketConditions.push(Prisma.sql`v."bancaId" = CAST(${params.bancaId} AS uuid)`);
+      if (params.loteriaId) ticketConditions.push(Prisma.sql`s."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
 
       const whereClause = Prisma.join(ticketConditions, ' AND ');
 

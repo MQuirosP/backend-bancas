@@ -160,11 +160,11 @@ function buildRawDateConditions(filters: VentasFilters) {
   const businessParts: Prisma.Sql[] = [];
 
   if (fromDateStr) {
-    businessParts.push(Prisma.sql`t."businessDate" >= ${new Date(`${fromDateStr}T00:00:00.000Z`)}::date`);
+    businessParts.push(Prisma.sql`t."businessDate" >= CAST(${new Date(`${fromDateStr}T00:00:00.000Z`)} AS date)`);
   }
 
   if (toDateStr) {
-    businessParts.push(Prisma.sql`t."businessDate" <= ${new Date(`${toDateStr}T00:00:00.000Z`)}::date`);
+    businessParts.push(Prisma.sql`t."businessDate" <= CAST(${new Date(`${toDateStr}T00:00:00.000Z`)} AS date)`);
   }
 
   const dateCondition = businessParts.length ? combineSqlWithAnd(businessParts) : Prisma.sql`TRUE`;
@@ -750,10 +750,10 @@ export const VentasService = {
                 AND t."isActive" = true
                 AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = '${filters.bancaId}'::uuid)` : ''}
-                ${filters.ventanaId ? `AND t."ventanaId" = '${filters.ventanaId}'::uuid` : ''}
-                ${filters.loteriaId ? `AND t."loteriaId" = '${filters.loteriaId}'::uuid` : ''}
-                ${filters.sorteoId ? `AND t."sorteoId" = '${filters.sorteoId}'::uuid` : ''}
+                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
+                ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
+                ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
+                ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
                 ${dateCondition ? `AND ${dateCondition.text}` : ''}
             ),
             jugada_stats AS (
@@ -805,11 +805,11 @@ export const VentasService = {
                 AND t."isActive" = true
                 AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = '${filters.bancaId}'::uuid)` : ''}
-                ${filters.ventanaId ? `AND t."ventanaId" = '${filters.ventanaId}'::uuid` : ''}
-                ${filters.vendedorId ? `AND t."vendedorId" = '${filters.vendedorId}'::uuid` : ''}
-                ${filters.loteriaId ? `AND t."loteriaId" = '${filters.loteriaId}'::uuid` : ''}
-                ${filters.sorteoId ? `AND t."sorteoId" = '${filters.sorteoId}'::uuid` : ''}
+                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
+                ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
+                ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
+                ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
+                ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
                 ${dateCondition ? `AND ${dateCondition.text}` : ''}
             ),
             jugada_stats AS (
@@ -889,11 +889,11 @@ export const VentasService = {
                 AND t."isActive" = true
                 AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = '${filters.bancaId}'::uuid)` : ''}
-                ${filters.ventanaId ? `AND t."ventanaId" = '${filters.ventanaId}'::uuid` : ''}
-                ${filters.vendedorId ? `AND t."vendedorId" = '${filters.vendedorId}'::uuid` : ''}
-                ${filters.loteriaId ? `AND t."loteriaId" = '${filters.loteriaId}'::uuid` : ''}
-                ${filters.sorteoId ? `AND t."sorteoId" = '${filters.sorteoId}'::uuid` : ''}
+                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
+                ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
+                ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
+                ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
+                ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
                 ${dateCondition ? `AND ${dateCondition.text}` : ''}
             ),
             jugada_stats AS (
@@ -945,11 +945,11 @@ export const VentasService = {
                 AND t."isActive" = true
                 AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = '${filters.bancaId}'::uuid)` : ''}
-                ${filters.ventanaId ? `AND t."ventanaId" = '${filters.ventanaId}'::uuid` : ''}
-                ${filters.vendedorId ? `AND t."vendedorId" = '${filters.vendedorId}'::uuid` : ''}
-                ${filters.loteriaId ? `AND t."loteriaId" = '${filters.loteriaId}'::uuid` : ''}
-                ${filters.sorteoId ? `AND t."sorteoId" = '${filters.sorteoId}'::uuid` : ''}
+                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
+                ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
+                ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
+                ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
+                ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
                 ${dateCondition ? `AND ${dateCondition.text}` : ''}
             ),
             jugada_stats AS (
@@ -1001,11 +1001,11 @@ export const VentasService = {
                 AND t."isActive" = true
                 AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = '${filters.bancaId}'::uuid)` : ''}
-                ${filters.ventanaId ? `AND t."ventanaId" = '${filters.ventanaId}'::uuid` : ''}
-                ${filters.vendedorId ? `AND t."vendedorId" = '${filters.vendedorId}'::uuid` : ''}
-                ${filters.loteriaId ? `AND t."loteriaId" = '${filters.loteriaId}'::uuid` : ''}
-                ${filters.sorteoId ? `AND t."sorteoId" = '${filters.sorteoId}'::uuid` : ''}
+                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
+                ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
+                ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
+                ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
+                ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
                 ${dateCondition ? `AND ${dateCondition.text}` : ''}
             )
             SELECT 
