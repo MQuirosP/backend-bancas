@@ -85,7 +85,12 @@ export class CierreService {
       loteriaId: filters.loteriaId || null,
     })).digest('hex')}`;
 
-    return cierreWrap(cacheKey, 120, async () => {
+    const todayCR = crDateService.dateUTCToCRString(new Date());
+    const isHistorical = crDateService.dateUTCToCRString(filters.fromDate) !== todayCR && 
+                        crDateService.dateUTCToCRString(filters.toDate) !== todayCR;
+    const ttl = isHistorical ? 3600 : 120;
+
+    return cierreWrap(cacheKey, ttl, async () => {
       const startTime = Date.now();
       let queryCount = 0;
 
@@ -130,6 +135,11 @@ export class CierreService {
     top?: number,
     orderBy: 'totalVendida' | 'ganado' | 'netoDespuesComision' = 'totalVendida'
   ): Promise<CierreBySellerData & { _performance: CierrePerformance; _metaExtras: CierreMetaExtras }> {
+    const todayCR = crDateService.dateUTCToCRString(new Date());
+    const isHistorical = crDateService.dateUTCToCRString(filters.fromDate) !== todayCR && 
+                        crDateService.dateUTCToCRString(filters.toDate) !== todayCR;
+    const ttl = isHistorical ? 3600 : 120;
+
     const cacheKey = `cierre:by-seller:${crypto.createHash('md5').update(JSON.stringify({
       from: filters.fromDate.toISOString(),
       to: filters.toDate.toISOString(),
@@ -141,16 +151,19 @@ export class CierreService {
       orderBy,
     })).digest('hex')}`;
 
-    return cierreWrap(cacheKey, 120, async () => {
+    return cierreWrap(cacheKey, ttl, async () => {
       const startTime = Date.now();
       let queryCount = 0;
 
-      // Tres queries independientes en paralelo
-      const [rawData, sorteoData, anomalies] = await Promise.all([
-        this.executeSellerAggregation(filters).then(d => { queryCount += 1; return d; }),
+      // OPTIMIZACIÓN: Se consolida executeSellerAggregation y executeSellerAggregationBySorteo
+      // executeSellerAggregationBySorteo ya contiene todo el detalle necesario.
+      const [sorteoData, anomalies] = await Promise.all([
         this.executeSellerAggregationBySorteo(filters).then(d => { queryCount += 1; return d; }),
-        computeAnomalies(filters).then(a => { queryCount += 2; return a; }),
+        computeAnomalies(filters).then(a => { queryCount += 1; return a; }),
       ]);
+
+      // Generar rawData (agregado general por vendedor/banda) en memoria
+      const rawData = this.aggregateSorteoDataToGeneral(sorteoData);
 
       const sellerLoterias = this.buildSellerLoterias(sorteoData);
       const { totals, vendedores } = this.transformSellerData(rawData, top, orderBy, sellerLoterias);
@@ -171,6 +184,43 @@ export class CierreService {
         },
       };
     });
+  }
+
+  /**
+   * Transforma datos de sorteos en datos generales por vendedor y banda en memoria
+   */
+  private static aggregateSorteoDataToGeneral(
+    sorteoData: SellerSorteoAggregateRow[]
+  ): VendedorAggregateRow[] {
+    const map = new Map<string, VendedorAggregateRow>();
+
+    for (const row of sorteoData) {
+      const key = `${row.vendedorId}|${row.banda}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          vendedorId: row.vendedorId,
+          vendedorNombre: row.vendedorNombre,
+          ventanaId: row.ventanaId,
+          ventanaNombre: row.ventanaNombre,
+          banda: row.banda,
+          totalVendida: 0,
+          ganado: 0,
+          comisionTotal: 0,
+          refuerzos: 0,
+          ticketsCount: 0,
+          jugadasCount: 0,
+        });
+      }
+      const agg = map.get(key)!;
+      agg.totalVendida += row.totalVendida;
+      agg.ganado += row.ganado;
+      agg.comisionTotal += row.comisionTotal;
+      agg.refuerzos += row.refuerzos;
+      agg.ticketsCount += row.ticketsCount;
+      agg.jugadasCount += row.jugadasCount;
+    }
+
+    return Array.from(map.values());
   }
 
   /**
@@ -521,115 +571,6 @@ export class CierreService {
     }));
   }
 
-  /**
-   * Ejecuta agregación SQL por vendedor
-   */
-  private static async executeSellerAggregation(
-    filters: CierreFilters
-  ): Promise<VendedorAggregateRow[]> {
-    const whereConditions = await this.buildWhereConditions(filters);
-    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
-
-    // OPTIMIZACIÓN: Tres CTEs eliminan el Seq Scan completo de Jugada y el EXISTS triple:
-    // ① relevant_tickets: pre-filtra tickets del periodo → reduce Jugada de 867K a ~5K filas/día
-    // ② lm_active: materializa LoteriaMultiplier una sola vez → hash lookup en EXISTS
-    // ③ base: computa banda una sola vez por jugada → el GROUP BY/ORDER BY externo la referencia
-    //    directamente sin re-evaluar EXISTS (antes se evaluaba 3 veces: SELECT, WHERE, GROUP BY)
-    const query = Prisma.sql`
-      WITH
-        relevant_tickets AS MATERIALIZED (
-          SELECT t.id
-          FROM "Ticket" t
-          WHERE
-            t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
-            AND t."isActive" = true
-            AND t."deletedAt" IS NULL
-            AND t."status" != 'CANCELLED'
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
-        ),
-        lm_active AS MATERIALIZED (
-          SELECT
-            lm."loteriaId",
-            lm."valueX",
-            lm."appliesToDate",
-            lm."appliesToSorteoId"
-          FROM "LoteriaMultiplier" lm
-          WHERE lm."kind" = 'NUMERO'
-            AND lm."isActive" = true
-        ),
-        base AS (
-          SELECT
-            u.id          AS uid,
-            u.name        AS uname,
-            v.id          AS vid,
-            v.name        AS vname,
-            t.id          AS "ticketId",
-            j.amount,
-            j.payout,
-            j."listeroCommissionAmount",
-            CASE
-              WHEN j.type = 'REVENTADO' THEN 200
-              WHEN EXISTS (
-                SELECT 1 FROM lm_active lm
-                WHERE lm."loteriaId" = t."loteriaId"
-                  AND lm."valueX" = j."finalMultiplierX"
-                  AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-              ) THEN j."finalMultiplierX"
-              ELSE NULL
-            END AS banda
-          FROM "Jugada" j
-          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
-          INNER JOIN "Ticket" t ON j."ticketId" = t.id
-          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-          INNER JOIN "User" u ON t."vendedorId" = u.id
-          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-          WHERE
-            t."deletedAt" IS NULL
-            AND j."deletedAt" IS NULL
-            AND t."status" != 'CANCELLED'
-            AND t."isActive" = true
-            AND j."isActive" = true
-            AND s."status" = 'EVALUATED'
-            ${whereConditions}
-        )
-      SELECT
-        base.uid          AS "vendedorId",
-        base.uname        AS "vendedorNombre",
-        base.vid          AS "ventanaId",
-        base.vname        AS "ventanaNombre",
-        base.banda,
-        COALESCE(SUM(base.amount), 0)::FLOAT                        AS "totalVendida",
-        COALESCE(SUM(base.payout), 0)::FLOAT                        AS ganado,
-        COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT      AS "comisionTotal",
-        0::FLOAT                                                     AS refuerzos,
-        COUNT(DISTINCT base."ticketId")::INT                        AS "ticketsCount",
-        COUNT(*)::INT                                               AS "jugadasCount"
-      FROM base
-      WHERE base.banda IS NOT NULL
-      GROUP BY
-        base.uid,
-        base.uname,
-        base.vid,
-        base.vname,
-        base.banda
-      ORDER BY
-        base.uname ASC,
-        base.banda ASC
-    `;
-
-    const result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL statement_timeout = '30000'`;
-      return tx.$queryRaw<VendedorAggregateRow[]>(query);
-    }, { timeout: 35000 });
-
-    return result.map((row: any) => ({
-      ...row,
-      banda: row.banda != null ? Number(row.banda) : undefined,
-    }));
-  }
 
   /**
    * Agrega por (vendedor, ventana, lotería, sorteo, turno, tipo, banda) para construir
@@ -1487,26 +1428,34 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
   `;
 
   const countQuery = Prisma.sql`
-    WITH ${lmActiveCte}
+    WITH 
+      ${lmActiveCte},
+      relevant_tickets AS MATERIALIZED (
+        SELECT t.id, t."loteriaId", t."sorteoId", t."createdAt"
+        FROM "Ticket" t
+        WHERE t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
+          AND t."isActive" = true
+          AND t."status" != 'CANCELLED'
+          AND t."deletedAt" IS NULL
+          ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+          ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      )
     SELECT COUNT(*)::INT as cnt
     FROM "Jugada" j
-    INNER JOIN "Ticket" t ON j."ticketId" = t.id
-    INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+    INNER JOIN relevant_tickets rt ON j."ticketId" = rt.id
+    INNER JOIN "Sorteo" s ON rt."sorteoId" = s.id
     WHERE
-      t."deletedAt" IS NULL
-      AND j."deletedAt" IS NULL
-      AND t."status" != 'CANCELLED'
-      AND t."isActive" = true
+      j."deletedAt" IS NULL
       AND j."isActive" = true
       AND s."status" = 'EVALUATED'
-      ${whereConditions}
       AND j.type = 'NUMERO'
       AND NOT EXISTS (
         SELECT 1 FROM lm_active lm
-        WHERE lm."loteriaId" = t."loteriaId"
+        WHERE lm."loteriaId" = rt."loteriaId"
           AND lm."valueX" = j."finalMultiplierX"
-          AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-          AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
+          AND (lm."appliesToDate" IS NULL OR rt."createdAt" >= lm."appliesToDate")
+          AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = rt."sorteoId")
       )
   `;
 
@@ -1515,34 +1464,42 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
   let examples: AnomaliesResult['examples'] = [];
   if (cnt > 0) {
     const sampleQuery = Prisma.sql`
-      WITH ${lmActiveCte}
+      WITH 
+        ${lmActiveCte},
+        relevant_tickets AS MATERIALIZED (
+          SELECT t.id, t."loteriaId", t."sorteoId", t."createdAt"
+          FROM "Ticket" t
+          WHERE t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
+            AND t."isActive" = true
+            AND t."status" != 'CANCELLED'
+            AND t."deletedAt" IS NULL
+            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+        )
       SELECT
         j.id as "jugadaId",
-        t.id as "ticketId",
-        t."loteriaId" as "loteriaId",
+        rt.id as "ticketId",
+        rt."loteriaId" as "loteriaId",
         l.name as "loteriaNombre",
         j."finalMultiplierX" as "finalMultiplierX",
         j."createdAt" as "createdAt",
         j.amount as amount
       FROM "Jugada" j
-      INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-      INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+      INNER JOIN relevant_tickets rt ON j."ticketId" = rt.id
+      INNER JOIN "Sorteo" s ON rt."sorteoId" = s.id
+      INNER JOIN "Loteria" l ON rt."loteriaId" = l.id
       WHERE
-        t."deletedAt" IS NULL
-        AND j."deletedAt" IS NULL
-        AND t."status" != 'CANCELLED'
-        AND t."isActive" = true
+        j."deletedAt" IS NULL
         AND j."isActive" = true
         AND s."status" = 'EVALUATED'
-        ${whereConditions}
         AND j.type = 'NUMERO'
         AND NOT EXISTS (
           SELECT 1 FROM lm_active lm
-          WHERE lm."loteriaId" = t."loteriaId"
+          WHERE lm."loteriaId" = rt."loteriaId"
             AND lm."valueX" = j."finalMultiplierX"
-            AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-            AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
+            AND (lm."appliesToDate" IS NULL OR rt."createdAt" >= lm."appliesToDate")
+            AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = rt."sorteoId")
         )
       ORDER BY j."createdAt" ASC
       LIMIT 5
