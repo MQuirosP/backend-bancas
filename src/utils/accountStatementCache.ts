@@ -219,6 +219,7 @@ export async function invalidateAccountStatementCache(params: {
     date: string; // YYYY-MM-DD
     ventanaId?: string | null;
     vendedorId?: string | null;
+    bancaId?: string | null;
 }): Promise<void> {
     try {
         const month = params.date.substring(0, 7); // YYYY-MM
@@ -243,12 +244,16 @@ export async function invalidateAccountStatementCache(params: {
         patterns.push(`account:statement:*:null:${params.date}:*`); // fromDate = fecha
         patterns.push(`account:statement:*:null:*:${params.date}:*`); // toDate = fecha
 
-        // Si hay ventanaId o vendedorId específicos, invalidar solo esos (más específico)
+        // Si hay IDs específicos, invalidar solo esos (más específico)
+        // Estructura de clave: account:statement:month:date:fromDate:toDate:dimension:ventanaId:vendedorId:bancaId:role:sort
         if (params.ventanaId) {
-            patterns.push(`account:statement:*:*:*:*:*:${params.ventanaId}:*`);
+            patterns.push(`account:statement:*:*:*:*:*:*:${params.ventanaId}:*`); // pos 6
         }
         if (params.vendedorId) {
-            patterns.push(`account:statement:*:*:*:*:*:*:${params.vendedorId}:*`);
+            patterns.push(`account:statement:*:*:*:*:*:*:*:${params.vendedorId}:*`); // pos 7
+        }
+        if (params.bancaId) {
+            patterns.push(`account:statement:*:*:*:*:*:*:*:*:${params.bancaId}:*`); // pos 8
         }
 
         // Invalidar todos los patrones y contar claves eliminadas

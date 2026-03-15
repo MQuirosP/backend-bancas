@@ -365,6 +365,9 @@ export async function registerPayment(data: {
         if (!updatedStatement) {
             throw new AppError("Error al obtener statement actualizado", 500, "STATEMENT_UPDATE_ERROR");
         }
+    }, {
+        timeout: 30000,
+        isolationLevel: "ReadCommitted"
     });
 
     // Validar que statement esté definido (defensivo)
@@ -538,6 +541,9 @@ export async function reversePayment(
         if (!updatedStatement) {
             throw new AppError("Error al obtener statement actualizado después de reversión", 500, "REVERSE_STATEMENT_UPDATE_ERROR");
         }
+    }, {
+        timeout: 30000,
+        isolationLevel: "ReadCommitted"
     });
 
     // CRÍTICO: Propagar cambios a días posteriores si el pago se revirtió en un día pasado
@@ -624,7 +630,7 @@ export async function reversePayment(
  */
 function updateCacheAfterMovement(date: string, ventanaId?: string | null, vendedorId?: string | null, bancaId?: string | null) {
     Promise.all([
-        invalidateAccountStatementCache({ date, ventanaId: ventanaId || null, vendedorId: vendedorId || null }),
+        invalidateAccountStatementCache({ date, ventanaId: ventanaId || null, vendedorId: vendedorId || null, bancaId: bancaId || null }),
         invalidateBySorteoCache({ date, ventanaId: ventanaId || null, vendedorId: vendedorId || null, bancaId: bancaId || null }),
     ]).catch(() => { });
 }
