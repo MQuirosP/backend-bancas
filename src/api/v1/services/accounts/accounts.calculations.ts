@@ -2987,20 +2987,20 @@ export async function getStatementDirect(
         monthlyWhereConditions.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "Ventana" v
       WHERE v.id = t."ventanaId"
-      AND v."bancaId" = ${bancaId}::uuid
+      AND v."bancaId" = CAST(${bancaId} AS uuid)
     )`);
     }
 
     if (dimension === "vendedor") {
         if (vendedorId) {
-            monthlyWhereConditions.push(Prisma.sql`t."vendedorId" = ${vendedorId}::uuid`);
+            monthlyWhereConditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
         }
         if (ventanaId) {
-            monthlyWhereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+            monthlyWhereConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         }
     } else if (dimension === "ventana") {
         if (ventanaId) {
-            monthlyWhereConditions.push(Prisma.sql`t."ventanaId" = ${ventanaId}::uuid`);
+            monthlyWhereConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         }
     }
 

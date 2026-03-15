@@ -92,23 +92,23 @@ export class CommissionAggregationService {
     ];
 
     if (filters.ventanaId) {
-      whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+      whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
     }
 
     if (filters.bancaId) {
-      whereConditions.push(Prisma.sql`v."bancaId" = ${filters.bancaId}::uuid`);
+      whereConditions.push(Prisma.sql`v."bancaId" = CAST(${filters.bancaId} AS uuid)`);
     }
 
     if (filters.vendedorId) {
-      whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+      whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
     }
 
     if (filters.sorteoId) {
-      whereConditions.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}::uuid`);
+      whereConditions.push(Prisma.sql`t."sorteoId" = CAST(${filters.sorteoId} AS uuid)`);
     }
 
     if (filters.loteriaId) {
-      whereConditions.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+      whereConditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
     }
 
     if (filters.dateFrom || filters.dateTo) {
@@ -185,23 +185,23 @@ export class CommissionAggregationService {
     ];
 
     if (filters.ventanaId) {
-      whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+      whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
     }
 
     if (filters.bancaId) {
-      whereConditions.push(Prisma.sql`v."bancaId" = ${filters.bancaId}::uuid`);
+      whereConditions.push(Prisma.sql`v."bancaId" = CAST(${filters.bancaId} AS uuid)`);
     }
 
     if (filters.vendedorId) {
-      whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+      whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
     }
 
     if (filters.sorteoId) {
-      whereConditions.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}::uuid`);
+      whereConditions.push(Prisma.sql`t."sorteoId" = CAST(${filters.sorteoId} AS uuid)`);
     }
 
     if (filters.loteriaId) {
-      whereConditions.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+      whereConditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
     }
 
     if (filters.dateFrom || filters.dateTo) {
@@ -284,23 +284,23 @@ export class CommissionAggregationService {
     ];
 
     if (filters.ventanaId) {
-      whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+      whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
     }
 
     if (filters.bancaId) {
-      whereConditions.push(Prisma.sql`v."bancaId" = ${filters.bancaId}::uuid`);
+      whereConditions.push(Prisma.sql`v."bancaId" = CAST(${filters.bancaId} AS uuid)`);
     }
 
     if (filters.vendedorId) {
-      whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+      whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
     }
 
     if (filters.sorteoId) {
-      whereConditions.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}::uuid`);
+      whereConditions.push(Prisma.sql`t."sorteoId" = CAST(${filters.sorteoId} AS uuid)`);
     }
 
     if (filters.loteriaId) {
-      whereConditions.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+      whereConditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
     }
 
     if (filters.dateFrom || filters.dateTo) {
@@ -377,23 +377,23 @@ export class CommissionAggregationService {
     ];
 
     if (filters.ventanaId) {
-      whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+      whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
     }
 
     if (filters.bancaId) {
-      whereConditions.push(Prisma.sql`v."bancaId" = ${filters.bancaId}::uuid`);
+      whereConditions.push(Prisma.sql`v."bancaId" = CAST(${filters.bancaId} AS uuid)`);
     }
 
     if (filters.vendedorId) {
-      whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+      whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
     }
 
     if (filters.sorteoId) {
-      whereConditions.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}::uuid`);
+      whereConditions.push(Prisma.sql`t."sorteoId" = CAST(${filters.sorteoId} AS uuid)`);
     }
 
     if (filters.loteriaId) {
-      whereConditions.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+      whereConditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
     }
 
     if (filters.dateFrom || filters.dateTo) {
@@ -470,23 +470,23 @@ export class CommissionAggregationService {
     ];
 
     if (filters.ventanaId) {
-      whereConditions.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+      whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
     }
 
     if (filters.bancaId) {
-      whereConditions.push(Prisma.sql`v."bancaId" = ${filters.bancaId}::uuid`);
+      whereConditions.push(Prisma.sql`v."bancaId" = CAST(${filters.bancaId} AS uuid)`);
     }
 
     if (filters.vendedorId) {
-      whereConditions.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+      whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
     }
 
     if (filters.sorteoId) {
-      whereConditions.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}::uuid`);
+      whereConditions.push(Prisma.sql`t."sorteoId" = CAST(${filters.sorteoId} AS uuid)`);
     }
 
     if (filters.loteriaId) {
-      whereConditions.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+      whereConditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
     }
 
     if (filters.dateFrom || filters.dateTo) {

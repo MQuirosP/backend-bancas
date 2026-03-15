@@ -2448,13 +2448,13 @@ export const TicketService = {
         sqlConditions.push(Prisma.sql`s.status::text = ${params.sorteoStatus}`);
       }
       if (effectiveFilters.bancaId) {
-        sqlConditions.push(Prisma.sql`v."bancaId" = ${effectiveFilters.bancaId}::uuid`);
+        sqlConditions.push(Prisma.sql`v."bancaId" = CAST(${effectiveFilters.bancaId} AS uuid)`);
       }
       if (effectiveFilters.vendedorId) {
-        sqlConditions.push(Prisma.sql`t."vendedorId" = ${effectiveFilters.vendedorId}::uuid`);
+        sqlConditions.push(Prisma.sql`t."vendedorId" = CAST(${effectiveFilters.vendedorId} AS uuid)`);
       }
       if (effectiveFilters.ventanaId) {
-        sqlConditions.push(Prisma.sql`t."ventanaId" = ${effectiveFilters.ventanaId}::uuid`);
+        sqlConditions.push(Prisma.sql`t."ventanaId" = CAST(${effectiveFilters.ventanaId} AS uuid)`);
       }
       if (dateFrom) {
         sqlConditions.push(Prisma.sql`t."businessDate" >= ${dateFrom}`);
@@ -2463,10 +2463,10 @@ export const TicketService = {
         sqlConditions.push(Prisma.sql`t."businessDate" <= ${dateTo}`);
       }
       if (params.loteriaId) {
-        sqlConditions.push(Prisma.sql`t."loteriaId" = ${params.loteriaId}::uuid`);
+        sqlConditions.push(Prisma.sql`t."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
       }
       if (params.sorteoId) {
-        sqlConditions.push(Prisma.sql`t."sorteoId" = ${params.sorteoId}::uuid`);
+        sqlConditions.push(Prisma.sql`t."sorteoId" = CAST(${params.sorteoId} AS uuid)`);
       }
       if (params.status) {
         sqlConditions.push(Prisma.sql`t.status::text = ${params.status}`);
@@ -2475,7 +2475,7 @@ export const TicketService = {
         sqlConditions.push(Prisma.sql`EXISTS (
           SELECT 1 FROM "Jugada" jf
           WHERE jf."ticketId" = t.id
-            AND jf."multiplierId" = ${params.multiplierId}::uuid
+            AND jf."multiplierId" = CAST(${params.multiplierId} AS uuid)
             AND jf."deletedAt" IS NULL
             AND jf."isActive" = true
             AND jf.type::text = 'NUMERO'
@@ -2485,7 +2485,7 @@ export const TicketService = {
 
       // CTEs opcionales según rol
       const multiplierFilter = params.multiplierId
-        ? Prisma.sql`AND j."multiplierId" = ${params.multiplierId}::uuid`
+        ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)`
         : Prisma.empty;
       const vendedorCte = (context.role === Role.ADMIN || context.role === Role.VENTANA)
         ? Prisma.sql`, vendedor_counts AS (SELECT "vendedorId"::text AS id, COUNT(*)::int AS cnt FROM filtered_tickets GROUP BY "vendedorId")`

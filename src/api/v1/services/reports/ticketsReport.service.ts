@@ -353,9 +353,9 @@ export const TicketsReportService = {
         AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
         AND j."isWinner" = true
         AND j."deletedAt" IS NULL
-        ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-        ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+        ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+        ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
       GROUP BY j.type
     `;
 
@@ -451,9 +451,9 @@ export const TicketsReportService = {
       AND t."deletedAt" IS NULL
       AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
       AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
     `;
 
     let bySorteo: any[] | undefined;
@@ -633,9 +633,9 @@ export const TicketsReportService = {
 
     // Filtros comunes de entidad para reutilizar
     const numbersEntityFilters = Prisma.sql`
-      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
       ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
     `;
 
@@ -755,7 +755,7 @@ export const TicketsReportService = {
         WHERE s."winningNumber" IS NOT NULL
           AND s.status = 'EVALUATED'
           AND s."deletedAt" IS NULL
-          ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND s."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+          ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND s."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
         GROUP BY s."winningNumber"
         ORDER BY times_won DESC
         LIMIT 10
@@ -781,7 +781,7 @@ export const TicketsReportService = {
           INNER JOIN "Ticket" t ON j."ticketId" = t.id
           WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
             AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-            ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+            ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
         ),
         last_wins AS (
           SELECT
@@ -790,7 +790,7 @@ export const TicketsReportService = {
           FROM "Sorteo" s
           WHERE s."winningNumber" IS NOT NULL
             AND s.status = 'EVALUATED'
-            ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND s."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+            ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND s."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
           GROUP BY s."winningNumber"
         )
         SELECT
@@ -1142,9 +1142,9 @@ export const TicketsReportService = {
     const cbk = resolveBreakdowns(filters);
 
     const cancelledEntityFilter = Prisma.sql`
-      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
     `;
 
     let cByVentana: any[] | undefined;
@@ -1404,13 +1404,13 @@ export const TicketsReportService = {
         COALESCE(AVG(j."finalMultiplierX"), ${DEFAULT_MULTIPLIER}) as avg_multiplier
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      WHERE t."sorteoId" = ${filters.sorteoId}::uuid
+      WHERE t."sorteoId" = CAST(${filters.sorteoId} AS uuid)
         AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
         AND j."isActive" = true
-        ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+        ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
       GROUP BY j.number
       ORDER BY total_amount DESC
     `;
@@ -1498,7 +1498,7 @@ export const TicketsReportService = {
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
       INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-      WHERE t."sorteoId" = ${filters.sorteoId}::uuid
+      WHERE t."sorteoId" = CAST(${filters.sorteoId} AS uuid)
         AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
@@ -1521,8 +1521,8 @@ export const TicketsReportService = {
         SELECT j.number, SUM(j.amount * COALESCE(j."finalMultiplierX", ${DEFAULT_MULTIPLIER})) as exposure
         FROM "Jugada" j
         INNER JOIN "Ticket" t ON j."ticketId" = t.id
-        WHERE t."sorteoId" = ${filters.sorteoId}::uuid
-          AND t."ventanaId" = ${v.ventanaId}::uuid
+      WHERE t."sorteoId" = CAST(${filters.sorteoId} AS uuid)
+        AND t."ventanaId" = CAST(${v.ventanaId} AS uuid)
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
@@ -1594,9 +1594,9 @@ export const TicketsReportService = {
 
   // Filtro de entidad reutilizable para profitability
   const profitEntityFilter = Prisma.sql`
-    ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-    ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-    ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+    ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+    ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+    ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
   `;
 
   // ======================================================
@@ -1909,9 +1909,9 @@ export const TicketsReportService = {
 
     // Filtro de entidad reutilizable para time-analysis
     const timeEntityFilter = Prisma.sql`
-      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
     `;
 
     // Por hora (convertir a hora local de Costa Rica)
@@ -2334,7 +2334,7 @@ export const TicketsReportService = {
         INNER JOIN "Ticket" t ON j."ticketId" = t.id
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
         INNER JOIN "User" u ON t."vendedorId" = u.id
-        WHERE t."loteriaId" = ${filters.loteriaId}::uuid
+        WHERE t."loteriaId" = CAST(${filters.loteriaId} AS uuid)
           AND j.number = ${filters.number}
           AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')

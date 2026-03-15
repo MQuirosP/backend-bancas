@@ -179,7 +179,7 @@ export class AccountStatementSyncService {
 
       // ️ CRÍTICO: Bloquear la fila si existe para evitar condiciones de carrera entre procesos (SELECT FOR UPDATE)
       if (statement) {
-        await tx.$executeRaw`SELECT 1 FROM "AccountStatement" WHERE id = ${statement.id} FOR UPDATE`;
+        await tx.$executeRaw`SELECT 1 FROM "AccountStatement" WHERE id = CAST(${statement.id} AS uuid) FOR UPDATE`;
       }
 
       // 2. Si no existe y force=false, no hacer nada (puede que el día no tenga actividad)

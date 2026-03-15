@@ -329,7 +329,7 @@ function buildTicketBaseFilters(
   }
 
   if (filters.ventanaId) {
-    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."ventanaId"`)} = ${filters.ventanaId}::uuid`);
+    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."ventanaId"`)} = CAST(${filters.ventanaId} AS uuid)`);
   }
 
   // Filtrar por banca activa (para ADMIN multibanca)
@@ -337,12 +337,12 @@ function buildTicketBaseFilters(
     conditions.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "Ventana" v
       WHERE v.id = ${Prisma.raw(`${alias}."ventanaId"`)}
-      AND v."bancaId" = ${filters.bancaId}::uuid
+      AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
     )`);
   }
 
   if (filters.loteriaId) {
-    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."loteriaId"`)} = ${filters.loteriaId}::uuid`);
+    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."loteriaId"`)} = CAST(${filters.loteriaId} AS uuid)`);
   }
 
   let combined = conditions[0];
@@ -364,7 +364,7 @@ function buildExclusionCTEsPreamble(skipExclusion: boolean = false): Prisma.Sql 
     // Stub vacío — sin scan a sorteo_lista_exclusion, NOT EXISTS siempre retorna vacío (sin efecto)
     return Prisma.sql`
       jugada_exclusions AS (
-        SELECT NULL::uuid AS sorteo_id, NULL::uuid AS "ventanaId", NULL::uuid AS vendedor_id, NULL::uuid AS multiplier_id
+        SELECT CAST(NULL AS uuid) AS sorteo_id, CAST(NULL AS uuid) AS "ventanaId", CAST(NULL AS uuid) AS vendedor_id, CAST(NULL AS uuid) AS multiplier_id
         WHERE 1 = 0
       ),
     `;
@@ -632,8 +632,8 @@ export const DashboardService = {
           SELECT v.id, v.name, v."isActive"
           FROM "Ventana" v
           WHERE v."isActive" = true
-            ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+            ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
         ),
         ticket_jugada_sums AS (
           SELECT
@@ -972,8 +972,8 @@ export const DashboardService = {
       LEFT JOIN collections_agg ca ON ca."ventanaId" = v.id
       LEFT JOIN ticket_payments_agg tpa ON tpa."ventanaId" = v.id
       WHERE v."isActive" = true
-      ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+      ${filters.ventanaId ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
       ORDER BY total_sales DESC
     `);
 
@@ -1097,8 +1097,8 @@ export const DashboardService = {
       LEFT JOIN collections_agg ca ON ca."vendedorId" = u.id
       LEFT JOIN ticket_payments_agg tpa ON tpa."vendedorId" = u.id
       WHERE u."isActive" = true AND u.role = 'VENDEDOR'
-      ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+      ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
     `);
 
     const nowCRStr = crDateService.dateUTCToCRString(new Date());
@@ -1229,8 +1229,8 @@ export const DashboardService = {
       LEFT JOIN collections_agg ca ON ca."ventanaId" = v.id
       LEFT JOIN ticket_payments_agg tpa ON tpa."ventanaId" = v.id
       WHERE v."isActive" = true
-      ${filters.ventanaId ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+      ${filters.ventanaId ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
       ORDER BY total_sales DESC
     `);
 
@@ -1356,8 +1356,8 @@ export const DashboardService = {
       LEFT JOIN collections_agg ca ON ca."vendedorId" = u.id
       LEFT JOIN ticket_payments_agg tpa ON tpa."vendedorId" = u.id
       WHERE u."isActive" = true AND u.role = 'VENDEDOR'
-      ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+      ${filters.ventanaId ? Prisma.sql`AND u."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
     `);
 
     const nowCRStr = crDateService.dateUTCToCRString(new Date());
@@ -2405,10 +2405,10 @@ export const DashboardService = {
     const currentMonth = nowCRStr.substring(0, 7); // YYYY-MM
 
     const bancaFilter   = filters.bancaId
-      ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid`
+      ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)`
       : Prisma.empty;
     const ventanaFilter = filters.ventanaId
-      ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid`
+      ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)`
       : Prisma.empty;
 
     type ByVentanaRow = {
@@ -2573,10 +2573,10 @@ export const DashboardService = {
     const currentMonth = nowCRStr.substring(0, 7);
 
     const bancaFilter   = filters.bancaId
-      ? Prisma.sql`AND v."bancaId" = ${filters.bancaId}::uuid`
+      ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)`
       : Prisma.empty;
     const ventanaFilter = filters.ventanaId
-      ? Prisma.sql`AND v.id = ${filters.ventanaId}::uuid`
+      ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)`
       : Prisma.empty;
 
     type EntidadRow = {
