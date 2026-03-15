@@ -1006,15 +1006,22 @@ export const TicketRepository = {
               });
               return { ruleId: rule.id, limit };
             } catch (error) {
+              //  SEGURIDAD: Si falla el cálculo del límite dinámico, usar baseAmount como fallback
+              //  Esto evita que la regla quede completamente ignorada (lo que permitiría crear tickets sin límite)
+              const fallbackLimit = (rule.baseAmount != null && rule.baseAmount > 0) ? rule.baseAmount : null;
               logger.warn({
                 layer: 'repository',
                 action: 'DYNAMIC_LIMIT_CALCULATION_FAILED',
                 payload: {
                   ruleId: rule.id,
                   error: (error as Error).message,
+                  fallbackLimit,
+                  message: fallbackLimit != null
+                    ? `Usando baseAmount=${fallbackLimit} como límite de seguridad`
+                    : 'Sin límite de respaldo disponible, se omite la regla',
                 },
               });
-              return { ruleId: rule.id, limit: null };
+              return { ruleId: rule.id, limit: fallbackLimit };
             }
           });
 
@@ -1664,7 +1671,10 @@ export const TicketRepository = {
         const scopesToPreload = new Set<string>();
 
         for (const rule of applicable) {
-          if (rule.maxTotal != null) {
+          //  Precargar scopes para reglas con maxTotal explícito O con límite dinámico (baseAmount/salesPercentage)
+          // Esto optimiza las queries dentro de validateMaxTotalForNumbers
+          const hasDynamicLimitConfig = (rule.baseAmount != null && rule.baseAmount > 0) || (rule.salesPercentage != null && rule.salesPercentage > 0);
+          if (rule.maxTotal != null || hasDynamicLimitConfig) {
             const scopeType = rule.userId ? 'USER' : rule.ventanaId ? 'VENTANA' : rule.bancaId ? 'BANCA' : null;
             const scopeId = rule.userId || rule.ventanaId || rule.bancaId;
             const multiplierId = rule.multiplierId ? (rule.multiplier?.kind === 'REVENTADO' ? 'REVENTADO' : rule.multiplierId) : 'NONE';
@@ -1719,15 +1729,22 @@ export const TicketRepository = {
               });
               return { ruleId: rule.id, limit };
             } catch (error) {
+              //  SEGURIDAD: Si falla el cálculo del límite dinámico, usar baseAmount como fallback
+              //  Esto evita que la regla quede completamente ignorada (lo que permitiría crear tickets sin límite)
+              const fallbackLimit = (rule.baseAmount != null && rule.baseAmount > 0) ? rule.baseAmount : null;
               logger.warn({
                 layer: 'repository',
                 action: 'DYNAMIC_LIMIT_CALCULATION_FAILED',
                 payload: {
                   ruleId: rule.id,
                   error: (error as Error).message,
+                  fallbackLimit,
+                  message: fallbackLimit != null
+                    ? `Usando baseAmount=${fallbackLimit} como límite de seguridad`
+                    : 'Sin límite de respaldo disponible, se omite la regla',
                 },
               });
-              return { ruleId: rule.id, limit: null };
+              return { ruleId: rule.id, limit: fallbackLimit };
             }
           });
 
