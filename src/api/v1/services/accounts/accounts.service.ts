@@ -374,8 +374,12 @@ export const AccountsService = {
         const monthEndStr = `${effectiveMonth}-${String(daysInEffectiveMonth).padStart(2, '0')}`;
 
         // Convert instant objects to Costa Rica date strings
+        const todayCR = crDateService.dateUTCToCRString(new Date());
         const startDateStr = crDateService.dateUTCToCRString(startDate);
-        const endDateStr = crDateService.dateUTCToCRString(endDate);
+        let endDateStr = crDateService.dateUTCToCRString(endDate);
+
+        // ️ CRÍTICO: Limitar metadata a hoy para evitar confusión visual
+        if (endDateStr > todayCR) endDateStr = todayCR;
 
         //  OPTIMIZACIÓN: Intentar obtener del caché primero
         const cacheKey = {
@@ -444,7 +448,6 @@ export const AccountsService = {
         // por periodos que cruzan meses (solo sumará los días del effectiveMonth)
         const queryStartDate = startDate < mStartDate ? startDate : mStartDate;
 
-        const todayCR = crDateService.dateUTCToCRString(new Date());
         const isCurrentMonth = effectiveMonth === todayCR.substring(0, 7);
 
         // Para Saldo a Hoy (fondo actual), si es el mes actual, siempre traer hasta hoy
@@ -669,15 +672,23 @@ export const AccountsService = {
         //  CRÍTICO: El bucle debe cubrir desde queryStartDate hasta queryEndDate
         // Esto asegura que tengamos los datos de TODO el mes del reporte (para Saldo a Hoy)
         // Y TAMBIÉN los días extra del periodo solicitado (si cruza meses).
-        const startOfLoop = queryStartDate;
+        const startOfLoop = new Date(queryStartDate);
+        startOfLoop.setUTCHours(0, 0, 0, 0);
         const currentDate = new Date(startOfLoop);
-        currentDate.setUTCHours(0, 0, 0, 0);
 
-        const endDateIter = new Date(queryEndDate);
-        endDateIter.setUTCHours(0, 0, 0, 0);
+        const endOfLoop = new Date(queryEndDate);
+        endOfLoop.setUTCHours(0, 0, 0, 0);
 
-        // Limit end date to current day/end of month to avoid phantom future gaps
-        // Pero queryEndDate ya está limitado o extendido según sea necesario arriba.
+        // ️ CRÍTICO: El límite de "relleno" es el máximo entre hoy y el último día con datos reales.
+        // El bucle usa dateUTCToCRString (-6h). Para incluir un día X, currentDate debe llegar a 00:00 UTC del día X+1.
+        const lastDataDateStr = rawStatements.length > 0
+            ? crDateService.postgresDateToCRString(rawStatements[rawStatements.length - 1].date)
+            : '';
+        const gapLimitStr = lastDataDateStr > todayCR ? lastDataDateStr : todayCR;
+        const gapLimitDate = new Date(gapLimitStr + 'T00:00:00Z');
+        gapLimitDate.setUTCDate(gapLimitDate.getUTCDate() + 1); // Boundary to include gapLimitStr day
+
+        const finalLoopEndDate = endOfLoop < gapLimitDate ? endOfLoop : gapLimitDate;
 
         //  CORRECCIÓN: Inicializar balance carry-over basado en la fecha de inicio real
         // Si el inicio es el día 1, usar el saldo del mes anterior.
@@ -724,7 +735,7 @@ export const AccountsService = {
             }
         }
 
-        while (currentDate.getTime() <= endDateIter.getTime()) {
+        while (currentDate.getTime() <= finalLoopEndDate.getTime()) {
             const dateStr = crDateService.dateUTCToCRString(currentDate);
 
             if (statementsMap.has(dateStr)) {
@@ -779,6 +790,7 @@ export const AccountsService = {
 
         // Filter statements for the specifically requested period
         const periodStatements = fullMonthStatements.filter(s => s.date >= startDateStr && s.date <= endDateStr);
+        const latestInPeriod = periodStatements.length > 0 ? periodStatements[0] : null;
 
         // 4. Calcular Totales del Periodo (LO QUE EL USER PIDIÓ: suma simple de los campos balance del periodo)
         const pSales = periodStatements.reduce((sum, s) => sum + s.totalSales, 0);
