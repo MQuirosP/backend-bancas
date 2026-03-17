@@ -1071,6 +1071,7 @@ export const TicketRepository = {
           numbers: ticketNumbers,
           sorteoId,
           dynamicLimits,
+          vendedorId: userId, // NUEVO
         });
 
         //  LOGGING: Registrar finalización de validación paralela
@@ -1794,7 +1795,8 @@ export const TicketRepository = {
           numbers: ticketNumbers,
           sorteoId,
           dynamicLimits,
-          cache, //  OPTIMIZACIÓN: Pasar caché
+          cache,
+          vendedorId: userId, // NUEVO
         });
 
         //  LOGGING: Registrar finalización de validación paralela
