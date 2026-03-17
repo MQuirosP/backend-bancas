@@ -46,6 +46,7 @@ async function calculateDynamicLimit(
     baseAmount?: number | null;
     salesPercentage?: number | null;
     appliesToVendedor?: boolean | null;
+    ruleUserId?: string | null; // NUEVO: Para saber si la regla es personal
   },
   context: {
     userId: string;
@@ -99,7 +100,9 @@ async function calculateDynamicLimit(
       sorteoId: context.sorteoId,  //  CRÍTICO: Filtrar por sorteo específico
     };
 
-    if (rule.appliesToVendedor) {
+    //  LÓGICA: Si la regla es personal (tiene ruleUserId) O tiene activo appliesToVendedor,
+    //  calculamos el porcentaje sobre las ventas del vendedor.
+    if (rule.ruleUserId || rule.appliesToVendedor) {
       // Por vendedor individual
       where.vendedorId = context.userId;
     } else {
@@ -108,7 +111,8 @@ async function calculateDynamicLimit(
     }
 
     // 2. Intentar obtener de caché
-    const cacheKey = rule.appliesToVendedor ? `USER:${context.userId}` : `VENTANA:${context.ventanaId}`;
+    const isPerVendedor = !!(rule.ruleUserId || rule.appliesToVendedor);
+    const cacheKey = isPerVendedor ? `USER:${context.userId}` : `VENTANA:${context.ventanaId}`;
     if (context.cache) {
       const cached = context.cache.salesTotals.get(cacheKey);
       if (cached !== undefined) {
