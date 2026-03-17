@@ -878,6 +878,16 @@ export const TicketController = {
       );
 
       // Siempre PNG para batch: devolver JSON
+      //  ADICIÓN: Verificar si el request ya expiró por timeout (503 ya enviado por middleware)
+      if (res.headersSent) {
+        req.logger?.warn({
+          layer: "controller",
+          action: "TICKET_NUMBERS_SUMMARY_PDF_BATCH_TIMEOUT_ALREADY_SENT",
+          payload: { userId: me.id, requestId: req.requestId }
+        });
+        return;
+      }
+
       return res.json({
         success: true,
         format: 'png',

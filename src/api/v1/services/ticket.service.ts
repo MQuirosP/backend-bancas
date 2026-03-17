@@ -1444,6 +1444,16 @@ export const TicketService = {
           const exclusions = exclusionCondition.NOT.OR.map((ex: any) => {
             let cond = Prisma.sql`t."ventanaId" = CAST(${ex.ventanaId} AS uuid)`;
             if (ex.vendedorId) cond = Prisma.sql`${cond} AND t."vendedorId" = CAST(${ex.vendedorId} AS uuid)`;
+            
+            //  NUEVO: Soporte para exclusión por multiplierId (banda específica)
+            if (ex.multiplierId) {
+              cond = Prisma.sql`${cond} AND EXISTS (
+                SELECT 1 FROM "Jugada" j_ex 
+                WHERE j_ex."ticketId" = t.id 
+                AND j_ex."multiplierId" = CAST(${ex.multiplierId} AS uuid)
+                AND j_ex."deletedAt" IS NULL
+              )`;
+            }
             return Prisma.sql`(${cond})`;
           });
           sqlWhere.push(Prisma.sql`NOT (${Prisma.join(exclusions, ' OR ')})`);
@@ -1489,17 +1499,72 @@ export const TicketService = {
         GROUP BY j.number
       `;
 
-      // Extract metadata (use separate small queries or first row if available)
+      //  NUEVO: Extraer metadatos de las tablas maestras cuando se filtran (Hardening BE-1)
+      // Esto asegura que tengamos nombres correctos incluso si no hay tickets (lista vacía)
       let metadataInfo: any = {};
-      if (results.length > 0) {
-        const firstTicketId = (await prisma.ticket.findFirst({ where: ticketWhere, select: { id: true, ventana: { select: { name: true } }, vendedor: { select: { name: true, code: true } }, loteria: { select: { name: true } }, sorteo: { select: { scheduledAt: true } } } }));
-        metadataInfo = {
-          ventanaName: firstTicketId?.ventana?.name,
-          vendedorName: firstTicketId?.vendedor?.name,
-          vendedorCode: firstTicketId?.vendedor?.code,
-          loteriaName: firstTicketId?.loteria?.name,
-          sorteoDate: firstTicketId?.sorteo?.scheduledAt,
-        };
+
+      const masterTasks: (() => Promise<any>)[] = [];
+      if (params.ventanaId) {
+        masterTasks.push(() => prisma.ventana.findUnique({ where: { id: params.ventanaId! }, select: { name: true } }));
+      }
+      if (params.vendedorId) {
+        masterTasks.push(() => prisma.user.findUnique({ where: { id: params.vendedorId! }, select: { name: true, code: true } }));
+      }
+      if (params.loteriaId) {
+        masterTasks.push(() => prisma.loteria.findUnique({ where: { id: params.loteriaId! }, select: { name: true } }));
+      }
+      if (params.sorteoId) {
+        masterTasks.push(() => prisma.sorteo.findUnique({ where: { id: params.sorteoId! }, select: { scheduledAt: true } }));
+      }
+
+      const masterResults = await Promise.all(masterTasks.map(t => t()));
+      let nextResultIdx = 0;
+
+      if (params.ventanaId) {
+        metadataInfo.ventanaName = masterResults[nextResultIdx++]?.name;
+      }
+      if (params.vendedorId) {
+        const v = masterResults[nextResultIdx++];
+        metadataInfo.vendedorName = v?.name;
+        metadataInfo.vendedorCode = v?.code;
+      }
+      if (params.loteriaId) {
+        metadataInfo.loteriaName = masterResults[nextResultIdx++]?.name;
+      }
+      if (params.sorteoId) {
+        metadataInfo.sorteoDate = masterResults[nextResultIdx++]?.scheduledAt;
+      }
+
+      //  NUEVO: Si hay tickets, podemos complementar datos faltantes o usar los del primer ticket
+      // Pero priorizamos los datos de los parámetros de filtro si están presentes
+      if (results.length > 0 && (!metadataInfo.ventanaName || !metadataInfo.vendedorName)) {
+        const firstTicket = await withConnectionRetry(
+          () => prisma.ticket.findFirst({
+            where: ticketWhere,
+            select: {
+              ventana: { select: { name: true } },
+              vendedor: { select: { name: true, code: true } },
+              loteria: { select: { name: true } },
+              sorteo: { select: { scheduledAt: true } }
+            }
+          }),
+          { context: 'TicketService.numbersSummary.metadata' }
+        );
+
+        if (!metadataInfo.ventanaName) metadataInfo.ventanaName = firstTicket?.ventana?.name;
+        if (!metadataInfo.vendedorName && params.vendedorId) {
+          metadataInfo.vendedorName = firstTicket?.vendedor?.name;
+          metadataInfo.vendedorCode = firstTicket?.vendedor?.code;
+        }
+        if (!metadataInfo.loteriaName) metadataInfo.loteriaName = firstTicket?.loteria?.name;
+        if (!metadataInfo.sorteoDate) metadataInfo.sorteoDate = firstTicket?.sorteo?.scheduledAt;
+      }
+
+      //  CRÍTICO: Si dimension='listero', QUITAR el vendedorName de los metadatos
+      // Esto asegura que pdf-generator.service.ts use ventanaName (ver l.122 de pdf-generator.ts)
+      if (params.dimension === 'listero') {
+        delete metadataInfo.vendedorName;
+        delete metadataInfo.vendedorCode;
       }
 
       // Map results to Map for quick lookup
@@ -1677,7 +1742,9 @@ export const TicketService = {
         multiplierValue: number | null;
       }> = [];
 
-      for (const multiplier of multipliers) {
+      //  OPTIMIZED: Procesar todos los multiplicadores en paralelo para evitar 503 Timeout
+      // Usamos Promise.all para que todas las generaciones ocurran concurrentemente
+      const batchPromises = multipliers.map(async (multiplier) => {
         const result = await TicketService.numbersSummary(
           {
             ...params,
@@ -1708,23 +1775,29 @@ export const TicketService = {
           throw new AppError(`No se pudo generar PNG para el multiplicador ${multiplier.name}`, 422);
         }
 
-        pngPages
+        return pngPages
           .filter(p => p && p.content)
-          .forEach((p, idx) => {
+          .map((p, idx) => {
             const buffer = p.content as Buffer;
-            if (!buffer) {
-              return;
-            }
-            pages.push({
+            if (!buffer) return null;
+            return {
               page: idx,
               filename: `lista-${multiplier.name || multiplier.valueX || 'mult'}-${idx + 1}.png`,
               image: buffer.toString('base64'),
               multiplierId: multiplier.id,
               multiplierName: multiplier.name,
               multiplierValue: multiplier.valueX,
-            });
-          });
-      }
+            };
+          })
+          .filter(Boolean) as any[];
+      });
+
+      const allPagesResults = await Promise.all(batchPromises);
+      
+      // Aplanar resultados
+      allPagesResults.forEach(multiplierPages => {
+        pages.push(...multiplierPages);
+      });
 
       return {
         format: 'png',
