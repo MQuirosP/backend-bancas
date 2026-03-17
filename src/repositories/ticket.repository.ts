@@ -1001,6 +1001,7 @@ export const TicketRepository = {
                 baseAmount: rule.baseAmount,
                 salesPercentage: rule.salesPercentage,
                 appliesToVendedor: rule.appliesToVendedor,
+                ruleUserId: rule.userId,
               }, {
                 userId,
                 ventanaId,
@@ -1724,6 +1725,7 @@ export const TicketRepository = {
                 baseAmount: rule.baseAmount,
                 salesPercentage: rule.salesPercentage,
                 appliesToVendedor: rule.appliesToVendedor,
+                ruleUserId: rule.userId,
               }, {
                 userId,
                 ventanaId,
