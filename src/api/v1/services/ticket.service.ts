@@ -1408,10 +1408,20 @@ export const TicketService = {
 
       //  OPTIMIZED: SQL Aggregation using $queryRaw
       // This solves the 'too many bind variables' error and reduces memory usage.
+      const sqlJoins: Prisma.Sql[] = [];
+      if (params.sorteoStatus) {
+        sqlJoins.push(Prisma.sql`INNER JOIN "Sorteo" s ON t."sorteoId" = s.id`);
+      }
+      const joinsSQL = sqlJoins.length > 0 ? Prisma.join(sqlJoins, ' ') : Prisma.empty;
+
       const sqlWhere: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`
       ];
+
+      if (params.sorteoStatus) {
+        sqlWhere.push(Prisma.sql`s.status::text = ${params.sorteoStatus}`);
+      }
 
       // Filter by status (default not in CANCELLED/EXCLUDED)
       if (params.status) {
@@ -1490,6 +1500,7 @@ export const TicketService = {
             THEN ${params.dimension === 'listero' || params.ventanaId ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
             ELSE 0 END)::FLOAT as "commissionByReventado"
         FROM "Ticket" t
+        ${joinsSQL}
         INNER JOIN "Jugada" j ON t.id = j."ticketId"
         WHERE ${combinedWhere}
           AND j."isActive" = true 
