@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.4",
-  "versionCode": 10,
-  "buildNumber": 10,
+  "versionName": "1.0.5",
+  "versionCode": 11,
+  "buildNumber": 11,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Llave idempotente para creación única de tickets. Mejoras visuales de reventado",
-  "releasedAt": "2026-03-09T23:00:00Z",
+  "changelog": "Mejoras en copia de tickets y limpieza de jugadas.",
+  "releasedAt": "2026-03-17T00:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "78b0121824c9f26100a1b13f80938a65b3d1c1cde6c63068831a0ffcde1e8291"
+      "sha256": "e827aaa0abbfe03e43ad5676b7605b9d2d3cb6b196aa80c19f9d9909aa0ee4a7"
     },
     "arm64-v8a": {
-      "sha256": "78b0121824c9f26100a1b13f80938a65b3d1c1cde6c63068831a0ffcde1e8291"
+      "sha256": "e827aaa0abbfe03e43ad5676b7605b9d2d3cb6b196aa80c19f9d9909aa0ee4a7"
     }
   }
 }
