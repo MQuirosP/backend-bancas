@@ -348,6 +348,7 @@ export async function validateMaxTotalForNumbers(
       isAutoDate?: boolean | null;
     };
     sorteoId: string;
+    vendedorId?: string | null;   //  NUEVO: Para appliesToVendedor=true
     dynamicLimit?: number | null; // Límite dinámico calculado (opcional)
     multiplierFilter?: {          //  NUEVO: Filtro por multiplicador
       id: string;
@@ -364,10 +365,12 @@ export async function validateMaxTotalForNumbers(
   }
 
   // Determinar alcance
-  const scopeType = rule.userId ? 'USER'
-    : rule.ventanaId ? 'VENTANA'
-      : rule.bancaId ? 'BANCA'
-        : null;
+  const isPerVendedor = !!(rule as any).appliesToVendedor;
+  const scopeType = isPerVendedor ? 'USER'
+    : rule.userId ? 'USER'
+      : rule.ventanaId ? 'VENTANA'
+        : rule.bancaId ? 'BANCA'
+          : null;
 
   if (!scopeType) {
     // Sin alcance específico: no validar (fallback a comportamiento legacy)
@@ -379,10 +382,20 @@ export async function validateMaxTotalForNumbers(
     return;
   }
 
-  const scopeId = rule.userId || rule.ventanaId || rule.bancaId!;
+  const scopeId = (isPerVendedor ? (params.vendedorId || rule.userId)
+    : (rule.userId || rule.ventanaId || rule.bancaId)) as string;
+
+  if (!scopeId) {
+    logger.warn({
+      layer: 'repository',
+      action: 'MAXTOTAL_VALIDATION_ERROR_NO_SCOPE_ID',
+      payload: { scopeType, ruleId: (rule as any).id },
+    });
+    return;
+  }
 
   // Calcular límite efectivo (considerar límite dinámico si existe)
-  const staticMaxTotal = rule.maxTotal;
+  const staticMaxTotal = rule.maxTotal ?? Infinity;
   const effectiveMaxTotal = dynamicLimit != null
     ? Math.min(staticMaxTotal, dynamicLimit)
     : staticMaxTotal;
@@ -428,7 +441,7 @@ export async function validateMaxTotalForNumbers(
     }
 
     //  ROBUSTEZ: Validar que effectiveMaxTotal sea un número válido
-    if (!Number.isFinite(effectiveMaxTotal) || effectiveMaxTotal <= 0) {
+    if (effectiveMaxTotal == null || !Number.isFinite(effectiveMaxTotal)) {
       logger.error({
         layer: 'repository',
         action: 'INVALID_EFFECTIVE_MAX_TOTAL',
@@ -833,7 +846,8 @@ async function executeValidationTask(
             sorteoId: context.sorteoId,
             dynamicLimit: task.dynamicLimit,
             multiplierFilter,
-            cache: context.cache
+            cache: context.cache,
+            vendedorId: (context as any).vendedorId
           });
         }
       }
@@ -876,9 +890,10 @@ export async function validateRulesInParallel(
     sorteoId: string;
     dynamicLimits?: Map<string, number>; // Map de ruleId -> dynamicLimit
     cache?: ScopeCache;
+    vendedorId?: string | null;          // NUEVO
   }
 ): Promise<void> {
-  const { rules, numbers, sorteoId, dynamicLimits = new Map(), cache } = params;
+  const { rules, numbers, sorteoId, dynamicLimits = new Map(), cache, vendedorId } = params;
 
   if (rules.length === 0) {
     return; // Nada que validar
@@ -912,7 +927,7 @@ export async function validateRulesInParallel(
         dynamicLimit: dynamicLimits.get(group[0].ruleId) || null,
       };
 
-      const result = await executeValidationTask(tx, task, { sorteoId, numbers, cache } as any);
+      const result = await executeValidationTask(tx, task, { sorteoId, numbers, cache, vendedorId } as any);
       allResults.push(result);
 
       if (!result.success && result.error) {
@@ -925,7 +940,7 @@ export async function validateRulesInParallel(
           ...task,
           dynamicLimit: dynamicLimits.get(task.ruleId) || null,
         };
-        return executeValidationTask(tx, enhancedTask, { sorteoId, numbers, cache } as any);
+        return executeValidationTask(tx, enhancedTask, { sorteoId, numbers, cache, vendedorId } as any);
       });
 
       const groupResults = await Promise.all(groupPromises);

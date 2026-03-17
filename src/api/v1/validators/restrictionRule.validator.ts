@@ -197,13 +197,8 @@ export const CreateRestrictionRuleSchema = z
       });
     }
 
-    if (data.appliesToVendedor && data.salesPercentage == null) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["appliesToVendedor"],
-        message: "appliesToVendedor solo tiene sentido cuando salesPercentage está presente.",
-      });
-    }
+    // El flag appliesToVendedor es independiente de salesPercentage
+    // (Ahora se permite para límites estáticos masivos)
   });
 
 // UPDATE
@@ -307,13 +302,8 @@ export const UpdateRestrictionRuleSchema = z.object({
       });
     }
 
-    if (data.appliesToVendedor && data.salesPercentage == null) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["appliesToVendedor"],
-        message: "appliesToVendedor solo tiene sentido cuando salesPercentage está presente.",
-      });
-    }
+    // El flag appliesToVendedor es independiente de salesPercentage
+    // (Ahora se permite para límites estáticos masivos)
   });
 
 
