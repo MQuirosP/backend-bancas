@@ -46,9 +46,17 @@ function buildSummary(details: Array<any>, source: "body" | "query" | "params") 
   if (missing.length) parts.push(`faltantes: ${missing.join(", ")}`);
   if (extras.length) parts.push(`no permitidas: ${extras.join(", ")}`);
 
-  return parts.length
-    ? `Hay errores de validación en ${source} (${parts.join(" | ")})`
-    : `Hay errores de validación en ${source}`;
+  if (parts.length) {
+    return `Hay errores de validación en ${source} (${parts.join(" | ")})`;
+  }
+
+  // Si no hay faltantes/extras, pero hay otros errores, mostrar el primero para ser más específicos
+  if (details.length > 0) {
+    const first = details[0];
+    return `Error en ${source} (${first.field}): ${first.issue}`;
+  }
+
+  return `Hay errores de validación en ${source}`;
 }
 
 /** Fuerza .strict() y emite AppError con meta {context, details} */

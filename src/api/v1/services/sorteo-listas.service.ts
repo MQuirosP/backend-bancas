@@ -18,6 +18,7 @@ import {
 import logger from "../../../core/logger";
 import { invalidateExclusionListCache } from "../../../core/exclusionListCache";
 import { formatIsoLocal } from "../../../utils/datetime";
+import { CacheService } from "../../../core/cache.service";
 
 export const SorteoListasService = {
     /**
@@ -822,6 +823,11 @@ export const SorteoListasService = {
 
         // Invalidar cache — la tabla ya no está vacía
         invalidateExclusionListCache();
+        
+        //  NUEVO: Invalidar cache de reportes de cierre para que reflejen el cambio
+        CacheService.invalidateTag('cierre').catch(err => 
+            logger.warn({ layer: 'service', action: 'CACHE_INVALIDATE_ERROR', payload: { tag: 'cierre', error: err.message } })
+        );
 
         //  PASO 2: Actualizar jugadas Y tickets para marcarlos como excluidos (marcado denormalizado)
         // Construir el where para buscar las jugadas/tickets a excluir
@@ -1120,6 +1126,11 @@ export const SorteoListasService = {
 
         // Invalidar cache — la tabla puede haber quedado vacía
         invalidateExclusionListCache();
+
+        //  NUEVO: Invalidar cache de reportes de cierre para que reflejen el cambio
+        CacheService.invalidateTag('cierre').catch(err => 
+            logger.warn({ layer: 'service', action: 'CACHE_INVALIDATE_ERROR', payload: { tag: 'cierre', error: err.message } })
+        );
 
         //  PASO 2: Actualizar jugadas Y tickets para desmarcarlos como excluidos (marcado denormalizado)
         const ticketWhere: any = {
