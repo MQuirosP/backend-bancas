@@ -158,16 +158,18 @@ async function calculateDynamicLimit(
       ? Math.max(baseAmt, percentageAmount)
       : percentageAmount;
 
+    const gano = percentageAmount >= baseAmt ? 'porcentaje' : 'base';
+
     logger.debug({
       layer: 'repository',
       action: 'DYNAMIC_LIMIT_CALCULATED',
       payload: {
         scope: `${cacheKey.split(':')[0]}:${cacheKey.split(':')[1]}`,
         sorteoId: context.sorteoId,
-        ventas: sorteoSales,
-        pct: rule.salesPercentage,
-        base: rule.baseAmount,
-        limite: dynamicLimit,
+        base: `₡${baseAmt.toLocaleString()}`,
+        ventas: `₡${sorteoSales.toLocaleString()}`,
+        calculo: `${rule.salesPercentage}% × ${sorteoSales.toLocaleString()} = ₡${percentageAmount.toFixed(2)}`,
+        limite: `₡${dynamicLimit.toFixed(2)} (ganó ${gano})`,
       },
     });
   } else if (baseAmt > 0) {
@@ -179,9 +181,8 @@ async function calculateDynamicLimit(
       action: 'DYNAMIC_LIMIT_CALCULATED',
       payload: {
         sorteoId: context.sorteoId,
-        baseAmount: baseAmt,
-        dynamicLimit,
-        formula: 'baseAmount only',
+        base: `₡${baseAmt.toLocaleString()}`,
+        limite: `₡${baseAmt.toLocaleString()} (solo base, sin porcentaje)`,
       },
     });
   }
