@@ -1075,6 +1075,7 @@ export const TicketRepository = {
           rules: applicable,
           numbers: ticketNumbers,
           sorteoId,
+          loteriaId, // NUEVO
           dynamicLimits,
           vendedorId: userId, // NUEVO
         });
@@ -1800,6 +1801,7 @@ export const TicketRepository = {
           rules: applicable,
           numbers: ticketNumbers,
           sorteoId,
+          loteriaId, // NUEVO
           dynamicLimits,
           cache,
           vendedorId: userId, // NUEVO

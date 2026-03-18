@@ -346,6 +346,8 @@ export async function validateMaxTotalForNumbers(
       ventanaId?: string | null;
       bancaId?: string | null;
       isAutoDate?: boolean | null;
+      appliesToVendedor?: boolean | null; //  AHORA EXPLÍCITO
+      id?: string;
     };
     sorteoId: string;
     vendedorId?: string | null;   //  NUEVO: Para appliesToVendedor=true
@@ -365,7 +367,7 @@ export async function validateMaxTotalForNumbers(
   }
 
   // Determinar alcance
-  const isPerVendedor = !!(rule as any).appliesToVendedor;
+  const isPerVendedor = !!rule.appliesToVendedor;
   const scopeType = isPerVendedor ? 'USER'
     : rule.userId ? 'USER'
       : rule.ventanaId ? 'VENTANA'
@@ -389,7 +391,7 @@ export async function validateMaxTotalForNumbers(
     logger.warn({
       layer: 'repository',
       action: 'MAXTOTAL_VALIDATION_ERROR_NO_SCOPE_ID',
-      payload: { scopeType, ruleId: (rule as any).id },
+      payload: { scopeType, ruleId: rule.id },
     });
     return;
   }
@@ -551,6 +553,7 @@ export async function validateMaxTotalForNumber(
       ventanaId?: string | null;
       bancaId?: string | null;
       isAutoDate?: boolean | null;
+      appliesToVendedor?: boolean | null;
     };
     sorteoId: string;
     dynamicLimit?: number | null; // Límite dinámico calculado (opcional)
@@ -684,6 +687,8 @@ async function executeValidationTask(
   task: ValidationTask,
   context: {
     sorteoId: string;
+    loteriaId: string; //  NUEVO: Para filtrar por lotería
+    vendedorId?: string | null; //  NUEVO: Para appliesToVendedor
     numbers: Array<{ number: string; amountForNumber: number }>;
     cache?: ScopeCache;
   }
@@ -692,6 +697,16 @@ async function executeValidationTask(
 
   try {
     const { rule, numbersToValidate } = task;
+
+    //  NUEVO: Filtrar por lotería si la regla especifica una
+    if (rule.loteriaId && rule.loteriaId !== context.loteriaId) {
+      return {
+        ruleId: rule.id,
+        success: true,
+        executionTime: Date.now() - startTime,
+        numbersValidated: 0
+      };
+    }
 
     if (numbersToValidate.length > 0) {
       // Case 1: Specific numbers in rule
@@ -769,7 +784,8 @@ async function executeValidationTask(
             sorteoId: context.sorteoId,
             dynamicLimit: task.dynamicLimit,
             multiplierFilter,
-            cache: context.cache
+            cache: context.cache,
+            vendedorId: context.vendedorId, //  AHORA SÍ PASA
           });
         }
       }
@@ -847,7 +863,7 @@ async function executeValidationTask(
             dynamicLimit: task.dynamicLimit,
             multiplierFilter,
             cache: context.cache,
-            vendedorId: (context as any).vendedorId
+            vendedorId: context.vendedorId, //  AHORA SÍ PASA
           });
         }
       }
@@ -888,12 +904,13 @@ export async function validateRulesInParallel(
     rules: any[]; // Reglas aplicables con relaciones
     numbers: Array<{ number: string; amountForNumber: number }>; // Números y montos del ticket
     sorteoId: string;
+    loteriaId: string; //  NUEVO: Para filtrar por lotería
     dynamicLimits?: Map<string, number>; // Map de ruleId -> dynamicLimit
     cache?: ScopeCache;
     vendedorId?: string | null;          // NUEVO
   }
 ): Promise<void> {
-  const { rules, numbers, sorteoId, dynamicLimits = new Map(), cache, vendedorId } = params;
+  const { rules, numbers, sorteoId, loteriaId, dynamicLimits = new Map(), cache, vendedorId } = params;
 
   if (rules.length === 0) {
     return; // Nada que validar
@@ -927,7 +944,7 @@ export async function validateRulesInParallel(
         dynamicLimit: dynamicLimits.get(group[0].ruleId) || null,
       };
 
-      const result = await executeValidationTask(tx, task, { sorteoId, numbers, cache, vendedorId } as any);
+      const result = await executeValidationTask(tx, task, { sorteoId, loteriaId, vendedorId, numbers, cache });
       allResults.push(result);
 
       if (!result.success && result.error) {
@@ -940,7 +957,7 @@ export async function validateRulesInParallel(
           ...task,
           dynamicLimit: dynamicLimits.get(task.ruleId) || null,
         };
-        return executeValidationTask(tx, enhancedTask, { sorteoId, numbers, cache, vendedorId } as any);
+        return executeValidationTask(tx, enhancedTask, { sorteoId, loteriaId, vendedorId, numbers, cache });
       });
 
       const groupResults = await Promise.all(groupPromises);
@@ -1000,4 +1017,3 @@ export async function validateRulesInParallel(
     throw firstError;
   }
 }
-
