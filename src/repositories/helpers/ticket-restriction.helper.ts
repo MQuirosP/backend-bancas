@@ -348,6 +348,7 @@ export async function validateMaxTotalForNumbers(
       isAutoDate?: boolean | null;
       appliesToVendedor?: boolean | null; //  AHORA EXPLÍCITO
       id?: string;
+      baseAmount?: number | null; //  NUEVO: crédito inicial que absorbe ventas sin consumir el límite
     };
     sorteoId: string;
     vendedorId?: string | null;   //  NUEVO: Para appliesToVendedor=true
@@ -456,10 +457,18 @@ export async function validateMaxTotalForNumbers(
       );
     }
 
-    const newAccumulated = accumulatedInSorteo + amountForNumber;
+    //  baseAmount actúa como crédito inicial: ventas hasta baseAmount no consumen el límite
+    // Ejemplo: base=1000, acumulado=1000 → efectivo=max(0,1000-1000)=0, disponible=límite completo
+    // Ejemplo: base=1000, acumulado=1200 → efectivo=max(0,1200-1000)=200, disponible=límite-200
+    const baseCredit = (dynamicLimit != null && rule.baseAmount != null && rule.baseAmount > 0)
+      ? rule.baseAmount
+      : 0;
+    const effectiveAccumulated = Math.max(0, accumulatedInSorteo - baseCredit);
+
+    const newAccumulated = effectiveAccumulated + amountForNumber;
 
     if (newAccumulated > effectiveMaxTotal) {
-      const available = Math.max(0, effectiveMaxTotal - accumulatedInSorteo);
+      const available = Math.max(0, effectiveMaxTotal - effectiveAccumulated);
       const scopeLabel = rule.userId ? "personal"
         : rule.ventanaId ? "de ventana"
           : rule.bancaId ? "de banca"
@@ -502,15 +511,16 @@ export async function validateMaxTotalForNumbers(
           scope: scopeLabel, //  Frontend espera 'scope' además de 'scopeLabel'
           scopeLabel,
           sorteoId,
-          accumulatedInSorteo, //  "usado" = acumulado previo SOLO de este número en el sorteo
-          amountForNumber, //  "intento" = monto SOLO de este número en el ticket actual
-          newAccumulated, //  Nuevo acumulado SOLO de este número
-          effectiveMaxTotal, //  "tope" = límite máximo SOLO para este número
+          accumulatedInSorteo,
+          effectiveAccumulated,
+          baseCredit,
+          amountForNumber,
+          newAccumulated,
+          effectiveMaxTotal,
           available,
           isAutoDate: rule.isAutoDate,
-          //  CRÍTICO: Aclarar en el meta que es por número individual, NO por total del ticket
           isPerNumber: true,
-          isAccumulated: true, //  Aclarar que es acumulado (maxTotal), no por ticket (maxAmount)
+          isAccumulated: true,
           clarification: 'Límite acumulado calculado por número individual en el sorteo, NO por total del ticket',
         }
       );
@@ -711,11 +721,12 @@ async function executeValidationTask(
     if (numbersToValidate.length > 0) {
       // Case 1: Specific numbers in rule
       let effectiveMaxAmount: number | null = null;
-      if (rule.maxAmount != null || task.dynamicLimit != null) {
-        const staticMaxAmount = rule.maxAmount ?? Infinity;
+      if (rule.maxAmount != null) {
+        // dynamicLimit solo capea maxAmount si la regla tiene maxAmount explícito
+        // NO se usa dynamicLimit como maxAmount cuando maxAmount=null
         effectiveMaxAmount = task.dynamicLimit != null
-          ? Math.min(staticMaxAmount, task.dynamicLimit)
-          : staticMaxAmount;
+          ? Math.min(rule.maxAmount, task.dynamicLimit)
+          : rule.maxAmount;
       }
 
       if (effectiveMaxAmount != null) {
@@ -794,9 +805,12 @@ async function executeValidationTask(
       const uniqueNumbers = [...new Set(context.numbers.map(n => n.number))];
 
       let effectiveMaxAmount: number | null = null;
-      if (rule.maxAmount != null || task.dynamicLimit != null) {
-        const staticMaxAmount = rule.maxAmount ?? Infinity;
-        effectiveMaxAmount = task.dynamicLimit != null ? Math.min(staticMaxAmount, task.dynamicLimit) : staticMaxAmount;
+      if (rule.maxAmount != null) {
+        // dynamicLimit solo capea maxAmount si la regla tiene maxAmount explícito
+        // NO se usa dynamicLimit como maxAmount cuando maxAmount=null
+        effectiveMaxAmount = task.dynamicLimit != null
+          ? Math.min(rule.maxAmount, task.dynamicLimit)
+          : rule.maxAmount;
       }
 
       if (effectiveMaxAmount != null) {
@@ -941,7 +955,7 @@ export async function validateRulesInParallel(
       // Grupo de una sola regla - ejecutar directamente
       const task = {
         ...group[0],
-        dynamicLimit: dynamicLimits.get(group[0].ruleId) || null,
+        dynamicLimit: dynamicLimits.get(group[0].ruleId) ?? null,
       };
 
       const result = await executeValidationTask(tx, task, { sorteoId, loteriaId, vendedorId, numbers, cache });
@@ -955,7 +969,7 @@ export async function validateRulesInParallel(
       const groupPromises = group.map(task => {
         const enhancedTask = {
           ...task,
-          dynamicLimit: dynamicLimits.get(task.ruleId) || null,
+          dynamicLimit: dynamicLimits.get(task.ruleId) ?? null,
         };
         return executeValidationTask(tx, enhancedTask, { sorteoId, loteriaId, vendedorId, numbers, cache });
       });

@@ -46,13 +46,15 @@ async function calculateDynamicLimit(
     baseAmount?: number | null;
     salesPercentage?: number | null;
     appliesToVendedor?: boolean | null;
-    ruleUserId?: string | null; // NUEVO: Para saber si la regla es personal
+    ruleUserId?: string | null;
+    bancaId?: string | null;   //  NUEVO: Para alcance de banca
+    ventanaId?: string | null; //  NUEVO: Para alcance de ventana
   },
   context: {
     userId: string;
     ventanaId: string;
     bancaId: string;
-    sorteoId: string;  //  NUEVO: sorteoId requerido para calcular sobre el sorteo
+    sorteoId: string;
     at: Date;
     cache?: ScopeCache;
   }
@@ -72,11 +74,6 @@ async function calculateDynamicLimit(
     });
   }
 
-  // Monto base
-  if (rule.baseAmount != null && rule.baseAmount > 0) {
-    dynamicLimit += rule.baseAmount;
-  }
-
   //  VALIDACIÓN: salesPercentage debe estar entre 0 y 100
   if (rule.salesPercentage != null && (rule.salesPercentage < 0 || rule.salesPercentage > 100)) {
     logger.warn({
@@ -90,38 +87,56 @@ async function calculateDynamicLimit(
     });
   }
 
-  // Porcentaje de ventas (solo si salesPercentage es válido)
-  if (rule.salesPercentage != null && rule.salesPercentage > 0 && rule.salesPercentage <= 100) {
+  const baseAmt = (rule.baseAmount != null && rule.baseAmount > 0) ? rule.baseAmount : 0;
+  const hasSalesPercentage = rule.salesPercentage != null && rule.salesPercentage > 0 && rule.salesPercentage <= 100;
+
+  if (hasSalesPercentage) {
     //  CRÍTICO: Calcular sobre ventas DEL SORTEO, no del día completo
     const where: Prisma.TicketWhereInput = {
       deletedAt: null,
       isActive: true,
       status: { notIn: [TicketStatus.CANCELLED, TicketStatus.EXCLUDED] },
-      sorteoId: context.sorteoId,  //  CRÍTICO: Filtrar por sorteo específico
+      sorteoId: context.sorteoId,
     };
 
-    //  LÓGICA: Si la regla es personal (tiene ruleUserId) O tiene activo appliesToVendedor,
-    //  calculamos el porcentaje sobre las ventas del vendedor.
+    let cacheKey = "";
+
+    //  LÓGICA DE ALCANCE JERÁRQUICO
+    //  Prioriza el alcance más específico definido en la regla
     if (rule.ruleUserId || rule.appliesToVendedor) {
-      // Por vendedor individual
+      // 1. Vendedor Individual (Personal o Automático/Masivo)
       where.vendedorId = context.userId;
+      cacheKey = `USER:${context.userId}`;
+    } else if (rule.ventanaId) {
+      // 2. Ventana Específica
+      where.ventanaId = rule.ventanaId;
+      cacheKey = `VENTANA:${rule.ventanaId}`;
+    } else if (rule.bancaId) {
+      // 3. Banca Completa (Filtra todas las ventanas de la banca)
+      where.ventana = { bancaId: rule.bancaId };
+      cacheKey = `BANCA:${rule.bancaId}`;
     } else {
-      // Por ventana o banca (global)
+      // Fallback: Ventana actual (Seguridad para reglas globales sin scope explícito en registro)
       where.ventanaId = context.ventanaId;
+      cacheKey = `VENTANA:${context.ventanaId}`;
     }
 
-    // 2. Intentar obtener de caché
-    const isPerVendedor = !!(rule.ruleUserId || rule.appliesToVendedor);
-    const cacheKey = isPerVendedor ? `USER:${context.userId}` : `VENTANA:${context.ventanaId}`;
+    // 2. Intentar obtener de caché (ahora con el alcance correcto)
     if (context.cache) {
       const cached = context.cache.salesTotals.get(cacheKey);
       if (cached !== undefined) {
-        dynamicLimit += (cached * rule.salesPercentage) / 100;
+        const percentageAmount = (cached * rule.salesPercentage!) / 100;
+        //  LÓGICA: dynamicLimit = percentageAmount - baseAmount
+        // Ejemplo: base=1000, 3% de 47000=1410 → límite = 1410 - 1000 = 410
+        // Ejemplo: base=1000, 3% de 10000=300 → límite = max(0, 300-1000) = 0 (bloqueado)
+        dynamicLimit = baseAmt > 0
+          ? Math.max(0, percentageAmount - baseAmt)
+          : percentageAmount;
         return Math.max(0, dynamicLimit);
       }
     }
 
-    // Calcular ventas del sorteo
+    // Calcular ventas del sorteo según el alcance determinado
     const result = await tx.ticket.aggregate({
       _sum: { totalAmount: true },
       where,
@@ -133,23 +148,45 @@ async function calculateDynamicLimit(
     if (context.cache) {
       context.cache.salesTotals.set(cacheKey, sorteoSales);
     }
-    const percentageAmount = (sorteoSales * rule.salesPercentage) / 100;
-    dynamicLimit += percentageAmount;
+    const percentageAmount = (sorteoSales * rule.salesPercentage!) / 100;
+
+    //  LÓGICA: dynamicLimit = percentageAmount - baseAmount
+    // Ejemplo: base=1000, 3% de 47000=1410 → límite = 1410 - 1000 = 410
+    // Ejemplo: base=1000, 3% de 10000=300 → límite = max(0, 300-1000) = 0 (bloqueado)
+    dynamicLimit = baseAmt > 0
+      ? Math.max(0, percentageAmount - baseAmt)
+      : percentageAmount;
 
     logger.debug({
       layer: 'repository',
       action: 'DYNAMIC_LIMIT_CALCULATED',
       payload: {
         sorteoId: context.sorteoId,
+        scope: cacheKey.split(':')[0],
+        scopeId: cacheKey.split(':')[1],
         sorteoSales,
         salesPercentage: rule.salesPercentage,
         baseAmount: rule.baseAmount,
         percentageAmount,
+        baseDeducted: baseAmt,
         dynamicLimit,
+        formula: baseAmt > 0 ? 'percentageAmount - baseAmount' : 'percentageAmount only',
         appliesToVendedor: rule.appliesToVendedor,
-        //  AGREGAR: Información sobre exclusión de tickets
         excludedTicketStatuses: ['CANCELLED', 'EXCLUDED'],
-        calculationNote: 'Calculated on gross sales (before individual jugada exclusions)',
+      },
+    });
+  } else if (baseAmt > 0) {
+    // Solo baseAmount sin salesPercentage → el límite es el base directamente
+    dynamicLimit = baseAmt;
+
+    logger.debug({
+      layer: 'repository',
+      action: 'DYNAMIC_LIMIT_CALCULATED',
+      payload: {
+        sorteoId: context.sorteoId,
+        baseAmount: baseAmt,
+        dynamicLimit,
+        formula: 'baseAmount only',
       },
     });
   }
@@ -1002,6 +1039,8 @@ export const TicketRepository = {
                 salesPercentage: rule.salesPercentage,
                 appliesToVendedor: rule.appliesToVendedor,
                 ruleUserId: rule.userId,
+                bancaId: rule.bancaId,
+                ventanaId: rule.ventanaId,
               }, {
                 userId,
                 ventanaId,
@@ -1727,6 +1766,8 @@ export const TicketRepository = {
                 salesPercentage: rule.salesPercentage,
                 appliesToVendedor: rule.appliesToVendedor,
                 ruleUserId: rule.userId,
+                bancaId: rule.bancaId,
+                ventanaId: rule.ventanaId,
               }, {
                 userId,
                 ventanaId,
