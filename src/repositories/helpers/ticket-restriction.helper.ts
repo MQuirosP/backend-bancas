@@ -172,12 +172,9 @@ export async function calculateAccumulatedByNumbersAndScope(
       layer: 'repository',
       action: 'ACCUMULATED_BY_NUMBERS_SCOPE_CALCULATED',
       payload: {
-        numbers,
-        scopeType,
-        scopeId,
+        scope: `${scopeType}:${scopeId}`,
         sorteoId,
-        multiplierFilter,
-        accumulatedMap: Object.fromEntries(accumulatedMap),
+        numeros: Object.fromEntries(accumulatedMap),
       },
     });
 
@@ -199,13 +196,10 @@ export async function calculateAccumulatedByNumbersAndScope(
       layer: 'repository',
       action: 'ACCUMULATED_BY_NUMBERS_SCOPE_ERROR',
       payload: {
-        numbers,
-        scopeType,
-        scopeId,
+        scope: `${scopeType}:${scopeId}`,
         sorteoId,
-        multiplierFilter,
+        numeros: numbers,
         error: error.message,
-        stack: error.stack,
       },
     });
     throw error;
@@ -380,7 +374,7 @@ export async function validateMaxTotalForNumbers(
     logger.debug({
       layer: 'repository',
       action: 'MAXTOTAL_VALIDATION_SKIPPED_NO_SCOPE',
-      payload: { numbers: numbers.map(n => n.number), ruleId: rule },
+      payload: { ruleId: rule.id },
     });
     return;
   }
@@ -458,17 +452,11 @@ export async function validateMaxTotalForNumbers(
     }
 
     //  baseAmount actúa como crédito inicial: ventas hasta baseAmount no consumen el límite
-    // Ejemplo: base=1000, acumulado=1000 → efectivo=max(0,1000-1000)=0, disponible=límite completo
-    // Ejemplo: base=1000, acumulado=1200 → efectivo=max(0,1200-1000)=200, disponible=límite-200
-    const baseCredit = (dynamicLimit != null && rule.baseAmount != null && rule.baseAmount > 0)
-      ? rule.baseAmount
-      : 0;
-    const effectiveAccumulated = Math.max(0, accumulatedInSorteo - baseCredit);
-
-    const newAccumulated = effectiveAccumulated + amountForNumber;
+    // dynamicLimit ya incorpora el base como piso (max(base, pct)), no hay que deducirlo del acumulado
+    const newAccumulated = accumulatedInSorteo + amountForNumber;
 
     if (newAccumulated > effectiveMaxTotal) {
-      const available = Math.max(0, effectiveMaxTotal - effectiveAccumulated);
+      const available = Math.max(0, effectiveMaxTotal - accumulatedInSorteo);
       const scopeLabel = rule.userId ? "personal"
         : rule.ventanaId ? "de ventana"
           : rule.bancaId ? "de banca"
@@ -480,67 +468,36 @@ export async function validateMaxTotalForNumbers(
         layer: 'repository',
         action: 'MAXTOTAL_EXCEEDED',
         payload: {
-          number,
-          scopeType,
-          scopeId,
-          scopeLabel,
+          numero: number,
+          scope: `${scopeType}:${scopeId}`,
           sorteoId,
-          multiplierFilter,
-          accumulatedInSorteo, //  Acumulado SOLO de este número
-          amountForNumber, //  Monto SOLO de este número en el ticket
-          newAccumulated, //  Nuevo acumulado SOLO de este número
-          effectiveMaxTotal, //  Límite SOLO para este número
-          staticMaxTotal,
-          dynamicLimit,
-          available,
-          isAutoDate: rule.isAutoDate,
-          //  CRÍTICO: Aclarar que estos valores son por número individual, no por total del ticket
-          clarification: 'Todos los valores son por número individual, no por total del ticket',
+          acumulado: accumulatedInSorteo,
+          limite: effectiveMaxTotal,
+          intento: amountForNumber,
+          disponible: available,
         },
       });
 
-      //  CRÍTICO: Mensaje claro - maxTotal es acumulado por número individual en el sorteo, NO por total del ticket
-      // Límite máximo: ₡${effectiveMaxTotal.toFixed(2)}. 
+      const userMessage = available > 0
+        ? `El número ${number}${isAutoDateLabel}: Disponible ₡${available.toFixed(2)}`
+        : `El número ${number}${isAutoDateLabel}: Agotado para este sorteo`;
+
       throw new AppError(
-        `El número ${number}${isAutoDateLabel}: Disponible: ₡${available.toFixed(2)}`,
+        userMessage,
         400,
         {
           code: "NUMBER_MAXTOTAL_EXCEEDED",
           number,
           scopeType,
-          scope: scopeLabel, //  Frontend espera 'scope' además de 'scopeLabel'
-          scopeLabel,
+          scope: scopeLabel,
           sorteoId,
           accumulatedInSorteo,
-          effectiveAccumulated,
-          baseCredit,
           amountForNumber,
-          newAccumulated,
           effectiveMaxTotal,
           available,
-          isAutoDate: rule.isAutoDate,
-          isPerNumber: true,
-          isAccumulated: true,
-          clarification: 'Límite acumulado calculado por número individual en el sorteo, NO por total del ticket',
         }
       );
     }
-
-    logger.debug({
-      layer: 'repository',
-      action: 'MAXTOTAL_VALIDATION_PASSED',
-      payload: {
-        number,
-        scopeType,
-        scopeId,
-        sorteoId,
-        multiplierFilter,
-        accumulatedInSorteo,
-        amountForNumber,
-        newAccumulated,
-        effectiveMaxTotal,
-      },
-    });
   }
 }
 
@@ -935,16 +892,7 @@ export async function validateRulesInParallel(
   // Organizar tareas de validación
   const { parallelGroups } = organizeValidationTasks(rules);
 
-  logger.info({
-    layer: 'repository',
-    action: 'PARALLEL_VALIDATION_START',
-    payload: {
-      totalRules: rules.length,
-      parallelGroups: parallelGroups.length,
-      totalNumbers: numbers.length,
-      sorteoId,
-    },
-  });
+  // Log removido (el repository ya registra PARALLEL_VALIDATION_START con userId)
 
   const allResults: ValidationResult[] = [];
   const errors: Error[] = [];
@@ -992,21 +940,18 @@ export async function validateRulesInParallel(
   const totalValidatedNumbers = allResults.reduce((sum, r) => sum + r.numbersValidated, 0);
   const avgExecutionTime = allResults.length > 0 ? allResults.reduce((sum, r) => sum + r.executionTime, 0) / allResults.length : 0;
 
-  logger.info({
-    layer: 'repository',
-    action: 'PARALLEL_VALIDATION_COMPLETE',
-    payload: {
-      totalRules: rules.length,
-      parallelGroups: parallelGroups.length,
-      successfulValidations,
-      failedValidations,
-      totalValidatedNumbers,
-      totalTime,
-      avgExecutionTime: Math.round(avgExecutionTime),
-      errorsCount: errors.length,
-      sorteoId,
-    },
-  });
+  if (errors.length > 0) {
+    logger.debug({
+      layer: 'repository',
+      action: 'PARALLEL_VALIDATION_COMPLETE',
+      payload: {
+        sorteoId,
+        reglas: rules.length,
+        fallidas: failedValidations,
+        tiempoMs: totalTime,
+      },
+    });
+  }
 
   // Si hay errores, lanzar el primero (comportamiento backward compatible)
   if (errors.length > 0) {
@@ -1017,14 +962,8 @@ export async function validateRulesInParallel(
       action: 'TICKET_REJECTED_BY_RESTRICTIONS',
       payload: {
         sorteoId,
-        numbersCount: numbers.length,
-        numbersAttempted: numbers.map((n: any) => ({
-          number: n.number,
-          amount: n.amountForNumber
-        })),
-        error: firstError.message,
-        errorCode: (firstError as any).code,
-        errorMeta: (firstError as any).meta,
+        motivo: firstError.message,
+        numeros: Object.fromEntries(numbers.map((n: any) => [n.number, n.amountForNumber])),
       },
     });
 
