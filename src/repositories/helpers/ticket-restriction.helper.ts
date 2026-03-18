@@ -471,10 +471,11 @@ export async function validateMaxTotalForNumbers(
           numero: number,
           scope: `${scopeType}:${scopeId}`,
           sorteoId,
-          acumulado: accumulatedInSorteo,
-          limite: effectiveMaxTotal,
-          intento: amountForNumber,
-          disponible: available,
+          limite: `₡${effectiveMaxTotal.toFixed(2)}`,
+          ya_vendido: `₡${accumulatedInSorteo.toFixed(2)}`,
+          intento: `₡${amountForNumber.toFixed(2)}`,
+          disponible: `₡${available.toFixed(2)}`,
+          calculo: `₡${effectiveMaxTotal.toFixed(2)} − ₡${accumulatedInSorteo.toFixed(2)} = ₡${available.toFixed(2)}`,
         },
       });
 
