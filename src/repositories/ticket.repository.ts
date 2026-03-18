@@ -150,29 +150,24 @@ async function calculateDynamicLimit(
     }
     const percentageAmount = (sorteoSales * rule.salesPercentage!) / 100;
 
-    //  LÓGICA: dynamicLimit = percentageAmount - baseAmount
-    // Ejemplo: base=1000, 3% de 47000=1410 → límite = 1410 - 1000 = 410
-    // Ejemplo: base=1000, 3% de 10000=300 → límite = max(0, 300-1000) = 0 (bloqueado)
+    // base actúa como piso garantizado: aunque el % sea menor, siempre se puede vender hasta la base
+    // Cuando el % supera la base, el % es el límite total
+    // Ejemplo: base=2500, 3% de 93950=2818.50 → límite=max(2500,2818.50)=2818.50 → disponible=2818.50-1300=1518.50
+    // Ejemplo: base=2500, 3% de 10000=300 → límite=max(2500,300)=2500 → disponible=2500
     dynamicLimit = baseAmt > 0
-      ? Math.max(0, percentageAmount - baseAmt)
+      ? Math.max(baseAmt, percentageAmount)
       : percentageAmount;
 
     logger.debug({
       layer: 'repository',
       action: 'DYNAMIC_LIMIT_CALCULATED',
       payload: {
+        scope: `${cacheKey.split(':')[0]}:${cacheKey.split(':')[1]}`,
         sorteoId: context.sorteoId,
-        scope: cacheKey.split(':')[0],
-        scopeId: cacheKey.split(':')[1],
-        sorteoSales,
-        salesPercentage: rule.salesPercentage,
-        baseAmount: rule.baseAmount,
-        percentageAmount,
-        baseDeducted: baseAmt,
-        dynamicLimit,
-        formula: baseAmt > 0 ? 'percentageAmount - baseAmount' : 'percentageAmount only',
-        appliesToVendedor: rule.appliesToVendedor,
-        excludedTicketStatuses: ['CANCELLED', 'EXCLUDED'],
+        ventas: sorteoSales,
+        pct: rule.salesPercentage,
+        base: rule.baseAmount,
+        limite: dynamicLimit,
       },
     });
   } else if (baseAmt > 0) {
