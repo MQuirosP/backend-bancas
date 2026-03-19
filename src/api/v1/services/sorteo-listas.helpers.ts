@@ -1,5 +1,6 @@
 import prisma from "../../../core/prismaClient";
 import { isExclusionListEmpty } from "../../../core/exclusionListCache";
+import { exclusionCacheService } from "../../../services/exclusionCache.service";
 
 /**
  * Obtiene los IDs de tickets excluidos para un sorteo
@@ -10,15 +11,8 @@ export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string
     // Optimización: tabla vacía → sin exclusiones, evitar query
     if (await isExclusionListEmpty()) return new Set();
 
-    //  OPTIMIZED: Single query with include to get ventana relation
-    const exclusions = await prisma.sorteoListaExclusion.findMany({
-        where: { sorteoId },
-        select: {
-            ventanaId: true,
-            vendedorId: true,
-            multiplierId: true,
-        },
-    });
+    //  OPTIMIZED: Use L1/L2 Cache instead of direct DB query
+    const exclusions = await exclusionCacheService.getExclusions(sorteoId);
 
     if (exclusions.length === 0) {
         return new Set();
@@ -73,15 +67,8 @@ export async function getExclusionWhereCondition(sorteoId: string): Promise<any>
     // Optimización: tabla vacía → sin exclusiones, evitar query
     if (await isExclusionListEmpty()) return {};
 
-    //  OPTIMIZED: Single query with include to get ventana relation
-    const exclusions = await prisma.sorteoListaExclusion.findMany({
-        where: { sorteoId },
-        select: {
-            ventanaId: true,
-            vendedorId: true,
-            multiplierId: true,
-        },
-    });
+    //  OPTIMIZED: Use L1/L2 Cache instead of direct DB query
+    const exclusions = await exclusionCacheService.getExclusions(sorteoId);
 
     if (exclusions.length === 0) {
         return {}; // Sin exclusiones
