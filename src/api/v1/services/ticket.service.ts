@@ -1218,295 +1218,108 @@ export const TicketService = {
       vendedorId?: string | null;
       loteriaId?: string;
       sorteoId?: string;
-      multiplierId?: string; //  NUEVO
-      status?: string; //  NUEVO
-      sorteoStatus?: string; // Filtrar por estado del sorteo asociado
-      page?: number; //  NUEVO: Paginación (0-9 para MONAZOS)
-      pageSize?: number; //  NUEVO: Tamaño de página (default: 100)
+      multiplierId?: string;
+      status?: string;
+      sorteoStatus?: string;
+      page?: number;
+      pageSize?: number;
     },
     role: string,
     userId: string
   ) {
     try {
-      //  FIX: Regla especial - cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha
+      // 1. Pre-flight checking: Validar parámetros mínimos para evitar queries inútiles
+      if (!params.sorteoId && !params.loteriaId && !params.date && !params.fromDate) {
+        throw new AppError("Parámetros insuficientes para el resumen", 400);
+      }
+
+      // 2. Consolidar Metadatos en una sola ráfaga controlada al inicio
+      // OPTIMIZACIÓN: Solo consultamos lo estrictamente necesario según los params
+      const [metadataResults, exclusionCondition] = await Promise.all([
+        prisma.$transaction([
+          ...(params.sorteoId ? [prisma.sorteo.findUnique({
+            where: { id: params.sorteoId },
+            select: {
+              id: true, name: true, status: true, winningNumber: true, scheduledAt: true,
+              loteria: { select: { name: true, rulesJson: true } }
+            }
+          })] : []),
+          ...(params.loteriaId && !params.sorteoId ? [prisma.loteria.findUnique({
+            where: { id: params.loteriaId },
+            select: { name: true, rulesJson: true }
+          })] : []),
+          ...(params.ventanaId ? [prisma.ventana.findUnique({ where: { id: params.ventanaId }, select: { name: true } })] : []),
+          ...(params.vendedorId ? [prisma.user.findUnique({ where: { id: params.vendedorId }, select: { name: true, code: true } })] : []),
+          ...(params.multiplierId ? [prisma.loteriaMultiplier.findUnique({ where: { id: params.multiplierId }, select: { name: true } })] : []),
+        ]),
+        params.sorteoId ? getExclusionWhereCondition(params.sorteoId) : Promise.resolve({})
+      ]);
+
+      // Mapear resultados de la transacción con casting para evitar errores de TS
+      let idx = 0;
+      const sorteo = params.sorteoId ? (metadataResults[idx++] as any) : null;
+      const loteria = (params.loteriaId && !params.sorteoId) ? (metadataResults[idx++] as any) : (sorteo?.loteria || null);
+      const ventana = params.ventanaId ? (metadataResults[idx++] as any) : null;
+      const vendedor = params.vendedorId ? (metadataResults[idx++] as any) : null;
+      const multiplier = params.multiplierId ? (metadataResults[idx++] as any) : null;
+
+      // 3. Resolver Reglas y Configuración (Fuera del pool)
+      const loteriaRules = loteria?.rulesJson as any;
+      const reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
+      const { resolveDigits } = await import('../../../utils/loteriaRules');
+      const sorteoDigits = resolveDigits(loteriaRules, 2);
+      const maxNumber = Math.pow(10, sorteoDigits) - 1;
+
+      // 4. Resolver Rango de Fechas
       const hasSorteoId = !!params.sorteoId;
       const hasExplicitDateRange = !!(params.fromDate || params.toDate);
+      const dateRange = (hasSorteoId && !hasExplicitDateRange) 
+        ? null 
+        : resolveDateRange(params.date || "today", params.fromDate, params.toDate);
 
-      let dateRange: DateRangeResolution | null = null;
-
-      if (hasSorteoId && !hasExplicitDateRange) {
-        // NO aplicar filtro de fecha cuando hay sorteoId y no hay fechas explícitas
-        dateRange = null;
-      } else {
-        // Resolver rango de fechas normalmente
-        dateRange = resolveDateRange(
-          params.date || "today",
-          params.fromDate,
-          params.toDate
-        );
-      }
-
-      // Construir filtro para tickets según dimension y scope
-      const ticketWhere: any = {
-        deletedAt: null,
-        //  FIX: Solo aplicar filtro de fecha si dateRange no es null
-        ...(dateRange ? {
-          businessDate: {
-            gte: dateRange.fromBusinessDate,
-            lte: dateRange.toBusinessDate,
-          },
-        } : {}),
-        // Excluir tickets CANCELLED por defecto
-        // Si se especifica params.status, usar ese valor; si no, excluir CANCELLED
-        status: params.status
-          ? params.status
-          : { notIn: ["CANCELLED", "EXCLUDED"] }, // Excluir CANCELLED si no se especifica
-        isActive: true,
-        ...(params.sorteoStatus ? { sorteo: { status: params.sorteoStatus } } : {}),
-        ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
-        ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
-      };
-
-      //  NUEVO: Aplicar exclusión de listas si hay sorteoId
-      if (params.sorteoId) {
-        const exclusionCondition = await getExclusionWhereCondition(params.sorteoId);
-        Object.assign(ticketWhere, exclusionCondition);
-      }
-
-      //  FIX: Si hay multiplierId, filtrar tickets que tengan al menos una jugada NUMERO con ese multiplierId
-      // Esto asegura que los REVENTADO incluidos estén en los mismos tickets que los NUMERO filtrados
-      if (params.multiplierId) {
-        ticketWhere.jugadas = {
-          some: {
-            multiplierId: params.multiplierId,
-            type: 'NUMERO',
-            deletedAt: null,
-            isActive: true,
-            isExcluded: false,
-          },
-        };
-      }
-
-      // Aplicar filtros según dimension y scope
-      // FIX: Los filtros son INDEPENDIENTES y ACUMULATIVOS (AND lógico)
-
-      // 1. Validar dimension (si se especifica, requiere el filtro correspondiente)
-      if (params.dimension === "listero" && !params.ventanaId) {
-        throw new AppError("ventanaId es requerido cuando dimension='listero'", 400);
-      }
-      if (params.dimension === "vendedor" && !params.vendedorId) {
-        throw new AppError("vendedorId es requerido cuando dimension='vendedor'", 400);
-      }
-
-      // 2. Aplicar filtros de forma INDEPENDIENTE (no else if)
-      // Cada filtro se aplica si está presente, permitiendo combinaciones
-      if (params.ventanaId) {
-        ticketWhere.ventanaId = params.ventanaId;
-      }
-
-      if (params.vendedorId) {
-        ticketWhere.vendedorId = params.vendedorId;
-      }
-
-      // 3. Si scope='mine' y NO hay filtros explícitos, aplicar filtro según rol
-      if (params.scope === "mine" && !params.ventanaId && !params.vendedorId) {
-        if (role === "VENDEDOR") {
-          ticketWhere.vendedorId = userId;
-        } else if (role === "VENTANA") {
-          logger.warn({
-            layer: "service",
-            action: "TICKET_NUMBERS_SUMMARY_MISSING_VENTANA_ID",
-            payload: { role, userId, message: "VENTANA user should have ventanaId from RBAC" },
-          });
-        }
-      }
-      // Si scope='all' y no hay filtros específicos, no agregar filtros de ventanaId/vendedorId (admin ve todo)
-
-      //  NUEVO: Obtener sorteo/lotería para detectar digits y reventadoEnabled
-      let sorteoDigits = 2; // Default
-      let sorteoName = '';
-      let reventadoEnabled = true; // Default (asumir habilitado si no se puede determinar)
-      let multiplierName = '';
-
-      //  NUEVO: Obtener nombre del multiplicador si está presente
-      if (params.multiplierId) {
-        const multiplier = await withConnectionRetry(
-          () => prisma.loteriaMultiplier.findUnique({
-            where: { id: params.multiplierId! },
-            select: { name: true },
-          }),
-          { context: 'TicketService.numbersSummary.multiplier' }
-        );
-        multiplierName = multiplier?.name || '';
-      }
-
-      //  NUEVO: Variable para almacenar información de números ganadores
-      let winningNumbersInfo: {
-        sorteoId: string;
-        sorteoName: string;
-        sorteoStatus: string;
-        isEvaluated: boolean;
-        digits: number;
-        winners: Array<{
-          number: string;
-          position: number;
-          prizeType: string;
-        }>;
-      } | undefined = undefined;
-
-      if (params.sorteoId) {
-        const sorteo = await withConnectionRetry(
-          () => prisma.sorteo.findUnique({
-            where: { id: params.sorteoId! },
-            select: {
-              id: true,
-              name: true,
-              status: true,
-              winningNumber: true, //  NUEVO: Obtener número ganador
-              loteria: {
-                select: {
-                  rulesJson: true,
-                },
-              },
-            },
-          }),
-          { context: 'TicketService.numbersSummary.sorteo' }
-        );
-        sorteoName = sorteo?.name || '';
-
-        // Extraer reventadoEnabled y digits de loteriaRules
-        const loteriaRules = sorteo?.loteria?.rulesJson as any;
-        reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
-
-        //  Usar resolveDigits para obtener digits desde rulesJson
-        const { resolveDigits } = await import('../../../utils/loteriaRules');
-        sorteoDigits = resolveDigits(loteriaRules, 2);
-
-        //  NUEVO: Si el sorteo está evaluado y tiene número ganador, preparar info
-        if (sorteo && sorteo.status === 'EVALUATED' && sorteo.winningNumber) {
-          winningNumbersInfo = {
-            sorteoId: sorteo.id,
-            sorteoName: sorteo.name,
-            sorteoStatus: sorteo.status,
-            isEvaluated: true,
-            digits: sorteoDigits,
-            winners: [
-              {
-                number: sorteo.winningNumber.padStart(sorteoDigits, '0'),
-                position: 1,
-                prizeType: 'PRIMERO',
-              }
-            ]
-          };
-
-          logger.info({
-            layer: "service",
-            action: "TICKET_NUMBERS_SUMMARY_WINNING_NUMBER",
-            payload: {
-              sorteoId: sorteo.id,
-              sorteoName: sorteo.name,
-              winningNumber: sorteo.winningNumber,
-              digits: sorteoDigits,
-            },
-          });
-        }
-      } else if (params.loteriaId) {
-        // Si solo hay loteriaId (sin sorteoId), consultar la lotería
-        const loteria = await prisma.loteria.findUnique({
-          where: { id: params.loteriaId },
-          select: { rulesJson: true }
-        });
-
-        const loteriaRules = loteria?.rulesJson as any;
-        reventadoEnabled = loteriaRules?.reventadoConfig?.enabled ?? true;
-
-        //  Usar resolveDigits para obtener digits desde rulesJson
-        const { resolveDigits } = await import('../../../utils/loteriaRules');
-        sorteoDigits = resolveDigits(loteriaRules, 2);
-      }
-
-      //  Calcular rango dinámico basado en digits
-      const maxNumber = Math.pow(10, sorteoDigits) - 1; // 2 digits -> 99, 3 digits -> 999
-
-      //  OPTIMIZED: Fetch tickets with jugadas and metadata in a single query
-      // Build jugada filter for nested query
-      //  CRÍTICO: NO filtrar por multiplierId aquí, ya que el filtro se aplica a nivel de ticket
-      // Esto permite incluir TANTO las jugadas NUMERO con el multiplierId especificado
-      // COMO las jugadas REVENTADO que van automáticamente con ellas en el mismo ticket
-      const jugadaFilter: any = {
-        deletedAt: null,
-        isActive: true,
-        isExcluded: false, //  FIX: Excluir jugadas marcadas como excluidas
-      };
-
-      //  OPTIMIZED: SQL Aggregation using $queryRaw
-      // This solves the 'too many bind variables' error and reduces memory usage.
-      const sqlJoins: Prisma.Sql[] = [];
-      if (params.sorteoStatus) {
-        sqlJoins.push(Prisma.sql`INNER JOIN "Sorteo" s ON t."sorteoId" = s.id`);
-      }
-      const joinsSQL = sqlJoins.length > 0 ? Prisma.join(sqlJoins, ' ') : Prisma.empty;
-
+      // 5. Construir Query de SQL Raw (Lean & Fast)
       const sqlWhere: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`
       ];
 
-      if (params.sorteoStatus) {
-        sqlWhere.push(Prisma.sql`s.status::text = ${params.sorteoStatus}`);
-      }
+      if (params.sorteoStatus) sqlWhere.push(Prisma.sql`s.status::text = ${params.sorteoStatus}`);
+      if (params.status) sqlWhere.push(Prisma.sql`t."status" = ${params.status}`);
+      else sqlWhere.push(Prisma.sql`t."status" NOT IN ('CANCELLED', 'EXCLUDED')`);
 
-      // Filter by status (default not in CANCELLED/EXCLUDED)
-      if (params.status) {
-        sqlWhere.push(Prisma.sql`t."status" = ${params.status}`);
-      } else {
-        sqlWhere.push(Prisma.sql`t."status" NOT IN ('CANCELLED', 'EXCLUDED')`);
-      }
-
-      // Filter by businessDate (uses idx_ticket_cierre_consolidado)
       if (dateRange) {
         sqlWhere.push(Prisma.sql`t."businessDate" BETWEEN ${dateRange.fromBusinessDate}::date AND ${dateRange.toBusinessDate}::date`);
       }
 
-      // Other ticket filters
       if (params.loteriaId) sqlWhere.push(Prisma.sql`t."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
       if (params.sorteoId) sqlWhere.push(Prisma.sql`t."sorteoId" = CAST(${params.sorteoId} AS uuid)`);
       if (params.ventanaId) sqlWhere.push(Prisma.sql`t."ventanaId" = CAST(${params.ventanaId} AS uuid)`);
 
-      // Role-based filters
       if (params.vendedorId) {
         sqlWhere.push(Prisma.sql`t."vendedorId" = CAST(${params.vendedorId} AS uuid)`);
       } else if (params.scope === "mine" && role === "VENDEDOR") {
         sqlWhere.push(Prisma.sql`t."vendedorId" = CAST(${userId} AS uuid)`);
       }
 
-      // Excluir listas si hay sorteoId
-      if (params.sorteoId) {
-        const exclusionCondition = await getExclusionWhereCondition(params.sorteoId);
-        if (exclusionCondition.NOT?.OR) {
-          const exclusions = exclusionCondition.NOT.OR.map((ex: any) => {
-            let cond = Prisma.sql`t."ventanaId" = CAST(${ex.ventanaId} AS uuid)`;
-            if (ex.vendedorId) cond = Prisma.sql`${cond} AND t."vendedorId" = CAST(${ex.vendedorId} AS uuid)`;
-            
-            //  NUEVO: Soporte para exclusión por multiplierId (banda específica)
-            if (ex.multiplierId) {
-              cond = Prisma.sql`${cond} AND EXISTS (
-                SELECT 1 FROM "Jugada" j_ex 
-                WHERE j_ex."ticketId" = t.id 
-                AND j_ex."multiplierId" = CAST(${ex.multiplierId} AS uuid)
-                AND j_ex."deletedAt" IS NULL
-              )`;
-            }
-            return Prisma.sql`(${cond})`;
-          });
-          sqlWhere.push(Prisma.sql`NOT (${Prisma.join(exclusions, ' OR ')})`);
-        }
+      // Aplicar exclusiones (convertir condition a SQL Raw)
+      if (exclusionCondition.NOT?.OR) {
+        const exclusions = exclusionCondition.NOT.OR.map((ex: any) => {
+          let cond = Prisma.sql`t."ventanaId" = CAST(${ex.ventanaId} AS uuid)`;
+          if (ex.vendedorId) cond = Prisma.sql`${cond} AND t."vendedorId" = CAST(${ex.vendedorId} AS uuid)`;
+          if (ex.multiplierId) {
+            cond = Prisma.sql`${cond} AND EXISTS (
+              SELECT 1 FROM "Jugada" j_ex 
+              WHERE j_ex."ticketId" = t.id 
+              AND j_ex."multiplierId" = CAST(${ex.multiplierId} AS uuid)
+              AND j_ex."deletedAt" IS NULL
+            )`;
+          }
+          return Prisma.sql`(${cond})`;
+        });
+        sqlWhere.push(Prisma.sql`NOT (${Prisma.join(exclusions, ' OR ')})`);
       }
 
       const combinedWhere = Prisma.join(sqlWhere, ' AND ');
-
-      // Build main query
-      // If multiplierId is present, we filter tickets that have at least one NUMERO with that multiplier
       const multiplierFilterTicket = params.multiplierId
         ? Prisma.sql`AND EXISTS (
             SELECT 1 FROM "Jugada" j2 
@@ -1518,100 +1331,78 @@ export const TicketService = {
           )`
         : Prisma.empty;
 
-      const results = await prisma.$queryRaw<any[]>`
-        SELECT 
-          j.number,
-          SUM(CASE WHEN j.type = 'NUMERO' ${params.multiplierId ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)` : Prisma.empty} THEN j.amount ELSE 0 END)::FLOAT as "amountByNumber",
-          SUM(CASE WHEN j.type = 'REVENTADO' THEN j.amount ELSE 0 END)::FLOAT as "amountByReventado",
-          COUNT(DISTINCT t.id)::INT as "ticketCount",
-          COUNT(DISTINCT CASE WHEN j.type = 'NUMERO' THEN t.id END)::INT as "ticketsByNumber",
-          COUNT(DISTINCT CASE WHEN j.type = 'REVENTADO' THEN t.id END)::INT as "ticketsByReventado",
-          SUM(CASE WHEN j.type = 'NUMERO' ${params.multiplierId ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)` : Prisma.empty} 
-            THEN ${params.dimension === 'listero' || params.ventanaId ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
-            ELSE 0 END)::FLOAT as "commissionByNumber",
-          SUM(CASE WHEN j.type = 'REVENTADO' 
-            THEN ${params.dimension === 'listero' || params.ventanaId ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
-            ELSE 0 END)::FLOAT as "commissionByReventado"
-        FROM "Ticket" t
-        ${joinsSQL}
-        INNER JOIN "Jugada" j ON t.id = j."ticketId"
-        WHERE ${combinedWhere}
-          AND j."isActive" = true 
-          AND j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          ${multiplierFilterTicket}
-        GROUP BY j.number
-      `;
+      // 6. Ejecutar Aggregation Query Principal
+      const [results, totalTicketsCount] = await Promise.all([
+        prisma.$queryRaw<any[]>`
+          SELECT 
+            j.number,
+            SUM(CASE WHEN j.type = 'NUMERO' ${params.multiplierId ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)` : Prisma.empty} THEN j.amount ELSE 0 END)::FLOAT as "amountByNumber",
+            SUM(CASE WHEN j.type = 'REVENTADO' THEN j.amount ELSE 0 END)::FLOAT as "amountByReventado",
+            COUNT(DISTINCT t.id)::INT as "ticketCount",
+            COUNT(DISTINCT CASE WHEN j.type = 'NUMERO' THEN t.id END)::INT as "ticketsByNumber",
+            COUNT(DISTINCT CASE WHEN j.type = 'REVENTADO' THEN t.id END)::INT as "ticketsByReventado",
+            SUM(CASE WHEN j.type = 'NUMERO' ${params.multiplierId ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)` : Prisma.empty} 
+              THEN ${params.dimension === 'listero' || params.ventanaId ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
+              ELSE 0 END)::FLOAT as "commissionByNumber",
+            SUM(CASE WHEN j.type = 'REVENTADO' 
+              THEN ${params.dimension === 'listero' || params.ventanaId ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
+              ELSE 0 END)::FLOAT as "commissionByReventado"
+          FROM "Ticket" t
+          ${params.sorteoStatus ? Prisma.sql`INNER JOIN "Sorteo" s ON t."sorteoId" = s.id` : Prisma.empty}
+          INNER JOIN "Jugada" j ON t.id = j."ticketId"
+          WHERE ${combinedWhere}
+            AND j."isActive" = true 
+            AND j."deletedAt" IS NULL
+            AND j."isExcluded" = false
+            ${multiplierFilterTicket}
+          GROUP BY j.number
+        `,
+        // OPTIMIZACIÓN: Fetch total count while connection is open
+        prisma.ticket.count({ where: { 
+          deletedAt: null,
+          isActive: true,
+          ...(dateRange ? { businessDate: { gte: dateRange.fromBusinessDate, lte: dateRange.toBusinessDate } } : {}),
+          status: params.status ? (params.status as any) : { notIn: ["CANCELLED", "EXCLUDED"] },
+          ...(params.sorteoStatus ? { sorteo: { status: params.sorteoStatus as any } } : {}),
+          ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+          ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
+          ...(params.ventanaId ? { ventanaId: params.ventanaId } : {}),
+          ...(params.vendedorId ? { vendedorId: params.vendedorId } : (params.scope === "mine" && role === "VENDEDOR" ? { vendedorId: userId } : {})),
+        } })
+      ]);
 
-      //  NUEVO: Extraer metadatos de las tablas maestras cuando se filtran (Hardening BE-1)
-      // Esto asegura que tengamos nombres correctos incluso si no hay tickets (lista vacía)
-      let metadataInfo: any = {};
+      // --- LIBERACIÓN DE CONEXIÓN ---
+      // A partir de aquí, no más llamadas a DB (prisma).
 
-      const masterTasks: (() => Promise<any>)[] = [];
-      if (params.ventanaId) {
-        masterTasks.push(() => prisma.ventana.findUnique({ where: { id: params.ventanaId! }, select: { name: true } }));
-      }
-      if (params.vendedorId) {
-        masterTasks.push(() => prisma.user.findUnique({ where: { id: params.vendedorId! }, select: { name: true, code: true } }));
-      }
-      if (params.loteriaId) {
-        masterTasks.push(() => prisma.loteria.findUnique({ where: { id: params.loteriaId! }, select: { name: true } }));
-      }
-      if (params.sorteoId) {
-        masterTasks.push(() => prisma.sorteo.findUnique({ where: { id: params.sorteoId! }, select: { scheduledAt: true } }));
-      }
+      // 7. Post-Procesamiento (En memoria, muy rápido)
+      const metadataInfo: any = {
+        ventanaName: ventana?.name,
+        vendedorName: vendedor?.name,
+        vendedorCode: vendedor?.code,
+        loteriaName: loteria?.name,
+        sorteoDate: sorteo?.scheduledAt || null,
+        sorteoName: sorteo?.name || '',
+        multiplierName: multiplier?.name || '',
+      };
 
-      const masterResults = await Promise.all(masterTasks.map(t => t()));
-      let nextResultIdx = 0;
-
-      if (params.ventanaId) {
-        metadataInfo.ventanaName = masterResults[nextResultIdx++]?.name;
-      }
-      if (params.vendedorId) {
-        const v = masterResults[nextResultIdx++];
-        metadataInfo.vendedorName = v?.name;
-        metadataInfo.vendedorCode = v?.code;
-      }
-      if (params.loteriaId) {
-        metadataInfo.loteriaName = masterResults[nextResultIdx++]?.name;
-      }
-      if (params.sorteoId) {
-        metadataInfo.sorteoDate = masterResults[nextResultIdx++]?.scheduledAt;
-      }
-
-      //  NUEVO: Si hay tickets, podemos complementar datos faltantes o usar los del primer ticket
-      // Pero priorizamos los datos de los parámetros de filtro si están presentes
-      if (results.length > 0 && (!metadataInfo.ventanaName || !metadataInfo.vendedorName)) {
-        const firstTicket = await withConnectionRetry(
-          () => prisma.ticket.findFirst({
-            where: ticketWhere,
-            select: {
-              ventana: { select: { name: true } },
-              vendedor: { select: { name: true, code: true } },
-              loteria: { select: { name: true } },
-              sorteo: { select: { scheduledAt: true } }
-            }
-          }),
-          { context: 'TicketService.numbersSummary.metadata' }
-        );
-
-        if (!metadataInfo.ventanaName) metadataInfo.ventanaName = firstTicket?.ventana?.name;
-        if (!metadataInfo.vendedorName && params.vendedorId) {
-          metadataInfo.vendedorName = firstTicket?.vendedor?.name;
-          metadataInfo.vendedorCode = firstTicket?.vendedor?.code;
-        }
-        if (!metadataInfo.loteriaName) metadataInfo.loteriaName = firstTicket?.loteria?.name;
-        if (!metadataInfo.sorteoDate) metadataInfo.sorteoDate = firstTicket?.sorteo?.scheduledAt;
-      }
-
-      //  CRÍTICO: Si dimension='listero', QUITAR el vendedorName de los metadatos
-      // Esto asegura que pdf-generator.service.ts use ventanaName (ver l.122 de pdf-generator.ts)
       if (params.dimension === 'listero') {
         delete metadataInfo.vendedorName;
         delete metadataInfo.vendedorCode;
       }
 
-      // Map results to Map for quick lookup
+      let winningNumbersInfo: any = undefined;
+      if (sorteo && sorteo.status === 'EVALUATED' && sorteo.winningNumber) {
+        winningNumbersInfo = {
+          sorteoId: sorteo.id,
+          sorteoName: sorteo.name,
+          sorteoStatus: sorteo.status,
+          isEvaluated: true,
+          digits: sorteoDigits,
+          winners: [{ number: sorteo.winningNumber.padStart(sorteoDigits, '0'), position: 1, prizeType: 'PRIMERO' }]
+        };
+      }
+
+      // Map results
       const numbersMap = new Map<string, any>();
       let totalAmountByNumber = 0;
       let totalAmountByReventado = 0;
@@ -1621,7 +1412,6 @@ export const TicketService = {
 
       for (const row of results) {
         const numStr = row.number.padStart(sorteoDigits, '0');
-        // Validar rango dinámico
         const numValue = parseInt(numStr, 10);
         if (numValue < 0 || numValue > maxNumber) continue;
 
@@ -1636,7 +1426,7 @@ export const TicketService = {
         }
       }
 
-      //  Determinar rango de números a retornar (paginación)
+      // Paginación
       const pageSize = params.pageSize || 100;
       const page = params.page;
       let startNumber = 0;
@@ -1647,17 +1437,10 @@ export const TicketService = {
         endNumber = Math.min(startNumber + pageSize - 1, maxNumber);
       }
 
-      //  Construir array de respuesta
       const data = Array.from({ length: endNumber - startNumber + 1 }, (_, i) => {
         const numValue = startNumber + i;
         const numStr = String(numValue).padStart(sorteoDigits, '0');
-        const row = numbersMap.get(numStr) || {
-          amountByNumber: 0,
-          amountByReventado: 0,
-          ticketCount: 0,
-          ticketsByNumber: 0,
-          ticketsByReventado: 0,
-        };
+        const row = numbersMap.get(numStr) || { amountByNumber: 0, amountByReventado: 0, ticketCount: 0, ticketsByNumber: 0, ticketsByReventado: 0 };
 
         return {
           number: numStr,
@@ -1668,12 +1451,6 @@ export const TicketService = {
           ticketsByNumber: Number(row.ticketsByNumber),
           ticketsByReventado: Number(row.ticketsByReventado),
         };
-      });
-
-      // Total tickets count (requires separate query to be accurate if grouping by number)
-      const { _count: totalTickets } = await prisma.ticket.aggregate({
-        where: ticketWhere,
-        _count: true,
       });
 
       const numbersWithBets = Array.from(numbersWithBetsSet).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
@@ -1688,22 +1465,13 @@ export const TicketService = {
           sorteoDigits,
           maxNumber,
           reventadoEnabled,
-          ...(sorteoName ? { sorteoName } : {}),
-          ...(multiplierName ? { multiplierName } : {}),
           ...(page !== undefined ? {
-            pagination: {
-              page,
-              pageSize,
-              startNumber,
-              endNumber,
-              totalPages: Math.ceil((maxNumber + 1) / pageSize),
-              returnedCount: data.length,
-            }
+            pagination: { page, pageSize, startNumber, endNumber, totalPages: Math.ceil((maxNumber + 1) / pageSize), returnedCount: data.length }
           } : {}),
           totalAmountByNumber,
           totalAmountByReventado,
           totalAmount: totalAmountByNumber + totalAmountByReventado,
-          totalTickets,
+          totalTickets: totalTicketsCount,
           commissionByNumber,
           commissionByReventado,
           totalCommission: commissionByNumber + commissionByReventado,
