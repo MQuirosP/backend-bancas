@@ -369,9 +369,12 @@ export const UserService = {
 
     const updated = await UserRepository.update(id, toUpdate);
 
-    // Invalidar cache de auth si cambió ventanaId
-    if (toUpdate.ventanaId !== undefined) {
-      await CacheService.del(`auth:ventana:${id}`);
+    // Invalidar caché de sesión (L1/L2) si cambian datos críticos
+    const criticalFields = ['role', 'ventanaId', 'isActive', 'password'];
+    const hasCriticalChanges = Object.keys(toUpdate).some(k => criticalFields.includes(k));
+    
+    if (hasCriticalChanges) {
+      await CacheService.invalidateTag(`user:${id}`);
     }
 
     // Respuesta coherente (incluye username)

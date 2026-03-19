@@ -8,15 +8,68 @@ import prisma from "../core/prismaClient";
 import { withConnectionRetry } from "../core/withConnectionRetry";
 import { CacheService } from "../core/cache.service";
 
+/**
+ * Interfaz para la sesión cacheada del usuario
+ */
+interface UserSession {
+  id: string;
+  role: Role;
+  isActive: boolean;
+  ventanaId: string | null;
+  bancaId: string | null;
+}
+
+/**
+ * OPTIMIZACIÓN: Obtiene el usuario con jerarquía de caché L1 -> L2 -> DB
+ * Mitiga el Error P2024 al reducir drásticamente los hits a la base de datos.
+ */
+async function getCachedUser(userId: string): Promise<UserSession | null> {
+  const cacheKey = `auth:session:${userId}`;
+  
+  // 1. Intentar obtener de L1 (Memoria) o L2 (Redis)
+  const cached = await CacheService.get<UserSession>(cacheKey, true);
+  if (cached) return cached;
+
+  // 2. DB Lean Query: Solo los campos indispensables
+  const user = await withConnectionRetry(
+    () => prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        isActive: true,
+        ventanaId: true,
+        ventana: {
+          select: { bancaId: true }
+        }
+      }
+    }),
+    { context: 'authMiddleware.getCachedUser', maxRetries: 2 }
+  );
+
+  if (!user) return null;
+
+  const session: UserSession = {
+    id: user.id,
+    role: user.role,
+    isActive: user.isActive,
+    ventanaId: user.ventanaId,
+    bancaId: user.ventana?.bancaId ?? null
+  };
+
+  // 3. Persistir en caché (300s en Redis, 60s en Memoria mediante el flag true)
+  await CacheService.set(cacheKey, session, 300, [`user:${userId}`], true);
+
+  return session;
+}
+
 export const protect = async (
   req: AuthenticatedRequest,
   _res: Response,
   next: NextFunction
 ) => {
-  //  Opción temporal: permitir solicitudes sin token si está habilitado en .env
   if (process.env.DISABLE_AUTH === "true") {
-    req.user = { id: "DEV_USER_ID", role: Role.ADMIN }; // simulamos un usuario
-    console.warn("️ [AUTH DISABLED] Autenticación temporalmente deshabilitada.");
+    req.user = { id: "DEV_USER_ID", role: Role.ADMIN };
     return next();
   }
 
@@ -27,9 +80,6 @@ export const protect = async (
 
   const token = header.split(" ")[1];
 
-  // 1) Verificar firma y expiración del JWT.
-  //    Solo errores JWT genuinos deben resultar en 401.
-  //    Separar este bloque evita que fallos de BD/Redis sean convertidos en 401.
   let decoded: any;
   try {
     decoded = jwt.verify(token, config.jwtAccessSecret);
@@ -37,47 +87,29 @@ export const protect = async (
     throw new AppError("Invalid token", 401);
   }
 
-  const role = decoded.role as Role;
-  if (!decoded.sub || !role) {
+  if (!decoded.sub) {
     throw new AppError("Invalid token", 401);
   }
 
-  // 2) Operaciones de infraestructura (Redis / BD).
-  //    Si fallan después de los reintentos, el error se propaga como 500,
-  //    no como 401. Esto evita que un blip de Supabase desloguee a todos
-  //    los usuarios simultáneamente.
-  //    Nota: CacheService ya tiene graceful degradation interna (devuelve null si falla).
-  let ventanaId: string | null | undefined = decoded.ventanaId ?? null;
+  // 1) Obtener usuario desde caché jerárquico
+  const user = await getCachedUser(decoded.sub);
 
-  if (role === Role.VENDEDOR) {
-    const cacheKey = `auth:ventana:${decoded.sub}`;
-    const cached = await CacheService.get<{ v: string | null }>(cacheKey);
-
-    if (cached != null) {
-      // Cache hit
-      if (cached.v !== ventanaId) {
-        ventanaId = cached.v;
-      }
-    } else {
-      // Cache miss — consultar BD y cachear 5 min
-      const user = await withConnectionRetry(
-        () => prisma.user.findUnique({
-          where: { id: decoded.sub },
-          select: { ventanaId: true }
-        }),
-        { context: 'authMiddleware.vendedorVentana', maxRetries: 2 }
-      );
-
-      const dbVentanaId = user?.ventanaId ?? null;
-      await CacheService.set(cacheKey, { v: dbVentanaId }, 300);
-
-      if (dbVentanaId !== ventanaId) {
-        ventanaId = dbVentanaId;
-      }
-    }
+  if (!user) {
+    throw new AppError("User not found or session expired", 401);
   }
 
-  req.user = { id: decoded.sub, role, ventanaId, bancaId: decoded.bancaId ?? null };
+  // 2) Validar si el usuario está activo
+  if (!user.isActive) {
+    throw new AppError("Tu cuenta ha sido desactivada. Contacta al administrador.", 401, "USER_INACTIVE");
+  }
+
+  req.user = { 
+    id: user.id, 
+    role: user.role, 
+    ventanaId: user.ventanaId, 
+    bancaId: user.bancaId 
+  };
+  
   next();
 };
 
@@ -134,25 +166,15 @@ export const restrictToAdminSelfOrVentanaVendor = async (
     throw new AppError("No tienes permisos para realizar esta acción", 403);
   }
 
-  const actor = await withConnectionRetry(
-    () => prisma.user.findUnique({
-      where: { id: authUser.id },
-      select: { ventanaId: true },
-    }),
-    { context: 'restrictToAdminSelfOrVentanaVendor.actor' }
-  );
+  // 1. Obtener datos del actor (VENTANA) de caché
+  const actor = await getCachedUser(authUser.id);
 
   if (!actor?.ventanaId) {
     throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
   }
 
-  const target = await withConnectionRetry(
-    () => prisma.user.findUnique({
-      where: { id: targetId },
-      select: { role: true, ventanaId: true },
-    }),
-    { context: 'restrictToAdminSelfOrVentanaVendor.target' }
-  );
+  // 2. Obtener datos del target (VENDEDOR) de caché
+  const target = await getCachedUser(targetId);
 
   if (!target) {
     throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
@@ -193,25 +215,15 @@ export const restrictToCommissionAdminSelfOrVentanaVendor = async (
     throw new AppError("No tienes permisos para realizar esta acción", 403);
   }
 
-  const actor = await withConnectionRetry(
-    () => prisma.user.findUnique({
-      where: { id: authUser.id },
-      select: { ventanaId: true },
-    }),
-    { context: 'restrictToCommissionAdminSelfOrVentanaVendor.actor' }
-  );
+  // 1. Obtener actor (VENTANA) de caché
+  const actor = await getCachedUser(authUser.id);
 
   if (!actor?.ventanaId) {
     throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
   }
 
-  const target = await withConnectionRetry(
-    () => prisma.user.findUnique({
-      where: { id: targetId },
-      select: { role: true, ventanaId: true },
-    }),
-    { context: 'restrictToCommissionAdminSelfOrVentanaVendor.target' }
-  );
+  // 2. Obtener target de caché
+  const target = await getCachedUser(targetId);
 
   if (!target) {
     throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
@@ -258,14 +270,8 @@ export const restrictToAdminOrVentanaSelf = async (
     throw new AppError("No tienes permisos para acceder a este recurso", 403);
   }
 
-  // Obtener la ventana del usuario autenticado
-  const actor = await withConnectionRetry(
-    () => prisma.user.findUnique({
-      where: { id: authUser.id },
-      select: { ventanaId: true },
-    }),
-    { context: 'restrictToAdminOrVentanaSelf.actor' }
-  );
+  // Obtener la ventana del usuario autenticado (desde caché)
+  const actor = await getCachedUser(authUser.id);
 
   if (!actor?.ventanaId) {
     throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
