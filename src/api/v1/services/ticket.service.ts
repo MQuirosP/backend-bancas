@@ -664,6 +664,39 @@ export const TicketService = {
   },
 
   async cancel(id: string, userId: string, requestId?: string) {
+    // 1) Obtener ticket completo para validación de cutoff
+    const existing = await TicketRepository.getById(id);
+    if (!existing) {
+      throw new AppError("Ticket no encontrado", 404, "NOT_FOUND");
+    }
+
+    // 2) Validar cutoff (igual que en la creación)
+    // Se utiliza el bancaId, ventanaId y vendedorId del ticket original
+    const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
+      bancaId: existing.ventana.bancaId,
+      ventanaId: existing.ventanaId,
+      userId: existing.vendedorId,
+      defaultCutoff: 1,
+    });
+
+    const now = nowCR();
+    const safeMinutes = (typeof cutoff.minutes === 'number' && !isNaN(cutoff.minutes))
+      ? cutoff.minutes
+      : 1;
+
+    const cutoffMs = safeMinutes * 60_000;
+    const limitTime = new Date(existing.sorteo.scheduledAt.getTime() - cutoffMs);
+    const effectiveLimitTime = new Date(limitTime.getTime() + CUTOFF_GRACE_MS);
+
+    if (now >= effectiveLimitTime) {
+      const minsLeft = Math.max(0, Math.ceil((existing.sorteo.scheduledAt.getTime() - now.getTime()) / 60_000));
+      throw new AppError(
+        `Anulación bloqueada: faltan ${minsLeft} min para el sorteo (cutoff=${safeMinutes} min, fuente=${cutoff.source})`,
+        409,
+        "SALES_CUTOFF_REACHED"
+      );
+    }
+
     const ticket = await TicketRepository.cancel(id, userId);
 
     //  FASE BE-2: Invalidar caché del vendedor
