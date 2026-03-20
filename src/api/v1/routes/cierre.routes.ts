@@ -64,6 +64,16 @@ router.get(
 );
 
 /**
+ * GET /api/v1/cierres/by-seller/:vendedorId/detail
+ * Detalle completo de un solo vendedor (Lazy Loading)
+ */
+router.get(
+  '/by-seller/:vendedorId/detail',
+  validateCierreBySellerQuery,
+  CierreController.getSellerDetail
+);
+
+/**
  * GET /api/v1/cierres/export.xlsx
  * Exporta cierre a Excel
  *

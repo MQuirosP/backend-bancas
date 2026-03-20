@@ -214,6 +214,9 @@ export const CierreController = {
       throw new AppError('No autorizado para ver cierres', 403);
     }
 
+    // Aumentar timeout para este request específico (reporte pesado)
+    req.setTimeout(45000);
+
     const query = req.query as any;
 
     // Validar fechas obligatorias
@@ -238,9 +241,13 @@ export const CierreController = {
       req.bancaContext?.bancaId || null
     );
 
-    // Parámetros de ordenamiento
+    // Parámetros de ordenamiento y profundidad
     const top = query.top ? parseInt(query.top, 10) : undefined;
     const orderBy = query.orderBy || 'totalVendida';
+    const depth = query.depth === 'summary' ? 'summary' : 'full';
+
+    // Inyectar depth en filters para el servicio
+    filters.depth = depth;
 
     // Ejecutar agregación (servicio retorna data + _performance)
     const { _performance, _metaExtras, ...data } = await CierreService.aggregateBySeller(
@@ -262,7 +269,7 @@ export const CierreController = {
     if (res.headersSent) return;
 
     // ETag y cache headers
-    const etagRawKey = `${filters.fromDate.toISOString()}:${filters.toDate.toISOString()}:${filters.scope}:${filters.ventanaId || ''}:${_metaExtras.configHash}:seller:${top || ''}:${orderBy}`;
+    const etagRawKey = `${filters.fromDate.toISOString()}:${filters.toDate.toISOString()}:${filters.scope}:${filters.ventanaId || ''}:${_metaExtras.configHash}:seller:${top || ''}:${orderBy}:${depth}`;
     const etagVal = `W/"${createHash('sha1').update(etagRawKey).digest('hex')}"`;
     res.setHeader('ETag', etagVal);
     res.setHeader('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
@@ -455,5 +462,60 @@ export const CierreController = {
       `attachment; filename="cierre-operativo-${query.from}-${query.to}.csv"`
     );
     res.send(csv);
+  },
+
+  /**
+   * GET /api/v1/cierres/by-seller/:vendedorId/detail
+   * Detalle completo de un solo vendedor (Lazy Loading)
+   */
+  async getSellerDetail(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) {
+      throw new AppError('Unauthorized', 401);
+    }
+
+    const { vendedorId } = req.params;
+    const query = req.query as any;
+
+    if (!vendedorId) {
+      throw new AppError('vendedorId es obligatorio', 400);
+    }
+
+    // Validar fechas obligatorias
+    if (!query.from || !query.to) {
+      throw new AppError('Parámetros "from" y "to" son obligatorios', 400);
+    }
+
+    validateDateRange(query.from, query.to);
+
+    const fromDate = parseDateCR(query.from, 'start');
+    const toDate = parseDateCR(query.to, 'end');
+
+    // Aplicar RBAC
+    const filters = await applyRbacToFilters(
+      req.user,
+      fromDate,
+      toDate,
+      query.ventanaId,
+      query.scope,
+      req.bancaContext?.bancaId || null
+    );
+
+    // Timeout corto ya que es una query quirúrgica
+    req.setTimeout(10000);
+
+    const data = await CierreService.getSellerDetail(filters, vendedorId);
+
+    if (!data) {
+      throw new AppError('Vendedor no encontrado en este periodo', 404);
+    }
+
+    return success(res, data, {
+      vendedorId,
+      range: {
+        from: query.from,
+        to: query.to
+      },
+      generatedAt: new Date().toISOString()
+    });
   },
 };

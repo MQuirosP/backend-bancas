@@ -1,14 +1,14 @@
 import { PrismaClient } from "@prisma/client";
 
 declare global {
-    var __prisma: PrismaClient | undefined;
+  var __prisma: PrismaClient | undefined;
 }
 
 //  FIX: Cachear globalmente SIEMPRE (incluso en producción)
 // Antes: Solo se cacheaba en development → múltiples instancias en production
 // Ahora: Una sola instancia reutilizada → evita agotamiento de conexiones
 const prisma = global.__prisma ?? new PrismaClient({
-    log: ['warn', 'error'],
+  log: ['warn', 'error'],
 });
 
 //  CRÍTICO: Cachear en producción también para evitar múltiples instancias
@@ -17,15 +17,14 @@ global.__prisma = prisma;
 
 /**
  * Verifica la conexión ejecutando un ping simple.
- * Útil para asegurar resiliencia en procesos críticos.
  */
 export async function verifyConnection(): Promise<boolean> {
-    try {
-        await prisma.$queryRaw`SELECT 1`;
-        return true;
-    } catch (error) {
-        return false;
-    }
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
-export default prisma;
+export default prisma;
