@@ -1543,7 +1543,7 @@ export const TicketService = {
       }
 
       const { generateNumbersSummaryPDF } = await import('./pdf-generator.service');
-      const { pdfToPng } = await import('pdf-to-png-converter');
+      const { convertPdfToPng } = await import('./worker.service');
 
       const pages: Array<{
         page: number;
@@ -1578,8 +1578,8 @@ export const TicketService = {
         const doc = await PDFDocument.load(pdfBuffer);
         const pageCount = doc.getPageCount();
 
-        // Convertir todas las páginas a PNG
-        const pngPages = await pdfToPng(new Uint8Array(pdfBuffer).buffer, {
+        // Convertir todas las páginas a PNG usando Worker
+        const pngPages = await convertPdfToPng(new Uint8Array(pdfBuffer), {
           pagesToProcess: Array.from({ length: pageCount }, (_, i) => i + 1),
         });
 
@@ -1590,7 +1590,7 @@ export const TicketService = {
         return pngPages
           .filter(p => p && p.content)
           .map((p, idx) => {
-            const buffer = p.content as Buffer;
+            const buffer = Buffer.from(p.content);
             if (!buffer) return null;
             return {
               page: idx,
