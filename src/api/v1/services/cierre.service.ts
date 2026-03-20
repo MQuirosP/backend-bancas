@@ -396,30 +396,57 @@ export class CierreService {
 
   /**
    * Ejecuta agregación SQL para datos semanales
+   * OPTIMIZACIÓN: Tres CTEs materializados + Una Pre-Agregación eliminan Disk Spill y Timeouts.
    */
   private static async executeWeeklyAggregation(
     filters: CierreFilters
   ): Promise<CierreAggregateRow[]> {
-    const whereConditions = await this.buildWhereConditions(filters);
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
 
-    // OPTIMIZACIÓN: Tres CTEs eliminan el Seq Scan completo de Jugada:
-    // ① relevant_tickets: pre-filtra tickets del periodo → reduce Jugada de 867K a ~5K filas/día
-    // ② lm_active: materializa LoteriaMultiplier una sola vez → hash lookup en EXISTS
-    // ③ numero_bandas: JOIN contra relevant_tickets en lugar de scan global de Jugada
+    // 1. Construir condiciones dinámicas (Blacklist y otros filtros) para incluirlas en el gatekeeper (CTE1)
+    const conditions: Prisma.Sql[] = [];
+    if (filters.ventanaId) conditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
+    if (filters.loteriaId) conditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
+    if (filters.vendedorId) conditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
+
+    // Blacklist: Evitar ticket si pertenece a sorteo/ventana restringido
+    if (!await isExclusionListEmpty()) {
+      conditions.push(Prisma.sql`NOT EXISTS (
+        SELECT 1 FROM "sorteo_lista_exclusion" sle
+        WHERE sle.sorteo_id = t."sorteoId"
+        AND sle.ventana_id = t."ventanaId"
+        AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+        AND (
+          sle.multiplier_id IS NULL 
+          OR EXISTS (
+            SELECT 1 FROM "Jugada" j_ex 
+            WHERE j_ex."ticketId" = t.id 
+            AND j_ex."multiplierId" = sle.multiplier_id
+            AND j_ex."deletedAt" IS NULL
+          )
+        )
+      )`);
+    }
+    const extraConditions = conditions.length ? Prisma.sql`AND ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+
+    // 2. Query Principal optimizada con CTEs
     const query = Prisma.sql`
       WITH
+        -- CTE 1: relevant_tickets (GATEKEEPER)
+        -- Filtra bancaId de inmediato mediante JOIN antes de materializar.
         relevant_tickets AS MATERIALIZED (
-          SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."vendedorId", t."createdAt", t."businessDate"
+          SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."createdAt", t."businessDate"
           FROM "Ticket" t
+          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
           WHERE
             t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
             AND t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+            ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+            ${extraConditions}
         ),
+        -- CTE 2: lm_active (Multiplicadores vigentes)
         lm_active AS MATERIALIZED (
           SELECT
             lm."loteriaId",
@@ -430,6 +457,7 @@ export class CierreService {
           WHERE lm."kind" = 'NUMERO'
             AND lm."isActive" = true
         ),
+        -- CTE 3: numero_bandas (Pre-calcula banda para REVENTADO)
         numero_bandas AS MATERIALIZED (
           SELECT
             j."ticketId",
@@ -442,47 +470,57 @@ export class CierreService {
             AND j."deletedAt" IS NULL
           GROUP BY j."ticketId", j.number
         ),
+        -- CTE 4: aggregated_jugadas (URGENTE: Group By antes del Join Principal)
+        -- Reduce dramáticamente el número de filas que se "barajan" en los joins de Sorteo/Loteria.
+        aggregated_jugadas AS (
+          SELECT
+            j."ticketId",
+            j.type,
+            j.number,
+            j."finalMultiplierX",
+            SUM(j.amount) AS amount,
+            SUM(j.payout) AS payout,
+            SUM(j."listeroCommissionAmount") AS "listeroCommissionAmount",
+            COUNT(*) AS "jugadasCount"
+          FROM "Jugada" j
+          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
+          WHERE j."deletedAt" IS NULL
+            AND j."isActive" = true
+          GROUP BY j."ticketId", j.type, j.number, j."finalMultiplierX"
+        ),
+        -- CTE 5: base (Cálculo de banda y joins estructurales)
         base AS (
           SELECT
-            j.id                AS "jugadaId",
-            j.type              AS type,
-            j."finalMultiplierX" AS "finalMultiplierX",
-            j.amount            AS amount,
-            j.payout            AS payout,
-            j."listeroCommissionAmount" AS "listeroCommissionAmount",
+            aj.type              AS type,
+            aj.amount            AS amount,
+            aj.payout            AS payout,
+            aj."listeroCommissionAmount" AS "listeroCommissionAmount",
+            aj."jugadasCount"    AS "jugadasCount",
             t.id                AS "ticketId",
-            t."ventanaId"       AS "ventanaId",
             t."loteriaId"       AS "loteriaId",
             t."sorteoId"        AS "sorteoId",
-            t."createdAt"       AS "ticketCreatedAt",
             s."scheduledAt"     AS "scheduledAt",
             CASE
-              -- NUMERO: EXISTS contra CTE materializado (hash lookup, no escaneo de tabla)
-              WHEN j.type = 'NUMERO' AND EXISTS (
+              -- NUMERO: Check contra CTE materializado (hash lookup)
+              WHEN aj.type = 'NUMERO' AND EXISTS (
                 SELECT 1 FROM lm_active lm
                 WHERE lm."loteriaId" = t."loteriaId"
-                  AND lm."valueX" = j."finalMultiplierX"
+                  AND lm."valueX" = aj."finalMultiplierX"
                   AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
                   AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-              ) THEN j."finalMultiplierX"
-
-              -- REVENTADO: LEFT JOIN al CTE pre-calculado (hash join, elimina scalar subquery)
-              WHEN j.type = 'REVENTADO' THEN nb.banda
-
+              ) THEN aj."finalMultiplierX"
+              -- REVENTADO: hereda banda de NUMERO asociado del mismo ticket
+              WHEN aj.type = 'REVENTADO' THEN nb.banda
               ELSE NULL
             END AS banda
-          FROM "Jugada" j
-          INNER JOIN relevant_tickets t ON j."ticketId" = t.id
+          FROM aggregated_jugadas aj
+          INNER JOIN relevant_tickets t ON aj."ticketId" = t.id
           INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-          LEFT JOIN numero_bandas nb ON nb."ticketId" = j."ticketId"
-            AND nb.number = j.number
-            AND j.type = 'REVENTADO'
-          WHERE
-            j."deletedAt" IS NULL
-            AND j."isActive" = true
-            ${whereConditions}
+          LEFT JOIN numero_bandas nb ON nb."ticketId" = aj."ticketId"
+            AND nb.number = aj.number
+            AND aj.type = 'REVENTADO'
         )
+      -- 3. Agregación Final por banda, tipo, fecha, lotería y turno
       SELECT
         CAST(base.banda AS INT) AS banda,
         base.type AS tipo,
@@ -497,7 +535,7 @@ export class CierreService {
         COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT as "comisionTotal",
         0::FLOAT as refuerzos,
         COUNT(DISTINCT base."ticketId")::INT as "ticketsCount",
-        COUNT(base."jugadaId")::INT as "jugadasCount"
+        SUM(base."jugadasCount")::INT as "jugadasCount"
       FROM base
       INNER JOIN "Loteria" l ON l.id = base."loteriaId"
       WHERE base.banda IS NOT NULL
@@ -512,15 +550,15 @@ export class CierreService {
       ORDER BY
         l.name ASC,
         turno ASC,
-        base.type ASC,
-        CAST(base.banda AS INT) ASC
+        tipo ASC,
+        banda ASC
     `;
 
-    // statement_timeout dentro de $transaction para que SET LOCAL sea efectivo con PgBouncer
+    // Aumentamos timeout a 60s para soportar rangos grandes mientras la query se optimiza
     const result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL statement_timeout = '30000'`;
+      await tx.$executeRaw`SET LOCAL statement_timeout = '60000'`;
       return tx.$queryRaw<CierreAggregateRow[]>(query);
-    }, { timeout: 35000 });
+    }, { timeout: 65000 });
 
     return result.map((row: any) => ({
       ...row,
@@ -531,32 +569,31 @@ export class CierreService {
 
   /**
    * Ejecuta agregación SQL por vendedor
+   * OPTIMIZACIÓN: Early Filtering (Gatekeeper) + Pre-Aggregated Jugadas (vía idx_jugada_report_totals).
    */
   private static async executeSellerAggregation(
     filters: CierreFilters
   ): Promise<VendedorAggregateRow[]> {
-    const whereConditions = await this.buildWhereConditions(filters);
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
 
-    // OPTIMIZACIÓN: Tres CTEs eliminan el Seq Scan completo de Jugada y el EXISTS triple:
-    // ① relevant_tickets: pre-filtra tickets del periodo → reduce Jugada de 867K a ~5K filas/día
-    // ② lm_active: materializa LoteriaMultiplier una sola vez → hash lookup en EXISTS
-    // ③ base: computa banda una sola vez por jugada → el GROUP BY/ORDER BY externo la referencia
-    //    directamente sin re-evaluar EXISTS (antes se evaluaba 3 veces: SELECT, WHERE, GROUP BY)
+    // 1. Gatekeeper: relevant_tickets (Filtramos banca/ventana/vendedor antes de ir a Jugada)
     const query = Prisma.sql`
       WITH
         relevant_tickets AS MATERIALIZED (
-          SELECT t.id
+          SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."vendedorId", t."createdAt"
           FROM "Ticket" t
+          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
           WHERE
             t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
             AND t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
+            ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
             ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
             ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
             ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
         ),
+        -- CTE 2: lm_active (Multiplicadores vigentes)
         lm_active AS MATERIALIZED (
           SELECT
             lm."loteriaId",
@@ -567,6 +604,38 @@ export class CierreService {
           WHERE lm."kind" = 'NUMERO'
             AND lm."isActive" = true
         ),
+        -- CTE 3: numero_bandas (Pre-calcula banda para herencia de REVENTADO)
+        numero_bandas AS MATERIALIZED (
+          SELECT
+            j."ticketId",
+            j.number,
+            MIN(j."finalMultiplierX") AS banda
+          FROM "Jugada" j
+          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
+          WHERE j.type = 'NUMERO'
+            AND j."isActive" = true
+            AND j."deletedAt" IS NULL
+          GROUP BY j."ticketId", j.number
+        ),
+        -- CTE 4: aggregated_jugadas (URGENTE: Group By antes del Join Estructural)
+        -- Diseñado para usar idx_jugada_report_totals y forzar Index Only Scan.
+        aggregated_jugadas AS (
+          SELECT
+            j."ticketId",
+            j.type,
+            j.number,
+            j."finalMultiplierX",
+            SUM(j.amount) AS amount,
+            SUM(j.payout) AS payout,
+            SUM(j."listeroCommissionAmount") AS "listeroCommissionAmount",
+            COUNT(*) AS "jugadasCount"
+          FROM "Jugada" j
+          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
+          WHERE j."deletedAt" IS NULL
+            AND j."isActive" = true
+          GROUP BY j."ticketId", j.type, j.number, j."finalMultiplierX"
+        ),
+        -- CTE 5: base (Joins estructurales y lógica de banda)
         base AS (
           SELECT
             u.id          AS uid,
@@ -574,47 +643,46 @@ export class CierreService {
             v.id          AS vid,
             v.name        AS vname,
             t.id          AS "ticketId",
-            j.amount,
-            j.payout,
-            j."listeroCommissionAmount",
+            aj.amount,
+            aj.payout,
+            aj."listeroCommissionAmount",
+            aj."jugadasCount",
             CASE
-              WHEN j.type = 'REVENTADO' THEN 200
-              WHEN EXISTS (
+              -- NUMERO: Check contra CTE materializado
+              WHEN aj.type = 'NUMERO' AND EXISTS (
                 SELECT 1 FROM lm_active lm
                 WHERE lm."loteriaId" = t."loteriaId"
-                  AND lm."valueX" = j."finalMultiplierX"
+                  AND lm."valueX" = aj."finalMultiplierX"
                   AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
                   AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-              ) THEN j."finalMultiplierX"
+              ) THEN aj."finalMultiplierX"
+              -- REVENTADO: hereda banda de NUMERO asociado
+              WHEN aj.type = 'REVENTADO' THEN nb.banda
               ELSE NULL
             END AS banda
-          FROM "Jugada" j
-          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
-          INNER JOIN "Ticket" t ON j."ticketId" = t.id
+          FROM aggregated_jugadas aj
+          INNER JOIN relevant_tickets t ON aj."ticketId" = t.id
           INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
           INNER JOIN "User" u ON t."vendedorId" = u.id
           INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-          WHERE
-            t."deletedAt" IS NULL
-            AND j."deletedAt" IS NULL
-            AND t."status" != 'CANCELLED'
-            AND t."isActive" = true
-            AND j."isActive" = true
-            AND s."status" = 'EVALUATED'
-            ${whereConditions}
+          LEFT JOIN numero_bandas nb ON nb."ticketId" = aj."ticketId"
+            AND nb.number = aj.number
+            AND aj.type = 'REVENTADO'
+          WHERE s."status" = 'EVALUATED'
         )
+      -- 3. Agregación Final
       SELECT
         base.uid          AS "vendedorId",
         base.uname        AS "vendedorNombre",
         base.vid          AS "ventanaId",
         base.vname        AS "ventanaNombre",
-        base.banda,
+        CAST(base.banda AS INT) AS banda,
         COALESCE(SUM(base.amount), 0)::FLOAT                        AS "totalVendida",
         COALESCE(SUM(base.payout), 0)::FLOAT                        AS ganado,
         COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT      AS "comisionTotal",
-        0::FLOAT                                                     AS refuerzos,
+        0::FLOAT                                                    AS refuerzos,
         COUNT(DISTINCT base."ticketId")::INT                        AS "ticketsCount",
-        COUNT(*)::INT                                               AS "jugadasCount"
+        SUM(base."jugadasCount")::INT                               AS "jugadasCount"
       FROM base
       WHERE base.banda IS NOT NULL
       GROUP BY
@@ -628,10 +696,11 @@ export class CierreService {
         base.banda ASC
     `;
 
+    // Timeout de 60s
     const result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL statement_timeout = '30000'`;
+      await tx.$executeRaw`SET LOCAL statement_timeout = '60000'`;
       return tx.$queryRaw<VendedorAggregateRow[]>(query);
-    }, { timeout: 35000 });
+    }, { timeout: 65000 });
 
     return result.map((row: any) => ({
       ...row,
