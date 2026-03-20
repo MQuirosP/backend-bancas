@@ -689,24 +689,20 @@ export class CierreService {
   private static async executeSellerAggregation(
     filters: CierreFilters
   ): Promise<VendedorAggregateRow[]> {
-    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
+    const whereConditions = await this.buildWhereConditions(filters);
 
     // 1. Gatekeeper: relevant_tickets (Filtramos banca/ventana/vendedor antes de ir a Jugada)
     const query = Prisma.sql`
       WITH
         relevant_tickets AS MATERIALIZED (
-          SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."vendedorId", t."createdAt"
+          SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."vendedorId", t."createdAt", t."businessDate"
           FROM "Ticket" t
           INNER JOIN "Ventana" v ON t."ventanaId" = v.id
           WHERE
-            t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
-            AND t."isActive" = true
+            t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
-            ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+            ${whereConditions}
         ),
         -- CTE 2: lm_active (Multiplicadores vigentes)
         lm_active AS MATERIALIZED (
@@ -905,6 +901,7 @@ export class CierreService {
           WHERE
             j."deletedAt" IS NULL
             AND j."isActive" = true
+            AND s."status" = 'EVALUATED'
             ${whereConditions}
         )
       SELECT
@@ -973,8 +970,10 @@ export class CierreService {
     }>>();
 
     for (const row of rawData) {
-      const { vendedorId, loteriaId, sorteoId, tipo } = row;
-      const sorteoKey = `${sorteoId}|${tipo}`;
+      const { vendedorId, loteriaId, tipo } = row;
+      // Consolidar por turno (hora) para el reporte de vendedor, 
+      // de lo contrario un mes muestra 90 filas separadas de "11:00 Numero" (una por sorteo_id).
+      const sorteoKey = `${row.turno}|${tipo}`;
       const bandaKey = String(row.banda);
 
       if (!vendedorMap.has(vendedorId)) {
@@ -994,9 +993,8 @@ export class CierreService {
       if (!loteriaGroup.sorteos.has(sorteoKey)) {
         loteriaGroup.sorteos.set(sorteoKey, {
           sorteo: {
-            id: sorteoId,
+            id: `summary-${row.turno}-${tipo}`,
             turno: `${row.turno} ${tipo === 'NUMERO' ? 'Numero' : 'Reventado'}`,
-            scheduledAt: row.scheduledAt?.toISOString(),
           },
           bands: new Map(),
           subtotal: this.createEmptyMetrics(),
