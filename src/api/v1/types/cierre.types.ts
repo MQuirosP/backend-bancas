@@ -18,6 +18,7 @@ export interface CierreFilters {
   loteriaId?: string;
   vendedorId?: string;
   bancaId?: string; // Para ADMIN multibanca (filtro de vista)
+  depth?: 'summary' | 'full';
 }
 
 /**
@@ -218,6 +219,7 @@ export interface CierreWeeklyQuery {
 export interface CierreBySellerQuery extends CierreWeeklyQuery {
   top?: number; // límite de resultados
   orderBy?: 'totalVendida' | 'ganado' | 'netoDespuesComision'; // campo de ordenamiento
+  depth?: 'summary' | 'full';
 }
 
 /**

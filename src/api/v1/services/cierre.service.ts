@@ -145,6 +145,7 @@ export class CierreService {
       loteriaId: filters.loteriaId || null,
       top: top || null,
       orderBy,
+      depth: filters.depth || 'full',
     })).digest('hex')}`;
 
     return cierreWrap(cacheKey, 3600, async () => {
@@ -153,21 +154,39 @@ export class CierreService {
       const labelPrefix = `CS-${Math.random().toString(36).substring(7)}`;
 
       console.time(`${labelPrefix}.executeSellerAggregation`);
-      // Tres queries independientes en paralelo
-      const [rawData, sorteoData, anomalies] = await Promise.all([
+      
+      const isSummary = filters.depth === 'summary';
+      
+      // En modo summary solo se ejecuta una consulta optimizada
+      // En modo full se ejecutan todas en paralelo como antes
+      const queries: Promise<any>[] = [
         this.executeSellerAggregation(filters).then(d => { 
           console.timeEnd(`${labelPrefix}.executeSellerAggregation`);
           queryCount += 1; 
           return d; 
         }),
-        this.executeSellerAggregationBySorteo(filters).then(d => { queryCount += 1; return d; }),
-        computeAnomalies(filters).then(a => { queryCount += 2; return a; }),
-      ]);
+      ];
 
-      const sellerLoterias = this.buildSellerLoterias(sorteoData);
+      if (!isSummary) {
+        queries.push(this.executeSellerAggregationBySorteo(filters).then(d => { queryCount += 1; return d; }));
+        queries.push(computeAnomalies(filters)
+          .then(a => { queryCount += 2; return a; })
+          .catch(err => {
+            logger.error({
+              layer: 'service',
+              action: 'COMPUTE_ANOMALIES_FAILURE',
+              meta: { error: err instanceof Error ? err.message : String(err) }
+            });
+            return { outOfBandCount: 0, examples: [] };
+          }));
+      }
+
+      const [rawData, sorteoData, anomalies] = await Promise.all(queries);
+
+      const sellerLoterias = !isSummary && sorteoData ? this.buildSellerLoterias(sorteoData) : undefined;
       const { totals, vendedores } = this.transformSellerData(rawData, top, orderBy, sellerLoterias);
-      const bandsUsed = computeBandsUsedFromSeller(rawData);
-      const configHash = hashConfig(bandsUsed);
+      const bandsUsed = !isSummary ? computeBandsUsedFromSeller(rawData) : { global: [], byLoteria: {}, details: [] };
+      const configHash = !isSummary ? hashConfig(bandsUsed) : 'summary-only';
 
       return {
         totals,
@@ -179,10 +198,64 @@ export class CierreService {
         _metaExtras: {
           bandsUsed,
           configHash,
-          anomalies,
+          anomalies: anomalies || { outOfBandCount: 0, examples: [] },
         },
       };
     });
+  }
+
+  /**
+   * Obtiene el detalle completo para un solo vendedor
+   * Optimizado para responder en < 200ms filtrando por vendedorId desde el inicio.
+   */
+  static async getSellerDetail(
+    filters: CierreFilters,
+    vendedorId: string
+  ): Promise<any> {
+    const detailFilters: CierreFilters = { ...filters, vendedorId, depth: 'full' };
+    
+    const labelPrefix = `SD-${Math.random().toString(36).substring(7)}`;
+    console.time(`${labelPrefix}.getSellerDetail`);
+
+    // 1. Obtener datos detallados (loterías, sorteos, bandas) para ESTE vendedor
+    const [rawData, sorteoData] = await Promise.all([
+      this.executeSellerAggregation(detailFilters),
+      this.executeSellerAggregationBySorteo(detailFilters)
+    ]);
+
+    console.timeEnd(`${labelPrefix}.getSellerDetail`);
+
+    if (rawData.length === 0) {
+      return null;
+    }
+
+    // 2. Transformar bandas (agrupado por banda)
+    const bands: Record<string, any> = {};
+    for (const row of rawData) {
+      if (row.banda) {
+        bands[row.banda] = this.rowToMetrics(row);
+      }
+    }
+
+    // 3. Transformar loterías (jerárquico)
+    const sellerLoteriasMap = this.buildSellerLoterias(sorteoData);
+    const loterias = sellerLoteriasMap.get(vendedorId) || [];
+
+    // 4. Calcular subtotal general
+    const subtotal = this.createEmptyMetrics();
+    for (const b of Object.values(bands)) {
+      this.accumulateMetrics(subtotal, b as CeldaMetrics);
+    }
+
+    return {
+      vendedor: {
+        id: vendedorId,
+        name: rawData[0].vendedorNombre
+      },
+      bands,
+      loterias,
+      subtotal
+    };
   }
 
   /**
@@ -208,119 +281,163 @@ export class CierreService {
 
     const query = Prisma.sql`
       WITH
-        relevant_tickets AS MATERIALIZED (
-          SELECT t.id
+        -- 1. Gatekeeper: Filtrar tickets y ventanas de una sola vez
+        relevant_tickets AS (
+          SELECT 
+            t.id, 
+            t."vendedorId", 
+            t."ventanaId", 
+            t."loteriaId", 
+            t."sorteoId", 
+            t."createdAt", 
+            t."businessDate"
           FROM "Ticket" t
+          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
           WHERE
-            t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
-            AND t."isActive" = true
+            t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+            AND s."status" = 'EVALUATED'
+            ${whereConditions}
         ),
-        lm_active AS MATERIALIZED (
+
+        -- 2. Multiplicadores activos (Hash-Join friendly)
+        lm_active AS (
           SELECT
             lm."loteriaId",
             lm."valueX",
             lm."appliesToDate",
             lm."appliesToSorteoId"
           FROM "LoteriaMultiplier" lm
-          WHERE lm."kind" = 'NUMERO'
-            AND lm."isActive" = true
+          WHERE lm."kind" = 'NUMERO' AND lm."isActive" = true
         ),
-        numero_bandas AS MATERIALIZED (
+
+        -- 3. Pre-agregación de Jugadas: Reducción masiva de cardinalidad
+        aggregated_jugadas AS (
           SELECT
             j."ticketId",
+            j.type,
             j.number,
-            MIN(j."finalMultiplierX") AS banda
+            j."finalMultiplierX",
+            SUM(j.amount) AS amount,
+            SUM(j.payout) AS payout,
+            SUM(j."listeroCommissionAmount") AS "listeroCommissionAmount",
+            COUNT(*) AS "jugadasCount"
           FROM "Jugada" j
           INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
-          WHERE j.type = 'NUMERO'
-            AND j."isActive" = true
-            AND j."deletedAt" IS NULL
-          GROUP BY j."ticketId", j.number
+          WHERE j."isActive" = true AND j."deletedAt" IS NULL
+          GROUP BY j."ticketId", j.type, j.number, j."finalMultiplierX"
         ),
-        base AS (
+
+        -- 4. Cálculo de bandas (herencia de REVENTADO) sobre dataset reducido
+        numero_bandas AS (
           SELECT
-            u.id          AS uid,
-            u.name        AS uname,
-            v.id          AS vid,
-            v.name        AS vname,
-            l.id          AS "loteriaId",
-            l.name        AS "loteriaNombre",
-            t.id          AS "ticketId",
-            t."businessDate" AS "businessDate",
-            TO_CHAR(s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') AS turno,
-            j.type          AS tipo,
-            j.amount,
-            j.payout,
-            j."listeroCommissionAmount",
+            aj."ticketId",
+            aj.number,
+            MIN(aj."finalMultiplierX") AS banda
+          FROM aggregated_jugadas aj
+          WHERE aj.type = 'NUMERO'
+          GROUP BY aj."ticketId", aj.number
+        ),
+
+        -- 5. Lógica de negocio y Joins con banderas de validación
+        base_with_validation AS (
+          SELECT
+            rt."vendedorId",
+            rt."ventanaId",
+            rt."loteriaId",
+            rt."sorteoId",
+            rt."businessDate",
+            aj.type,
+            aj.amount,
+            aj.payout,
+            aj."listeroCommissionAmount",
+            aj."jugadasCount",
+            rt.id as "ticketId",
+            -- Reemplazo de EXISTS por logic flag (vía Join o validación directa)
             CASE
-              WHEN j.type = 'NUMERO' AND EXISTS (
+              WHEN aj.type = 'NUMERO' THEN (
                 SELECT 1 FROM lm_active lm
-                WHERE lm."loteriaId" = t."loteriaId"
-                  AND lm."valueX" = j."finalMultiplierX"
-                  AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-              ) THEN j."finalMultiplierX"
-              WHEN j.type = 'REVENTADO' THEN nb.banda
+                WHERE lm."loteriaId" = rt."loteriaId"
+                  AND lm."valueX" = aj."finalMultiplierX"
+                  AND (lm."appliesToDate" IS NULL OR rt."createdAt" >= lm."appliesToDate")
+                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = rt."sorteoId")
+                LIMIT 1
+              )
               ELSE NULL
-            END AS banda
-          FROM "Jugada" j
-          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
-          INNER JOIN "Ticket" t ON j."ticketId" = t.id
-          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-          INNER JOIN "Loteria" l ON l.id = t."loteriaId"
-          INNER JOIN "User" u ON t."vendedorId" = u.id
-          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-          LEFT JOIN numero_bandas nb ON nb."ticketId" = j."ticketId"
-            AND nb.number = j.number
-            AND j.type = 'REVENTADO'
-          WHERE
-            t."deletedAt" IS NULL
-            AND j."deletedAt" IS NULL
-            AND t."status" != 'CANCELLED'
-            AND t."isActive" = true
-            AND j."isActive" = true
-            AND s."status" = 'EVALUATED'
-            ${whereConditions}
+            END as is_valid_multiplier,
+            nb.banda as inherited_banda,
+            aj."finalMultiplierX"
+          FROM aggregated_jugadas aj
+          INNER JOIN relevant_tickets rt ON aj."ticketId" = rt.id
+          LEFT JOIN numero_bandas nb ON nb."ticketId" = aj."ticketId" 
+            AND nb.number = aj.number 
+            AND aj.type = 'REVENTADO'
+        ),
+
+        -- 6. Asignación de banda final
+        calculated_base AS (
+          SELECT
+             *,
+             CASE
+               WHEN type = 'NUMERO' AND is_valid_multiplier = 1 THEN "finalMultiplierX"
+               WHEN type = 'REVENTADO' THEN inherited_banda
+               ELSE NULL
+             END as final_banda
+          FROM base_with_validation
+        ),
+
+        -- 7. Agregación intermedia antes de Joins de strings
+        grouped_results AS (
+          SELECT
+            "vendedorId", "ventanaId", "loteriaId", "sorteoId", "businessDate",
+            type, final_banda,
+            SUM(amount) AS amount,
+            SUM(payout) AS payout,
+            SUM("listeroCommissionAmount") AS comision,
+            COUNT(DISTINCT "ticketId") AS tickets_count,
+            SUM("jugadasCount") AS jugadas_count
+          FROM calculated_base
+          WHERE final_banda IS NOT NULL
+          GROUP BY 1, 2, 3, 4, 5, 6, 7
         )
+
+      -- 8. Enriquecimiento final con Tablas Maestras (Joins sobre < 10k filas)
       SELECT
-        base.uid             AS "vendedorId",
-        base.uname           AS "vendedorNombre",
-        base.vid             AS "ventanaId",
-        base.vname           AS "ventanaNombre",
-        base."loteriaId",
-        base."loteriaNombre",
-        base.turno,
-        base.tipo,
-        base.banda,
-        TO_CHAR(base."businessDate", 'YYYY-MM-DD')                  AS fecha,
-        COALESCE(SUM(base.amount), 0)::FLOAT                        AS "totalVendida",
-        COALESCE(SUM(base.payout), 0)::FLOAT                        AS ganado,
-        COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT      AS "comisionTotal",
-        0::FLOAT                                                     AS refuerzos,
-        COUNT(DISTINCT base."ticketId")::INT                        AS "ticketsCount",
-        COUNT(*)::INT                                               AS "jugadasCount"
-      FROM base
-      WHERE base.banda IS NOT NULL
-      GROUP BY
-        base.uid, base.uname, base.vid, base.vname,
-        base."loteriaId", base."loteriaNombre",
-        base.turno, base.tipo, base.banda,
-        TO_CHAR(base."businessDate", 'YYYY-MM-DD')
+        gr."vendedorId",
+        u.name AS "vendedorNombre",
+        gr."ventanaId",
+        v.name AS "ventanaNombre",
+        gr."loteriaId",
+        l.name AS "loteriaNombre",
+        TO_CHAR(s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') AS turno,
+        gr.type AS tipo,
+        gr.final_banda AS banda,
+        TO_CHAR(gr."businessDate", 'YYYY-MM-DD') AS fecha,
+        gr.amount::FLOAT AS "totalVendida",
+        gr.payout::FLOAT AS ganado,
+        gr.comision::FLOAT AS "comisionTotal",
+        0::FLOAT AS refuerzos,
+        gr.tickets_count::INT AS "ticketsCount",
+        gr.jugadas_count::INT AS "jugadasCount"
+      FROM grouped_results gr
+      INNER JOIN "User" u ON u.id = gr."vendedorId"
+      INNER JOIN "Ventana" v ON v.id = gr."ventanaId"
+      INNER JOIN "Loteria" l ON l.id = gr."loteriaId"
+      INNER JOIN "Sorteo" s ON s.id = gr."sorteoId"
       ORDER BY
-        base.uname ASC,
-        base."loteriaNombre" ASC,
-        base.turno ASC,
-        base.tipo ASC,
-        base.banda ASC,
-        TO_CHAR(base."businessDate", 'YYYY-MM-DD') ASC
+        u.name ASC,
+        l.name ASC,
+        turno ASC,
+        tipo ASC,
+        banda ASC,
+        fecha ASC;
     `;
 
-    const result = await prisma.$queryRaw<VendedorAggregateRowWithDate[]>(query);
+    const startTime = Date.now();
+    const result = await prisma.$queryRaw<any[]>(query);
+    console.log(`executeSellerAggregationByDay: ${Date.now() - startTime}ms`);
 
     return result.map((row: any) => ({
       ...row,
@@ -554,11 +671,9 @@ export class CierreService {
         banda ASC
     `;
 
-    // Aumentamos timeout a 60s para soportar rangos grandes mientras la query se optimiza
-    const result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL statement_timeout = '60000'`;
-      return tx.$queryRaw<CierreAggregateRow[]>(query);
-    }, { timeout: 65000 });
+    const startTime = Date.now();
+    const result = await prisma.$queryRaw<CierreAggregateRow[]>(query);
+    console.log(`executeWeeklyAggregation: ${Date.now() - startTime}ms`);
 
     return result.map((row: any) => ({
       ...row,
@@ -676,7 +791,7 @@ export class CierreService {
         base.uname        AS "vendedorNombre",
         base.vid          AS "ventanaId",
         base.vname        AS "ventanaNombre",
-        CAST(base.banda AS INT) AS banda,
+        ${filters.depth === 'summary' ? Prisma.empty : Prisma.sql`CAST(base.banda AS INT) AS banda,`}
         COALESCE(SUM(base.amount), 0)::FLOAT                        AS "totalVendida",
         COALESCE(SUM(base.payout), 0)::FLOAT                        AS ganado,
         COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT      AS "comisionTotal",
@@ -689,18 +804,16 @@ export class CierreService {
         base.uid,
         base.uname,
         base.vid,
-        base.vname,
-        base.banda
+        base.vname
+        ${filters.depth === 'summary' ? Prisma.empty : Prisma.sql`, base.banda`}
       ORDER BY
-        base.uname ASC,
-        base.banda ASC
+        base.uname ASC
+        ${filters.depth === 'summary' ? Prisma.empty : Prisma.sql`, base.banda ASC`}
     `;
 
-    // Timeout de 60s
-    const result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL statement_timeout = '60000'`;
-      return tx.$queryRaw<VendedorAggregateRow[]>(query);
-    }, { timeout: 65000 });
+    const startTime = Date.now();
+    const result = await prisma.$queryRaw<VendedorAggregateRow[]>(query);
+    console.log(`executeSellerAggregation: ${Date.now() - startTime}ms`);
 
     return result.map((row: any) => ({
       ...row,
@@ -830,10 +943,9 @@ export class CierreService {
         CAST(base.banda AS INT) ASC
     `;
 
-    const result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL statement_timeout = '30000'`;
-      return tx.$queryRaw<SellerSorteoAggregateRow[]>(query);
-    }, { timeout: 35000 });
+    const startTime = Date.now();
+    const result = await prisma.$queryRaw<SellerSorteoAggregateRow[]>(query);
+    console.log(`executeSellerAggregationBySorteo: ${Date.now() - startTime}ms`);
 
     return result.map((row: any) => ({
       ...row,
@@ -1628,11 +1740,12 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
             AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
         )
       ORDER BY j."createdAt" ASC
-      LIMIT 5
+      LIMIT 10
     `;
 
-    const sampleRows = await prisma.$queryRaw<AnomalyRow[]>(sampleQuery);
-    examples = sampleRows.map((r) => ({
+    const rawExamples = await prisma.$queryRaw<any[]>(sampleQuery);
+
+    examples = rawExamples.map((r: any) => ({
       jugadaId: r.jugadaId,
       ticketId: r.ticketId,
       loteriaId: r.loteriaId,

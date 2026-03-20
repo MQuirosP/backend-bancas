@@ -51,6 +51,11 @@ export const CierreBySellerQuerySchema = BaseCierreQuerySchema.extend({
     .optional()
     .default('totalVendida')
     .describe('Campo de ordenamiento'),
+  depth: z
+    .enum(['summary', 'full'])
+    .optional()
+    .default('full')
+    .describe('Profundidad de los datos: summary (rápido) o full (detallado)'),
 }).strict();
 
 export const validateCierreBySellerQuery = validateQuery(
