@@ -21,6 +21,7 @@ import { crDateService } from "../../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts/accounts.balances";
 import { CacheService } from "../../../core/cache.service";
 import crypto from 'crypto';
+import { ConcurrencyManager } from "../../../utils/concurrency";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
@@ -832,13 +833,13 @@ export const SorteoService = {
     const loteriaIds = [...new Set(sorteos.map(s => s.loteriaId))];
     const multipliersByLoteria = new Map<string, Array<{ id: string; valueX: number }>>();
 
-    // Obtener multiplicadores para todas las loterías en paralelo
-    await Promise.all(
-      loteriaIds.map(async (loteriaId) => {
-        const multipliers = await this.getActiveMultipliers(loteriaId);
-        multipliersByLoteria.set(loteriaId, multipliers);
-      })
-    );
+    // Obtener multiplicadores para todas las loterías en paralelo con límite de concurrencia
+    const multiplierTasks = loteriaIds.map((loteriaId) => async () => {
+      const multipliers = await this.getActiveMultipliers(loteriaId);
+      multipliersByLoteria.set(loteriaId, multipliers);
+    });
+
+    await ConcurrencyManager.runLimited(multiplierTasks, { limit: 5 });
 
     // Verificar cada sorteo
     for (const sorteo of sorteos) {
@@ -1120,39 +1121,38 @@ gs."loteriaName" ASC,
       mostRecentSorteoId: string;
     }>>(query);
 
-    // Formatear respuesta
-    // Ordenar sorteoIds por fecha (obtener IDs ordenados por scheduledAt DESC)
-    const data = await Promise.all(
-      results.map(async (row) => {
-        // Obtener IDs ordenados por fecha descendente
-        const sorteoIdsArray = row.sorteoIds.split(",");
-        const sorteosWithDates = await prisma.sorteo.findMany({
-          where: {
-            id: { in: sorteoIdsArray },
-            ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
-          },
-          select: {
-            id: true,
-            scheduledAt: true,
-          },
-          orderBy: {
-            scheduledAt: "desc",
-          },
-        });
-        const sortedIds = sorteosWithDates.map((s) => s.id);
+    // Formatear respuesta con límite de concurrencia para evitar saturar el pool
+    const dataTasks = results.map((row) => async () => {
+      // Obtener IDs ordenados por fecha descendente
+      const sorteoIdsArray = row.sorteoIds.split(",");
+      const sorteosWithDates = await prisma.sorteo.findMany({
+        where: {
+          id: { in: sorteoIdsArray },
+          ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+        },
+        select: {
+          id: true,
+          scheduledAt: true,
+        },
+        orderBy: {
+          scheduledAt: "desc",
+        },
+      });
+      const sortedIds = sorteosWithDates.map((s) => s.id);
 
-        return {
-          loteriaId: row.loteriaId,
-          loteriaName: row.loteriaName,
-          hour: row.hour12.trim(), // Formato 12h para display (trim para quitar espacios)
-          hour24: row.hour24, // Formato 24h para ordenamiento
-          sorteoIds: sortedIds, // Array ordenado por fecha descendente
-          count: row.count,
-          mostRecentSorteoId: row.mostRecentSorteoId,
-          mostRecentDate: formatDateOnly(row.mostRecentDate),
-        };
-      })
-    );
+      return {
+        loteriaId: row.loteriaId,
+        loteriaName: row.loteriaName,
+        hour: row.hour12.trim(), // Formato 12h para display (trim para quitar espacios)
+        hour24: row.hour24, // Formato 24h para ordenamiento
+        sorteoIds: sortedIds, // Array ordenado por fecha descendente
+        count: row.count,
+        mostRecentSorteoId: row.mostRecentSorteoId,
+        mostRecentDate: formatDateOnly(row.mostRecentDate),
+      };
+    });
+
+    const data = await ConcurrencyManager.runLimited(dataTasks, { limit: 5 });
 
     return {
       data,
@@ -1269,37 +1269,36 @@ gs."hour24" ASC
       mostRecentSorteoId: string;
     }>>(query);
 
-    // Formatear respuesta
-    // Ordenar sorteoIds por fecha (obtener IDs ordenados por scheduledAt DESC)
-    const data = await Promise.all(
-      results.map(async (row) => {
-        // Obtener IDs ordenados por fecha descendente
-        const sorteoIdsArray = row.sorteoIds.split(",");
-        const sorteosWithDates = await prisma.sorteo.findMany({
-          where: {
-            id: { in: sorteoIdsArray },
-            ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
-          },
-          select: {
-            id: true,
-            scheduledAt: true,
-          },
-          orderBy: {
-            scheduledAt: "desc",
-          },
-        });
-        const sortedIds = sorteosWithDates.map((s) => s.id);
+    // Formatear respuesta con límite de concurrencia
+    const dataTasks = results.map((row) => async () => {
+      // Obtener IDs ordenados por fecha descendente
+      const sorteoIdsArray = row.sorteoIds.split(",");
+      const sorteosWithDates = await prisma.sorteo.findMany({
+        where: {
+          id: { in: sorteoIdsArray },
+          ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+        },
+        select: {
+          id: true,
+          scheduledAt: true,
+        },
+        orderBy: {
+          scheduledAt: "desc",
+        },
+      });
+      const sortedIds = sorteosWithDates.map((s) => s.id);
 
-        return {
-          hour: row.hour12.trim(), // Formato 12h para display
-          hour24: row.hour24, // Formato 24h para ordenamiento
-          sorteoIds: sortedIds, // Array ordenado por fecha descendente
-          count: row.count,
-          mostRecentSorteoId: row.mostRecentSorteoId,
-          mostRecentDate: formatDateOnly(row.mostRecentDate),
-        };
-      })
-    );
+      return {
+        hour: row.hour12.trim(), // Formato 12h para display
+        hour24: row.hour24, // Formato 24h para ordenamiento
+        sorteoIds: sortedIds, // Array ordenado por fecha descendente
+        count: row.count,
+        mostRecentSorteoId: row.mostRecentSorteoId,
+        mostRecentDate: formatDateOnly(row.mostRecentDate),
+      };
+    });
+
+    const data = await ConcurrencyManager.runLimited(dataTasks, { limit: 5 });
 
     return {
       data,

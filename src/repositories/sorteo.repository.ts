@@ -562,8 +562,8 @@ const SorteoRepository = {
           winners: winnersCount,
           hasWinner: sorteoFinal?.hasWinner || false,
         },
-      })
-    })
+      });
+    }, { timeout: 180000 });
 
     // 4) Devolver sorteo ya evaluado con relaciones
     return prisma.sorteo.findUnique({
