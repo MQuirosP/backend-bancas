@@ -155,6 +155,12 @@ export const RestrictionRuleService = {
             bancaId: basePayload.bancaId,
             loteriaId: basePayload.loteriaId,
             multiplierId: basePayload.multiplierId,
+            isAutoDate: basePayload.isAutoDate, // Diferenciar reglas automáticas
+            // Diferenciar reglas de Cutoff vs reglas de Montos
+            ...(basePayload.salesCutoffMinutes !== null 
+                ? { salesCutoffMinutes: { not: null } }
+                : { salesCutoffMinutes: null }
+            )
           },
           select: { id: true }
         });
