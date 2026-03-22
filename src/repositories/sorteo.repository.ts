@@ -337,12 +337,12 @@ const SorteoRepository = {
         throw new AppError("Solo se puede revertir un sorteo evaluado", 409);
       }
 
-      // 2️⃣ Eliminar pagos de tickets del sorteo
+      // 2️⃣ Eliminar pagos de tickets del sorteo (Optimizado usando JOIN)
       const paymentsDeleted = await tx.$executeRaw`
-        DELETE FROM "TicketPayment"
-        WHERE "ticketId" IN (
-          SELECT id FROM "Ticket" WHERE "sorteoId" = CAST(${id} AS uuid)
-        )
+        DELETE FROM "TicketPayment" tp
+        USING "Ticket" t
+        WHERE tp."ticketId" = t.id 
+        AND t."sorteoId" = CAST(${id} AS uuid)
       `;
 
       // 3️⃣ Resetear jugadas (ganadoras y multiplicadores reventado)
