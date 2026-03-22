@@ -156,6 +156,7 @@ export const RestrictionRuleService = {
             loteriaId: basePayload.loteriaId,
             multiplierId: basePayload.multiplierId,
             isAutoDate: basePayload.isAutoDate, // Diferenciar reglas automáticas
+            appliesToVendedor: basePayload.appliesToVendedor, // Diferenciar individual vs compartido
             // Diferenciar reglas de Cutoff vs reglas de Montos
             ...(basePayload.salesCutoffMinutes !== null 
                 ? { salesCutoffMinutes: { not: null } }
