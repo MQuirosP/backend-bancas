@@ -1291,6 +1291,12 @@ export const TicketRepository = {
       createdBy?: string;
       createdByRole?: Role;
       idempotencyKey?: string;
+      preFetched?: {
+        vendedor?: any;
+        sorteo?: any;
+        ventana?: any;
+        loteria?: any;
+      };
     }
   ) {
     const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
@@ -1332,33 +1338,41 @@ export const TicketRepository = {
         const nowUtc = new Date();
         const cutoffHour = (process.env.BUSINESS_CUTOFF_HOUR_CR || '00:00').trim();
 
-        // 2) Validación de FKs + reglas de la lotería
+        // 2) Validación de FKs + reglas de la lotería (Optimizado para usar pre-fetch)
         const [loteria, sorteo, ventana, user] = await Promise.all([
-          tx.loteria.findUnique({
-            where: { id: loteriaId },
-            select: { id: true, name: true, isActive: true, rulesJson: true },
-          }),
-          tx.sorteo.findUnique({
-            where: { id: sorteoId },
-            select: { id: true, status: true, loteriaId: true, scheduledAt: true },
-          }),
-          tx.ventana.findUnique({
-            where: { id: ventanaId },
-            select: {
-              id: true,
-              bancaId: true,
-              commissionPolicyJson: true,
-              banca: {
+          options?.preFetched?.loteria
+            ? Promise.resolve(options.preFetched.loteria)
+            : tx.loteria.findUnique({
+                where: { id: loteriaId },
+                select: { id: true, name: true, isActive: true, rulesJson: true },
+              }),
+          options?.preFetched?.sorteo
+            ? Promise.resolve(options.preFetched.sorteo)
+            : tx.sorteo.findUnique({
+                where: { id: sorteoId },
+                select: { id: true, status: true, loteriaId: true, scheduledAt: true },
+              }),
+          options?.preFetched?.ventana
+            ? Promise.resolve(options.preFetched.ventana)
+            : tx.ventana.findUnique({
+                where: { id: ventanaId },
                 select: {
+                  id: true,
+                  bancaId: true,
                   commissionPolicyJson: true,
+                  banca: {
+                    select: {
+                      commissionPolicyJson: true,
+                    },
+                  },
                 },
-              },
-            },
-          }),
-          tx.user.findUnique({
-            where: { id: userId },
-            select: { id: true, commissionPolicyJson: true },
-          }),
+              }),
+          options?.preFetched?.vendedor
+            ? Promise.resolve(options.preFetched.vendedor)
+            : tx.user.findUnique({
+                where: { id: userId },
+                select: { id: true, commissionPolicyJson: true },
+              }),
         ]);
 
         if (!user) throw new AppError("Seller (vendedor) not found", 404, "FK_VIOLATION");

@@ -22,6 +22,10 @@ export const EnvSchema = z.object({
   REDIS_TOKEN: z.string().optional(),
   CACHE_TTL_CUTOFF: z.coerce.number().int().default(300),
   CACHE_TTL_RESTRICTIONS: z.coerce.number().int().default(300),
+  IDEMPOTENCY_STRICT_MODE: z.preprocess(
+    (val) => val === 'true' || val === '1',
+    z.boolean()
+  ).default(true),
 
   // RESILIENCIA / CIRCUIT BREAKERS
   RESILIENCE_ENABLED: z.preprocess(

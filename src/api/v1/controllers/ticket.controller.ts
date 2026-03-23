@@ -7,68 +7,120 @@ import { Role } from "@prisma/client";
 import { resolveDateRange, DateRangeResolution } from "../../../utils/dateRange";
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 
-const _idempotencyCache = new Map<string, { data: any; expiresAt: number }>();
-const _inflightRequests = new Map<string, Promise<any>>();
+import { IdempotencyService } from "../../../services/idempotency.service";
+import { config } from "../../../config";
+import { isRedisAvailable } from "../../../core/redisClient";
 
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
     const userId = req.user!.id;
     const clientRequestId: string | undefined = req.body.idempotencyKey ?? req.body.requestId;
 
+    // 1. Fase de Idempotencia Distribuida
+    let ownerId = '';
+    let payloadHash = '';
+    
     if (clientRequestId) {
-      const cached = _idempotencyCache.get(clientRequestId);
-      if (cached && cached.expiresAt > Date.now()) {
-        req.logger?.info({
-          layer: "controller",
-          action: "TICKET_CREATE_IDEMPOTENCY_HIT",
-          payload: { clientRequestId, userId },
-        });
-        return success(res, cached.data);
-      }
+      payloadHash = IdempotencyService.generateHash(req.body);
+      const result = await IdempotencyService.start(clientRequestId, payloadHash);
 
-      // Si hay un request en vuelo con el mismo clientRequestId, esperar ese resultado
-      // en lugar de crear un ticket duplicado
-      const inflight = _inflightRequests.get(clientRequestId);
-      if (inflight) {
-        req.logger?.info({
-          layer: "controller",
-          action: "TICKET_CREATE_IDEMPOTENCY_INFLIGHT",
-          payload: { clientRequestId, userId },
-        });
-        const result = await inflight;
-        return success(res, result);
+      switch (result.status) {
+        case 'HIT':
+          req.logger?.info({ layer: "controller", action: "IDEMPOTENCY_HIT", payload: { clientRequestId } });
+          return success(res, result.cachedData);
+        
+        case 'CONFLICT':
+          return res.status(409).json({
+            success: false,
+            error: "IDEMPOTENCY_PAYLOAD_MISMATCH",
+            message: "Se ha enviado una petición distinta con el mismo ID de idempotencia.",
+          });
+
+        case 'LOCKED':
+          // FIX 2: Jitter para evitar thundering herd (0.3s - 1.2s)
+          const jitter = (Math.random() * (1.2 - 0.3) + 0.3).toFixed(3);
+          res.setHeader("Retry-After", jitter);
+          return res.status(429).json({
+            success: false,
+            error: "IDEMPOTENCY_LOCKED",
+            message: "La petición ya está siendo procesada. Por favor espera.",
+          });
+
+        case 'ERROR':
+          // REQUISITO STAFF: Observabilidad mejorada
+          req.logger?.error({
+            layer: "controller",
+            action: "IDEMPOTENCY_UNAVAILABLE",
+            requestId: req.requestId,
+            payload: { 
+              clientRequestId,
+              strictMode: config.redis.strictMode,
+              redisAvailable: isRedisAvailable()
+            }
+          });
+
+          // FIX: Soft-Fail mode (QA/Dev)
+          if (!config.redis.strictMode) {
+             req.logger?.warn({ 
+               layer: "controller", 
+               action: "IDEMPOTENCY_SOFT_FAIL", 
+               message: "Proceeding without idempotency check due to Redis unavailability" 
+             });
+             break;
+          }
+
+          // FAIL-STOP (Producción)
+          res.setHeader("Retry-After", "1");
+          return res.status(503).json({
+            success: false,
+            error: "SERVICE_UNAVAILABLE",
+            message: "Servidor de idempotencia temporalmente fuera de servicio. Reintenta en unos momentos.",
+          });
+
+        case 'ACQUIRED':
+          ownerId = result.ownerId;
+          break;
       }
     }
 
-    const promise = TicketService.create(
-      req.body,
-      userId,
-      req.requestId,
-      req.user!.role
-    );
-
-    if (clientRequestId) {
-      _inflightRequests.set(clientRequestId, promise);
-    }
-
-    let result: any;
     try {
-      result = await promise;
-    } catch (err) {
-      if (clientRequestId) _inflightRequests.delete(clientRequestId);
+      // 2. Ejecución Lógica de Negocio
+      const ticketResult = await TicketService.create(
+        req.body,
+        userId,
+        req.requestId,
+        req.user!.role
+      );
+
+      // 3. Commit Atómico (Lua: Update Cache + Release Lock)
+      if (clientRequestId) {
+        await IdempotencyService.commit(clientRequestId, ownerId, ticketResult, payloadHash);
+      }
+
+      return success(res, ticketResult);
+
+    } catch (err: any) {
+      // 4. Manejo P2002 (Auto-Repair)
+      if (clientRequestId && err?.code === 'P2002' && (err?.meta?.target as string[] | undefined)?.includes('idempotencyKey')) {
+        try {
+          const recovered = await IdempotencyService.autoRepair(clientRequestId, payloadHash, () => 
+            TicketService.getByIdempotencyKey(clientRequestId)
+          );
+          if (recovered) {
+            if (ownerId) await IdempotencyService.rollback(clientRequestId, ownerId);
+            return success(res, recovered);
+          }
+        } catch (repairErr) {
+          req.logger?.error({ layer: "controller", action: "RECOVERY_FAILED", payload: { error: (repairErr as Error).message } });
+        }
+      }
+
+      // 5. Rollback seguro en errores de negocio
+      if (clientRequestId && ownerId) {
+        await IdempotencyService.rollback(clientRequestId, ownerId);
+      }
       throw err;
     }
-
-    if (clientRequestId) {
-      _inflightRequests.delete(clientRequestId);
-      _idempotencyCache.set(clientRequestId, {
-        data: result,
-        expiresAt: Date.now() + 5 * 60 * 1000,
-      });
-      setTimeout(() => _idempotencyCache.delete(clientRequestId), 5 * 60 * 1000);
-    }
-
-    return success(res, result);
   },
 
   async getById(req: AuthenticatedRequest, res: Response) {

@@ -51,6 +51,7 @@ export const config = {
     url: parsed.data.REDIS_URL,
     token: parsed.data.REDIS_TOKEN,
     enabled: parsed.data.CACHE_ENABLED,
+    strictMode: parsed.data.IDEMPOTENCY_STRICT_MODE,
     connectTimeout: parsed.data.REDIS_CONNECT_TIMEOUT,
     ttlCutoff: parsed.data.CACHE_TTL_CUTOFF,
     ttlRestrictions: parsed.data.CACHE_TTL_RESTRICTIONS,
