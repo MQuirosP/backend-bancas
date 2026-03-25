@@ -33,14 +33,15 @@ export interface VentasFilters {
   dateTo?: Date;
   status?: string;
   winnersOnly?: boolean;
-  bancaId?: string;
-  ventanaId?: string;
+  bancaId?: string | null;
+  ventanaId?: string | null;
   vendedorId?: string;
   loteriaId?: string;
   sorteoId?: string;
   multiplierId?: string;
   search?: string;
   orderBy?: string;
+  order?: "asc" | "desc";
   lastId?: string;
   lastCreatedAt?: Date;
 }
@@ -720,35 +721,54 @@ export const VentasService = {
     }>
   > {
     try {
-      if (top > 50) {
-        throw new AppError("El parámetro 'top' no puede ser mayor a 50", 400, {
+      if (top > 100) {
+        throw new AppError("El parámetro 'top' no puede ser mayor a 100", 400, {
           code: "VAL_3001",
-          details: [{ field: "top", message: "Máximo permitido: 50" }],
+          details: [{ field: "top", message: "Máximo permitido: 100" }],
         });
       }
 
-      const baseWhere = buildWhereClause(filters);
-      const exclusionWhere = await getExclusionsWhere(filters);
-
-      // Combinar filtros base con exclusiones
-      const where: Prisma.TicketWhereInput = {
-        AND: [baseWhere, exclusionWhere]
+      // Parámetros de ordenamiento y límites
+      const limit = Number(top) || 10;
+      const sortOrder = filters.order === "asc" ? "ASC" : "DESC";
+      const sortBy = filters.orderBy || "ventasTotal";
+      
+      // Mapeo de métricas para el ORDER BY
+      // Nota: Usar NULLS LAST para que los valores nulos no aparezcan primero en DESC
+      const metricMap: Record<string, string> = {
+        ventasTotal: 'SUM(ft."totalAmount")',
+        payoutTotal: 'SUM(COALESCE(js.payout, 0))',
+        neto: '(SUM(ft."totalAmount") - SUM(COALESCE(js.payout, 0)))',
+        ticketsCount: 'COUNT(ft.id)',
+        // Rentabilidad (% de ganancia sobre lo vendido)
+        // Evitar división por cero
+        margin: `CASE 
+          WHEN SUM(ft."totalAmount") > 0 
+          THEN ((SUM(ft."totalAmount") - SUM(COALESCE(js.payout, 0))) / SUM(ft."totalAmount")) * 100 
+          ELSE 0 
+        END`,
+        // Payout rate (% de premios sobre lo vendido)
+        payoutRate: `CASE 
+          WHEN SUM(ft."totalAmount") > 0 
+          THEN (SUM(COALESCE(js.payout, 0)) / SUM(ft."totalAmount")) * 100 
+          ELSE 100 
+        END`,
       };
+      
+      const orderBySql = metricMap[sortBy] || '"ventasTotal"';
+      const searchTerm = filters.search?.trim();
+      const searchSql = searchTerm ? `%${searchTerm}%` : null;
 
       switch (dimension) {
         case "ventana": {
-          // OPTIMIZACIÓN: Single raw SQL query for all metrics
-          // Evita N queries y loops en JS
           const { dateCondition } = buildRawDateConditions(filters);
           
           const rawResult = await prisma.$queryRawUnsafe<any[]>(`
             WITH filtered_tickets AS (
               SELECT t.id, t."ventanaId", t."totalAmount", t."isWinner", t.status
               FROM "Ticket" t
-              INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
               WHERE t."deletedAt" IS NULL 
                 AND t."isActive" = true
-                AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
                 ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
                 ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
@@ -776,10 +796,12 @@ export const VentasService = {
             FROM "Ventana" v
             INNER JOIN filtered_tickets ft ON ft."ventanaId" = v.id
             LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
+            WHERE 1=1
+              ${searchSql ? `AND v.name ILIKE $${(dateCondition?.values?.length || 0) + 1}` : ''}
             GROUP BY v.id, v.name
-            ORDER BY "ventasTotal" DESC
-            LIMIT ${top}
-          `, ...(dateCondition?.values || []));
+            ORDER BY ${orderBySql} ${sortOrder} NULLS LAST
+            LIMIT ${limit}
+          `, ...(dateCondition?.values || []), ...(searchSql ? [searchSql] : []));
 
           return rawResult.map(r => ({
             ...r,
@@ -800,12 +822,10 @@ export const VentasService = {
             WITH filtered_tickets AS (
               SELECT t.id, t."vendedorId", t."ventanaId", t."totalAmount", t."isWinner", t.status, t."createdAt", t."businessDate"
               FROM "Ticket" t
-              INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
               WHERE t."deletedAt" IS NULL 
                 AND t."isActive" = true
-                AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
+                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
                 ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
                 ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
                 ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
@@ -850,10 +870,12 @@ export const VentasService = {
             INNER JOIN "Ventana" v ON v.id = ft."ventanaId"
             LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
             LEFT JOIN payment_stats ps ON ps."ticketId" = ft.id
+            WHERE 1=1
+              ${searchSql ? `AND (u.name ILIKE $${(dateCondition?.values?.length || 0) + 1} OR u.code ILIKE $${(dateCondition?.values?.length || 0) + 1})` : ''}
             GROUP BY u.id, u.name, u.code, u."isActive", v.name
-            ORDER BY "ventasTotal" DESC
-            LIMIT ${top}
-          `, ...(dateCondition?.values || []));
+            ORDER BY ${orderBySql} ${sortOrder} NULLS LAST
+            LIMIT ${limit}
+          `, ...(dateCondition?.values || []), ...(searchSql ? [searchSql] : []));
 
           return rawResult.map(r => ({
             ...r,
@@ -884,12 +906,10 @@ export const VentasService = {
             WITH filtered_tickets AS (
               SELECT t.id, t."loteriaId", t."ventanaId", t."totalAmount", t."isWinner", t.status
               FROM "Ticket" t
-              INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
               WHERE t."deletedAt" IS NULL 
                 AND t."isActive" = true
-                AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
+                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
                 ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
                 ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
                 ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
@@ -916,10 +936,12 @@ export const VentasService = {
             FROM "Loteria" l
             INNER JOIN filtered_tickets ft ON ft."loteriaId" = l.id
             LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
+            WHERE 1=1
+              ${searchSql ? `AND l.name ILIKE $${(dateCondition?.values?.length || 0) + 1}` : ''}
             GROUP BY l.id, l.name
-            ORDER BY "ventasTotal" DESC
-            LIMIT ${top}
-          `, ...(dateCondition?.values || []));
+            ORDER BY ${orderBySql} ${sortOrder} NULLS LAST
+            LIMIT ${limit}
+          `, ...(dateCondition?.values || []), ...(searchSql ? [searchSql] : []));
 
           return rawResult.map(r => ({
             ...r,
@@ -940,12 +962,10 @@ export const VentasService = {
             WITH filtered_tickets AS (
               SELECT t.id, t."sorteoId", t."ventanaId", t."totalAmount", t."isWinner", t.status
               FROM "Ticket" t
-              INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
               WHERE t."deletedAt" IS NULL 
                 AND t."isActive" = true
-                AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
+                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
                 ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
                 ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
                 ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
@@ -972,10 +992,12 @@ export const VentasService = {
             FROM "Sorteo" s
             INNER JOIN filtered_tickets ft ON ft."sorteoId" = s.id
             LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
+            WHERE 1=1
+              ${searchSql ? `AND s.name ILIKE $${(dateCondition?.values?.length || 0) + 1}` : ''}
             GROUP BY s.id, s.name
-            ORDER BY "ventasTotal" DESC
-            LIMIT ${top}
-          `, ...(dateCondition?.values || []));
+            ORDER BY ${orderBySql} ${sortOrder} NULLS LAST
+            LIMIT ${limit}
+          `, ...(dateCondition?.values || []), ...(searchSql ? [searchSql] : []));
 
           return rawResult.map(r => ({
             ...r,
@@ -1001,7 +1023,7 @@ export const VentasService = {
                 AND t."isActive" = true
                 AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
+                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
                 ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
                 ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
                 ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
@@ -1021,10 +1043,11 @@ export const VentasService = {
             FROM "Jugada" j
             INNER JOIN filtered_tickets ft ON ft.id = j."ticketId"
             WHERE j."deletedAt" IS NULL AND j."isActive" = true
+              ${searchSql ? `AND j.number ILIKE $${(dateCondition?.values?.length || 0) + 1}` : ''}
             GROUP BY j.number
-            ORDER BY "ventasTotal" DESC
-            LIMIT ${top}
-          `, ...(dateCondition?.values || []));
+            ORDER BY ${orderBySql} ${sortOrder} NULLS LAST
+            LIMIT ${limit}
+          `, ...(dateCondition?.values || []), ...(searchSql ? [searchSql] : []));
 
           return rawResult.map(r => ({
             ...r,

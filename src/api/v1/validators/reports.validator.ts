@@ -159,8 +159,8 @@ export const WinnersListParamsSchema = z.object({
 }).strict();
 
 // Endpoint de Detalle de Análisis de Números (Drill-down)
-export const NumbersAnalysisDetailQuerySchema = DateRangeSchemaBase.extend({
+export const NumbersAnalysisDetailQuerySchema = DateRangeSchemaBase.merge(EntityFiltersSchema).extend({
   number: z.string().min(1, 'Número es requerido'),
-  loteriaId: z.string().uuid('loteriaId inválido (UUID)'),
+  loteriaId: z.string().uuid('loteriaId inválido (UUID)'), // Sigue siendo requerido para el detalle
   betType: z.enum(['NUMERO', 'REVENTADO', 'all']).default('all').optional(),
 }).refine(dateRangeRefine, dateRangeRefineOptions).strict();

@@ -1,6 +1,6 @@
 // src/api/v1/controllers/venta.controller.ts
 import { Response } from "express";
-import { VentasService } from "../services/venta.service";
+import { VentasService, VentasFilters } from "../services/venta.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { Role } from "@prisma/client";
@@ -205,14 +205,14 @@ export const VentaController = {
       });
     }
 
-    // Validar top
-    if (Number(top) > 50) {
-      throw new AppError("top cannot exceed 50", 400, {
+    // Validar top (permitir hasta 100 para reportes profundos)
+    if (Number(top) > 100) {
+      throw new AppError("top cannot exceed 100", 400, {
         code: "SLS_2001",
         details: [
           {
             field: "top",
-            reason: "Maximum value is 50"
+            reason: "Maximum value is 100"
           }
         ]
       });
@@ -257,11 +257,13 @@ export const VentaController = {
       }
     });
 
-    // Construir filtros finales para el servicio
-    const filters: any = {
+    const filters: VentasFilters = {
       ...effectiveFilters,
       dateFrom: dateRange.fromAt,
-      dateTo: dateRange.toAt
+      dateTo: dateRange.toAt,
+      search: (req.query.search as string) || undefined,
+      orderBy: (req.query.orderBy as string) || undefined,
+      order: (req.query.order as any) || undefined,
     };
 
     const result = await VentasService.breakdown(dimensionStr, Number(top), filters);

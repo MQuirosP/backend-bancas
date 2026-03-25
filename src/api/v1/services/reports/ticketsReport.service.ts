@@ -2299,6 +2299,8 @@ export const TicketsReportService = {
   async getNumbersAnalysisDetail(filters: {
     number: string;
     loteriaId: string;
+    ventanaId?: string;
+    vendedorId?: string;
     date?: DateToken;
     fromDate?: string;
     toDate?: string;
@@ -2341,6 +2343,8 @@ export const TicketsReportService = {
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
           AND j."deletedAt" IS NULL
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+          ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
           ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
       ),
       sorteo_agg AS (

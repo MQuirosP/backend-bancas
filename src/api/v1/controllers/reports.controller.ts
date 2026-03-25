@@ -72,6 +72,8 @@ export const ReportsController = {
     const result = await TicketsReportService.getNumbersAnalysisDetail({
       number: query.number,
       loteriaId: query.loteriaId,
+      ventanaId: query.ventanaId,
+      vendedorId: query.vendedorId,
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,

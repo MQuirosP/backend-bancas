@@ -66,7 +66,7 @@ export const VentasBreakdownQuerySchema = z
   .object({
     // Dimension es requerida
     dimension: z.enum(["ventana", "vendedor", "loteria", "sorteo", "numero"]),
-    top: z.coerce.number().int().min(1).max(50).optional().default(10),
+    top: z.coerce.number().int().min(1).max(100).optional().default(10),
 
     // Scope (aceptado pero ignorado; RBAC lo maneja automáticamente)
     scope: z.enum(["mine", "all"]).optional(),
@@ -83,6 +83,9 @@ export const VentasBreakdownQuerySchema = z
     vendedorId: z.uuid().optional(),
     loteriaId: z.uuid().optional(),
     sorteoId: z.uuid().optional(),
+    search: z.string().trim().min(1).max(100).optional(),
+    orderBy: z.string().optional(),
+    order: z.enum(["asc", "desc"]).optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
