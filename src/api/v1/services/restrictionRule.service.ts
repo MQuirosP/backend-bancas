@@ -157,6 +157,8 @@ export const RestrictionRuleService = {
             multiplierId: basePayload.multiplierId,
             isAutoDate: basePayload.isAutoDate, // Diferenciar reglas automáticas
             appliesToVendedor: basePayload.appliesToVendedor, // Diferenciar individual vs compartido
+            appliesToDate: basePayload.appliesToDate, // Diferenciar por fecha específica
+            appliesToHour: basePayload.appliesToHour, // Diferenciar por hora específica
             // Diferenciar reglas de Cutoff vs reglas de Montos
             ...(basePayload.salesCutoffMinutes !== null 
                 ? { salesCutoffMinutes: { not: null } }
@@ -268,6 +270,53 @@ export const RestrictionRuleService = {
             ? null
             : data.message.trim(),
     };
+
+    //  Check de unicidad en Update para evitar conflictos
+    const finalIsActive = data.isActive ?? current.isActive;
+    if (finalIsActive) {
+      const finalState = {
+        number: data.number !== undefined ? data.number : current.number,
+        userId: data.userId !== undefined ? data.userId : current.userId,
+        ventanaId: data.ventanaId !== undefined ? data.ventanaId : current.ventanaId,
+        bancaId: data.bancaId !== undefined ? data.bancaId : current.bancaId,
+        loteriaId: loteriaId,
+        multiplierId: multiplierId,
+        isAutoDate: data.isAutoDate !== undefined ? data.isAutoDate : current.isAutoDate,
+        appliesToVendedor: data.appliesToVendedor !== undefined ? data.appliesToVendedor : current.appliesToVendedor,
+        appliesToDate: data.appliesToDate !== undefined ? data.appliesToDate : (current.appliesToDate ? new Date(current.appliesToDate) : null),
+        appliesToHour: data.appliesToHour !== undefined ? data.appliesToHour : current.appliesToHour,
+        salesCutoffMinutes: data.salesCutoffMinutes !== undefined ? data.salesCutoffMinutes : current.salesCutoffMinutes,
+      };
+
+      const conflict = await prisma.restrictionRule.findFirst({
+        where: {
+          id: { not: id },
+          isActive: true,
+          number: finalState.number as string | null,
+          userId: finalState.userId,
+          ventanaId: finalState.ventanaId,
+          bancaId: finalState.bancaId,
+          loteriaId: finalState.loteriaId,
+          multiplierId: finalState.multiplierId,
+          isAutoDate: finalState.isAutoDate,
+          appliesToVendedor: finalState.appliesToVendedor,
+          appliesToDate: finalState.appliesToDate,
+          appliesToHour: finalState.appliesToHour,
+          ...(finalState.salesCutoffMinutes !== null 
+              ? { salesCutoffMinutes: { not: null } }
+              : { salesCutoffMinutes: null }
+          )
+        },
+        select: { id: true }
+      });
+
+      if (conflict) {
+        throw new AppError(
+          `La actualización entraría en conflicto con otra regla activa existente en este ámbito.`,
+          409
+        );
+      }
+    }
 
     const updated = await RestrictionRuleRepository.update(id, payload);
     await ActivityService.log({
