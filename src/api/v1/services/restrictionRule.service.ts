@@ -408,7 +408,7 @@ export const RestrictionRuleService = {
    * Agrupa reglas que comparten la misma configuración pero diferentes números.
    */
   async listGrouped(query: any) {
-    let repoQuery = { ...query, page: 1, pageSize: 2000 };
+    let repoQuery = { ...query, page: 1, pageSize: 5000 };
 
     // Si viene un groupKey, lo usamos para filtrar directamente los atributos en el repo
     // Esto es mucho más eficiente y "congruente" que buscar por un solo ID

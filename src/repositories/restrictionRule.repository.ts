@@ -47,6 +47,8 @@ type ListParams = {
   maxTotal?: number | string | null;
   salesCutoffMinutes?: number | string | null;
   isAutoDate?: boolean | string;
+  hasLotteryMultiplier?: boolean | string;
+  search?: string;
 };
 
 const includeLabels = {
@@ -186,10 +188,11 @@ export const RestrictionRuleRepository = {
       hasAutoDate,
       loteriaId,
       multiplierId,
+      search,
     } = params;
 
     const _page = Math.max(1, Number(page) || 1);
-    const _pageSize = Math.min(100, Math.max(1, Number(pageSize) || 20));
+    const _pageSize = Math.min(5000, Math.max(1, Number(pageSize) || 20)); // Aumentado cap de 100 a 5000 para soportar agrupación extensiva
     const skip = (_page - 1) * _pageSize;
     const take = _pageSize;
 
@@ -198,9 +201,10 @@ export const RestrictionRuleRepository = {
     const _isActive = isActive !== undefined ? isActive : true;
 
     // Los otros filtros de tipo son opcionales y Zod los parsea correctamente
-    const _hasCutoff = hasCutoff === true;
-    const _hasAmount = hasAmount === true;
-    const _hasAutoDate = hasAutoDate !== undefined ? hasAutoDate : undefined;
+    const _hasCutoff = hasCutoff === true || hasCutoff === 'true';
+    const _hasAmount = hasAmount === true || hasAmount === 'true';
+    const _hasAutoDate = hasAutoDate === true || hasAutoDate === 'true' ? true : (hasAutoDate === false || hasAutoDate === 'false' ? false : undefined);
+    const _hasLotteryMultiplier = params.hasLotteryMultiplier === true || params.hasLotteryMultiplier === 'true';
 
     const where: any = {};
     // Aplicar filtro isActive siempre (por defecto true si no se especifica)
@@ -253,10 +257,38 @@ export const RestrictionRuleRepository = {
         if (userId) where.userId = userId;
     }
     
-    if (number) where.number = number;
+    if (number || search) {
+      const searchTerm = search || number;
+      // Búsqueda parcial por número o nombre para mayor flexibilidad
+      const searchConditions: any[] = [
+        { number: { contains: searchTerm } },
+        { message: { contains: searchTerm, mode: 'insensitive' } },
+        { banca: { name: { contains: searchTerm, mode: 'insensitive' } } },
+        { banca: { code: { contains: searchTerm, mode: 'insensitive' } } },
+        { ventana: { name: { contains: searchTerm, mode: 'insensitive' } } },
+        { ventana: { code: { contains: searchTerm, mode: 'insensitive' } } },
+        { user: { name: { contains: searchTerm, mode: 'insensitive' } } },
+        { user: { username: { contains: searchTerm, mode: 'insensitive' } } },
+      ];
+      
+      const searchCondition = { OR: searchConditions };
+      
+      if (where.OR) {
+        // Si ya hay un OR (ej. de bancaId), debemos envolver todo en un AND 
+        // para no sobreescribir el OR de banca con el filtro de búsqueda
+        const existingOr = where.OR;
+        delete where.OR;
+        where.AND = [
+          { OR: existingOr },
+          searchCondition
+        ];
+      } else {
+        where.OR = searchCondition.OR;
+      }
+    }
 
     // Determinar si hay algún filtro de tipo especificado
-    const hasAnyTypeFilter = _hasCutoff || _hasAmount || _hasAutoDate !== undefined || loteriaId || multiplierId;
+    const hasAnyTypeFilter = _hasCutoff || _hasAmount || _hasAutoDate !== undefined || loteriaId || multiplierId || _hasLotteryMultiplier;
 
     // Solo aplicar filtros de tipo si se especifican explícitamente
     if (hasAnyTypeFilter) {
@@ -265,7 +297,8 @@ export const RestrictionRuleRepository = {
         where.isAutoDate = _hasAutoDate;
       }
 
-    // Filtros de lotería/multiplicador
+
+    // Filtros de lotería/multiplicador específicos (cuando se busca por ID)
     if (loteriaId) where.loteriaId = loteriaId;
     if (multiplierId) where.multiplierId = multiplierId;
 
@@ -305,11 +338,20 @@ export const RestrictionRuleRepository = {
           { number: null }
         );
       } else if (_hasAmount) {
-        // solo montos (incluye automáticas con maxAmount/maxTotal)
-        typeFilterConditions.push(
-          { maxAmount: { not: null } },
-          { maxTotal: { not: null } }
-        );
+        // solo montos (incluye automáticas con maxAmount/maxTotal/baseAmount/salesPercentage)
+        typeFilterConditions.push({
+          OR: [
+            { maxAmount: { not: null } },
+            { maxTotal: { not: null } },
+            { baseAmount: { not: null } },
+            { salesPercentage: { not: null } }
+          ]
+        });
+      } else if (_hasLotteryMultiplier) {
+        // solo multiplicadores
+        typeFilterConditions.push({
+          OR: [{ loteriaId: { not: null } }, { multiplierId: { not: null } }]
+        });
       }
       
       // Si hay filtros de tipo, combinarlos con los filtros existentes usando AND
