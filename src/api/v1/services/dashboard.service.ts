@@ -1623,19 +1623,20 @@ export const DashboardService = {
     monitor.checkpoint('BEFORE_PARALLEL_QUERIES');
 
     // FASE 1: Datos críticos (los que el usuario ve primero)
+    //  SEMI-OPTIMIZADO: Comentamos CxC y CxP por desuso y riesgos de performance en Prisma (intermitencia)
     const measuredPhase1 = await Promise.all([
       measureAsync('calculateGanancia', () => this.calculateGanancia(filters, role).then((r) => {
         queryCount += 2;
         return r;
       })),
-      measureAsync('calculateCxC', () => this.calculateCxC(filters).then((r) => {
+      /* measureAsync('calculateCxC', () => this.calculateCxC(filters).then((r) => {
         queryCount += 1;
         return r;
       })),
       measureAsync('calculateCxP', () => this.calculateCxP(filters).then((r) => {
         queryCount += 1;
         return r;
-      })),
+      })), */
       measureAsync('getSummary', () => this.getSummary(filters, role).then((r) => {
         queryCount += 1;
         return r;
@@ -1660,8 +1661,17 @@ export const DashboardService = {
 
     const measured = [...measuredPhase1, ...measuredPhase2];
 
-    // Extraer resultados
-    const [ganancia, cxc, cxp, summary, timeSeries, exposure, previousPeriod] = measured.map(m => m.result);
+    // Extraer resultados (mapeo manual para seguridad tras comentar CxC/CxP)
+    const ganancia = measuredPhase1[0].result;
+    const summary = measuredPhase1[1].result;
+    
+    // Valores dummy para CxC/CxP (comentados por performance)
+    const cxc = { totalAmount: 0, byVentana: [] };
+    const cxp = { totalAmount: 0, byVentana: [] };
+
+    const timeSeries = measuredPhase2[0].result;
+    const exposure = measuredPhase2[1].result;
+    const previousPeriod = measuredPhase2[2].result;
 
     // 🟡 CHECKPOINT: Después de queries, antes de alerts
     monitor.checkpoint('AFTER_PARALLEL_QUERIES');
@@ -2380,8 +2390,10 @@ export const DashboardService = {
     const EXPOSURE_THRESHOLD_WARN = 60;
     const EXPOSURE_THRESHOLD_CRITICAL = 80;
 
+    /* 
     // Nueva lógica: Alertar SOLO sobre riesgo en calle (Vendedores)
     // No alertar sobre saldos de listeros (Ventanas) ya que se consideran fondo de caja (Reserva)
+    // DESACTIVADO: CxC y CxP comentados por performance
     const isVendedorDimension = (data.cxc?.byVendedor && data.cxc.byVendedor.length > 0) || 
                                 (data.cxp?.byVendedor && data.cxp.byVendedor.length > 0);
 
@@ -2407,6 +2419,7 @@ export const DashboardService = {
         });
       }
     }
+    */
 
     // Alertas generales (siempre relevantes)
     // Alerta: Ventas bajas
