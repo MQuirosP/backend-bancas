@@ -126,11 +126,10 @@ async function calculateDynamicLimit(
       const cached = context.cache.salesTotals.get(cacheKey);
       if (cached !== undefined) {
         const percentageAmount = (cached * rule.salesPercentage!) / 100;
-        //  LÓGICA: dynamicLimit = percentageAmount - baseAmount
-        // Ejemplo: base=1000, 3% de 47000=1410 → límite = 1410 - 1000 = 410
-        // Ejemplo: base=1000, 3% de 10000=300 → límite = max(0, 300-1000) = 0 (bloqueado)
+        // base actúa como piso garantizado: aunque el % sea menor, siempre se puede vender hasta la base
+        // Cuando el % supera la base, el % es el límite total
         dynamicLimit = baseAmt > 0
-          ? Math.max(0, percentageAmount - baseAmt)
+          ? Math.max(baseAmt, percentageAmount)
           : percentageAmount;
         return Math.max(0, dynamicLimit);
       }
