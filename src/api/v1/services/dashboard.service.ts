@@ -986,14 +986,20 @@ export const DashboardService = {
 
     const allVentanaIds = ventanaData.map(v => v.ventana_id);
 
-    const [periodPreviousMonthBalances] = await Promise.all([
+    const [periodPreviousMonthBalances, accumulatedBalances] = await Promise.all([
       (async () => {
         const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
         if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
           return getPreviousMonthFinalBalancesBatch(effectiveMonth, "ventana", allVentanaIds, filters.bancaId);
         }
         return new Map<string, number>();
-      })()
+      })(),
+      getMonthlyRemainingBalancesBatch(
+        effectiveMonth,
+        "ventana",
+        allVentanaIds,
+        filters.bancaId
+      )
     ]);
 
     const byVentana = ventanaData.map((v) => {
@@ -1001,8 +1007,10 @@ export const DashboardService = {
       const baseBalance = Number(v.total_sales) - Number(v.total_payouts) - totalListeroCommission;
       const previousMonthBalance = periodPreviousMonthBalances.get(v.ventana_id) || 0;
       const periodRemainingBalance = previousMonthBalance + baseBalance - Number(v.total_collected) + Number(v.total_paid);
-      const monthlyAccumulatedBalance = 0; // Se calcula por separado para optimizar carga inicial
-      const recalculatedRemainingBalance = isMonthComplete ? 0 : periodRemainingBalance; // Solo se usa el del periodo inicialmente
+      
+      // Saldo acumulado real (Saldo a Hoy)
+      const accumulatedBalance = accumulatedBalances.get(v.ventana_id) || 0;
+      const recalculatedRemainingBalance = isMonthComplete ? 0 : periodRemainingBalance;
 
       return {
         ventanaId: v.ventana_id,
@@ -1017,14 +1025,19 @@ export const DashboardService = {
         totalPaidOut: Number(v.total_paid),
         totalCollected: Number(v.total_collected),
         totalPaidToCustomer: Number(v.total_paid_to_customer),
-        amount: recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0,
+        // amount se usa para el total del dashboard y la alerta
+        // Para una alerta de CxC, usamos el saldo acumulado real si es positivo
+        amount: accumulatedBalance > 0 ? accumulatedBalance : 0,
         remainingBalance: recalculatedRemainingBalance,
-        monthlyAccumulated: { remainingBalance: monthlyAccumulatedBalance },
+        monthlyAccumulated: { remainingBalance: accumulatedBalance },
         isActive: v.is_active,
       };
     }).sort((a, b) => b.amount - a.amount);
 
-    return { totalAmount: byVentana.reduce((sum, v) => sum + v.amount, 0), byVentana };
+    return { 
+      totalAmount: byVentana.reduce((sum, v) => sum + v.amount, 0), 
+      byVentana 
+    };
   },
 
   /**
@@ -1110,14 +1123,20 @@ export const DashboardService = {
 
     const allVendedorIds = vendedorData.map(v => v.vendedor_id);
 
-    const [periodPreviousMonthBalances] = await Promise.all([
+    const [periodPreviousMonthBalances, accumulatedBalances] = await Promise.all([
       (async () => {
         const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
         if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
           return getPreviousMonthFinalBalancesBatch(effectiveMonth, "vendedor", allVendedorIds, filters.bancaId);
         }
         return new Map<string, number>();
-      })()
+      })(),
+      getMonthlyRemainingBalancesBatch(
+        effectiveMonth,
+        "vendedor",
+        allVendedorIds,
+        filters.bancaId
+      )
     ]);
 
     const byVendedor = vendedorData.map((v) => {
@@ -1125,7 +1144,9 @@ export const DashboardService = {
       const baseBalance = Number(v.total_sales) - Number(v.total_payouts) - totalListeroCommission;
       const previousMonthBalance = periodPreviousMonthBalances.get(v.vendedor_id) || 0;
       const periodRemainingBalance = previousMonthBalance + baseBalance - Number(v.total_collected) + Number(v.total_paid);
-      const monthlyAccumulatedBalance = 0; // Se calcula por separado para optimizar carga inicial
+      
+      // Saldo acumulado real (Saldo a Hoy)
+      const accumulatedBalance = accumulatedBalances.get(v.vendedor_id) || 0;
       const recalculatedRemainingBalance = isMonthComplete ? 0 : periodRemainingBalance;
 
       return {
@@ -1144,14 +1165,18 @@ export const DashboardService = {
         totalPaidOut: Number(v.total_paid),
         totalCollected: Number(v.total_collected),
         totalPaidToCustomer: Number(v.total_paid_to_customer),
-        amount: recalculatedRemainingBalance > 0 ? recalculatedRemainingBalance : 0,
+        // El amount se usa para el total del dashboard y alertas
+        amount: accumulatedBalance > 0 ? accumulatedBalance : 0,
         remainingBalance: recalculatedRemainingBalance,
-        monthlyAccumulated: { remainingBalance: monthlyAccumulatedBalance },
+        monthlyAccumulated: { remainingBalance: accumulatedBalance },
         isActive: v.is_active,
       };
     }).sort((a, b) => b.amount - a.amount);
 
-    return { totalAmount: byVendedor.reduce((sum, v) => sum + v.amount, 0), byVendedor };
+    return { 
+      totalAmount: byVendedor.reduce((sum, v) => sum + v.amount, 0), 
+      byVendedor 
+    };
   },
 
   /**
@@ -1243,14 +1268,20 @@ export const DashboardService = {
 
     const allVentanaIds = ventanaData.map(v => v.ventana_id);
 
-    const [periodPreviousMonthBalances] = await Promise.all([
+    const [periodPreviousMonthBalances, accumulatedBalances] = await Promise.all([
       (async () => {
         const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
         if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
           return getPreviousMonthFinalBalancesBatch(effectiveMonth, "ventana", allVentanaIds, filters.bancaId);
         }
         return new Map<string, number>();
-      })()
+      })(),
+      getMonthlyRemainingBalancesBatch(
+        effectiveMonth,
+        "ventana",
+        allVentanaIds,
+        filters.bancaId
+      )
     ]);
 
     const byVentana = ventanaData.map((v) => {
@@ -1258,7 +1289,9 @@ export const DashboardService = {
       const baseBalance = Number(v.total_sales) - Number(v.total_payouts) - totalListeroCommission;
       const previousMonthBalance = periodPreviousMonthBalances.get(v.ventana_id) || 0;
       const periodRemainingBalance = previousMonthBalance + baseBalance - Number(v.total_collected) + Number(v.total_paid);
-      const monthlyAccumulatedBalance = 0; // Se calcula por separado para optimizar carga inicial
+      
+      // Saldo acumulado real (Saldo a Hoy)
+      const accumulatedBalance = accumulatedBalances.get(v.ventana_id) || 0;
       const recalculatedRemainingBalance = isMonthComplete ? 0 : periodRemainingBalance;
 
       return {
@@ -1275,14 +1308,18 @@ export const DashboardService = {
         totalCollected: Number(v.total_collected),
         totalPaidToCustomer: Number(v.total_paid_to_customer),
         totalPaidToVentana: 0,
-        amount: recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0,
+        // CxP = Saldo a favor de la ventana (acumulado < 0)
+        amount: accumulatedBalance < 0 ? Math.abs(accumulatedBalance) : 0,
         remainingBalance: recalculatedRemainingBalance,
-        monthlyAccumulated: { remainingBalance: monthlyAccumulatedBalance },
+        monthlyAccumulated: { remainingBalance: accumulatedBalance },
         isActive: v.is_active,
       };
     }).sort((a, b) => b.amount - a.amount);
 
-    return { totalAmount: byVentana.reduce((sum, v) => sum + v.amount, 0), byVentana };
+    return { 
+      totalAmount: byVentana.reduce((sum, v) => sum + v.amount, 0), 
+      byVentana 
+    };
   },
 
   /**
@@ -1369,14 +1406,20 @@ export const DashboardService = {
 
     const allVendedorIds = vendedorData.map(v => v.vendedor_id);
 
-    const [periodPreviousMonthBalances] = await Promise.all([
+    const [periodPreviousMonthBalances, accumulatedBalances] = await Promise.all([
       (async () => {
         const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
         if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
           return getPreviousMonthFinalBalancesBatch(effectiveMonth, "vendedor", allVendedorIds, filters.bancaId);
         }
         return new Map<string, number>();
-      })()
+      })(),
+      getMonthlyRemainingBalancesBatch(
+        effectiveMonth,
+        "vendedor",
+        allVendedorIds,
+        filters.bancaId
+      )
     ]);
 
     const byVendedor = vendedorData.map((v) => {
@@ -1384,7 +1427,9 @@ export const DashboardService = {
       const baseBalance = Number(v.total_sales) - Number(v.total_payouts) - totalListeroCommission;
       const previousMonthBalance = periodPreviousMonthBalances.get(v.vendedor_id) || 0;
       const periodRemainingBalance = previousMonthBalance + baseBalance - Number(v.total_collected) + Number(v.total_paid);
-      const monthlyAccumulatedBalance = 0; // Se calcula por separado para optimizar carga inicial
+      
+      // Saldo acumulado real (Saldo a Hoy)
+      const accumulatedBalance = accumulatedBalances.get(v.vendedor_id) || 0;
       const recalculatedRemainingBalance = isMonthComplete ? 0 : periodRemainingBalance;
 
       return {
@@ -1404,14 +1449,18 @@ export const DashboardService = {
         totalCollected: Number(v.total_collected),
         totalPaidToCustomer: Number(v.total_paid_to_customer),
         totalPaidToVentana: 0,
-        amount: recalculatedRemainingBalance < 0 ? Math.abs(recalculatedRemainingBalance) : 0,
+        // CxP = Saldo a favor del vendedor (acumulado < 0)
+        amount: accumulatedBalance < 0 ? Math.abs(accumulatedBalance) : 0,
         remainingBalance: recalculatedRemainingBalance,
-        monthlyAccumulated: { remainingBalance: monthlyAccumulatedBalance },
+        monthlyAccumulated: { remainingBalance: accumulatedBalance },
         isActive: v.is_active,
       };
     }).sort((a, b) => b.amount - a.amount);
 
-    return { totalAmount: byVendedor.reduce((sum, v) => sum + v.amount, 0), byVendedor };
+    return { 
+      totalAmount: byVendedor.reduce((sum, v) => sum + v.amount, 0), 
+      byVendedor 
+    };
   },
 
   /**
@@ -2331,23 +2380,35 @@ export const DashboardService = {
     const EXPOSURE_THRESHOLD_WARN = 60;
     const EXPOSURE_THRESHOLD_CRITICAL = 80;
 
-    // Alerta: CxC alto
-    if (data.cxc.totalAmount > CXC_THRESHOLD_CRITICAL) {
-      alerts.push({
-        type: 'HIGH_CXC',
-        severity: 'critical',
-        message: `CxC total: ₡${data.cxc.totalAmount.toLocaleString()} excede umbral crítico`,
-        action: 'Revisar ventanas con mayor deuda y gestionar cobro inmediato',
-      });
-    } else if (data.cxc.totalAmount > CXC_THRESHOLD_WARN) {
-      alerts.push({
-        type: 'HIGH_CXC',
-        severity: 'warn',
-        message: `CxC total: ₡${data.cxc.totalAmount.toLocaleString()} excede umbral de advertencia`,
-        action: 'Monitorear cuentas por cobrar y planificar gestión de cobro',
-      });
+    // Nueva lógica: Alertar SOLO sobre riesgo en calle (Vendedores)
+    // No alertar sobre saldos de listeros (Ventanas) ya que se consideran fondo de caja (Reserva)
+    const isVendedorDimension = (data.cxc?.byVendedor && data.cxc.byVendedor.length > 0) || 
+                                (data.cxp?.byVendedor && data.cxp.byVendedor.length > 0);
+
+    if (isVendedorDimension) {
+      // Alerta: Vendedores con Deuda (CxC positivo)
+      if (data.cxc.totalAmount > CXC_THRESHOLD_CRITICAL) {
+        alerts.push({
+          type: 'HIGH_CXC',
+          severity: 'critical',
+          message: `Riesgo en calle (Deuda Vendedores): ₡${data.cxc.totalAmount.toLocaleString()}`,
+          action: 'Revisar vendedores con mayor deuda y gestionar cobro con listeros',
+        });
+      }
+
+      // Alerta: Déficit de Cobertura (Vendedores con saldo negativo / CxP)
+      // "si un vendedor en el saldo a hoy tiene saldo negativo es que no tiene para cubrir"
+      if (data.cxp.totalAmount > 0) {
+        alerts.push({
+          type: 'LIQUIDITY_RISK',
+          severity: 'critical',
+          message: `Déficit de Cobertura: ₡${data.cxp.totalAmount.toLocaleString()} (Vendedores sin liquidez)`,
+          action: 'Listeros deben proveer fondos inmediatos para cubrir pago de premios',
+        });
+      }
     }
 
+    // Alertas generales (siempre relevantes)
     // Alerta: Ventas bajas
     if (data.summary.totalSales < LOW_SALES_THRESHOLD) {
       alerts.push({
@@ -2372,16 +2433,6 @@ export const DashboardService = {
         severity: 'warn',
         message: `Exposición alta en número ${data.exposure.topNumbers[0].number}: ${data.exposure.topNumbers[0].ratio.toFixed(0)}x`,
         action: 'Monitorear ventas en este número',
-      });
-    }
-
-    // Alerta: Overpayment (CxP > 0)
-    if (data.cxp.totalAmount > 0) {
-      alerts.push({
-        type: 'OVERPAYMENT',
-        severity: 'info',
-        message: `CxP detectado: ₡${data.cxp.totalAmount.toLocaleString()}`,
-        action: 'Banco debe liquidar con ventanas',
       });
     }
 

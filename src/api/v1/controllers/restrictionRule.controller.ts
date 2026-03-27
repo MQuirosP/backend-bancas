@@ -5,11 +5,12 @@ import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rb
 import prisma from "../../../core/prismaClient";
 import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import logger from "../../../core/logger";
+import * as responses from "../../../utils/responses";
 
 export const RestrictionRuleController = {
   async create(req: AuthenticatedRequest, res: Response) {
     const rule = await RestrictionRuleService.create(req.user!.id, req.body);
-    res.status(201).json({ success: true, data: rule });
+    responses.created(res, rule);
   },
 
   async update(req: AuthenticatedRequest, res: Response) {
@@ -18,7 +19,7 @@ export const RestrictionRuleController = {
       req.params.id,
       req.body
     );
-    res.json({ success: true, data: rule });
+    responses.success(res, rule);
   },
 
   async delete(req: AuthenticatedRequest, res: Response) {
@@ -27,7 +28,7 @@ export const RestrictionRuleController = {
       req.params.id,
       req.body?.reason
     );
-    res.json({ success: true, data: rule });
+    responses.success(res, rule);
   },
 
   async restore(req: AuthenticatedRequest, res: Response) {
@@ -35,12 +36,12 @@ export const RestrictionRuleController = {
       req.user!.id,
       req.params.id
     );
-    res.json({ success: true, data: rule });
+    responses.success(res, rule);
   },
 
   async findById(req: AuthenticatedRequest, res: Response) {
     const rule = await RestrictionRuleService.getById(req.params.id);
-    res.json({ success: true, data: rule });
+    responses.success(res, rule);
   },
 
   async list(req: AuthenticatedRequest, res: Response) {
@@ -68,17 +69,17 @@ export const RestrictionRuleController = {
       }
     });
 
-    res.json({ success: true, data: result.data, meta: result.meta });
+    responses.success(res, result.data, result.meta);
   },
 
   async getCronHealth(req: AuthenticatedRequest, res: Response) {
     const health = await RestrictionRuleService.getCronHealth();
-    res.json({ success: true, data: health });
+    responses.success(res, health);
   },
 
   async executeCronManually(req: AuthenticatedRequest, res: Response) {
     const result = await RestrictionRuleService.executeCronManually();
-    res.json({ success: true, data: result });
+    responses.success(res, result);
   },
 
   async listGrouped(req: AuthenticatedRequest, res: Response) {
@@ -89,7 +90,7 @@ export const RestrictionRuleController = {
     }
 
     const result = await RestrictionRuleService.listGrouped(query);
-    res.json({ success: true, data: result.data, meta: result.meta });
+    responses.success(res, result.data, result.meta);
   },
 
   async bulkUpdate(req: AuthenticatedRequest, res: Response) {
@@ -99,7 +100,7 @@ export const RestrictionRuleController = {
       ids,
       data
     );
-    res.json({ success: true, data: result });
+    responses.success(res, result);
   },
 
   async bulkDelete(req: AuthenticatedRequest, res: Response) {
@@ -109,7 +110,7 @@ export const RestrictionRuleController = {
       ids,
       reason
     );
-    res.json({ success: true, data: result });
+    responses.success(res, result);
   },
 
   /**
@@ -230,12 +231,9 @@ export const RestrictionRuleController = {
         },
       });
 
-      return res.json({
-        success: true,
-        data: {
-          general: [],
-          vendorSpecific: []
-        }
+      return responses.success(res, {
+        general: [],
+        vendorSpecific: []
       });
     }
 
@@ -257,6 +255,6 @@ export const RestrictionRuleController = {
       },
     });
 
-    res.json({ success: true, data: result });
+    responses.success(res, result);
   },
 };
