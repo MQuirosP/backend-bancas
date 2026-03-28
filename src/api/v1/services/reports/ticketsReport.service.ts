@@ -1915,6 +1915,7 @@ export const TicketsReportService = {
     `;
 
     // Por hora (convertir a hora local de Costa Rica)
+    // Filtro por businessDate para consistencia con Profitability
     const byHourQuery = metric === 'cancelaciones'
       ? Prisma.sql`
           SELECT
@@ -1922,7 +1923,7 @@ export const TicketsReportService = {
             COUNT(*) as count,
             SUM(t."totalAmount") as amount
           FROM "Ticket" t
-          WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${cancelledTicketFilter}
             ${timeEntityFilter}
           GROUP BY EXTRACT(HOUR FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
@@ -1935,7 +1936,7 @@ export const TicketsReportService = {
             SUM(t."totalAmount") as amount
           FROM "Ticket" t
           INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-          WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${validTicketFilter}
             ${timeEntityFilter}
           GROUP BY EXTRACT(HOUR FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
@@ -1958,31 +1959,31 @@ export const TicketsReportService = {
       };
     });
 
-    // Por día de semana (convertir a hora local de Costa Rica)
+    // Por día de semana (usa businessDate que es la fecha de negocio)
     const byDayQuery = metric === 'cancelaciones'
       ? Prisma.sql`
           SELECT
-            EXTRACT(DOW FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica') as day,
+            EXTRACT(DOW FROM t."businessDate") as day,
             COUNT(*) as count,
             SUM(t."totalAmount") as amount
           FROM "Ticket" t
-          WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${cancelledTicketFilter}
             ${timeEntityFilter}
-          GROUP BY EXTRACT(DOW FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
+          GROUP BY EXTRACT(DOW FROM t."businessDate")
           ORDER BY day ASC
         `
       : Prisma.sql`
           SELECT
-            EXTRACT(DOW FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica') as day,
+            EXTRACT(DOW FROM t."businessDate") as day,
             COUNT(*) as count,
             SUM(t."totalAmount") as amount
           FROM "Ticket" t
           INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-          WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${validTicketFilter}
             ${timeEntityFilter}
-          GROUP BY EXTRACT(DOW FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
+          GROUP BY EXTRACT(DOW FROM t."businessDate")
           ORDER BY day ASC
         `;
 
@@ -2033,7 +2034,7 @@ export const TicketsReportService = {
           COUNT(*) as count,
           SUM(t."totalAmount") as amount
         FROM "Ticket" t
-        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+        WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
           AND t.status = 'CANCELLED'
           ${timeEntityFilter}
         GROUP BY EXTRACT(HOUR FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
@@ -2081,7 +2082,7 @@ export const TicketsReportService = {
           SUM(t."totalAmount") as amount
         FROM "Ticket" t
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+        WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
           ${validTicketFilter}
           ${timeEntityFilter}
         GROUP BY t."sorteoId", s.name
@@ -2109,7 +2110,7 @@ export const TicketsReportService = {
         FROM "Ticket" t
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
         INNER JOIN "Loteria" l ON t."loteriaId" = l.id
-        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+        WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
           ${validTicketFilter}
           ${timeEntityFilter}
         GROUP BY t."loteriaId", l.name
@@ -2137,7 +2138,7 @@ export const TicketsReportService = {
         FROM "Ticket" t
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
         INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+        WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
           ${validTicketFilter}
           ${timeEntityFilter}
         GROUP BY t."ventanaId", v.name
@@ -2165,7 +2166,7 @@ export const TicketsReportService = {
         FROM "Ticket" t
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
         INNER JOIN "User" u ON t."vendedorId" = u.id
-        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+        WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
           ${validTicketFilter}
           ${timeEntityFilter}
         GROUP BY t."vendedorId", u.name
