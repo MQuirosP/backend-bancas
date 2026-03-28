@@ -2427,32 +2427,9 @@ export const TicketRepository = {
             ventana: { select: { id: true, name: true } },
             vendedor: { select: { id: true, name: true, role: true } },
             createdByUser: { select: { id: true, name: true, role: true } },
-            jugadas: {
-              select: {
-                id: true,
-                number: true,
-                amount: true,
-                finalMultiplierX: true,
-                payout: true,
-                isActive: true,
-                isWinner: true,
-                multiplierId: true,
-                reventadoNumber: true,
-                type: true,
-                commissionPercent: true,
-                commissionAmount: true,
-                commissionOrigin: true,
-                multiplier: {
-                  select: {
-                    id: true,
-                    name: true,
-                    valueX: true,
-                    kind: true,
-                    isActive: true,
-                  },
-                },
-              },
-            },
+            _count: {
+              select: { jugadas: true }
+            }
           },
           orderBy: { createdAt: "desc" },
         }),
