@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.7",
-  "versionCode": 13,
-  "buildNumber": 13,
+  "versionName": "1.0.8",
+  "versionCode": 14,
+  "buildNumber": 14,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Llave de seguridad para creación de tickets implementada.",
-  "releasedAt": "2026-03-23T04:00:00Z",
+  "changelog": "Optimización de rendimientos.",
+  "releasedAt": "2026-03-28T21:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "084babf7e3bea5b8b0503f98d8bfb333e102cc4de4d87b458ca6522815aece0d"
+      "sha256": "d19fee9a097521abbe51ce521b5253c2148dd0b6eab8b910f48cd440faa02caa"
     },
     "arm64-v8a": {
-      "sha256": "084babf7e3bea5b8b0503f98d8bfb333e102cc4de4d87b458ca6522815aece0d"
+      "sha256": "d19fee9a097521abbe51ce521b5253c2148dd0b6eab8b910f48cd440faa02caa"
     }
   }
 }
