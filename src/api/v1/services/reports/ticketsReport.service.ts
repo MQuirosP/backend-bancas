@@ -246,11 +246,11 @@ export const TicketsReportService = {
       t."isWinner" = true
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
-      AND t.status IN (${Prisma.join(ticketStatuses)})
+      AND t."status"::text IN (${Prisma.join(ticketStatuses)})
       AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-      ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-      ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-      ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
+      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
       ${filters.paymentStatus === 'paid' ? Prisma.sql`AND t."remainingAmount" <= 0` : Prisma.empty}
       ${filters.paymentStatus === 'partial' ? Prisma.sql`AND t."remainingAmount" > 0 AND t."totalPaid" > 0` : Prisma.empty}
       ${filters.paymentStatus === 'unpaid' ? Prisma.sql`AND t."totalPaid" <= 0` : Prisma.empty}
@@ -259,30 +259,41 @@ export const TicketsReportService = {
     `;
 
     const summaryQuery = Prisma.sql`
+      WITH filtered AS (
+        SELECT
+          t.id,
+          t."ticketNumber",
+          t."totalPayout",
+          t."totalPaid",
+          t."remainingAmount",
+          t."lastPaymentAt",
+          s.status          AS sorteo_status,
+          s."updatedAt"     AS sorteo_updated_at
+        FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        WHERE ${summaryBaseWhere}
+      )
       SELECT
-        COUNT(*)::int as total_winning_tickets,
-        SUM(COALESCE(t."totalPayout", 0))::float as total_payout,
-        SUM(COALESCE(t."totalPaid", 0))::float as total_paid,
-        SUM(COALESCE(t."remainingAmount", 0))::float as total_pending,
-        COUNT(*) FILTER (WHERE t."totalPaid" > 0 AND t."remainingAmount" > 0)::int as partial_payments_count,
-        COUNT(*) FILTER (WHERE COALESCE(t."totalPaid", 0) <= 0)::int as unpaid_count,
-        MAX(t."totalPayout")::float as max_payout_value,
+        COUNT(*)::int AS total_winning_tickets,
+        SUM(COALESCE("totalPayout", 0))::float AS total_payout,
+        SUM(COALESCE("totalPaid", 0))::float AS total_paid,
+        SUM(COALESCE("remainingAmount", 0))::float AS total_pending,
+        COUNT(*) FILTER (WHERE "totalPaid" > 0 AND "remainingAmount" > 0)::int AS partial_payments_count,
+        COUNT(*) FILTER (WHERE COALESCE("totalPaid", 0) <= 0)::int AS unpaid_count,
+        MAX("totalPayout")::float AS max_payout_value,
         (
           SELECT json_build_object('id', id, 'ticketNumber', "ticketNumber")
-          FROM "Ticket"
-          WHERE "totalPayout" = (SELECT MAX("totalPayout") FROM "Ticket" WHERE ${summaryBaseWhere})
-            AND ${summaryBaseWhere}
+          FROM filtered
+          WHERE "totalPayout" = (SELECT MAX("totalPayout") FROM filtered)
           LIMIT 1
-        ) as max_payout_ticket,
-        COUNT(*) FILTER (WHERE t."remainingAmount" > 0 AND s.status = 'EVALUATED' AND s."updatedAt" < ${expiredThreshold})::int as expired_count,
-        SUM(COALESCE(t."remainingAmount", 0)) FILTER (WHERE t."remainingAmount" > 0 AND s.status = 'EVALUATED' AND s."updatedAt" < ${expiredThreshold})::float as expired_amount,
-        AVG(EXTRACT(EPOCH FROM (t."lastPaymentAt" - s."updatedAt")) / 3600) FILTER (WHERE t."lastPaymentAt" IS NOT NULL AND s.status = 'EVALUATED' AND t."lastPaymentAt" > s."updatedAt")::float as avg_payment_time
-      FROM "Ticket" t
-      INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-      WHERE ${summaryBaseWhere}
+        ) AS max_payout_ticket,
+        COUNT(*) FILTER (WHERE "remainingAmount" > 0 AND sorteo_status = 'EVALUATED' AND sorteo_updated_at < ${expiredThreshold})::int AS expired_count,
+        SUM(COALESCE("remainingAmount", 0)) FILTER (WHERE "remainingAmount" > 0 AND sorteo_status = 'EVALUATED' AND sorteo_updated_at < ${expiredThreshold})::float AS expired_amount,
+        AVG(EXTRACT(EPOCH FROM ("lastPaymentAt" - sorteo_updated_at)) / 3600) FILTER (WHERE "lastPaymentAt" IS NOT NULL AND sorteo_status = 'EVALUATED' AND "lastPaymentAt" > sorteo_updated_at)::float AS avg_payment_time
+      FROM filtered
     `;
 
-    const [summaryResult] = await prisma.$queryRawUnsafe<any[]>(summaryQuery.sql, ...summaryQuery.values);
+    const [summaryResult] = await prisma.$queryRaw<any[]>(summaryQuery);
     
     // Variables de apoyo mapeadas desde el resultado
     const maxPayoutTicket = summaryResult?.max_payout_ticket;
@@ -401,7 +412,7 @@ export const TicketsReportService = {
           COUNT(DISTINCT t.id)::int as count,
           SUM(j.payout)::float as amount
         FROM "Jugada" j
-        INNER JOIN filtered_tickets t ON j.id = j.id -- Truco para asegurar joins eficientes si necesario
+        INNER JOIN filtered_tickets t ON j."ticketId" = t.id
         WHERE j."ticketId" = t.id
           AND j."isWinner" = true
           AND j."deletedAt" IS NULL
@@ -415,7 +426,7 @@ export const TicketsReportService = {
         (SELECT json_agg(x) FROM desglose_bet_type x) as by_bet_type
     `;
 
-    const [breakdownsRaw] = await prisma.$queryRawUnsafe<any[]>(breakdownsQuery.sql, ...breakdownsQuery.values);
+    const [breakdownsRaw] = await prisma.$queryRaw<any[]>(breakdownsQuery);
 
     const byBetType = {
       NUMERO: { count: 0, amount: 0 },
@@ -546,7 +557,7 @@ export const TicketsReportService = {
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
       WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+        AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
@@ -573,7 +584,7 @@ export const TicketsReportService = {
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
       WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+        AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
@@ -602,7 +613,7 @@ export const TicketsReportService = {
         FROM "Jugada" j
         INNER JOIN "Ticket" t ON j."ticketId" = t.id
         WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
           AND j."deletedAt" IS NULL
@@ -751,7 +762,7 @@ export const TicketsReportService = {
     // ======================================================
     const numbersBaseFilter = Prisma.sql`
       t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-      AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+      AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
       AND j."deletedAt" IS NULL
@@ -1054,7 +1065,7 @@ export const TicketsReportService = {
             SUM(t."totalAmount")::float as cancelled_amount
           FROM "Ticket" t
           INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-          WHERE t.status = 'CANCELLED'
+          WHERE t."status"::text = 'CANCELLED'
             AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
             ${cancelledEntityFilter}
           GROUP BY t."ventanaId", v.name
@@ -1111,7 +1122,7 @@ export const TicketsReportService = {
           FROM "Ticket" t
           INNER JOIN "User" u ON t."vendedorId" = u.id
           INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-          WHERE t.status = 'CANCELLED'
+          WHERE t."status"::text = 'CANCELLED'
             AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
             ${cancelledEntityFilter}
           GROUP BY t."vendedorId", u.name, v.name
@@ -1167,7 +1178,7 @@ export const TicketsReportService = {
             SUM(t."totalAmount")::float as cancelled_amount
           FROM "Ticket" t
           INNER JOIN "Loteria" l ON t."loteriaId" = l.id
-          WHERE t.status = 'CANCELLED'
+          WHERE t."status"::text = 'CANCELLED'
             AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
             ${cancelledEntityFilter}
           GROUP BY t."loteriaId", l.name
@@ -1221,7 +1232,7 @@ export const TicketsReportService = {
             SUM(t."totalAmount")::float as cancelled_amount
           FROM "Ticket" t
           INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-          WHERE t.status = 'CANCELLED'
+          WHERE t."status"::text = 'CANCELLED'
             AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
             ${cancelledEntityFilter}
           GROUP BY t."sorteoId", s.name
@@ -1325,7 +1336,7 @@ export const TicketsReportService = {
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
       WHERE t."sorteoId" = CAST(${filters.sorteoId} AS uuid)
-        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+        AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND j."deletedAt" IS NULL
@@ -1419,7 +1430,7 @@ export const TicketsReportService = {
         FROM "Jugada" j
         INNER JOIN "Ticket" t ON j."ticketId" = t.id
         WHERE t."sorteoId" = CAST(${filters.sorteoId} AS uuid)
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
           AND j."deletedAt" IS NULL
@@ -1442,7 +1453,7 @@ export const TicketsReportService = {
         INNER JOIN "Ticket" t ON j."ticketId" = t.id
         INNER JOIN "Ventana" v ON t."ventanaId" = v.id
         WHERE t."sorteoId" = CAST(${filters.sorteoId} AS uuid)
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
           AND j."deletedAt" IS NULL
@@ -1543,7 +1554,7 @@ export const TicketsReportService = {
     INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
     WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
                                 AND ${dateRange.toString}::date
-      AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+      AND t."status"::text IN ('EVALUATED', 'PAID', 'PAGADO')
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
       AND s.status = 'EVALUATED'
@@ -1568,7 +1579,7 @@ export const TicketsReportService = {
     INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
     WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
                                 AND ${dateRange.toString}::date
-      AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+      AND t."status"::text IN ('EVALUATED', 'PAID', 'PAGADO')
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
       AND j."isActive" = true
@@ -1636,7 +1647,7 @@ export const TicketsReportService = {
       INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
       WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
                                   AND ${dateRange.toString}::date
-        AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+        AND t."status"::text IN ('EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
         AND s.status = 'EVALUATED'
@@ -1665,7 +1676,7 @@ export const TicketsReportService = {
   // ======================================================
   const profitBaseFilter = Prisma.sql`
     t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-    AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+    AND t."status"::text IN ('EVALUATED', 'PAID', 'PAGADO')
     AND t."isActive" = true
     AND t."deletedAt" IS NULL
     AND s.status = 'EVALUATED'
@@ -1830,13 +1841,13 @@ export const TicketsReportService = {
     const validTicketFilter = Prisma.sql`
       AND t."deletedAt" IS NULL
       AND t."isActive" = true
-      AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
+      AND t."status"::text IN ('EVALUATED', 'PAID', 'PAGADO')
       AND s.status = 'EVALUATED'
       AND s."deletedAt" IS NULL
     `;
 
     // Para cancelaciones: tickets cancelados (sin filtro de sorteo)
-    const cancelledTicketFilter = Prisma.sql`AND t.status = 'CANCELLED'`;
+    const cancelledTicketFilter = Prisma.sql`AND t."status"::text = 'CANCELLED'`;
 
     // Filtro de entidad reutilizable para time-analysis
     const timeEntityFilter = Prisma.sql`
@@ -1966,7 +1977,7 @@ export const TicketsReportService = {
           SUM(t."totalAmount") as amount
         FROM "Ticket" t
         WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-          AND t.status = 'CANCELLED'
+          AND t."status"::text = 'CANCELLED'
           ${timeEntityFilter}
         GROUP BY EXTRACT(HOUR FROM t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')
         ORDER BY hour ASC
@@ -2312,7 +2323,7 @@ export const TicketsReportService = {
         WHERE t."loteriaId" = CAST(${filters.loteriaId} AS uuid)
           AND j.number = ${filters.number}
           AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
           AND j."deletedAt" IS NULL
