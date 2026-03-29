@@ -378,6 +378,10 @@ export const TicketService = {
       const response = {
         ...ticket,
         sorteo: sorteoWithFormattedName,
+        loteria: sorteo.loteria ? {
+          id: sorteo.loteria.id,
+          name: sorteo.loteria.name
+        } : undefined,
         vendedor: {
           id: effectiveVendedorId,
           ...extractPrintConfig(vendedor?.settings, vendedor?.name || null, vendedor?.phone || null),
