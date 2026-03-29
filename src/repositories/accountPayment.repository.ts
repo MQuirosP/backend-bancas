@@ -122,6 +122,8 @@ export const AccountPaymentRepository = {
       ventanaId?: string;
       vendedorId?: string;
       includeReversed?: boolean;
+      page?: number;
+      pageSize?: number;
     }
   ) {
     const where: Prisma.AccountPaymentWhereInput = {
@@ -137,24 +139,34 @@ export const AccountPaymentRepository = {
       where.vendedorId = filters.vendedorId;
     }
 
-    return await prisma.accountPayment.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      include: {
-        paidBy: {
-          select: {
-            id: true,
-            name: true,
+    const skip = filters.page && filters.pageSize ? (filters.page - 1) * filters.pageSize : undefined;
+    const take = filters.pageSize;
+
+    const [data, totalCount] = await prisma.$transaction([
+      prisma.accountPayment.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { createdAt: "desc" },
+        include: {
+          paidBy: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          reversedByUser: {
+            select: {
+              id: true,
+              name: true,
+            },
           },
         },
-        reversedByUser: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-      },
-    });
+      }),
+      prisma.accountPayment.count({ where }),
+    ]);
+
+    return { data, totalCount };
   },
 
   /**
@@ -349,27 +361,39 @@ export const AccountPaymentRepository = {
   /**
    * Obtiene todos los pagos/cobros de un statement (para historial)
    */
-  async findByStatementId(accountStatementId: string) {
-    const payments = await prisma.accountPayment.findMany({
-      where: {
-        accountStatementId,
-      },
-      orderBy: { createdAt: "asc" },
-      include: {
-        paidBy: {
-          select: {
-            id: true,
-            name: true,
+  async findByStatementId(accountStatementId: string, page?: number, pageSize?: number) {
+    const where: Prisma.AccountPaymentWhereInput = {
+      accountStatementId,
+    };
+
+    const skip = page && pageSize ? (page - 1) * pageSize : undefined;
+    const take = pageSize;
+
+    const [payments, totalCount] = await prisma.$transaction([
+      prisma.accountPayment.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { createdAt: "asc" },
+        include: {
+          paidBy: {
+            select: {
+              id: true,
+              name: true,
+            },
           },
         },
-      },
-    });
+      }),
+      prisma.accountPayment.count({ where }),
+    ]);
 
     //  NUEVO: Incluir campo time en la respuesta
-    return payments.map(payment => ({
+    const data = payments.map(payment => ({
       ...payment,
       time: payment.time || null,
     }));
+
+    return { data, totalCount };
   },
 
   /**

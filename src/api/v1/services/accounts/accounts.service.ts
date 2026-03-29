@@ -894,39 +894,45 @@ export const AccountsService = {
     async getPaymentHistory(date: any, filters: any) {
         // Si el primer argumento es string, asumir que es statementId (uso interno nuevo)
         if (typeof date === 'string' && !date.includes('-')) {
+            // getMovementsForDay already returns { data, totalCount }
             return getMovementsForDay(date);
         }
 
         // Si es fecha y filtros (uso legacy del controller)
         let targetDate: Date;
         if (typeof date === 'string') {
-            // Parse date string in format YYYY-MM-DD
-            // This represents a day in Costa Rica timezone
             const [year, month, day] = date.split('-').map(Number);
             targetDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
         } else {
             targetDate = date;
         }
 
-        // Extraer filtros
-        const { ventanaId, vendedorId, bancaId, dimension } = filters;
+        const { ventanaId, vendedorId, bancaId, dimension, page, pageSize } = filters;
 
-        //  CRÍTICO: Usar findMovementsByDateRange para obtener historial completo
-        // Esto permite filtrar por dimension correctamente y es más robusto
-        // Para historial de banca, includeChildren debe ser FALSE (solo administrative movements)
+        // Si se solicita paginación, usar findByDate
+        if (page || pageSize) {
+            return await AccountPaymentRepository.findByDate(targetDate, {
+                ventanaId,
+                vendedorId,
+                page: parseInt(page) || 1,
+                pageSize: parseInt(pageSize) || 20,
+            });
+        }
+
+        // Si no hay paginación, usar el método de rango (comportamiento anterior)
         const movementsMap = await AccountPaymentRepository.findMovementsByDateRange(
             targetDate,
-            targetDate, // Un solo día
+            targetDate,
             dimension,
             ventanaId,
             vendedorId,
             bancaId,
-            false // includeChildren = false para historial (solo propios/administrativos)
+            false
         );
 
-        // Convertir mapa a array plano
         const dateKey = crDateService.postgresDateToCRString(targetDate);
-        return movementsMap.get(dateKey) || [];
+        const data = movementsMap.get(dateKey) || [];
+        return { data, totalCount: data.length };
     },
 
     /**

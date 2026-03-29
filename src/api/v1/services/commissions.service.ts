@@ -208,911 +208,163 @@ export const CommissionsService = {
       }
 
       // SIEMPRE desglosar por día, y por dimensión si aplica
-      if (filters.dimension === "ventana") {
-        // Agrupar por día Y por ventana
-        // Solo incluir ventanas que tienen tickets en el periodo (según scope)
-        const result = await prisma.$queryRaw<
-          Array<{
-            business_date: Date;
-            ventana_id: string;
-            ventana_name: string;
-            total_sales: string;
-            total_payouts: string;
-            total_tickets: string;
-            total_commission: string;
-          }>
-        >`
+      // ============================================================================
+      // REFACTORIZACION 'TANK' MODE: Agregacion 100% en SQL (PostgreSQL)
+      // Eliminamos el procesamiento en memoria de miles de jugadas en Node.js
+      // ============================================================================
+      
+      const isVentana = filters.dimension === "ventana";
+      const isVendedor = filters.dimension === "vendedor";
+
+      const query = Prisma.sql`
+        WITH base_jugadas AS (
           SELECT
-            t."businessDate" as business_date,
-            v.id as ventana_id,
-            v.name as ventana_name,
-            COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
-            COALESCE(SUM(t."totalPayout"), 0)::text as total_payouts,
-            COUNT(DISTINCT t.id)::text as total_tickets,
-            COALESCE(SUM(t."totalCommission"), 0)::text as total_commission
-          FROM "Ticket" t
-          INNER JOIN "Ventana" v ON v.id = t."ventanaId"
-          ${whereClause}
-          GROUP BY business_date, v.id, v.name
-          ORDER BY business_date DESC, v.name ASC
-        `;
-
-        //  CRÍTICO: Filtrar resultados SQL que puedan estar fuera del período
-        // Aunque el WHERE clause filtra, puede haber casos edge donde PostgreSQL incluya datos del día siguiente
-        const filteredResult = result.filter((r) => {
-          const dateKey = postgresDateToCRString(r.business_date);
-          const isInRange = isDateInCRRange(dateKey, startDateCRStr, endDateCRStr);
-
-          //  DEBUG: Log detallado para identificar problemas
-          if (!isInRange) {
-            logger.debug({
-              layer: "service",
-              action: "COMMISSIONS_FILTER_OUT_OF_RANGE",
-              payload: {
-                business_date_iso: r.business_date.toISOString(),
-                business_date_utc: r.business_date.getUTCFullYear() + '-' +
-                  String(r.business_date.getUTCMonth() + 1).padStart(2, '0') + '-' +
-                  String(r.business_date.getUTCDate()).padStart(2, '0'),
-                dateKey,
-                startDateCRStr,
-                endDateCRStr,
-                ventana_id: r.ventana_id,
-              },
-            });
-          }
-
-          return isInRange;
-        });
-
-        logger.info({
-          layer: "service",
-          action: "COMMISSIONS_LIST_VENTANA",
-          payload: {
-            dateRange: {
-              fromAt: dateRange.fromAt.toISOString(),
-              toAt: dateRange.toAt.toISOString(),
-            },
-            dateRangeCR: {
-              startDateCRStr,
-              endDateCRStr,
-            },
-            filters,
-            resultCount: result.length,
-            filteredResultCount: filteredResult.length,
-            resultDates: result.map(r => ({
-              business_date_iso: r.business_date.toISOString(),
-              dateKey: postgresDateToCRString(r.business_date),
-            })),
-          },
-        });
-
-        // ============================================================================
-        // CAMBIO: Cuando dimension=ventana, calcular todo desde jugadas individuales
-        // ============================================================================
-        // Esto asegura que totalSales, totalTickets y totalCommission coincidan
-        // exactamente con el endpoint detail (que también calcula desde jugadas)
-        // Antes: totalSales y totalTickets venían de Ticket, solo totalCommission se recalculaba
-        // Ahora: Todo se calcula desde jugadas individuales para consistencia
-        // ============================================================================
-        if (filters.dimension === "ventana" && ventanaUserPolicy) {
-          // Obtener el ventanaId del usuario VENTANA para aplicar su política solo a su ventana
-          const ventanaUser = await prisma.user.findUnique({
-            where: { id: ventanaUserId || "" },
-            select: { ventanaId: true },
-          });
-          const targetVentanaId = ventanaUser?.ventanaId;
-
-          // Obtener todas las jugadas del periodo para calcular todo desde ellas
-          // Usar zona horaria de Costa Rica para el agrupamiento por fecha
-          const jugadas = await prisma.$queryRaw<
-            Array<{
-              business_date: Date;
-              ventana_id: string;
-              ventana_name: string;
-              ticket_id: string;
-              amount: number;
-              ticket_total_payout: number | null;
-              commission_amount: number | null;
-              listero_commission_amount: number | null;
-            }>
-          >`
-            SELECT
-              COALESCE(
-                t."businessDate",
-                DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
-              ) as business_date,
-              t."ventanaId" as ventana_id,
-              v.name as ventana_name,
-              t.id as ticket_id,
-              j.amount,
-              t."totalPayout" as ticket_total_payout,
-              j."commissionAmount" as commission_amount,
-              j."listeroCommissionAmount" as listero_commission_amount
-            FROM "Ticket" t
-            INNER JOIN "Jugada" j ON j."ticketId" = t.id
-            INNER JOIN "Ventana" v ON v.id = t."ventanaId"
-            ${whereClause}
-            AND j."isExcluded" IS FALSE
-            ${exclusionJugadaFilter}
-          `;
-
-          //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
-          // Si no, agrupar por fecha + ventana (comportamiento original)
-          const byDateAndVentana = new Map<
-            string,
-            {
-              ventanaId: string | null;
-              ventanaName: string | null;
-              totalSales: number;
-              totalPayouts: number;
-              totalTickets: Set<string>;
-              commissionListero: number;
-              commissionVendedor: number;
-              payoutTickets: Set<string>;
-            }
-          >();
-
-          //  NUEVO: Mapa para desglose por entidad (byVentana) cuando hay agrupación
-          const breakdownByEntity = new Map<
-            string, // `${dateKey}_${ventanaId}`
-            {
-              ventanaId: string;
-              ventanaName: string;
-              totalSales: number;
-              totalPayouts: number;
-              totalTickets: Set<string>;
-              commissionListero: number;
-              commissionVendedor: number;
-              payoutTickets: Set<string>;
-            }
-          >();
-
-          //  DEBUG: Log para entender qué jugadas se están procesando
-          const ventanasSeen = new Set<string>();
-          let jugadasFiltered = 0;
-          let jugadasProcessed = 0;
-
-          logger.info({
-            layer: "service",
-            action: "COMMISSIONS_DATE_FILTER_DEBUG",
-            payload: {
-              startDateCRStr,
-              endDateCRStr,
-              dateRange: {
-                fromAt: dateRange.fromAt.toISOString(),
-                toAt: dateRange.toAt.toISOString(),
-              },
-            },
-          });
-
-          for (const jugada of jugadas) {
-            // Usar snapshot de comisión del listero guardado en BD, NO recalcular
-            const commissionListero = Number(jugada.listero_commission_amount || 0);
-
-            const dateKey = postgresDateToCRString(jugada.business_date);
-            //  CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
-            if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
-              jugadasFiltered++;
-              logger.debug({
-                layer: "service",
-                action: "COMMISSIONS_FILTERED_JUGADA",
-                payload: {
-                  dateKey,
-                  startDateCRStr,
-                  endDateCRStr,
-                  business_date_iso: jugada.business_date.toISOString(),
-                  ventana_id: jugada.ventana_id,
-                },
-              });
-              continue; // Saltar jugadas fuera del período
-            }
-            jugadasProcessed++;
-
-            //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + ventana
-            const groupKey = shouldGroupByDate
-              ? dateKey // Solo fecha cuando hay agrupación
-              : `${dateKey}_${jugada.ventana_id}`;
-
-            // Clave para el desglose por entidad (siempre incluye entidad)
-            const breakdownKey = `${dateKey}_${jugada.ventana_id}`;
-            ventanasSeen.add(jugada.ventana_id);
-
-            // Obtener o crear entrada principal (agrupada por fecha si shouldGroupByDate)
-            let entry = byDateAndVentana.get(groupKey);
-            if (!entry) {
-              entry = {
-                ventanaId: shouldGroupByDate ? null : jugada.ventana_id,
-                ventanaName: shouldGroupByDate ? null : jugada.ventana_name,
-                totalSales: 0,
-                totalPayouts: 0,
-                totalTickets: new Set<string>(),
-                commissionListero: 0,
-                commissionVendedor: 0,
-                payoutTickets: new Set<string>(),
-              };
-              byDateAndVentana.set(groupKey, entry);
-            }
-
-            //  NUEVO: Mantener desglose por entidad cuando hay agrupación
-            if (shouldGroupByDate) {
-              let breakdownEntry = breakdownByEntity.get(breakdownKey);
-              if (!breakdownEntry) {
-                breakdownEntry = {
-                  ventanaId: jugada.ventana_id,
-                  ventanaName: jugada.ventana_name,
-                  totalSales: 0,
-                  totalPayouts: 0,
-                  totalTickets: new Set<string>(),
-                  commissionListero: 0,
-                  commissionVendedor: 0,
-                  payoutTickets: new Set<string>(),
-                };
-                breakdownByEntity.set(breakdownKey, breakdownEntry);
-              }
-
-              // Actualizar desglose por entidad
-              breakdownEntry.totalSales += jugada.amount;
-              breakdownEntry.totalTickets.add(jugada.ticket_id);
-              breakdownEntry.commissionListero += commissionListero;
-              breakdownEntry.commissionVendedor += Number(jugada.commission_amount || 0);
-              if (!breakdownEntry.payoutTickets.has(jugada.ticket_id)) {
-                breakdownEntry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-                breakdownEntry.payoutTickets.add(jugada.ticket_id);
-              }
-            }
-
-            // Actualizar entrada principal (agrupada)
-            entry.totalSales += jugada.amount;
-            entry.totalTickets.add(jugada.ticket_id);
-            entry.commissionListero += commissionListero;
-            entry.commissionVendedor += Number(jugada.commission_amount || 0);
-            if (!entry.payoutTickets.has(jugada.ticket_id)) {
-              entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-              entry.payoutTickets.add(jugada.ticket_id);
-            }
-          }
-
-          logger.info({
-            layer: "service",
-            action: "COMMISSIONS_PROCESSING_JUGADAS",
-            payload: {
-              totalJugadas: jugadas.length,
-              jugadasFiltered,
-              jugadasProcessed,
-              ventanasSeen: Array.from(ventanasSeen),
-              byDateAndVentanaSize: byDateAndVentana.size,
-              byDateAndVentanaKeys: Array.from(byDateAndVentana.keys()),
-            },
-          });
-
-          // Convertir a formato de respuesta
-          const items = Array.from(byDateAndVentana.entries())
-            .map(([key, entry]) => {
-              //  NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_ventana
-              const date = shouldGroupByDate ? key : key.split("_")[0];
-              //  CRÍTICO: Filtrar fechas fuera del período solicitado (doble verificación)
-              if (date < startDateCRStr || date > endDateCRStr) {
-                return null; // Marcar para filtrar después
-              }
-              // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
-              // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
-              const totalCommission = entry.commissionListero;
-
-              const item: any = {
-                date, // YYYY-MM-DD
-                ventanaId: entry.ventanaId,
-                ventanaName: entry.ventanaName,
-                vendedorId: null,
-                vendedorName: null,
-                totalSales: entry.totalSales,
-                totalTickets: entry.totalTickets.size,
-                totalCommission, // Solo comisión de listero (ventana)
-                totalPayouts: entry.totalPayouts,
-                commissionListero: entry.commissionListero,
-                commissionVendedor: entry.commissionVendedor,
-                // Ganancia neta para VENTANA: ventas - premios - comisión listero
-                net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
-              };
-
-              //  NUEVO: Agregar desglose por entidad cuando hay agrupación
-              if (shouldGroupByDate) {
-                const ventanaBreakdown: any[] = [];
-                for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
-                  const breakdownDate = breakdownKey.split("_")[0];
-                  if (breakdownDate === date) {
-                    const breakdownTotalCommission = breakdownEntry.commissionListero;
-                    ventanaBreakdown.push({
-                      ventanaId: breakdownEntry.ventanaId,
-                      ventanaName: breakdownEntry.ventanaName,
-                      totalSales: breakdownEntry.totalSales,
-                      totalTickets: breakdownEntry.totalTickets.size,
-                      totalCommission: breakdownTotalCommission,
-                      totalPayouts: breakdownEntry.totalPayouts,
-                      commissionListero: breakdownEntry.commissionListero,
-                      commissionVendedor: breakdownEntry.commissionVendedor,
-                      net: breakdownEntry.totalSales - breakdownEntry.totalPayouts - breakdownEntry.commissionListero,
-                    });
-                  }
-                }
-                item.byVentana = ventanaBreakdown.sort((a, b) => a.ventanaName.localeCompare(b.ventanaName));
-              }
-
-              return item;
-            })
-            .filter((item): item is NonNullable<typeof item> => item !== null) // Filtrar nulls
-            .sort((a, b) => {
-              // Ordenar por fecha DESC, luego por nombre de ventana ASC (si no hay agrupación)
-              if (a.date !== b.date) {
-                return b.date.localeCompare(a.date);
-              }
-              if (shouldGroupByDate) {
-                return 0; // No hay ordenamiento secundario cuando hay agrupación
-              }
-              return (a.ventanaName || "").localeCompare(b.ventanaName || "");
-            });
-
-          return items;
-        }
-
-        // ============================================================================
-        // FIX: Cuando dimension=ventana y NO hay ventanaUserPolicy, usar snapshots de comisión
-        // ============================================================================
-        // Las comisiones ya están guardadas como snapshots en listeroCommissionAmount
-        // Simplemente las sumamos directamente sin recalcular
-        // ============================================================================
-        if (filters.dimension === "ventana" && !ventanaUserPolicy) {
-          // Obtener todas las jugadas del periodo con snapshots de comisión
-          const jugadas = await prisma.$queryRaw<
-            Array<{
-              business_date: Date;
-              ventana_id: string;
-              ventana_name: string;
-              ticket_id: string;
-              amount: number;
-              ticket_total_payout: number | null;
-              commission_amount: number | null;
-              listero_commission_amount: number | null;
-            }>
-          >`
-            SELECT
-              COALESCE(
-                t."businessDate",
-                DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
-              ) as business_date,
-              t."ventanaId" as ventana_id,
-              v.name as ventana_name,
-              t.id as ticket_id,
-              j.amount,
-              t."totalPayout" as ticket_total_payout,
-              j."commissionAmount" as commission_amount,
-              j."listeroCommissionAmount" as listero_commission_amount
-            FROM "Ticket" t
-            INNER JOIN "Jugada" j ON j."ticketId" = t.id
-            INNER JOIN "Ventana" v ON v.id = t."ventanaId"
-            ${whereClause}
-            AND j."isExcluded" IS FALSE
-            ${exclusionJugadaFilter}
-          `;
-
-          //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
-          // Si no, agrupar por fecha + ventana (comportamiento original)
-          const byDateAndVentana = new Map<
-            string,
-            {
-              ventanaId: string | null;
-              ventanaName: string | null;
-              totalSales: number;
-              totalPayouts: number;
-              totalTickets: Set<string>;
-              commissionListero: number;
-              commissionVendedor: number;
-              payoutTickets: Set<string>;
-            }
-          >();
-
-          //  NUEVO: Mapa para desglose por entidad (byVentana) cuando hay agrupación
-          const breakdownByEntity = new Map<
-            string, // `${dateKey}_${ventanaId}`
-            {
-              ventanaId: string;
-              ventanaName: string;
-              totalSales: number;
-              totalPayouts: number;
-              totalTickets: Set<string>;
-              commissionListero: number;
-              commissionVendedor: number;
-              payoutTickets: Set<string>;
-            }
-          >();
-
-          //  DEBUG: Log para entender qué jugadas se están procesando
-          const ventanasSeen = new Set<string>();
-          let jugadasFiltered = 0;
-          let jugadasProcessed = 0;
-
-          logger.info({
-            layer: "service",
-            action: "COMMISSIONS_DATE_FILTER_DEBUG",
-            payload: {
-              startDateCRStr,
-              endDateCRStr,
-              dateRange: {
-                fromAt: dateRange.fromAt.toISOString(),
-                toAt: dateRange.toAt.toISOString(),
-              },
-            },
-          });
-
-          for (const jugada of jugadas) {
-            // Usar snapshot de comisión del listero guardado en BD, NO recalcular
-            const commissionListero = Number(jugada.listero_commission_amount || 0);
-
-            const dateKey = postgresDateToCRString(jugada.business_date);
-            //  CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
-            if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
-              jugadasFiltered++;
-              logger.debug({
-                layer: "service",
-                action: "COMMISSIONS_FILTERED_JUGADA",
-                payload: {
-                  dateKey,
-                  startDateCRStr,
-                  endDateCRStr,
-                  business_date_iso: jugada.business_date.toISOString(),
-                  ventana_id: jugada.ventana_id,
-                },
-              });
-              continue; // Saltar jugadas fuera del período
-            }
-            jugadasProcessed++;
-
-            //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + ventana
-            const groupKey = shouldGroupByDate
-              ? dateKey // Solo fecha cuando hay agrupación
-              : `${dateKey}_${jugada.ventana_id}`;
-
-            // Clave para el desglose por entidad (siempre incluye entidad)
-            const breakdownKey = `${dateKey}_${jugada.ventana_id}`;
-            ventanasSeen.add(jugada.ventana_id);
-
-            // Obtener o crear entrada principal (agrupada por fecha si shouldGroupByDate)
-            let entry = byDateAndVentana.get(groupKey);
-            if (!entry) {
-              entry = {
-                ventanaId: shouldGroupByDate ? null : jugada.ventana_id,
-                ventanaName: shouldGroupByDate ? null : jugada.ventana_name,
-                totalSales: 0,
-                totalPayouts: 0,
-                totalTickets: new Set<string>(),
-                commissionListero: 0,
-                commissionVendedor: 0,
-                payoutTickets: new Set<string>(),
-              };
-              byDateAndVentana.set(groupKey, entry);
-            }
-
-            //  NUEVO: Mantener desglose por entidad cuando hay agrupación
-            if (shouldGroupByDate) {
-              let breakdownEntry = breakdownByEntity.get(breakdownKey);
-              if (!breakdownEntry) {
-                breakdownEntry = {
-                  ventanaId: jugada.ventana_id,
-                  ventanaName: jugada.ventana_name,
-                  totalSales: 0,
-                  totalPayouts: 0,
-                  totalTickets: new Set<string>(),
-                  commissionListero: 0,
-                  commissionVendedor: 0,
-                  payoutTickets: new Set<string>(),
-                };
-                breakdownByEntity.set(breakdownKey, breakdownEntry);
-              }
-
-              // Actualizar desglose por entidad
-              breakdownEntry.totalSales += jugada.amount;
-              breakdownEntry.totalTickets.add(jugada.ticket_id);
-              breakdownEntry.commissionListero += commissionListero;
-              breakdownEntry.commissionVendedor += Number(jugada.commission_amount || 0);
-              if (!breakdownEntry.payoutTickets.has(jugada.ticket_id)) {
-                breakdownEntry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-                breakdownEntry.payoutTickets.add(jugada.ticket_id);
-              }
-            }
-
-            // Actualizar entrada principal (agrupada)
-            entry.totalSales += jugada.amount;
-            entry.totalTickets.add(jugada.ticket_id);
-            entry.commissionListero += commissionListero;
-            entry.commissionVendedor += Number(jugada.commission_amount || 0);
-            if (!entry.payoutTickets.has(jugada.ticket_id)) {
-              entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-              entry.payoutTickets.add(jugada.ticket_id);
-            }
-          }
-
-          logger.info({
-            layer: "service",
-            action: "COMMISSIONS_PROCESSING_JUGADAS",
-            payload: {
-              totalJugadas: jugadas.length,
-              jugadasFiltered,
-              jugadasProcessed,
-              ventanasSeen: Array.from(ventanasSeen),
-              byDateAndVentanaSize: byDateAndVentana.size,
-              byDateAndVentanaKeys: Array.from(byDateAndVentana.keys()),
-            },
-          });
-
-          // Convertir a formato de respuesta
-          const items = Array.from(byDateAndVentana.entries())
-            .map(([key, entry]) => {
-              //  NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_ventana
-              const date = shouldGroupByDate ? key : key.split("_")[0];
-              //  CRÍTICO: Filtrar fechas fuera del período solicitado (doble verificación)
-              if (date < startDateCRStr || date > endDateCRStr) {
-                return null; // Marcar para filtrar después
-              }
-              // Cuando dimension=ventana, totalCommission debe ser solo commissionListero
-              // commissionVendedor es la comisión del vendedor (snapshot), no cuenta para la ventana
-              const totalCommission = entry.commissionListero;
-
-              const item: any = {
-                date, // YYYY-MM-DD
-                ventanaId: entry.ventanaId,
-                ventanaName: entry.ventanaName,
-                vendedorId: null,
-                vendedorName: null,
-                totalSales: entry.totalSales,
-                totalTickets: entry.totalTickets.size,
-                totalCommission, // Solo comisión de listero (ventana)
-                totalPayouts: entry.totalPayouts,
-                commissionListero: entry.commissionListero,
-                commissionVendedor: entry.commissionVendedor,
-                // Ganancia neta para VENTANA: ventas - premios - comisión listero
-                net: entry.totalSales - entry.totalPayouts - entry.commissionListero,
-              };
-
-              //  NUEVO: Agregar desglose por entidad cuando hay agrupación
-              if (shouldGroupByDate) {
-                const ventanaBreakdown: any[] = [];
-                for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
-                  const breakdownDate = breakdownKey.split("_")[0];
-                  if (breakdownDate === date) {
-                    const breakdownTotalCommission = breakdownEntry.commissionListero;
-                    ventanaBreakdown.push({
-                      ventanaId: breakdownEntry.ventanaId,
-                      ventanaName: breakdownEntry.ventanaName,
-                      totalSales: breakdownEntry.totalSales,
-                      totalTickets: breakdownEntry.totalTickets.size,
-                      totalCommission: breakdownTotalCommission,
-                      totalPayouts: breakdownEntry.totalPayouts,
-                      commissionListero: breakdownEntry.commissionListero,
-                      commissionVendedor: breakdownEntry.commissionVendedor,
-                      net: breakdownEntry.totalSales - breakdownEntry.totalPayouts - breakdownEntry.commissionListero,
-                    });
-                  }
-                }
-                item.byVentana = ventanaBreakdown.sort((a, b) => a.ventanaName.localeCompare(b.ventanaName));
-              }
-
-              return item;
-            })
-            .filter((item): item is NonNullable<typeof item> => item !== null) // Filtrar nulls
-            .sort((a, b) => {
-              // Ordenar por fecha DESC, luego por nombre de ventana ASC (si no hay agrupación)
-              if (a.date !== b.date) {
-                return b.date.localeCompare(a.date);
-              }
-              if (shouldGroupByDate) {
-                return 0; // No hay ordenamiento secundario cuando hay agrupación
-              }
-              return (a.ventanaName || "").localeCompare(b.ventanaName || "");
-            });
-
-          return items;
-        }
-
-        // Fallback: solo si realmente no hay forma de calcular (caso edge muy raro)
-        // Este caso no debería ocurrir en producción si las ventanas tienen políticas configuradas
-        return filteredResult
-          .map((r) => {
-            const dateKey = postgresDateToCRString(r.business_date);
-            //  CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
-            if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
-              return null; // Marcar para filtrar después
-            }
-            const commissionVendedor = parseFloat(r.total_commission);
-            return {
-              date: dateKey,
-              ventanaId: r.ventana_id,
-              ventanaName: r.ventana_name,
-              totalSales: parseFloat(r.total_sales),
-              totalTickets: parseInt(r.total_tickets, 10),
-              totalCommission: commissionVendedor, // Fallback: usar snapshot del vendedor (no ideal)
-              totalPayouts: parseFloat(r.total_payouts),
-              commissionListero: 0,
-              commissionVendedor,
-              // Ganancia neta para VENTANA: ventas - premios - comisión listero
-              net: parseFloat(r.total_sales) - parseFloat(r.total_payouts) - 0, // commissionListero is 0 in fallback
-            };
-          })
-          .filter((item): item is NonNullable<typeof item> => item !== null); // Filtrar nulls
-      } else if (filters.dimension === "vendedor") {
-        // Agrupar por día Y por vendedor
-        // Usar snapshots de comisión guardados en la BD (listeroCommissionAmount)
-        const jugadas = await prisma.$queryRaw<
-          Array<{
-            business_date: Date;
-            vendedor_id: string;
-            vendedor_name: string;
-            ventana_id: string;
-            ventana_name: string;
-            ticket_id: string;
-            amount: number;
-            ticket_total_payout: number | null;
-            commission_amount: number | null;
-            listero_commission_amount: number | null;
-          }>
-        >`
-          SELECT
-            t."businessDate" as business_date,
-            t."vendedorId" as vendedor_id,
-            u.name as vendedor_name,
-            v.id as ventana_id,
-            v.name as ventana_name,
+            t."businessDate" as date,
             t.id as ticket_id,
+            t."totalPayout" as ticket_payout,
+            ${isVentana ? Prisma.sql`t."ventanaId"` : isVendedor ? Prisma.sql`t."vendedorId"` : Prisma.sql`NULL`} as entity_id,
+            ${isVentana ? Prisma.sql`v.name` : isVendedor ? Prisma.sql`u.name` : Prisma.sql`NULL`} as entity_name,
+            ${isVendedor ? Prisma.sql`v.id` : Prisma.sql`NULL`} as extra_id,
+            ${isVendedor ? Prisma.sql`v.name` : Prisma.sql`NULL`} as extra_name,
             j.amount,
-            t."totalPayout" as ticket_total_payout,
-            j."commissionAmount" as commission_amount,
-            j."listeroCommissionAmount" as listero_commission_amount
+            j."listeroCommissionAmount" as commission_listero,
+            j."commissionAmount" as commission_vendedor,
+            -- Rango para contar payouts de tickets una sola vez por entidad/dia
+            ROW_NUMBER() OVER(
+              PARTITION BY t.id, t."businessDate"
+              ${isVentana ? Prisma.sql`, t."ventanaId"` : isVendedor ? Prisma.sql`, t."vendedorId"` : Prisma.empty}
+            ) as ticket_rnk
           FROM "Ticket" t
-          INNER JOIN "Jugada" j ON j."ticketId" = t.id AND j."deletedAt" IS NULL AND j."isExcluded" IS FALSE
-          INNER JOIN "User" u ON u.id = t."vendedorId"
-          INNER JOIN "Ventana" v ON v.id = t."ventanaId"
+          INNER JOIN "Jugada" j ON j."ticketId" = t.id
+          ${isVentana ? Prisma.sql`INNER JOIN "Ventana" v ON v.id = t."ventanaId"` : Prisma.empty}
+          ${isVendedor ? Prisma.sql`
+            INNER JOIN "User" u ON u.id = t."vendedorId"
+            INNER JOIN "Ventana" v ON v.id = t."ventanaId"
+          ` : Prisma.empty}
           ${whereClause}
+          AND j."isExcluded" IS FALSE
+          AND j."deletedAt" IS NULL
           ${exclusionJugadaFilter}
-        `;
+        ),
+        daily_summary AS (
+          SELECT
+            date,
+            ${!shouldGroupByDate ? Prisma.sql`entity_id, entity_name,` : Prisma.empty}
+            ${isVendedor && !shouldGroupByDate ? Prisma.sql`extra_id, extra_name,` : Prisma.empty}
+            SUM(amount)::float as total_sales,
+            COUNT(DISTINCT ticket_id)::int as total_tickets,
+            SUM(COALESCE(commission_listero, 0))::float as commission_listero,
+            SUM(COALESCE(commission_vendedor, 0))::float as commission_vendedor,
+            SUM(CASE WHEN ticket_rnk = 1 THEN ticket_payout ELSE 0 END)::float as total_payouts
+          FROM base_jugadas
+          GROUP BY 1 ${!shouldGroupByDate ? Prisma.sql`, 2, 3` : Prisma.empty} ${isVendedor && !shouldGroupByDate ? Prisma.sql`, 4, 5` : Prisma.empty}
+        )
+        ${shouldGroupByDate ? Prisma.sql`
+        , entity_breakdown AS (
+          SELECT
+            date,
+            entity_id,
+            entity_name,
+            ${isVendedor ? Prisma.sql`extra_id, extra_name,` : Prisma.empty}
+            SUM(amount)::float as total_sales,
+            COUNT(DISTINCT ticket_id)::int as total_tickets,
+            SUM(COALESCE(commission_listero, 0))::float as commission_listero,
+            SUM(COALESCE(commission_vendedor, 0))::float as commission_vendedor,
+            SUM(CASE WHEN ticket_rnk = 1 THEN ticket_payout ELSE 0 END)::float as total_payouts
+          FROM base_jugadas
+          GROUP BY 1, 2, 3 ${isVendedor ? Prisma.sql`, 4, 5` : Prisma.empty}
+        )
+        SELECT 
+          s.*,
+          (
+            SELECT jsonb_agg(b.*)
+            FROM entity_breakdown b
+            WHERE b.date = s.date
+          ) as breakdown
+        FROM daily_summary s
+        ` : Prisma.sql`SELECT * FROM daily_summary`}
+        ORDER BY date DESC ${!shouldGroupByDate ? Prisma.sql`, entity_name ASC` : Prisma.empty}
+      `;
 
-        //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha (sin separar por entidad)
-        // Si no, agrupar por fecha + vendedor (comportamiento original)
-        const byDateAndVendedor = new Map<
-          string,
-          {
-            vendedorId: string | null;
-            vendedorName: string | null;
-            ventanaId: string | null;
-            ventanaName: string | null;
-            totalSales: number;
-            totalPayouts: number;
-            totalTickets: Set<string>;
-            commissionListero: number;
-            commissionVendedor: number;
-            payoutTickets: Set<string>;
-          }
-        >();
+      const rawResult = await prisma.$queryRaw<any[]>(query);
 
-        //  NUEVO: Mapa para desglose por entidad (byVendedor) cuando hay agrupación
-        const breakdownByEntity = new Map<
-          string, // `${dateKey}_${vendedorId}`
-          {
-            vendedorId: string;
-            vendedorName: string;
-            ventanaId: string;
-            ventanaName: string;
-            totalSales: number;
-            totalPayouts: number;
-            totalTickets: Set<string>;
-            commissionListero: number;
-            commissionVendedor: number;
-            payoutTickets: Set<string>;
-          }
-        >();
+      logger.info({
+        layer: "service",
+        action: "COMMISSIONS_LIST_TANK_MODE",
+        payload: {
+          dimension: filters.dimension,
+          shouldGroupByDate,
+          rawResultCount: rawResult.length,
+        },
+      });
 
-        for (const jugada of jugadas) {
-          const dateKey = postgresDateToCRString(jugada.business_date);
-          //  CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
-          if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
-            continue; // Saltar jugadas fuera del período
-          }
+      // Mapear resultados al formato de respuesta esperado
+      return rawResult.map(r => {
+        const dateKey = postgresDateToCRString(r.date);
+        
+        const item: any = {
+          date: dateKey,
+          totalSales: r.total_sales,
+          totalTickets: r.total_tickets,
+          totalPayouts: r.total_payouts,
+          commissionListero: r.commission_listero,
+          commissionVendedor: r.commission_vendedor,
+        };
 
-          //  NUEVO: Si shouldGroupByDate=true, agrupar solo por fecha; si no, por fecha + vendedor
-          const groupKey = shouldGroupByDate
-            ? dateKey // Solo fecha cuando hay agrupación
-            : `${dateKey}_${jugada.vendedor_id}`;
-
-          // Clave para el desglose por entidad (siempre incluye entidad)
-          const breakdownKey = `${dateKey}_${jugada.vendedor_id}`;
-
-          // Obtener o crear entrada principal (agrupada por fecha si shouldGroupByDate)
-          let entry = byDateAndVendedor.get(groupKey);
-          if (!entry) {
-            entry = {
-              vendedorId: shouldGroupByDate ? null : jugada.vendedor_id,
-              vendedorName: shouldGroupByDate ? null : jugada.vendedor_name,
-              ventanaId: shouldGroupByDate ? null : jugada.ventana_id,
-              ventanaName: shouldGroupByDate ? null : jugada.ventana_name,
-              totalSales: 0,
-              totalPayouts: 0,
-              totalTickets: new Set<string>(),
-              commissionListero: 0,
-              commissionVendedor: 0,
-              payoutTickets: new Set<string>(),
-            };
-            byDateAndVendedor.set(groupKey, entry);
-          }
-
-          //  NUEVO: Mantener desglose por entidad cuando hay agrupación
+        if (isVentana) {
           if (shouldGroupByDate) {
-            let breakdownEntry = breakdownByEntity.get(breakdownKey);
-            if (!breakdownEntry) {
-              breakdownEntry = {
-                vendedorId: jugada.vendedor_id,
-                vendedorName: jugada.vendedor_name,
-                ventanaId: jugada.ventana_id,
-                ventanaName: jugada.ventana_name,
-                totalSales: 0,
-                totalPayouts: 0,
-                totalTickets: new Set<string>(),
-                commissionListero: 0,
-                commissionVendedor: 0,
-                payoutTickets: new Set<string>(),
-              };
-              breakdownByEntity.set(breakdownKey, breakdownEntry);
-            }
-
-            // Actualizar desglose por entidad
-            breakdownEntry.totalSales += jugada.amount;
-            breakdownEntry.totalTickets.add(jugada.ticket_id);
-            breakdownEntry.commissionListero += Number(jugada.listero_commission_amount || 0);
-            breakdownEntry.commissionVendedor += Number(jugada.commission_amount || 0);
-            if (!breakdownEntry.payoutTickets.has(jugada.ticket_id)) {
-              breakdownEntry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-              breakdownEntry.payoutTickets.add(jugada.ticket_id);
-            }
+            item.totalCommission = r.commission_listero;
+            item.net = r.total_sales - r.total_payouts - r.commission_listero;
+            item.byVentana = (r.breakdown || []).map((b: any) => ({
+              ventanaId: b.entity_id,
+              ventanaName: b.entity_name,
+              totalSales: b.total_sales,
+              totalTickets: b.total_tickets,
+              totalCommission: b.commission_listero,
+              totalPayouts: b.total_payouts,
+              commissionListero: b.commission_listero,
+              commissionVendedor: b.commission_vendedor,
+              net: b.total_sales - b.total_payouts - b.commission_listero,
+            })).sort((a: any, b: any) => a.ventanaName.localeCompare(b.ventanaName));
+          } else {
+            item.ventanaId = r.entity_id;
+            item.ventanaName = r.entity_name;
+            item.totalCommission = r.commission_listero;
+            item.net = r.total_sales - r.total_payouts - r.commission_listero;
           }
-
-          // Actualizar entrada principal (agrupada)
-          entry.totalSales += jugada.amount;
-          entry.totalTickets.add(jugada.ticket_id);
-          // Usar snapshot de comisión del listero guardado en BD
-          entry.commissionListero += Number(jugada.listero_commission_amount || 0);
-          entry.commissionVendedor += Number(jugada.commission_amount || 0);
-          if (!entry.payoutTickets.has(jugada.ticket_id)) {
-            entry.totalPayouts += Number(jugada.ticket_total_payout || 0);
-            entry.payoutTickets.add(jugada.ticket_id);
+        } else if (isVendedor) {
+          if (shouldGroupByDate) {
+            item.totalCommission = r.commission_listero + r.commission_vendedor;
+            item.net = r.total_sales - r.total_payouts - r.commission_listero;
+            item.byVendedor = (r.breakdown || []).map((b: any) => ({
+              vendedorId: b.entity_id,
+              vendedorName: b.entity_name,
+              ventanaId: b.extra_id,
+              ventanaName: b.extra_name,
+              totalSales: b.total_sales,
+              totalTickets: b.total_tickets,
+              totalCommission: b.commission_listero + b.commission_vendedor,
+              totalPayouts: b.total_payouts,
+              commissionListero: b.commission_listero,
+              commissionVendedor: b.commission_vendedor,
+              net: b.total_sales - b.total_payouts - b.commission_listero,
+            })).sort((a: any, b: any) => a.vendedorName.localeCompare(b.vendedorName));
+          } else {
+            item.vendedorId = r.entity_id;
+            item.vendedorName = r.entity_name;
+            item.ventanaId = r.extra_id;
+            item.ventanaName = r.extra_name;
+            item.totalCommission = r.commission_listero + r.commission_vendedor;
+            item.net = r.total_sales - r.total_payouts - r.commission_listero;
+            item.gananciaListero = r.commission_listero - r.commission_vendedor;
+            item.gananciaNeta = r.total_sales - r.total_payouts - r.commission_listero;
           }
+        } else {
+          item.totalCommission = r.commission_listero;
         }
 
-        logger.info({
-          layer: "service",
-          action: "COMMISSIONS_LIST_VENDEDOR",
-          payload: {
-            dateRange: {
-              fromAt: dateRange.fromAt.toISOString(),
-              toAt: dateRange.toAt.toISOString(),
-            },
-            filters,
-            resultCount: byDateAndVendedor.size,
-          },
-        });
-
-        // Convertir a formato de respuesta
-        const items = Array.from(byDateAndVendedor.entries()).map(([key, entry]) => {
-          //  NUEVO: Si shouldGroupByDate=true, la clave es solo la fecha; si no, es fecha_vendedor
-          const date = shouldGroupByDate ? key : key.split("_")[0];
-
-          const item: any = {
-            date, // YYYY-MM-DD
-            vendedorId: entry.vendedorId,
-            vendedorName: entry.vendedorName,
-            ventanaId: entry.ventanaId,
-            ventanaName: entry.ventanaName,
-            totalSales: entry.totalSales,
-            totalTickets: entry.totalTickets.size,
-            totalCommission: entry.commissionListero + entry.commissionVendedor,
-            totalPayouts: entry.totalPayouts,
-            commissionListero: entry.commissionListero,
-            commissionVendedor: entry.commissionVendedor,
-            // Ganancia del listero = comisión listero - comisión vendedor
-            gananciaListero: entry.commissionListero - entry.commissionVendedor,
-            // Para VENDEDOR: ganancia neta = ventas - premios - comisión listero
-            gananciaNeta: entry.totalSales - entry.totalPayouts - entry.commissionListero,
-            net: entry.totalSales - entry.totalPayouts - entry.commissionListero, // Alias
-          };
-
-          //  NUEVO: Agregar desglose por entidad cuando hay agrupación
-          if (shouldGroupByDate) {
-            const vendedorBreakdown: any[] = [];
-            for (const [breakdownKey, breakdownEntry] of breakdownByEntity.entries()) {
-              const breakdownDate = breakdownKey.split("_")[0];
-              if (breakdownDate === date) {
-                const breakdownTotalCommission = breakdownEntry.commissionListero + breakdownEntry.commissionVendedor;
-                vendedorBreakdown.push({
-                  vendedorId: breakdownEntry.vendedorId,
-                  vendedorName: breakdownEntry.vendedorName,
-                  ventanaId: breakdownEntry.ventanaId,
-                  ventanaName: breakdownEntry.ventanaName,
-                  totalSales: breakdownEntry.totalSales,
-                  totalTickets: breakdownEntry.totalTickets.size,
-                  totalCommission: breakdownTotalCommission,
-                  totalPayouts: breakdownEntry.totalPayouts,
-                  commissionListero: breakdownEntry.commissionListero,
-                  commissionVendedor: breakdownEntry.commissionVendedor,
-                  net: breakdownEntry.totalSales - breakdownEntry.totalPayouts - breakdownEntry.commissionListero,
-                });
-              }
-            }
-            item.byVendedor = vendedorBreakdown.sort((a, b) => a.vendedorName.localeCompare(b.vendedorName));
-          }
-
-          return item;
-        }).sort((a, b) => {
-          // Ordenar por fecha DESC, luego por nombre ASC (si no hay agrupación)
-          if (a.date !== b.date) {
-            return b.date.localeCompare(a.date);
-          }
-          if (shouldGroupByDate) {
-            return 0; // No hay ordenamiento secundario cuando hay agrupación
-          }
-          return (a.vendedorName || "").localeCompare(b.vendedorName || "");
-        });
-
-        return items;
-      } else {
-        // Sin dimensión: solo agrupar por día
-        const result = await prisma.$queryRaw<
-          Array<{
-            business_date: Date;
-            total_sales: string;
-            total_payouts: string;
-            total_tickets: string;
-            total_commission: string;
-          }>
-        >`
-          SELECT
-            t."businessDate" as business_date,
-            COALESCE(SUM(t."totalAmount"), 0)::text as total_sales,
-            COALESCE(SUM(t."totalPayout"), 0)::text as total_payouts,
-            COUNT(DISTINCT t.id)::text as total_tickets,
-            COALESCE(SUM(t."totalCommission"), 0)::text as total_commission
-          FROM "Ticket" t
-          ${whereClause}
-          GROUP BY business_date
-          ORDER BY business_date DESC
-        `;
-
-        logger.info({
-          layer: "service",
-          action: "COMMISSIONS_LIST_NO_DIMENSION",
-          payload: {
-            dateRange: {
-              fromAt: dateRange.fromAt.toISOString(),
-              toAt: dateRange.toAt.toISOString(),
-            },
-            filters,
-            resultCount: result.length,
-          },
-        });
-
-        return result
-          .map((r) => {
-            const dateKey = postgresDateToCRString(r.business_date);
-            //  CRÍTICO: Filtrar fechas fuera del período solicitado usando función centralizada
-            if (!isDateInCRRange(dateKey, startDateCRStr, endDateCRStr)) {
-              return null; // Marcar para filtrar después
-            }
-            return {
-              date: dateKey,
-              totalSales: parseFloat(r.total_sales),
-              totalPayouts: parseFloat(r.total_payouts),
-              totalTickets: parseInt(r.total_tickets, 10),
-              totalCommission: parseFloat(r.total_commission),
-              commissionListero: undefined,
-              commissionVendedor: undefined,
-            };
-          })
-          .filter((item): item is NonNullable<typeof item> => item !== null); // Filtrar nulls
-      }
+        return item;
+      });
     } catch (err: any) {
       logger.error({
         layer: "service",
@@ -1158,7 +410,6 @@ export const CommissionsService = {
     try {
       // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
-      //  CORRECCIÓN: Usar servicio centralizado para conversión de fechas
       const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
       const fromDateStr = startDateCRStr;
       const toDateStr = endDateCRStr;
@@ -1201,7 +452,6 @@ export const CommissionsService = {
         if (filters.vendedorId) {
           whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
         }
-        // También aplicar ventanaId si está presente (para filtrar vendedores de una ventana específica)
         if (filters.ventanaId) {
           whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
@@ -1224,421 +474,75 @@ export const CommissionsService = {
             AND sle.multiplier_id = j."multiplierId"
           )`;
 
-      // Si dimension=ventana, obtener la política de comisiones del usuario VENTANA
-      let ventanaUserPolicy: any = null;
-      if (filters.dimension === "ventana" && ventanaUserId) {
-        const ventanaUser = await prisma.user.findUnique({
-          where: { id: ventanaUserId },
-          select: { commissionPolicyJson: true },
-        });
-        ventanaUserPolicy = ventanaUser?.commissionPolicyJson ?? null;
-      }
+      // ============================================================================
+      // REFACTORIZACION 'TANK' MODE: Agregacion 100% en SQL (PostgreSQL)
+      // Eliminamos el procesamiento en memoria de miles de jugadas en Node.js
+      // ============================================================================
 
-      // ============================================================================
-      // CAMBIO: Cuando dimension=ventana, calcular jugada por jugada (igual que list)
-      // ============================================================================
-      // Esto asegura que los totales coincidan entre list y detail
-      // Antes: Agrupábamos en SQL y aplicábamos porcentaje al total agrupado
-      // Ahora: Calculamos jugada por jugada y luego agrupamos en memoria
-      // ============================================================================
-      if (filters.dimension === "ventana" && ventanaUserPolicy) {
-        // Obtener todas las jugadas individuales del periodo con snapshots de comisión
-        const jugadas = await prisma.$queryRaw<
-          Array<{
-            loteria_id: string;
-            loteria_name: string;
-            multiplier_id: string | null;
-            multiplier_name: string | null;
-            multiplier_value_x: number | null;
-            multiplier_kind: string | null;
-            amount: number;
-            ticket_id: string;
-            listero_commission_amount: number | null;
-          }>
-        >`
+      const isVentana = filters.dimension === "ventana";
+
+      const query = Prisma.sql`
+        WITH base_jugadas AS (
           SELECT
             t."loteriaId" as loteria_id,
             l.name as loteria_name,
             lm.id as multiplier_id,
-            lm.name as multiplier_name,
+            COALESCE(lm.name, 'Base') as multiplier_name,
             lm."valueX" as multiplier_value_x,
             lm.kind as multiplier_kind,
             j.amount,
             t.id as ticket_id,
-            j."listeroCommissionAmount" as listero_commission_amount
+            ${isVentana ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} as commission_amount
           FROM "Ticket" t
           INNER JOIN "Jugada" j ON j."ticketId" = t.id
           INNER JOIN "Loteria" l ON l.id = t."loteriaId"
           LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
           ${whereClause}
+          AND j."isExcluded" IS FALSE
+          AND j."deletedAt" IS NULL
           ${exclusionJugadaFilter}
-        `;
-
-        // Agrupar por lotería y multiplicador, calculando comisiones jugada por jugada
-        const byLoteria = new Map<
-          string,
-          {
-            loteriaId: string;
-            loteriaName: string;
-            totalSales: number;
-            totalTickets: Set<string>;
-            totalCommission: number;
-            multipliers: Map<string, {
-              multiplierId: string;
-              multiplierName: string;
-              multiplierPercentage: number;
-              totalSales: number;
-              totalTickets: Set<string>;
-              totalCommission: number;
-              commissionSum: number;
-              commissionCount: number;
-            }>;
-          }
-        >();
-
-        // Procesar cada jugada individualmente
-        for (const jugada of jugadas) {
-          // Usar snapshot de comisión del listero guardado en BD, NO recalcular
-          const commission = Number(jugada.listero_commission_amount || 0);
-          const commissionPercent = jugada.amount > 0 ? (commission / jugada.amount) * 100 : 0;
-
-          // Construir clave única para el multiplicador
-          const multiplierKey = jugada.multiplier_id || "REVENTADO";
-
-          // Inicializar lotería si no existe
-          if (!byLoteria.has(jugada.loteria_id)) {
-            byLoteria.set(jugada.loteria_id, {
-              loteriaId: jugada.loteria_id,
-              loteriaName: jugada.loteria_name,
-              totalSales: 0,
-              totalTickets: new Set(),
-              totalCommission: 0,
-              multipliers: new Map(),
-            });
-          }
-
-          const loteria = byLoteria.get(jugada.loteria_id)!;
-
-          // Inicializar multiplicador si no existe
-          if (!loteria.multipliers.has(multiplierKey)) {
-            // Construir nombre del multiplicador
-            let multiplierName: string;
-            if (!jugada.multiplier_id || !jugada.multiplier_name) {
-              multiplierName = "REVENTADO";
-            } else if (jugada.multiplier_name === "Base" && jugada.multiplier_kind === "NUMERO" && jugada.multiplier_value_x) {
-              multiplierName = `Base ${jugada.multiplier_value_x}x`;
-            } else {
-              multiplierName = jugada.multiplier_name;
-            }
-
-            loteria.multipliers.set(multiplierKey, {
-              multiplierId: jugada.multiplier_id || "unknown",
-              multiplierName,
-              multiplierPercentage: 0,
-              totalSales: 0,
-              totalTickets: new Set(),
-              totalCommission: 0,
-              commissionSum: 0,
-              commissionCount: 0,
-            });
-          }
-
-          const multiplier = loteria.multipliers.get(multiplierKey)!;
-
-          // Acumular datos
-          multiplier.totalSales += jugada.amount;
-          multiplier.totalTickets.add(jugada.ticket_id);
-          multiplier.totalCommission += commission;
-          multiplier.commissionSum += commissionPercent;
-          multiplier.commissionCount += 1;
-
-          loteria.totalSales += jugada.amount;
-          loteria.totalTickets.add(jugada.ticket_id);
-          loteria.totalCommission += commission;
-        }
-
-        // Convertir a estructura de respuesta y calcular porcentajes promedios
-        const result: Array<{
-          loteriaId: string;
-          loteriaName: string;
-          totalSales: number;
-          totalTickets: number;
-          totalCommission: number;
-          multipliers: Array<{
-            multiplierId: string;
-            multiplierName: string;
-            multiplierPercentage: number;
-            totalSales: number;
-            totalTickets: number;
-            totalCommission: number;
-          }>;
-        }> = [];
-
-        for (const loteria of byLoteria.values()) {
-          const multipliers = Array.from(loteria.multipliers.values()).map((m) => ({
-            multiplierId: m.multiplierId,
-            multiplierName: m.multiplierName,
-            multiplierPercentage: m.commissionCount > 0
-              ? Number((m.commissionSum / m.commissionCount).toFixed(2))
-              : 0,
-            totalSales: m.totalSales,
-            totalTickets: m.totalTickets.size,
-            totalCommission: m.totalCommission,
-          }));
-
-          // Ordenar multiplicadores por porcentaje descendente
-          multipliers.sort((a, b) => b.multiplierPercentage - a.multiplierPercentage);
-
-          result.push({
-            loteriaId: loteria.loteriaId,
-            loteriaName: loteria.loteriaName,
-            totalSales: loteria.totalSales,
-            totalTickets: loteria.totalTickets.size,
-            totalCommission: loteria.totalCommission,
-            multipliers,
-          });
-        }
-
-        // Ordenar por nombre de lotería
-        result.sort((a, b) => a.loteriaName.localeCompare(b.loteriaName));
-
-        logger.info({
-          layer: "service",
-          action: "COMMISSIONS_DETAIL",
-          payload: {
-            date,
-            filters,
-            resultCount: result.length,
-            calculationMethod: "jugada_por_jugada",
-          },
-        });
-
-        return result;
-      }
-
-      // ============================================================================
-      // FIX: Cuando dimension=ventana y NO hay ventanaUserPolicy, usar snapshots de comisión
-      // ============================================================================
-      // Las comisiones ya están guardadas como snapshots en la BD, simplemente las sumamos
-      // ============================================================================
-      if (filters.dimension === "ventana" && !ventanaUserPolicy) {
-        // Obtener todas las jugadas individuales del periodo con snapshots de comisión
-        const jugadas = await prisma.$queryRaw<
-          Array<{
-            loteria_id: string;
-            loteria_name: string;
-            multiplier_id: string | null;
-            multiplier_name: string | null;
-            multiplier_value_x: number | null;
-            multiplier_kind: string | null;
-            amount: number;
-            listero_commission_amount: number;
-            ticket_id: string;
-          }>
-        >`
+        ),
+        loteria_summary AS (
           SELECT
-            t."loteriaId" as loteria_id,
-            l.name as loteria_name,
-            lm.id as multiplier_id,
-            lm.name as multiplier_name,
-            lm."valueX" as multiplier_value_x,
-            lm.kind as multiplier_kind,
-            j.amount,
-            j."listeroCommissionAmount" as listero_commission_amount,
-            t.id as ticket_id
-          FROM "Ticket" t
-          INNER JOIN "Jugada" j ON j."ticketId" = t.id
-          INNER JOIN "Loteria" l ON l.id = t."loteriaId"
-          LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
-          ${whereClause}
-        `;
-
-        // Agrupar por lotería y multiplicador, sumando comisiones snapshots
-        const byLoteria = new Map<
-          string,
-          {
-            loteriaId: string;
-            loteriaName: string;
-            totalSales: number;
-            totalTickets: Set<string>;
-            totalCommission: number;
-            multipliers: Map<string, {
-              multiplierId: string;
-              multiplierName: string;
-              multiplierPercentage: number;
-              totalSales: number;
-              totalTickets: Set<string>;
-              totalCommission: number;
-              commissionSum: number;
-              commissionCount: number;
-            }>;
-          }
-        >();
-
-        // Procesar cada jugada usando snapshots
-        for (const jugada of jugadas) {
-          // Usar el snapshot directamente
-          const commission = Number(jugada.listero_commission_amount || 0);
-          const commissionPercent = jugada.amount > 0 ? (commission / jugada.amount) * 100 : 0;
-
-          // Construir clave única para el multiplicador
-          const multiplierKey = jugada.multiplier_id || "REVENTADO";
-
-          // Inicializar lotería si no existe
-          if (!byLoteria.has(jugada.loteria_id)) {
-            byLoteria.set(jugada.loteria_id, {
-              loteriaId: jugada.loteria_id,
-              loteriaName: jugada.loteria_name,
-              totalSales: 0,
-              totalTickets: new Set(),
-              totalCommission: 0,
-              multipliers: new Map(),
-            });
-          }
-
-          const loteria = byLoteria.get(jugada.loteria_id)!;
-
-          // Inicializar multiplicador si no existe
-          if (!loteria.multipliers.has(multiplierKey)) {
-            // Construir nombre del multiplicador
-            let multiplierName: string;
-            if (!jugada.multiplier_id || !jugada.multiplier_name) {
-              multiplierName = "REVENTADO";
-            } else if (jugada.multiplier_name === "Base" && jugada.multiplier_kind === "NUMERO" && jugada.multiplier_value_x) {
-              multiplierName = `Base ${jugada.multiplier_value_x}x`;
-            } else {
-              multiplierName = jugada.multiplier_name;
-            }
-
-            loteria.multipliers.set(multiplierKey, {
-              multiplierId: jugada.multiplier_id || "unknown",
-              multiplierName,
-              multiplierPercentage: 0,
-              totalSales: 0,
-              totalTickets: new Set(),
-              totalCommission: 0,
-              commissionSum: 0,
-              commissionCount: 0,
-            });
-          }
-
-          const multiplier = loteria.multipliers.get(multiplierKey)!;
-
-          // Acumular datos usando snapshots
-          multiplier.totalSales += jugada.amount;
-          multiplier.totalTickets.add(jugada.ticket_id);
-          multiplier.totalCommission += commission;
-          multiplier.commissionSum += commissionPercent;
-          multiplier.commissionCount += 1;
-
-          loteria.totalSales += jugada.amount;
-          loteria.totalTickets.add(jugada.ticket_id);
-          loteria.totalCommission += commission;
-        }
-
-        // Convertir a estructura de respuesta y calcular porcentajes promedios
-        const result: Array<{
-          loteriaId: string;
-          loteriaName: string;
-          totalSales: number;
-          totalTickets: number;
-          totalCommission: number;
-          multipliers: Array<{
-            multiplierId: string;
-            multiplierName: string;
-            multiplierPercentage: number;
-            totalSales: number;
-            totalTickets: number;
-            totalCommission: number;
-          }>;
-        }> = [];
-
-        for (const loteria of byLoteria.values()) {
-          const multipliers = Array.from(loteria.multipliers.values()).map((m) => ({
-            multiplierId: m.multiplierId,
-            multiplierName: m.multiplierName,
-            multiplierPercentage: m.commissionCount > 0
-              ? Number((m.commissionSum / m.commissionCount).toFixed(2))
-              : 0,
-            totalSales: m.totalSales,
-            totalTickets: m.totalTickets.size,
-            totalCommission: m.totalCommission,
-          }));
-
-          // Ordenar multiplicadores por porcentaje descendente
-          multipliers.sort((a, b) => b.multiplierPercentage - a.multiplierPercentage);
-
-          result.push({
-            loteriaId: loteria.loteriaId,
-            loteriaName: loteria.loteriaName,
-            totalSales: loteria.totalSales,
-            totalTickets: loteria.totalTickets.size,
-            totalCommission: loteria.totalCommission,
-            multipliers,
-          });
-        }
-
-        // Ordenar por nombre de lotería
-        result.sort((a, b) => a.loteriaName.localeCompare(b.loteriaName));
-
-        logger.info({
-          layer: "service",
-          action: "COMMISSIONS_DETAIL",
-          payload: {
-            date,
-            filters,
-            resultCount: result.length,
-            calculationMethod: "snapshot_based",
-          },
-        });
-
-        return result;
-      }
-
-      // ============================================================================
-      // CÓDIGO ORIGINAL: Para dimension=vendedor (sin cambios)
-      // ============================================================================
-      // Query para obtener datos por lotería y multiplicador
-      // Agrupamos por lotería y multiplicador, sumando ventas y comisiones de las jugadas
-      // REVENTADO puede no tener multiplierId (null), lo manejamos con LEFT JOIN
-      const result = await prisma.$queryRaw<
-        Array<{
-          loteria_id: string;
-          loteria_name: string;
-          multiplier_id: string | null;
-          multiplier_name: string | null;
-          multiplier_value_x: number | null;
-          multiplier_kind: string | null;
-          bet_type: string;
-          final_multiplier_x: number;
-          commission_percent: number;
-          total_sales: string;
-          total_tickets: string;
-          total_commission: string;
-        }>
-      >`
-        SELECT
-          l.id as loteria_id,
-          l.name as loteria_name,
-          lm.id as multiplier_id,
-          lm.name as multiplier_name,
-          lm."valueX" as multiplier_value_x,
-          lm.kind as multiplier_kind,
-          j.type as bet_type,
-          AVG(j."finalMultiplierX") as final_multiplier_x,
-          AVG(j."commissionPercent") as commission_percent,
-          COALESCE(SUM(j.amount), 0)::text as total_sales,
-          COUNT(DISTINCT t.id)::text as total_tickets,
-          COALESCE(SUM(j."commissionAmount"), 0)::text as total_commission
-        FROM "Ticket" t
-        INNER JOIN "Jugada" j ON j."ticketId" = t.id
-        INNER JOIN "Loteria" l ON l.id = t."loteriaId"
-        LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
-        ${whereClause}
-        AND j."isExcluded" IS FALSE
-        GROUP BY l.id, l.name, lm.id, lm.name, lm."valueX", lm.kind, j.type
-        ORDER BY l.name ASC, AVG(j."commissionPercent") DESC
+            loteria_id,
+            loteria_name,
+            SUM(amount)::float as total_sales,
+            COUNT(DISTINCT ticket_id)::int as total_tickets,
+            SUM(COALESCE(commission_amount, 0))::float as total_commission
+          FROM base_jugadas
+          GROUP BY 1, 2
+        ),
+        multiplier_breakdown AS (
+          SELECT
+            loteria_id,
+            multiplier_id,
+            CASE 
+              WHEN multiplier_id IS NULL THEN 'REVENTADO'
+              WHEN multiplier_name = 'Base' AND multiplier_kind = 'NUMERO' AND multiplier_value_x IS NOT NULL THEN 'Base ' || multiplier_value_x || 'x'
+              ELSE multiplier_name
+            END as multiplier_name,
+            SUM(amount)::float as total_sales,
+            COUNT(DISTINCT ticket_id)::int as total_tickets,
+            SUM(COALESCE(commission_amount, 0))::float as total_commission,
+            CASE 
+              WHEN SUM(amount) > 0 THEN (SUM(COALESCE(commission_amount, 0)) / SUM(amount) * 100)::float
+              ELSE 0
+            END as multiplier_percentage
+          FROM base_jugadas
+          GROUP BY 1, 2, 3, multiplier_name, multiplier_kind, multiplier_value_x
+        )
+        SELECT 
+          s.*,
+          (
+            SELECT jsonb_agg(m.*)
+            FROM multiplier_breakdown m
+            WHERE m.loteria_id = s.loteria_id
+          ) as breakdown
+        FROM loteria_summary s
+        ORDER BY loteria_name ASC
       `;
+
+      const resultRaw = await prisma.$queryRaw<any[]>(query);
 
       logger.info({
         layer: "service",
@@ -1646,88 +550,26 @@ export const CommissionsService = {
         payload: {
           date,
           filters,
-          resultCount: result.length,
+          resultCount: resultRaw.length,
           calculationMethod: "sql_aggregation",
         },
       });
 
-      // Agrupar por lotería y construir estructura de respuesta
-      const byLoteria = new Map<
-        string,
-        {
-          loteriaId: string;
-          loteriaName: string;
-          totalSales: number;
-          totalTickets: number;
-          totalCommission: number;
-          multipliers: Array<{
-            multiplierId: string;
-            multiplierName: string;
-            multiplierPercentage: number;
-            totalSales: number;
-            totalTickets: number;
-            totalCommission: number;
-          }>;
-        }
-      >();
-
-      for (const row of result) {
-        const loteriaKey = row.loteria_id;
-        if (!byLoteria.has(loteriaKey)) {
-          byLoteria.set(loteriaKey, {
-            loteriaId: row.loteria_id,
-            loteriaName: row.loteria_name,
-            totalSales: 0,
-            totalTickets: 0,
-            totalCommission: 0,
-            multipliers: [],
-          });
-        }
-
-        const loteria = byLoteria.get(loteriaKey)!;
-
-        // Construir nombre del multiplicador según reglas:
-        // - Si es NULL (REVENTADO): "REVENTADO" (nunca "Sin multiplicador")
-        // - Si es "Base" y kind=NUMERO: "Base {valueX}x" (ej: "Base 90x")
-        // - Si tiene otro nombre: usar el nombre tal cual
-        let multiplierName: string;
-        if (!row.multiplier_id || !row.multiplier_name) {
-          // REVENTADO sin multiplicador
-          multiplierName = "REVENTADO";
-        } else if (row.multiplier_name === "Base" && row.multiplier_kind === "NUMERO" && row.multiplier_value_x) {
-          // Base con valor: construir "Base {valueX}x"
-          multiplierName = `Base ${row.multiplier_value_x}x`;
-        } else {
-          // Usar el nombre tal cual
-          multiplierName = row.multiplier_name;
-        }
-
-        // Para VENDEDOR: usar el porcentaje y monto almacenado (del vendedor)
-        // commission_percent ya está en formato 0-100, redondear a entero
-        const multiplierPercentage = Number((row.commission_percent || 0).toFixed(2));
-        const totalCommission = parseFloat(row.total_commission);
-
-        const multiplier = {
-          multiplierId: row.multiplier_id || "unknown",
-          multiplierName,
-          multiplierPercentage,
-          totalSales: parseFloat(row.total_sales),
-          totalTickets: parseInt(row.total_tickets, 10),
-          totalCommission,
-        };
-
-        loteria.multipliers.push(multiplier);
-        loteria.totalSales += multiplier.totalSales;
-        loteria.totalTickets += multiplier.totalTickets;
-        loteria.totalCommission += multiplier.totalCommission;
-      }
-
-      // Ordenar multiplicadores por porcentaje descendente dentro de cada lotería
-      for (const loteria of byLoteria.values()) {
-        loteria.multipliers.sort((a, b) => b.multiplierPercentage - a.multiplierPercentage);
-      }
-
-      return Array.from(byLoteria.values());
+      return resultRaw.map(row => ({
+        loteriaId: row.loteria_id,
+        loteriaName: row.loteria_name,
+        totalSales: row.total_sales,
+        totalTickets: row.total_tickets,
+        totalCommission: row.total_commission,
+        multipliers: (row.breakdown || []).map((m: any) => ({
+          multiplierId: m.multiplier_id || "unknown",
+          multiplierName: m.multiplier_name,
+          multiplierPercentage: Number(m.multiplier_percentage.toFixed(2)),
+          totalSales: m.total_sales,
+          totalTickets: m.total_tickets,
+          totalCommission: m.total_commission,
+        })).sort((a: any, b: any) => b.multiplierPercentage - a.multiplierPercentage)
+      }));
     } catch (err: any) {
       logger.error({
         layer: "service",

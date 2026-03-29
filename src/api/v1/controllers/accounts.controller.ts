@@ -527,16 +527,20 @@ export const AccountsController = {
   async getPaymentHistory(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
 
-    const { date, ventanaId, vendedorId } = req.query as any;
+    const { date, ventanaId, vendedorId, page, pageSize } = req.query as any;
     const user = req.user;
+    const p = parseInt(page) || 1;
+    const ps = parseInt(pageSize) || 20;
 
     // Validar permisos según rol
     if (user.role === Role.VENDEDOR) {
-      // Los vendedores solo pueden ver su propio historial
       const filters = {
         vendedorId: user.id,
+        page: p,
+        pageSize: ps,
       };
-      const history = await AccountsService.getPaymentHistory(date, filters);
+      const result = await AccountsService.getPaymentHistory(date, filters);
+      const { data, totalCount } = result;
 
       // Log de auditoría
       await ActivityService.log({
@@ -547,25 +551,17 @@ export const AccountsController = {
         details: {
           date,
           vendedorId: user.id,
-          count: history.length,
+          count: data.length,
+          totalCount,
         },
         layer: "controller",
         requestId: req.requestId,
       });
 
-      req.logger?.info({
-        layer: "controller",
-        action: "ACCOUNT_PAYMENT_HISTORY_VIEW",
-        userId: user.id,
-        requestId: req.requestId,
-        payload: { date, count: history.length },
-      });
-
-      return success(res, history, 200);
+      return success(res, data, { total: totalCount, page: p, pageSize: ps });
     }
 
     if (user.role === Role.VENTANA) {
-      // Obtener ventanaId del usuario si no está en el token
       let effectiveVentanaId = user.ventanaId;
       if (!effectiveVentanaId) {
         const userWithVentana = await prisma.user.findUnique({
@@ -579,7 +575,8 @@ export const AccountsController = {
         throw new AppError("El usuario VENTANA no tiene una ventana asignada", 400, "NO_VENTANA");
       }
 
-      // Si se proporciona vendedorId, validar que pertenece a la ventana
+      let filters: any = { ventanaId: effectiveVentanaId, page: p, pageSize: ps };
+
       if (vendedorId) {
         const vendedor = await prisma.user.findUnique({
           where: { id: vendedorId },
@@ -588,39 +585,11 @@ export const AccountsController = {
         if (!vendedor || vendedor.ventanaId !== effectiveVentanaId || vendedor.role !== Role.VENDEDOR) {
           throw new AppError("El vendedor no pertenece a tu ventana", 403, "FORBIDDEN");
         }
-        const filters = { vendedorId };
-        const history = await AccountsService.getPaymentHistory(date, filters);
-
-        // Log de auditoría
-        await ActivityService.log({
-          userId: user.id,
-          action: ActivityType.ACCOUNT_PAYMENT_HISTORY_VIEW,
-          targetType: "ACCOUNT_PAYMENT",
-          targetId: null,
-          details: {
-            date,
-            vendedorId,
-            ventanaId: effectiveVentanaId,
-            count: history.length,
-          },
-          layer: "controller",
-          requestId: req.requestId,
-        });
-
-        req.logger?.info({
-          layer: "controller",
-          action: "ACCOUNT_PAYMENT_HISTORY_VIEW",
-          userId: user.id,
-          requestId: req.requestId,
-          payload: { date, vendedorId, count: history.length },
-        });
-
-        return success(res, history, 200);
+        filters = { vendedorId, page: p, pageSize: ps };
       }
 
-      // Si no se proporciona vendedorId, ver historial de la ventana
-      const filters = { ventanaId: effectiveVentanaId };
-      const history = await AccountsService.getPaymentHistory(date, filters);
+      const result = await AccountsService.getPaymentHistory(date, filters);
+      const { data, totalCount } = result;
 
       // Log de auditoría
       await ActivityService.log({
@@ -630,28 +599,23 @@ export const AccountsController = {
         targetId: null,
         details: {
           date,
+          vendedorId: filters.vendedorId || null,
           ventanaId: effectiveVentanaId,
-          count: history.length,
+          count: data.length,
+          totalCount,
         },
         layer: "controller",
         requestId: req.requestId,
       });
 
-      req.logger?.info({
-        layer: "controller",
-        action: "ACCOUNT_PAYMENT_HISTORY_VIEW",
-        userId: user.id,
-        requestId: req.requestId,
-        payload: { date, ventanaId: effectiveVentanaId, count: history.length },
-      });
-
-      return success(res, history, 200);
+      return success(res, data, { total: totalCount, page: p, pageSize: ps });
     }
 
     // ADMIN puede ver cualquier historial
     if (user.role === Role.ADMIN) {
-      const filters = { ventanaId, vendedorId };
-      const history = await AccountsService.getPaymentHistory(date, filters);
+      const filters = { ventanaId, vendedorId, page: p, pageSize: ps };
+      const result = await AccountsService.getPaymentHistory(date, filters);
+      const { data, totalCount } = result;
 
       // Log de auditoría
       await ActivityService.log({
@@ -663,21 +627,14 @@ export const AccountsController = {
           date,
           ventanaId: filters.ventanaId || null,
           vendedorId: filters.vendedorId || null,
-          count: history.length,
+          count: data.length,
+          totalCount,
         },
         layer: "controller",
         requestId: req.requestId,
       });
 
-      req.logger?.info({
-        layer: "controller",
-        action: "ACCOUNT_PAYMENT_HISTORY_VIEW",
-        userId: user.id,
-        requestId: req.requestId,
-        payload: { date, count: history.length },
-      });
-
-      return success(res, history, 200);
+      return success(res, data, { total: totalCount, page: p, pageSize: ps });
     }
 
     throw new AppError("Rol no permitido", 403, "FORBIDDEN");

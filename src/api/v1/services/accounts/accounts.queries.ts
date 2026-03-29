@@ -824,7 +824,7 @@ export async function getSorteoBreakdown(
  */
 export async function getMovementsForDay(
     statementId: string
-): Promise<Array<{
+): Promise<{ data: Array<{
     id: string;
     accountStatementId: string;
     date: string;
@@ -841,25 +841,22 @@ export async function getMovementsForDay(
     paidByName: string;
     createdAt: string;
     updatedAt: string;
-}>> {
-    const payments = await AccountPaymentRepository.findByStatementId(statementId);
+}>, totalCount: number }> {
+    const result = await AccountPaymentRepository.findByStatementId(statementId);
+    const payments = (result as any).data || [];
 
-    return payments
-        //  CORREGIDO: Retornar TODOS los movimientos (activos y reversados)
-        // El FE los separa en "Activos" y "Revertidos" para mostrar en historial de auditoria
-        // Los cálculos en el backend filtran !isReversed cuando es necesario
-        .map((p) => ({
+    const data = payments
+        .map((p: any) => ({
             id: p.id,
             accountStatementId: p.accountStatementId,
             date: p.date.toISOString().split("T")[0],
-            time: p.time || null, //  NUEVO: Hora del movimiento si está disponible
+            time: p.time || null,
             amount: p.amount,
             type: p.type as "payment" | "collection",
             method: p.method as "cash" | "transfer" | "check" | "other",
             notes: p.notes,
             isFinal: p.isFinal,
             isReversed: p.isReversed,
-            //  CRÍTICO: Serializar reversedAt como ISO string para consistencia con la API
             reversedAt: p.reversedAt ? p.reversedAt.toISOString() : null,
             reversedBy: p.reversedBy,
             paidById: p.paidById,
@@ -867,5 +864,7 @@ export async function getMovementsForDay(
             createdAt: p.createdAt.toISOString(),
             updatedAt: p.updatedAt.toISOString(),
         }))
-        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); // Ordenar por createdAt ascendente
+        .sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); // Ordenar por createdAt ascendente
+
+    return { data, totalCount: (result as any).totalCount };
 }

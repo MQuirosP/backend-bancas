@@ -41,10 +41,7 @@ export async function calculateAccumulatedByNumbersAndScope(
     scopeType: 'USER' | 'VENTANA' | 'BANCA';
     scopeId: string;            // userId, ventanaId, o bancaId
     sorteoId: string;           // ️ CRÍTICO: Acumulado es por sorteo
-    multiplierFilter?: {        //  NUEVO: Filtro por multiplicador
-      id: string;
-      kind: 'NUMERO' | 'REVENTADO';
-    } | null;
+    multiplierFilter?: { id: string; kind: 'NUMERO' | 'REVENTADO' } | null;
     cache?: ScopeCache;
   }
 ): Promise<Map<string, number>> {
@@ -81,11 +78,11 @@ export async function calculateAccumulatedByNumbersAndScope(
     let scopeCondition: Prisma.Sql;
 
     if (scopeType === 'USER') {
-      scopeCondition = Prisma.sql`t."vendedorId" = CAST(${scopeId} AS uuid)`;
+      scopeCondition = Prisma.sql`t."vendedorId" = ${scopeId}::uuid`;
     } else if (scopeType === 'VENTANA') {
-      scopeCondition = Prisma.sql`t."ventanaId" = CAST(${scopeId} AS uuid)`;
+      scopeCondition = Prisma.sql`t."ventanaId" = ${scopeId}::uuid`;
     } else if (scopeType === 'BANCA') {
-      scopeCondition = Prisma.sql`v."bancaId" = CAST(${scopeId} AS uuid)`;
+      scopeCondition = Prisma.sql`v."bancaId" = ${scopeId}::uuid`;
     } else {
       throw new Error(`Invalid scopeType: ${scopeType}`);
     }
@@ -98,7 +95,7 @@ export async function calculateAccumulatedByNumbersAndScope(
         multiplierCondition = Prisma.sql`AND j."type" = 'REVENTADO'`;
       } else {
         // Para NUMERO, filtramos por el ID del multiplicador específico
-        multiplierCondition = Prisma.sql`AND j."multiplierId" = CAST(${multiplierFilter.id} AS uuid)`;
+        multiplierCondition = Prisma.sql`AND j."multiplierId" = ${multiplierFilter.id}::uuid`;
       }
     }
 
@@ -143,7 +140,7 @@ export async function calculateAccumulatedByNumbersAndScope(
         }
         WHERE 
           ${scopeCondition}
-          AND t."sorteoId" = CAST(${sorteoId} AS uuid)
+          AND t."sorteoId" = ${sorteoId}::uuid
           AND t."status" != 'CANCELLED'
           AND t."isActive" = true  --  Exclusivo activos
           AND t."deletedAt" IS NULL
@@ -657,7 +654,12 @@ async function executeValidationTask(
     sorteoId: string;
     loteriaId: string; //  NUEVO: Para filtrar por lotería
     vendedorId?: string | null; //  NUEVO: Para appliesToVendedor
-    numbers: Array<{ number: string; amountForNumber: number }>;
+    numbers: Array<{ 
+      number: string; 
+      amountForNumber: number; 
+      type: "NUMERO" | "REVENTADO"; 
+      multiplierId?: string | null 
+    }>;
     cache?: ScopeCache;
   }
 ): Promise<ValidationResult> {
@@ -737,8 +739,7 @@ async function executeValidationTask(
       }
 
       if (rule.maxTotal != null || task.dynamicLimit != null) {
-        const staticMaxTotal = rule.maxTotal ?? Infinity;
-        const effectiveMaxTotal = task.dynamicLimit != null ? Math.min(staticMaxTotal, task.dynamicLimit) : staticMaxTotal;
+        const effectiveMaxTotal = task.dynamicLimit ?? rule.maxTotal ?? Infinity;
 
         const numbersToCheck = numbersToValidate.map(num => {
           const amount = context.numbers.find(n => n.number === num)?.amountForNumber || 0;
@@ -818,11 +819,24 @@ async function executeValidationTask(
       }
 
       if (rule.maxTotal != null || task.dynamicLimit != null) {
-        const staticMaxTotal = rule.maxTotal ?? Infinity;
-        const effectiveMaxTotal = task.dynamicLimit != null ? Math.min(staticMaxTotal, task.dynamicLimit) : staticMaxTotal;
+        const effectiveMaxTotal = task.dynamicLimit ?? rule.maxTotal ?? Infinity;
 
+        //  NUEVO: Filtrar las jugadas del ticket que aplican a ESTA regla específica
+        // - Si la regla TIENE multiplierId: solo contamos jugadas de ese multiplicador.
+        // - Si la regla NO tiene multiplierId: sumamos TODO lo del número (Número + Reventado).
         const numbersToCheck = uniqueNumbers.map(num => {
-          const amount = context.numbers.find(n => n.number === num)?.amountForNumber || 0;
+          const matchingJugadas = context.numbers.filter(n => {
+            if (n.number !== num) return false;
+            // Si la regla es específica de multiplicador, filtrar por él
+            if (rule.multiplierId) {
+              return n.multiplierId === rule.multiplierId;
+            }
+            // Si la regla no tiene multiplicador pero pedimos "REVENTADO" (en algunos casos esto se maneja por tipo)
+            // Aquí sumamos todo si la regla es de "Techo Global" del número.
+            return true;
+          });
+
+          const amount = matchingJugadas.reduce((sum, j) => sum + j.amountForNumber, 0);
           return { number: num, amountForNumber: amount };
         }).filter(n => n.amountForNumber > 0);
 
@@ -832,10 +846,9 @@ async function executeValidationTask(
             numbers: numbersToCheck,
             rule: { ...rule, maxTotal: effectiveMaxTotal },
             sorteoId: context.sorteoId,
-            dynamicLimit: task.dynamicLimit,
+            vendedorId: context.vendedorId,
             multiplierFilter,
             cache: context.cache,
-            vendedorId: context.vendedorId, //  AHORA SÍ PASA
           });
         }
       }
@@ -874,7 +887,12 @@ export async function validateRulesInParallel(
   tx: Prisma.TransactionClient,
   params: {
     rules: any[]; // Reglas aplicables con relaciones
-    numbers: Array<{ number: string; amountForNumber: number }>; // Números y montos del ticket
+    numbers: Array<{ 
+      number: string; 
+      amountForNumber: number; 
+      type: "NUMERO" | "REVENTADO"; 
+      multiplierId?: string | null 
+    }>; // Números y montos granulares del ticket
     sorteoId: string;
     loteriaId: string; //  NUEVO: Para filtrar por lotería
     dynamicLimits?: Map<string, number>; // Map de ruleId -> dynamicLimit

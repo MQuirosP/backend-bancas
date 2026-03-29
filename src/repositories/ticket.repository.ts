@@ -589,6 +589,27 @@ export const TicketRepository = {
           .sort((a, b) => b.score - a.score)
           .map((x) => x.r);
 
+        // 4.1) Blindaje Quirúrgico: Bloqueo selectivo de reglas compartidas (Cupos de Banca/Ventana)
+        // Solo bloqueamos el registro si la regla NO es personal ni aplica por vendedor.
+        // Esto garantiza que los vendedores independientes no se "frenen" entre sí.
+        const sharedRuleIds = applicable
+          .filter(r => !r.userId && !r.appliesToVendedor && (r.ventanaId || r.bancaId))
+          .map(r => r.id);
+
+        if (sharedRuleIds.length > 0) {
+          await tx.$queryRawUnsafe(`
+            SELECT id FROM "RestrictionRule" 
+            WHERE id IN (${sharedRuleIds.map(id => `'${id}'::uuid`).join(',')})
+            FOR UPDATE
+          `);
+          
+          logger.info({
+            layer: "repository",
+            action: "SHARED_RULES_LOCKED",
+            payload: { ruleCount: sharedRuleIds.length, sorteoId, userId }
+          });
+        }
+
         const lotteryMultiplierRules = applicable.filter(
           (rule) => rule.loteriaId && rule.multiplierId
         );
@@ -990,33 +1011,21 @@ export const TicketRepository = {
         //  CRÍTICO: maxTotal se valida por número individual acumulado en el sorteo
         // ️ NUNCA se valida sobre total del ticket ni sobre total diario
 
-        // Preparar números del ticket para validación paralela
-        const ticketNumbers: Array<{ number: string; amountForNumber: number }> = [];
-        const uniqueNumbers = [...new Set(preparedJugadas.map(j => j.type === 'NUMERO' ? j.number : j.reventadoNumber))].filter((n): n is string => !!n);
+        // Preparar números del ticket para validación paralela de forma GRANULAR
+        // Incluimos el tipo y el multiplicador para que cada regla sepa qué sumar.
+        const ticketNumbers: Array<{ 
+          number: string; 
+          amountForNumber: number; 
+          type: "NUMERO" | "REVENTADO"; 
+          multiplierId?: string | null 
+        }> = preparedJugadas.map(j => ({
+          number: j.type === 'NUMERO' ? j.number : j.reventadoNumber!,
+          amountForNumber: Number(j.amount),
+          type: j.type as "NUMERO" | "REVENTADO",
+          multiplierId: j.multiplierId
+        })).filter(n => n.amountForNumber > 0);
 
-        for (const num of uniqueNumbers) {
-          const jugadasDelNumero = preparedJugadas.filter(j => {
-            if (j.isActive === false) return false;
-            return (j.type === 'NUMERO' && j.number === num) || (j.type === 'REVENTADO' && j.reventadoNumber === num);
-          });
-
-          const amount = jugadasDelNumero.reduce((acc, j) => {
-            const amountValue = Number(j.amount);
-            if (!Number.isFinite(amountValue) || amountValue <= 0) {
-              logger.warn({
-                layer: 'repository',
-                action: 'INVALID_JUGADA_AMOUNT',
-                payload: { jugada: j, amount: j.amount },
-              });
-              return acc;
-            }
-            return acc + amountValue;
-          }, 0);
-
-          if (amount > 0) {
-            ticketNumbers.push({ number: num, amountForNumber: amount });
-          }
-        }
+        const uniqueNumbersCount = new Set(ticketNumbers.map(n => n.number)).size;
 
         // Calcular límites dinámicos para todas las reglas que los necesiten
         const dynamicLimits = new Map<string, number>();
@@ -1084,7 +1093,7 @@ export const TicketRepository = {
               userId,
               bancaId,
               jugadasCount: preparedJugadas.length,
-              uniqueNumbersCount: uniqueNumbers.length,
+              uniqueNumbersCount,
             },
             applicableRules: applicable.map((r, idx) => ({
               index: idx,
@@ -1109,9 +1118,9 @@ export const TicketRepository = {
           rules: applicable,
           numbers: ticketNumbers,
           sorteoId,
-          loteriaId, // NUEVO
+          loteriaId, 
           dynamicLimits,
-          vendedorId: userId, // NUEVO
+          vendedorId: userId, 
         });
 
         //  LOGGING: Registrar finalización de validación paralela
@@ -1459,6 +1468,20 @@ export const TicketRepository = {
           },
         });
 
+        // ============================================================================
+        // REFACTORIZACION 'TANK' MODE: Row-level locking (FOR UPDATE)
+        // Bloqueamos las reglas encontradas para asegurar validación atómica
+        // Evita que dos tickets concurrentes vean el mismo 'acumulado' antes de insertar
+        // ============================================================================
+        if (candidateRules.length > 0) {
+          const ruleIds = candidateRules.map(r => r.id);
+          // Usamos queryRaw para ejecutar el bloqueo en PostgreSQL con casting explícito a uuid
+          await tx.$queryRaw`
+            SELECT id FROM "RestrictionRule" 
+            WHERE id IN (${Prisma.join(ruleIds.map(id => Prisma.sql`${id}::uuid`))}) 
+            FOR UPDATE`;
+        }
+
         const applicable: RestrictionRuleWithRelations[] = candidateRules
           .filter((r) => {
             if (r.appliesToDate && !isSameLocalDay(new Date(r.appliesToDate), now)) return false;
@@ -1692,33 +1715,22 @@ export const TicketRepository = {
           numberTotals: new Map(),
         };
 
-        // Preparar números del ticket para validación paralela
-        const ticketNumbers: Array<{ number: string; amountForNumber: number }> = [];
-        const uniqueNumbers = [...new Set(preparedJugadas.map(j => j.type === 'NUMERO' ? j.number : j.reventadoNumber))].filter((n): n is string => !!n);
+        // Preparar números del ticket para validación paralela (incluyendo tipo y multiplicador)
+        const ticketNumbers: Array<{ 
+          number: string; 
+          amountForNumber: number; 
+          type: 'NUMERO' | 'REVENTADO'; 
+          multiplierId?: string | null 
+        }> = preparedJugadas.map(j => ({
+          number: j.type === 'NUMERO' ? j.number : j.reventadoNumber!,
+          amountForNumber: Number(j.amount),
+          type: j.type,
+          multiplierId: j.multiplierId || null
+        }));
 
-        for (const num of uniqueNumbers) {
-          const jugadasDelNumero = preparedJugadas.filter(j => {
-            if (j.isActive === false) return false;
-            return (j.type === 'NUMERO' && j.number === num) || (j.type === 'REVENTADO' && j.reventadoNumber === num);
-          });
+        const uniqueNumbersCount = new Set(ticketNumbers.map(n => n.number)).size;
 
-          const amount = jugadasDelNumero.reduce((acc, j) => {
-            const amountValue = Number(j.amount);
-            if (!Number.isFinite(amountValue) || amountValue <= 0) {
-              logger.warn({
-                layer: 'repository',
-                action: 'INVALID_JUGADA_AMOUNT',
-                payload: { jugada: j, amount: j.amount },
-              });
-              return acc;
-            }
-            return acc + amountValue;
-          }, 0);
 
-          if (amount > 0) {
-            ticketNumbers.push({ number: num, amountForNumber: amount });
-          }
-        }
 
         //  OPTIMIZACIÓN: Precargar acumulados por ámbito y números del ticket en paralelo
         const preloadingPromises = [];
@@ -1826,7 +1838,7 @@ export const TicketRepository = {
               userId,
               bancaId,
               jugadasCount: preparedJugadas.length,
-              uniqueNumbersCount: uniqueNumbers.length,
+              uniqueNumbersCount,
             },
             applicableRules: applicable.map((r, idx) => ({
               index: idx,
@@ -2161,15 +2173,49 @@ export const TicketRepository = {
     return withConnectionRetry(
       () => prisma.ticket.findUnique({
         where: { id },
-        include: {
-          jugadas: true,
-          loteria: true,
-          sorteo: true,
-          ventana: true,
-          vendedor: true,
-          createdByUser: {
-            select: { id: true, name: true, role: true },
+        select: {
+          id: true,
+          ticketNumber: true,
+          totalAmount: true,
+          status: true,
+          isActive: true,
+          sorteoId: true,
+          loteriaId: true,
+          ventanaId: true,
+          vendedorId: true,
+          businessDate: true,
+          totalPayout: true,
+          totalPaid: true,
+          remainingAmount: true,
+          totalCommission: true,
+          createdAt: true,
+          updatedAt: true,
+          jugadas: {
+            select: {
+              id: true,
+              number: true,
+              type: true,
+              amount: true,
+              reventadoNumber: true,
+              isWinner: true,
+              payout: true,
+              commissionAmount: true,
+              listeroCommissionAmount: true,
+              multiplierId: true,
+            }
           },
+          loteria: { select: { id: true, name: true } },
+          sorteo: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              scheduledAt: true,
+            }
+          },
+          ventana: { select: { id: true, name: true, bancaId: true } },
+          vendedor: { select: { id: true, name: true, role: true } },
+          createdByUser: { select: { id: true, name: true, role: true } },
         },
       }),
       { context: 'TicketRepository.getById' }
@@ -2427,9 +2473,19 @@ export const TicketRepository = {
             ventana: { select: { id: true, name: true } },
             vendedor: { select: { id: true, name: true, role: true } },
             createdByUser: { select: { id: true, name: true, role: true } },
-            _count: {
-              select: { jugadas: true }
-            }
+            jugadas: {
+              select: {
+                id: true,
+                number: true,
+                type: true,
+                amount: true,
+                reventadoNumber: true,
+                isWinner: true,
+                payout: true,
+                multiplierId: true,
+                commissionAmount: true,
+              }
+            },
           },
           orderBy: { createdAt: "desc" },
         }),
@@ -2542,22 +2598,6 @@ export const TicketRepository = {
       },
     });
 
-    //  NUEVO: Invalidar caché de estados de cuenta cuando se cancela un ticket
-    // El ticket cancelado afecta el balance (totalSales) del statement del día
-    const { invalidateCacheForTicket } = await import('../utils/accountStatementCache');
-    invalidateCacheForTicket({
-      businessDate: ticket.businessDate,
-      ventanaId: ticket.ventanaId,
-      vendedorId: ticket.vendedorId,
-    }).catch((err: Error) => {
-      // Ignorar errores de invalidación de caché (no crítico)
-      logger.warn({
-        layer: 'repository',
-        action: 'CACHE_INVALIDATION_FAILED',
-        payload: { error: err.message, ticketId: id }
-      });
-    });
-
     return ticket;
   },
 
@@ -2645,22 +2685,6 @@ export const TicketRepository = {
         ticketId: id,
         userId,
       },
-    });
-
-    //  NUEVO: Invalidar caché de estados de cuenta cuando se restaura un ticket
-    // El ticket restaurado afecta el balance (totalSales) del statement del día
-    const { invalidateCacheForTicket } = await import('../utils/accountStatementCache');
-    invalidateCacheForTicket({
-      businessDate: ticket.businessDate,
-      ventanaId: ticket.ventanaId,
-      vendedorId: ticket.vendedorId,
-    }).catch((err: Error) => {
-      // Ignorar errores de invalidación de caché (no crítico)
-      logger.warn({
-        layer: 'repository',
-        action: 'CACHE_INVALIDATION_FAILED',
-        payload: { error: err.message, ticketId: id }
-      });
     });
 
     return ticket;

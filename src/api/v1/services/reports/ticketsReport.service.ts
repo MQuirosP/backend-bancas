@@ -1046,100 +1046,112 @@ export const TicketsReportService = {
     let cByVentana: any[] | undefined;
     if (cbk.includeVentana) {
       const byVentanaQuery = Prisma.sql`
-        SELECT
-          t."ventanaId",
-          v.name as ventana_name,
-          COUNT(*) as cancelled_count,
-          SUM(t."totalAmount") as cancelled_amount
-        FROM "Ticket" t
-        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-        WHERE t.status = 'CANCELLED'
-          AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-          ${cancelledEntityFilter}
-        GROUP BY t."ventanaId", v.name
+        WITH cancelled_stats AS (
+          SELECT
+            t."ventanaId",
+            v.name as ventana_name,
+            COUNT(*)::int as cancelled_count,
+            SUM(t."totalAmount")::float as cancelled_amount
+          FROM "Ticket" t
+          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+          WHERE t.status = 'CANCELLED'
+            AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            ${cancelledEntityFilter}
+          GROUP BY t."ventanaId", v.name
+        ),
+        total_stats AS (
+          SELECT
+            t."ventanaId",
+            COUNT(*)::int as total_tickets
+          FROM "Ticket" t
+          WHERE t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            ${cancelledEntityFilter}
+          GROUP BY t."ventanaId"
+        )
+        SELECT 
+          cs.*, 
+          COALESCE(ts.total_tickets, 0) as total_tickets,
+          ROUND(COALESCE((cs.cancelled_count::float / NULLIF(ts.total_tickets, 0)) * 100, 0)::numeric, 2)::float as cancelled_rate
+        FROM cancelled_stats cs
+        LEFT JOIN total_stats ts ON cs."ventanaId" = ts."ventanaId"
+        ORDER BY cs.cancelled_count DESC
       `;
 
       const byVentanaRaw = await prisma.$queryRaw<Array<{
         ventanaId: string;
         ventana_name: string;
-        cancelled_count: bigint;
+        cancelled_count: number;
         cancelled_amount: number;
+        total_tickets: number;
+        cancelled_rate: number;
       }>>(byVentanaQuery);
 
       if (byVentanaRaw.length > 0) {
-        cByVentana = await Promise.all(byVentanaRaw.map(async (v) => {
-          const ventanaTotalTickets = await prisma.ticket.count({
-            where: {
-              ventanaId: v.ventanaId,
-              createdAt: { gte: dateRange.from, lte: dateRange.to },
-            },
-          });
-          const cancelledCount = parseInt(v.cancelled_count.toString());
-          const cancelledRate = ventanaTotalTickets > 0
-            ? calculatePercentage(cancelledCount, ventanaTotalTickets)
-            : 0;
-
-          return {
-            ventanaId: v.ventanaId,
-            ventanaName: v.ventana_name,
-            cancelledCount,
-            cancelledAmount: parseFloat(v.cancelled_amount?.toString() || '0'),
-            cancelledRate,
-            totalTickets: ventanaTotalTickets,
-          };
+        cByVentana = byVentanaRaw.map(v => ({
+          ventanaId: v.ventanaId,
+          ventanaName: v.ventana_name,
+          cancelledCount: v.cancelled_count,
+          cancelledAmount: v.cancelled_amount,
+          cancelledRate: v.cancelled_rate,
+          totalTickets: v.total_tickets,
         }));
-        cByVentana.sort((a, b) => b.cancelledCount - a.cancelledCount);
       }
     }
 
     let cByVendedor: any[] | undefined;
     if (cbk.includeVendedor) {
       const byVendedorQuery = Prisma.sql`
-        SELECT
-          t."vendedorId",
-          u.name as vendedor_name,
-          v.name as ventana_name,
-          COUNT(*) as cancelled_count,
-          SUM(t."totalAmount") as cancelled_amount
-        FROM "Ticket" t
-        INNER JOIN "User" u ON t."vendedorId" = u.id
-        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-        WHERE t.status = 'CANCELLED'
-          AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-          ${cancelledEntityFilter}
-        GROUP BY t."vendedorId", u.name, v.name
-        ORDER BY cancelled_count DESC
+        WITH cancelled_stats AS (
+          SELECT
+            t."vendedorId",
+            u.name as vendedor_name,
+            v.name as ventana_name,
+            COUNT(*)::int as cancelled_count,
+            SUM(t."totalAmount")::float as cancelled_amount
+          FROM "Ticket" t
+          INNER JOIN "User" u ON t."vendedorId" = u.id
+          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+          WHERE t.status = 'CANCELLED'
+            AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            ${cancelledEntityFilter}
+          GROUP BY t."vendedorId", u.name, v.name
+        ),
+        total_stats AS (
+          SELECT
+            t."vendedorId",
+            COUNT(*)::int as total_tickets
+          FROM "Ticket" t
+          WHERE t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            ${cancelledEntityFilter}
+          GROUP BY t."vendedorId"
+        )
+        SELECT 
+          cs.*,
+          COALESCE(ts.total_tickets, 0) as total_tickets,
+          ROUND(COALESCE((cs.cancelled_count::float / NULLIF(ts.total_tickets, 0)) * 100, 0)::numeric, 2)::float as cancelled_rate
+        FROM cancelled_stats cs
+        LEFT JOIN total_stats ts ON cs."vendedorId" = ts."vendedorId"
+        ORDER BY cs.cancelled_count DESC
       `;
 
       const byVendedorRaw = await prisma.$queryRaw<Array<{
         vendedorId: string;
         vendedor_name: string;
         ventana_name: string;
-        cancelled_count: bigint;
+        cancelled_count: number;
         cancelled_amount: number;
+        total_tickets: number;
+        cancelled_rate: number;
       }>>(byVendedorQuery);
 
       if (byVendedorRaw.length > 0) {
-        cByVendedor = await Promise.all(byVendedorRaw.map(async (v) => {
-          const vendedorTotalTickets = await prisma.ticket.count({
-            where: {
-              vendedorId: v.vendedorId,
-              createdAt: { gte: dateRange.from, lte: dateRange.to },
-            },
-          });
-          const cancelledCount = parseInt(v.cancelled_count.toString());
-          const cancelledRate = vendedorTotalTickets > 0
-            ? calculatePercentage(cancelledCount, vendedorTotalTickets)
-            : 0;
-
-          return {
-            vendedorId: v.vendedorId,
-            vendedorName: v.vendedor_name,
-            ventanaName: v.ventana_name,
-            cancelledCount,
-            cancelledAmount: parseFloat(v.cancelled_amount.toString()),
-            cancelledRate,
-          };
+        cByVendedor = byVendedorRaw.map(v => ({
+          vendedorId: v.vendedorId,
+          vendedorName: v.vendedor_name,
+          ventanaName: v.ventana_name,
+          cancelledCount: v.cancelled_count,
+          cancelledAmount: v.cancelled_amount,
+          cancelledRate: v.cancelled_rate,
         }));
       }
     }
@@ -1147,47 +1159,53 @@ export const TicketsReportService = {
     let cByLoteria: any[] | undefined;
     if (cbk.includeLoteria) {
       const byLoteriaQuery = Prisma.sql`
-        SELECT
-          t."loteriaId",
-          l.name as loteria_name,
-          COUNT(*) as cancelled_count,
-          SUM(t."totalAmount") as cancelled_amount
-        FROM "Ticket" t
-        INNER JOIN "Loteria" l ON t."loteriaId" = l.id
-        WHERE t.status = 'CANCELLED'
-          AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-          ${cancelledEntityFilter}
-        GROUP BY t."loteriaId", l.name
-        ORDER BY cancelled_count DESC
+        WITH cancelled_stats AS (
+          SELECT
+            t."loteriaId",
+            l.name as loteria_name,
+            COUNT(*)::int as cancelled_count,
+            SUM(t."totalAmount")::float as cancelled_amount
+          FROM "Ticket" t
+          INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+          WHERE t.status = 'CANCELLED'
+            AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            ${cancelledEntityFilter}
+          GROUP BY t."loteriaId", l.name
+        ),
+        total_stats AS (
+          SELECT
+            t."loteriaId",
+            COUNT(*)::int as total_tickets
+          FROM "Ticket" t
+          WHERE t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            ${cancelledEntityFilter}
+          GROUP BY t."loteriaId"
+        )
+        SELECT 
+          cs.*,
+          COALESCE(ts.total_tickets, 0) as total_tickets,
+          ROUND(COALESCE((cs.cancelled_count::float / NULLIF(ts.total_tickets, 0)) * 100, 0)::numeric, 2)::float as cancelled_rate
+        FROM cancelled_stats cs
+        LEFT JOIN total_stats ts ON cs."loteriaId" = ts."loteriaId"
+        ORDER BY cs.cancelled_count DESC
       `;
 
       const byLoteriaRaw = await prisma.$queryRaw<Array<{
         loteriaId: string;
         loteria_name: string;
-        cancelled_count: bigint;
+        cancelled_count: number;
         cancelled_amount: number;
+        total_tickets: number;
+        cancelled_rate: number;
       }>>(byLoteriaQuery);
 
       if (byLoteriaRaw.length > 0) {
-        cByLoteria = await Promise.all(byLoteriaRaw.map(async (l) => {
-          const loteriaTotalTickets = await prisma.ticket.count({
-            where: {
-              loteriaId: l.loteriaId,
-              createdAt: { gte: dateRange.from, lte: dateRange.to },
-            },
-          });
-          const cancelledCount = parseInt(l.cancelled_count.toString());
-          const cancelledRate = loteriaTotalTickets > 0
-            ? calculatePercentage(cancelledCount, loteriaTotalTickets)
-            : 0;
-
-          return {
-            loteriaId: l.loteriaId,
-            loteriaName: l.loteria_name,
-            cancelledCount,
-            cancelledAmount: parseFloat(l.cancelled_amount.toString()),
-            cancelledRate,
-          };
+        cByLoteria = byLoteriaRaw.map(l => ({
+          loteriaId: l.loteriaId,
+          loteriaName: l.loteria_name,
+          cancelledCount: l.cancelled_count,
+          cancelledAmount: l.cancelled_amount,
+          cancelledRate: l.cancelled_rate,
         }));
       }
     }
@@ -1195,47 +1213,53 @@ export const TicketsReportService = {
     let cBySorteo: any[] | undefined;
     if (cbk.includeSorteo) {
       const bySorteoQuery = Prisma.sql`
-        SELECT
-          t."sorteoId",
-          s.name as sorteo_name,
-          COUNT(*) as cancelled_count,
-          SUM(t."totalAmount") as cancelled_amount
-        FROM "Ticket" t
-        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-        WHERE t.status = 'CANCELLED'
-          AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
-          ${cancelledEntityFilter}
-        GROUP BY t."sorteoId", s.name
-        ORDER BY cancelled_count DESC
+        WITH cancelled_stats AS (
+          SELECT
+            t."sorteoId",
+            s.name as sorteo_name,
+            COUNT(*)::int as cancelled_count,
+            SUM(t."totalAmount")::float as cancelled_amount
+          FROM "Ticket" t
+          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+          WHERE t.status = 'CANCELLED'
+            AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            ${cancelledEntityFilter}
+          GROUP BY t."sorteoId", s.name
+        ),
+        total_stats AS (
+          SELECT
+            t."sorteoId",
+            COUNT(*)::int as total_tickets
+          FROM "Ticket" t
+          WHERE t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            ${cancelledEntityFilter}
+          GROUP BY t."sorteoId"
+        )
+        SELECT 
+          cs.*,
+          COALESCE(ts.total_tickets, 0) as total_tickets,
+          ROUND(COALESCE((cs.cancelled_count::float / NULLIF(ts.total_tickets, 0)) * 100, 0)::numeric, 2)::float as cancelled_rate
+        FROM cancelled_stats cs
+        LEFT JOIN total_stats ts ON cs."sorteoId" = ts."sorteoId"
+        ORDER BY cs.cancelled_count DESC
       `;
 
       const bySorteoRaw = await prisma.$queryRaw<Array<{
         sorteoId: string;
         sorteo_name: string;
-        cancelled_count: bigint;
+        cancelled_count: number;
         cancelled_amount: number;
+        total_tickets: number;
+        cancelled_rate: number;
       }>>(bySorteoQuery);
 
       if (bySorteoRaw.length > 0) {
-        cBySorteo = await Promise.all(bySorteoRaw.map(async (s) => {
-          const sorteoTotalTickets = await prisma.ticket.count({
-            where: {
-              sorteoId: s.sorteoId,
-              createdAt: { gte: dateRange.from, lte: dateRange.to },
-            },
-          });
-          const cancelledCount = parseInt(s.cancelled_count.toString());
-          const cancelledRate = sorteoTotalTickets > 0
-            ? calculatePercentage(cancelledCount, sorteoTotalTickets)
-            : 0;
-
-          return {
-            sorteoId: s.sorteoId,
-            sorteoName: s.sorteo_name,
-            cancelledCount,
-            cancelledAmount: parseFloat(s.cancelled_amount.toString()),
-            cancelledRate,
-          };
+        cBySorteo = bySorteoRaw.map(s => ({
+          sorteoId: s.sorteoId,
+          sorteoName: s.sorteo_name,
+          cancelledCount: s.cancelled_count,
+          cancelledAmount: s.cancelled_amount,
+          cancelledRate: s.cancelled_rate,
         }));
       }
     }
@@ -1384,24 +1408,54 @@ export const TicketsReportService = {
       }
     });
 
-    // Agrupación por ventana
+    // Agrupación por ventana con ventana-functions para obtener el top number en una sola query
     const byVentanaQuery = Prisma.sql`
+      WITH number_exposure AS (
+        SELECT
+          t."sorteoId",
+          t."ventanaId",
+          j.number,
+          SUM(j.amount * COALESCE(j."finalMultiplierX", ${DEFAULT_MULTIPLIER}))::float as exposure
+        FROM "Jugada" j
+        INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        WHERE t."sorteoId" = CAST(${filters.sorteoId} AS uuid)
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND t."isActive" = true
+          AND t."deletedAt" IS NULL
+          AND j."deletedAt" IS NULL
+          AND j."isActive" = true
+        GROUP BY t."sorteoId", t."ventanaId", j.number
+      ),
+      top_numbers AS (
+        SELECT
+          *,
+          ROW_NUMBER() OVER(PARTITION BY "sorteoId", "ventanaId" ORDER BY exposure DESC) as rnk
+        FROM number_exposure
+      ),
+      ventana_totals AS (
+        SELECT
+          t."ventanaId",
+          v.name as ventana_name,
+          SUM(j.amount)::float as total_amount,
+          SUM(j.amount * COALESCE(j."finalMultiplierX", ${DEFAULT_MULTIPLIER}))::float as exposure
+        FROM "Jugada" j
+        INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+        WHERE t."sorteoId" = CAST(${filters.sorteoId} AS uuid)
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND t."isActive" = true
+          AND t."deletedAt" IS NULL
+          AND j."deletedAt" IS NULL
+          AND j."isActive" = true
+        GROUP BY t."ventanaId", v.name
+      )
       SELECT
-        t."ventanaId",
-        v.name as ventana_name,
-        SUM(j.amount) as total_amount,
-        SUM(j.amount * COALESCE(j."finalMultiplierX", ${DEFAULT_MULTIPLIER})) as exposure
-      FROM "Jugada" j
-      INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-      WHERE t."sorteoId" = CAST(${filters.sorteoId} AS uuid)
-        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-        AND t."isActive" = true
-        AND t."deletedAt" IS NULL
-        AND j."deletedAt" IS NULL
-        AND j."isActive" = true
-      GROUP BY t."ventanaId", v.name
-      ORDER BY exposure DESC
+        vt.*,
+        tn.number as top_number,
+        COALESCE(tn.exposure, 0) as top_number_exposure
+      FROM ventana_totals vt
+      LEFT JOIN top_numbers tn ON vt."ventanaId" = tn."ventanaId" AND tn.rnk = 1
+      ORDER BY vt.exposure DESC
     `;
 
     const byVentanaRaw = await prisma.$queryRaw<Array<{
@@ -1409,36 +1463,17 @@ export const TicketsReportService = {
       ventana_name: string;
       total_amount: number;
       exposure: number;
+      top_number: string | null;
+      top_number_exposure: number;
     }>>(byVentanaQuery);
 
-    // Obtener número top por ventana
-    const byVentana = await Promise.all(byVentanaRaw.map(async (v) => {
-      const topNumberQuery = Prisma.sql`
-        SELECT j.number, SUM(j.amount * COALESCE(j."finalMultiplierX", ${DEFAULT_MULTIPLIER})) as exposure
-        FROM "Jugada" j
-        INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      WHERE t."sorteoId" = CAST(${filters.sorteoId} AS uuid)
-        AND t."ventanaId" = CAST(${v.ventanaId} AS uuid)
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-          AND t."isActive" = true
-          AND t."deletedAt" IS NULL
-          AND j."deletedAt" IS NULL
-          AND j."isActive" = true
-        GROUP BY j.number
-        ORDER BY exposure DESC
-        LIMIT 1
-      `;
-
-      const [topNum] = await prisma.$queryRaw<Array<{ number: string; exposure: number }>>(topNumberQuery);
-
-      return {
-        ventanaId: v.ventanaId,
-        ventanaName: v.ventana_name,
-        ventas: parseFloat(v.total_amount.toString()),
-        exposure: parseFloat(v.exposure.toString()),
-        topNumber: topNum?.number || null,
-        topNumberExposure: topNum ? parseFloat(topNum.exposure.toString()) : 0,
-      };
+    const byVentana = byVentanaRaw.map(v => ({
+      ventanaId: v.ventanaId,
+      ventanaName: v.ventana_name,
+      ventas: v.total_amount,
+      exposure: v.exposure,
+      topNumber: v.top_number,
+      topNumberExposure: v.top_number_exposure,
     }));
 
     return {
@@ -2128,11 +2163,25 @@ export const TicketsReportService = {
         ...(filters.vendedorId && filters.vendedorId.trim() !== '' && { vendedorId: filters.vendedorId })
       },
       select: {
+        id: true,
         ticketNumber: true,
         totalAmount: true,
         totalPayout: true,
+        clienteNombre: true,
         vendedor: {
           select: { name: true }
+        },
+        jugadas: {
+          where: {
+            isWinner: true,
+            deletedAt: null
+          },
+          select: {
+            number: true,
+            type: true,
+            amount: true,
+            payout: true
+          }
         }
       },
       orderBy: {
@@ -2157,9 +2206,38 @@ export const TicketsReportService = {
       }
     }
 
-    // 4. Calcular totales
-    const totalAmount = tickets.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
-    const totalPayout = tickets.reduce((acc, t) => acc + (t.totalPayout || 0), 0);
+    // 4. Calcular totales e informados
+    let totalAmountVal = 0;
+    let totalPayoutVal = 0;
+    let totalPayoutByNumber = 0;
+    let totalPayoutByReventado = 0;
+
+    const ticketsData = tickets.map(t => {
+      totalAmountVal += t.totalAmount || 0;
+      totalPayoutVal += t.totalPayout || 0;
+
+      // Desglose por tipo de jugada para los totales
+      t.jugadas.forEach(j => {
+        if (j.type === 'NUMERO') {
+          totalPayoutByNumber += j.payout || 0;
+        } else if (j.type === 'REVENTADO') {
+          totalPayoutByReventado += j.payout || 0;
+        }
+      });
+
+      return {
+        ticketNumber: t.ticketNumber,
+        clienteNombre: t.clienteNombre,
+        totalAmount: t.totalAmount,
+        totalPayout: t.totalPayout,
+        winningJugadas: t.jugadas.map(j => ({
+          number: j.number,
+          type: j.type,
+          amount: j.amount,
+          payout: j.payout
+        }))
+      };
+    });
 
     return {
       data: {
@@ -2175,15 +2253,13 @@ export const TicketsReportService = {
           name: vendedorName
         },
         printDateTime: new Date().toISOString(),
-        tickets: tickets.map(t => ({
-          ticketNumber: t.ticketNumber,
-          totalAmount: t.totalAmount,
-          totalPayout: t.totalPayout
-        })),
+        tickets: ticketsData,
         totals: {
           count: tickets.length,
-          totalAmount,
-          totalPayout
+          totalAmount: totalAmountVal,
+          totalPayout: totalPayoutVal,
+          totalPayoutByNumber,
+          totalPayoutByReventado
         }
       }
     };
