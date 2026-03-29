@@ -2100,10 +2100,19 @@ export const TicketRepository = {
           });
         }
 
-        // 14) Obtener ticket completo con jugadas
+        // 14) Obtener ticket completo con jugadas y relaciones (Compatibilidad APK)
         const ticketWithJugadas = await tx.ticket.findUnique({
           where: { id: createdTicket.id },
-          include: { jugadas: true },
+          include: {
+            jugadas: {
+              where: { deletedAt: null },
+              orderBy: { id: "asc" },
+            },
+            loteria: true,
+            sorteo: true,
+            ventana: true,
+            vendedor: true,
+          },
         });
 
         if (!ticketWithJugadas) {
@@ -2173,52 +2182,22 @@ export const TicketRepository = {
     return withConnectionRetry(
       () => prisma.ticket.findUnique({
         where: { id },
-        select: {
-          id: true,
-          ticketNumber: true,
-          totalAmount: true,
-          status: true,
-          isActive: true,
-          sorteoId: true,
-          loteriaId: true,
-          ventanaId: true,
-          vendedorId: true,
-          businessDate: true,
-          totalPayout: true,
-          totalPaid: true,
-          remainingAmount: true,
-          totalCommission: true,
-          createdAt: true,
-          updatedAt: true,
+        include: {
           jugadas: {
-            select: {
-              id: true,
-              number: true,
-              type: true,
-              amount: true,
-              reventadoNumber: true,
-              isWinner: true,
-              payout: true,
-              commissionAmount: true,
-              listeroCommissionAmount: true,
-              multiplierId: true,
-            }
+            where: { deletedAt: null },
           },
-          loteria: { select: { id: true, name: true } },
-          sorteo: {
-            select: {
-              id: true,
-              name: true,
-              status: true,
-              scheduledAt: true,
-            }
+          loteria: true,
+          sorteo: true,
+          ventana: {
+            include: {
+              banca: true,
+            },
           },
-          ventana: { select: { id: true, name: true, bancaId: true } },
-          vendedor: { select: { id: true, name: true, role: true } },
-          createdByUser: { select: { id: true, name: true, role: true } },
+          vendedor: true,
+          createdByUser: true,
         },
       }),
-      { context: 'TicketRepository.getById' }
+      { context: "TicketRepository.getById" }
     );
   },
 
@@ -2434,60 +2413,24 @@ export const TicketRepository = {
       ];
     }
 
-    // Optimización: Usar select en lugar de include para mejor performance
+    // RESTAURACIÓN: Usar include en lugar de select para asegurar compatibilidad total con la APK
     const [data, total] = await withConnectionRetry(
       () => Promise.all([
         prisma.ticket.findMany({
           where,
           skip,
           take: pageSize,
-          select: {
-            id: true,
-            ticketNumber: true,
-            businessDate: true,
-            loteriaId: true,
-            ventanaId: true,
-            vendedorId: true,
-            totalAmount: true,
-            status: true,
-            isActive: true,
-            isWinner: true,
-            sorteoId: true,
-            clienteNombre: true,
-            totalPayout: true,
-            totalPaid: true,
-            remainingAmount: true,
-            totalCommission: true,
-            lastPaymentAt: true,
-            paidById: true,
-            paymentMethod: true,
-            paymentNotes: true,
-            createdAt: true,
-            updatedAt: true,
-            createdBy: true,
-            createdByRole: true,
-            loteria: { select: { id: true, name: true } },
-            sorteo: {
-              select: { id: true, name: true, status: true, scheduledAt: true, extraOutcomeCode: true, extraMultiplierX: true },
-            },
-            ventana: { select: { id: true, name: true } },
-            vendedor: { select: { id: true, name: true, role: true } },
-            createdByUser: { select: { id: true, name: true, role: true } },
+          include: {
             jugadas: {
-              select: {
-                id: true,
-                number: true,
-                type: true,
-                amount: true,
-                reventadoNumber: true,
-                isWinner: true,
-                payout: true,
-                multiplierId: true,
-                commissionAmount: true,
-              }
+              where: { deletedAt: null },
+              orderBy: { id: "asc" },
             },
+            loteria: true,
+            sorteo: true,
+            ventana: true,
+            vendedor: true,
           },
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         }),
         prisma.ticket.count({ where }),
       ]),
