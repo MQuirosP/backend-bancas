@@ -433,7 +433,13 @@ export const CierreController = {
       for (const row of band.rows) {
         for (const fecha of band.fechas) {
           const metrics = row.dias[fecha];
-          if (!metrics || metrics.totalVendida === 0) continue;
+          if (!metrics || (metrics.totalVendida ?? 0) === 0) continue;
+
+          // Coerción defensiva: convierte null/undefined a 0 para evitar crash en .toFixed()
+          const venta = Number(metrics.totalVendida) || 0;
+          const premios = Number(metrics.ganado) || 0;
+          const comision = Number(metrics.comisionTotal) || 0;
+          const neto = Number(metrics.netoDespuesComision) || 0;
 
           lines.push(
             [
@@ -444,10 +450,10 @@ export const CierreController = {
               row.turno,
               row.tipo,
               fecha,
-              metrics.totalVendida.toFixed(2),
-              metrics.ganado.toFixed(2),
-              metrics.comisionTotal.toFixed(2),
-              metrics.netoDespuesComision.toFixed(2),
+              venta.toFixed(2),
+              premios.toFixed(2),
+              comision.toFixed(2),
+              neto.toFixed(2),
             ].join(',')
           );
         }

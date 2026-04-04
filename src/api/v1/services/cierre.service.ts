@@ -415,12 +415,12 @@ export class CierreService {
         gr.type AS tipo,
         gr.final_banda AS banda,
         TO_CHAR(gr."businessDate", 'YYYY-MM-DD') AS fecha,
-        gr.amount::FLOAT AS "totalVendida",
-        gr.payout::FLOAT AS ganado,
-        gr.comision::FLOAT AS "comisionTotal",
+        COALESCE(gr.amount, 0)::FLOAT AS "totalVendida",
+        COALESCE(gr.payout, 0)::FLOAT AS ganado,
+        COALESCE(gr.comision, 0)::FLOAT AS "comisionTotal",
         0::FLOAT AS refuerzos,
-        gr.tickets_count::INT AS "ticketsCount",
-        gr.jugadas_count::INT AS "jugadasCount"
+        COALESCE(gr.tickets_count, 0)::INT AS "ticketsCount",
+        COALESCE(gr.jugadas_count, 0)::INT AS "jugadasCount"
       FROM grouped_results gr
       INNER JOIN "User" u ON u.id = gr."vendedorId"
       INNER JOIN "Ventana" v ON v.id = gr."ventanaId"
@@ -555,11 +555,13 @@ export class CierreService {
           SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."createdAt", t."businessDate"
           FROM "Ticket" t
           INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
           WHERE
             t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
             AND t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
+            AND s."status" = 'EVALUATED'
             ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
             ${extraConditions}
         ),
@@ -698,10 +700,12 @@ export class CierreService {
           SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."vendedorId", t."createdAt", t."businessDate"
           FROM "Ticket" t
           INNER JOIN "Ventana" v ON t."ventanaId" = v.id
+          INNER JOIN "Sorteo" s_gate ON t."sorteoId" = s_gate.id
           WHERE
             t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
+            AND s_gate."status" = 'EVALUATED'
             ${whereConditions}
         ),
         -- CTE 2: lm_active (Multiplicadores vigentes)
@@ -833,11 +837,13 @@ export class CierreService {
         relevant_tickets AS MATERIALIZED (
           SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."vendedorId", t."createdAt", t."businessDate"
           FROM "Ticket" t
+          INNER JOIN "Sorteo" s_gate ON t."sorteoId" = s_gate.id
           WHERE
             t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
             AND t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
+            AND s_gate."status" = 'EVALUATED'
             ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
             ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
             ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
