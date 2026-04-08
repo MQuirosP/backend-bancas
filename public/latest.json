@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.8",
-  "versionCode": 14,
-  "buildNumber": 14,
+  "versionName": "1.0.9",
+  "versionCode": 15,
+  "buildNumber": 15,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Optimización de rendimientos.",
-  "releasedAt": "2026-03-28T21:00:00Z",
+  "changelog": "Ordenamiento de jugadas en previsualización de tickets.",
+  "releasedAt": "2026-04-08T21:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "d19fee9a097521abbe51ce521b5253c2148dd0b6eab8b910f48cd440faa02caa"
+      "sha256": "2499a4dbc6d81f461250baa2ad893ee39770a7f6add063bd6c0ad5ecb33436fd"
     },
     "arm64-v8a": {
-      "sha256": "d19fee9a097521abbe51ce521b5253c2148dd0b6eab8b910f48cd440faa02caa"
+      "sha256": "2499a4dbc6d81f461250baa2ad893ee39770a7f6add063bd6c0ad5ecb33436fd"
     }
   }
 }
