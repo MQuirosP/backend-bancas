@@ -300,7 +300,7 @@ export class CierreService {
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
             AND s."status" = 'EVALUATED'
-            ${whereConditions}
+            AND ${whereConditions}
         ),
 
         -- 2. Multiplicadores activos (Hash-Join friendly)
@@ -835,7 +835,7 @@ export class CierreService {
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
             AND s_gate."status" = 'EVALUATED'
-            ${whereConditions}
+            AND ${whereConditions}
         ),
         -- CTE 2: lm_active (Multiplicadores vigentes)
         lm_active AS MATERIALIZED (
