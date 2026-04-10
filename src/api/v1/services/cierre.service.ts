@@ -512,58 +512,111 @@ export class CierreService {
   }
 
   /**
-   * Ejecuta agregación SQL para datos semanales
-   * OPTIMIZACIÓN: Tres CTEs materializados + Una Pre-Agregación eliminan Disk Spill y Timeouts.
+   * Ejecuta agregación híbrida para datos semanales (MV + Live)
    */
   private static async executeWeeklyAggregation(
     filters: CierreFilters
   ): Promise<CierreAggregateRow[]> {
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
+    const todayStr = crDateService.getTodayCRString();
 
-    // 1. Construir condiciones dinámicas (Blacklist y otros filtros) para incluirlas en el gatekeeper (CTE1)
-    const conditions: Prisma.Sql[] = [];
-    if (filters.ventanaId) conditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
-    if (filters.loteriaId) conditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
-    if (filters.vendedorId) conditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
+    const rangeIncludesPast = startDateCRStr < todayStr;
+    const rangeIncludesToday = endDateCRStr >= todayStr;
 
-    // Blacklist: Evitar ticket si pertenece a sorteo/ventana restringido
-    if (!await isExclusionListEmpty()) {
-      conditions.push(Prisma.sql`NOT EXISTS (
-        SELECT 1 FROM "sorteo_lista_exclusion" sle
-        WHERE sle.sorteo_id = t."sorteoId"
-        AND sle.ventana_id = t."ventanaId"
-        AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-        AND (
-          sle.multiplier_id IS NULL 
-          OR EXISTS (
-            SELECT 1 FROM "Jugada" j_ex 
-            WHERE j_ex."ticketId" = t.id 
-            AND j_ex."multiplierId" = sle.multiplier_id
-            AND j_ex."deletedAt" IS NULL
-          )
-        )
-      )`);
+    const queries: Promise<CierreAggregateRow[]>[] = [];
+
+    // 1. Consultar pasado desde la Vista Materializada
+    if (rangeIncludesPast) {
+      const pastEndStr = endDateCRStr < todayStr ? endDateCRStr : crDateService.dateUTCToCRString(new Date(new Date(todayStr).getTime() - 86400000));
+      queries.push(this.executeWeeklyAggregationFromMV(filters, startDateCRStr, pastEndStr));
     }
-    const extraConditions = conditions.length ? Prisma.sql`AND ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+
+    // 2. Consultar hoy desde tablas en vivo
+    if (rangeIncludesToday) {
+      queries.push(this.executeWeeklyAggregationLive(filters, todayStr));
+    }
+
+    try {
+      const results = await Promise.all(queries);
+      const merged = results.flat();
+
+      // Re-agrupar si hay solapamientos (raro pero posible)
+      return merged; 
+    } catch (error) {
+      logger.error({
+        layer: 'service',
+        action: 'HYBRID_WEEKLY_AGGREGATION_FAILURE',
+        meta: { error: error instanceof Error ? error.message : String(error) }
+      });
+      return this.executeWeeklyAggregationLive(filters, startDateCRStr, endDateCRStr);
+    }
+  }
+
+  /**
+   * Consulta la Vista Materializada para reportes semanales
+   */
+  private static async executeWeeklyAggregationFromMV(
+    filters: CierreFilters,
+    startStr: string,
+    endStr: string
+  ): Promise<CierreAggregateRow[]> {
+    const whereConditions = this.buildMVWhereConditions(filters, startStr, endStr);
+    
+    const query = Prisma.sql`
+      SELECT
+        banda,
+        tipo,
+        TO_CHAR("businessDate", 'YYYY-MM-DD') as fecha,
+        l.id as "loteriaId",
+        l.name as "loteriaNombre",
+        mv."sorteoId" as "sorteoId",
+        TO_CHAR(s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') as turno,
+        s."scheduledAt" as "scheduledAt",
+        "totalVendida",
+        ganado,
+        "comisionTotal",
+        0::FLOAT as refuerzos,
+        "ticketsCount",
+        "jugadasCount"
+      FROM mv_diario_ventas_totales mv
+      INNER JOIN "Loteria" l ON l.id = mv."loteriaId"
+      INNER JOIN "Sorteo" s ON s.id = mv."sorteoId"
+      WHERE ${whereConditions}
+    `;
+
+    return prisma.$queryRaw<any[]>(query).then(res => res.map(row => ({
+      ...row,
+      banda: Number(row.banda),
+      scheduledAt: row.scheduledAt ? new Date(row.scheduledAt) : undefined,
+    })));
+  }
+
+  /**
+   * Implementación original de agregación semanal (Live)
+   */
+  private static async executeWeeklyAggregationLive(
+    filters: CierreFilters,
+    startStr: string,
+    endStr?: string
+  ): Promise<CierreAggregateRow[]> {
+    const endStrFinal = endStr || startStr;
+    const whereConditions = await this.buildWhereConditionsWithRange(filters, startStr, endStrFinal);
 
     // 2. Query Principal optimizada con CTEs
     const query = Prisma.sql`
       WITH
         -- CTE 1: relevant_tickets (GATEKEEPER)
-        -- Filtra bancaId de inmediato mediante JOIN antes de materializar.
         relevant_tickets AS MATERIALIZED (
           SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."createdAt", t."businessDate"
           FROM "Ticket" t
           INNER JOIN "Ventana" v ON t."ventanaId" = v.id
           INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
           WHERE
-            t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
-            AND t."isActive" = true
+            t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
             AND s."status" = 'EVALUATED'
-            ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
-            ${extraConditions}
+            AND ${whereConditions}
         ),
         -- CTE 2: lm_active (Multiplicadores vigentes)
         lm_active AS MATERIALIZED (
@@ -691,7 +744,80 @@ export class CierreService {
   private static async executeSellerAggregation(
     filters: CierreFilters
   ): Promise<VendedorAggregateRow[]> {
-    const whereConditions = await this.buildWhereConditions(filters);
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
+    const todayStr = crDateService.getTodayCRString();
+
+    const rangeIncludesPast = startDateCRStr < todayStr;
+    const rangeIncludesToday = endDateCRStr >= todayStr;
+
+    const queries: Promise<VendedorAggregateRow[]>[] = [];
+
+    if (rangeIncludesPast) {
+      const pastEndStr = endDateCRStr < todayStr ? endDateCRStr : crDateService.dateUTCToCRString(new Date(new Date(todayStr).getTime() - 86400000));
+      queries.push(this.executeSellerAggregationFromMV(filters, startDateCRStr, pastEndStr));
+    }
+
+    if (rangeIncludesToday) {
+      queries.push(this.executeSellerAggregationLive(filters, todayStr));
+    }
+
+    try {
+      const results = await Promise.all(queries);
+      const merged = results.flat();
+      
+      // Dado que es por vendedor, debemos re-agrupar los registros que vienen de MV y Live
+      return this.consolidateSellerRows(merged, filters.depth === 'summary');
+    } catch (error) {
+      logger.error({
+        layer: 'service',
+        action: 'HYBRID_SELLER_AGGREGATION_FAILURE',
+        meta: { error: error instanceof Error ? error.message : String(error) }
+      });
+      return this.executeSellerAggregationLive(filters, startDateCRStr, endDateCRStr);
+    }
+  }
+
+  private static async executeSellerAggregationFromMV(
+    filters: CierreFilters,
+    startStr: string,
+    endStr: string
+  ): Promise<VendedorAggregateRow[]> {
+    const whereConditions = this.buildMVWhereConditions(filters, startStr, endStr);
+    const isSummary = filters.depth === 'summary';
+
+    const query = Prisma.sql`
+      SELECT
+        u.id as "vendedorId",
+        u.name as "vendedorNombre",
+        v.id as "ventanaId",
+        v.name as "ventanaNombre",
+        ${isSummary ? Prisma.empty : Prisma.sql`mv.banda,`}
+        SUM("totalVendida")::FLOAT as "totalVendida",
+        SUM(ganado)::FLOAT as ganado,
+        SUM("comisionTotal")::FLOAT as "comisionTotal",
+        0::FLOAT as refuerzos,
+        SUM("ticketsCount")::INT as "ticketsCount",
+        SUM("jugadasCount")::INT as "jugadasCount"
+      FROM mv_diario_ventas_totales mv
+      INNER JOIN "User" u ON u.id = mv."vendedorId"
+      INNER JOIN "Ventana" v ON v.id = mv."ventanaId"
+      WHERE ${whereConditions}
+      GROUP BY 1, 2, 3, 4 ${isSummary ? Prisma.empty : Prisma.sql`, 5`}
+    `;
+
+    return prisma.$queryRaw<any[]>(query).then(res => res.map(row => ({
+      ...row,
+      banda: row.banda != null ? Number(row.banda) : undefined,
+    })));
+  }
+
+  private static async executeSellerAggregationLive(
+    filters: CierreFilters,
+    startStr: string,
+    endStr?: string
+  ): Promise<VendedorAggregateRow[]> {
+    const endStrFinal = endStr || startStr;
+    const whereConditions = await this.buildWhereConditionsWithRange(filters, startStr, endStrFinal);
 
     // 1. Gatekeeper: relevant_tickets (Filtramos banca/ventana/vendedor antes de ir a Jugada)
     const query = Prisma.sql`
@@ -837,16 +963,14 @@ export class CierreService {
         relevant_tickets AS MATERIALIZED (
           SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."vendedorId", t."createdAt", t."businessDate"
           FROM "Ticket" t
+          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
           INNER JOIN "Sorteo" s_gate ON t."sorteoId" = s_gate.id
           WHERE
-            t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date
-            AND t."isActive" = true
+            t."isActive" = true
             AND t."deletedAt" IS NULL
             AND t."status" != 'CANCELLED'
             AND s_gate."status" = 'EVALUATED'
-            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-            ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+            AND ${whereConditions}
         ),
         lm_active AS MATERIALIZED (
           SELECT
@@ -908,7 +1032,6 @@ export class CierreService {
             j."deletedAt" IS NULL
             AND j."isActive" = true
             AND s."status" = 'EVALUATED'
-            ${whereConditions}
         )
       SELECT
         base.uid          AS "vendedorId",
@@ -1085,53 +1208,74 @@ export class CierreService {
 
     // Rango de fechas (obligatorio) usando businessDate directamente (siempre poblado)
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
-    conditions.push(Prisma.sql`t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date`);
+    return this.buildWhereConditionsWithRange(filters, startDateCRStr, endDateCRStr);
+  }
 
-    // Filtro de ventana
-    // Filtrar por banca activa (para ADMIN multibanca)
-    if (filters.bancaId) {
-      conditions.push(Prisma.sql`v."bancaId" = CAST(${filters.bancaId} AS uuid)`);
-    }
+  private static async buildWhereConditionsWithRange(
+    filters: CierreFilters, 
+    startStr: string, 
+    endStr: string
+  ): Promise<Prisma.Sql> {
+    const conditions: Prisma.Sql[] = [];
+    conditions.push(Prisma.sql`t."businessDate" BETWEEN ${startStr}::date AND ${endStr}::date`);
 
-    if (filters.ventanaId) {
-      conditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
-    }
+    if (filters.bancaId) conditions.push(Prisma.sql`v."bancaId" = CAST(${filters.bancaId} AS uuid)`);
+    if (filters.ventanaId) conditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
+    if (filters.loteriaId) conditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
+    if (filters.vendedorId) conditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
 
-    // Filtro de lotería (opcional)
-    if (filters.loteriaId) {
-      conditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
-    }
-
-    // Filtro de vendedor (opcional)
-    if (filters.vendedorId) {
-      conditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
-    }
-
-    //  NUEVO: Excluir tickets de listas bloqueadas (Lista Exclusion)
     if (!await isExclusionListEmpty()) {
       conditions.push(Prisma.sql`NOT EXISTS (
         SELECT 1 FROM "sorteo_lista_exclusion" sle
-        WHERE sle.sorteo_id = t."sorteoId"
+        WHERE sle.sorteo_id = t."sorteoId" 
         AND sle.ventana_id = t."ventanaId"
         AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-        AND (
-          sle.multiplier_id IS NULL 
-          OR EXISTS (
-            SELECT 1 FROM "Jugada" j_ex 
-            WHERE j_ex."ticketId" = t.id 
-            AND j_ex."multiplierId" = sle.multiplier_id
-            AND j_ex."deletedAt" IS NULL
-          )
-        )
       )`);
     }
 
-    // Combinar condiciones con AND
-    if (conditions.length === 0) {
-      return Prisma.empty;
+    return conditions.length ? Prisma.join(conditions, ' AND ') : Prisma.empty;
+  }
+
+  /**
+   * Construye condiciones WHERE para la Vista Materializada
+   */
+  private static buildMVWhereConditions(
+    filters: CierreFilters,
+    startStr: string,
+    endStr: string
+  ): Prisma.Sql {
+    const conditions: Prisma.Sql[] = [];
+    conditions.push(Prisma.sql`mv."businessDate" BETWEEN ${startStr}::date AND ${endStr}::date`);
+
+    if (filters.bancaId) conditions.push(Prisma.sql`mv."ventanaId" IN (SELECT id FROM "Ventana" WHERE "bancaId" = CAST(${filters.bancaId} AS uuid))`);
+    if (filters.ventanaId) conditions.push(Prisma.sql`mv."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
+    if (filters.loteriaId) conditions.push(Prisma.sql`mv."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
+    if (filters.vendedorId) conditions.push(Prisma.sql`mv."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
+
+    return conditions.length ? Prisma.join(conditions, ' AND ') : Prisma.empty;
+  }
+
+  /**
+   * Consolida filas de vendedores que pueden venir duplicadas entre MV y Live
+   */
+  private static consolidateSellerRows(rows: VendedorAggregateRow[], isSummary: boolean): VendedorAggregateRow[] {
+    const map = new Map<string, VendedorAggregateRow>();
+
+    for (const row of rows) {
+      const key = isSummary ? row.vendedorId : `${row.vendedorId}|${row.banda}`;
+      if (!map.has(key)) {
+        map.set(key, { ...row });
+      } else {
+        const existing = map.get(key)!;
+        existing.totalVendida += row.totalVendida;
+        existing.ganado += row.ganado;
+        existing.comisionTotal += row.comisionTotal;
+        existing.ticketsCount += row.ticketsCount;
+        existing.jugadasCount += row.jugadasCount;
+      }
     }
 
-    return Prisma.sql`AND ${Prisma.join(conditions, ' AND ')}`;
+    return Array.from(map.values()).sort((a, b) => a.vendedorNombre.localeCompare(b.vendedorNombre));
   }
 
   /**

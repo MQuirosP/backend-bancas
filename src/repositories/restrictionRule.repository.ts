@@ -196,196 +196,156 @@ export const RestrictionRuleRepository = {
     const skip = (_page - 1) * _pageSize;
     const take = _pageSize;
 
-    //  Zod ya parsea correctamente los booleanos con enum + transform
-    // Si no viene isActive, usar true por defecto (solo activas)
-    const _isActive = isActive !== undefined ? isActive : true;
-
-    // Los otros filtros de tipo son opcionales y Zod los parsea correctamente
-    const _hasCutoff = hasCutoff === true || hasCutoff === 'true';
-    const _hasAmount = hasAmount === true || hasAmount === 'true';
-    const _hasAutoDate = hasAutoDate === true || hasAutoDate === 'true' ? true : (hasAutoDate === false || hasAutoDate === 'false' ? false : undefined);
-    const _hasLotteryMultiplier = params.hasLotteryMultiplier === true || params.hasLotteryMultiplier === 'true';
-
-    const where: any = {};
-    // Aplicar filtro isActive siempre (por defecto true si no se especifica)
-    where.isActive = _isActive;
+    // NORMALIZACIÓN ESTRICTA: Evitar que strings como "true" o "false" rompan el filtrado
+    const normalizeBool = (v: any) => v === true || v === 'true';
+    const _isActive = isActive !== undefined ? normalizeBool(isActive) : true;
+    const _hasCutoff = normalizeBool(hasCutoff);
+    const _hasAmount = normalizeBool(hasAmount);
+    const _hasLotteryMultiplier = normalizeBool(params.hasLotteryMultiplier);
     
-    //  CORRECCIÓN: Inferir bancaId cuando se consulta por bancaId pero las restricciones solo tienen ventanaId/vendedorId
+    // hasAutoDate requiere manejo especial (true/false/undefined)
+    const _hasAutoDate = (hasAutoDate === true || hasAutoDate === 'true') 
+      ? true 
+      : (hasAutoDate === false || hasAutoDate === 'false' ? false : undefined);
+
+    const andConditions: any[] = [{ isActive: _isActive }];
+    
+    // 1. FILTRO DE ÁMBITO (BANCA/VENTANA/USUARIO)
     if (bancaId) {
-        // Obtener ventanas y vendedores de esta banca para incluir sus restricciones
         const ventanas = await withConnectionRetry(
-            () => prisma.ventana.findMany({
-                where: { bancaId },
-                select: { id: true },
-            }),
+            () => prisma.ventana.findMany({ where: { bancaId }, select: { id: true } }),
             { context: 'RestrictionRuleRepository.list.fetchVentanas' }
         );
         const ventanaIds = ventanas.map(v => v.id);
         
         const vendedores = ventanaIds.length > 0 ? await withConnectionRetry(
             () => prisma.user.findMany({
-                where: {
-                    ventanaId: { in: ventanaIds },
-                    role: Role.VENDEDOR,
-                },
-                select: { id: true },
+                where: { ventanaId: { in: ventanaIds }, role: Role.VENDEDOR },
+                select: { id: true }
             }),
             { context: 'RestrictionRuleRepository.list.fetchVendedores' }
         ) : [];
         const vendedorIds = vendedores.map(u => u.id);
         
-        // Buscar restricciones que:
-        // 1. Tengan bancaId directamente, O
-        // 2. Tengan ventanaId de esta banca, O
-        // 3. Tengan userId (vendedor) de esta banca
-        const bancaOrConditions: any[] = [{ bancaId }];
-        if (ventanaIds.length > 0) {
-            bancaOrConditions.push({ ventanaId: { in: ventanaIds } });
-        }
-        if (vendedorIds.length > 0) {
-            bancaOrConditions.push({ userId: { in: vendedorIds } });
-        }
-        
-        // Si solo hay una condición, usar directamente, sino usar OR
-        if (bancaOrConditions.length === 1) {
-            Object.assign(where, bancaOrConditions[0]);
-        } else {
-            where.OR = bancaOrConditions;
-        }
+        andConditions.push({
+          OR: [
+            { bancaId },
+            ...(ventanaIds.length > 0 ? [{ ventanaId: { in: ventanaIds } }] : []),
+            ...(vendedorIds.length > 0 ? [{ userId: { in: vendedorIds } }] : [])
+          ]
+        });
     } else {
-        if (ventanaId) where.ventanaId = ventanaId;
-        if (userId) where.userId = userId;
+        if (ventanaId) andConditions.push({ ventanaId });
+        if (userId) andConditions.push({ userId });
     }
     
+    // 2. FILTRO DE BÚSQUEDA (OBLIGATORIO SI HAY SEARCH/NUMBER)
     if (number || search) {
-      const searchTerm = search || number;
-      // Búsqueda parcial por número o nombre para mayor flexibilidad
-      const searchConditions: any[] = [
-        { number: { contains: searchTerm } },
-        { message: { contains: searchTerm, mode: 'insensitive' } },
-        { banca: { name: { contains: searchTerm, mode: 'insensitive' } } },
-        { banca: { code: { contains: searchTerm, mode: 'insensitive' } } },
-        { ventana: { name: { contains: searchTerm, mode: 'insensitive' } } },
-        { ventana: { code: { contains: searchTerm, mode: 'insensitive' } } },
-        { user: { name: { contains: searchTerm, mode: 'insensitive' } } },
-        { user: { username: { contains: searchTerm, mode: 'insensitive' } } },
-      ];
+      const searchTerm = (search || number || '').toString().trim();
       
-      const searchCondition = { OR: searchConditions };
-      
-      if (where.OR) {
-        // Si ya hay un OR (ej. de bancaId), debemos envolver todo en un AND 
-        // para no sobreescribir el OR de banca con el filtro de búsqueda
-        const existingOr = where.OR;
-        delete where.OR;
-        where.AND = [
-          { OR: existingOr },
-          searchCondition
-        ];
-      } else {
-        where.OR = searchCondition.OR;
+      if (searchTerm) {
+        // Pre-búsqueda de IDs para mayor precisión y performance
+        const [matchingUsers, matchingBancas] = await Promise.all([
+          prisma.user.findMany({
+            where: {
+              OR: [
+                { name: { contains: searchTerm, mode: 'insensitive' } },
+                { username: { contains: searchTerm, mode: 'insensitive' } }
+              ]
+            },
+            select: { id: true }
+          }),
+          prisma.banca.findMany({
+            where: { name: { contains: searchTerm, mode: 'insensitive' } },
+            select: { id: true }
+          })
+        ]);
+
+        const uIds = matchingUsers.map(u => u.id).filter(id => !!id);
+        const bIds = matchingBancas.map(b => b.id).filter(id => !!id);
+
+        console.log(`[DEBUG_RESTRICTION_SEARCH] Term: "${searchTerm}" | Users: ${uIds.length} | Bancas: ${bIds.length}`);
+
+        andConditions.push({
+          OR: [
+            { number: { contains: searchTerm } },
+            ...(uIds.length > 0 ? [{ userId: { in: uIds } }] : []),
+            ...(bIds.length > 0 ? [{ bancaId: { in: bIds } }] : [])
+          ]
+        });
       }
     }
 
-    // Determinar si hay algún filtro de tipo especificado
-    const hasAnyTypeFilter = _hasCutoff || _hasAmount || _hasAutoDate !== undefined || loteriaId || multiplierId || _hasLotteryMultiplier;
+    // 3. FILTROS EXACTOS Y CATEGORÍAS
+    if (loteriaId) andConditions.push({ loteriaId });
+    if (multiplierId) andConditions.push({ multiplierId });
 
-    // Solo aplicar filtros de tipo si se especifican explícitamente
-    if (hasAnyTypeFilter) {
-      // Filtro para restricciones automáticas por fecha
-      if (_hasAutoDate !== undefined) {
-        where.isAutoDate = _hasAutoDate;
-      }
-
-
-    // Filtros de lotería/multiplicador específicos (cuando se busca por ID)
-    if (loteriaId) where.loteriaId = loteriaId;
-    if (multiplierId) where.multiplierId = multiplierId;
-
-    // Filtros exactos para agrupación
-    const parseNumeric = (v: any) => (v === 'null' || v === null) ? null : Number(v);
+    const parseNumeric = (v: any) => (v === 'null' || v === null || v === undefined) ? undefined : Number(v);
     
-    if (params.baseAmount !== undefined) where.baseAmount = parseNumeric(params.baseAmount);
-    if (params.salesPercentage !== undefined) where.salesPercentage = parseNumeric(params.salesPercentage);
-    if (params.maxAmount !== undefined) where.maxAmount = parseNumeric(params.maxAmount);
-    if (params.maxTotal !== undefined) where.maxTotal = parseNumeric(params.maxTotal);
-    if (params.appliesToHour !== undefined) where.appliesToHour = parseNumeric(params.appliesToHour);
-    if (params.salesCutoffMinutes !== undefined) where.salesCutoffMinutes = parseNumeric(params.salesCutoffMinutes);
+    // Campos numéricos directos
+    const numericFields: any = {
+      baseAmount: parseNumeric(params.baseAmount),
+      salesPercentage: parseNumeric(params.salesPercentage),
+      maxAmount: parseNumeric(params.maxAmount),
+      maxTotal: parseNumeric(params.maxTotal),
+      appliesToHour: parseNumeric(params.appliesToHour),
+      salesCutoffMinutes: parseNumeric(params.salesCutoffMinutes)
+    };
+
+    Object.keys(numericFields).forEach(key => {
+      if (numericFields[key] !== undefined) {
+        andConditions.push({ [key]: numericFields[key] });
+      }
+    });
     
     if (params.isAutoDate !== undefined) {
-      where.isAutoDate = params.isAutoDate === 'true' || params.isAutoDate === true;
+      andConditions.push({ isAutoDate: normalizeBool(params.isAutoDate) });
     }
+    
     if (params.appliesToDate !== undefined) {
-      where.appliesToDate = (params.appliesToDate === 'null' || params.appliesToDate === null) 
-        ? null 
-        : new Date(params.appliesToDate as string);
+      const dateVal = (params.appliesToDate === 'null' || params.appliesToDate === null) ? null : new Date(params.appliesToDate as string);
+      andConditions.push({ appliesToDate: dateVal });
     }
 
-      //  CRÍTICO: Combinar filtros de tipo con filtros de banca/ventana existentes
-      // Si ya hay un OR de bancaId, necesitamos combinar con AND
-      const typeFilterConditions: any[] = [];
+    // 4. LÓGICA DE CATEGORÍAS (TIPO)
+    const hasAnyTypeFilter = _hasCutoff || _hasAmount || _hasAutoDate !== undefined || _hasLotteryMultiplier;
+    
+    if (hasAnyTypeFilter) {
+      const typeOrConditions: any[] = [];
       
       if (_hasCutoff && _hasAmount) {
-        // ambas clases de reglas
-        typeFilterConditions.push(
+        typeOrConditions.push(
           { AND: [{ salesCutoffMinutes: { not: null } }, { number: null }] },
           { OR: [{ maxAmount: { not: null } }, { maxTotal: { not: null } }] }
         );
       } else if (_hasCutoff) {
-        // solo cutoff: sin number
-        typeFilterConditions.push(
-          { salesCutoffMinutes: { not: null } },
-          { number: null }
-        );
+        andConditions.push({ salesCutoffMinutes: { not: null } });
+        andConditions.push({ number: null });
       } else if (_hasAmount) {
-        // solo montos (incluye automáticas con maxAmount/maxTotal/baseAmount/salesPercentage)
-        typeFilterConditions.push({
-          OR: [
-            { maxAmount: { not: null } },
-            { maxTotal: { not: null } },
-            { baseAmount: { not: null } },
-            { salesPercentage: { not: null } }
-          ]
-        });
+        typeOrConditions.push(
+          { maxAmount: { not: null } },
+          { maxTotal: { not: null } },
+          { baseAmount: { not: null } },
+          { salesPercentage: { not: null } }
+        );
       } else if (_hasLotteryMultiplier) {
-        // solo multiplicadores
-        typeFilterConditions.push({
-          OR: [{ loteriaId: { not: null } }, { multiplierId: { not: null } }]
-        });
+        typeOrConditions.push(
+          { loteriaId: { not: null } },
+          { multiplierId: { not: null } }
+        );
+      }
+
+      if (typeOrConditions.length > 0) {
+        andConditions.push({ OR: typeOrConditions });
       }
       
-      // Si hay filtros de tipo, combinarlos con los filtros existentes usando AND
-      if (typeFilterConditions.length > 0) {
-        const existingConditions = { ...where };
-        delete existingConditions.OR; // Separar OR si existe
-        
-        if (where.OR) {
-          // Si ya hay OR (de bancaId), usar AND para combinar
-          where.AND = [
-            { OR: where.OR },
-            ...(_hasCutoff && _hasAmount 
-              ? [{ OR: typeFilterConditions }]
-              : typeFilterConditions.length === 1 
-                ? typeFilterConditions 
-                : [{ OR: typeFilterConditions }]
-            )
-          ];
-          delete where.OR;
-        } else {
-          // Si no hay OR, agregar directamente
-          if (typeFilterConditions.length === 1) {
-            Object.assign(where, typeFilterConditions[0]);
-          } else if (_hasCutoff && _hasAmount) {
-            where.OR = typeFilterConditions;
-          } else {
-            where.AND = [...(where.AND ?? []), ...typeFilterConditions];
-          }
-        }
+      if (_hasAutoDate !== undefined) {
+        andConditions.push({ isAutoDate: _hasAutoDate });
       }
-    } else {
-      // Si NO hay filtros de tipo, no aplicar ningún filtro de tipo (retornar TODAS las restricciones)
-      // Esto incluye automáticas, de montos, de cutoff, y de lotería/multiplicador
     }
+
+    const where = { AND: andConditions };
+    console.log(`[DEBUG_RESTRICTION_SEARCH] Total AND Conditions: ${andConditions.length}`);
 
     // Optimización: Usar Promise.all en lugar de $transaction para mejor performance
     const [data, total] = await withConnectionRetry(

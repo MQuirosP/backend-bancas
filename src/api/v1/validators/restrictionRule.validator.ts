@@ -322,6 +322,7 @@ export const ListRestrictionRuleQuerySchema = z.object({
   number: z.string().trim().min(1).optional(),
   id: z.string().uuid().optional(), // Búsqueda de grupo por ID de integrante
   groupKey: z.string().optional(),  // Búsqueda directa por llave de grupo
+  search: z.string().trim().optional(), // Parametro para el search bar
 
   // Parseo explícito de booleanos desde string (evita problemas con z.coerce.boolean)
   isActive: z.enum(["true", "false"]).transform(v => v === "true").optional(),

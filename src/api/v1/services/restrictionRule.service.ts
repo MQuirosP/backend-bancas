@@ -513,9 +513,25 @@ export const RestrictionRuleService = {
     }
 
     const { data } = await RestrictionRuleRepository.list(repoQuery);
+    
+    // FILTRO DE SEGURIDAD (In-memory): Asegurar que si hay búsqueda, los resultados la cumplan estrictamente
+    let filteredData = data;
+    if (query.search) {
+        const s = query.search.toString().toLowerCase().trim();
+        filteredData = data.filter(rule => {
+            const numMatch = rule.number?.toLowerCase().includes(s);
+            const userMatch = rule.user?.name?.toLowerCase().includes(s) || rule.user?.username?.toLowerCase().includes(s);
+            const bancaMatch = rule.banca?.name?.toLowerCase().includes(s) || rule.banca?.code?.toLowerCase().includes(s);
+            const ventanaMatch = rule.ventana?.name?.toLowerCase().includes(s) || rule.ventana?.code?.toLowerCase().includes(s);
+            const messageMatch = rule.message?.toLowerCase().includes(s); // Incluimos mensaje por si acaso para no ser tan restrictivos si el repo lo encontró así
+            
+            return numMatch || userMatch || bancaMatch || ventanaMatch || messageMatch;
+        });
+    }
+
     const groups = new Map<string, any>();
 
-    for (const rule of data) {
+    for (const rule of filteredData) {
         // Generar Key de Agrupación consistente
         const groupKey = [
             rule.userId || 'null',

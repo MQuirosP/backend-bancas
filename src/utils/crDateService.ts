@@ -136,6 +136,15 @@ export function isDateInCRRange(
 }
 
 /**
+ * Obtiene la fecha actual en Costa Rica (YYYY-MM-DD)
+ * 
+ * @returns String YYYY-MM-DD
+ */
+export function getTodayCRString(): string {
+  return dateUTCToCRString(new Date());
+}
+
+/**
  * ️ SERVICIO CENTRALIZADO: Exportar todas las funciones como objeto
  * 
  * Uso recomendado:
@@ -153,6 +162,7 @@ export const crDateService = {
   postgresDateToCRString,
   dateRangeUTCToCRStrings,
   isDateInCRRange,
+  getTodayCRString,
   // Constantes
   CR_TIMEZONE_OFFSET_HOURS,
   CR_TIMEZONE_OFFSET_MS,
