@@ -527,13 +527,13 @@ export class CierreService {
 
     // 1. Consultar pasado desde la Vista Materializada
     if (rangeIncludesPast) {
-      const pastEndStr = endDateCRStr < todayStr ? endDateCRStr : crDateService.dateUTCToCRString(new Date(new Date(todayStr).getTime() - 86400000));
+      const yesterdayStr = crDateService.dateUTCToCRString(new Date(Date.now() - 86400000));
+      const pastEndStr = endDateCRStr < todayStr ? endDateCRStr : yesterdayStr;
       queries.push(this.executeWeeklyAggregationFromMV(filters, startDateCRStr, pastEndStr));
     }
 
-    // 2. Consultar hoy desde tablas en vivo
     if (rangeIncludesToday) {
-      queries.push(this.executeWeeklyAggregationLive(filters, todayStr));
+      queries.push(this.executeWeeklyAggregationLive(filters, todayStr, endDateCRStr));
     }
 
     try {
@@ -658,6 +658,7 @@ export class CierreService {
           INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
           WHERE j."deletedAt" IS NULL
             AND j."isActive" = true
+            AND j."isExcluded" = false
           GROUP BY j."ticketId", j.type, j.number, j."finalMultiplierX"
         ),
         -- CTE 5: base (Cálculo de banda y joins estructurales)
@@ -753,12 +754,13 @@ export class CierreService {
     const queries: Promise<VendedorAggregateRow[]>[] = [];
 
     if (rangeIncludesPast) {
-      const pastEndStr = endDateCRStr < todayStr ? endDateCRStr : crDateService.dateUTCToCRString(new Date(new Date(todayStr).getTime() - 86400000));
+      const yesterdayStr = crDateService.dateUTCToCRString(new Date(Date.now() - 86400000));
+      const pastEndStr = endDateCRStr < todayStr ? endDateCRStr : yesterdayStr;
       queries.push(this.executeSellerAggregationFromMV(filters, startDateCRStr, pastEndStr));
     }
 
     if (rangeIncludesToday) {
-      queries.push(this.executeSellerAggregationLive(filters, todayStr));
+      queries.push(this.executeSellerAggregationLive(filters, todayStr, endDateCRStr));
     }
 
     try {
@@ -874,6 +876,7 @@ export class CierreService {
           INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
           WHERE j."deletedAt" IS NULL
             AND j."isActive" = true
+            AND j."isExcluded" = false
           GROUP BY j."ticketId", j.type, j.number, j."finalMultiplierX"
         ),
         -- CTE 5: base (Joins estructurales y lógica de banda)
@@ -1031,6 +1034,7 @@ export class CierreService {
           WHERE
             j."deletedAt" IS NULL
             AND j."isActive" = true
+            AND j."isExcluded" = false
             AND s."status" = 'EVALUATED'
         )
       SELECT
@@ -1224,14 +1228,7 @@ export class CierreService {
     if (filters.loteriaId) conditions.push(Prisma.sql`t."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
     if (filters.vendedorId) conditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
 
-    if (!await isExclusionListEmpty()) {
-      conditions.push(Prisma.sql`NOT EXISTS (
-        SELECT 1 FROM "sorteo_lista_exclusion" sle
-        WHERE sle.sorteo_id = t."sorteoId" 
-        AND sle.ventana_id = t."ventanaId"
-        AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-      )`);
-    }
+    // El filtrado de exclusiones se maneja individualmente en cada Jugada (j."isExcluded" = false)
 
     return conditions.length ? Prisma.join(conditions, ' AND ') : Prisma.empty;
   }
