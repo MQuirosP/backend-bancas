@@ -8,7 +8,8 @@ const _cierreInFlight = new Map<string, Promise<any>>();
 function cierreWrap<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T> {
   const inFlight = _cierreInFlight.get(key);
   if (inFlight) return inFlight;
-  const promise = CacheService.wrap(key, fn, ttl, [`cierre:${key}`]);
+  //  USO DE TAG GLOBAL: 'cierre' permite invalidar todo el reporte closure de una vez
+  const promise = CacheService.wrap(key, fn, ttl, ['cierre']);
   _cierreInFlight.set(key, promise);
   promise.finally(() => _cierreInFlight.delete(key));
   return promise;
@@ -76,7 +77,7 @@ export class CierreService {
   static async aggregateWeekly(
     filters: CierreFilters
   ): Promise<CierreWeeklyData & { _performance: CierrePerformance; _metaExtras: CierreMetaExtras }> {
-    const cacheKey = `cierre:weekly:${crypto.createHash('md5').update(JSON.stringify({
+    const cacheKey = `cierre_v2:weekly:${crypto.createHash('md5').update(JSON.stringify({
       from: filters.fromDate.toISOString(),
       to: filters.toDate.toISOString(),
       scope: filters.scope,
@@ -136,7 +137,7 @@ export class CierreService {
     top?: number,
     orderBy: 'totalVendida' | 'ganado' | 'netoDespuesComision' = 'totalVendida'
   ): Promise<CierreBySellerData & { _performance: CierrePerformance; _metaExtras: CierreMetaExtras }> {
-    const cacheKey = `cierre:by-seller:${crypto.createHash('md5').update(JSON.stringify({
+    const cacheKey = `cierre_v2:by-seller:${crypto.createHash('md5').update(JSON.stringify({
       from: filters.fromDate.toISOString(),
       to: filters.toDate.toISOString(),
       scope: filters.scope,
