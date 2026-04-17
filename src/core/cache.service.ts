@@ -8,6 +8,10 @@ interface L1Entry { data: any; expiresAt: number; }
 const l1Cache = new Map<string, L1Entry>();
 const MAX_L1_SIZE = 2000; // Límite de seguridad para evitar fugas de memoria
 
+// TTLs para L1: restricciones de vendedor 30s, cutoffs 60s
+export const L1_TTL_RESTRICTIONS_MS = 30_000;  // 30 segundos — bloqueos de números rápidos
+export const L1_TTL_CUTOFF_MS      = 60_000;   // 60 segundos — cutoffs son más estables
+
 // Limpieza periódica de entradas expiradas (cada 5 minutos)
 setInterval(() => {
     const now = Date.now();
@@ -23,7 +27,7 @@ export class CacheService {
     /**
      * Obtener valor del caché
      */
-    static async get<T>(key: string, useL1: boolean = false): Promise<T | null> {
+    static async get<T>(key: string, useL1: boolean = false, l1TtlMs: number = L1_TTL_RESTRICTIONS_MS): Promise<T | null> {
         // 1. OPTIMIZACIÓN L1 (Memory): Latencia cero para hot keys
         if (useL1) {
             const entry = l1Cache.get(key);
@@ -33,7 +37,14 @@ export class CacheService {
             }
         }
 
-        if (!isRedisAvailable()) return null;
+        if (!isRedisAvailable()) {
+            logger.warn({
+                layer: 'cache',
+                action: 'REDIS_FALLBACK_TRIGGERED',
+                payload: { key, reason: 'Redis no disponible en get()', fallback: 'Retornando null — sistema consultará DB' },
+            });
+            return null;
+        }
 
         try {
             const result = await ResilienceService.runRedis(key, async () => {
@@ -44,41 +55,133 @@ export class CacheService {
                 if (!cached) return null;
 
                 const parsed = JSON.parse(cached) as T;
-                
-                // BACKFILL L1: Si se solicitó L1 y hubo hit en L2, guardar en L1
+
+                // BACKFILL L1: Si se solicitó L1 y hubo hit en L2, guardar en L1 con el TTL correcto
                 if (useL1) {
-                    l1Cache.set(key, { data: parsed, expiresAt: Date.now() + 60000 }); // 1 min fix TTL para L1
+                    if (l1Cache.size >= MAX_L1_SIZE) l1Cache.clear();
+                    l1Cache.set(key, { data: parsed, expiresAt: Date.now() + l1TtlMs });
                 }
 
                 return parsed;
             });
             return result ?? null;
         } catch {
+            logger.warn({
+                layer: 'cache',
+                action: 'REDIS_FALLBACK_TRIGGERED',
+                payload: { key, reason: 'Excepción en get()', fallback: 'Retornando null — sistema consultará DB' },
+            });
             return null;
         }
     }
 
     /**
-     * Guardar valor en caché con TTL y opcionalmente asociarlo a tags
+     * MGET: Obtener múltiples claves en una sola operación Redis.
+     * Crítico para consolidar las validaciones de las ~7 jugadas de un ticket.
+     * Devuelve un Map con key → valor (o null si no existe en caché).
      */
-    static async set(
-        key: string, 
-        value: any, 
-        ttlSeconds: number = config.redis.ttlCutoff, 
-        tags: string[] = [],
-        useL1: boolean = false
-    ): Promise<void> {
-        // 1. OPTIMIZACIÓN L1 (Memory)
+    static async mget<T>(keys: string[], useL1: boolean = false, l1TtlMs: number = L1_TTL_RESTRICTIONS_MS): Promise<Map<string, T | null>> {
+        const result = new Map<string, T | null>();
+
+        if (keys.length === 0) return result;
+
+        // 1. Verificar L1 para todas las claves
+        const missingKeys: string[] = [];
         if (useL1) {
-            // Protección contra overflow: si llegamos al límite, vaciamos 
-            // (estrategia simple para no incurrir en overhead de LRU)
-            if (l1Cache.size >= MAX_L1_SIZE) {
-                l1Cache.clear();
+            const now = Date.now();
+            for (const key of keys) {
+                const entry = l1Cache.get(key);
+                if (entry && now < entry.expiresAt) {
+                    result.set(key, entry.data as T);
+                } else {
+                    if (entry) l1Cache.delete(key);
+                    missingKeys.push(key);
+                }
+            }
+        } else {
+            missingKeys.push(...keys);
+        }
+
+        if (missingKeys.length === 0) return result;
+
+        // 2. Si Redis no está disponible, log de fallback y retornar nulls para las faltantes
+        if (!isRedisAvailable()) {
+            logger.warn({
+                layer: 'cache',
+                action: 'REDIS_FALLBACK_TRIGGERED',
+                payload: {
+                    keysCount: missingKeys.length,
+                    reason: 'Redis no disponible en mget()',
+                    fallback: 'Retornando nulls — sistema consultará DB para cada jugada',
+                },
+            });
+            for (const key of missingKeys) result.set(key, null);
+            return result;
+        }
+
+        try {
+            const redis = getRedisClient();
+            if (!redis) {
+                for (const key of missingKeys) result.set(key, null);
+                return result;
             }
 
-            // L1 TTL es siempre corto para mantener consistencia (max entre 1 min y ttl real)
-            const l1Ttl = Math.min(60, ttlSeconds); 
-            l1Cache.set(key, { data: value, expiresAt: Date.now() + l1Ttl * 1000 });
+            // Una sola operación MGET para todas las jugadas pendientes
+            const values = await redis.mget(...missingKeys);
+
+            for (let i = 0; i < missingKeys.length; i++) {
+                const key = missingKeys[i];
+                const raw = values[i];
+                if (raw) {
+                    const parsed = JSON.parse(raw) as T;
+                    result.set(key, parsed);
+                    // Backfill L1
+                    if (useL1) {
+                        if (l1Cache.size >= MAX_L1_SIZE) l1Cache.clear();
+                        l1Cache.set(key, { data: parsed, expiresAt: Date.now() + l1TtlMs });
+                    }
+                } else {
+                    result.set(key, null);
+                }
+            }
+        } catch (err: any) {
+            logger.warn({
+                layer: 'cache',
+                action: 'REDIS_FALLBACK_TRIGGERED',
+                payload: {
+                    keysCount: missingKeys.length,
+                    reason: 'Excepción en mget()',
+                    error: err.message,
+                    fallback: 'Retornando nulls — sistema consultará DB',
+                },
+            });
+            for (const key of missingKeys) result.set(key, null);
+        }
+
+        return result;
+    }
+
+    /**
+     * Guardar valor en caché con TTL y opcionalmente asociarlo a tags
+     */
+    /**
+     * Guardar valor en caché con TTL configurable.
+     * @param l1TtlMs TTL en milisegundos para la capa L1 (memoria).
+     *   - Restricciones de vendedor: L1_TTL_RESTRICTIONS_MS (30s)
+     *   - Cutoffs: L1_TTL_CUTOFF_MS (60s)
+     */
+    static async set(
+        key: string,
+        value: any,
+        ttlSeconds: number = config.redis.ttlCutoff,
+        tags: string[] = [],
+        useL1: boolean = false,
+        l1TtlMs: number = L1_TTL_RESTRICTIONS_MS,
+    ): Promise<void> {
+        // 1. OPTIMIZACIÓN L1 (Memory) con TTL explícito por tipo de dato
+        if (useL1) {
+            if (l1Cache.size >= MAX_L1_SIZE) l1Cache.clear();
+            l1Cache.set(key, { data: value, expiresAt: Date.now() + l1TtlMs });
         }
 
         if (!isRedisAvailable()) return;
@@ -96,9 +199,6 @@ export class CacheService {
                     const tagKey = `tag:${tag}`;
                     pipeline.sadd(tagKey, key);
                     pipeline.expire(tagKey, 86400); // Max 24h para el set de tags
-                    
-                    // Si usamos L1, necesitamos trackear qué keys pertenecen a qué tags en memoria?
-                    // Por ahora, delPattern e invalidateTag limpian L1 por conveniencia.
                 }
 
                 await pipeline.exec();

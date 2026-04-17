@@ -10,6 +10,47 @@ import { config } from '../config';
 let redisClient: Redis | any = null;
 let redisAvailable = false;
 
+// ── CIRCUIT BREAKER LIGERO ────────────────────────────────────────────────────
+// Detecta ráfagas de error (cuota Upstash 429/ECONNREFUSED) y abre el circuito
+// durante 10 segundos para evitar cascada de errores 500.
+const CB = {
+  failureCount: 0,
+  THRESHOLD:    5,          // Errores consecutivos para abrir el circuito
+  OPEN_DURATION: 10_000,   // Tiempo abierto en ms (10 segundos)
+  openUntil:    0,         // Timestamp absoluto hasta el que el circuito está abierto
+};
+
+/**
+ * Reporta un error a Redis al circuit breaker.
+ * Llamar desde cualquier capa que detecte un fallo de Redis.
+ */
+export function markRedisError(context?: string): void {
+  CB.failureCount++;
+  if (CB.failureCount >= CB.THRESHOLD && Date.now() > CB.openUntil) {
+    CB.openUntil = Date.now() + CB.OPEN_DURATION;
+    logger.warn({
+      layer: 'redis',
+      action: 'CIRCUIT_BREAKER_OPENED',
+      payload: {
+        context,
+        failureCount: CB.failureCount,
+        openDurationMs: CB.OPEN_DURATION,
+        openUntil: new Date(CB.openUntil).toISOString(),
+        fallback: 'Omitiendo Redis durante 10s — sistema usará DB directamente',
+      },
+    });
+  }
+}
+
+/** Resetea el contador de errores cuando Redis se recupera */
+function resetCircuitBreaker(): void {
+  if (CB.failureCount > 0) {
+    CB.failureCount = 0;
+    logger.info({ layer: 'redis', action: 'CIRCUIT_BREAKER_RESET' });
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Inicializar cliente Redis (solo si está configurado)
  */
@@ -72,6 +113,7 @@ export async function initRedisClient(): Promise<void> {
                 logger.error({ layer: 'redis', action: 'ERROR', payload: { error: err.message } });
             }
             redisAvailable = false;
+            markRedisError('redisClient.on(error)'); // Reportar al circuit breaker
         });
 
         redisClient.on('connect', () => {
@@ -81,6 +123,7 @@ export async function initRedisClient(): Promise<void> {
         redisClient.on('ready', () => {
             logger.info({ layer: 'redis', action: 'READY' });
             redisAvailable = true;
+            resetCircuitBreaker(); // Reset al recuperarse
         });
 
         redisClient.on('close', () => {
@@ -121,10 +164,15 @@ export function getRedisClient(): Redis | null {
 }
 
 /**
- * Verificar si Redis está disponible y listo
+ * Verificar si Redis está disponible y listo.
+ * Respeta el circuit breaker: si está abierto, retorna false aunque Redis esté conectado.
  */
 export function isRedisAvailable(): boolean {
-    return redisAvailable && redisClient?.status === 'ready';
+  // Verificar circuit breaker primero
+  if (CB.failureCount >= CB.THRESHOLD && Date.now() < CB.openUntil) {
+    return false; // Circuito abierto — derivar a DB
+  }
+  return redisAvailable && redisClient?.status === 'ready';
 }
 
 /**

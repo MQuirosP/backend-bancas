@@ -1,4 +1,5 @@
-import { CacheService } from '../core/cache.service';
+import { CacheService, L1_TTL_RESTRICTIONS_MS, L1_TTL_CUTOFF_MS } from '../core/cache.service';
+import logger from '../core/logger';
 
 /**
  *  OPTIMIZACIÓN: Caché de restricciones y cutoff
@@ -47,7 +48,20 @@ export async function getCachedCutoff(params: {
     userId?: string | null;
 }): Promise<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" } | null> {
     const key = getCutoffCacheKey(params);
-    return await CacheService.get(key);
+    // useL1: true + 60s TTL para cutoffs (más estables que restricciones de número)
+    const result = await CacheService.get<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" }>(key, true, L1_TTL_CUTOFF_MS);
+    if (!result) {
+        logger.warn({
+            layer: 'restrictionCache',
+            action: 'REDIS_FALLBACK_TRIGGERED',
+            payload: {
+                key,
+                reason: 'Cache miss o Redis no disponible en getCachedCutoff()',
+                fallback: 'Sistema consultará DB para resolver cutoff',
+            },
+        });
+    }
+    return result;
 }
 
 /**
@@ -58,7 +72,8 @@ export async function setCachedCutoff(
     value: { minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" }
 ): Promise<void> {
     const key = getCutoffCacheKey(params);
-    await CacheService.set(key, value, CUTOFF_TTL);
+    // useL1: true + 60s TTL para cutoffs
+    await CacheService.set(key, value, CUTOFF_TTL, [], true, L1_TTL_CUTOFF_MS);
 }
 
 /**
@@ -72,7 +87,20 @@ export async function getCachedRestrictions(params: {
     number?: string | null;
 }): Promise<any | null> {
     const key = getRestrictionsCacheKey(params);
-    return await CacheService.get(key);
+    // useL1: true + 30s TTL para restricciones de vendedor (bloqueos de números deben propagarse rápido)
+    const result = await CacheService.get<any>(key, true, L1_TTL_RESTRICTIONS_MS);
+    if (!result) {
+        logger.warn({
+            layer: 'restrictionCache',
+            action: 'REDIS_FALLBACK_TRIGGERED',
+            payload: {
+                key,
+                reason: 'Cache miss o Redis no disponible en getCachedRestrictions()',
+                fallback: 'Sistema consultará DB para resolver restricciones',
+            },
+        });
+    }
+    return result;
 }
 
 /**
@@ -83,7 +111,8 @@ export async function setCachedRestrictions(
     value: any
 ): Promise<void> {
     const key = getRestrictionsCacheKey(params);
-    await CacheService.set(key, value, RESTRICTIONS_TTL);
+    // useL1: true + 30s TTL para restricciones
+    await CacheService.set(key, value, RESTRICTIONS_TTL, [], true, L1_TTL_RESTRICTIONS_MS);
 }
 
 /**

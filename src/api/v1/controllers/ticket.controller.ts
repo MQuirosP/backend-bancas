@@ -8,8 +8,6 @@ import { resolveDateRange, DateRangeResolution } from "../../../utils/dateRange"
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 
 import { IdempotencyService } from "../../../services/idempotency.service";
-import { config } from "../../../config";
-import { isRedisAvailable } from "../../../core/redisClient";
 
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
@@ -26,59 +24,51 @@ export const TicketController = {
 
       switch (result.status) {
         case 'HIT':
-          req.logger?.info({ layer: "controller", action: "IDEMPOTENCY_HIT", payload: { clientRequestId } });
+        case 'DB_HIT':
+          // Petición duplicada confirmada (Redis o DB) → devolver respuesta cacheada
+          req.logger?.info({
+            layer: 'controller',
+            action: result.status === 'DB_HIT' ? 'IDEMPOTENCY_DB_HIT' : 'IDEMPOTENCY_HIT',
+            payload: { clientRequestId, source: result.status === 'DB_HIT' ? 'DB' : 'Redis' },
+          });
           return success(res, result.cachedData);
-        
+
         case 'CONFLICT':
+        case 'DB_CONFLICT':
           return res.status(409).json({
             success: false,
-            error: "IDEMPOTENCY_PAYLOAD_MISMATCH",
-            message: "Se ha enviado una petición distinta con el mismo ID de idempotencia.",
+            error: 'IDEMPOTENCY_PAYLOAD_MISMATCH',
+            message: 'Se ha enviado una petición distinta con el mismo ID de idempotencia.',
           });
 
         case 'LOCKED':
-          // FIX 2: Jitter para evitar thundering herd (0.3s - 1.2s)
+          // FIX: Jitter para evitar thundering herd (0.3s - 1.2s)
           const jitter = (Math.random() * (1.2 - 0.3) + 0.3).toFixed(3);
-          res.setHeader("Retry-After", jitter);
+          res.setHeader('Retry-After', jitter);
           return res.status(429).json({
             success: false,
-            error: "IDEMPOTENCY_LOCKED",
-            message: "La petición ya está siendo procesada. Por favor espera.",
-          });
-
-        case 'ERROR':
-          // REQUISITO STAFF: Observabilidad mejorada
-          req.logger?.error({
-            layer: "controller",
-            action: "IDEMPOTENCY_UNAVAILABLE",
-            requestId: req.requestId,
-            payload: { 
-              clientRequestId,
-              strictMode: config.redis.strictMode,
-              redisAvailable: isRedisAvailable()
-            }
-          });
-
-          // FIX: Soft-Fail mode (QA/Dev)
-          if (!config.redis.strictMode) {
-             req.logger?.warn({ 
-               layer: "controller", 
-               action: "IDEMPOTENCY_SOFT_FAIL", 
-               message: "Proceeding without idempotency check due to Redis unavailability" 
-             });
-             break;
-          }
-
-          // FAIL-STOP (Producción)
-          res.setHeader("Retry-After", "1");
-          return res.status(503).json({
-            success: false,
-            error: "SERVICE_UNAVAILABLE",
-            message: "Servidor de idempotencia temporalmente fuera de servicio. Reintenta en unos momentos.",
+            error: 'IDEMPOTENCY_LOCKED',
+            message: 'La petición ya está siendo procesada. Por favor espera.',
           });
 
         case 'ACQUIRED':
           ownerId = result.ownerId;
+          break;
+
+        case 'DB_FALLBACK':
+        case 'ERROR':
+          // Redis no disponible y llave no encontrada en DB → proceder sin lock.
+          // El unique constraint de idempotencyKey en la DB previene duplicados.
+          req.logger?.warn({
+            layer: 'controller',
+            action: 'IDEMPOTENCY_PROCEEDING_WITHOUT_LOCK',
+            payload: {
+              clientRequestId,
+              status: result.status,
+              note: 'Idempotencia garantizada por DB unique constraint.',
+            },
+          });
+          // ownerId queda '' → rollback y commit son no-ops seguros
           break;
       }
     }
@@ -93,6 +83,7 @@ export const TicketController = {
       );
 
       // 3. Commit Atómico (Lua: Update Cache + Release Lock)
+      // Si ownerId es '' (DB_FALLBACK), commit es no-op seguro.
       if (clientRequestId) {
         await IdempotencyService.commit(clientRequestId, ownerId, ticketResult, payloadHash);
       }
@@ -100,10 +91,10 @@ export const TicketController = {
       return success(res, ticketResult);
 
     } catch (err: any) {
-      // 4. Manejo P2002 (Auto-Repair)
+      // 4. P2002 Auto-Repair (duplicate idempotencyKey en DB)
       if (clientRequestId && err?.code === 'P2002' && (err?.meta?.target as string[] | undefined)?.includes('idempotencyKey')) {
         try {
-          const recovered = await IdempotencyService.autoRepair(clientRequestId, payloadHash, () => 
+          const recovered = await IdempotencyService.autoRepair(clientRequestId, payloadHash, () =>
             TicketService.getByIdempotencyKey(clientRequestId)
           );
           if (recovered) {
@@ -111,11 +102,11 @@ export const TicketController = {
             return success(res, recovered);
           }
         } catch (repairErr) {
-          req.logger?.error({ layer: "controller", action: "RECOVERY_FAILED", payload: { error: (repairErr as Error).message } });
+          req.logger?.error({ layer: 'controller', action: 'RECOVERY_FAILED', payload: { error: (repairErr as Error).message } });
         }
       }
 
-      // 5. Rollback seguro en errores de negocio
+      // 5. Rollback seguro (no-op si ownerId es '')
       if (clientRequestId && ownerId) {
         await IdempotencyService.rollback(clientRequestId, ownerId);
       }
