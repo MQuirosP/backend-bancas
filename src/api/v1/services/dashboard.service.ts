@@ -2485,6 +2485,7 @@ export const DashboardService = {
       vendedor_commission: string;
       ticket_count: string;
       remaining_balance: string;
+      vendedores_remaining_balance: string;
     };
 
     type MtdRow = {
@@ -2506,7 +2507,8 @@ export const DashboardService = {
           COALESCE(SUM(s."listeroCommission"), 0)      AS listero_commission,
           COALESCE(SUM(s."vendedorCommission"), 0)     AS vendedor_commission,
           COALESCE(SUM(s."ticketCount"), 0)            AS ticket_count,
-          COALESCE(MAX(lb.remaining_balance), 0)       AS remaining_balance
+          COALESCE(MAX(lb.remaining_balance), 0)       AS remaining_balance,
+          COALESCE(MAX(vlb.total_vendedores_balance), 0) AS vendedores_remaining_balance
         FROM "Ventana" v
         LEFT JOIN "AccountStatement" s
           ON  s."ventanaId" = v.id
@@ -2521,6 +2523,22 @@ export const DashboardService = {
           ORDER BY date DESC
           LIMIT 1
         ) lb ON true
+        LEFT JOIN LATERAL (
+          SELECT SUM(lb_vend.remaining_balance) AS total_vendedores_balance
+          FROM "User" u
+          JOIN LATERAL (
+            SELECT "remainingBalance" AS remaining_balance
+            FROM "AccountStatement" ast
+            WHERE ast."vendedorId" = u.id
+              AND ast.month = ${currentMonth}
+            ORDER BY date DESC
+            LIMIT 1
+          ) lb_vend ON true
+          WHERE u."ventanaId" = v.id
+            AND u.role = 'VENDEDOR'
+            AND u."isActive" = true
+            AND u."deletedAt" IS NULL
+        ) vlb ON true
         WHERE v."deletedAt" IS NULL
           ${bancaFilter}
           ${ventanaFilter}
@@ -2552,6 +2570,7 @@ export const DashboardService = {
       const listeroCommission = Number(r.listero_commission);
       const vendedorCommission= Number(r.vendedor_commission);
       const remainingBalance  = Number(r.remaining_balance);
+      const vendedoresRemainingBalance = Number(r.vendedores_remaining_balance);
       const net    = totalSales - totalPayouts - listeroCommission;
       const margin = totalSales > 0 ? parseFloat(((net / totalSales) * 100).toFixed(2)) : 0;
       return {
@@ -2566,6 +2585,7 @@ export const DashboardService = {
         margin,
         ticketCount:        Number(r.ticket_count),
         remainingBalance:   parseFloat(remainingBalance.toFixed(2)),
+        vendedoresRemainingBalance: parseFloat(vendedoresRemainingBalance.toFixed(2)),
         cxcAmount:          parseFloat(Math.max(remainingBalance, 0).toFixed(2)),
         cxpAmount:          parseFloat(Math.max(-remainingBalance, 0).toFixed(2)),
       };
