@@ -954,7 +954,8 @@ export const AccountsService = {
             bancaId?: string;
             userRole?: "ADMIN" | "VENTANA" | "VENDEDOR";
         },
-        includePreviousDayAccumulated: boolean = true //  NUEVO: Flag para controlar si se incluye acumulado del día anterior
+        includePreviousDayAccumulated: boolean = true, //  NUEVO: Flag para controlar si se incluye acumulado del día anterior
+        tx: Prisma.TransactionClient = prisma
     ) {
         // Convertir fecha string a Date
         const [year, month, day] = date.split('-').map(Number);
@@ -1011,7 +1012,7 @@ export const AccountsService = {
                 if (isSingleStatementQuery) {
                     if (filters.dimension === "banca" && targetBancaId) {
                         // Buscar específicamente el statement consolidado de la banca (ventanaId=null, vendedorId=null)
-                        dbStatement = await prisma.accountStatement.findFirst({
+                        dbStatement = await tx.accountStatement.findFirst({
                             where: {
                                 date: previousDayDate,
                                 bancaId: targetBancaId,
@@ -1049,23 +1050,23 @@ export const AccountsService = {
                         previousDayDateUTC.setUTCHours(0, 0, 0, 0);
 
                         if (filters.dimension === "vendedor" && targetVendedorId) {
-                            await AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "vendedor", targetVendedorId);
+                            await AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "vendedor", targetVendedorId, { force: true });
                         } else if (filters.dimension === "ventana" && targetVentanaId) {
-                            await AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "ventana", targetVentanaId);
+                            await AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "ventana", targetVentanaId, { force: true });
                         } else if (filters.dimension === "banca" && targetBancaId) {
-                            await AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "banca", targetBancaId);
+                            await AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "banca", targetBancaId, { force: true });
                         }
 
                         // Intentar buscar nuevamente después de sincronizar
                         if (filters.dimension === "banca" && targetBancaId) {
-                            dbStatement = await prisma.accountStatement.findFirst({
+                            dbStatement = await tx.accountStatement.findFirst({
                                 where: { date: previousDayDate, bancaId: targetBancaId, ventanaId: null, vendedorId: null },
                             });
                         } else {
                             dbStatement = await AccountStatementRepository.findByDate(previousDayDate, {
                                 ventanaId: targetVentanaId,
                                 vendedorId: targetVendedorId,
-                            });
+                            }, tx);
                         }
                     }
                 }
@@ -1091,7 +1092,7 @@ export const AccountsService = {
                 } else if (!isSingleStatementQuery && filters.dimension === 'banca' && !filters.bancaId) {
                     //  OPTIMIZACIÓN: Para "ALL bancas", usar aggregate directo en AccountStatement
                     // en vez de getStatementDirect() (que recalcula todo el mes y consume mucha memoria)
-                    const aggregated = await prisma.accountStatement.aggregate({
+                    const aggregated = await tx.accountStatement.aggregate({
                         where: {
                             date: previousDayDate,
                             bancaId: { not: null },

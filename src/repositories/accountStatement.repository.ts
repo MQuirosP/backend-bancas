@@ -14,13 +14,13 @@ export const AccountStatementRepository = {
     bancaId?: string;
     ventanaId?: string;
     vendedorId?: string;
-  }) {
+  }, tx: Prisma.TransactionClient = prisma) {
     let finalVentanaId: string | undefined = data.ventanaId;
     let finalBancaId: string | undefined = data.bancaId;
 
     // Inferir ventana desde vendedor
     if (!finalVentanaId && data.vendedorId) {
-      const vendedor = await prisma.user.findUnique({
+      const vendedor = await tx.user.findUnique({
         where: { id: data.vendedorId },
         select: { ventanaId: true },
       });
@@ -29,7 +29,7 @@ export const AccountStatementRepository = {
 
     // Inferir banca desde ventana
     if (!finalBancaId && finalVentanaId) {
-      const ventana = await prisma.ventana.findUnique({
+      const ventana = await tx.ventana.findUnique({
         where: { id: finalVentanaId },
         select: { bancaId: true },
       });
@@ -62,14 +62,14 @@ export const AccountStatementRepository = {
     }
 
     // Buscar statement existente
-    let statement = await prisma.accountStatement.findFirst({
+    let statement = await tx.accountStatement.findFirst({
       where: where
     });
 
     //  SI ENCONTRAMOS UN VENDEDOR: Asegurar que ventanaId sea null (limpieza de datos sucios)
     // Esto evita que un record de vendedor bloquee el consolidado de la ventana
     if (statement && data.vendedorId && statement.ventanaId !== null) {
-      statement = await prisma.accountStatement.update({
+      statement = await tx.accountStatement.update({
         where: { id: statement.id },
         data: { ventanaId: null }
       });
@@ -78,7 +78,7 @@ export const AccountStatementRepository = {
     // Si no existe, intentar crear
     if (!statement) {
       try {
-        statement = await prisma.accountStatement.create({
+        statement = await tx.accountStatement.create({
           data: {
             date: data.date,
             month: data.month,
@@ -93,7 +93,7 @@ export const AccountStatementRepository = {
         // P2002 es el código de Prisma para Unique constraint failed
         if (error.code === 'P2002') {
           // Si falló por concurrencia, lo buscamos de nuevo (ya debería existir)
-          statement = await prisma.accountStatement.findFirst({
+          statement = await tx.accountStatement.findFirst({
             where: where
           });
 
@@ -110,7 +110,7 @@ export const AccountStatementRepository = {
             // que está bloqueando el constraint pero no coincide con nuestro 'where'
             if (data.ventanaId && !data.vendedorId) {
               // Intentar encontrar el culpable (registro con misma date/ventanaId pero vendedorId NOT NULL)
-              const culprit = await prisma.accountStatement.findFirst({
+              const culprit = await tx.accountStatement.findFirst({
                 where: {
                   date: data.date,
                   ventanaId: data.ventanaId
@@ -126,13 +126,13 @@ export const AccountStatementRepository = {
 
                 // Si encontramos el culpable, lo "limpiamos" quitándole la ventanaId
                 // para que deje de bloquear el consolidado
-                await prisma.accountStatement.update({
+                await tx.accountStatement.update({
                   where: { id: culprit.id },
                   data: { ventanaId: null }
                 });
 
                 // Re-intentar crear el consolidado
-                statement = await prisma.accountStatement.create({
+                statement = await tx.accountStatement.create({
                   data: {
                     date: data.date,
                     month: data.month,
@@ -169,7 +169,7 @@ export const AccountStatementRepository = {
       }
     } else if (finalBancaId && !statement.bancaId) {
       // Actualizar bancaId si faltaba
-      statement = await prisma.accountStatement.update({
+      statement = await tx.accountStatement.update({
         where: { id: statement.id },
         data: { bancaId: finalBancaId },
       });
@@ -198,8 +198,8 @@ export const AccountStatementRepository = {
     // ventanaId and vendedorId are immutable after creation and should not be updated here
     settledAt?: Date | null;
     settledBy?: string | null;
-  }) {
-    return await prisma.accountStatement.update({
+  }, tx: Prisma.TransactionClient = prisma) {
+    return await tx.accountStatement.update({
       where: { id },
       data,
     });
@@ -311,7 +311,8 @@ export const AccountStatementRepository = {
       ventanaId?: string;
       vendedorId?: string;
       bancaId?: string;
-    }
+    },
+    tx: Prisma.TransactionClient = prisma
   ) {
     const where: Prisma.AccountStatementWhereInput = {
       date,
@@ -337,7 +338,7 @@ export const AccountStatementRepository = {
       where.vendedorId = null;
     }
 
-    return await prisma.accountStatement.findFirst({
+    return await tx.accountStatement.findFirst({
       where,
       include: {
         banca: {

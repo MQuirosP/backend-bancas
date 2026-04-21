@@ -4,6 +4,7 @@ import logger from "../../../../core/logger";
 import { getCachedPreviousMonthBalance, setCachedPreviousMonthBalance } from "../../../../utils/accountStatementCache";
 import { crDateService } from "../../../../utils/crDateService";
 import { isExclusionListEmpty } from "../../../../core/exclusionListCache";
+import { ConcurrencyManager } from "../../../../utils/concurrency";
 
 /**
  * Interface para los parámetros de cálculo de saldo anterior desde fuente
@@ -90,6 +91,7 @@ async function calculatePreviousMonthBalanceFromSource(
         const ticketWhereClause = Prisma.sql`WHERE ${Prisma.join(ticketConditions, " AND ")}`;
 
         // 1. Calcular ventas desde jugadas
+        // CRÍTICO: Las agregaciones pesadas SIEMPRE usan prisma global para no saturar tx activas
         const salesResult = await prisma.$queryRaw<Array<{ total_sales: number }>>`
             SELECT COALESCE(SUM(j.amount), 0) as total_sales
             FROM "Ticket" t
@@ -100,6 +102,7 @@ async function calculatePreviousMonthBalanceFromSource(
         `;
 
         // 2. Calcular premios desde tickets
+        // CRÍTICO: Las agregaciones pesadas SIEMPRE usan prisma global
         const payoutsResult = await prisma.$queryRaw<Array<{ total_payouts: number }>>`
             SELECT COALESCE(SUM(t."totalPayout"), 0) as total_payouts
             FROM "Ticket" t
@@ -107,6 +110,7 @@ async function calculatePreviousMonthBalanceFromSource(
         `;
 
         // 3. Calcular comisiones según dimensión
+        // CRÍTICO: Las agregaciones pesadas SIEMPRE usan prisma global
         const commissionField = dimension === "vendedor"
             ? Prisma.sql`CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END`
             : Prisma.sql`j."listeroCommissionAmount"`;
@@ -133,6 +137,9 @@ async function calculatePreviousMonthBalanceFromSource(
             paymentsWhere.vendedorId = filters.vendedorId;
         } else if (filters.ventanaId) {
             paymentsWhere.ventanaId = filters.ventanaId;
+            if (filters.bancaId) {
+                paymentsWhere.bancaId = filters.bancaId;
+            }
         } else if (filters.bancaId) {
             paymentsWhere.bancaId = filters.bancaId;
         }
@@ -284,8 +291,8 @@ export async function getPreviousMonthFinalBalancesBatch(
 ): Promise<Map<string, number>> {
     const balancesMap = new Map<string, number>();
     
-    // Implementación batch real para mejor rendimiento usando Promise.all
-    const promises = entityIds.map(async (entityId) => {
+    // Implementación batch con limitación de concurrencia para proteger el pool
+    const tasks = entityIds.map((entityId) => async () => {
         const balance = await getPreviousMonthFinalBalance(
             effectiveMonth,
             dimension,
@@ -296,9 +303,10 @@ export async function getPreviousMonthFinalBalancesBatch(
         return { entityId, balance };
     });
 
-    const results = await Promise.all(promises);
-    for (const { entityId, balance } of results) {
-        balancesMap.set(entityId, balance);
+    const results = await ConcurrencyManager.runLimited(tasks, { limit: 5, label: "GetPreviousMonthFinalBalancesBatch" });
+
+    for (const res of results) {
+        balancesMap.set(res.entityId, res.balance);
     }
     
     return balancesMap;

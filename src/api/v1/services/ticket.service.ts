@@ -1105,7 +1105,7 @@ export const TicketService = {
       // 2. Consolidar Metadatos en una sola ráfaga controlada al inicio
       // OPTIMIZACIÓN: Solo consultamos lo estrictamente necesario según los params
       const [metadataResults, exclusionCondition] = await Promise.all([
-        prisma.$transaction([
+        Promise.all([
           ...(params.sorteoId ? [prisma.sorteo.findUnique({
             where: { id: params.sorteoId },
             select: {

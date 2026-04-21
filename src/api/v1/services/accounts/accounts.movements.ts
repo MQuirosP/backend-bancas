@@ -348,27 +348,19 @@ export async function registerPayment(data: {
             },
         });
 
-        // 2. Usar el sync service para recalcular correctamente el statement
-        //    Esto evita la duplicación de lógica y asegura cálculos consistentes
-        await AccountStatementSyncService.syncDayStatement(
-            paymentDate,
-            dimension,
-            entityId || undefined,
-            { force: true, tx }
-        );
-
-        // 3. Obtener el statement actualizado
-        updatedStatement = await tx.accountStatement.findUnique({
-            where: { id: currentStatement.id }
-        });
-
-        if (!updatedStatement) {
-            throw new AppError("Error al obtener statement actualizado", 500, "STATEMENT_UPDATE_ERROR");
-        }
     }, {
         timeout: 30000,
         isolationLevel: "ReadCommitted"
     });
+
+    // 2. Usar el sync service para recalcular correctamente el statement (FUERA de la tx del pago)
+    //    En Arquitectura v5, el cómputo es stateless y requiere ver los datos commiteados.
+    await AccountStatementSyncService.syncDayStatement(
+        paymentDate,
+        dimension,
+        entityId || undefined,
+        { force: true }
+    );
 
     // Validar que statement esté definido (defensivo)
     if (!updatedStatement) {
@@ -471,7 +463,6 @@ export async function registerPayment(data: {
 
     // Invalidar caché
     updateCacheAfterMovement(data.date, finalVentanaId, data.vendedorId, finalBancaId);
-
     return {
         payment: {
             ...payment,
@@ -524,27 +515,18 @@ export async function reversePayment(
             data: { isReversed: true, reversedAt: new Date(), reversedBy: userId }
         });
 
-        // 2. Usar el sync service para recalcular correctamente el statement
-        //    Esto evita la duplicación de lógica y asegura cálculos consistentes
-        await AccountStatementSyncService.syncDayStatement(
-            paymentDate,
-            dimension,
-            entityId || undefined,
-            { force: true, tx }
-        );
-
-        // 3. Obtener el statement actualizado
-        updatedStatement = await tx.accountStatement.findUnique({
-            where: { id: currentStatement.id }
-        });
-
-        if (!updatedStatement) {
-            throw new AppError("Error al obtener statement actualizado después de reversión", 500, "REVERSE_STATEMENT_UPDATE_ERROR");
-        }
     }, {
         timeout: 30000,
         isolationLevel: "ReadCommitted"
     });
+
+    // 2. Usar el sync service para recalcular correctamente el statement (FUERA de la tx)
+    await AccountStatementSyncService.syncDayStatement(
+        paymentDate,
+        dimension,
+        entityId || undefined,
+        { force: true }
+    );
 
     // CRÍTICO: Propagar cambios a días posteriores si el pago se revirtió en un día pasado
     // Esto asegura que los accumulatedBalance de días posteriores se actualicen correctamente
@@ -618,6 +600,9 @@ export async function reversePayment(
     }
 
     updateCacheAfterMovement(dateStr, statement.ventanaId, statement.vendedorId, statement.bancaId);
+
+    // Recuperar el statement actualizado para la respuesta
+    updatedStatement = await AccountStatementRepository.findById(statement.id);
 
     return {
         payment: { ...payment, isReversed: true, reversedAt: new Date().toISOString(), reversedBy: userId, date: dateStr },

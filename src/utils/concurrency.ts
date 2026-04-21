@@ -33,4 +33,35 @@ export class ConcurrencyManager {
     
     return results;
   }
+
+  /**
+   * Ejecuta una lista de tareas asíncronas con un límite de concurrencia y retorna los resultados liquidados.
+   * Equivalente a Promise.allSettled pero con límite de hilos paralelos.
+   */
+  static async runLimitedSettled<T>(
+    tasks: (() => Promise<T>)[],
+    options: { limit: number; label?: string }
+  ): Promise<PromiseSettledResult<T>[]> {
+    const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+    const queue = tasks.map((task, index) => ({ task, index }));
+    const limit = Math.min(options.limit, tasks.length);
+
+    const worker = async () => {
+      while (queue.length > 0) {
+        const item = queue.shift();
+        if (!item) break;
+        try {
+          const value = await item.task();
+          results[item.index] = { status: "fulfilled", value };
+        } catch (error) {
+          results[item.index] = { status: "rejected", reason: error };
+        }
+      }
+    };
+
+    const workers = Array.from({ length: limit }, () => worker());
+    await Promise.all(workers);
+
+    return results;
+  }
 }
