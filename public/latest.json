@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.9",
-  "versionCode": 15,
-  "buildNumber": 15,
+  "versionName": "1.0.10",
+  "versionCode": 16,
+  "buildNumber": 16,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Ordenamiento de jugadas en previsualización de tickets.",
-  "releasedAt": "2026-04-08T21:00:00Z",
+  "changelog": "Implementa historial por rango personalizado.",
+  "releasedAt": "2026-04-27T21:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "2499a4dbc6d81f461250baa2ad893ee39770a7f6add063bd6c0ad5ecb33436fd"
+      "sha256": "f7876b6b5bd6d258c884fef4775f837dc968a3180c67820ba8ccaef3c7296cb1"
     },
     "arm64-v8a": {
-      "sha256": "2499a4dbc6d81f461250baa2ad893ee39770a7f6add063bd6c0ad5ecb33436fd"
+      "sha256": "f7876b6b5bd6d258c884fef4775f837dc968a3180c67820ba8ccaef3c7296cb1"
     }
   }
 }
