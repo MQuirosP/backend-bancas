@@ -365,8 +365,25 @@ export const AccountsService = {
         }
 
         //  CRÍTICO: Determinar effectiveMonth de forma robusta
-        // Si hay filters.month, se usa ese. Si no, se usa el mes del endDate del reporte (el fin del rango)
-        effectiveMonth = filters.month || crDateService.dateUTCToCRString(endDate).substring(0, 7);
+        // Si hay filters.month, se usa ese. 
+        // Si es un rango (ej. date=week) que cruza meses, priorizar el mes actual si hoy cae en el rango.
+        if (filters.month) {
+            effectiveMonth = filters.month;
+        } else {
+            const startStr = crDateService.dateUTCToCRString(startDate);
+            const endStr = crDateService.dateUTCToCRString(endDate);
+            const todayCRStr = crDateService.dateUTCToCRString(new Date());
+            
+            if (startStr.substring(0, 7) !== endStr.substring(0, 7)) {
+                if (todayCRStr >= startStr && todayCRStr <= endStr) {
+                    effectiveMonth = todayCRStr.substring(0, 7);
+                } else {
+                    effectiveMonth = endStr.substring(0, 7);
+                }
+            } else {
+                effectiveMonth = endStr.substring(0, 7);
+            }
+        }
 
         // Resolve Costa Rica date boundaries
         const monthStartStr = `${effectiveMonth}-01`;
@@ -1029,44 +1046,111 @@ export const AccountsService = {
                     }
 
                     if (!dbStatement) {
-                        //  CRÍTICO: Si no existe el statement en la BD, sincronizarlo primero
-                        logger.info({
-                            layer: "service",
-                            action: "GET_BY_SORTEO_SYNCING_PREVIOUS_DAY",
-                            payload: {
-                                date,
-                                previousDate: previousDateStr,
-                                dimension: filters.dimension,
-                                bancaId: filters.bancaId,
-                                ventanaId: filters.ventanaId,
-                                vendedorId: filters.vendedorId,
-                                note: "Sincronizando statement del día anterior antes de usarlo",
+                        // ⚡ OPTIMIZACIÓN: Antes de lanzar un sync costoso, verificar si esta entidad
+                        // tiene ALGÚN statement en el mes actual. Si no tiene ninguno (vendedor/ventana nuevo),
+                        // no tiene sentido sincronizar — el acumulado es 0.
+                        const [prevYear, prevMonth] = previousDateStr.split('-').map(Number);
+                        const monthStartUTC = new Date(Date.UTC(prevYear, prevMonth - 1, 1));
+                        const monthEndUTC = new Date(Date.UTC(prevYear, prevMonth, 0, 23, 59, 59, 999));
+
+                        const anyStatementInMonth = await tx.accountStatement.findFirst({
+                            where: {
+                                date: { gte: monthStartUTC, lte: monthEndUTC },
+                                ...(filters.dimension === "vendedor" && targetVendedorId ? { vendedorId: targetVendedorId } : {}),
+                                ...(filters.dimension === "ventana" && targetVentanaId ? { ventanaId: targetVentanaId, vendedorId: null } : {}),
+                                ...(filters.dimension === "banca" && targetBancaId ? { bancaId: targetBancaId, ventanaId: null, vendedorId: null } : {}),
                             },
+                            select: { id: true, remainingBalance: true, date: true },
+                            orderBy: { date: 'desc' },
                         });
 
-                        // Sincronizar el statement del día anterior
-                        const { AccountStatementSyncService } = await import('./accounts.sync.service');
-                        const previousDayDateUTC = new Date(previousDayDate);
-                        previousDayDateUTC.setUTCHours(0, 0, 0, 0);
-
-                        if (filters.dimension === "vendedor" && targetVendedorId) {
-                            await AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "vendedor", targetVendedorId, { force: true });
-                        } else if (filters.dimension === "ventana" && targetVentanaId) {
-                            await AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "ventana", targetVentanaId, { force: true });
-                        } else if (filters.dimension === "banca" && targetBancaId) {
-                            await AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "banca", targetBancaId, { force: true });
-                        }
-
-                        // Intentar buscar nuevamente después de sincronizar
-                        if (filters.dimension === "banca" && targetBancaId) {
-                            dbStatement = await tx.accountStatement.findFirst({
-                                where: { date: previousDayDate, bancaId: targetBancaId, ventanaId: null, vendedorId: null },
+                        if (!anyStatementInMonth) {
+                            // 🆕 Entidad sin datos en el mes → lastDayAccumulated = 0, sin sync costoso
+                            logger.info({
+                                layer: "service",
+                                action: "GET_BY_SORTEO_SKIP_SYNC_NO_DATA",
+                                payload: {
+                                    date,
+                                    previousDate: previousDateStr,
+                                    dimension: filters.dimension,
+                                    vendedorId: filters.vendedorId,
+                                    ventanaId: filters.ventanaId,
+                                    bancaId: filters.bancaId,
+                                    note: "Entidad sin statements en el mes, usando 0 como lastDayAccumulated (skip sync)",
+                                },
                             });
+                            lastDayAccumulated = 0;
                         } else {
-                            dbStatement = await AccountStatementRepository.findByDate(previousDayDate, {
-                                ventanaId: targetVentanaId,
-                                vendedorId: targetVendedorId,
-                            }, tx);
+                            // La entidad SÍ tiene datos pero falta el día específico → sincronizar con timeout
+                            logger.info({
+                                layer: "service",
+                                action: "GET_BY_SORTEO_SYNCING_PREVIOUS_DAY",
+                                payload: {
+                                    date,
+                                    previousDate: previousDateStr,
+                                    dimension: filters.dimension,
+                                    bancaId: filters.bancaId,
+                                    ventanaId: filters.ventanaId,
+                                    vendedorId: filters.vendedorId,
+                                    nearestStatementDate: anyStatementInMonth.date,
+                                    note: "Sincronizando statement del día anterior (con timeout de seguridad)",
+                                },
+                            });
+
+                            try {
+                                // Wrap en Promise.race con timeout de 5s para evitar bloquear el request
+                                const SYNC_TIMEOUT_MS = 5000;
+                                const { AccountStatementSyncService } = await import('./accounts.sync.service');
+                                const previousDayDateUTC = new Date(previousDayDate);
+                                previousDayDateUTC.setUTCHours(0, 0, 0, 0);
+
+                                let syncPromise: Promise<void>;
+                                if (filters.dimension === "vendedor" && targetVendedorId) {
+                                    syncPromise = AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "vendedor", targetVendedorId, { force: true });
+                                } else if (filters.dimension === "ventana" && targetVentanaId) {
+                                    syncPromise = AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "ventana", targetVentanaId, { force: true });
+                                } else if (filters.dimension === "banca" && targetBancaId) {
+                                    syncPromise = AccountStatementSyncService.syncDayStatement(previousDayDateUTC, "banca", targetBancaId, { force: true });
+                                } else {
+                                    syncPromise = Promise.resolve();
+                                }
+
+                                await Promise.race([
+                                    syncPromise,
+                                    new Promise<void>((_, reject) =>
+                                        setTimeout(() => reject(new Error('Sync timeout')), SYNC_TIMEOUT_MS)
+                                    ),
+                                ]);
+
+                                // Intentar buscar nuevamente después de sincronizar
+                                if (filters.dimension === "banca" && targetBancaId) {
+                                    dbStatement = await tx.accountStatement.findFirst({
+                                        where: { date: previousDayDate, bancaId: targetBancaId, ventanaId: null, vendedorId: null },
+                                    });
+                                } else {
+                                    dbStatement = await AccountStatementRepository.findByDate(previousDayDate, {
+                                        ventanaId: targetVentanaId,
+                                        vendedorId: targetVendedorId,
+                                    }, tx);
+                                }
+                            } catch (syncError) {
+                                // Sync falló o expiró → usar el statement más cercano como fallback
+                                logger.warn({
+                                    layer: "service",
+                                    action: "GET_BY_SORTEO_SYNC_TIMEOUT_FALLBACK",
+                                    payload: {
+                                        date,
+                                        previousDate: previousDateStr,
+                                        dimension: filters.dimension,
+                                        vendedorId: filters.vendedorId,
+                                        error: (syncError as Error).message,
+                                        fallbackStatementDate: anyStatementInMonth.date,
+                                        fallbackBalance: Number(anyStatementInMonth.remainingBalance),
+                                        note: "Sync expiró o falló, usando statement más cercano como fallback",
+                                    },
+                                });
+                                lastDayAccumulated = Number(anyStatementInMonth.remainingBalance || 0);
+                            }
                         }
                     }
                 }
