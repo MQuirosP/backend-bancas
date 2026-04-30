@@ -3,6 +3,7 @@ import { Router } from "express";
 import { CommissionsController } from "../controllers/commissions.controller";
 import {
   validateCommissionsListQuery,
+  validateCommissionsBreakdown,
   validateCommissionsDetailQuery,
   validateCommissionsTicketsQuery,
   validateCommissionsExportQuery,
@@ -39,6 +40,10 @@ const exportLimiter = rateLimit({
 // 1) Lista de comisiones por periodo
 // GET /api/v1/commissions
 router.get("/", validateCommissionsListQuery, CommissionsController.list);
+
+// 1.5) Desglose anidado por Lotería/Multiplicador (Lazy Loading)
+// GET /api/v1/commissions/:date/breakdown
+router.get("/:date/breakdown", validateCommissionsBreakdown, CommissionsController.breakdown);
 
 // 2) Detalle de comisiones por lotería
 // GET /api/v1/commissions/detail

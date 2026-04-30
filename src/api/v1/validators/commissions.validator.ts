@@ -15,11 +15,12 @@ export const CommissionsListQuerySchema = z
 
     // Scope y dimension
     scope: z.enum(["mine", "all"]),
-    dimension: z.enum(["ventana", "vendedor"]),
+    dimension: z.enum(["ventana", "vendedor", "loteria"]),
 
     // Filtros opcionales (solo para ADMIN)
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
+    loteriaId: z.string().uuid().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
@@ -72,7 +73,7 @@ export const CommissionsDetailQuerySchema = z
 
     // Scope y dimension
     scope: z.enum(["mine", "all"]),
-    dimension: z.enum(["ventana", "vendedor"]),
+    dimension: z.enum(["ventana", "vendedor", "loteria"]),
 
     // Filtros opcionales (solo para ADMIN)
     ventanaId: z.string().uuid().optional(),
@@ -96,7 +97,7 @@ export const CommissionsTicketsQuerySchema = z
 
     // Scope y dimension
     scope: z.enum(["mine", "all"]),
-    dimension: z.enum(["ventana", "vendedor"]),
+    dimension: z.enum(["ventana", "vendedor", "loteria"]),
 
     // Filtros opcionales (solo para ADMIN)
     ventanaId: z.string().uuid().optional(),
@@ -125,11 +126,12 @@ export const CommissionsExportQuerySchema = z
 
     // Scope y dimension
     scope: z.enum(["mine", "all"]),
-    dimension: z.enum(["ventana", "vendedor"]),
+    dimension: z.enum(["ventana", "vendedor", "loteria"]),
 
     // Filtros opcionales (solo para ADMIN)
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
+    loteriaId: z.string().uuid().optional(),
 
     // Opciones de exportación
     includeBreakdown: z.coerce.boolean().optional().default(true),
@@ -181,4 +183,26 @@ export const validateCommissionsListQuery = validateQuery(CommissionsListQuerySc
 export const validateCommissionsDetailQuery = validateQuery(CommissionsDetailQuerySchema);
 export const validateCommissionsTicketsQuery = validateQuery(CommissionsTicketsQuerySchema);
 export const validateCommissionsExportQuery = validateQuery(CommissionsExportQuerySchema);
+
+/**
+ * Schema para GET /api/v1/commissions/:date/breakdown
+ */
+export const CommissionsBreakdownParamsSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export const CommissionsBreakdownQuerySchema = z.object({
+  scope: z.enum(["mine", "all"]),
+  dimension: z.enum(["ventana", "vendedor", "loteria"]),
+  ventanaId: z.string().uuid().optional(),
+  vendedorId: z.string().uuid().optional(),
+  _: z.string().optional(),
+}).strict();
+
+import { validateParams } from "../../../middlewares/validate.middleware";
+
+export const validateCommissionsBreakdown = [
+  validateParams(CommissionsBreakdownParamsSchema),
+  validateQuery(CommissionsBreakdownQuerySchema),
+];
 

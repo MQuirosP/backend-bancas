@@ -66,6 +66,7 @@ export const CommissionsController = {
       dimension: string;
       ventanaId?: string;
       vendedorId?: string;
+      loteriaId?: string;
       bancaId?: string;
     } = {
       scope: scope as string,
@@ -137,6 +138,57 @@ export const CommissionsController = {
       },
       effectiveFilters,
     });
+  },
+
+  /**
+   * 1.5) Desglose anidado por Lotería/Multiplicador para una fecha específica (Lazy Loading)
+   * GET /api/v1/commissions/:date/breakdown
+   */
+  async breakdown(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    const { date } = req.params;
+    const {
+      scope,
+      dimension,
+      ...rest
+    } = req.query as any;
+
+    // Validar scope y dimension según rol
+    if (req.user.role === Role.VENDEDOR) {
+      if (scope !== "mine" || dimension !== "vendedor") {
+        throw new AppError("VENDEDOR can only view own commissions with dimension=vendedor", 403);
+      }
+      rest.scope = "mine";
+      rest.dimension = "vendedor";
+    } else if (req.user.role === Role.VENTANA) {
+      if (scope !== "mine") {
+        throw new AppError("VENTANA can only view own commissions (scope=mine)", 403);
+      }
+      rest.scope = "mine";
+    }
+
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user.id,
+      role: req.user.role,
+      ventanaId: req.user.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null,
+    };
+    const effectiveFilters = await applyRbacFilters(context, rest);
+
+    const filters: any = {
+      scope: scope as string,
+      dimension: dimension as string,
+    };
+
+    if (effectiveFilters.ventanaId) filters.ventanaId = effectiveFilters.ventanaId;
+    if (effectiveFilters.vendedorId) filters.vendedorId = effectiveFilters.vendedorId;
+    if (effectiveFilters.bancaId) filters.bancaId = effectiveFilters.bancaId;
+
+    const result = await CommissionsService.getBreakdown(date, filters);
+
+    return success(res, result);
   },
 
   /**
