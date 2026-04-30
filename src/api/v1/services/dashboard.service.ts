@@ -20,9 +20,11 @@ interface DashboardFilters {
   fromDate: Date;
   toDate: Date;
   ventanaId?: string; // Para RBAC
+  vendedorId?: string; //  NUEVO: Filtro global por vendedor
   bancaId?: string; // Para filtrar por banca activa (ADMIN multibanca)
   loteriaId?: string; // Filtro por lotería
   betType?: 'NUMERO' | 'REVENTADO'; // Filtro por tipo de apuesta
+  status?: string; //  NUEVO: Filtro por estado del sorteo (OPEN, EVALUATED, CLOSED)
   scope?: 'all' | 'byVentana';
   dimension?: 'ventana' | 'loteria' | 'vendedor'; // Agrupación
   top?: number; // Limitar resultados
@@ -301,20 +303,24 @@ function buildTicketBaseFilters(
   filters: DashboardFilters,
   fromDateStr: string,
   toDateStr: string,
-  skipExclusion: boolean = false
+  skipExclusion: boolean = false,
+  includeAllSorteos: boolean = false //  NUEVO: Permitir incluir sorteos OPEN/CLOSED
 ) {
   const conditions: Prisma.Sql[] = [
     Prisma.sql`${Prisma.raw(`${alias}."deletedAt"`)} IS NULL`,
     Prisma.sql`${Prisma.raw(`${alias}."isActive"`)} = true`,
     Prisma.sql`${Prisma.raw(`${alias}."status"`)} IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')`,
     ticketBusinessDateCondition(alias, fromDateStr, toDateStr),
-    //  CAMBIO STRICT: Solo incluir sorteos EVALUATED (Global Filter)
-    Prisma.sql`EXISTS (
+  ];
+
+  //  CAMBIO STRICT: Solo incluir sorteos EVALUATED por defecto
+  if (!includeAllSorteos) {
+    conditions.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "Sorteo" s
       WHERE s.id = ${Prisma.raw(`${alias}."sorteoId"`)}
       AND s.status = 'EVALUATED'
-    )`,
-  ];
+    )`);
+  }
 
   // Excluir tickets de listas bloqueadas (solo si hay exclusiones activas)
   if (!skipExclusion) {
@@ -343,6 +349,10 @@ function buildTicketBaseFilters(
 
   if (filters.loteriaId) {
     conditions.push(Prisma.sql`${Prisma.raw(`${alias}."loteriaId"`)} = CAST(${filters.loteriaId} AS uuid)`);
+  }
+
+  if (filters.vendedorId) {
+    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."vendedorId"`)} = CAST(${filters.vendedorId} AS uuid)`);
   }
 
   let combined = conditions[0];
@@ -437,6 +447,10 @@ function buildTicketWhereInput(
 
   if (filters.loteriaId) {
     baseWhere.loteriaId = filters.loteriaId;
+  }
+
+  if (filters.vendedorId) {
+    baseWhere.vendedorId = filters.vendedorId;
   }
 
   return baseWhere;
@@ -1919,8 +1933,10 @@ export const DashboardService = {
 
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const skipExclusion = await isExclusionListEmpty();
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
+    //  NUEVO: Incluir todos los sorteos (OPEN, EVALUATED, CLOSED)
+    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion, true);
 
+    // 1. Top Numbers: Actual payout (si evaluado) + Potential risk (si abierto)
     const topNumbers = await prisma.$queryRaw<
       Array<{
         number: string;
@@ -1932,36 +1948,42 @@ export const DashboardService = {
     >(
       Prisma.sql`
         WITH tickets_in_range AS (
-          SELECT t.id
+          SELECT t.id, t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
         ),
-        jugadas_in_range AS (
+        jugadas_stats AS (
           SELECT
             j."ticketId",
             j.number,
             j.type,
             j.amount,
-            j."finalMultiplierX"
+            j."finalMultiplierX",
+            j.payout,
+            tir."sorteoId"
           FROM "Jugada" j
           JOIN tickets_in_range tir ON tir.id = j."ticketId"
           WHERE j."deletedAt" IS NULL
             AND j."isExcluded" = false
+            ${filters.betType ? Prisma.sql`AND j.type = ${filters.betType}` : Prisma.empty}
         )
         SELECT
           j.number,
           j.type as bet_type,
           COALESCE(SUM(j.amount), 0) as total_sales,
-          COALESCE(SUM(j.amount * j."finalMultiplierX"), 0) as potential_payout,
+          COALESCE(SUM(CASE WHEN s.status = 'EVALUATED' THEN j.payout ELSE j.amount * j."finalMultiplierX" END), 0) as potential_payout,
           COUNT(DISTINCT j."ticketId") as ticket_count
-        FROM jugadas_in_range j
-        ${filters.betType ? Prisma.sql`WHERE j.type = ${filters.betType}` : Prisma.empty}
+        FROM jugadas_stats j
+        JOIN "Sorteo" s ON s.id = j."sorteoId"
+        WHERE 1=1
+        ${filters.status ? Prisma.sql`AND s.status = ${filters.status}` : Prisma.empty}
         GROUP BY j.number, j.type
         ORDER BY total_sales DESC
         LIMIT ${topLimit}
       `
     );
 
+    // 2. Heatmap: Ventas acumuladas de todos los sorteos
     const heatmap = await prisma.$queryRaw<
       Array<{
         number: string;
@@ -1970,7 +1992,7 @@ export const DashboardService = {
     >(
       Prisma.sql`
         WITH tickets_in_range AS (
-          SELECT t.id
+          SELECT t.id, t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
         ),
@@ -1988,47 +2010,162 @@ export const DashboardService = {
           j.number,
           COALESCE(SUM(j.amount), 0) as total_sales
         FROM jugadas_in_range j
+        JOIN "Sorteo" s ON s.id = (SELECT "sorteoId" FROM tickets_in_range WHERE id = j."ticketId")
+        WHERE 1=1
+        ${filters.status ? Prisma.sql`AND s.status = ${filters.status}` : Prisma.empty}
         GROUP BY j.number
         ORDER BY j.number ASC
       `
     );
 
-    const byLoteria = await prisma.$queryRaw<
+    // 3. By Loteria: Riesgo dinámico (payout real vs max exposure)
+    const byLoteriaResult = await prisma.$queryRaw<
       Array<{
         loteria_id: string;
         loteria_name: string;
         total_sales: number;
         potential_payout: number;
+        status: string;
+        critical_number: string | null;
       }>
     >(
       Prisma.sql`
         WITH tickets_in_range AS (
-          SELECT
-            t.id,
-            t."loteriaId"
+          SELECT t.id, t."loteriaId", t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
         ),
-        jugadas_in_range AS (
+        jugadas_stats AS (
           SELECT
-            j."ticketId",
-            j.amount,
-            j."finalMultiplierX"
+            tir."loteriaId",
+            tir."sorteoId",
+            j.number,
+            SUM(j.amount) as sales,
+            SUM(j.amount * j."finalMultiplierX") as potential_payout,
+            SUM(j.payout) as actual_payout
           FROM "Jugada" j
           JOIN tickets_in_range tir ON tir.id = j."ticketId"
           WHERE j."deletedAt" IS NULL
             AND j."isExcluded" = false
+          GROUP BY tir."loteriaId", tir."sorteoId", j.number
+        ),
+        sorteo_summary AS (
+          SELECT
+            "loteriaId",
+            "sorteoId",
+            SUM(sales) as total_sales,
+            SUM(actual_payout) as total_actual_payout,
+            MAX(potential_payout) as max_potential_payout,
+            (ARRAY_AGG(number ORDER BY potential_payout DESC) FILTER (WHERE number IS NOT NULL))[1] as critical_number
+          FROM jugadas_stats
+          GROUP BY "loteriaId", "sorteoId"
+        ),
+        sorteo_risk AS (
+          SELECT
+            ss.*,
+            s.status,
+            CASE
+              WHEN s.status = 'EVALUATED' THEN ss.total_actual_payout
+              ELSE ss.max_potential_payout
+            END as risk_amount
+          FROM sorteo_summary ss
+          JOIN "Sorteo" s ON s.id = ss."sorteoId"
+          WHERE 1=1
+          ${filters.status ? Prisma.sql`AND s.status = ${filters.status}` : Prisma.empty}
         )
         SELECT
           l.id as loteria_id,
           l.name as loteria_name,
-          COALESCE(SUM(j.amount), 0) as total_sales,
-          COALESCE(SUM(j.amount * j."finalMultiplierX"), 0) as potential_payout
-        FROM jugadas_in_range j
-        JOIN tickets_in_range tir ON tir.id = j."ticketId"
-        JOIN "Loteria" l ON tir."loteriaId" = l.id
+          COALESCE(SUM(sr.total_sales), 0) as total_sales,
+          COALESCE(SUM(sr.risk_amount), 0) as potential_payout,
+          CASE 
+            WHEN 'OPEN' = ANY(ARRAY_AGG(sr.status)) THEN 'ABIERTO'
+            ELSE 'EVALUADO'
+          END as status,
+          (ARRAY_AGG(sr.critical_number ORDER BY sr.risk_amount DESC) FILTER (WHERE sr.critical_number IS NOT NULL))[1] as critical_number
+        FROM "Loteria" l
+        LEFT JOIN sorteo_risk sr ON sr."loteriaId" = l.id
+        WHERE l."isActive" = true
+          AND (sr.total_sales > 0 OR l.id = CAST(${filters.loteriaId || '00000000-0000-0000-0000-000000000000'} AS uuid))
         GROUP BY l.id, l.name
         ORDER BY total_sales DESC
+      `
+    );
+
+    // 4. By Sorteo: Detalle granular por sorteo
+    const bySorteoResult = await prisma.$queryRaw<
+      Array<{
+        sorteo_id: string;
+        sorteo_name: string;
+        loteria_name: string;
+        draw_time: Date;
+        status: string;
+        sales: number;
+        potential_payout: number;
+        critical_number: string | null;
+        top_numbers_json: string;
+      }>
+    >(
+      Prisma.sql`
+        WITH tickets_in_range AS (
+          SELECT t.id, t."loteriaId", t."sorteoId"
+          FROM "Ticket" t
+          WHERE ${baseFilters}
+        ),
+        jugadas_stats AS (
+          SELECT
+            tir."sorteoId",
+            j.number,
+            SUM(j.amount) as sales,
+            SUM(j.amount * j."finalMultiplierX") as potential_payout,
+            SUM(j.payout) as actual_payout
+          FROM "Jugada" j
+          JOIN tickets_in_range tir ON tir.id = j."ticketId"
+          WHERE j."deletedAt" IS NULL
+            AND j."isExcluded" = false
+          GROUP BY tir."sorteoId", j.number
+        ),
+        sorteo_summary AS (
+          SELECT
+            "sorteoId",
+            SUM(sales) as total_sales,
+            SUM(actual_payout) as total_actual_payout,
+            MAX(potential_payout) as max_potential_payout,
+            (ARRAY_AGG(number ORDER BY potential_payout DESC) FILTER (WHERE number IS NOT NULL))[1] as critical_number
+          FROM jugadas_stats
+          GROUP BY "sorteoId"
+        )
+        SELECT
+          s.id as sorteo_id,
+          s.name as sorteo_name,
+          l.name as loteria_name,
+          s."scheduledAt" as draw_time,
+          s.status,
+          ss.total_sales as sales,
+          CASE
+            WHEN s.status = 'EVALUATED' THEN ss.total_actual_payout
+            ELSE ss.max_potential_payout
+          END as potential_payout,
+          ss.critical_number,
+          (
+            SELECT json_agg(row)
+            FROM (
+              SELECT number, SUM(amount) as sales, SUM(amount * "finalMultiplierX") as payout
+              FROM "Jugada" j2
+              JOIN tickets_in_range tir2 ON tir2.id = j2."ticketId"
+              WHERE tir2."sorteoId" = ss."sorteoId"
+                AND j2."deletedAt" IS NULL
+              GROUP BY number
+              ORDER BY sales DESC
+              LIMIT 5
+            ) row
+          )::text as top_numbers_json
+        FROM sorteo_summary ss
+        JOIN "Sorteo" s ON s.id = ss."sorteoId"
+        JOIN "Loteria" l ON l.id = s."loteriaId"
+        WHERE 1=1
+        ${filters.status ? Prisma.sql`AND s.status = ${filters.status}` : Prisma.empty}
+        ORDER BY (CASE WHEN ss.total_sales > 0 THEN (CASE WHEN s.status = 'EVALUATED' THEN ss.total_actual_payout ELSE ss.max_potential_payout END) / ss.total_sales ELSE 0 END) DESC
       `
     );
 
@@ -2050,7 +2187,7 @@ export const DashboardService = {
         number: row.number,
         sales: Number(row.total_sales) || 0,
       })),
-      byLoteria: byLoteria.map(row => {
+      byLoteria: byLoteriaResult.map(row => {
         const sales = Number(row.total_sales) || 0;
         const payout = Number(row.potential_payout) || 0;
         return {
@@ -2059,6 +2196,24 @@ export const DashboardService = {
           sales,
           potentialPayout: payout,
           ratio: sales > 0 ? parseFloat((payout / sales).toFixed(2)) : 0,
+          status: row.status,
+          criticalNumber: row.critical_number,
+        };
+      }),
+      bySorteo: bySorteoResult.map(row => {
+        const sales = Number(row.sales) || 0;
+        const payout = Number(row.potential_payout) || 0;
+        return {
+          sorteoId: row.sorteo_id,
+          sorteoName: row.sorteo_name,
+          loteriaName: row.loteria_name,
+          drawTime: row.draw_time,
+          status: row.status,
+          sales,
+          potentialPayout: payout,
+          ratio: sales > 0 ? parseFloat((payout / sales).toFixed(2)) : 0,
+          criticalNumber: row.critical_number,
+          topNumbers: row.top_numbers_json ? JSON.parse(row.top_numbers_json) : [],
         };
       }),
     };

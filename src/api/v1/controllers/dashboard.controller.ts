@@ -19,6 +19,7 @@ import { crDateService } from "../../../utils/crDateService";
  */
 async function applyDashboardRbac(req: AuthenticatedRequest, query: any) {
   let ventanaId = query.ventanaId;
+  let vendedorId = query.vendedorId; //  NUEVO: Filtro global por vendedor
   let bancaId: string | undefined = undefined;
   
   if (req.user!.role === Role.VENTANA) {
@@ -33,7 +34,7 @@ async function applyDashboardRbac(req: AuthenticatedRequest, query: any) {
     }
   }
   
-  return { ventanaId, bancaId };
+  return { ventanaId, vendedorId, bancaId };
 }
 
 export const DashboardController = {
@@ -58,12 +59,13 @@ export const DashboardController = {
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
     // Aplicar RBAC
-    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+    const { ventanaId, vendedorId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.getFullDashboard({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      vendedorId,
       bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
@@ -91,12 +93,13 @@ export const DashboardController = {
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+    const { ventanaId, vendedorId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateGanancia({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      vendedorId,
       bancaId,
       dimension: query.dimension, // 'ventana' | 'loteria' | 'vendedor'
     }, req.user!.role); // Pasar el rol del usuario para calcular correctamente la ganancia neta
@@ -196,12 +199,13 @@ export const DashboardController = {
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+    const { ventanaId, vendedorId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateCxC({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      vendedorId,
       bancaId,
       cxcDimension: query.dimension === 'vendedor' ? 'vendedor' : 'ventana', //  NUEVO: Soporte para dimension=vendedor
     }, req.user!.role); //  CRÍTICO: Pasar rol del usuario para calcular balance correctamente
@@ -234,12 +238,13 @@ export const DashboardController = {
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+    const { ventanaId, vendedorId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateCxP({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      vendedorId,
       bancaId,
       cxcDimension: query.dimension === 'vendedor' ? 'vendedor' : 'ventana', //  NUEVO: Soporte para dimension=vendedor
     }, req.user!.role); //  CRÍTICO: Pasar rol del usuario para calcular balance correctamente
@@ -273,7 +278,7 @@ export const DashboardController = {
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+    const { ventanaId, vendedorId, bancaId } = await applyDashboardRbac(req, query);
 
     // Mapear granularity a interval (frontend compatibility)
     const interval = query.interval || query.granularity || 'day';
@@ -283,6 +288,7 @@ export const DashboardController = {
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      vendedorId,
       bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
@@ -319,15 +325,17 @@ export const DashboardController = {
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+    const { ventanaId, vendedorId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.calculateExposure({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      vendedorId,
       bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
+      status: query.status, //  NUEVO: Filtro por estado
       top: query.top ? parseInt(query.top) : 10,
     });
 
@@ -360,12 +368,13 @@ export const DashboardController = {
     const date = query.date || 'today';
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+    const { ventanaId, vendedorId, bancaId } = await applyDashboardRbac(req, query);
 
     const result = await DashboardService.getVendedores({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      vendedorId,
       bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
@@ -446,12 +455,13 @@ export const DashboardController = {
     const date = query.fromDate && query.toDate ? 'range' : (query.date || 'today');
     const dateRange = resolveDateRange(date, query.fromDate, query.toDate);
 
-    const { ventanaId, bancaId } = await applyDashboardRbac(req, query);
+    const { ventanaId, vendedorId, bancaId } = await applyDashboardRbac(req, query);
 
     const dashboard = await DashboardService.getFullDashboard({
       fromDate: dateRange.fromAt,
       toDate: dateRange.toAt,
       ventanaId,
+      vendedorId,
       bancaId,
       loteriaId: query.loteriaId,
       betType: query.betType,
