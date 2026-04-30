@@ -1971,19 +1971,19 @@ export const DashboardService = {
           j.number,
           j.type as bet_type,
           COALESCE(SUM(j.amount), 0) as total_sales,
-          COALESCE(SUM(CASE WHEN s.status = 'EVALUATED' THEN j.payout ELSE j.amount * j."finalMultiplierX" END), 0) as potential_payout,
+          COALESCE(SUM(j.amount * j."finalMultiplierX"), 0) as potential_payout,
           COUNT(DISTINCT j."ticketId") as ticket_count
         FROM jugadas_stats j
         JOIN "Sorteo" s ON s.id = j."sorteoId"
-        WHERE 1=1
-        ${filters.status ? Prisma.sql`AND s.status = ${filters.status}` : Prisma.empty}
+        -- SIEMPRE filtramos solo OPEN para el top de riesgo activo
+        WHERE s.status = 'OPEN'
         GROUP BY j.number, j.type
         ORDER BY total_sales DESC
         LIMIT ${topLimit}
       `
     );
 
-    // 2. Heatmap: Ventas acumuladas de todos los sorteos
+    // 2. Heatmap: Ventas acumuladas de sorteos OPEN
     const heatmap = await prisma.$queryRaw<
       Array<{
         number: string;
@@ -2010,15 +2010,15 @@ export const DashboardService = {
           j.number,
           COALESCE(SUM(j.amount), 0) as total_sales
         FROM jugadas_in_range j
-        JOIN "Sorteo" s ON s.id = (SELECT "sorteoId" FROM tickets_in_range WHERE id = j."ticketId")
-        WHERE 1=1
-        ${filters.status ? Prisma.sql`AND s.status = ${filters.status}` : Prisma.empty}
+        JOIN "Sorteo" s ON s.id = (SELECT "sorteoId" FROM tickets_in_range WHERE id = j."ticketId" LIMIT 1)
+        -- SIEMPRE filtramos solo OPEN para el mapa de calor de riesgo
+        WHERE s.status = 'OPEN'
         GROUP BY j.number
         ORDER BY j.number ASC
       `
     );
 
-    // 3. By Loteria: Riesgo dinámico (payout real vs max exposure)
+    // 3. By Loteria: Solo sorteos OPEN — riesgo activo pendiente de resolución
     const byLoteriaResult = await prisma.$queryRaw<
       Array<{
         loteria_id: string;
@@ -2064,29 +2064,23 @@ export const DashboardService = {
           SELECT
             ss.*,
             s.status,
-            CASE
-              WHEN s.status = 'EVALUATED' THEN ss.total_actual_payout
-              ELSE ss.max_potential_payout
-            END as risk_amount
+            ss.max_potential_payout as risk_amount
           FROM sorteo_summary ss
           JOIN "Sorteo" s ON s.id = ss."sorteoId"
-          WHERE 1=1
-          ${filters.status ? Prisma.sql`AND s.status = ${filters.status}` : Prisma.empty}
+          -- SIEMPRE filtramos solo OPEN: exposición activa pendiente de resolución
+          WHERE s.status = 'OPEN'
         )
         SELECT
           l.id as loteria_id,
           l.name as loteria_name,
           COALESCE(SUM(sr.total_sales), 0) as total_sales,
           COALESCE(SUM(sr.risk_amount), 0) as potential_payout,
-          CASE 
-            WHEN 'OPEN' = ANY(ARRAY_AGG(sr.status)) THEN 'ABIERTO'
-            ELSE 'EVALUADO'
-          END as status,
+          'ABIERTO' as status,
           (ARRAY_AGG(sr.critical_number ORDER BY sr.risk_amount DESC) FILTER (WHERE sr.critical_number IS NOT NULL))[1] as critical_number
         FROM "Loteria" l
-        LEFT JOIN sorteo_risk sr ON sr."loteriaId" = l.id
+        INNER JOIN sorteo_risk sr ON sr."loteriaId" = l.id
         WHERE l."isActive" = true
-          AND (sr.total_sales > 0 OR l.id = CAST(${filters.loteriaId || '00000000-0000-0000-0000-000000000000'} AS uuid))
+          AND sr.total_sales > 0
         GROUP BY l.id, l.name
         ORDER BY total_sales DESC
       `

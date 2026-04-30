@@ -244,6 +244,10 @@ export async function invalidateAccountStatementCache(params: {
         patterns.push(`account:statement:*:null:${params.date}:*`); // fromDate = fecha
         patterns.push(`account:statement:*:null:*:${params.date}:*`); // toDate = fecha
 
+        // 4.  CRÍTICO: Invalidar queries dinámicos (date=today, yesterday, week, etc.)
+        // Estos queries tienen month=null en su clave (ej. account:statement:null:today:...)
+        patterns.push(`account:statement:null:*`);
+
         // Si hay IDs específicos, invalidar solo esos (más específico)
         // Estructura de clave: account:statement:month:date:fromDate:toDate:dimension:ventanaId:vendedorId:bancaId:role:sort
         if (params.ventanaId) {

@@ -504,6 +504,14 @@ export class AccountStatementSyncService {
       if (syncFailures.length > 0) {
         throw new Error(`Sync parcial: ${syncFailures.length} entidades fallaron.`);
       }
+
+      //  NUEVO: Invalidar el caché DESPUÉS de que la base de datos se actualizó
+      const { invalidateCacheForSorteo } = await import('../../../../utils/accountStatementCache');
+      await invalidateCacheForSorteo(
+        { scheduledAt: sorteoDate },
+        affectedTickets
+      );
+
     } catch (error) {
       logger.error({ layer: "service", action: "SYNC_SORTEO_STATEMENTS_ERROR", payload: { sorteoId, sorteoDateStrCR, error: (error as Error).message } });
       throw error;
