@@ -2128,6 +2128,26 @@ export const DashboardService = {
             (ARRAY_AGG(number ORDER BY potential_payout DESC) FILTER (WHERE number IS NOT NULL))[1] as critical_number
           FROM jugadas_stats
           GROUP BY "sorteoId"
+        ),
+        ranked_numbers AS (
+          SELECT
+            "sorteoId",
+            number,
+            sales,
+            potential_payout as payout,
+            ROW_NUMBER() OVER(PARTITION BY "sorteoId" ORDER BY sales DESC) as rn
+          FROM jugadas_stats
+        ),
+        top_numbers_per_sorteo AS (
+          SELECT
+            "sorteoId",
+            json_agg(
+              json_build_object('number', number, 'sales', sales, 'payout', payout)
+              ORDER BY sales DESC
+            ) as top_numbers_json
+          FROM ranked_numbers
+          WHERE rn <= 5
+          GROUP BY "sorteoId"
         )
         SELECT
           s.id as sorteo_id,
@@ -2141,20 +2161,9 @@ export const DashboardService = {
             ELSE ss.max_potential_payout
           END as potential_payout,
           ss.critical_number,
-          (
-            SELECT json_agg(row)
-            FROM (
-              SELECT number, SUM(amount) as sales, SUM(amount * "finalMultiplierX") as payout
-              FROM "Jugada" j2
-              JOIN tickets_in_range tir2 ON tir2.id = j2."ticketId"
-              WHERE tir2."sorteoId" = ss."sorteoId"
-                AND j2."deletedAt" IS NULL
-              GROUP BY number
-              ORDER BY sales DESC
-              LIMIT 5
-            ) row
-          )::text as top_numbers_json
+          t.top_numbers_json::text
         FROM sorteo_summary ss
+        JOIN top_numbers_per_sorteo t ON t."sorteoId" = ss."sorteoId"
         JOIN "Sorteo" s ON s.id = ss."sorteoId"
         JOIN "Loteria" l ON l.id = s."loteriaId"
         WHERE 1=1
