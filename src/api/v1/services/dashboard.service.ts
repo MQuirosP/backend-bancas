@@ -1998,7 +1998,7 @@ export const DashboardService = {
         ),
         jugadas_in_range AS (
           SELECT
-            j."ticketId",
+            tir."sorteoId",
             j.number,
             j.amount
           FROM "Jugada" j
@@ -2010,7 +2010,7 @@ export const DashboardService = {
           j.number,
           COALESCE(SUM(j.amount), 0) as total_sales
         FROM jugadas_in_range j
-        JOIN "Sorteo" s ON s.id = (SELECT "sorteoId" FROM tickets_in_range WHERE id = j."ticketId" LIMIT 1)
+        JOIN "Sorteo" s ON s.id = j."sorteoId"
         -- SIEMPRE filtramos solo OPEN para el mapa de calor de riesgo
         WHERE s.status = 'OPEN'
         GROUP BY j.number
