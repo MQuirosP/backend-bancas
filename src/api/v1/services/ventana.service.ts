@@ -320,9 +320,12 @@ async findAll(page?: number, pageSize?: number, search?: string, isActive?: bool
   const p  = page && page > 0 ? page : 1
   const ps = pageSize && pageSize > 0 ? pageSize : 10
 
-  const { data, total } = await VentanaRepository.list(
-    p, ps, search?.trim() || undefined,
-  )
+  const { data, total } = await VentanaRepository.list({
+  page: p,
+  pageSize: ps,
+  search: search?.trim() || undefined,
+  isActive, // 👈 este lo estabas ignorando
+})
 
   return {
     data,

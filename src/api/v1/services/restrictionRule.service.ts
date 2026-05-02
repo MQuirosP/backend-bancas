@@ -1,4 +1,5 @@
-import { ActivityType } from "@prisma/client";
+import { ActivityType, Role } from "@prisma/client";
+import { AuthUser } from "../../../core/types";
 import ActivityService from "../../../core/activity.service";
 import { AppError } from "../../../core/errors";
 import {
@@ -59,8 +60,74 @@ function normalizeAndValidateNumbers(
   return unique.sort((a, b) => Number(a) - Number(b));
 }
 
+/**
+ * Valida que un listero no exceda sus permisos ni su alcance.
+ */
+async function validateListeroPermissions(actor: AuthUser, data: any, existingRule?: any) {
+  if (actor.role === Role.ADMIN) return;
+  
+  if (actor.role !== Role.VENTANA) {
+    throw new AppError("No tienes permisos para realizar esta operación", 403);
+  }
+
+  // 1. Prohibido tocar Cutoff (Regla de Oro)
+  if (data.salesCutoffMinutes !== undefined && data.salesCutoffMinutes !== null) {
+    throw new AppError("Solo la administración puede gestionar tiempos de corte", 403);
+  }
+  
+  // Si estamos editando, verificar que la regla actual NO sea de corte
+  if (existingRule && (existingRule.salesCutoffMinutes !== null && existingRule.salesCutoffMinutes !== undefined)) {
+    throw new AppError("No puedes modificar ni eliminar una regla de tiempo de corte", 403);
+  }
+
+  // 2. Validar alcance de Ventana
+  // El listero solo puede crear/editar reglas para SU ventana
+  if (data.ventanaId && data.ventanaId !== actor.ventanaId) {
+    throw new AppError("No puedes asignar reglas a otra ventana", 403);
+  }
+
+  // 3. Validar alcance de Vendedor
+  // Si asigna a un usuario, este debe pertenecer a su ventana
+  if (data.userId) {
+    const targetUser = await prisma.user.findUnique({
+      where: { id: data.userId },
+      select: { ventanaId: true }
+    });
+    if (!targetUser || targetUser.ventanaId !== actor.ventanaId) {
+      throw new AppError("No puedes asignar reglas a un vendedor fuera de tu estructura", 403);
+    }
+  }
+
+  // 4. Prohibido bancaId para listeros
+  if (data.bancaId) {
+    throw new AppError("Solo la administración puede crear reglas a nivel de banca", 403);
+  }
+
+  // 5. Si estamos editando/eliminando, validar que la regla pertenezca a su estructura
+  if (existingRule) {
+    const isOwnVentana = existingRule.ventanaId === actor.ventanaId;
+    const isOwnSeller = existingRule.user && existingRule.user.ventanaId === actor.ventanaId;
+    
+    // Si la regla no tiene ventanaId ni userId de su estructura, no puede tocarla
+    // (Ej: una regla global o de banca)
+    if (!isOwnVentana && !isOwnSeller) {
+       throw new AppError("No tienes permisos para modificar esta regla", 403);
+    }
+  }
+}
+
 export const RestrictionRuleService = {
-  async create(actorId: string, data: CreateRestrictionRuleInput) {
+  async create(actor: AuthUser, data: CreateRestrictionRuleInput) {
+    const actorId = actor.id;
+
+    //  NUEVO: Soporte para rol VENTANA (Listero)
+    if (actor.role === Role.VENTANA) {
+       // Forzar su ventanaId si no viene ni userId
+       if (!data.ventanaId && !data.userId) {
+         data.ventanaId = actor.ventanaId || undefined;
+       }
+       await validateListeroPermissions(actor, data);
+    }
     const isLotteryRule = Boolean(data.loteriaId || data.multiplierId);
     let multiplierName = "";
 
@@ -215,9 +282,15 @@ export const RestrictionRuleService = {
     return createdRules;
   },
 
-  async update(actorId: string, id: string, data: UpdateRestrictionRuleInput) {
+  async update(actor: AuthUser, id: string, data: UpdateRestrictionRuleInput) {
+    const actorId = actor.id;
     const current = await RestrictionRuleRepository.findById(id);
     if (!current) throw new AppError("RestrictionRule not found", 404);
+
+    //  NUEVO: Soporte para rol VENTANA (Listero)
+    if (actor.role === Role.VENTANA) {
+       await validateListeroPermissions(actor, data, current);
+    }
 
     const loteriaId = data.loteriaId ?? current.loteriaId ?? null;
     const multiplierId = data.multiplierId ?? current.multiplierId ?? null;
@@ -333,8 +406,20 @@ export const RestrictionRuleService = {
   /**
    * Actualización masiva transaccional
    */
-  async bulkUpdate(actorId: string, ids: string[], data: UpdateRestrictionRuleInput) {
+  async bulkUpdate(actor: AuthUser, ids: string[], data: UpdateRestrictionRuleInput) {
+    const actorId = actor.id;
     if (!ids || ids.length === 0) throw new AppError("No ids provided", 400);
+
+    //  NUEVO: Soporte para rol VENTANA (Listero)
+    if (actor.role === Role.VENTANA) {
+      // Validar cada regla antes de proceder
+      for (const id of ids) {
+        const current = await RestrictionRuleRepository.findById(id);
+        if (current) {
+          await validateListeroPermissions(actor, data, current);
+        }
+      }
+    }
 
     const updatedRules = await prisma.$transaction(async (tx) => {
       const results: any[] = [];
@@ -374,8 +459,20 @@ export const RestrictionRuleService = {
   /**
    * Borrado masivo (desactivación lógica)
    */
-  async bulkRemove(actorId: string, ids: string[], reason?: string) {
+  async bulkRemove(actor: AuthUser, ids: string[], reason?: string) {
+    const actorId = actor.id;
     if (!ids || ids.length === 0) throw new AppError("No ids provided", 400);
+
+    //  NUEVO: Soporte para rol VENTANA (Listero)
+    if (actor.role === Role.VENTANA) {
+      // Validar cada regla antes de proceder
+      for (const id of ids) {
+        const current = await RestrictionRuleRepository.findById(id);
+        if (current) {
+          await validateListeroPermissions(actor, {}, current);
+        }
+      }
+    }
 
     const deletedRules = await prisma.$transaction(async (tx) => {
       const results: any[] = [];
@@ -412,7 +509,16 @@ export const RestrictionRuleService = {
     return deletedRules;
   },
 
-  async remove(actorId: string, id: string, reason?: string) {
+  async remove(actor: AuthUser, id: string, reason?: string) {
+    const actorId = actor.id;
+    
+    //  NUEVO: Soporte para rol VENTANA (Listero)
+    if (actor.role === Role.VENTANA) {
+      const current = await RestrictionRuleRepository.findById(id);
+      if (current) {
+        await validateListeroPermissions(actor, {}, current);
+      }
+    }
     const deleted = await RestrictionRuleRepository.softDelete(
       id,
       actorId,
@@ -429,7 +535,16 @@ export const RestrictionRuleService = {
     return deleted;
   },
 
-  async restore(actorId: string, id: string) {
+  async restore(actor: AuthUser, id: string) {
+    const actorId = actor.id;
+
+    //  NUEVO: Soporte para rol VENTANA (Listero)
+    if (actor.role === Role.VENTANA) {
+      const current = await RestrictionRuleRepository.findById(id);
+      if (current) {
+        await validateListeroPermissions(actor, {}, current);
+      }
+    }
     const restored = await RestrictionRuleRepository.restore(id);
     await ActivityService.log({
       userId: actorId,

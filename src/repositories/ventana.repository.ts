@@ -121,31 +121,48 @@ const VentanaRepository = {
     return ventana;
   },
 
-  async list(page = 1, pageSize = 10, search?: string) {
-  const skip = (page - 1) * pageSize
-  const s = (search ?? '').trim()
+  async list(args: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    bancaId?: string;
+    id?: string;
+    isActive?: boolean;
+  }) {
+    const { page = 1, pageSize = 10, search, bancaId, id, isActive } = args;
+    const skip = (page - 1) * pageSize;
+    const s = (search ?? '').trim();
 
-  const where: Prisma.VentanaWhereInput = {
-    ...(s ? {
-      OR: [
-        { code:  { contains: s, mode: 'insensitive' } },
-        { name:  { contains: s, mode: 'insensitive' } },
-        { email: { contains: s, mode: 'insensitive' } },
-        { phone: { contains: s, mode: 'insensitive' } },
-      ],
-    } : {}),
-  }
+    const where: Prisma.VentanaWhereInput = {
+      ...(bancaId ? { bancaId } : {}),
+      ...(id ? { id } : {}),
+      ...(isActive !== undefined ? { isActive } : {}),
+      ...(s ? {
+        OR: [
+          { code: { contains: s, mode: 'insensitive' } },
+          { name: { contains: s, mode: 'insensitive' } },
+          { email: { contains: s, mode: 'insensitive' } },
+          { phone: { contains: s, mode: 'insensitive' } },
+        ],
+      } : {}),
+    };
 
-  // debug
-  logger.info({ layer: 'repository', action: 'VENTANA_LIST_WHERE', payload: { where } })
+    // debug
+    logger.info({ layer: 'repository', action: 'VENTANA_LIST_WHERE', payload: { where } });
 
-  const [data, total] = await Promise.all([
-    prisma.ventana.findMany({ where, include: { banca: true }, skip, take: pageSize, orderBy: { createdAt: 'desc' } }),
-    prisma.ventana.count({ where }),
-  ])
+    const [data, total] = await Promise.all([
+      prisma.ventana.findMany({
+        where,
+        include: { banca: true },
+        skip,
+        take: pageSize,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.ventana.count({ where }),
+    ]);
 
-  return { data, total }
-},
+    return { data, total };
+  },
 
   // Si finalmente eliminas “isDeleted” del modelo, elimina también este restore.
   async restore(id: string) {

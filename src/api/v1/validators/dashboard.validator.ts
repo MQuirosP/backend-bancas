@@ -14,7 +14,7 @@ export const DashboardQuerySchema = z
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     // Scope (ventana específica)
-    ventanaId: z.string().uuid().optional(),
+    ventanaId: z.uuid().optional(),
     scope: z.enum(["mine", "all"]).optional(),
 
     // Filtros adicionales

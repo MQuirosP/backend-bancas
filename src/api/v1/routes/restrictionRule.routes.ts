@@ -12,6 +12,9 @@ import {
 import { protect } from "../../../middlewares/auth.middleware";
 import { requireAdmin, requireAuth } from "../../../middlewares/roleGuards.middleware";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
+import { Role } from "@prisma/client";
+import { AuthenticatedRequest } from "../../../core/types";
+import { Response, NextFunction } from "express";
 
 const router = Router();
 
@@ -20,6 +23,31 @@ router.use(protect);
 
 //  aplicar contexto de banca (resuelve bancaId para VENDEDOR/VENTANA)
 router.use(bancaContextMiddleware);
+
+/**
+ * Middleware para normalizar el ámbito de la restricción según el rol.
+ * Si es VENTANA, elimina bancaId para evitar el error de exclusividad de Zod,
+ * ya que un listero no puede crear reglas de banca.
+ */
+const normalizeRestrictionScope = (
+  req: AuthenticatedRequest,
+  _res: Response,
+  next: NextFunction
+) => {
+  if (req.user?.role === Role.VENTANA) {
+    // 1. Eliminar bancaId (Listeros no gestionan bancas)
+    if (req.body.bancaId) {
+      delete req.body.bancaId;
+    }
+
+    // 2. Prioridad de ámbito: Si viene userId, eliminar ventanaId 
+    // (el vendedor es el ámbito más específico y son excluyentes en el modelo)
+    if (req.body.userId && req.body.ventanaId) {
+      delete req.body.ventanaId;
+    }
+  }
+  next();
+};
 
 /**
  * LIBERADOS (solo requieren estar autenticado)
@@ -88,7 +116,8 @@ router.get(
  */
 router.post(
   "/",
-  requireAdmin,
+  requireAuth,
+  normalizeRestrictionScope,
   validateBody(CreateRestrictionRuleSchema),
   RestrictionRuleController.create
 );
@@ -99,7 +128,8 @@ router.post(
  */
 router.put(
   "/bulk",
-  requireAdmin,
+  requireAuth,
+  normalizeRestrictionScope,
   // validateBody(BulkUpdateRestrictionRuleSchema), // Opcional, ya se valida en el service si es necesario
   RestrictionRuleController.bulkUpdate
 );
@@ -110,13 +140,14 @@ router.put(
  */
 router.delete(
   "/bulk",
-  requireAdmin,
+  requireAuth,
   RestrictionRuleController.bulkDelete
 );
 
 router.patch(
   "/:id",
-  requireAdmin,
+  requireAuth,
+  normalizeRestrictionScope,
   validateParams(RestrictionRuleIdParamSchema),
   validateBody(UpdateRestrictionRuleSchema),
   RestrictionRuleController.update
@@ -124,7 +155,7 @@ router.patch(
 
 router.delete(
   "/:id",
-  requireAdmin,
+  requireAuth,
   validateParams(RestrictionRuleIdParamSchema),
   validateBody(ReasonBodySchema),
   RestrictionRuleController.delete
@@ -132,7 +163,7 @@ router.delete(
 
 router.patch(
   "/:id/restore",
-  requireAdmin,
+  requireAuth,
   validateParams(RestrictionRuleIdParamSchema),
   RestrictionRuleController.restore
 );

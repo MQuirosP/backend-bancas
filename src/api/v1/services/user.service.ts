@@ -209,6 +209,7 @@ export const UserService = {
     role?: string;
     search?: string;
     ventanaId?: string;
+    bancaId?: string;
     isActive?: boolean;
   }) {
     const page = params.page && params.page > 0 ? params.page : 1;
@@ -220,6 +221,7 @@ export const UserService = {
       role: params.role as Role | undefined,
       search: params.search?.trim() || undefined,
       ventanaId: params.ventanaId,
+      bancaId: params.bancaId,
       isActive: params.isActive,
     });
 

@@ -77,15 +77,17 @@ export const UserRepository = {
     search?: string;
     ventanaId?: string;
     isActive?: boolean;
+    bancaId?: string;
     select?: Prisma.UserSelect;
     orderBy?: Prisma.UserOrderByWithRelationInput;
   }) {
-    const { page, pageSize, role, search, ventanaId, isActive, select, orderBy } = args;
+    const { page, pageSize, role, search, ventanaId, isActive, select, orderBy, bancaId } = args;
     const skip = (page - 1) * pageSize;
 
     const where: Prisma.UserWhereInput = {
       ...(role ? { role } : {}),
       ...(ventanaId ? { ventanaId } : {}),
+      ...(bancaId ? { ventana: { bancaId } } : {}),
       ...(typeof isActive === 'boolean' ? { isActive } : {}),
     };
 

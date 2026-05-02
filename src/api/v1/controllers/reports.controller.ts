@@ -4,6 +4,7 @@
 
 import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../../../core/types';
+import { applyRbacFilters, AuthContext } from '../../../utils/rbac';
 import { success } from '../../../utils/responses';
 import { TicketsReportService } from '../services/reports/ticketsReport.service';
 import { LoteriasReportService } from '../services/reports/loteriasReport.service';
@@ -45,13 +46,27 @@ export const ReportsController = {
   async getNumbersAnalysis(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
 
+    // Construir contexto de autenticación para RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.user!.bancaId,
+    };
+
+    // Aplicar RBAC a los filtros del cliente
+    const effectiveFilters = await applyRbacFilters(context, {
+      ventanaId: query.ventanaId,
+      vendedorId: query.vendedorId,
+    });
+
     const result = await TicketsReportService.getNumbersAnalysis({
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
       loteriaId: query.loteriaId,
-      ventanaId: query.ventanaId,
-      vendedorId: query.vendedorId,
+      ventanaId: effectiveFilters.ventanaId || undefined,
+      vendedorId: effectiveFilters.vendedorId,
       betType: query.betType || 'all',
       top: query.top ? Number(query.top) : undefined,
       includeComparison: query.includeComparison === 'true' || query.includeComparison === true,

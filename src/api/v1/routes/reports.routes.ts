@@ -4,7 +4,7 @@
 
 import { Router } from 'express';
 import { protect } from '../../../middlewares/auth.middleware';
-import { requireAdmin } from '../../../middlewares/roleGuards.middleware';
+import { requireAdmin, requireAdminOrVentana } from '../../../middlewares/roleGuards.middleware';
 import { ReportsController } from '../controllers/reports.controller';
 import { validateQuery, validateParams } from '../../../middlewares/validate.middleware';
 import {
@@ -38,7 +38,7 @@ router.get(
 
 router.get(
   '/tickets/numbers-analysis',
-  requireAdmin,
+  requireAdminOrVentana,
   validateQuery(NumbersAnalysisQuerySchema),
   ReportsController.getNumbersAnalysis
 );

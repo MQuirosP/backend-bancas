@@ -9,13 +9,13 @@ import * as responses from "../../../utils/responses";
 
 export const RestrictionRuleController = {
   async create(req: AuthenticatedRequest, res: Response) {
-    const rule = await RestrictionRuleService.create(req.user!.id, req.body);
+    const rule = await RestrictionRuleService.create(req.user!, req.body);
     responses.created(res, rule);
   },
 
   async update(req: AuthenticatedRequest, res: Response) {
     const rule = await RestrictionRuleService.update(
-      req.user!.id,
+      req.user!,
       req.params.id,
       req.body
     );
@@ -24,7 +24,7 @@ export const RestrictionRuleController = {
 
   async delete(req: AuthenticatedRequest, res: Response) {
     const rule = await RestrictionRuleService.remove(
-      req.user!.id,
+      req.user!,
       req.params.id,
       req.body?.reason
     );
@@ -33,7 +33,7 @@ export const RestrictionRuleController = {
 
   async restore(req: AuthenticatedRequest, res: Response) {
     const rule = await RestrictionRuleService.restore(
-      req.user!.id,
+      req.user!,
       req.params.id
     );
     responses.success(res, rule);
@@ -50,6 +50,12 @@ export const RestrictionRuleController = {
     // Si es ADMIN con banca activa, agregar filtro de bancaId
     if (req.user!.role === 'ADMIN' && req.bancaContext?.bancaId && req.bancaContext.hasAccess) {
       query.bancaId = req.bancaContext.bancaId;
+    }
+
+    // Si es VENTANA, forzar filtro de listero
+    if (req.user!.role === 'VENTANA') {
+      query.listeroVentanaId = req.user!.ventanaId;
+      query.listeroBancaId = req.user!.bancaId || req.bancaContext?.bancaId;
     }
 
     req.logger?.info({
@@ -89,6 +95,12 @@ export const RestrictionRuleController = {
       query.bancaId = req.bancaContext.bancaId;
     }
 
+    // Si es VENTANA, forzar filtro de listero
+    if (req.user!.role === 'VENTANA') {
+      query.listeroVentanaId = req.user!.ventanaId;
+      query.listeroBancaId = req.user!.bancaId || req.bancaContext?.bancaId;
+    }
+
     const result = await RestrictionRuleService.listGrouped(query);
     responses.success(res, result.data, result.meta);
   },
@@ -96,7 +108,7 @@ export const RestrictionRuleController = {
   async bulkUpdate(req: AuthenticatedRequest, res: Response) {
     const { ids, data } = req.body;
     const result = await RestrictionRuleService.bulkUpdate(
-      req.user!.id,
+      req.user!,
       ids,
       data
     );
@@ -106,7 +118,7 @@ export const RestrictionRuleController = {
   async bulkDelete(req: AuthenticatedRequest, res: Response) {
     const { ids, reason } = req.body;
     const result = await RestrictionRuleService.bulkRemove(
-      req.user!.id,
+      req.user!,
       ids,
       reason
     );

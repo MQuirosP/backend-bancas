@@ -49,12 +49,14 @@ type ListParams = {
   isAutoDate?: boolean | string;
   hasLotteryMultiplier?: boolean | string;
   search?: string;
+  listeroVentanaId?: string;
+  listeroBancaId?: string;
 };
 
 const includeLabels = {
   banca: { select: { id: true, name: true, code: true } },
   ventana: { select: { id: true, name: true, code: true } },
-  user: { select: { id: true, name: true, username: true } },
+  user: { select: { id: true, name: true, username: true, ventanaId: true } },
   loteria: { select: { id: true, name: true } },
   multiplier: { select: { id: true, name: true, valueX: true, kind: true } },
 } as const;
@@ -189,6 +191,8 @@ export const RestrictionRuleRepository = {
       loteriaId,
       multiplierId,
       search,
+      listeroVentanaId,
+      listeroBancaId,
     } = params;
 
     const _page = Math.max(1, Number(page) || 1);
@@ -211,7 +215,27 @@ export const RestrictionRuleRepository = {
     const andConditions: any[] = [{ isActive: _isActive }];
     
     // 1. FILTRO DE ÁMBITO (BANCA/VENTANA/USUARIO)
-    if (bancaId) {
+    if (listeroVentanaId) {
+        const vendedoras = await withConnectionRetry(
+            () => prisma.user.findMany({
+                where: { ventanaId: listeroVentanaId, role: Role.VENDEDOR },
+                select: { id: true }
+            }),
+            { context: 'RestrictionRuleRepository.list.fetchListeroVendedores' }
+        );
+        const vendedorIds = vendedoras.map(u => u.id);
+
+        andConditions.push({
+          OR: [
+            { ventanaId: listeroVentanaId },
+            ...(vendedorIds.length > 0 ? [{ userId: { in: vendedorIds } }] : []),
+            // Globales (sin banca, sin ventana, sin user)
+            { AND: [{ bancaId: null }, { ventanaId: null }, { userId: null }] },
+            // Banca-wide (si se proporciona listeroBancaId)
+            ...(listeroBancaId ? [{ AND: [{ bancaId: listeroBancaId }, { ventanaId: null }, { userId: null }] }] : [])
+          ]
+        });
+    } else if (bancaId) {
         const ventanas = await withConnectionRetry(
             () => prisma.ventana.findMany({ where: { bancaId }, select: { id: true } }),
             { context: 'RestrictionRuleRepository.list.fetchVentanas' }

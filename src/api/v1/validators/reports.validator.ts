@@ -57,14 +57,20 @@ export const WinnersPaymentsQuerySchema = DateRangeSchemaBase.merge(PaginationSc
   betType: z.enum(['NUMERO', 'REVENTADO', 'all']).default('all').optional(),
 }).refine(dateRangeRefine, dateRangeRefineOptions).strict();
 
-export const NumbersAnalysisQuerySchema = DateRangeSchemaBase.merge(EntityFiltersSchema).extend({
-  betType: z.enum(['NUMERO', 'REVENTADO', 'all']).default('all').optional(),
-  top: z.coerce.number().int().min(1).max(100).default(20).optional(),
-  includeComparison: z.coerce.boolean().default(false).optional(),
-  // Nuevos parámetros
-  includeWinners: z.coerce.boolean().default(false).optional(),
-  includeExposure: z.coerce.boolean().default(false).optional(),
-}).refine(dateRangeRefine, dateRangeRefineOptions).strict();
+export const NumbersAnalysisQuerySchema = DateRangeSchemaBase
+  .merge(EntityFiltersSchema)
+  .extend({
+    betType: z.enum(['NUMERO', 'REVENTADO', 'all']).default('all').optional(),
+    top: z.coerce.number().int().min(1).max(100).default(20).optional(),
+    includeComparison: z.coerce.boolean().default(false).optional(),
+    includeWinners: z.coerce.boolean().default(false).optional(),
+    includeExposure: z.coerce.boolean().default(false).optional(),
+
+    // 👇 AGREGA ESTO
+    scope: z.enum(['mine', 'all']).optional(),
+  })
+  .refine(dateRangeRefine, dateRangeRefineOptions)
+  .strict();
 
 export const CancelledTicketsQuerySchema = DateRangeSchemaBase.merge(PaginationSchema).merge(EntityFiltersSchema).refine(dateRangeRefine, dateRangeRefineOptions).strict();
 

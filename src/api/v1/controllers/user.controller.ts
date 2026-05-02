@@ -49,51 +49,61 @@ export const UserController = {
     const currentUser = (req as any)?.user;
 
     // Valores directamente del query validado por Zod
-    let page = req.query.page ? Number(req.query.page) : 1;
-    let pageSize = req.query.pageSize ? Number(req.query.pageSize) : 10;
+    const page = req.query.page ? Number(req.query.page) : 1;
+    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 10;
     let role = (req.query.role as Role) ?? undefined;
-    let search = typeof req.query.search === "string" ? req.query.search : undefined;
-    let isActive = req.query.isActive as any; // Ya es boolean | undefined
+    const search = typeof req.query.search === "string" ? req.query.search : undefined;
+    let isActive = req.query.isActive as any;
+    const scope = req.query.scope as string | undefined;
 
-    // Si es VENTANA: solo vendedores de su ventana
-    if (currentUser?.role === Role.VENTANA) {
-      role = Role.VENDEDOR;
+    let ventanaId: string | undefined = undefined;
+    let bancaId: string | undefined = undefined;
 
-      // Si no especificó isActive, default = true
-      if (isActive === undefined) {
-        isActive = true;
+    // 1. Lógica de Ámbito (Scope)
+    if (scope === "mine" && currentUser) {
+      // Prioridad absoluta a la identidad del token
+      if (currentUser.role === Role.VENTANA) {
+        ventanaId = currentUser.ventanaId || undefined;
+        if (!ventanaId) {
+          const u = await prisma.user.findUnique({ where: { id: currentUser.id }, select: { ventanaId: true } });
+          ventanaId = u?.ventanaId || undefined;
+        }
+        if (!ventanaId) throw new AppError("No tienes una ventana asignada", 403);
+        
+        // Un listero pidiendo "lo suyo" usualmente busca a sus vendedores
+        if (!role) role = Role.VENDEDOR;
+        if (isActive === undefined) isActive = true;
+      } else if (currentUser.role === Role.ADMIN) {
+        // Para ADMIN, scope=mine significa todo el sistema, 
+        // así que ignoramos cualquier filtro manual de ID si viene scope=mine
+        ventanaId = undefined;
+        bancaId = undefined;
       }
-
-      // Obtener ventanaId
-      let ventanaId = currentUser.ventanaId;
-      if (!ventanaId) {
-        const user = await prisma.user.findUnique({
-          where: { id: currentUser.id },
-          select: { ventanaId: true },
-        });
-        ventanaId = user?.ventanaId ?? null;
+    } else {
+      // Lógica tradicional/manual: respetar filtros del query si el rol tiene permiso
+      if (currentUser?.role === Role.VENTANA) {
+        ventanaId = currentUser.ventanaId || undefined;
+        if (!role) role = Role.VENDEDOR;
+        if (isActive === undefined) isActive = true;
+      } else {
+        // ADMIN o BANCA pueden pedir filtros específicos manualmente si no usan scope=mine
+        ventanaId = req.query.ventanaId as string;
+        bancaId = req.query.bancaId as string;
       }
-
-      if (!ventanaId) {
-        throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
-      }
-
-      const { data, meta } = await UserService.list({ page, pageSize, role, search, isActive, ventanaId });
-      return success(res, data, meta);
     }
 
-    // Si es ADMIN: devuelve TODOS sin filtrar isActive a menos que se especifique explícitamente
-    // No pasar isActive si no se envió en la query para traer activos e inactivos
-    const { data, meta } = await UserService.list({ 
-      page, 
-      pageSize, 
-      role, 
-      search, 
-      isActive: req.query.isActive !== undefined ? isActive : undefined 
+    const { data, meta } = await UserService.list({
+      page,
+      pageSize,
+      role,
+      search,
+      isActive: req.query.isActive !== undefined ? isActive : (currentUser?.role === Role.VENTANA ? true : undefined),
+      ventanaId,
+      bancaId,
     });
+
     return success(res, data, meta);
-  }
-  ,
+  },
 
   async update(req: Request, res: Response) {
     const actor = (req as any)?.user ?? null;
