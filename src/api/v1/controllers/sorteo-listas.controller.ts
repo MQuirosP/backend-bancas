@@ -2,6 +2,7 @@ import { Response } from "express";
 import { SorteoListasService } from "../services/sorteo-listas.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { Role } from "@prisma/client";
+import { validateVentanaUser } from "../../../utils/rbac";
 
 export const SorteoListasController = {
     async getListas(req: AuthenticatedRequest, res: Response) {
@@ -17,6 +18,12 @@ export const SorteoListasController = {
             vendedorId = me.id;
         }
 
+        //  FIX: Si es rol VENTANA y el vendedorId enviado es el mismo ID del usuario (Ventana),
+        // limpiamos el vendedorId para que devuelva el resumen de toda su ventana.
+        if (me.role === Role.VENTANA && vendedorId === me.id) {
+            vendedorId = undefined;
+        }
+
         const response = await SorteoListasService.getListas(
             req.params.id,
             includeExcluded,
@@ -26,14 +33,15 @@ export const SorteoListasController = {
         );
 
         // Si es rol VENTANA, filtrar los resultados en memoria para mostrar solo su ventana
-        // Nota: SorteoListasService.getListas no tiene filtro de ventanaId interno,
-        // devuelve todas las ventanas si no se filtra por vendedor.
         if (me.role === Role.VENTANA) {
+            // Garantizar que tenemos el ventanaId (buscar en DB si falta en JWT)
+            const myVentanaId = await validateVentanaUser(me.role, me.ventanaId, me.id);
+            
             if (response.listeros) {
-                response.listeros = response.listeros.filter(l => l.ventanaId === me.ventanaId);
+                response.listeros = response.listeros.filter(l => l.ventanaId === myVentanaId);
             }
             if (response.listerosCompact) {
-                response.listerosCompact = response.listerosCompact.filter(l => l.ventanaId === me.ventanaId);
+                response.listerosCompact = response.listerosCompact.filter(l => l.ventanaId === myVentanaId);
             }
             
             // Recalcular totales globales basados solo en esta ventana
@@ -53,9 +61,10 @@ export const SorteoListasController = {
             // Si hay listerosCompact, también debemos sumar de ahí
             if (response.listerosCompact && response.listerosCompact.length > 0) {
                 response.listerosCompact.forEach(l => {
-                    totalExcluded += l.totalExcluded; 
+                    totalExcluded += l.totalExcluded || 0; 
                 });
             }
+            response.meta.totalSales = totalSales; //  NUEVO: Actualizar totalSales también
             response.meta.totalTickets = totalTickets;
             response.meta.totalCommission = totalCommission;
             response.meta.totalExcluded = totalExcluded;

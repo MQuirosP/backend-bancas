@@ -89,367 +89,434 @@ interface PaymentHistoryEntry {
 
 export const TicketService = {
   async create(
-    data: any,
-    userId: string,
-    requestId?: string,
-    actorRole: Role = Role.VENDEDOR
-  ) {
-    try {
-      const { loteriaId, sorteoId } = data;
-      if (!loteriaId || !sorteoId) throw new AppError("Missing loteriaId/sorteoId", 400);
+  data: any,
+  userId: string,
+  requestId?: string,
+  actorRole: Role = Role.VENDEDOR
+) {
+  try {
+    const { loteriaId, sorteoId } = data;
+    if (!loteriaId || !sorteoId) throw new AppError("Missing loteriaId/sorteoId", 400);
 
-      const clientIdempotencyKey: string | undefined = data.idempotencyKey ?? data.requestId;
+    const clientIdempotencyKey: string | undefined = data.idempotencyKey ?? data.requestId;
 
-      // 1. Actor autenticado (Pre-cargado con sus políticas)
-      const actor = await withConnectionRetry(
+    // ─────────────────────────────────────────────────────────────────────
+    // 1. Actor autenticado
+    //    OPTIMIZACIÓN: se agregan name, phone, settings para evitar el
+    //    fetch post-transacción que existía antes.
+    // ─────────────────────────────────────────────────────────────────────
+    const actor = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          role: true,
+          ventanaId: true,
+          isActive: true,
+          commissionPolicyJson: true,
+          name: true,     // ← NUEVO
+          phone: true,    // ← NUEVO
+          settings: true, // ← NUEVO
+        },
+      }),
+      { context: 'TicketService.create.actor' }
+    );
+    if (!actor) throw new AppError("Authenticated user not found", 401);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 2. Resolver Vendedor y Ventana
+    // ─────────────────────────────────────────────────────────────────────
+    const requestedVendedorId: string | undefined = data?.vendedorId;
+    let effectiveVendedorId: string;
+    let ventanaId: string;
+    let vendedorToPass: any = actor;
+
+    if (requestedVendedorId && requestedVendedorId !== actor.id) {
+      if (
+        actor.role !== Role.VENDEDOR &&
+        actor.role !== Role.ADMIN &&
+        actor.role !== Role.VENTANA
+      ) {
+        throw new AppError("No tienes permisos para realizar esta acción", 403);
+      }
+
+      // OPTIMIZACIÓN: se agregan name, phone, settings al target también
+      const target = await withConnectionRetry(
         () => prisma.user.findUnique({
-          where: { id: userId },
-          select: { id: true, role: true, ventanaId: true, isActive: true, commissionPolicyJson: true },
-        }),
-        { context: 'TicketService.create.actor' }
-      );
-      if (!actor) throw new AppError("Authenticated user not found", 401);
-
-      // 2. Resolver Vendedor y Ventana (Identificación de IDs)
-      const requestedVendedorId: string | undefined = data?.vendedorId;
-      let effectiveVendedorId: string;
-      let ventanaId: string;
-      let vendedorToPass: any = actor; // Por defecto es el actor
-
-      if (requestedVendedorId && requestedVendedorId !== actor.id) {
-        // Validación de permisos para impersonación
-        if (actor.role !== Role.VENDEDOR && actor.role !== Role.ADMIN && actor.role !== Role.VENTANA) {
-          throw new AppError("No tienes permisos para realizar esta acción", 403);
-        }
-
-        // Fetch del vendedor target (Segunda ráfaga necesaria para impersonación)
-        const target = await withConnectionRetry(
-          () => prisma.user.findUnique({
-            where: { id: requestedVendedorId },
-            select: { id: true, role: true, ventanaId: true, isActive: true, commissionPolicyJson: true },
-          }),
-          { context: 'TicketService.create.targetVendedor' }
-        );
-        if (!target || !target.isActive) throw new AppError("Vendedor no encontrado o inactivo", 404);
-        if (target.role !== Role.VENDEDOR) throw new AppError("vendedorId debe pertenecer a un usuario con rol VENDEDOR", 400);
-        if (!target.ventanaId) throw new AppError("El vendedor seleccionado no tiene Ventana asignada", 400);
-
-        if (actor.role === Role.VENTANA) {
-          if (!actor.ventanaId || actor.ventanaId !== target.ventanaId) {
-            throw new AppError("vendedorId no pertenece a tu Ventana", 403);
-          }
-        }
-        effectiveVendedorId = target.id;
-        ventanaId = target.ventanaId;
-        vendedorToPass = target;
-      } else {
-        // Gestión directa (Vendedor creando su propio ticket)
-        if (actor.role === Role.VENDEDOR) {
-          if (!actor.ventanaId) throw new AppError("El vendedor no tiene una Ventana asignada", 400);
-          effectiveVendedorId = actor.id;
-          ventanaId = actor.ventanaId;
-        } else {
-          throw new AppError("vendedorId es requerido para este rol", 400);
-        }
-      }
-
-      // 3. Fetch Masivo Consolidado (Fase Final de Lectura: Sorteo, Ventana+Banca y Listero)
-      // OPTIMIZACIÓN: 1 solo roundtrip para todas las entidades maestras restantes
-      const [sorteo, ventanaWithBanca, listeroUser] = await withConnectionRetry(
-        () => Promise.all([
-          prisma.sorteo.findUnique({
-            where: { id: sorteoId },
-            select: {
-              id: true,
-              name: true,
-              scheduledAt: true,
-              status: true,
-              loteriaId: true,
-              loteria: { select: { id: true, name: true, rulesJson: true } },
-            },
-          }),
-          prisma.ventana.findUnique({
-            where: { id: ventanaId },
-            select: {
-              id: true,
-              bancaId: true,
-              isActive: true,
-              commissionPolicyJson: true,
-              banca: { select: { id: true, commissionPolicyJson: true } }
-            },
-          }),
-          prisma.user.findFirst({
-            where: { role: Role.VENTANA, ventanaId: ventanaId, isActive: true, deletedAt: null },
-            select: { id: true, commissionPolicyJson: true },
-            orderBy: { updatedAt: "desc" },
-          }),
-        ]),
-        { context: 'TicketService.create.consolidatedMetadata' }
-      );
-
-      if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
-      if (sorteo.status === "CLOSED") throw new AppError("No se pueden crear tickets en un sorteo cerrado", 409);
-      if (loteriaId !== sorteo.loteriaId) {
-        throw new AppError(`loteriaId mismatch: request=${loteriaId}, sorteo=${sorteo.loteriaId}`, 400);
-      }
-      if (!ventanaWithBanca || !ventanaWithBanca.isActive) throw new AppError("La Ventana no existe o está inactiva", 404);
-
-      //  VALIDACIÓN DEFENSIVA: scheduledAt
-      try {
-        validateDate(sorteo.scheduledAt, 'sorteo.scheduledAt');
-      } catch (err: any) {
-        logger.error({ layer: "service", action: "INVALID_SORTEO_SCHEDULED_AT", payload: { sorteoId, error: err.message } });
-        throw new AppError(`Sorteo ${sorteoId} con fecha inválida`, 400);
-      }
-
-      //  Resolver cutoff efectivo
-      const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
-        bancaId: ventanaWithBanca.bancaId,
-        ventanaId,
-        userId: effectiveVendedorId,
-        defaultCutoff: 1,
-      });
-
-      const now = nowCR();
-      const safeMinutes = (typeof cutoff.minutes === 'number' && !isNaN(cutoff.minutes)) ? cutoff.minutes : 1;
-      const cutoffMs = safeMinutes * 60_000;
-      const effectiveLimitTime = new Date(sorteo.scheduledAt.getTime() - cutoffMs + CUTOFF_GRACE_MS);
-
-      if (now >= effectiveLimitTime) {
-        const minsLeft = Math.max(0, Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000));
-        throw new AppError(`Venta bloqueada: faltan ${minsLeft} min para el sorteo`, 409);
-      }
-
-      // Procesamiento de jugadas
-      const jugadasIn: Array<{ type?: "NUMERO" | "REVENTADO"; number?: string; reventadoNumber?: string | null; amount: number; }> = Array.isArray(data.jugadas) ? data.jugadas : [];
-      if (jugadasIn.length === 0) throw new AppError("At least one jugada is required", 400);
-
-      // Seguridad: match Numero-Reventado
-      const numeros = new Set(jugadasIn.filter((j) => (j.type ?? "NUMERO") === "NUMERO").map((j) => j.number!));
-      for (const j of jugadasIn) {
-        if ((j.type ?? "NUMERO") === "REVENTADO") {
-          const target = j.reventadoNumber ?? j.number;
-          if (!target || !numeros.has(target)) throw new AppError(`REVENTADO requiere NUMERO para ${target}`, 400);
-        }
-      }
-
-      // Validaciones por rulesJson de la Lotería
-      const rules = (sorteo.loteria?.rulesJson ?? {}) as any;
-      if (!isWithinSalesHours(now, rules)) throw new AppError("Fuera del horario de ventas", 409);
-
-      const rulesCheck = validateTicketAgainstRules({
-        loteriaRules: rules,
-        jugadas: jugadasIn.map((j) => ({
-          type: (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO",
-          number: j.number ?? j.reventadoNumber ?? "",
-          amount: j.amount,
-          reventadoNumber: j.reventadoNumber ?? undefined,
-        })),
-      });
-      if (!rulesCheck.ok) throw new AppError(rulesCheck.reason, 400);
-
-      // Preparar contexto de comisiones sin nuevas consultas
-      const commissionContext = await commissionService.prepareContext(
-        effectiveVendedorId,
-        ventanaId,
-        ventanaWithBanca.bancaId,
-        vendedorToPass?.commissionPolicyJson ?? null,
-        ventanaWithBanca?.commissionPolicyJson ?? null,
-        ventanaWithBanca?.banca?.commissionPolicyJson ?? null,
-        listeroUser?.commissionPolicyJson ?? null
-      );
-
-      //  Normalizar jugadas para repo (sin comisiones aún)
-      const normalizedJugadas = jugadasIn.map((j) => {
-        const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
-        const isNumero = type === "NUMERO";
-        const number = isNumero ? j.number! : (j.reventadoNumber ?? j.number)!;
-        return {
-          type,
-          number,
-          reventadoNumber: isNumero ? null : number,
-          amount: j.amount,
-          multiplierId: isNumero ? ((j as any).multiplierId ?? null) : null,
-          finalMultiplierX: 0, // Se calculará en el repo
-        };
-      });
-
-      //  Determinar campos de auditoría (createdBy y createdByRole)
-      // Si el vendedor efectivo es diferente al actor autenticado, fue creado por otro
-      let createdBy: string | undefined;
-      let createdByRole: Role | undefined;
-
-      if (effectiveVendedorId === actor.id) {
-        // Ticket creado por el propio vendedor
-        createdBy = actor.id;
-        createdByRole = Role.VENDEDOR;
-      } else {
-        // Ticket creado por admin/ventana para otro vendedor
-        createdBy = actor.id;
-        createdByRole = actor.role;
-      }
-
-      //  Crear ticket con método optimizado
-      let ticket: any;
-      let warnings: any[];
-      try {
-        ({ ticket, warnings } = await TicketRepository.createOptimized(
-          {
-            loteriaId,
-            sorteoId,
-            ventanaId,
-            clienteNombre: data.clienteNombre ?? null,
-            jugadas: normalizedJugadas,
+          where: { id: requestedVendedorId },
+          select: {
+            id: true,
+            role: true,
+            ventanaId: true,
+            isActive: true,
+            commissionPolicyJson: true,
+            name: true,     // ← NUEVO
+            phone: true,    // ← NUEVO
+            settings: true, // ← NUEVO
           },
-          effectiveVendedorId,
-          {
-            actorRole,
-            commissionContext, // Pasar contexto para cálculo rápido
-            createdBy,
-            createdByRole,
-            scheduledAt: sorteo.scheduledAt,
-            idempotencyKey: clientIdempotencyKey,
-            preFetched: {
-              vendedor: vendedorToPass,
-              sorteo: sorteo,
-              ventana: ventanaWithBanca,
-              loteria: sorteo.loteria
-            }
-          }
-        ));
-      } catch (err: any) {
-        // P2002 en idempotencyKey = carrera entre procesos con el mismo key
-        if (
-          err?.code === 'P2002' &&
-          (err?.meta?.target as string[] | undefined)?.includes('idempotencyKey')
-        ) {
-          const row = await withConnectionRetry(
-            () => prisma.$queryRaw<{ id: string }[]>`
-              SELECT id FROM "Ticket"
-              WHERE "idempotencyKey" = ${clientIdempotencyKey}
-                AND "deletedAt" IS NULL
-              LIMIT 1
-            `,
-            { context: 'TicketService.create.idempotencyRaceRecover' }
-          );
-          if (row.length > 0) {
-            logger.info({
-              layer: 'service',
-              action: 'TICKET_CREATE_DB_IDEMPOTENCY_RACE_HIT',
-              userId,
-              requestId,
-              payload: { idempotencyKey: clientIdempotencyKey },
-            });
-            return TicketRepository.getById(row[0].id);
-          }
-        }
-        throw err;
-      }
-
-      //  FASE BE-2: Invalidar caché del vendedor (summary)
-      // Usamos fire-and-forget para no bloquear el flujo de venta
-      CacheService.invalidateTag(`vendedor:${effectiveVendedorId}`).catch(err => {
-        logger.warn({ layer: 'cache', action: 'INVALIDATE_ERROR_ON_CREATE', payload: { vendedorId: effectiveVendedorId, error: err.message } });
-      });
-
-      // ️ Obtener configuraciones de impresión del vendedor y ventana
-      const [vendedor, ventanaData] = await withConnectionRetry(
-        () => Promise.all([
-          prisma.user.findUnique({
-            where: { id: effectiveVendedorId },
-            select: { name: true, phone: true, settings: true },
-          }),
-          prisma.ventana.findUnique({
-            where: { id: ventanaId },
-            select: { name: true, phone: true, settings: true },
-          }),
-        ]),
-        { context: 'TicketService.create.printConfigs' }
+        }),
+        { context: 'TicketService.create.targetVendedor' }
       );
+      if (!target || !target.isActive)
+        throw new AppError("Vendedor no encontrado o inactivo", 404);
+      if (target.role !== Role.VENDEDOR)
+        throw new AppError("vendedorId debe pertenecer a un usuario con rol VENDEDOR", 400);
+      if (!target.ventanaId)
+        throw new AppError("El vendedor seleccionado no tiene Ventana asignada", 400);
 
-      //  Formatear sorteo.name concatenando la hora (requerido por frontend)
-      // El ticket de createOptimized no incluye sorteo, así que lo obtenemos por separado
-      const sorteoWithFormattedName = {
-        ...sorteo,
-        name: formatSorteoNameWithTime(sorteo.name, sorteo.scheduledAt),
-      };
-
-      // Enriquecer respuesta con configuraciones de impresión
-      const response = {
-        ...ticket,
-        sorteo: sorteoWithFormattedName,
-        loteria: sorteo.loteria ? {
-          id: sorteo.loteria.id,
-          name: sorteo.loteria.name
-        } : undefined,
-        vendedor: {
-          id: effectiveVendedorId,
-          ...extractPrintConfig(vendedor?.settings, vendedor?.name || null, vendedor?.phone || null),
-        },
-        ventana: {
-          id: ventanaId,
-          ...extractPrintConfig(ventanaData?.settings, ventanaData?.name || null, ventanaData?.phone || null),
-        },
-      };
-
-      // Obtener número de jugadas (el ticket incluye jugadas pero TypeScript no lo infiere)
-      const jugadasList = (ticket as any).jugadas || [];
-      const jugadasCount = jugadasList.length ?? jugadasIn.length;
-
-      // Detallar jugadas en la descripción
-      const jugadasSummary = jugadasList
-        .map((j: any) => `${j.type === 'REVENTADO' ? 'R:' : '#'}${j.number}: ₡${j.amount.toLocaleString()}`)
-        .join(", ");
-
-      await ActivityService.log({
-        userId,
-        action: ActivityType.TICKET_CREATE,
-        targetType: "TICKET",
-        targetId: ticket.id,
-        details: {
-          ticketNumber: ticket.ticketNumber,
-          totalAmount: ticket.totalAmount,
-          jugadas: jugadasCount,
-          description: `Ticket #${ticket.ticketNumber} creado por [${effectiveVendedorId}] - ${vendedor?.name || 'N/A'} para ${sorteo.loteria.name} - ${sorteoWithFormattedName.name} por un monto de ₡${ticket.totalAmount.toLocaleString()}. Jugadas: [${jugadasSummary}]`,
-        },
-        requestId,
-        layer: "service",
-      });
-
-      logger.info({
-        layer: "service",
-        action: "TICKET_CREATE",
-        userId,
-        requestId,
-        payload: { ticketId: ticket.id, totalAmount: ticket.totalAmount, jugadas: jugadasCount },
-      });
-
-      if (warnings && warnings.length > 0) {
-        logger.warn({
-          layer: "service",
-          action: "TICKET_CREATE_WARNINGS",
-          userId,
-          requestId,
-          payload: { warnings },
-        });
+      if (actor.role === Role.VENTANA) {
+        if (!actor.ventanaId || actor.ventanaId !== target.ventanaId) {
+          throw new AppError("vendedorId no pertenece a tu Ventana", 403);
+        }
       }
 
-      if (warnings && warnings.length > 0) {
-        (response as any).warnings = warnings;
+      effectiveVendedorId = target.id;
+      ventanaId = target.ventanaId;
+      vendedorToPass = target;
+    } else {
+      if (actor.role === Role.VENDEDOR) {
+        if (!actor.ventanaId)
+          throw new AppError("El vendedor no tiene una Ventana asignada", 400);
+        effectiveVendedorId = actor.id;
+        ventanaId = actor.ventanaId;
+      } else {
+        throw new AppError("vendedorId es requerido para este rol", 400);
       }
+    }
 
-      return response;
+    // ─────────────────────────────────────────────────────────────────────
+    // 3. Fetch Masivo Consolidado
+    //    OPTIMIZACIÓN: se agregan name, phone, settings a ventana para
+    //    eliminar el fetch post-transacción que antes hacía 2 queries extra.
+    // ─────────────────────────────────────────────────────────────────────
+    const [sorteo, ventanaWithBanca, listeroUser] = await withConnectionRetry(
+      () => Promise.all([
+        prisma.sorteo.findUnique({
+          where: { id: sorteoId },
+          select: {
+            id: true,
+            name: true,
+            scheduledAt: true,
+            status: true,
+            loteriaId: true,
+            loteria: { select: { id: true, name: true, rulesJson: true } },
+          },
+        }),
+        prisma.ventana.findUnique({
+          where: { id: ventanaId },
+          select: {
+            id: true,
+            bancaId: true,
+            isActive: true,
+            commissionPolicyJson: true,
+            name: true,     // ← NUEVO
+            phone: true,    // ← NUEVO
+            settings: true, // ← NUEVO
+            banca: { select: { id: true, commissionPolicyJson: true } },
+          },
+        }),
+        prisma.user.findFirst({
+          where: { role: Role.VENTANA, ventanaId: ventanaId, isActive: true, deletedAt: null },
+          select: { id: true, commissionPolicyJson: true },
+          orderBy: { updatedAt: "desc" },
+        }),
+      ]),
+      { context: 'TicketService.create.consolidatedMetadata' }
+    );
+
+    if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
+    if (sorteo.status === "CLOSED")
+      throw new AppError("No se pueden crear tickets en un sorteo cerrado", 409);
+    if (loteriaId !== sorteo.loteriaId) {
+      throw new AppError(
+        `loteriaId mismatch: request=${loteriaId}, sorteo=${sorteo.loteriaId}`,
+        400
+      );
+    }
+    if (!ventanaWithBanca || !ventanaWithBanca.isActive)
+      throw new AppError("La Ventana no existe o está inactiva", 404);
+
+    // Validación defensiva de scheduledAt
+    try {
+      validateDate(sorteo.scheduledAt, 'sorteo.scheduledAt');
     } catch (err: any) {
       logger.error({
         layer: "service",
-        action: "TICKET_CREATE_FAIL",
-        userId,
-        requestId,
-        payload: { message: err.message },
+        action: "INVALID_SORTEO_SCHEDULED_AT",
+        payload: { sorteoId, error: err.message },
       });
+      throw new AppError(`Sorteo ${sorteoId} con fecha inválida`, 400);
+    }
+
+    // Resolver cutoff efectivo
+    const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
+      bancaId: ventanaWithBanca.bancaId,
+      ventanaId,
+      userId: effectiveVendedorId,
+      defaultCutoff: 1,
+    });
+
+    const now = nowCR();
+    const safeMinutes =
+      typeof cutoff.minutes === 'number' && !isNaN(cutoff.minutes)
+        ? cutoff.minutes
+        : 1;
+    const cutoffMs = safeMinutes * 60_000;
+    const effectiveLimitTime = new Date(
+      sorteo.scheduledAt.getTime() - cutoffMs + CUTOFF_GRACE_MS
+    );
+
+    if (now >= effectiveLimitTime) {
+      const minsLeft = Math.max(
+        0,
+        Math.ceil((sorteo.scheduledAt.getTime() - now.getTime()) / 60_000)
+      );
+      throw new AppError(`Venta bloqueada: faltan ${minsLeft} min para el sorteo`, 409);
+    }
+
+    // Procesamiento de jugadas
+    const jugadasIn: Array<{
+      type?: "NUMERO" | "REVENTADO";
+      number?: string;
+      reventadoNumber?: string | null;
+      amount: number;
+    }> = Array.isArray(data.jugadas) ? data.jugadas : [];
+    if (jugadasIn.length === 0)
+      throw new AppError("At least one jugada is required", 400);
+
+    // Seguridad: match Numero-Reventado
+    const numeros = new Set(
+      jugadasIn
+        .filter((j) => (j.type ?? "NUMERO") === "NUMERO")
+        .map((j) => j.number!)
+    );
+    for (const j of jugadasIn) {
+      if ((j.type ?? "NUMERO") === "REVENTADO") {
+        const target = j.reventadoNumber ?? j.number;
+        if (!target || !numeros.has(target))
+          throw new AppError(`REVENTADO requiere NUMERO para ${target}`, 400);
+      }
+    }
+
+    // Validaciones por rulesJson de la Lotería
+    const rules = (sorteo.loteria?.rulesJson ?? {}) as any;
+    if (!isWithinSalesHours(now, rules))
+      throw new AppError("Fuera del horario de ventas", 409);
+
+    const rulesCheck = validateTicketAgainstRules({
+      loteriaRules: rules,
+      jugadas: jugadasIn.map((j) => ({
+        type: (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO",
+        number: j.number ?? j.reventadoNumber ?? "",
+        amount: j.amount,
+        reventadoNumber: j.reventadoNumber ?? undefined,
+      })),
+    });
+    if (!rulesCheck.ok) throw new AppError(rulesCheck.reason, 400);
+
+    // Preparar contexto de comisiones sin nuevas consultas
+    const commissionContext = await commissionService.prepareContext(
+      effectiveVendedorId,
+      ventanaId,
+      ventanaWithBanca.bancaId,
+      vendedorToPass?.commissionPolicyJson ?? null,
+      ventanaWithBanca?.commissionPolicyJson ?? null,
+      ventanaWithBanca?.banca?.commissionPolicyJson ?? null,
+      listeroUser?.commissionPolicyJson ?? null
+    );
+
+    // Normalizar jugadas para repo
+    const normalizedJugadas = jugadasIn.map((j) => {
+      const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
+      const isNumero = type === "NUMERO";
+      const number = isNumero ? j.number! : (j.reventadoNumber ?? j.number)!;
+      return {
+        type,
+        number,
+        reventadoNumber: isNumero ? null : number,
+        amount: j.amount,
+        multiplierId: isNumero ? ((j as any).multiplierId ?? null) : null,
+        finalMultiplierX: 0,
+      };
+    });
+
+    // Campos de auditoría
+    let createdBy: string | undefined;
+    let createdByRole: Role | undefined;
+
+    if (effectiveVendedorId === actor.id) {
+      createdBy = actor.id;
+      createdByRole = Role.VENDEDOR;
+    } else {
+      createdBy = actor.id;
+      createdByRole = actor.role;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 4. Crear ticket
+    // ─────────────────────────────────────────────────────────────────────
+    let ticket: any;
+    let warnings: any[];
+    try {
+      ({ ticket, warnings } = await TicketRepository.createOptimized(
+        {
+          loteriaId,
+          sorteoId,
+          ventanaId,
+          clienteNombre: data.clienteNombre ?? null,
+          jugadas: normalizedJugadas,
+        },
+        effectiveVendedorId,
+        {
+          actorRole,
+          commissionContext,
+          createdBy,
+          createdByRole,
+          scheduledAt: sorteo.scheduledAt,
+          idempotencyKey: clientIdempotencyKey,
+          preFetched: {
+            vendedor: vendedorToPass,
+            sorteo: sorteo,
+            ventana: ventanaWithBanca,
+            loteria: sorteo.loteria,
+          },
+        }
+      ));
+    } catch (err: any) {
+      if (
+        err?.code === 'P2002' &&
+        (err?.meta?.target as string[] | undefined)?.includes('idempotencyKey')
+      ) {
+        const row = await withConnectionRetry(
+          () => prisma.$queryRaw<{ id: string }[]>`
+            SELECT id FROM "Ticket"
+            WHERE "idempotencyKey" = ${clientIdempotencyKey}
+              AND "deletedAt" IS NULL
+            LIMIT 1
+          `,
+          { context: 'TicketService.create.idempotencyRaceRecover' }
+        );
+        if (row.length > 0) {
+          logger.info({
+            layer: 'service',
+            action: 'TICKET_CREATE_DB_IDEMPOTENCY_RACE_HIT',
+            userId,
+            requestId,
+            payload: { idempotencyKey: clientIdempotencyKey },
+          });
+          return TicketRepository.getById(row[0].id);
+        }
+      }
       throw err;
     }
-  },
+
+    // Fire-and-forget: invalidar caché del vendedor
+    CacheService.invalidateTag(`vendedor:${effectiveVendedorId}`).catch((err) => {
+      logger.warn({
+        layer: 'cache',
+        action: 'INVALIDATE_ERROR_ON_CREATE',
+        payload: { vendedorId: effectiveVendedorId, error: err.message },
+      });
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 5. Construir response
+    //    OPTIMIZACIÓN: ya no se hace el fetch post-transacción de vendedor
+    //    y ventana. Usamos los datos que ya están en memoria desde los
+    //    pasos 1-2 (vendedorToPass) y paso 3 (ventanaWithBanca).
+    //
+    //    Antes: 2 queries extra aquí (~200-350ms en Render)
+    //    Ahora: 0 queries — datos ya disponibles en memoria
+    // ─────────────────────────────────────────────────────────────────────
+    const sorteoWithFormattedName = {
+      ...sorteo,
+      name: formatSorteoNameWithTime(sorteo.name, sorteo.scheduledAt),
+    };
+
+    const response = {
+      ...ticket,
+      sorteo: sorteoWithFormattedName,
+      loteria: sorteo.loteria
+        ? { id: sorteo.loteria.id, name: sorteo.loteria.name }
+        : undefined,
+      vendedor: {
+        id: effectiveVendedorId,
+        ...extractPrintConfig(
+          vendedorToPass?.settings,
+          vendedorToPass?.name ?? null,
+          vendedorToPass?.phone ?? null
+        ),
+      },
+      ventana: {
+        id: ventanaId,
+        ...extractPrintConfig(
+          ventanaWithBanca?.settings,
+          ventanaWithBanca?.name ?? null,
+          ventanaWithBanca?.phone ?? null
+        ),
+      },
+    };
+
+    // ActivityLog
+    const jugadasList = (ticket as any).jugadas || [];
+    const jugadasCount = jugadasList.length ?? jugadasIn.length;
+    const jugadasSummary = jugadasList
+      .map(
+        (j: any) =>
+          `${j.type === 'REVENTADO' ? 'R:' : '#'}${j.number}: ₡${j.amount.toLocaleString()}`
+      )
+      .join(", ");
+
+    await ActivityService.log({
+      userId,
+      action: ActivityType.TICKET_CREATE,
+      targetType: "TICKET",
+      targetId: ticket.id,
+      details: {
+        ticketNumber: ticket.ticketNumber,
+        totalAmount: ticket.totalAmount,
+        jugadas: jugadasCount,
+        description: `Ticket #${ticket.ticketNumber} creado por [${effectiveVendedorId}] - ${vendedorToPass?.name || 'N/A'} para ${sorteo.loteria.name} - ${sorteoWithFormattedName.name} por un monto de ₡${ticket.totalAmount.toLocaleString()}. Jugadas: [${jugadasSummary}]`,
+      },
+      requestId,
+      layer: "service",
+    });
+
+    logger.info({
+      layer: "service",
+      action: "TICKET_CREATE",
+      userId,
+      requestId,
+      payload: {
+        ticketId: ticket.id,
+        totalAmount: ticket.totalAmount,
+        jugadas: jugadasCount,
+      },
+    });
+
+    if (warnings && warnings.length > 0) {
+      logger.warn({
+        layer: "service",
+        action: "TICKET_CREATE_WARNINGS",
+        userId,
+        requestId,
+        payload: { warnings },
+      });
+      (response as any).warnings = warnings;
+    }
+
+    return response;
+  } catch (err: any) {
+    logger.error({
+      layer: "service",
+      action: "TICKET_CREATE_FAIL",
+      userId,
+      requestId,
+      payload: { message: err.message },
+    });
+    throw err;
+  }
+},
 
   async getById(id: string) {
     const ticket = await TicketRepository.getById(id);
@@ -2030,7 +2097,11 @@ export const TicketService = {
       let dateFrom: Date | undefined;
       let dateTo: Date | undefined;
 
-      if (params.date || params.fromDate || params.toDate) {
+      //  FIX: Regla especial - cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha
+      const hasExplicitDateRange = !!(params.fromDate || params.toDate);
+      const shouldSkipDateFilter = !!params.sorteoId && !hasExplicitDateRange;
+
+      if (!shouldSkipDateFilter && (params.date || hasExplicitDateRange)) {
         const dateRange = resolveDateRange(
           params.date || 'today',
           params.fromDate,

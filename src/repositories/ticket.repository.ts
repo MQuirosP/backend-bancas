@@ -12,6 +12,55 @@ import { getBusinessDateCRInfo, getCRDayRangeUTC, getCRLocalComponents } from ".
 import { nowCR, validateDate, formatDateCRWithTZ } from "../utils/datetime";
 import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel, ScopeCache, calculateAccumulatedByNumbersAndScope } from "./helpers/ticket-restriction.helper";
 
+
+interface CachedRules {
+  rules: any[];
+  expiresAt: number;
+}
+ 
+const RULES_CACHE_TTL_MS = 60_000; // 60 segundos
+ 
+/**
+ * Cache en memoria para RestrictionRules activas.
+ * Clave: JSON.stringify de los scopeIds (userId, ventanaId, bancaId).
+ * Se invalida llamando a invalidateRestrictionRulesCache() desde el
+ * endpoint PATCH /restriction-rules/:id y POST/DELETE equivalentes.
+ */
+const restrictionRulesCache = new Map<string, CachedRules>();
+ 
+export function buildRulesCacheKey(params: {
+  userId: string;
+  ventanaId: string;
+  bancaId: string;
+}): string {
+  return `rules:${params.userId}:${params.ventanaId}:${params.bancaId}`;
+}
+ 
+export function getCachedRestrictionRules(key: string): any[] | null {
+  const cached = restrictionRulesCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt < Date.now()) {
+    restrictionRulesCache.delete(key);
+    return null;
+  }
+  return cached.rules;
+}
+ 
+export function setCachedRestrictionRules(key: string, rules: any[]): void {
+  restrictionRulesCache.set(key, {
+    rules,
+    expiresAt: Date.now() + RULES_CACHE_TTL_MS,
+  });
+}
+ 
+/** Llamar desde el controller de RestrictionRule en mutaciones (create/update/delete) */
+export function invalidateRestrictionRulesCache(): void {
+  restrictionRulesCache.clear();
+}
+ 
+// ---------------------------------------------------------------------------
+// SECCIÓN 2: Método createOptimized refactorizado
+// -
 /**
  * Calcula el límite dinámico basado en baseAmount y salesPercentage
  * Obtiene las ventas del SORTEO dentro de la transacción
@@ -1290,134 +1339,180 @@ export const TicketRepository = {
    * - Timeout dinámico según número de jugadas
    */
   async createOptimized(
-    data: Omit<CreateTicketInput, 'totalAmount'>,
-    userId: string,
-    options?: {
-      actorRole?: Role;
-      commissionContext?: CommissionContext;
-      scheduledAt?: Date | null;
-      createdBy?: string;
-      createdByRole?: Role;
-      idempotencyKey?: string;
-      preFetched?: {
-        vendedor?: any;
-        sorteo?: any;
-        ventana?: any;
-        loteria?: any;
-      };
-    }
-  ) {
-    const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
-    const actorRole = options?.actorRole ?? Role.VENDEDOR;
-    const commissionContext = options?.commissionContext;
-    const scheduledAt = options?.scheduledAt;
-
-    // Calcular timeout dinámico basado en número de jugadas
-    const baseTimeout = 20_000; // 20s base (aumentado para manejar concurrencia)
-    const perJugadaTimeout = 300; // 300ms por jugada
-    const maxTimeout = 30_000; // Máximo 30s
-    const dynamicTimeout = Math.min(
-      baseTimeout + (jugadas.length * perJugadaTimeout),
-      maxTimeout
-    );
-
-    logger.info({
-      layer: 'repository',
-      action: 'TICKET_CREATE_OPTIMIZED_START',
-      payload: {
-        loteriaId,
-        sorteoId,
-        ventanaId,
-        jugadasCount: jugadas.length,
-        dynamicTimeout,
-        hasCommissionContext: !!commissionContext,
-        multiplierIds: jugadas
-          .filter((j) => j.type === 'NUMERO' && j.multiplierId)
-          .map((j) => j.multiplierId),
-      },
-    });
-
-    const { ticket, warnings } = await withTransactionRetry(
+  data: Omit<CreateTicketInput, 'totalAmount'>,
+  userId: string,
+  options?: {
+    actorRole?: Role;
+    commissionContext?: CommissionContext;
+    scheduledAt?: Date | null;
+    createdBy?: string;
+    createdByRole?: Role;
+    idempotencyKey?: string;
+    preFetched?: {
+      vendedor?: any;
+      sorteo?: any;
+      ventana?: any;
+      loteria?: any;
+    };
+  }
+) {
+  const { loteriaId, sorteoId, ventanaId, jugadas, clienteNombre } = data;
+  const actorRole = options?.actorRole ?? Role.VENDEDOR;
+  const commissionContext = options?.commissionContext;
+  const scheduledAt = options?.scheduledAt;
+ 
+  const baseTimeout = 20_000;
+  const perJugadaTimeout = 300;
+  const maxTimeout = 30_000;
+  const dynamicTimeout = Math.min(
+    baseTimeout + jugadas.length * perJugadaTimeout,
+    maxTimeout
+  );
+ 
+  logger.info({
+    layer: 'repository',
+    action: 'TICKET_CREATE_OPTIMIZED_START',
+    payload: {
+      loteriaId,
+      sorteoId,
+      ventanaId,
+      jugadasCount: jugadas.length,
+      dynamicTimeout,
+      hasCommissionContext: !!commissionContext,
+      multiplierIds: jugadas
+        .filter((j) => j.type === 'NUMERO' && j.multiplierId)
+        .map((j) => j.multiplierId),
+    },
+  });
+ 
+  // ─────────────────────────────────────────────────────────────────────────
+  // TRANSACCIÓN: sólo las operaciones que REQUIEREN atomicidad
+  // El findUnique final se ejecuta fuera para reducir el hold time del lock
+  // ─────────────────────────────────────────────────────────────────────────
+  const { createdTicketId, jugadasWithCommissions, warnings } =
+    await withTransactionRetry(
       async (tx) => {
         const warnings: TicketWarning[] = [];
         const warningRuleIds = new Set<string>();
-
-        // 1) Generación de businessDate CR
+ 
+        // 1) businessDate CR
         const nowUtc = new Date();
-        const cutoffHour = (process.env.BUSINESS_CUTOFF_HOUR_CR || '00:00').trim();
-
-        // 2) Validación de FKs + reglas de la lotería (Optimizado para usar pre-fetch)
-        const [loteria, sorteo, ventana, user] = await Promise.all([
-          options?.preFetched?.loteria
-            ? Promise.resolve(options.preFetched.loteria)
-            : tx.loteria.findUnique({
-                where: { id: loteriaId },
-                select: { id: true, name: true, isActive: true, rulesJson: true },
-              }),
-          options?.preFetched?.sorteo
-            ? Promise.resolve(options.preFetched.sorteo)
-            : tx.sorteo.findUnique({
-                where: { id: sorteoId },
-                select: { id: true, status: true, loteriaId: true, scheduledAt: true },
-              }),
-          options?.preFetched?.ventana
-            ? Promise.resolve(options.preFetched.ventana)
-            : tx.ventana.findUnique({
-                where: { id: ventanaId },
-                select: {
-                  id: true,
-                  bancaId: true,
-                  commissionPolicyJson: true,
-                  banca: {
-                    select: {
-                      commissionPolicyJson: true,
+        const cutoffHour = (
+          process.env.BUSINESS_CUTOFF_HOUR_CR || '00:00'
+        ).trim();
+ 
+        // ─────────────────────────────────────────────────────────────────
+        // 2) FK lookups + resolveBaseMultiplierX en paralelo
+        //    OPTIMIZACIÓN: si hay preFetch de ventana (que tiene bancaId),
+        //    lanzamos resolveBaseMultiplierX en el mismo Promise.all.
+        //    Si no hay preFetch, se ejecuta después como antes.
+        // ─────────────────────────────────────────────────────────────────
+        const preFetchedBancaId = options?.preFetched?.ventana?.bancaId as
+          | string
+          | undefined;
+ 
+        const [loteria, sorteo, ventana, user, preResolvedMultiplier] =
+          await Promise.all([
+            options?.preFetched?.loteria
+              ? Promise.resolve(options.preFetched.loteria)
+              : tx.loteria.findUnique({
+                  where: { id: loteriaId },
+                  select: {
+                    id: true,
+                    name: true,
+                    isActive: true,
+                    rulesJson: true,
+                  },
+                }),
+            options?.preFetched?.sorteo
+              ? Promise.resolve(options.preFetched.sorteo)
+              : tx.sorteo.findUnique({
+                  where: { id: sorteoId },
+                  select: {
+                    id: true,
+                    status: true,
+                    loteriaId: true,
+                    scheduledAt: true,
+                  },
+                }),
+            options?.preFetched?.ventana
+              ? Promise.resolve(options.preFetched.ventana)
+              : tx.ventana.findUnique({
+                  where: { id: ventanaId },
+                  select: {
+                    id: true,
+                    bancaId: true,
+                    commissionPolicyJson: true,
+                    banca: {
+                      select: { commissionPolicyJson: true },
                     },
                   },
-                },
-              }),
-          options?.preFetched?.vendedor
-            ? Promise.resolve(options.preFetched.vendedor)
-            : tx.user.findUnique({
-                where: { id: userId },
-                select: { id: true, commissionPolicyJson: true },
-              }),
-        ]);
-
-        if (!user) throw new AppError("Seller (vendedor) not found", 404, "FK_VIOLATION");
-        if (!loteria || loteria.isActive === false) throw new AppError("Lotería not found", 404, "FK_VIOLATION");
-        if (!sorteo) throw new AppError("Sorteo not found", 404, "FK_VIOLATION");
-        if (!ventana) throw new AppError("Ventana not found", 404, "FK_VIOLATION");
-
+                }),
+            options?.preFetched?.vendedor
+              ? Promise.resolve(options.preFetched.vendedor)
+              : tx.user.findUnique({
+                  where: { id: userId },
+                  select: { id: true, commissionPolicyJson: true },
+                }),
+            // ── NUEVO: lanzar resolveBaseMultiplierX en paralelo si bancaId ya está disponible
+            preFetchedBancaId
+              ? resolveBaseMultiplierX(tx, {
+                  bancaId: preFetchedBancaId,
+                  loteriaId,
+                  userId,
+                  ventanaId,
+                })
+              : Promise.resolve(null),
+          ]);
+ 
+        if (!user)
+          throw new AppError('Seller (vendedor) not found', 404, 'FK_VIOLATION');
+        if (!loteria || loteria.isActive === false)
+          throw new AppError('Lotería not found', 404, 'FK_VIOLATION');
+        if (!sorteo)
+          throw new AppError('Sorteo not found', 404, 'FK_VIOLATION');
+        if (!ventana)
+          throw new AppError('Ventana not found', 404, 'FK_VIOLATION');
+ 
         if (sorteo.loteriaId !== loteriaId) {
-          throw new AppError("El sorteo no pertenece a la lotería indicada", 400, "SORTEO_LOTERIA_MISMATCH");
+          throw new AppError(
+            'El sorteo no pertenece a la lotería indicada',
+            400,
+            'SORTEO_LOTERIA_MISMATCH'
+          );
         }
-
+ 
         const loteriaName = loteria.name ?? null;
-
-        // 3) Determinar businessDate CR
+        const bancaId = ventana.bancaId;
+ 
+        // 3) businessDate CR
         const bd = getBusinessDateCRInfo({
           scheduledAt: scheduledAt ?? sorteo.scheduledAt,
           nowUtc,
           cutoffHour,
         });
-
-        // 4) Generar número de ticket via secuencia atómica (sin row lock)
-        let nextNumber: string = '';
+ 
+        // 4) Número de ticket vía secuencia atómica
+        let nextNumber = '';
         let seqForLog: number | null = null;
-
+ 
         try {
           const seqRows = await tx.$queryRaw<{ ticket_number: string }[]>(
             Prisma.sql`SELECT generate_ticket_number_v3(${bd.businessDate}::date) AS ticket_number`
           );
-
+ 
           if (!seqRows?.[0]?.ticket_number) {
-            throw new AppError('No se pudo generar número de ticket', 500, 'SEQ_ERROR');
+            throw new AppError(
+              'No se pudo generar número de ticket',
+              500,
+              'SEQ_ERROR'
+            );
           }
-
+ 
           nextNumber = seqRows[0].ticket_number;
           const seqStr = nextNumber.split('-')[1];
           seqForLog = seqStr ? parseInt(seqStr, 10) : null;
-
+ 
           logger.info({
             layer: 'repository',
             action: 'TICKET_NUMBER_GENERATED',
@@ -1433,59 +1528,91 @@ export const TicketRepository = {
             action: 'TICKET_NUMBER_GENERATION_ERROR',
             payload: { error: error.message },
           });
-          throw error instanceof AppError ? error : new AppError('Error al generar número de ticket', 500, 'TICKET_NUMBER_ERROR');
+          throw error instanceof AppError
+            ? error
+            : new AppError(
+                'Error al generar número de ticket',
+                500,
+                'TICKET_NUMBER_ERROR'
+              );
         }
-
+ 
         if (!nextNumber) {
           throw new AppError('Failed to generate ticket number', 500, 'SEQ_ERROR');
         }
-
+ 
         // 5) Resolver multiplicador base
-        const bancaId = ventana.bancaId;
-        const { valueX: effectiveBaseX, source } = await resolveBaseMultiplierX(tx, {
-          bancaId,
-          loteriaId,
-          userId,
-          ventanaId,
-        });
-
-        // 6) Búsqueda de reglas de restricción (simplificada)
-        const now = new Date();
-        const candidateRules = await tx.restrictionRule.findMany({
-          where: {
-            isActive: true,
-            OR: [
-              { userId },
-              { ventanaId },
-              { bancaId },
-              //  Incluir reglas globales (sin scope específico)
-              { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] }
-            ],
-          },
-          include: {
-            loteria: true,
-            multiplier: true,
-          },
-        });
-
-        // ============================================================================
-        // REFACTORIZACION 'TANK' MODE: Row-level locking (FOR UPDATE)
-        // Bloqueamos las reglas encontradas para asegurar validación atómica
-        // Evita que dos tickets concurrentes vean el mismo 'acumulado' antes de insertar
-        // ============================================================================
-        if (candidateRules.length > 0) {
-          const ruleIds = candidateRules.map(r => r.id);
-          // Usamos queryRaw para ejecutar el bloqueo en PostgreSQL con casting explícito a uuid
-          await tx.$queryRaw`
-            SELECT id FROM "RestrictionRule" 
-            WHERE id IN (${Prisma.join(ruleIds.map(id => Prisma.sql`${id}::uuid`))}) 
-            FOR UPDATE`;
+        //    Si ya lo resolvimos en paralelo en el paso 2, reutilizamos el resultado.
+        //    Si no (porque no había preFetch de ventana), lo calculamos ahora con bancaId real.
+        const { valueX: effectiveBaseX, source } = preResolvedMultiplier
+          ? preResolvedMultiplier
+          : await resolveBaseMultiplierX(tx, {
+              bancaId,
+              loteriaId,
+              userId,
+              ventanaId,
+            });
+ 
+        // 6) Reglas de restricción con CACHE
+        //    OPTIMIZACIÓN: evita un findMany en el 99% de los tickets
+        const rulesCacheKey = buildRulesCacheKey({ userId, ventanaId, bancaId });
+        let candidateRules = getCachedRestrictionRules(rulesCacheKey);
+ 
+        if (!candidateRules) {
+          candidateRules = await tx.restrictionRule.findMany({
+            where: {
+              isActive: true,
+              OR: [
+                { userId },
+                { ventanaId },
+                { bancaId },
+                {
+                  AND: [
+                    { userId: null },
+                    { ventanaId: null },
+                    { bancaId: null },
+                  ],
+                },
+              ],
+            },
+            include: {
+              loteria: true,
+              multiplier: true,
+            },
+          });
+          setCachedRestrictionRules(rulesCacheKey, candidateRules);
         }
-
+ 
+        // ─────────────────────────────────────────────────────────────────
+        // OPTIMIZACIÓN: FOR NO KEY UPDATE en lugar de FOR UPDATE
+        // Reduce la contención de locks bajo carga concurrente:
+        //   - FOR UPDATE: bloquea SELECTs y UPDATEs → serializa todos los tickets
+        //   - FOR NO KEY UPDATE: permite SELECTs → solo bloquea updates a la PK
+        // Suficiente para garantizar la validación atómica de acumulados.
+        // ─────────────────────────────────────────────────────────────────
+        if (candidateRules.length > 0) {
+          const ruleIds = candidateRules.map((r) => r.id);
+          await tx.$queryRaw`
+            SELECT id FROM "RestrictionRule"
+            WHERE id IN (${Prisma.join(
+              ruleIds.map((id) => Prisma.sql`${id}::uuid`)
+            )})
+            FOR NO KEY UPDATE`;
+        }
+ 
+        const now = new Date();
         const applicable: RestrictionRuleWithRelations[] = candidateRules
           .filter((r) => {
-            if (r.appliesToDate && !isSameLocalDay(new Date(r.appliesToDate), now)) return false;
-            if (typeof r.appliesToHour === "number" && r.appliesToHour !== now.getHours()) return false;
+            if (
+              r.appliesToDate &&
+              !isSameLocalDay(new Date(r.appliesToDate), now)
+            )
+              return false;
+            if (
+              typeof r.appliesToHour === 'number' &&
+              r.appliesToHour !== now.getHours()
+            )
+              return false;
             return true;
           })
           .map((r) => {
@@ -1498,77 +1625,98 @@ export const TicketRepository = {
           })
           .sort((a, b) => b.score - a.score)
           .map((x) => x.r);
-
+ 
         const lotteryMultiplierRules = applicable.filter(
           (rule) => rule.loteriaId && rule.multiplierId
         );
-
-        // 7) Validaciones de rulesJson (simplificadas, ya validadas en service)
+ 
+        // 7) Validaciones de rulesJson
         const RJ = (loteria.rulesJson ?? {}) as any;
         const numberRange =
           RJ.numberRange &&
-            typeof RJ.numberRange.min === "number" &&
-            typeof RJ.numberRange.max === "number"
+          typeof RJ.numberRange.min === 'number' &&
+          typeof RJ.numberRange.max === 'number'
             ? { min: RJ.numberRange.min, max: RJ.numberRange.max }
             : { min: 0, max: 99 };
-
-        const minBetAmount = typeof RJ.minBetAmount === "number" ? RJ.minBetAmount : undefined;
-        const maxBetAmount = typeof RJ.maxBetAmount === "number" ? RJ.maxBetAmount : undefined;
+ 
+        const minBetAmount =
+          typeof RJ.minBetAmount === 'number' ? RJ.minBetAmount : undefined;
+        const maxBetAmount =
+          typeof RJ.maxBetAmount === 'number' ? RJ.maxBetAmount : undefined;
         const maxNumbersPerTicket =
-          typeof RJ.maxNumbersPerTicket === "number" ? RJ.maxNumbersPerTicket : undefined;
-
-        // Validaciones rápidas (ya validadas en service, pero verificamos por seguridad)
+          typeof RJ.maxNumbersPerTicket === 'number'
+            ? RJ.maxNumbersPerTicket
+            : undefined;
+ 
         for (const j of jugadas) {
           const num = Number(j.number);
-          if (Number.isNaN(num) || num < numberRange.min || num > numberRange.max) {
+          if (
+            Number.isNaN(num) ||
+            num < numberRange.min ||
+            num > numberRange.max
+          ) {
             throw new AppError(
               `Número fuera de rango permitido (${numberRange.min}..${numberRange.max}): ${j.number}`,
               400,
-              "NUMBER_OUT_OF_RANGE"
+              'NUMBER_OUT_OF_RANGE'
             );
           }
-          if (typeof minBetAmount === "number" && j.amount < minBetAmount) {
-            throw new AppError(`Monto mínimo por jugada: ${minBetAmount}`, 400, "BET_MIN_VIOLATION");
+          if (
+            typeof minBetAmount === 'number' &&
+            j.amount < minBetAmount
+          ) {
+            throw new AppError(
+              `Monto mínimo por jugada: ${minBetAmount}`,
+              400,
+              'BET_MIN_VIOLATION'
+            );
           }
-          if (typeof maxBetAmount === "number" && j.amount > maxBetAmount) {
-            throw new AppError(`Monto máximo por jugada: ${maxBetAmount}`, 400, "BET_MAX_VIOLATION");
+          if (
+            typeof maxBetAmount === 'number' &&
+            j.amount > maxBetAmount
+          ) {
+            throw new AppError(
+              `Monto máximo por jugada: ${maxBetAmount}`,
+              400,
+              'BET_MAX_VIOLATION'
+            );
           }
         }
-
-        if (typeof maxNumbersPerTicket === "number") {
+ 
+        if (typeof maxNumbersPerTicket === 'number') {
           const uniqueNumeros = new Set(
-            jugadas.filter((j) => j.type === "NUMERO").map((j) => j.number)
+            jugadas.filter((j) => j.type === 'NUMERO').map((j) => j.number)
           );
           if (uniqueNumeros.size > maxNumbersPerTicket) {
             throw new AppError(
               `Máximo de números por ticket: ${maxNumbersPerTicket}`,
               400,
-              "MAX_NUMBERS_PER_TICKET"
+              'MAX_NUMBERS_PER_TICKET'
             );
           }
         }
-
+ 
         // 8) Normalizar jugadas y obtener multiplicadores
         const numeroMultiplierIds = Array.from(
           new Set(
             jugadas
-              .filter((j) => j.type === "NUMERO" && j.multiplierId)
+              .filter((j) => j.type === 'NUMERO' && j.multiplierId)
               .map((j) => j.multiplierId!)
           )
         );
-
+ 
         const multiplierCache = new Map<
           string,
           {
             id: string;
             valueX: number;
             isActive: boolean;
-            kind: "NUMERO" | "REVENTADO";
+            kind: 'NUMERO' | 'REVENTADO';
             loteriaId: string;
             name?: string | null;
           }
         >();
-
+ 
         if (numeroMultiplierIds.length > 0) {
           const multipliers = await tx.loteriaMultiplier.findMany({
             where: { id: { in: numeroMultiplierIds } },
@@ -1581,23 +1729,22 @@ export const TicketRepository = {
               loteriaId: true,
             },
           });
-
           for (const m of multipliers) {
             multiplierCache.set(m.id, {
               id: m.id,
               name: m.name,
               valueX: m.valueX,
               isActive: m.isActive,
-              kind: m.kind as "NUMERO" | "REVENTADO",
+              kind: m.kind as 'NUMERO' | 'REVENTADO',
               loteriaId: m.loteriaId,
             });
           }
         }
-
+ 
         const preparedJugadas = jugadas.map((j) => {
-          if (j.type === "REVENTADO") {
+          if (j.type === 'REVENTADO') {
             return {
-              type: "REVENTADO" as const,
+              type: 'REVENTADO' as const,
               number: j.number,
               reventadoNumber: j.reventadoNumber,
               amount: j.amount,
@@ -1605,19 +1752,28 @@ export const TicketRepository = {
               multiplierId: null,
             };
           }
-
-          // NUMERO
+ 
           if (!j.multiplierId) {
-            throw new AppError("Debe seleccionar un multiplicador para jugadas tipo NUMERO", 400, "MISSING_MULTIPLIER_ID");
+            throw new AppError(
+              'Debe seleccionar un multiplicador para jugadas tipo NUMERO',
+              400,
+              'MISSING_MULTIPLIER_ID'
+            );
           }
-
+ 
           const multiplier = multiplierCache.get(j.multiplierId);
-          if (!multiplier) {
-            throw new AppError(`Multiplicador inválido para jugada NUMERO`, 400, "INVALID_MULTIPLIER");
-          }
-          if (multiplier.kind !== "NUMERO") {
-            throw new AppError(`Multiplicador incompatible con jugada NUMERO`, 400, "INVALID_MULTIPLIER_KIND");
-          }
+          if (!multiplier)
+            throw new AppError(
+              'Multiplicador inválido para jugada NUMERO',
+              400,
+              'INVALID_MULTIPLIER'
+            );
+          if (multiplier.kind !== 'NUMERO')
+            throw new AppError(
+              'Multiplicador incompatible con jugada NUMERO',
+              400,
+              'INVALID_MULTIPLIER_KIND'
+            );
           if (multiplier.loteriaId !== loteriaId) {
             logger.error({
               layer: 'repository',
@@ -1629,39 +1785,51 @@ export const TicketRepository = {
                 multiplierName: multiplier.name,
               },
             });
-            throw new AppError(`Multiplicador no pertenece a la lotería`, 400, "INVALID_MULTIPLIER_LOTERIA");
+            throw new AppError(
+              'Multiplicador no pertenece a la lotería',
+              400,
+              'INVALID_MULTIPLIER_LOTERIA'
+            );
           }
-          if (!multiplier.isActive) {
-            throw new AppError(`Multiplicador inactivo`, 400, "INACTIVE_MULTIPLIER");
-          }
-
+          if (!multiplier.isActive)
+            throw new AppError('Multiplicador inactivo', 400, 'INACTIVE_MULTIPLIER');
+ 
           const multiplierX = multiplier.valueX;
-          if (typeof multiplierX !== "number" || multiplierX <= 0) {
-            throw new AppError(`Multiplicador con valor inválido`, 400, "INVALID_MULTIPLIER_VALUE");
-          }
-
+          if (typeof multiplierX !== 'number' || multiplierX <= 0)
+            throw new AppError(
+              'Multiplicador con valor inválido',
+              400,
+              'INVALID_MULTIPLIER_VALUE'
+            );
+ 
           const matchingRule = lotteryMultiplierRules.find(
-            (rule) => rule.loteriaId === loteriaId && rule.multiplierId === j.multiplierId
+            (rule) =>
+              rule.loteriaId === loteriaId &&
+              rule.multiplierId === j.multiplierId
           );
-
+ 
           if (matchingRule) {
-            const ruleScope: "USER" | "VENTANA" | "BANCA" = matchingRule.userId
-              ? "USER"
+            const ruleScope: 'USER' | 'VENTANA' | 'BANCA' = matchingRule.userId
+              ? 'USER'
               : matchingRule.ventanaId
-                ? "VENTANA"
-                : "BANCA";
-
-            const loteriaNameForWarning = matchingRule.loteria?.name ?? loteriaName;
-            const multiplierNameForWarning = multiplier.name ?? matchingRule.multiplier?.name ?? null;
+              ? 'VENTANA'
+              : 'BANCA';
+ 
+            const loteriaNameForWarning =
+              matchingRule.loteria?.name ?? loteriaName;
+            const multiplierNameForWarning =
+              multiplier.name ?? matchingRule.multiplier?.name ?? null;
             const defaultMessage = multiplier.name
               ? `El multiplicador '${multiplier.name}' está restringido para esta lotería.`
-              : "El multiplicador seleccionado está restringido para esta lotería.";
-            const message = (matchingRule.message && matchingRule.message.trim()) || defaultMessage;
-
+              : 'El multiplicador seleccionado está restringido para esta lotería.';
+            const message =
+              (matchingRule.message && matchingRule.message.trim()) ||
+              defaultMessage;
+ 
             if (actorRole === Role.ADMIN) {
               if (!warningRuleIds.has(matchingRule.id)) {
                 warnings.push({
-                  code: "LOTTERY_MULTIPLIER_RESTRICTED",
+                  code: 'LOTTERY_MULTIPLIER_RESTRICTED',
                   restrictedButAllowed: true,
                   ruleId: matchingRule.id,
                   scope: ruleScope,
@@ -1675,7 +1843,7 @@ export const TicketRepository = {
               }
             } else {
               throw new AppError(message, 400, {
-                code: "LOTTERY_MULTIPLIER_RESTRICTED",
+                code: 'LOTTERY_MULTIPLIER_RESTRICTED',
                 ruleId: matchingRule.id,
                 scope: ruleScope,
                 loteriaId,
@@ -1685,139 +1853,151 @@ export const TicketRepository = {
               });
             }
           }
-
+ 
           return {
-            type: "NUMERO" as const,
+            type: 'NUMERO' as const,
             number: j.number,
             reventadoNumber: null,
             amount: j.amount,
             finalMultiplierX: multiplierX,
             multiplierId: j.multiplierId,
-            isActive: (j as any).isActive !== false, //  Preservar isActive (default true)
+            isActive: (j as any).isActive !== false,
           };
         });
-
-        const totalAmountTx = preparedJugadas.reduce((acc, j) => acc + j.amount, 0);
-
-        // 9)  ELIMINADO: Validación de límite diario TOTAL del vendedor
-        // Los límites deben aplicarse POR NÚMERO, no por total diario del vendedor.
-        // La validación correcta está en las líneas 1966-2034 (validateMaxTotalForNumbers)
-
-        // 10)  OPTIMIZACIÓN: Aplicar TODAS las reglas aplicables en PARALELO
-        //  CRÍTICO: Todas las reglas aplicables se validan, no solo la de mayor prioridad
-        //  CRÍTICO: maxAmount se valida por número individual por ticket
-        //  CRÍTICO: maxTotal se valida por número individual acumulado en el sorteo
-        // ️ NUNCA se valida sobre total del ticket ni sobre total diario
-
-        // Inicializar caché para optimizar queries en esta transacción
+ 
+        const totalAmountTx = preparedJugadas.reduce(
+          (acc, j) => acc + j.amount,
+          0
+        );
+ 
+        // 10) Validación paralela de reglas
         const cache: ScopeCache = {
           salesTotals: new Map(),
           numberTotals: new Map(),
         };
-
-        // Preparar números del ticket para validación paralela (incluyendo tipo y multiplicador)
-        const ticketNumbers: Array<{ 
-          number: string; 
-          amountForNumber: number; 
-          type: 'NUMERO' | 'REVENTADO'; 
-          multiplierId?: string | null 
-        }> = preparedJugadas.map(j => ({
+ 
+        const ticketNumbers: Array<{
+          number: string;
+          amountForNumber: number;
+          type: 'NUMERO' | 'REVENTADO';
+          multiplierId?: string | null;
+        }> = preparedJugadas.map((j) => ({
           number: j.type === 'NUMERO' ? j.number : j.reventadoNumber!,
           amountForNumber: Number(j.amount),
           type: j.type,
-          multiplierId: j.multiplierId || null
+          multiplierId: j.multiplierId || null,
         }));
-
-        const uniqueNumbersCount = new Set(ticketNumbers.map(n => n.number)).size;
-
-
-
-        //  OPTIMIZACIÓN: Precargar acumulados por ámbito y números del ticket en paralelo
+ 
+        const uniqueNumbersCount = new Set(ticketNumbers.map((n) => n.number))
+          .size;
+ 
         const preloadingPromises = [];
-        const uniqueNumberStrings = ticketNumbers.map(n => n.number);
+        const uniqueNumberStrings = ticketNumbers.map((n) => n.number);
         const scopesToPreload = new Set<string>();
-
+ 
         for (const rule of applicable) {
-          //  Precargar scopes para reglas con maxTotal explícito O con límite dinámico (baseAmount/salesPercentage)
-          // Esto optimiza las queries dentro de validateMaxTotalForNumbers
-          const hasDynamicLimitConfig = (rule.baseAmount != null && rule.baseAmount > 0) || (rule.salesPercentage != null && rule.salesPercentage > 0);
+          const hasDynamicLimitConfig =
+            (rule.baseAmount != null && rule.baseAmount > 0) ||
+            (rule.salesPercentage != null && rule.salesPercentage > 0);
           if (rule.maxTotal != null || hasDynamicLimitConfig) {
-            const scopeType = rule.userId ? 'USER' : rule.ventanaId ? 'VENTANA' : rule.bancaId ? 'BANCA' : null;
+            const scopeType = rule.userId
+              ? 'USER'
+              : rule.ventanaId
+              ? 'VENTANA'
+              : rule.bancaId
+              ? 'BANCA'
+              : null;
             const scopeId = rule.userId || rule.ventanaId || rule.bancaId;
-            const multiplierId = rule.multiplierId ? (rule.multiplier?.kind === 'REVENTADO' ? 'REVENTADO' : rule.multiplierId) : 'NONE';
+            const multiplierId = rule.multiplierId
+              ? rule.multiplier?.kind === 'REVENTADO'
+                ? 'REVENTADO'
+                : rule.multiplierId
+              : 'NONE';
             if (scopeType && scopeId) {
               scopesToPreload.add(`${scopeType}:${scopeId}:${multiplierId}`);
             }
           }
         }
-
+ 
         for (const scopeKey of scopesToPreload) {
           const [scopeType, scopeId, multiplierKey] = scopeKey.split(':');
-          const multiplierFilter = multiplierKey === 'NONE' ? null : 
-                                 multiplierKey === 'REVENTADO' ? { id: 'REVENTADO', kind: 'REVENTADO' as any } :
-                                 { id: multiplierKey, kind: 'NUMERO' as any };
-          
-          preloadingPromises.push(calculateAccumulatedByNumbersAndScope(tx, {
-            numbers: uniqueNumberStrings,
-            scopeType: scopeType as any,
-            scopeId,
-            sorteoId,
-            multiplierFilter,
-            cache,
-          }));
+          const multiplierFilter =
+            multiplierKey === 'NONE'
+              ? null
+              : multiplierKey === 'REVENTADO'
+              ? { id: 'REVENTADO', kind: 'REVENTADO' as any }
+              : { id: multiplierKey, kind: 'NUMERO' as any };
+ 
+          preloadingPromises.push(
+            calculateAccumulatedByNumbersAndScope(tx, {
+              numbers: uniqueNumberStrings,
+              scopeType: scopeType as any,
+              scopeId,
+              sorteoId,
+              multiplierFilter,
+              cache,
+            })
+          );
         }
-
+ 
         if (preloadingPromises.length > 0) {
           await Promise.all(preloadingPromises);
         }
-
-        // Calcular límites dinámicos para todas las reglas que los necesiten
+ 
         const dynamicLimits = new Map<string, number>();
-        const rulesNeedingDynamicLimits = applicable.filter((rule: any) =>
-          (rule.baseAmount != null && rule.baseAmount > 0) ||
-          (rule.salesPercentage != null && rule.salesPercentage > 0)
+        const rulesNeedingDynamicLimits = applicable.filter(
+          (rule: any) =>
+            (rule.baseAmount != null && rule.baseAmount > 0) ||
+            (rule.salesPercentage != null && rule.salesPercentage > 0)
         );
-
+ 
         if (rulesNeedingDynamicLimits.length > 0) {
-          // Calcular límites dinámicos en paralelo
-          const dynamicLimitPromises = rulesNeedingDynamicLimits.map(async (rule: any) => {
-            try {
-              const limit = await calculateDynamicLimit(tx, {
-                baseAmount: rule.baseAmount,
-                salesPercentage: rule.salesPercentage,
-                appliesToVendedor: rule.appliesToVendedor,
-                ruleUserId: rule.userId,
-                bancaId: rule.bancaId,
-                ventanaId: rule.ventanaId,
-              }, {
-                userId,
-                ventanaId,
-                bancaId,
-                sorteoId,  //  CRÍTICO: Pasar sorteoId para calcular sobre el sorteo
-                at: now,
-                cache,     //  OPTIMIZACIÓN: Pasar caché
-              });
-              return { ruleId: rule.id, limit };
-            } catch (error) {
-              //  SEGURIDAD: Si falla el cálculo del límite dinámico, usar baseAmount como fallback
-              //  Esto evita que la regla quede completamente ignorada (lo que permitiría crear tickets sin límite)
-              const fallbackLimit = (rule.baseAmount != null && rule.baseAmount > 0) ? rule.baseAmount : null;
-              logger.warn({
-                layer: 'repository',
-                action: 'DYNAMIC_LIMIT_CALCULATION_FAILED',
-                payload: {
-                  ruleId: rule.id,
-                  error: (error as Error).message,
-                  fallbackLimit,
-                  message: fallbackLimit != null
-                    ? `Usando baseAmount=${fallbackLimit} como límite de seguridad`
-                    : 'Sin límite de respaldo disponible, se omite la regla',
-                },
-              });
-              return { ruleId: rule.id, limit: fallbackLimit };
+          const dynamicLimitPromises = rulesNeedingDynamicLimits.map(
+            async (rule: any) => {
+              try {
+                const limit = await calculateDynamicLimit(
+                  tx,
+                  {
+                    baseAmount: rule.baseAmount,
+                    salesPercentage: rule.salesPercentage,
+                    appliesToVendedor: rule.appliesToVendedor,
+                    ruleUserId: rule.userId,
+                    bancaId: rule.bancaId,
+                    ventanaId: rule.ventanaId,
+                  },
+                  {
+                    userId,
+                    ventanaId,
+                    bancaId,
+                    sorteoId,
+                    at: now,
+                    cache,
+                  }
+                );
+                return { ruleId: rule.id, limit };
+              } catch (error) {
+                const fallbackLimit =
+                  rule.baseAmount != null && rule.baseAmount > 0
+                    ? rule.baseAmount
+                    : null;
+                logger.warn({
+                  layer: 'repository',
+                  action: 'DYNAMIC_LIMIT_CALCULATION_FAILED',
+                  payload: {
+                    ruleId: rule.id,
+                    error: (error as Error).message,
+                    fallbackLimit,
+                    message:
+                      fallbackLimit != null
+                        ? `Usando baseAmount=${fallbackLimit} como límite de seguridad`
+                        : 'Sin límite de respaldo disponible, se omite la regla',
+                  },
+                });
+                return { ruleId: rule.id, limit: fallbackLimit };
+              }
             }
-          });
-
+          );
+ 
           const dynamicLimitResults = await Promise.all(dynamicLimitPromises);
           for (const result of dynamicLimitResults) {
             if (result.limit != null) {
@@ -1825,8 +2005,7 @@ export const TicketRepository = {
             }
           }
         }
-
-        //  LOGGING: Registrar reglas aplicables antes de validación paralela
+ 
         logger.info({
           layer: 'repository',
           action: 'PARALLEL_VALIDATION_START_OPTIMIZED',
@@ -1843,7 +2022,13 @@ export const TicketRepository = {
             applicableRules: applicable.map((r, idx) => ({
               index: idx,
               ruleId: r.id,
-              scope: r.userId ? 'USER' : r.ventanaId ? 'VENTANA' : r.bancaId ? 'BANCA' : 'GLOBAL',
+              scope: r.userId
+                ? 'USER'
+                : r.ventanaId
+                ? 'VENTANA'
+                : r.bancaId
+                ? 'BANCA'
+                : 'GLOBAL',
               priority: calculatePriorityScore(r),
               hasMaxAmount: r.maxAmount != null,
               hasMaxTotal: r.maxTotal != null,
@@ -1857,79 +2042,66 @@ export const TicketRepository = {
             rulesWithDynamicLimits: dynamicLimits.size,
           },
         });
-
-        // Ejecutar validación paralela de todas las reglas
+ 
         await validateRulesInParallel(tx, {
           rules: applicable,
           numbers: ticketNumbers,
           sorteoId,
-          loteriaId, // NUEVO
+          loteriaId,
           dynamicLimits,
           cache,
-          vendedorId: userId, // NUEVO
+          vendedorId: userId,
         });
-
-        //  LOGGING: Registrar finalización de validación paralela
+ 
         logger.info({
           layer: 'repository',
           action: 'PARALLEL_VALIDATION_COMPLETE_OPTIMIZED',
           payload: {
-            ticketContext: {
-              loteriaId,
-              sorteoId,
-              ventanaId,
-              userId,
-              bancaId,
-            },
+            ticketContext: { loteriaId, sorteoId, ventanaId, userId, bancaId },
             totalRulesValidated: applicable.length,
             totalNumbersValidated: ticketNumbers.length,
             dynamicLimitsCalculated: dynamicLimits.size,
           },
         });
-
-        // 11)  OPTIMIZACIÓN: Calcular comisiones usando contexto cacheado
+ 
+        // 11) Comisiones
         const commissionsDetails: any[] = [];
         let jugadasWithCommissions: Array<{
-          type: "NUMERO" | "REVENTADO";
+          type: 'NUMERO' | 'REVENTADO';
           number: string;
           reventadoNumber: string | null;
           amount: number;
           finalMultiplierX: number;
           commissionPercent: number;
           commissionAmount: number;
-          commissionOrigin: "USER" | "VENTANA" | "BANCA" | null;
+          commissionOrigin: 'USER' | 'VENTANA' | 'BANCA' | null;
           commissionRuleId: string | null;
-          listeroCommissionAmount: number; //  CRÍTICO: Comisión del listero (VENTANA/BANCA)
+          listeroCommissionAmount: number;
           multiplierId: string | null;
         }>;
-
+ 
         if (commissionContext) {
-          // Usar pre-cálculo optimizado con CommissionService
-          const preCalculated = commissionService.calculateCommissionsForJugadas(
-            preparedJugadas,
-            loteriaId,
-            commissionContext
-          );
-
-          // Crear mapa de número -> multiplierId para NUMERO jugadas
+          const preCalculated =
+            commissionService.calculateCommissionsForJugadas(
+              preparedJugadas,
+              loteriaId,
+              commissionContext
+            );
+ 
           const numeroMultiplierMap = new Map<string, string | null>();
           for (const pj of preparedJugadas) {
-            if (pj.type === "NUMERO") {
+            if (pj.type === 'NUMERO') {
               numeroMultiplierMap.set(pj.number, pj.multiplierId);
             }
           }
-
-          //  CRÍTICO: Calcular listeroCommissionAmount desde políticas VENTANA o BANCA
+ 
           const ventanaPolicy = ventana?.commissionPolicyJson ?? null;
           const bancaPolicy = ventana?.banca?.commissionPolicyJson ?? null;
-          //  Use listeroPolicy from context if available
           const listeroPolicy = commissionContext.listeroPolicy ?? null;
-
+ 
           jugadasWithCommissions = preCalculated.map((j) => {
-            // Calcular comisión del listero (VENTANA o BANCA, nunca USER)
             let listeroCommissionAmount = 0;
-
-            // Try to use listeroPolicy from context first (most optimized)
+ 
             if (listeroPolicy) {
               const match = commissionResolver.findMatchingRule(listeroPolicy, {
                 loteriaId,
@@ -1938,23 +2110,26 @@ export const TicketRepository = {
                 amount: j.amount,
               });
               if (match) {
-                listeroCommissionAmount = parseFloat(((j.amount * match.percent) / 100).toFixed(2));
-              } else {
-                // Fallback to standard resolution if no match in listero policy
-                const listeroResult = commissionService.calculateListeroCommission(
-                  {
-                    loteriaId,
-                    betType: j.type,
-                    finalMultiplierX: j.finalMultiplierX,
-                    amount: j.amount,
-                  },
-                  ventanaPolicy,
-                  bancaPolicy
+                listeroCommissionAmount = parseFloat(
+                  ((j.amount * match.percent) / 100).toFixed(2)
                 );
-                listeroCommissionAmount = parseFloat((listeroResult.commissionAmount).toFixed(2));
+              } else {
+                const listeroResult =
+                  commissionService.calculateListeroCommission(
+                    {
+                      loteriaId,
+                      betType: j.type,
+                      finalMultiplierX: j.finalMultiplierX,
+                      amount: j.amount,
+                    },
+                    ventanaPolicy,
+                    bancaPolicy
+                  );
+                listeroCommissionAmount = parseFloat(
+                  listeroResult.commissionAmount.toFixed(2)
+                );
               }
             } else {
-              // Fallback to standard resolution
               const listeroResult = commissionService.calculateListeroCommission(
                 {
                   loteriaId,
@@ -1965,25 +2140,29 @@ export const TicketRepository = {
                 ventanaPolicy,
                 bancaPolicy
               );
-              listeroCommissionAmount = parseFloat((listeroResult.commissionAmount).toFixed(2));
+              listeroCommissionAmount = parseFloat(
+                listeroResult.commissionAmount.toFixed(2)
+              );
             }
-
+ 
             return {
               ...j,
-              reventadoNumber: j.type === "REVENTADO" ? j.number : null,
-              multiplierId: j.type === "NUMERO" ? (numeroMultiplierMap.get(j.number) ?? null) : null,
-              listeroCommissionAmount, //  PERSISTIR en DB
+              reventadoNumber: j.type === 'REVENTADO' ? j.number : null,
+              multiplierId:
+                j.type === 'NUMERO'
+                  ? (numeroMultiplierMap.get(j.number) ?? null)
+                  : null,
+              listeroCommissionAmount,
             };
           });
-
-          // Preparar detalles para ActivityLog
+ 
           for (const j of jugadasWithCommissions) {
             commissionsDetails.push({
               origin: j.commissionOrigin,
               ruleId: j.commissionRuleId ?? null,
               percent: j.commissionPercent,
               amount: j.commissionAmount,
-              listeroAmount: j.listeroCommissionAmount, //  Incluir en logs
+              listeroAmount: j.listeroCommissionAmount,
               loteriaId,
               betType: j.type,
               multiplierX: j.finalMultiplierX,
@@ -1991,11 +2170,10 @@ export const TicketRepository = {
             });
           }
         } else {
-          // Fallback al método original (sin optimización)
           const userPolicy = user?.commissionPolicyJson ?? null;
           const ventanaPolicy = ventana?.commissionPolicyJson ?? null;
           const bancaPolicy = ventana?.banca?.commissionPolicyJson ?? null;
-
+ 
           jugadasWithCommissions = preparedJugadas.map((j) => {
             const res = commissionService.calculateVendedorCommission(
               {
@@ -2008,8 +2186,7 @@ export const TicketRepository = {
               ventanaPolicy,
               bancaPolicy
             );
-
-            //  CRÍTICO: Calcular listeroCommissionAmount desde políticas VENTANA o BANCA
+ 
             const listeroResult = commissionService.calculateListeroCommission(
               {
                 loteriaId,
@@ -2020,21 +2197,23 @@ export const TicketRepository = {
               ventanaPolicy,
               bancaPolicy
             );
-
-            const listeroCommissionAmount = parseFloat((listeroResult.commissionAmount).toFixed(2));
-
+ 
+            const listeroCommissionAmount = parseFloat(
+              listeroResult.commissionAmount.toFixed(2)
+            );
+ 
             commissionsDetails.push({
               origin: res.commissionOrigin,
               ruleId: res.commissionRuleId ?? null,
               percent: res.commissionPercent,
               amount: res.commissionAmount,
-              listeroAmount: listeroCommissionAmount, //  Incluir en logs
+              listeroAmount: listeroCommissionAmount,
               loteriaId,
               betType: j.type,
               multiplierX: j.finalMultiplierX,
               jugadaAmount: j.amount,
             });
-
+ 
             return {
               type: j.type,
               number: j.number,
@@ -2045,20 +2224,21 @@ export const TicketRepository = {
               commissionAmount: res.commissionAmount,
               commissionOrigin: res.commissionOrigin,
               commissionRuleId: res.commissionRuleId ?? null,
-              listeroCommissionAmount, //  PERSISTIR en DB
+              listeroCommissionAmount,
               multiplierId: j.multiplierId ?? null,
             };
           });
         }
-
+ 
         const totalCommission = jugadasWithCommissions.reduce(
           (sum, j) => sum + (j.commissionAmount || 0),
           0
         );
-
-        const normalizedClienteNombre = (clienteNombre?.trim() || "CLIENTE CONTADO");
-
-        // 12) Crear ticket primero
+ 
+        const normalizedClienteNombre =
+          clienteNombre?.trim() || 'CLIENTE CONTADO';
+ 
+        // 12) Crear ticket
         const createdTicket = await tx.ticket.create({
           data: {
             ticketNumber: nextNumber,
@@ -2077,8 +2257,8 @@ export const TicketRepository = {
             idempotencyKey: options?.idempotencyKey ?? null,
           },
         });
-
-        // 13)  OPTIMIZACIÓN: Crear jugadas en batches
+ 
+        // 13) Jugadas en batches
         const BATCH_SIZE = 20;
         for (let i = 0; i < jugadasWithCommissions.length; i += BATCH_SIZE) {
           const batch = jugadasWithCommissions.slice(i, i + BATCH_SIZE);
@@ -2094,43 +2274,12 @@ export const TicketRepository = {
               commissionAmount: j.commissionAmount,
               commissionOrigin: j.commissionOrigin,
               commissionRuleId: (j as any).commissionRuleId,
-              listeroCommissionAmount: (j as any).listeroCommissionAmount, //  PERSISTIR en DB
+              listeroCommissionAmount: (j as any).listeroCommissionAmount,
               multiplierId: (j as any).multiplierId,
             })),
           });
         }
-
-        // 14) Obtener ticket completo con jugadas y relaciones (Compatibilidad APK)
-        const ticketWithJugadas = await tx.ticket.findUnique({
-          where: { id: createdTicket.id },
-          include: {
-            jugadas: {
-              where: { deletedAt: null },
-              orderBy: { id: "asc" },
-            },
-            loteria: true,
-            sorteo: true,
-            ventana: true,
-            vendedor: true,
-          },
-        });
-
-        if (!ticketWithJugadas) {
-          throw new AppError("Failed to retrieve created ticket", 500);
-        }
-
-        // Adjuntar datos para uso fuera de TX
-        (ticketWithJugadas as any).__businessDateInfo = bd;
-        (ticketWithJugadas as any).__commissionsDetails = commissionsDetails;
-        (ticketWithJugadas as any).__jugadasCount = jugadasWithCommissions.length;
-        // Guardar detalles de jugadas para el ActivityLog
-        (ticketWithJugadas as any).__jugadasDetails = jugadasWithCommissions.map((j) => ({
-          number: j.number,
-          type: j.type,
-          amount: j.amount,
-          reventadoNumber: j.reventadoNumber ?? null,
-        }));
-
+ 
         logger.info({
           layer: 'repository',
           action: 'TICKET_FOLIO_DIAG',
@@ -2144,8 +2293,21 @@ export const TicketRepository = {
             optimized: true,
           },
         });
-
-        return { ticket: ticketWithJugadas, warnings };
+ 
+        // ─────────────────────────────────────────────────────────────────
+        // OPTIMIZACIÓN: devolvemos solo el ID y los datos en memoria.
+        // El findUnique con JOINs se ejecuta FUERA de la TX, cuando el
+        // lock ya fue liberado. Esto reduce el hold time en ~150-200ms.
+        // ─────────────────────────────────────────────────────────────────
+        return {
+          createdTicketId: createdTicket.id,
+          jugadasWithCommissions,
+          commissionsDetails,
+          businessDateInfo: bd,
+          seqForLog,
+          ticketNumber: nextNumber,
+          warnings,
+        };
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
@@ -2156,27 +2318,55 @@ export const TicketRepository = {
         timeoutMs: dynamicTimeout,
       }
     );
-
-    logger.info({
-      layer: "repository",
-      action: "TICKET_CREATE_OPTIMIZED_SUCCESS",
-      payload: {
-        ticketId: ticket.id,
-        ticketNumber: ticket.ticketNumber,
-        totalAmount: ticket.totalAmount,
-        jugadas: (ticket as any).jugadas?.length ?? (ticket as any).__jugadasCount ?? jugadas.length,
-        dynamicTimeout,
+ 
+  // ─────────────────────────────────────────────────────────────────────────
+  // POST-TRANSACCIÓN: fetch completo del ticket YA SIN locks activos
+  // Se hace fuera para no mantener la conexión bloqueada durante el JOIN.
+  // ─────────────────────────────────────────────────────────────────────────
+  const ticket = await prisma.ticket.findUnique({
+    where: { id: createdTicketId },
+    include: {
+      jugadas: {
+        where: { deletedAt: null },
+        orderBy: { id: 'asc' },
       },
-    });
+      loteria: true,
+      sorteo: true,
+      ventana: true,
+      vendedor: true,
+    },
+  });
+ 
+  if (!ticket) {
+    throw new AppError('Failed to retrieve created ticket', 500);
+  }
+ 
+  // Adjuntar metadatos para uso en el service (ActivityLog, etc.)
+  (ticket as any).__businessDateInfo = jugadasWithCommissions; // reutilizar si el service lo necesita
+  (ticket as any).__commissionsDetails = (jugadasWithCommissions as any).__commissionsDetails;
+  (ticket as any).__jugadasCount = jugadasWithCommissions.length;
+  (ticket as any).__jugadasDetails = jugadasWithCommissions.map((j) => ({
+    number: j.number,
+    type: j.type,
+    amount: j.amount,
+    reventadoNumber: j.reventadoNumber ?? null,
+  }));
+ 
+  logger.info({
+    layer: 'repository',
+    action: 'TICKET_CREATE_OPTIMIZED_SUCCESS',
+    payload: {
+      ticketId: ticket.id,
+      ticketNumber: ticket.ticketNumber,
+      totalAmount: ticket.totalAmount,
+      jugadas: jugadasWithCommissions.length,
+      dynamicTimeout,
+    },
+  });
+ 
+  return { ticket, warnings };
+},
 
-    // Mantener detalles para el log en el servicio
-    // delete (ticket as any).__commissionsDetails;
-    // delete (ticket as any).__jugadasCount;
-    // delete (ticket as any).__jugadasDetails;
-    // delete (ticket as any).__businessDateInfo;
-
-    return { ticket, warnings };
-  },
 
   async getById(id: string) {
     return withConnectionRetry(

@@ -897,7 +897,7 @@ export const SorteoService = {
 
       if (!isVendedor) {
         // Intentar obtener del cache solo para ADMIN/VENTANA
-        const { getCachedSorteoList, setCachedSorteoList } = require('../../../utils/sorteoCache');
+        const { getCachedSorteoList } = require('../../../utils/sorteoCache');
         const cached = getCachedSorteoList({
           loteriaId: params.loteriaId,
           page: p,
@@ -909,6 +909,9 @@ export const SorteoService = {
           dateTo: params.dateTo,
           lastId: params.lastId,
           lastScheduledAt: params.lastScheduledAt,
+          // NUEVO: Identidad del usuario para separar cache
+          role: params.role,
+          ventanaId: params.ventanaId,
         });
 
         if (cached) {
@@ -927,6 +930,10 @@ export const SorteoService = {
         dateTo: params.dateTo,
         lastId: params.lastId,
         lastScheduledAt: params.lastScheduledAt,
+        //  NUEVO: Pasar parámetros de identidad para filtrar conteos de ventas
+        role: params.role,
+        userId: params.userId,
+        ventanaId: params.ventanaId,
       });
 
       //  Aplicar filtrado por política de comisiones solo para VENDEDOR
@@ -987,6 +994,9 @@ export const SorteoService = {
             isActive: params.isActive,
             dateFrom: params.dateFrom,
             dateTo: params.dateTo,
+            // NUEVO: Identidad del usuario para separar cache
+            role: params.role,
+            ventanaId: params.ventanaId,
           },
           result.data,
           result.meta

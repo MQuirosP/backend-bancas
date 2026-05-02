@@ -32,8 +32,13 @@ function generateCacheKey(params: {
   dateFrom?: Date;
   dateTo?: Date;
   groupBy?: string;
+  //  NUEVO: Identidad del usuario para separar cache por ventana/rol
+  role?: string;
+  ventanaId?: string | null;
 }): string {
   const parts = [
+    params.role || 'PUBLIC',
+    params.ventanaId || 'GLOBAL',
     params.loteriaId || 'all',
     params.page || 1,
     params.pageSize || 10,
@@ -93,6 +98,8 @@ export function getCachedSorteoList(params: {
   dateFrom?: Date;
   dateTo?: Date;
   groupBy?: string;
+  role?: string;
+  ventanaId?: string | null;
 }): { data: any[]; meta: any } | null {
   const cacheKey = generateCacheKey(params);
   const cached = sorteoListCache.get(cacheKey);
@@ -126,6 +133,8 @@ export function setCachedSorteoList(
     dateFrom?: Date;
     dateTo?: Date;
     groupBy?: string;
+    role?: string;
+    ventanaId?: string | null;
   },
   data: any[],
   meta: any

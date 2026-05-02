@@ -8,119 +8,140 @@ import logger from '../../../core/logger';
 const extension = __filename.endsWith('.ts') ? '.ts' : '.js';
 const workerFile = path.resolve(__dirname, `../../../workers/image-converter.worker${extension}`);
 
+//  SINGLETON WORKER: Mantener un único hilo vivo para evitar crashes por terminate() constante
+let globalWorker: Worker | null = null;
+let isWorkerBusy = false;
+const workerQueue: { 
+  pdfBuffer: Uint8Array; 
+  options: any; 
+  resolve: (value: any) => void; 
+  reject: (reason?: any) => void;
+  startTime: number;
+}[] = [];
+
 /**
- * Convierte un Buffer PDF a uno o más Buffers PNG usando un Worker Thread.
- * Libera el Event Loop principal de la carga pesada de CPU de la librería de imagen.
- * 
- * @param pdfBuffer El Buffer del PDF a convertir
- * @param options Opciones de conversión (viewportScale, quality, etc.)
- * @returns Promesa que resuelve a un array de páginas con sus contenidos en Buffer
+ * Inicializa o recupera el worker global
+ */
+function getOrCreateWorker(): Worker {
+  if (globalWorker) return globalWorker;
+
+  const workerOptions: any = extension === '.ts' 
+    ? { 
+        execArgv: ['-r', 'ts-node/register'],
+        env: { 
+          ...process.env, 
+          TS_NODE_TRANSPILE_ONLY: 'true'
+        }
+      } 
+    : {};
+
+  logger.info({
+    layer: 'worker-service',
+    action: 'WORKER_INIT_PERSISTENT',
+    payload: { workerFile, extension }
+  });
+
+  globalWorker = new Worker(workerFile, workerOptions);
+
+  globalWorker.on('message', (data: any) => {
+    isWorkerBusy = false;
+    const currentTask = workerQueue.shift();
+    if (!currentTask) return;
+
+    if (data.success) {
+      const duration = Date.now() - currentTask.startTime;
+      logger.info({
+        layer: 'worker-service',
+        action: 'IMAGE_CONVERSION_SUCCESS',
+        payload: { 
+          pages: data.pngPages.length,
+          durationMs: duration,
+          queueRemaining: workerQueue.length
+        }
+      });
+      currentTask.resolve(data.pngPages);
+    } else {
+      logger.error({
+        layer: 'worker-service',
+        action: 'IMAGE_CONVERSION_WORKER_ERROR',
+        payload: { error: data.error }
+      });
+      currentTask.reject(new Error(data.error));
+    }
+
+    processNextTask();
+  });
+
+  globalWorker.on('error', (err) => {
+    logger.error({
+      layer: 'worker-service',
+      action: 'WORKER_FATAL_ERROR',
+      payload: { error: err.message, stack: err.stack }
+    });
+    
+    // Rechazar todas las tareas pendientes
+    while (workerQueue.length > 0) {
+      const task = workerQueue.shift();
+      task?.reject(err);
+    }
+
+    globalWorker = null;
+    isWorkerBusy = false;
+  });
+
+  globalWorker.on('exit', (code) => {
+    if (code !== 0) {
+      logger.warn({
+        layer: 'worker-service',
+        action: 'WORKER_EXITED_UNEXPECTEDLY',
+        payload: { code }
+      });
+    }
+    globalWorker = null;
+    isWorkerBusy = false;
+    
+    // Si quedan tareas, reiniciar worker
+    if (workerQueue.length > 0) {
+      getOrCreateWorker();
+      processNextTask();
+    }
+  });
+
+  return globalWorker;
+}
+
+/**
+ * Procesa la siguiente tarea en la cola
+ */
+function processNextTask() {
+  if (isWorkerBusy || workerQueue.length === 0) return;
+
+  const worker = getOrCreateWorker();
+  const nextTask = workerQueue[0];
+  
+  isWorkerBusy = true;
+  worker.postMessage({ 
+    pdfBuffer: nextTask.pdfBuffer, 
+    options: nextTask.options 
+  });
+}
+
+/**
+ * Convierte un Buffer PDF a uno o más Buffers PNG usando un Worker Thread Persistente.
  */
 export async function convertPdfToPng(pdfBuffer: Uint8Array, options: any = {}): Promise<any[]> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
     
-    // Si estamos en desarrollo (.ts), necesitamos registrar ts-node para el worker
-    const workerOptions: any = extension === '.ts' 
-      ? { 
-          execArgv: ['-r', 'ts-node/register'],
-          env: { 
-            ...process.env, 
-            TS_NODE_TRANSPILE_ONLY: 'true'
-          }
-        } 
-      : {};
-
-    logger.info({
-      layer: 'worker-service',
-      action: 'WORKER_SPAWNING_V3',
-      payload: { 
-        workerFile, 
-        extension, 
-        hasExecArgv: !!workerOptions.execArgv,
-        envKeys: workerOptions.env ? Object.keys(workerOptions.env).length : 0,
-        pdfSize: pdfBuffer.length
-      }
+    workerQueue.push({ 
+      pdfBuffer, 
+      options, 
+      resolve, 
+      reject,
+      startTime 
     });
 
-    let worker: Worker;
-    try {
-      worker = new Worker(workerFile, workerOptions);
-    } catch (err: any) {
-      logger.error({
-        layer: 'worker-service',
-        action: 'WORKER_SPAWN_ERROR',
-        payload: { error: err.message, stack: err.stack }
-      });
-      return reject(err);
-    }
-
-    const onMessage = (data: any) => {
-      if (data.success) {
-        const duration = Date.now() - startTime;
-        logger.info({
-          layer: 'worker-service',
-          action: 'IMAGE_CONVERSION_SUCCESS',
-          payload: { 
-            pages: data.pngPages.length,
-            durationMs: duration
-          }
-        });
-        resolve(data.pngPages);
-      } else {
-        logger.error({
-          layer: 'worker-service',
-          action: 'IMAGE_CONVERSION_WORKER_ERROR',
-          payload: { error: data.error }
-        });
-        reject(new Error(data.error));
-      }
-      cleanup();
-    };
-
-    const onError = (err: any) => {
-      logger.error({
-        layer: 'worker-service',
-        action: 'IMAGE_CONVERSION_FATAL_ERROR',
-        payload: { error: err.message }
-      });
-      reject(err);
-      cleanup();
-    };
-
-    const onExit = (code: number) => {
-      if (code !== 0) {
-        reject(new Error(`Worker de imagen finalizó con código de error ${code}`));
-      }
-      cleanup();
-    };
-
-    let cleaned = false;
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-
-      // Limpiar listeners para evitar fugas de memoria
-      worker.off('message', onMessage);
-      worker.off('error', onError);
-      worker.off('exit', onExit);
-      
-      // Asegurar que el thread se cierre inmediatamente liberando memoria
-      worker.terminate().catch(err => {
-        logger.warn({
-          layer: 'worker-service',
-          action: 'WORKER_TERMINATE_ERROR',
-          payload: { error: err.message }
-        });
-      });
-    };
-
-    worker.on('message', onMessage);
-    worker.on('error', onError);
-    worker.on('exit', onExit);
-
-    // Iniciar la tarea
-    worker.postMessage({ pdfBuffer, options });
+    processNextTask();
   });
 }
 

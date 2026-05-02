@@ -354,11 +354,11 @@ export const TicketController = {
     } else if (me.role === Role.VENTANA) {
       // VENTANA siempre usa scope='mine' (su ventana)
       effectiveScope = 'mine';
-      //  FIX: Para dimension='listero', forzar el ventanaId del usuario VENTANA
-      if (dimension === 'listero') {
-        // Usar el ventanaId del effectiveFilters (que viene de RBAC)
-        // Esto evita que el frontend envíe el userId en lugar del ventanaId
-        effectiveFilters.ventanaId = effectiveFilters.ventanaId || me.ventanaId;
+      //  FIX: Para rol VENTANA, si la dimensión es 'listero' O si el vendedorId enviado es el mismo ID del usuario (Ventana)
+      // o si no se envió vendedorId, nos aseguramos de no filtrar por vendedor específico para que devuelva el total de la ventana (sus vendedores).
+      // Usamos el ventanaId ya resuelto por RBAC (que es el ID real de la ventana, no el ID del usuario)
+      if (dimension === 'listero' || !vendedorId || vendedorId === me.id) {
+        delete effectiveFilters.vendedorId;
       }
     } else if (me.role === Role.ADMIN) {
       // ADMIN puede usar scope='all' o 'mine'
@@ -379,10 +379,12 @@ export const TicketController = {
     const hasExplicitDateRange = fromDate || toDate;
 
     let dateRange: DateRangeResolution | null = null;
+    let finalDate: string | undefined = date || "today";
 
     if (hasSorteoId && !hasExplicitDateRange) {
       // NO aplicar filtro de fecha cuando hay sorteoId y no hay fechas explícitas
       dateRange = null;
+      finalDate = undefined;
     } else {
       // Resolver rango de fechas normalmente
       dateRange = resolveDateRange(date || "today", fromDate, toDate);
@@ -405,7 +407,7 @@ export const TicketController = {
 
     const result = await TicketService.numbersSummary(
       {
-        date: date || "today",
+        date: finalDate,
         fromDate,
         toDate,
         scope: effectiveScope,
@@ -441,7 +443,7 @@ export const TicketController = {
   async numbersSummaryPdf(req: AuthenticatedRequest, res: Response) {
     try {
       const startTime = Date.now();
-      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, format, page, pageSize, onlyWithSales } = req.body;
+      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, sorteoStatus, format, page, pageSize, onlyWithSales } = req.body;
 
       const me = req.user!;
 
@@ -451,7 +453,7 @@ export const TicketController = {
         payload: {
           userId: me.id,
           role: me.role,
-          bodyParams: { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId },
+          bodyParams: { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, sorteoStatus },
         },
       });
 
@@ -480,10 +482,11 @@ export const TicketController = {
         effectiveFilters.vendedorId = me.id;
       } else if (me.role === Role.VENTANA) {
         effectiveScope = 'mine';
-        //  FIX: Para dimension='listero', forzar el ventanaId del usuario VENTANA
-        // Esto evita que si el frontend envía el userId en lugar del ventanaId, se rompa la consulta
-        if (dimension === 'listero') {
-          effectiveFilters.ventanaId = effectiveFilters.ventanaId || me.ventanaId;
+        //  FIX: Para rol VENTANA, si la dimensión es 'listero' O si el vendedorId enviado es el mismo ID del usuario (Ventana)
+        // o si no se envió vendedorId, nos aseguramos de no filtrar por vendedor específico para que devuelva el total de la ventana (sus vendedores).
+        // Usamos el ventanaId ya resuelto por RBAC (que es el ID real de la ventana, no el ID del usuario)
+        if (dimension === 'listero' || !vendedorId || vendedorId === me.id) {
+          delete effectiveFilters.vendedorId;
         }
       } else if (me.role === Role.ADMIN) {
         effectiveScope = scope || 'all';
@@ -500,14 +503,19 @@ export const TicketController = {
       req.logger?.info({
         layer: "controller",
         action: "TICKET_NUMBERS_SUMMARY_PDF_BEFORE_SERVICE",
-        payload: { effectiveFilters, effectiveScope },
+        payload: { effectiveFilters, effectiveScope, dimension },
       });
 
       //  Para PDF/PNG, NO usar paginación - siempre obtener TODOS los números
       // La paginación solo se usa para la API de consulta, no para generación de archivos
+      
+      //  FIX: Regla especial - cuando hay sorteoId y no hay fechas explícitas, NO aplicar filtros de fecha
+      const hasExplicitDateRange = fromDate || toDate;
+      const finalDate = (effectiveFilters.sorteoId && !hasExplicitDateRange) ? undefined : (date || "today");
+
       const result = await TicketService.numbersSummary(
         {
-          date: date || "today",
+          date: finalDate,
           fromDate,
           toDate,
           scope: effectiveScope,
@@ -518,6 +526,7 @@ export const TicketController = {
           sorteoId: effectiveFilters.sorteoId,
           multiplierId,
           status,
+          sorteoStatus,
           // NO pasar page ni pageSize - siempre obtener todos los números
         },
         me.role,
@@ -912,8 +921,9 @@ export const TicketController = {
 
       const effectiveFilters = await applyRbacFilters(context, requestFilters);
 
-      //  FIX: Para rol VENTANA y dimension='listero', forzar el ventanaId del usuario
-      if (me.role === Role.VENTANA && rest.dimension === 'listero') {
+      //  FIX: Para rol VENTANA y dimension='listero' (o sin vendedorId explícito), forzar el ventanaId y quitar vendedorId
+      if (me.role === Role.VENTANA && (rest.dimension === 'listero' || !rest.vendedorId)) {
+        delete effectiveFilters.vendedorId;
         effectiveFilters.ventanaId = effectiveFilters.ventanaId || me.ventanaId;
       }
 
@@ -1092,15 +1102,23 @@ export const TicketController = {
       multiplierId,
       status,
       sorteoStatus,
+      dimension, //  NUEVO
     } = req.query as any;
 
     const me = req.user!;
 
     try {
+      //  FIX: Para rol VENTANA, si la dimensión es 'listero' O si el vendedorId enviado es el mismo ID del usuario (Ventana)
+      // o si no se envió vendedorId, nos aseguramos de no filtrar por vendedor específico en las opciones.
+      let effectiveVendedorId = vendedorId;
+      if (me.role === Role.VENTANA && (dimension === 'listero' || !vendedorId || vendedorId === me.id)) {
+        effectiveVendedorId = undefined;
+      }
+
       const result = await TicketService.getNumbersSummaryFilterOptions(
         {
           scope,
-          vendedorId,
+          vendedorId: effectiveVendedorId,
           ventanaId,
           date,
           fromDate,

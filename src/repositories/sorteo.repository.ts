@@ -586,8 +586,12 @@ const SorteoRepository = {
     dateTo?: Date;
     lastId?: string;
     lastScheduledAt?: Date;
+    //  NUEVO: Parámetros de identidad para filtrar conteos de ventas
+    role?: string;
+    userId?: string;
+    ventanaId?: string | null;
   }) {
-    const { loteriaId, page, pageSize, status, search, isActive, dateFrom, dateTo, lastId, lastScheduledAt } = params;
+    const { loteriaId, page, pageSize, status, search, isActive, dateFrom, dateTo, lastId, lastScheduledAt, role, userId, ventanaId } = params;
 
     logger.info({
       layer: "repository",
@@ -598,6 +602,9 @@ const SorteoRepository = {
         loteriaId,
         status,
         isActive,
+        role,
+        userId,
+        ventanaId,
         message: "Parámetros recibidos en repository"
       }
     });
@@ -693,6 +700,21 @@ const SorteoRepository = {
       ? Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`
       : Prisma.empty;
 
+    //  NUEVO: Construir filtros de RBAC para las subconsultas de conteo
+    const rbacCountsConditions: Prisma.Sql[] = [
+      Prisma.sql`t."sorteoId" = s.id`,
+      Prisma.sql`t."status" NOT IN ('CANCELLED', 'EXCLUDED')`,
+      Prisma.sql`t."deletedAt" IS NULL`
+    ];
+
+    if (role === "VENDEDOR" && userId) {
+      rbacCountsConditions.push(Prisma.sql`t."vendedorId" = CAST(${userId} AS uuid)`);
+    } else if (role === "VENTANA" && ventanaId) {
+      rbacCountsConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
+    }
+
+    const rbacCountsWhere = Prisma.join(rbacCountsConditions, " AND ");
+
     // Query SQL optimizada con subconsultas para hasSales y ticketCount
     const dataQuery = Prisma.sql`
       SELECT 
@@ -716,18 +738,14 @@ const SorteoRepository = {
         s."deletedByCascade",
         s."deletedByCascadeFrom",
         s."deletedByCascadeId",
-        --  NUEVO: Campos de ventas
+        --  NUEVO: Campos de ventas (filtrados por RBAC)
         EXISTS(
           SELECT 1 FROM "Ticket" t
-          WHERE t."sorteoId" = s.id
-          AND t."status" != 'CANCELLED'
-          AND t."deletedAt" IS NULL
+          WHERE ${rbacCountsWhere}
         ) as "hasSales",
         (
           SELECT COUNT(*)::int FROM "Ticket" t
-          WHERE t."sorteoId" = s.id
-          AND t."status" != 'CANCELLED'
-          AND t."deletedAt" IS NULL
+          WHERE ${rbacCountsWhere}
         ) as "ticketCount",
         -- Relaciones
         json_build_object(
