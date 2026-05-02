@@ -480,6 +480,11 @@ export const TicketController = {
         effectiveFilters.vendedorId = me.id;
       } else if (me.role === Role.VENTANA) {
         effectiveScope = 'mine';
+        //  FIX: Para dimension='listero', forzar el ventanaId del usuario VENTANA
+        // Esto evita que si el frontend envía el userId en lugar del ventanaId, se rompa la consulta
+        if (dimension === 'listero') {
+          effectiveFilters.ventanaId = effectiveFilters.ventanaId || me.ventanaId;
+        }
       } else if (me.role === Role.ADMIN) {
         effectiveScope = scope || 'all';
       }
@@ -906,6 +911,11 @@ export const TicketController = {
       };
 
       const effectiveFilters = await applyRbacFilters(context, requestFilters);
+
+      //  FIX: Para rol VENTANA y dimension='listero', forzar el ventanaId del usuario
+      if (me.role === Role.VENTANA && rest.dimension === 'listero') {
+        effectiveFilters.ventanaId = effectiveFilters.ventanaId || me.ventanaId;
+      }
 
       // Resolver lista de multiplicadores
       const multipliers = await TicketService.resolveMultipliersForBatch({

@@ -18,7 +18,7 @@ import {
   validateIncludeLista,
 } from "../validators/sorteo-listas.validator";
 import { protect } from "../../../middlewares/auth.middleware";
-import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
+import { requireAdmin, requireAdminOrVentana } from "../../../middlewares/roleGuards.middleware";
 import { SorteosAutoController } from "../controllers/sorteosAuto.controller";
 import { validateBody } from "../../../middlewares/validate.middleware";
 import { UpdateSorteosAutoConfigSchema } from "../validators/sorteosAuto.validator";
@@ -100,8 +100,8 @@ router.patch(
 );
 router.delete("/:id", requireAdmin, validateIdParam, SorteoController.delete);
 
-// Rutas de exclusión de listas (ADMIN only)
-router.get("/:id/listas", requireAdmin, validateListaIdParam, SorteoListasController.getListas);
+// Rutas de exclusión de listas (ADMIN only, pero VENTANA puede ver el resumen)
+router.get("/:id/listas", requireAdminOrVentana, validateListaIdParam, SorteoListasController.getListas);
 router.post("/:id/listas/exclude", requireAdmin, validateListaIdParam, validateExcludeLista, SorteoListasController.excludeLista);
 router.post("/:id/listas/include", requireAdmin, validateListaIdParam, validateIncludeLista, SorteoListasController.includeLista);
 
