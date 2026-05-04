@@ -625,6 +625,118 @@ export const UserService = {
     };
   },
 
+  async getAllowedMultipliersBatch(
+    userId: string,
+    betType?: 'NUMERO' | 'REVENTADO',
+    isActive: boolean = true
+  ) {
+    // 1. Obtener usuario
+    const user = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, commissionPolicyJson: true },
+      }),
+      { context: 'UserService.getAllowedMultipliersBatch.fetchUser' }
+    );
+
+    if (!user) {
+      throw new AppError('Usuario no encontrado', 404, { code: 'USER_NOT_FOUND' });
+    }
+
+    // 2. Obtener todas las loterías activas
+    const loterias = await withConnectionRetry(
+      () => prisma.loteria.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true },
+      }),
+      { context: 'UserService.getAllowedMultipliersBatch.fetchLoterias' }
+    );
+
+    // 3. Obtener todos los multiplicadores activos
+    const multipliers = await withConnectionRetry(
+      () => prisma.loteriaMultiplier.findMany({
+        where: {
+          isActive: isActive,
+          kind: betType || undefined,
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      { context: 'UserService.getAllowedMultipliersBatch.fetchMultipliers' }
+    );
+
+    // 4. Parsear la política del usuario
+    const userPolicy = parseCommissionPolicy(user.commissionPolicyJson, 'USER');
+
+    const allowedMultipliers: any[] = [];
+    let totalRulesMatched = 0;
+
+    // Si el usuario no tiene política o no tiene reglas, no puede vender nada
+    if (!userPolicy || !userPolicy.rules || userPolicy.rules.length === 0) {
+      return {
+        data: [],
+        meta: {
+          totalLoterias: loterias.length,
+          totalMultipliersProcessed: multipliers.length,
+          totalAllowedMultipliers: 0,
+          totalRulesMatched: 0,
+        },
+      };
+    }
+
+    // 5. Procesar cada lotería (idéntico al individual, pero en bucle)
+    const multipliersByLoteria = multipliers.reduce((acc, m) => {
+      if (!acc[m.loteriaId]) acc[m.loteriaId] = [];
+      acc[m.loteriaId].push(m);
+      return acc;
+    }, {} as Record<string, typeof multipliers>);
+
+    for (const loteria of loterias) {
+      const loteriaMultipliers = multipliersByLoteria[loteria.id] || [];
+      
+      for (const multiplier of loteriaMultipliers) {
+        // Filtrar reglas del usuario que apliquen a esta lotería y tipo de apuesta
+        const applicableRules = userPolicy.rules.filter((rule: CommissionRule) => {
+          const loteriaMatches = rule.loteriaId === null || rule.loteriaId === loteria.id;
+          const betTypeMatches = rule.betType === null || rule.betType === multiplier.kind;
+          return loteriaMatches && betTypeMatches && !!rule.multiplierRange;
+        });
+
+        let isAllowed = false;
+        for (const rule of applicableRules) {
+          const inRange = multiplier.valueX >= rule.multiplierRange!.min && 
+                         multiplier.valueX <= rule.multiplierRange!.max;
+          
+          if (inRange) {
+            isAllowed = true;
+            break;
+          }
+        }
+
+        if (isAllowed) {
+          totalRulesMatched++;
+          allowedMultipliers.push({
+            id: multiplier.id,
+            name: multiplier.name,
+            valueX: multiplier.valueX,
+            loteriaId: multiplier.loteriaId,
+            kind: multiplier.kind,
+            isActive: multiplier.isActive,
+          });
+        }
+      }
+    }
+
+    return {
+      data: allowedMultipliers,
+      meta: {
+        totalLoterias: loterias.length,
+        totalMultipliersProcessed: multipliers.length,
+        totalAllowedMultipliers: allowedMultipliers.length,
+        totalRulesMatched,
+      },
+    };
+  },
+
   async restore(id: string, actor?: { id: string; role: Role }) {
     const actingRole = actor?.role ?? Role.ADMIN;
     const actorId = actor?.id;

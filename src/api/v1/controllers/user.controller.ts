@@ -263,6 +263,31 @@ export const UserController = {
 
     return success(res, result.data, result.meta);
   },
+
+  async getAllowedMultipliersBatch(req: Request, res: Response) {
+    const { id } = req.params;
+    const { betType, isActive } = req.query;
+
+    const result = await UserService.getAllowedMultipliersBatch(
+      id,
+      betType as 'NUMERO' | 'REVENTADO' | undefined,
+      isActive as any
+    );
+
+    (req as any)?.logger?.info({
+      layer: "controller",
+      action: "GET_ALLOWED_MULTIPLIERS_BATCH",
+      userId: (req as any)?.user?.id,
+      payload: { 
+        targetUserId: id, 
+        betType, 
+        isActive, 
+        multipliersCount: result.data.length 
+      },
+    });
+
+    return success(res, result.data, result.meta);
+  },
 };
 
 export default UserController;

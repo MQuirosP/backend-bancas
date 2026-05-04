@@ -187,3 +187,20 @@ export const getAllowedMultipliersParamsSchema = z
     userId: z.string().uuid('userId debe ser un UUID válido'),
   })
   .strict()
+
+/**
+ * Esquema para obtener multiplicadores permitidos de un vendedor (Batch)
+ */
+export const getAllowedMultipliersBatchQuerySchema = z
+  .object({
+    betType: z.enum(['NUMERO', 'REVENTADO']).optional(),
+    isActive: queryBoolean.default(true),
+    _: z.string().optional(),
+  })
+  .strict()
+
+export const getAllowedMultipliersBatchParamsSchema = z
+  .object({
+    id: z.string().uuid('id debe ser un UUID válido'),
+  })
+  .strict()

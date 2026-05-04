@@ -17,6 +17,8 @@ import {
   ChangePasswordSchema,
   getAllowedMultipliersQuerySchema,
   getAllowedMultipliersParamsSchema,
+  getAllowedMultipliersBatchQuerySchema,
+  getAllowedMultipliersBatchParamsSchema,
 } from "../validators/user.validator";
 import { z } from "zod";
 import { Role } from "@prisma/client";
@@ -141,6 +143,16 @@ router.get(
   validateParams(getAllowedMultipliersParamsSchema),
   validateQuery(getAllowedMultipliersQuerySchema),
   UserController.getAllowedMultipliers
+);
+
+// GET /api/v1/users/:id/allowed-multipliers-batch
+router.get(
+  "/:id/allowed-multipliers-batch",
+  protect,
+  restrictToAdminSelfOrVentanaVendor,
+  validateParams(getAllowedMultipliersBatchParamsSchema),
+  validateQuery(getAllowedMultipliersBatchQuerySchema),
+  UserController.getAllowedMultipliersBatch
 );
 
 export default router;
