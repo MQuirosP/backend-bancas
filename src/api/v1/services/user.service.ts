@@ -667,11 +667,13 @@ export const UserService = {
     // 4. Parsear la política del usuario
     const userPolicy = parseCommissionPolicy(user.commissionPolicyJson, 'USER');
 
-    const allowedMultipliers: any[] = [];
-    let totalRulesMatched = 0;
+    // 4.1 Verificar vigencia temporal (Igual que en el endpoint individual)
+    const now = new Date();
+    const effectiveFrom = userPolicy?.effectiveFrom ? new Date(userPolicy.effectiveFrom) : null;
+    const effectiveTo = userPolicy?.effectiveTo ? new Date(userPolicy.effectiveTo) : null;
+    const policyEffective = !userPolicy || ((!effectiveFrom || now >= effectiveFrom) && (!effectiveTo || now <= effectiveTo));
 
-    // Si el usuario no tiene política o no tiene reglas, no puede vender nada
-    if (!userPolicy || !userPolicy.rules || userPolicy.rules.length === 0) {
+    if (!userPolicy || !userPolicy.rules || userPolicy.rules.length === 0 || !policyEffective) {
       return {
         data: [],
         meta: {
@@ -679,6 +681,8 @@ export const UserService = {
           totalMultipliersProcessed: multipliers.length,
           totalAllowedMultipliers: 0,
           totalRulesMatched: 0,
+          policyExists: !!userPolicy,
+          policyEffective: policyEffective,
         },
       };
     }
@@ -690,7 +694,15 @@ export const UserService = {
       return acc;
     }, {} as Record<string, typeof multipliers>);
 
-    for (const loteria of loterias) {
+    const allowedMultipliers: any[] = [];
+    let totalRulesMatched = 0;
+
+    // Aseguramos que procesamos todas las loterías que tengan multiplicadores si la lista inicial falló
+    const effectiveLoterias = loterias.length > 0 
+      ? loterias 
+      : Array.from(new Set(multipliers.map(m => m.loteriaId))).map(id => ({ id, name: 'Unknown' }));
+
+    for (const loteria of effectiveLoterias) {
       const loteriaMultipliers = multipliersByLoteria[loteria.id] || [];
       
       for (const multiplier of loteriaMultipliers) {
@@ -729,10 +741,12 @@ export const UserService = {
     return {
       data: allowedMultipliers,
       meta: {
-        totalLoterias: loterias.length,
+        totalLoterias: effectiveLoterias.length,
         totalMultipliersProcessed: multipliers.length,
         totalAllowedMultipliers: allowedMultipliers.length,
         totalRulesMatched,
+        policyExists: true,
+        policyEffective: true,
       },
     };
   },

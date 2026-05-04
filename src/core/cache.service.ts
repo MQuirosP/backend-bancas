@@ -52,7 +52,10 @@ export class CacheService {
                 if (!redis) return null;
 
                 const cached = await redis.get(key);
-                if (!cached) return null;
+                if (!cached) {
+                    logger.debug({ layer: 'cache', action: 'CACHE_MISS', payload: { key } });
+                    return null;
+                }
 
                 const parsed = JSON.parse(cached) as T;
 

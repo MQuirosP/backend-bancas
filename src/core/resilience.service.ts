@@ -125,10 +125,12 @@ export class ResilienceService {
 
         // 3. Ejecutar a través del Breaker
         const promise = this.redisBreaker.fire(action).then(result => {
-            this.l1Cache.set(key, {
-                value: result,
-                expiry: Date.now() + (ttl * 1000)
-            });
+            if (result !== undefined) {
+                this.l1Cache.set(key, {
+                    value: result,
+                    expiry: Date.now() + (ttl * 1000)
+                });
+            }
             this.inflightRedisRequests.delete(key);
             return result;
         }).catch(err => {

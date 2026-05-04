@@ -51,12 +51,12 @@ export async function getCachedCutoff(params: {
     // useL1: true + 60s TTL para cutoffs (más estables que restricciones de número)
     const result = await CacheService.get<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" }>(key, true, L1_TTL_CUTOFF_MS);
     if (!result) {
-        logger.warn({
+        logger.info({
             layer: 'restrictionCache',
-            action: 'REDIS_FALLBACK_TRIGGERED',
+            action: 'REDIS_CACHE_MISS',
             payload: {
                 key,
-                reason: 'Cache miss o Redis no disponible en getCachedCutoff()',
+                reason: 'Cache miss o Redis no disponible (comportamiento normal)',
                 fallback: 'Sistema consultará DB para resolver cutoff',
             },
         });
