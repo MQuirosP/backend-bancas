@@ -114,9 +114,10 @@ export const TicketService = {
           ventanaId: true,
           isActive: true,
           commissionPolicyJson: true,
-          name: true,     // ← NUEVO
-          phone: true,    // ← NUEVO
-          settings: true, // ← NUEVO
+          name: true,
+          code: true,
+          phone: true,
+          settings: true,
         },
       }),
       { context: 'TicketService.create.actor' }
@@ -150,9 +151,10 @@ export const TicketService = {
             ventanaId: true,
             isActive: true,
             commissionPolicyJson: true,
-            name: true,     // ← NUEVO
-            phone: true,    // ← NUEVO
-            settings: true, // ← NUEVO
+            name: true,
+            code: true,
+            phone: true,
+            settings: true,
           },
         }),
         { context: 'TicketService.create.targetVendedor' }
@@ -179,6 +181,8 @@ export const TicketService = {
           throw new AppError("El vendedor no tiene una Ventana asignada", 400);
         effectiveVendedorId = actor.id;
         ventanaId = actor.ventanaId;
+        // OPTIMIZACIÓN: Reutilizar el objeto 'actor' ya que tiene los campos necesarios
+        vendedorToPass = actor;
       } else {
         throw new AppError("vendedorId es requerido para este rol", 400);
       }
@@ -209,9 +213,10 @@ export const TicketService = {
             bancaId: true,
             isActive: true,
             commissionPolicyJson: true,
-            name: true,     // ← NUEVO
-            phone: true,    // ← NUEVO
-            settings: true, // ← NUEVO
+            name: true,
+            code: true,
+            phone: true,
+            settings: true,
             banca: { select: { id: true, commissionPolicyJson: true } },
           },
         }),

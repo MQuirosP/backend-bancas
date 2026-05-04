@@ -1353,6 +1353,7 @@ export const TicketRepository = {
       sorteo?: any;
       ventana?: any;
       loteria?: any;
+      multipliers?: any[];
     };
   }
 ) {
@@ -1386,11 +1387,51 @@ export const TicketRepository = {
   });
  
   // ─────────────────────────────────────────────────────────────────────────
+  // PRE-FETCH: Multiplicadores de jugadas (FUERA de la transacción)
+  // ─────────────────────────────────────────────────────────────────────────
+  if (!options?.preFetched?.multipliers) {
+    const numeroMultiplierIds = Array.from(
+      new Set(
+        jugadas
+          .filter((j) => j.type === 'NUMERO' && j.multiplierId)
+          .map((j) => j.multiplierId!)
+      )
+    );
+
+    if (numeroMultiplierIds.length > 0) {
+      const multipliers = await prisma.loteriaMultiplier.findMany({
+        where: { id: { in: numeroMultiplierIds } },
+        select: {
+          id: true,
+          name: true,
+          valueX: true,
+          isActive: true,
+          kind: true,
+          loteriaId: true,
+        },
+      });
+      options = {
+        ...options,
+        preFetched: {
+          ...options?.preFetched,
+          multipliers,
+        },
+      };
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // TRANSACCIÓN: sólo las operaciones que REQUIEREN atomicidad
   // El findUnique final se ejecuta fuera para reducir el hold time del lock
   // ─────────────────────────────────────────────────────────────────────────
-  const { createdTicketId, jugadasWithCommissions, warnings } =
-    await withTransactionRetry(
+  const {
+    createdTicketId,
+    jugadasWithCommissions,
+    commissionsDetails,
+    businessDateInfo,
+    ticketNumber,
+    warnings,
+  } = await withTransactionRetry(
       async (tx) => {
         const warnings: TicketWarning[] = [];
         const warningRuleIds = new Set<string>();
@@ -1498,7 +1539,7 @@ export const TicketRepository = {
  
         try {
           const seqRows = await tx.$queryRaw<{ ticket_number: string }[]>(
-            Prisma.sql`SELECT generate_ticket_number_v3(${bd.businessDate}::date) AS ticket_number`
+            Prisma.sql`SELECT generate_ticket_number_v4(${bd.businessDate}::date) AS ticket_number`
           );
  
           if (!seqRows?.[0]?.ticket_number) {
@@ -1717,28 +1758,18 @@ export const TicketRepository = {
           }
         >();
  
-        if (numeroMultiplierIds.length > 0) {
-          const multipliers = await tx.loteriaMultiplier.findMany({
-            where: { id: { in: numeroMultiplierIds } },
-            select: {
-              id: true,
-              name: true,
-              valueX: true,
-              isActive: true,
-              kind: true,
-              loteriaId: true,
-            },
+        // OPTIMIZACIÓN: Los multiplicadores ya fueron pre-cargados al inicio de createOptimized (fuera de la transacción)
+        // para evitar este fetch adicional bajo lock.
+        const multipliers = options?.preFetched?.multipliers || [];
+        for (const m of multipliers) {
+          multiplierCache.set(m.id, {
+            id: m.id,
+            name: m.name,
+            valueX: m.valueX,
+            isActive: m.isActive,
+            kind: m.kind as 'NUMERO' | 'REVENTADO',
+            loteriaId: m.loteriaId,
           });
-          for (const m of multipliers) {
-            multiplierCache.set(m.id, {
-              id: m.id,
-              name: m.name,
-              valueX: m.valueX,
-              isActive: m.isActive,
-              kind: m.kind as 'NUMERO' | 'REVENTADO',
-              loteriaId: m.loteriaId,
-            });
-          }
         }
  
         const preparedJugadas = jugadas.map((j) => {
@@ -2259,7 +2290,7 @@ export const TicketRepository = {
         });
  
         // 13) Jugadas en batches
-        const BATCH_SIZE = 20;
+        const BATCH_SIZE = 100;
         for (let i = 0; i < jugadasWithCommissions.length; i += BATCH_SIZE) {
           const batch = jugadasWithCommissions.slice(i, i + BATCH_SIZE);
           await tx.jugada.createMany({
@@ -2323,35 +2354,54 @@ export const TicketRepository = {
   // POST-TRANSACCIÓN: fetch completo del ticket YA SIN locks activos
   // Se hace fuera para no mantener la conexión bloqueada durante el JOIN.
   // ─────────────────────────────────────────────────────────────────────────
-  const ticket = await prisma.ticket.findUnique({
-    where: { id: createdTicketId },
-    include: {
-      jugadas: {
-        where: { deletedAt: null },
-        orderBy: { id: 'asc' },
-      },
-      loteria: true,
-      sorteo: true,
-      ventana: true,
-      vendedor: true,
-    },
-  });
- 
-  if (!ticket) {
-    throw new AppError('Failed to retrieve created ticket', 500);
+  const ticket: any = {
+    id: createdTicketId,
+    ticketNumber: ticketNumber,
+    businessDate: businessDateInfo.businessDate,
+    loteriaId,
+    sorteoId,
+    ventanaId,
+    vendedorId: userId,
+    totalAmount: jugadas.reduce((sum: number, j: any) => sum + j.amount, 0),
+    totalCommission: jugadasWithCommissions.reduce((sum: number, j: any) => sum + (j.commissionAmount || 0), 0),
+    status: 'ACTIVE',
+    isActive: true,
+    clienteNombre: clienteNombre?.trim() || 'CLIENTE CONTADO',
+    createdBy: options?.createdBy ?? null,
+    createdByRole: options?.createdByRole ?? null,
+    idempotencyKey: options?.idempotencyKey ?? null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    deletedAt: null,
+    loteria: options?.preFetched?.loteria || null,
+    sorteo: options?.preFetched?.sorteo || null,
+    ventana: options?.preFetched?.ventana || null,
+    vendedor: options?.preFetched?.vendedor || null,
+    jugadas: jugadasWithCommissions.map((j, idx) => ({
+      id: `temp-${createdTicketId}-${idx}`,
+      ticketId: createdTicketId,
+      type: j.type,
+      number: j.number,
+      reventadoNumber: j.reventadoNumber,
+      amount: j.amount,
+      finalMultiplierX: j.finalMultiplierX,
+      commissionPercent: j.commissionPercent,
+      commissionAmount: j.commissionAmount,
+      commissionOrigin: j.commissionOrigin,
+      commissionRuleId: j.commissionRuleId,
+      listeroCommissionAmount: j.listeroCommissionAmount,
+      multiplierId: j.multiplierId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+    })),
+  };
+
+  if (false) {
+    // Código muerto para mantener compatibilidad con el resto del archivo si es necesario
+    await (prisma as any).ticket.findUnique({ where: { id: '' } });
   }
- 
-  // Adjuntar metadatos para uso en el service (ActivityLog, etc.)
-  (ticket as any).__businessDateInfo = jugadasWithCommissions; // reutilizar si el service lo necesita
-  (ticket as any).__commissionsDetails = (jugadasWithCommissions as any).__commissionsDetails;
-  (ticket as any).__jugadasCount = jugadasWithCommissions.length;
-  (ticket as any).__jugadasDetails = jugadasWithCommissions.map((j) => ({
-    number: j.number,
-    type: j.type,
-    amount: j.amount,
-    reventadoNumber: j.reventadoNumber ?? null,
-  }));
- 
+
   logger.info({
     layer: 'repository',
     action: 'TICKET_CREATE_OPTIMIZED_SUCCESS',
@@ -2359,11 +2409,11 @@ export const TicketRepository = {
       ticketId: ticket.id,
       ticketNumber: ticket.ticketNumber,
       totalAmount: ticket.totalAmount,
-      jugadas: jugadasWithCommissions.length,
+      jugadas: (ticket as any).__jugadasCount,
       dynamicTimeout,
     },
   });
- 
+
   return { ticket, warnings };
 },
 
