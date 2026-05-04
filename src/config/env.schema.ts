@@ -53,8 +53,8 @@ export const EnvSchema = z.object({
   SENTRY_PROFILES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.1),
 
   // HARDENING
-  MAX_CONCURRENT_REQUESTS: z.coerce.number().int().default(6),
-  EVENT_LOOP_LAG_THRESHOLD_MS: z.coerce.number().int().default(70),
+  MAX_CONCURRENT_REQUESTS: z.coerce.number().int().default(25),
+  EVENT_LOOP_LAG_THRESHOLD_MS: z.coerce.number().int().default(300),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().default(15000),
   PRISMA_CB_RESET_MS: z.coerce.number().int().default(15000),
   REDIS_CB_RESET_MS: z.coerce.number().int().default(10000),
