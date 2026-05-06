@@ -8,9 +8,6 @@ datasource db {
   url          = env("DATABASE_URL")
   directUrl    = env("DIRECT_URL")
   relationMode = "foreignKeys"
-  // shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
-  // ⚠️ Shadow database deshabilitado para Supabase/PgBouncer
-  // Usar "prisma migrate deploy" en lugar de "prisma migrate dev"
 }
 
 model Banca {
@@ -29,110 +26,97 @@ model Banca {
   phone                  String?
   isActive               Boolean                 @default(true)
   salesCutoffMinutes     Int                     @default(1)
-  commissionPolicyJson   Json? // Política de comisiones jerárquica
-  loteriaSettings        BancaLoteriaSetting[]
-  restrictionRules       RestrictionRule[]
-  ventanas               Ventana[]
-  users                  UserBanca[]
+  commissionPolicyJson   Json?
   accountPayments        AccountPayment[]
   accountStatements      AccountStatement[]
+  loteriaSettings        BancaLoteriaSetting[]
   monthlyClosingBalances MonthlyClosingBalance[] @relation("MonthlyClosingBalanceBanca")
+  restrictionRules       RestrictionRule[]
+  users                  UserBanca[]
+  ventanas               Ventana[]
 }
 
 model Ventana {
-  id                   String    @id @default(uuid()) @db.Uuid
-  bancaId              String    @db.Uuid // <- requerido
-  name                 String
-  code                 String    @unique
-  commissionMarginX    Float
-  deletedAt            DateTime?
-  deletedBy            String?
-  deletedReason        String?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-  address              String?
-  email                String?
-  phone                String?
-  isActive             Boolean   @default(true)
-  commissionPolicyJson Json? // Política de comisiones jerárquica
-  settings             Json? // Configuraciones de la ventana (print, theme, etc.)
-
-  banca Banca @relation(fields: [bancaId], references: [id]) // <- relación requerida
-
+  id                     String                  @id @default(uuid()) @db.Uuid
+  bancaId                String                  @db.Uuid
+  name                   String
+  code                   String                  @unique
+  commissionMarginX      Float
+  deletedAt              DateTime?
+  deletedBy              String?
+  deletedReason          String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  address                String?
+  email                  String?
+  phone                  String?
+  isActive               Boolean                 @default(true)
+  commissionPolicyJson   Json?
+  settings               Json?
+  accountPayments        AccountPayment[]
+  accountStatements      AccountStatement[]
+  monthlyClosingBalances MonthlyClosingBalance[] @relation("MonthlyClosingBalanceVentana")
+  multiplierOverrides    MultiplierOverride[]
   restrictionRules       RestrictionRule[]
   tickets                Ticket[]
   users                  User[]
-  multiplierOverrides    MultiplierOverride[]
-  accountStatements      AccountStatement[]
-  accountPayments        AccountPayment[]
-  monthlyClosingBalances MonthlyClosingBalance[] @relation("MonthlyClosingBalanceVentana")
+  banca                  Banca                   @relation(fields: [bancaId], references: [id])
   sorteoListaExclusiones SorteoListaExclusion[]  @relation("ExclusionVentana")
 
-  @@index([code])
-  @@index([email])
   @@index([name])
-  @@index([phone])
-  @@index([code(ops: raw("gin_trgm_ops"))], map: "idx_ventana_code_trgm", type: Gin)
-  @@index([email(ops: raw("gin_trgm_ops"))], map: "idx_ventana_email_trgm", type: Gin)
-  @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_ventana_name_trgm", type: Gin)
-  @@index([phone(ops: raw("gin_trgm_ops"))], map: "idx_ventana_phone_trgm", type: Gin)
 }
 
 model User {
-  id                   String    @id @default(uuid()) @db.Uuid
-  ventanaId            String?   @db.Uuid
-  name                 String
-  email                String?   @unique
-  phone                String?
-  password             String
-  role                 Role      @default(VENTANA)
-  deletedAt            DateTime?
-  deletedBy            String?
-  deletedReason        String?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-  isActive             Boolean   @default(true)
-  username             String    @unique @db.Citext
-  code                 String?   @unique
-  commissionPolicyJson Json? // Política de comisiones jerárquica
-  settings             Json? // Configuraciones del usuario (print, theme, etc.)
-  platform             String? // Plataforma del cliente: 'web' | 'android' | 'ios'
-  appVersion           String?   @db.VarChar(50) // Versión de la aplicación (ej: '2.0.7')
-
-  activities                              ActivityLog[]
-  refreshTokens                           RefreshToken[]
-  restrictionRules                        RestrictionRule[]
-  tickets                                 Ticket[]                           @relation("TicketVendedor")
-  ticketsCreated                          Ticket[]                           @relation("TicketCreatedBy")
-  ticketsPaid                             Ticket[]                           @relation("TicketPaidBy")
-  TicketPayment                           TicketPayment[]
-  ventana                                 Ventana?                           @relation(fields: [ventanaId], references: [id])
-  multiplierOverrides                     MultiplierOverride[]
-  savedReports                            SavedReport[]
-  exportJobs                              ExportJob[]
-  alerts                                  Alert[]
-  apiKeys                                 ApiKey[]
-  accountStatements                       AccountStatement[]
-  accountPayments                         AccountPayment[]
+  id                                      String                             @id @default(uuid()) @db.Uuid
+  ventanaId                               String?                            @db.Uuid
+  name                                    String
+  email                                   String?                            @unique
+  phone                                   String?
+  password                                String
+  role                                    Role                               @default(VENTANA)
+  deletedAt                               DateTime?
+  deletedBy                               String?
+  deletedReason                           String?
+  createdAt                               DateTime                           @default(now())
+  updatedAt                               DateTime                           @updatedAt
+  isActive                                Boolean                            @default(true)
+  username                                String                             @unique @db.Citext
+  code                                    String?                            @unique
+  commissionPolicyJson                    Json?
+  settings                                Json?
+  platform                                String?
+  appVersion                              String?                            @db.VarChar(50)
   accountPaymentsPaid                     AccountPayment[]                   @relation("AccountPaymentPaidBy")
   accountPaymentsReversed                 AccountPayment[]                   @relation("AccountPaymentReversedBy")
-  bancas                                  UserBanca[]
-  sorteosAutoConfigUpdated                SorteosAutoConfig[]                @relation("SorteosAutoConfigUpdatedBy")
+  accountPayments                         AccountPayment[]
   accountStatementsSettled                AccountStatement[]                 @relation("AccountStatementSettledBy")
+  accountStatements                       AccountStatement[]
   accountStatementSettlementConfigUpdated AccountStatementSettlementConfig[] @relation("AccountStatementSettlementConfigUpdatedBy")
-  monthlyClosingBalances                  MonthlyClosingBalance[]            @relation("MonthlyClosingBalanceVendedor")
-  exclusionsAsVendedor                    SorteoListaExclusion[]             @relation("ExclusionVendedor")
-  exclusionsCreated                       SorteoListaExclusion[]             @relation("ExclusionExcludedBy")
+  activities                              ActivityLog[]
+  alerts                                  Alert[]
+  apiKeys                                 ApiKey[]
+  exportJobs                              ExportJob[]
   jugadasExcluded                         Jugada[]                           @relation("JugadaExcludedBy")
+  monthlyClosingBalances                  MonthlyClosingBalance[]            @relation("MonthlyClosingBalanceVendedor")
+  multiplierOverrides                     MultiplierOverride[]
+  refreshTokens                           RefreshToken[]
+  restrictionRules                        RestrictionRule[]
+  savedReports                            SavedReport[]
+  sorteosAutoConfigUpdated                SorteosAutoConfig[]                @relation("SorteosAutoConfigUpdatedBy")
+  ticketsPaid                             Ticket[]                           @relation("TicketPaidBy")
+  tickets                                 Ticket[]                           @relation("TicketVendedor")
+  ticketsCreated                          Ticket[]                           @relation("TicketCreatedBy")
+  TicketPayment                           TicketPayment[]
+  ventana                                 Ventana?                           @relation(fields: [ventanaId], references: [id])
+  bancas                                  UserBanca[]
+  exclusionsCreated                       SorteoListaExclusion[]             @relation("ExclusionExcludedBy")
+  exclusionsAsVendedor                    SorteoListaExclusion[]             @relation("ExclusionVendedor")
 
-  @@index([code])
   @@index([email])
   @@index([name])
   @@index([username])
   @@index([code(ops: raw("gin_trgm_ops"))], map: "idx_user_code_trgm", type: Gin)
-  @@index([email(ops: raw("gin_trgm_ops"))], map: "idx_user_email_trgm", type: Gin)
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_user_name_trgm", type: Gin)
-  @@index([username(ops: raw("gin_trgm_ops"))], map: "idx_user_username_trgm", type: Gin)
 }
 
 model Loteria {
@@ -147,13 +131,12 @@ model Loteria {
   isActive            Boolean               @default(true)
   loteriaSettings     BancaLoteriaSetting[]
   multipliers         LoteriaMultiplier[]
-  sorteos             Sorteo[]
-  tickets             Ticket[]
   multiplierOverrides MultiplierOverride[]
   restrictionRules    RestrictionRule[]
+  sorteos             Sorteo[]
+  tickets             Ticket[]
 
   @@index([name])
-  @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_loteria_name_trgm", type: Gin)
 }
 
 model BancaLoteriaSetting {
@@ -174,69 +157,56 @@ model BancaLoteriaSetting {
 }
 
 model Ticket {
-  id            String       @id @default(uuid()) @db.Uuid
-  ticketNumber  String       @unique @default(dbgenerated("generate_ticket_number()")) @db.VarChar(24)
-  businessDate  DateTime?    @db.Date
-  loteriaId     String       @db.Uuid
-  ventanaId     String       @db.Uuid
-  vendedorId    String       @db.Uuid
-  totalAmount   Float
-  status        TicketStatus @default(ACTIVE)
-  deletedAt     DateTime?
-  deletedBy     String?
-  deletedReason String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  isActive      Boolean      @default(true)
-  isWinner      Boolean      @default(false)
-  sorteoId      String       @db.Uuid
-  clienteNombre String?      @default("CLIENTE CONTADO") @db.VarChar(100)
+  id              String          @id @default(uuid()) @db.Uuid
+  ticketNumber    String          @unique @default(dbgenerated("generate_ticket_number()")) @db.VarChar(24)
+  loteriaId       String          @db.Uuid
+  ventanaId       String          @db.Uuid
+  vendedorId      String          @db.Uuid
+  totalAmount     Float
+  status          TicketStatus    @default(ACTIVE)
+  deletedAt       DateTime?
+  deletedBy       String?
+  deletedReason   String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  isActive        Boolean         @default(true)
+  isWinner        Boolean         @default(false)
+  sorteoId        String          @db.Uuid
+  totalPayout     Float?          @default(0)
+  totalPaid       Float?          @default(0)
+  remainingAmount Float?          @default(0)
+  lastPaymentAt   DateTime?
+  paidById        String?         @db.Uuid
+  paymentMethod   String?
+  paymentNotes    String?
+  paymentHistory  Json?
+  clienteNombre   String?         @default("CLIENTE CONTADO") @db.VarChar(100)
+  businessDate    DateTime?       @db.Date
+  totalCommission Float?          @default(0)
+  createdBy       String?         @db.Uuid
+  createdByRole   Role?
+  isSorteoClosed  Boolean         @default(false)
+  idempotencyKey  String?
+  jugadas         Jugada[]
+  loteria         Loteria         @relation(fields: [loteriaId], references: [id])
+  paidBy          User?           @relation("TicketPaidBy", fields: [paidById], references: [id])
+  sorteo          Sorteo          @relation(fields: [sorteoId], references: [id])
+  vendedor        User            @relation("TicketVendedor", fields: [vendedorId], references: [id])
+  ventana         Ventana         @relation(fields: [ventanaId], references: [id])
+  createdByUser   User?           @relation("TicketCreatedBy", fields: [createdBy], references: [id])
+  TicketPayment   TicketPayment[]
 
-  // Campos de auditoría: quién creó el ticket
-  createdBy     String? @db.Uuid // userId del usuario que creó el ticket
-  createdByRole Role? // Rol del usuario que creó el ticket ('ADMIN' | 'VENTANA' | 'VENDEDOR')
-
-  // Campos de pago unificados
-  totalPayout     Float?    @default(0) // Total de premios ganados
-  totalPaid       Float?    @default(0) // Total pagado acumulado
-  remainingAmount Float?    @default(0) // Monto pendiente de pago
-  totalCommission Float?    @default(0) // Total de comisiones (suma de jugadas)
-  lastPaymentAt   DateTime? // Fecha del último pago
-  paidById        String?   @db.Uuid // Usuario que realizó el último pago
-  paymentMethod   String? // Método del último pago (cash|transfer|check)
-  paymentNotes    String? // Notas del último pago
-  paymentHistory  Json? // Historial completo de pagos
-
-  //  NUEVO: Cascada de cierre de sorteo
-  isSorteoClosed Boolean @default(false) // Marca si el sorteo fue cerrado (para exclusión de reportes)
-  idempotencyKey String? @unique
-
-  jugadas       Jugada[]
-  loteria       Loteria         @relation(fields: [loteriaId], references: [id])
-  sorteo        Sorteo          @relation(fields: [sorteoId], references: [id])
-  vendedor      User            @relation("TicketVendedor", fields: [vendedorId], references: [id])
-  ventana       Ventana         @relation(fields: [ventanaId], references: [id])
-  paidBy        User?           @relation("TicketPaidBy", fields: [paidById], references: [id])
-  createdByUser User?           @relation("TicketCreatedBy", fields: [createdBy], references: [id])
-  TicketPayment TicketPayment[] // Mantenido para auditoría
-
-  @@index([businessDate])
-  @@index([sorteoId])
-  @@index([vendedorId, createdAt])
   @@index([status, isWinner])
   @@index([paidById])
-  @@index([createdBy])
-  @@index([isSorteoClosed]) //  Índice para filtrados rápidos de sorteos cerrados
-  //  OPTIMIZACIÓN: Índices para cálculo de límite dinámico (calculateDynamicLimit)
-  @@index([ventanaId, createdAt, deletedAt]) // Para aggregate por ventana
-  @@index([vendedorId, createdAt, deletedAt]) // Para aggregate por vendedor
-  @@index([vendedorId, sorteoId, deletedAt, isActive]) // B1.3: groupBy en evaluatedSummary
-  @@index([ventanaId, businessDate, deletedAt]) // B1.4: summary por ventana y fecha
+  @@index([vendedorId, sorteoId, deletedAt, isActive])
+  @@index([ventanaId, businessDate, deletedAt])
+  @@index([loteriaId], map: "idx_Ticket_loteriaId")
+  @@index([businessDate, isActive, status, deletedAt, vendedorId, sorteoId, ventanaId], map: "idx_ticket_cierre_consolidado")
 }
 
 /// Contador global diario de tickets basado en businessDate (CR)
 model TicketCounter {
-  businessDate DateTime @id @db.Date
+  businessDate DateTime @id @unique(map: "idx_ticketcounter_date_unique") @db.Date
   last         Int      @default(0)
 }
 
@@ -256,116 +226,102 @@ model TicketPayment {
   idempotencyKey  String?   @unique
   isPartial       Boolean   @default(false)
   remainingAmount Float?
-  isFinal         Boolean   @default(false) // Marks partial as intentionally final
-  completedAt     DateTime? // When payment was finalized (full or final partial)
-
-  paidBy User   @relation(fields: [paidById], references: [id])
-  ticket Ticket @relation(fields: [ticketId], references: [id])
+  isFinal         Boolean   @default(false)
+  completedAt     DateTime?
+  paidBy          User      @relation(fields: [paidById], references: [id])
+  ticket          Ticket    @relation(fields: [ticketId], references: [id])
 
   @@index([ticketId, isReversed])
   @@index([ticketId, createdAt])
 }
 
 model Jugada {
-  id                      String    @id @default(uuid()) @db.Uuid
-  ticketId                String    @db.Uuid
+  id                      String             @id @default(uuid()) @db.Uuid
+  ticketId                String             @db.Uuid
   number                  String
   amount                  Float
   finalMultiplierX        Float
   payout                  Float?
-  isActive                Boolean   @default(true)
+  isActive                Boolean            @default(true)
   deletedAt               DateTime?
   deletedBy               String?
   deletedReason           String?
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
-  isWinner                Boolean   @default(false)
-  multiplierId            String?   @db.Uuid
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+  isWinner                Boolean            @default(false)
+  multiplierId            String?            @db.Uuid
   reventadoNumber         String?
-  type                    BetType   @default(NUMERO)
-  commissionPercent       Float     @default(0) // Snapshot inmutable: % de comisión aplicado
-  commissionAmount        Float     @default(0) // Snapshot inmutable: monto calculado
-  commissionOrigin        String? // Snapshot inmutable: "user"|"ventana"|"banca"
-  commissionRuleId        String? // Snapshot inmutable: ID de la regla que aplicó
-  listeroCommissionAmount Float     @default(0) //  Snapshot inmutable: comisión del listero (ventana) calculada desde políticas
+  type                    BetType            @default(NUMERO)
+  commissionPercent       Float              @default(0)
+  commissionAmount        Float              @default(0)
+  commissionOrigin        String?
+  commissionRuleId        String?
+  listeroCommissionAmount Float              @default(0)
+  isExcluded              Boolean            @default(false)
+  excludedAt              DateTime?
+  excludedBy              String?            @db.Uuid
+  excludedReason          String?
+  excludedByUser          User?              @relation("JugadaExcludedBy", fields: [excludedBy], references: [id])
+  multiplier              LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
+  ticket                  Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
-  //  NUEVO: Campos de exclusión de listas
-  isExcluded     Boolean   @default(false) // Marca si esta jugada fue excluida de reportes
-  excludedAt     DateTime? // Fecha de exclusión
-  excludedBy     String?   @db.Uuid // Usuario que excluyó
-  excludedReason String? // Motivo de la exclusión
-
-  multiplier     LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
-  ticket         Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  excludedByUser User?              @relation("JugadaExcludedBy", fields: [excludedBy], references: [id])
-
-  @@index([ticketId])
-  @@index([type])
   @@index([reventadoNumber])
-  @@index([isActive, isExcluded]) //  Para filtros rápidos
-  @@index([multiplierId, isExcluded]) //  Para exclusión por multiplicador
-  @@index([ticketId, deletedAt]) // B1.2: jugadas filtradas por deletedAt IS NULL
+  @@index([multiplierId, isExcluded])
+  @@index([excludedBy], map: "idx_Jugada_excludedBy")
 }
 
 model Sorteo {
-  id                   String       @id @default(uuid()) @db.Uuid
-  loteriaId            String       @db.Uuid
+  id                   String                 @id @default(uuid()) @db.Uuid
+  loteriaId            String                 @db.Uuid
   scheduledAt          DateTime
-  status               SorteoStatus @default(SCHEDULED)
+  status               SorteoStatus           @default(SCHEDULED)
   winningNumber        String?
-  hasWinner            Boolean      @default(false)
-  digits               Int          @default(2) // 2 para tiempos, 3 para monazos
-  isActive             Boolean      @default(true)
+  isActive             Boolean                @default(true)
   deletedAt            DateTime?
   deletedBy            String?
   deletedReason        String?
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
   name                 String
-  extraMultiplierId    String?      @db.Uuid
+  extraMultiplierId    String?                @db.Uuid
   extraMultiplierX     Float?
   extraOutcomeCode     String?
-  // Campos de cascada para tracking de inactivación automática
-  deletedByCascade     Boolean      @default(false)
-  deletedByCascadeFrom String? // 'loteria', 'ventana', etc.
-  deletedByCascadeId   String?      @db.Uuid // ID del recurso padre que causó la cascada
-
-  extraMultiplier LoteriaMultiplier?     @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
-  loteria         Loteria                @relation(fields: [loteriaId], references: [id])
-  tickets         Ticket[]
-  exclusions      SorteoListaExclusion[] // Relación con exclusiones de listas
+  hasWinner            Boolean                @default(false)
+  deletedByCascadeFrom String?
+  deletedByCascadeId   String?                @db.Uuid
+  deletedByCascade     Boolean                @default(false)
+  digits               Int                    @default(2)
+  extraMultiplier      LoteriaMultiplier?     @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
+  loteria              Loteria                @relation(fields: [loteriaId], references: [id])
+  tickets              Ticket[]
+  exclusions           SorteoListaExclusion[]
 
   @@unique([loteriaId, scheduledAt])
-  @@index([loteriaId, scheduledAt])
-  @@index([loteriaId, deletedAt])
-  @@index([deletedByCascade, deletedByCascadeFrom, deletedByCascadeId])
+  @@index([loteriaId, deletedAt], map: "idx_sorteos_loteria_id_deleted_at")
   @@index([extraMultiplierId])
   @@index([name])
   @@index([winningNumber])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_name_trgm", type: Gin)
-  @@index([winningNumber(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_winning_trgm", type: Gin)
-  @@index([status, scheduledAt]) // B1.1: evaluatedSummary filtra status + scheduledAt
 }
 
 model SorteoListaExclusion {
-  id           String   @id @default(uuid()) @db.Uuid
-  sorteoId     String   @map("sorteo_id") @db.Uuid
-  ventanaId    String   @map("ventana_id") @db.Uuid
-  vendedorId   String?  @map("vendedor_id") @db.Uuid // NULL = listero completo, NOT NULL = vendedor específico
-  multiplierId String?  @map("multiplier_id") @db.Uuid // NULL = todos los multiplicadores, NOT NULL = multiplicador específico
-  excludedAt   DateTime @default(now()) @map("excluded_at")
-  excludedBy   String   @map("excluded_by") @db.Uuid
-  reason       String? // Campo opcional para auditoría
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-
-  sorteo         Sorteo             @relation(fields: [sorteoId], references: [id], onDelete: Cascade)
-  ventana        Ventana            @relation("ExclusionVentana", fields: [ventanaId], references: [id])
-  vendedor       User?              @relation("ExclusionVendedor", fields: [vendedorId], references: [id])
+  id             String             @id @default(uuid()) @db.Uuid
+  sorteoId       String             @map("sorteo_id") @db.Uuid
+  ventanaId      String             @map("ventana_id") @db.Uuid
+  vendedorId     String?            @map("vendedor_id") @db.Uuid
+  excludedAt     DateTime           @default(now()) @map("excluded_at")
+  excludedBy     String             @map("excluded_by") @db.Uuid
+  reason         String?
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+  multiplierId   String?            @map("multiplier_id") @db.Uuid
   excludedByUser User               @relation("ExclusionExcludedBy", fields: [excludedBy], references: [id])
   multiplier     LoteriaMultiplier? @relation("ExclusionMultiplier", fields: [multiplierId], references: [id])
+  sorteo         Sorteo             @relation(fields: [sorteoId], references: [id], onDelete: Cascade)
+  vendedor       User?              @relation("ExclusionVendedor", fields: [vendedorId], references: [id])
+  ventana        Ventana            @relation("ExclusionVentana", fields: [ventanaId], references: [id])
 
-  @@unique([sorteoId, ventanaId, vendedorId, multiplierId])
+  @@unique([sorteoId, ventanaId, vendedorId, multiplierId], map: "sorteo_lista_exclusion_sorteo_ventana_vendedor_multiplier_key")
   @@index([sorteoId])
   @@index([ventanaId])
   @@index([vendedorId])
@@ -381,68 +337,60 @@ model ActivityLog {
   targetId   String?
   details    Json?
   createdAt  DateTime     @default(now())
+  user       User?        @relation(fields: [userId], references: [id])
 
-  user User? @relation(fields: [userId], references: [id])
+  @@index([createdAt])
+  @@index([targetType])
+  @@index([targetType, targetId, createdAt(sort: Desc)], map: "idx_activity_log_target_date")
+  @@index([userId], map: "idx_activity_log_user_id")
 }
 
 model RestrictionRule {
-  id                 String    @id @default(uuid()) @db.Uuid
-  bancaId            String?   @db.Uuid
-  ventanaId          String?   @db.Uuid
-  userId             String?   @db.Uuid
+  id                 String             @id @default(uuid()) @db.Uuid
+  bancaId            String?            @db.Uuid
+  ventanaId          String?            @db.Uuid
+  userId             String?            @db.Uuid
   number             String?
   maxAmount          Float?
   maxTotal           Float?
   appliesToDate      DateTime?
   appliesToHour      Int?
-  isActive           Boolean   @default(true)
-  isAutoDate         Boolean   @default(false)
-  baseAmount         Float? // Monto base para restricciones por porcentaje
-  salesPercentage    Float? // Porcentaje de ventas permitido (0-100)
-  appliesToVendedor  Boolean   @default(false) // Si aplica por vendedor o globalmente
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  isActive           Boolean            @default(true)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
   salesCutoffMinutes Int?
-  loteriaId          String?   @db.Uuid
-  multiplierId       String?   @db.Uuid
-  message            String?   @db.VarChar(255)
-
-  banca      Banca?             @relation(fields: [bancaId], references: [id])
-  user       User?              @relation(fields: [userId], references: [id])
-  ventana    Ventana?           @relation(fields: [ventanaId], references: [id])
-  loteria    Loteria?           @relation(fields: [loteriaId], references: [id])
-  multiplier LoteriaMultiplier? @relation(fields: [multiplierId], references: [id])
+  loteriaId          String?            @db.Uuid
+  multiplierId       String?            @db.Uuid
+  message            String?            @db.VarChar(255)
+  isAutoDate         Boolean            @default(false)
+  baseAmount         Float?
+  salesPercentage    Float?
+  appliesToVendedor  Boolean            @default(false)
+  banca              Banca?             @relation(fields: [bancaId], references: [id])
+  loteria            Loteria?           @relation(fields: [loteriaId], references: [id])
+  multiplier         LoteriaMultiplier? @relation(fields: [multiplierId], references: [id])
+  user               User?              @relation(fields: [userId], references: [id])
+  ventana            Ventana?           @relation(fields: [ventanaId], references: [id])
 
   @@index([loteriaId])
   @@index([multiplierId])
-  @@index([isAutoDate, isActive])
-  @@index([salesPercentage])
-  //  OPTIMIZACIÓN: Índices para resolveSalesCutoff (líneas 408-428 de restrictionRule.repository.ts)
-  @@index([userId, isActive, salesCutoffMinutes, number])
-  @@index([ventanaId, isActive, salesCutoffMinutes, number])
-  @@index([bancaId, isActive, salesCutoffMinutes, number])
-  //  OPTIMIZACIÓN: Índices para getEffectiveLimits (líneas 298-352 de restrictionRule.repository.ts)
-  @@index([userId, isActive, number])
-  @@index([ventanaId, isActive, number])
-  @@index([bancaId, isActive, number])
 }
 
 model LoteriaMultiplier {
-  id                String         @id @default(uuid()) @db.Uuid
-  loteriaId         String         @db.Uuid
-  name              String
-  valueX            Float
-  isActive          Boolean        @default(true)
-  appliesToDate     DateTime?
-  appliesToSorteoId String?        @db.Uuid
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  kind              MultiplierKind @default(NUMERO)
-
+  id                    String                 @id @default(uuid()) @db.Uuid
+  loteriaId             String                 @db.Uuid
+  name                  String
+  valueX                Float
+  isActive              Boolean                @default(true)
+  appliesToDate         DateTime?
+  appliesToSorteoId     String?                @db.Uuid
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  kind                  MultiplierKind         @default(NUMERO)
   jugadasAtSale         Jugada[]               @relation("JugadaMultiplierAtSale")
   loteria               Loteria                @relation(fields: [loteriaId], references: [id])
-  appliedInSorteos      Sorteo[]               @relation("SorteoExtraMultiplier")
   restrictionRules      RestrictionRule[]
+  appliedInSorteos      Sorteo[]               @relation("SorteoExtraMultiplier")
   sorteoListaExclusions SorteoListaExclusion[] @relation("ExclusionMultiplier")
 
   @@index([loteriaId, kind, isActive])
@@ -463,37 +411,32 @@ model MultiplierOverride {
   deletedReason   String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
-
-  user    User?    @relation(fields: [userId], references: [id])
-  ventana Ventana? @relation(fields: [ventanaId], references: [id])
-  loteria Loteria  @relation(fields: [loteriaId], references: [id])
+  loteria         Loteria       @relation(fields: [loteriaId], references: [id])
+  user            User?         @relation(fields: [userId], references: [id])
+  ventana         Ventana?      @relation(fields: [ventanaId], references: [id])
 
   @@unique([scope, userId, ventanaId, loteriaId, multiplierType], map: "uniq_override_scope_target")
   @@index([scope, userId, ventanaId, loteriaId, multiplierType], map: "idx_override_lookup")
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid
-  token     String   @unique
-  revoked   Boolean  @default(false)
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @db.Uuid
+  token         String    @unique
+  revoked       Boolean   @default(false)
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deviceId      String?   @db.VarChar(255)
+  deviceName    String?   @db.VarChar(255)
+  userAgent     String?
+  ipAddress     String?   @db.VarChar(45)
+  lastUsedAt    DateTime? @default(now())
+  revokedAt     DateTime?
+  revokedReason String?   @db.VarChar(50)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // Campos para tracking de dispositivos (multi-dispositivo)
-  deviceId      String?   @db.VarChar(255) // UUID persistente generado por el cliente
-  deviceName    String?   @db.VarChar(255) // Nombre legible: "Chrome · Windows", "Samsung Galaxy S23"
-  userAgent     String? // User-Agent completo para auditoría
-  ipAddress     String?   @db.VarChar(45) // IPv4 o IPv6
-  lastUsedAt    DateTime? @default(now()) // Última vez que se usó para refresh
-  revokedAt     DateTime? // Cuándo se revocó
-  revokedReason String?   @db.VarChar(50) // 'logout' | 'rotation' | 'new_login' | 'security' | 'admin'
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId], name: "idx_refresh_token_user_id")
-  @@index([userId, deviceId], name: "idx_refresh_token_user_device")
+  @@index([userId], map: "idx_refresh_token_user_id")
 }
 
 model UserBanca {
@@ -503,31 +446,26 @@ model UserBanca {
   isDefault Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  banca     Banca    @relation(fields: [bancaId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  banca Banca @relation(fields: [bancaId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, bancaId])
+  @@unique([userId, bancaId], map: "UserBanca_userId_bancaId_unique")
   @@index([userId])
   @@index([bancaId])
-  @@index([userId, isDefault])
   @@map("UserBanca")
 }
 
-// ==================== MÓDULO DE VENTAS Y ANALÍTICA ====================
-
 model SavedReport {
-  id        String   @id @default(uuid()) @db.Uuid
+  id        String           @id @default(uuid()) @db.Uuid
   name      String
-  userId    String   @db.Uuid
-  filters   Json // Filtros guardados (scope, date, ventanaId, etc.)
-  schedule  Json? // Programación opcional: { frequency: "daily|weekly|monthly", recipients: ["email@..."] }
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String           @db.Uuid
+  filters   Json
+  schedule  Json?
+  isActive  Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
   schedules ReportSchedule[]
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, isActive])
 }
@@ -536,74 +474,68 @@ model ExportJob {
   id             String       @id @default(uuid()) @db.Uuid
   userId         String       @db.Uuid
   format         ExportFormat @default(CSV)
-  filters        Json // Filtros aplicados
+  filters        Json
   status         JobStatus    @default(PENDING)
-  fileUrl        String? // URL de descarga cuando status=COMPLETED
+  fileUrl        String?
   errorMessage   String?
-  progress       Int          @default(0) // 0-100
+  progress       Int          @default(0)
   totalRecords   Int?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   completedAt    DateTime?
   idempotencyKey String?      @unique
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status])
-  @@index([status, createdAt])
 }
 
 model Alert {
   id            String    @id @default(uuid()) @db.Uuid
   name          String
   userId        String    @db.Uuid
-  dimension     String // ventana|vendedor|loteria|sorteo
-  targetId      String? // ID de la entidad (ventanaId, vendedorId, etc.)
-  condition     Json // { type: "threshold|spike|drop", operator: "gt|lt", value: 1000 }
+  dimension     String
+  targetId      String?
+  condition     Json
   isActive      Boolean   @default(true)
   lastFiredAt   DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   notifyEmail   String?
   notifyWebhook String?
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([isActive, lastFiredAt])
   @@index([userId, isActive])
 }
 
 model ApiKey {
   id         String    @id @default(uuid()) @db.Uuid
   name       String
-  key        String    @unique // Hash de la key (bcrypt)
-  userId     String?   @db.Uuid // Si es de un usuario específico
-  scopes     String[] // ["read:sales", "read:metrics", "write:reports"]
+  key        String    @unique
+  userId     String?   @db.Uuid
+  scopes     String[]
   isActive   Boolean   @default(true)
   expiresAt  DateTime?
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
-
-  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([key, isActive])
   @@index([userId, isActive])
 }
 
 model Webhook {
-  id          String    @id @default(uuid()) @db.Uuid
+  id          String            @id @default(uuid()) @db.Uuid
   name        String
   url         String
-  events      String[] // ["sales.summary.closedHour", "sales.ticket.created", etc.]
-  isActive    Boolean   @default(true)
-  secret      String? // Para firmar payloads (HMAC)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  events      String[]
+  isActive    Boolean           @default(true)
+  secret      String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
   lastFiredAt DateTime?
-  failCount   Int       @default(0)
-
-  deliveries WebhookDelivery[]
+  failCount   Int               @default(0)
+  deliveries  WebhookDelivery[]
 
   @@index([isActive])
 }
@@ -613,29 +545,26 @@ model WebhookDelivery {
   webhookId    String   @db.Uuid
   event        String
   payload      Json
-  status       Int // HTTP status code
+  status       Int
   responseBody String?
   attempt      Int      @default(1)
   createdAt    DateTime @default(now())
-
-  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  webhook      Webhook  @relation(fields: [webhookId], references: [id], onDelete: Cascade)
 
   @@index([webhookId, createdAt])
-  @@index([createdAt])
 }
 
 model ReportSchedule {
-  id         String    @id @default(uuid()) @db.Uuid
-  reportId   String    @db.Uuid
-  frequency  String // "daily"|"weekly"|"monthly"
-  recipients String[] // Emails
+  id         String      @id @default(uuid()) @db.Uuid
+  reportId   String      @db.Uuid
+  frequency  String
+  recipients String[]
   nextRunAt  DateTime
   lastRunAt  DateTime?
-  isActive   Boolean   @default(true)
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-
-  report SavedReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  isActive   Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  report     SavedReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@index([isActive, nextRunAt])
 }
@@ -643,10 +572,10 @@ model ReportSchedule {
 model Goal {
   id          String   @id @default(uuid()) @db.Uuid
   name        String
-  dimension   String // "ventana"|"vendedor"|"global"
-  targetId    String? // ID de la entidad (ventanaId, vendedorId)
-  targetValue Float // Objetivo numérico
-  period      String // "day"|"week"|"month"|"year"
+  dimension   String
+  targetId    String?
+  targetValue Float
+  period      String
   startDate   DateTime
   endDate     DateTime
   isActive    Boolean  @default(true)
@@ -658,130 +587,150 @@ model Goal {
 }
 
 model AccountStatement {
-  id         String   @id @default(uuid()) @db.Uuid
-  date       DateTime @db.Date
-  month      String   @db.VarChar(7) // YYYY-MM
-  //  CRÍTICO: bancaId, ventanaId y vendedorId deben persistirse directamente (no inferirse)
-  // para evitar problemas cuando un vendedor cambia de ventana o una ventana cambia de banca
-  bancaId    String?  @db.Uuid
-  ventanaId  String?  @db.Uuid
-  vendedorId String?  @db.Uuid
+  id                 String    @id @default(uuid()) @db.Uuid
+  date               DateTime  @db.Date
+  month              String    @db.VarChar(7)
+  ventanaId          String?   @db.Uuid
+  vendedorId         String?   @db.Uuid
+  totalSales         Float     @default(0)
+  totalPayouts       Float     @default(0)
+  listeroCommission  Float     @default(0)
+  vendedorCommission Float     @default(0)
+  balance            Float     @default(0)
+  totalPaid          Float     @default(0)
+  remainingBalance   Float     @default(0)
+  isSettled          Boolean   @default(false)
+  canEdit            Boolean   @default(true)
+  ticketCount        Int       @default(0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  totalCollected     Float     @default(0)
+  settledAt          DateTime?
+  settledBy          String?   @db.Uuid
+  bancaId            String?   @db.Uuid
+  accumulatedBalance Float     @default(0)
+  banca              Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
+  payments           AccountPayment[]
+  settledByUser      User?            @relation("AccountStatementSettledBy", fields: [settledBy], references: [id])
+  vendedor           User?     @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
+  ventana            Ventana?  @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
 
-  // Totales del día
-  totalSales   Float @default(0)
-  totalPayouts Float @default(0)
-
-  // Comisiones (informativas)
-  listeroCommission  Float @default(0)
-  vendedorCommission Float @default(0)
-
-  // Saldo y pagos
-  balance          Float @default(0)
-  totalPaid        Float @default(0)
-  totalCollected   Float @default(0) //  NUEVO: Total de collections (cobros) del día
-  remainingBalance Float @default(0)
-
-  //  NUEVO: Saldo acumulado progresivo desde el día 1 del mes
-  // Este campo se actualiza cuando se asienta el día (isSettled = true)
-  // Fórmula: accumulatedBalance = previousDayAccumulatedBalance + balance
-  // Para el día 1: accumulatedBalance = saldoMesAnterior + balance
-  // Se usa como fuente de verdad para evitar recalcular en cada consulta
-  accumulatedBalance Float @default(0)
-
-  // Estado
-  isSettled Boolean @default(false)
-  canEdit   Boolean @default(true)
-
-  //  NUEVO: Campos de auditoría para asentamiento
-  settledAt DateTime? // Cuándo se asentó
-  settledBy String?   @db.Uuid // Quién lo asentó (userId o null para automático)
-
-  // Metadatos
-  ticketCount Int @default(0)
-
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relaciones
-  banca         Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
-  ventana       Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
-  vendedor      User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
-  payments      AccountPayment[]
-  settledByUser User?            @relation("AccountStatementSettledBy", fields: [settledBy], references: [id])
-
-  @@unique([date, ventanaId], map: "account_statements_date_ventana_unique")
   @@unique([date, vendedorId], map: "account_statements_date_vendedor_unique")
   @@index([month])
   @@index([date])
   @@index([bancaId])
-  @@index([ventanaId])
-  @@index([vendedorId])
   @@index([isSettled])
-  @@index([isSettled, date]) // Para queries del cron job
-  @@index([month, isSettled, date]) //  NUEVO: Para queries eficientes de accumulatedBalance
-  @@index([vendedorId, date]) // B1.5: evaluatedSummary y balance por vendedor+fecha
+  @@index([isSettled, date])
+  @@index([month, isSettled, date])
+  @@index([vendedorId, date])
+  @@index([vendedorId, date, remainingBalance], map: "idx_account_statement_vendedor_covering_v3")
 }
 
 model AccountPayment {
-  id String @id @default(uuid()) @db.Uuid
-
-  // Relación con estado de cuenta
-  accountStatementId String @db.Uuid
-
-  // Identificación del día
-  date  DateTime @db.Date
-  month String   @db.VarChar(7) // YYYY-MM
-  time  String?  @db.VarChar(5) //  NUEVO: HH:MM (opcional, hora del movimiento en CR)
-
-  // Relaciones
-  //  CRÍTICO: bancaId y ventanaId deben persistirse directamente (no inferirse)
-  // para evitar problemas cuando un vendedor cambia de ventana o una ventana cambia de banca
-  bancaId    String? @db.Uuid
-  ventanaId  String? @db.Uuid
-  vendedorId String? @db.Uuid
-
-  // Detalles del pago/cobro
-  amount Float
-  type   String  @db.VarChar(20) // 'payment' | 'collection'
-  method String  @db.VarChar(20) // 'cash' | 'transfer' | 'check' | 'other'
-  notes  String?
-
-  // Estado
-  isFinal    Boolean   @default(false)
-  isReversed Boolean   @default(false)
-  reversedAt DateTime?
-  reversedBy String?   @db.Uuid
-
-  // Auditoría
-  paidById   String @db.Uuid
-  paidByName String @db.VarChar(255)
-
-  // Idempotencia
-  idempotencyKey String? @unique
-
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relaciones
-  //  CRÍTICO: onDelete: Restrict previene borrar AccountStatement si tiene AccountPayment asociados
-  // Esto protege los datos críticos de pagos/cobros de producción
+  id                 String    @id @default(uuid()) @db.Uuid
+  accountStatementId String    @db.Uuid
+  date               DateTime  @db.Date
+  month              String    @db.VarChar(7)
+  ventanaId          String?   @db.Uuid
+  vendedorId         String?   @db.Uuid
+  amount             Float
+  type               String    @db.VarChar(20)
+  method             String    @db.VarChar(20)
+  notes              String?
+  isFinal            Boolean   @default(false)
+  isReversed         Boolean   @default(false)
+  reversedAt         DateTime?
+  reversedBy         String?   @db.Uuid
+  paidById           String    @db.Uuid
+  paidByName         String    @db.VarChar(255)
+  idempotencyKey     String?   @unique
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  bancaId            String?   @db.Uuid
+  time               String?   @db.VarChar(5)
   accountStatement AccountStatement @relation(fields: [accountStatementId], references: [id], onDelete: Restrict)
   banca            Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
-  ventana          Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
-  vendedor         User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
-  paidBy           User             @relation("AccountPaymentPaidBy", fields: [paidById], references: [id])
-  reversedByUser   User?            @relation("AccountPaymentReversedBy", fields: [reversedBy], references: [id])
+  paidBy             User      @relation("AccountPaymentPaidBy", fields: [paidById], references: [id])
+  reversedByUser     User?     @relation("AccountPaymentReversedBy", fields: [reversedBy], references: [id])
+  vendedor           User?     @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
+  ventana            Ventana?  @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
 
   @@index([accountStatementId])
   @@index([date])
   @@index([month])
   @@index([bancaId])
-  @@index([ventanaId])
-  @@index([vendedorId])
   @@index([isReversed])
-  @@index([idempotencyKey])
+  @@index([paidById], map: "idx_AccountPayment_paidById")
+  @@index([reversedBy], map: "idx_AccountPayment_reversedBy")
+}
+
+model SorteosAutoConfig {
+  id                  String    @id @default(uuid()) @db.Uuid
+  autoOpenEnabled     Boolean   @default(false)
+  autoCreateEnabled   Boolean   @default(false)
+  openCronSchedule    String?
+  createCronSchedule  String?
+  lastOpenExecution   DateTime?
+  lastCreateExecution DateTime?
+  lastOpenCount       Int?
+  lastCreateCount     Int?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  updatedBy           String?   @db.Uuid
+  autoCloseEnabled    Boolean   @default(false)
+  closeCronSchedule   String?
+  lastCloseExecution  DateTime?
+  lastCloseCount      Int?
+  updatedByUser       User?     @relation("SorteosAutoConfigUpdatedBy", fields: [updatedBy], references: [id])
+}
+
+model AccountStatementSettlementConfig {
+  id                String    @id @default(uuid()) @db.Uuid
+  enabled           Boolean   @default(false)
+  settlementAgeDays Int       @default(7)
+  cronSchedule      String?   @db.VarChar(50)
+  batchSize         Int       @default(1000)
+  lastExecution     DateTime?
+  lastSettledCount  Int?
+  lastSkippedCount  Int?
+  lastErrorCount    Int?
+  lastErrorMessage  String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  updatedBy         String?   @db.Uuid
+  updatedByUser     User?     @relation("AccountStatementSettlementConfigUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@index([enabled])
+}
+
+model MonthlyClosingBalance {
+  id              String   @id @default(uuid()) @db.Uuid
+  closingMonth    String   @db.VarChar(7)
+  dimension       String   @db.VarChar(20)
+  vendedorId      String?  @db.Uuid
+  ventanaId       String?  @db.Uuid
+  bancaId         String?  @db.Uuid
+  closingBalance  Decimal  @db.Decimal(15, 2)
+  totalSales      Decimal  @db.Decimal(15, 2)
+  totalPayouts    Decimal  @db.Decimal(15, 2)
+  totalCommission Decimal  @db.Decimal(15, 2)
+  totalPaid       Decimal  @db.Decimal(15, 2)
+  totalCollected  Decimal  @db.Decimal(15, 2)
+  ticketCount     Int
+  closingDate     DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  banca           Banca?   @relation("MonthlyClosingBalanceBanca", fields: [bancaId], references: [id])
+  vendedor        User?    @relation("MonthlyClosingBalanceVendedor", fields: [vendedorId], references: [id])
+  ventana         Ventana? @relation("MonthlyClosingBalanceVentana", fields: [ventanaId], references: [id])
+
+  @@unique([closingMonth, dimension, vendedorId, ventanaId, bancaId], map: "MonthlyClosingBalance_closingMonth_dimension_vendedorId_ventana")
+  @@index([closingMonth])
+  @@index([closingDate])
+  @@index([dimension, vendedorId, ventanaId, bancaId], map: "MonthlyClosingBalance_dimension_vendedorId_ventanaId_bancaId_id")
+  @@index([bancaId], map: "idx_MonthlyClosingBalance_bancaId")
+  @@index([vendedorId], map: "idx_MonthlyClosingBalance_vendedorId")
+  @@index([ventanaId], map: "idx_MonthlyClosingBalance_ventanaId")
 }
 
 enum OverrideScope {
@@ -885,82 +834,4 @@ enum JobStatus {
   COMPLETED
   FAILED
   CANCELLED
-}
-
-model SorteosAutoConfig {
-  id                  String    @id @default(uuid()) @db.Uuid
-  autoOpenEnabled     Boolean   @default(false)
-  autoCreateEnabled   Boolean   @default(false)
-  autoCloseEnabled    Boolean   @default(false) //  NUEVO: Auto-close de sorteos sin ventas
-  openCronSchedule    String? // Ej: "0 7 * * *" (1 AM CR = 7 AM UTC)
-  createCronSchedule  String? // Ej: "30 7 * * *" (1:30 AM CR = 7:30 AM UTC)
-  closeCronSchedule   String? //  NUEVO: Ej: "*/10 * * * *" (cada 10 minutos)
-  lastOpenExecution   DateTime?
-  lastCreateExecution DateTime?
-  lastCloseExecution  DateTime? //  NUEVO: Última ejecución del cierre automático
-  lastOpenCount       Int?
-  lastCreateCount     Int?
-  lastCloseCount      Int? //  NUEVO: Cantidad de sorteos cerrados en la última ejecución
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  updatedBy           String?   @db.Uuid
-
-  updatedByUser User? @relation("SorteosAutoConfigUpdatedBy", fields: [updatedBy], references: [id])
-
-  @@unique([id]) // Solo una configuración global
-}
-
-model AccountStatementSettlementConfig {
-  id                String    @id @default(uuid()) @db.Uuid
-  enabled           Boolean   @default(false)
-  settlementAgeDays Int       @default(7) // Días de antigüedad mínima
-  cronSchedule      String?   @db.VarChar(50) // Ej: "0 3 * * *" (3:00 AM UTC)
-  batchSize         Int       @default(1000) // Máximo de statements por ejecución
-  lastExecution     DateTime?
-  lastSettledCount  Int?
-  lastSkippedCount  Int?
-  lastErrorCount    Int?
-  lastErrorMessage  String?   @db.Text
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  updatedBy         String?   @db.Uuid
-
-  updatedByUser User? @relation("AccountStatementSettlementConfigUpdatedBy", fields: [updatedBy], references: [id])
-
-  @@index([enabled])
-}
-
-model MonthlyClosingBalance {
-  id           String  @id @default(uuid()) @db.Uuid
-  closingMonth String  @db.VarChar(7) // YYYY-MM
-  dimension    String  @db.VarChar(20) // "vendedor", "ventana", "banca"
-  vendedorId   String? @db.Uuid
-  ventanaId    String? @db.Uuid
-  bancaId      String? @db.Uuid
-
-  // Saldo de cierre
-  closingBalance Decimal @db.Decimal(15, 2)
-
-  // Totales del mes
-  totalSales      Decimal @db.Decimal(15, 2)
-  totalPayouts    Decimal @db.Decimal(15, 2)
-  totalCommission Decimal @db.Decimal(15, 2)
-  totalPaid       Decimal @db.Decimal(15, 2)
-  totalCollected  Decimal @db.Decimal(15, 2)
-  ticketCount     Int
-
-  // Auditoría
-  closingDate DateTime @default(now()) // Fecha/hora del cierre
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relaciones (opcionales, para referencia)
-  vendedor User?    @relation("MonthlyClosingBalanceVendedor", fields: [vendedorId], references: [id])
-  ventana  Ventana? @relation("MonthlyClosingBalanceVentana", fields: [ventanaId], references: [id])
-  banca    Banca?   @relation("MonthlyClosingBalanceBanca", fields: [bancaId], references: [id])
-
-  @@unique([closingMonth, dimension, vendedorId, ventanaId, bancaId])
-  @@index([closingMonth])
-  @@index([dimension, vendedorId, ventanaId, bancaId])
-  @@index([closingDate])
 }
