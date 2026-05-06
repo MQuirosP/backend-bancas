@@ -18,6 +18,7 @@ import { PDFDocument } from "pdf-lib";
 import { ConcurrencyManager } from "../../../utils/concurrency";
 import { CacheService } from "../../../core/cache.service";
 import crypto from 'crypto';
+import { WorkerService } from "./worker.service";
 
 const CUTOFF_GRACE_MS = 1000;
 // Updated: Added clienteNombre field support
@@ -2505,7 +2506,6 @@ export const TicketService = {
       // ADMIN puede ver cualquier ticket
 
       // Obtener configuraciones de impresión
-      // IMPORTANTE: Siempre leer y validar la configuración del vendedor para el código de barras
       const vendedorConfig = extractPrintConfig(
         ticket.vendedor?.settings,
         ticket.vendedor?.name || null,
@@ -2517,8 +2517,6 @@ export const TicketService = {
         ticket.ventana?.phone || null
       );
 
-      // Validar explícitamente la configuración del código de barras del vendedor
-      // Si printBarcode es false, no se mostrará el código de barras en la imagen
       const vendedorBarcodeEnabled = vendedorConfig.printBarcode !== false;
       const ventanaBarcodeEnabled = ventanaConfig.printBarcode !== false;
 
@@ -2528,16 +2526,12 @@ export const TicketService = {
         name: formatSorteoNameWithTime(ticket.sorteo.name, ticket.sorteo.scheduledAt),
       };
 
-      // Determinar ancho según configuración de impresión (prioridad: vendedor > ventana > default)
-      // printWidth viene en mm (58 o 88), convertir a píxeles
+      // Determinar ancho
       const { mmToPixels } = await import('../../../services/ticket-image-generator.service');
-      const printWidthMm = vendedorConfig.printWidth || ventanaConfig.printWidth || 58; // Default: 58mm
+      const printWidthMm = vendedorConfig.printWidth || ventanaConfig.printWidth || 58;
       const printWidthPx = mmToPixels(printWidthMm);
-
-      // Generar imagen
-      const { generateTicketImage } = await import('../../../services/ticket-image-generator.service');
-
-      const imageBuffer = await generateTicketImage(
+      // Generar imagen delegando al Worker Thread para no bloquear el Event Loop
+      const imageBuffer = await WorkerService.generateTicketImage(
         {
           ticket: {
             id: ticket.id,
@@ -2545,7 +2539,7 @@ export const TicketService = {
             totalAmount: ticket.totalAmount,
             clienteNombre: ticket.clienteNombre,
             createdAt: ticket.createdAt,
-            isActive: ticket.isActive, // Pass isActive
+            isActive: ticket.isActive,
             jugadas: ticket.jugadas,
             sorteo: {
               ...sorteoWithFormattedName,
@@ -2556,7 +2550,6 @@ export const TicketService = {
               code: ticket.vendedor?.code || null,
               printName: vendedorConfig.printName,
               printPhone: vendedorConfig.printPhone,
-              // Siempre validar la configuración del vendedor: si printBarcode es false, no mostrar código de barras
               printBarcode: vendedorBarcodeEnabled,
               printFooter: vendedorConfig.printFooter,
             },
@@ -2564,7 +2557,6 @@ export const TicketService = {
               name: ticket.ventana?.name || null,
               printName: ventanaConfig.printName,
               printPhone: ventanaConfig.printPhone,
-              // Validar también la configuración de la ventana
               printBarcode: ventanaBarcodeEnabled,
               printFooter: ventanaConfig.printFooter,
             },
@@ -2572,9 +2564,11 @@ export const TicketService = {
         },
         {
           width: printWidthPx,
-          scale: 2, // Calidad suficiente para impresión térmica
+          scale: 2,
         }
       );
+      // Registro de éxito
+
 
       logger.info({
         layer: 'service',

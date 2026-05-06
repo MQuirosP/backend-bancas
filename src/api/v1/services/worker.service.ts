@@ -12,8 +12,8 @@ const workerFile = path.resolve(__dirname, `../../../workers/image-converter.wor
 let globalWorker: Worker | null = null;
 let isWorkerBusy = false;
 const workerQueue: { 
-  pdfBuffer: Uint8Array; 
-  options: any; 
+  type: 'PDF_TO_PNG' | 'GENERATE_TICKET';
+  payload: any;
   resolve: (value: any) => void; 
   reject: (reason?: any) => void;
   startTime: number;
@@ -52,14 +52,16 @@ function getOrCreateWorker(): Worker {
       const duration = Date.now() - currentTask.startTime;
       logger.info({
         layer: 'worker-service',
-        action: 'IMAGE_CONVERSION_SUCCESS',
+        action: 'WORKER_TASK_SUCCESS',
         payload: { 
-          pages: data.pngPages.length,
+          type: currentTask.type,
           durationMs: duration,
-          queueRemaining: workerQueue.length
+          queueRemaining: workerQueue.length,
+          resultSize: (data.pngPages?.length || data.imageBuffer?.length || 0)
         }
       });
-      currentTask.resolve(data.pngPages);
+      // Devolver pngPages o imageBuffer según el tipo
+      currentTask.resolve(data.pngPages || data.imageBuffer);
     } else {
       logger.error({
         layer: 'worker-service',
@@ -121,8 +123,8 @@ function processNextTask() {
   
   isWorkerBusy = true;
   worker.postMessage({ 
-    pdfBuffer: nextTask.pdfBuffer, 
-    options: nextTask.options 
+    type: nextTask.type,
+    ...nextTask.payload
   });
 }
 
@@ -134,8 +136,27 @@ export async function convertPdfToPng(pdfBuffer: Uint8Array, options: any = {}):
     const startTime = Date.now();
     
     workerQueue.push({ 
-      pdfBuffer, 
-      options, 
+      type: 'PDF_TO_PNG',
+      payload: { pdfBuffer, options }, 
+      resolve, 
+      reject,
+      startTime 
+    });
+
+    processNextTask();
+  });
+}
+
+/**
+ * Genera una imagen de ticket usando el worker
+ */
+export async function generateTicketImage(ticketData: any, options: any = {}): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const startTime = Date.now();
+    
+    workerQueue.push({ 
+      type: 'GENERATE_TICKET',
+      payload: { ticketData, options }, 
       resolve, 
       reject,
       startTime 
@@ -149,5 +170,6 @@ export async function convertPdfToPng(pdfBuffer: Uint8Array, options: any = {}):
  * Interface para el servicio de workers
  */
 export const WorkerService = {
-  convertPdfToPng
+  convertPdfToPng,
+  generateTicketImage
 };

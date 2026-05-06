@@ -15,13 +15,24 @@ if (process.env.TS_NODE_TRANSPILE_ONLY) {
 }
 
 parentPort.on('message', async (data) => {
-  const { pdfBuffer, options } = data;
+  const { type, pdfBuffer, ticketData, options } = data;
   
   try {
+    if (type === 'GENERATE_TICKET') {
+      // Importación dinámica para cargar canvas solo en este hilo
+      const { generateTicketImage } = await import('../services/ticket-image-generator.service');
+      const buffer = await generateTicketImage(ticketData, options);
+      
+      parentPort?.postMessage({ 
+        success: true, 
+        imageBuffer: buffer 
+      });
+      return;
+    }
+
+    // Default: PDF to PNG conversion
     const { pdfToPng } = await import('pdf-to-png-converter');
     
-    // DPI Estratégico: viewportScale = 2.0 equivale a ~144-150 DPI (base 72)
-    // Esto reduce el uso de CPU a la mitad comparado con 300 DPI (scale 4.0)
     const finalOptions = {
       viewportScale: 2.0, 
       ...options
@@ -29,16 +40,14 @@ parentPort.on('message', async (data) => {
 
     const pngPages = await pdfToPng(pdfBuffer, finalOptions);
     
-    // Enviar resultado al hilo principal
     parentPort?.postMessage({ 
       success: true, 
       pngPages: pngPages.map(page => ({
         ...page,
-        content: page.content // El Buffer se serializa automáticamente
+        content: page.content
       }))
     });
   } catch (error: any) {
-    // Captura global de errores para no tumbar el worker inesperadamente
     parentPort?.postMessage({ 
       success: false, 
       error: error.message || 'Error interno en el worker de imagen' 

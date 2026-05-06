@@ -530,7 +530,7 @@ function calculateTicketHeight(
     height += 12 * scale + 4 * scale + 50 * scale; // Texto + espacio para código de barras
   }
 
-  return height;
+  return Math.ceil(height);
 }
 
 /**

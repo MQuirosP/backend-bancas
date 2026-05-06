@@ -125,7 +125,14 @@ export const TicketController = {
     const role = req.user!.role;
 
     try {
-      const imageBuffer = await TicketService.getTicketImage(ticketId, userId, role, req.requestId);
+      const result = await TicketService.getTicketImage(ticketId, userId, role, req.requestId);
+      const imageBuffer = Buffer.from(result); 
+      
+      req.logger?.info({
+        layer: "controller",
+        action: "TICKET_IMAGE_READY",
+        payload: { ticketId, size: imageBuffer.length }
+      });
 
       res.setHeader('Content-Type', 'image/png');
       res.setHeader('Content-Disposition', `inline; filename="ticket-${ticketId}.png"`);
