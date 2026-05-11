@@ -12,6 +12,11 @@ export const SorteoListasController = {
         const mode = (req.query.mode as string) === 'compact' ? 'compact' : 'full';
         
         const me = req.user!;
+        const bancaId = req.bancaContext?.bancaId ?? undefined;
+
+        if (!bancaId) {
+            return res.status(400).json({ success: false, error: "BANCA_CONTEXT_REQUIRED", message: "Se requiere el contexto de banca para esta operación." });
+        }
         
         // Aplicar RBAC: Si es VENDEDOR, forzar ver solo sus propias listas
         if (me.role === Role.VENDEDOR) {
@@ -20,21 +25,23 @@ export const SorteoListasController = {
 
         //  FIX: Si es rol VENTANA y el vendedorId enviado es el mismo ID del usuario (Ventana),
         // limpiamos el vendedorId para que devuelva el resumen de toda su ventana.
-        if (me.role === Role.VENTANA && vendedorId === me.id) {
+        if (me.role === Role.VENTANA && (!vendedorId || vendedorId === me.id)) {
             vendedorId = undefined;
         }
 
         const response = await SorteoListasService.getListas(
             req.params.id,
+            bancaId!, // Asserting not undefined because of check above (mostly for TS)
             includeExcluded,
             vendedorId,
             multiplierId,
             mode
         );
 
-        // Si es rol VENTANA, filtrar los resultados en memoria para mostrar solo su ventana
+        // Si es rol VENTANA, el servicio ya filtró por bancaId en SQL.
+        // Pero el servicio devuelve TODAS las ventanas de la banca.
+        // Debemos filtrar para que el Listero solo vea SU propia ventana.
         if (me.role === Role.VENTANA) {
-            // Garantizar que tenemos el ventanaId (buscar en DB si falta en JWT)
             const myVentanaId = await validateVentanaUser(me.role, me.ventanaId, me.id);
             
             if (response.listeros) {
@@ -54,17 +61,15 @@ export const SorteoListasController = {
                 totalSales += l.totalSales;
                 totalTickets += l.totalTickets;
                 totalCommission += l.totalCommission;
-                // Sumar vendedores excluidos individualmente
                 totalExcluded += l.vendedores.filter(v => v.isExcluded).length;
             });
             
-            // Si hay listerosCompact, también debemos sumar de ahí
             if (response.listerosCompact && response.listerosCompact.length > 0) {
                 response.listerosCompact.forEach(l => {
                     totalExcluded += l.totalExcluded || 0; 
                 });
             }
-            response.meta.totalSales = totalSales; //  NUEVO: Actualizar totalSales también
+            response.meta.totalSales = totalSales;
             response.meta.totalTickets = totalTickets;
             response.meta.totalCommission = totalCommission;
             response.meta.totalExcluded = totalExcluded;
@@ -77,26 +82,45 @@ export const SorteoListasController = {
     },
 
     async excludeLista(req: AuthenticatedRequest, res: Response) {
+        const bancaId = req.bancaContext?.bancaId ?? undefined;
+        if (!bancaId) {
+            return res.status(400).json({ success: false, error: "BANCA_CONTEXT_REQUIRED" });
+        }
+
         const exclusion = await SorteoListasService.excludeLista(
             req.params.id,
             req.body,
-            req.user!.id
+            req.user!.id,
+            bancaId!
         );
         res.status(201).json({ success: true, data: exclusion });
     },
 
     async includeLista(req: AuthenticatedRequest, res: Response) {
+        const bancaId = req.bancaContext?.bancaId ?? undefined;
+        if (!bancaId) {
+            return res.status(400).json({ success: false, error: "BANCA_CONTEXT_REQUIRED" });
+        }
+
         const result = await SorteoListasService.includeLista(
             req.params.id,
             req.body,
-            req.user!.id
+            req.user!.id,
+            bancaId!
         );
         res.json({ success: true, data: result });
     },
 
     async getExcludedListas(req: AuthenticatedRequest, res: Response) {
+        const bancaId = req.bancaContext?.bancaId ?? undefined;
+        if (!bancaId) {
+            return res.status(400).json({ success: false, error: "BANCA_CONTEXT_REQUIRED" });
+        }
+
         // Parse query parameters
-        const filters: any = {};
+        const filters: any = {
+            bancaId: bancaId!
+        };
 
         if (req.query.sorteoId) filters.sorteoId = req.query.sorteoId as string;
         if (req.query.ventanaId) filters.ventanaId = req.query.ventanaId as string;
@@ -113,6 +137,14 @@ export const SorteoListasController = {
         }
 
         const exclusions = await SorteoListasService.getExcludedListas(filters);
-        res.json({ success: true, data: exclusions, total: exclusions.length });
+
+        // Si es rol VENTANA, filtrar resultados para mostrar solo su ventana
+        let finalExclusions = exclusions;
+        if (req.user!.role === Role.VENTANA) {
+            const myVentanaId = await validateVentanaUser(req.user!.role, req.user!.ventanaId, req.user!.id);
+            finalExclusions = exclusions.filter(ex => ex.ventanaId === myVentanaId);
+        }
+
+        res.json({ success: true, data: finalExclusions, total: finalExclusions.length });
     },
 };

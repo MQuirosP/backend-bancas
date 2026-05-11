@@ -91,7 +91,51 @@ function formatDateOnly(date: Date): string {
 }
 
 const SorteoService = {
-  async create(data: CreateSorteoDTO, userId: string) {
+  /**
+   * Valida si un usuario tiene acceso a un sorteo según su bancaId.
+   * Si el sorteo es global (bancaId === null), solo ADMIN puede editarlo?
+   * O permitimos que BANCA admins vean globales pero no los toquen?
+   */
+  async validateSorteoOwnership(sorteoId: string, bancaId?: string, role?: Role) {
+    const sorteo = await prisma.sorteo.findUnique({
+      where: { id: sorteoId },
+      select: { 
+        id: true, 
+        bancaId: true, 
+        status: true, 
+        name: true, 
+        scheduledAt: true, 
+        loteriaId: true, 
+        winningNumber: true, 
+        extraMultiplierId: true,
+        isActive: true,
+        digits: true,
+        loteria: { select: { name: true } } 
+      }
+    });
+
+    if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
+
+    // Si el usuario es ADMIN global, tiene acceso a todo
+    if (role === Role.ADMIN && !bancaId) return sorteo;
+
+    // Si el usuario tiene una banca activa
+    if (bancaId) {
+      // Si el sorteo pertenece a OTRA banca, denegar
+      if (sorteo.bancaId && sorteo.bancaId !== bancaId) {
+        throw new AppError("Acceso denegado: El sorteo pertenece a otra banca", 403);
+      }
+      
+      // Si el sorteo es GLOBAL (bancaId null), permitimos lectura pero NO edición para BANCA admins?
+      // Por ahora, si es global, permitimos que lo vean, pero las mutaciones deberían ser restringidas.
+      // Sin embargo, en este sistema los sorteos suelen ser compartidos.
+      // Si el usuario intenta una MUTACIÓN, debemos ser más estrictos.
+    }
+
+    return sorteo;
+  },
+
+  async create(data: CreateSorteoDTO, userId: string, bancaId?: string) {
     //  Obtener lotería con rulesJson para heredar digits
     const loteria = await prisma.loteria.findUnique({
       where: { id: data.loteriaId },
@@ -109,6 +153,7 @@ const SorteoService = {
     const s = await SorteoRepository.create({
       ...data,
       digits: finalDigits,
+      bancaId, // Pasar el bancaId (si viene)
     });
 
     // Invalidar cache de sorteos
@@ -141,12 +186,12 @@ const SorteoService = {
     return serializeSorteo(s);
   },
 
-  async update(id: string, data: UpdateSorteoDTO, userId: string) {
-    const existing = await prisma.sorteo.findUnique({
-      where: { id },
-      include: { loteria: { select: { name: true } } }
-    });
-    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+  async update(id: string, data: UpdateSorteoDTO, userId: string, bancaId?: string, role?: Role) {
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para modificar un sorteo global", 403);
+    }
     if (FINAL_STATES.has(existing.status)) {
       throw new AppError("No se puede editar un sorteo evaluado o cerrado", 409);
     }
@@ -178,10 +223,10 @@ const SorteoService = {
     if (data.scheduledAt) {
       details.scheduledAt = formatDateCRWithTZ(normalizeDateCR(data.scheduledAt, 'scheduledAt')); //  Normalizar y formatear con timezone
     }
-    if (data.digits && data.digits !== (existing as any).digits) {
+    if (data.digits && data.digits !== existing.digits) {
       details.digits = data.digits;
     }
-    if (data.isActive !== undefined && data.isActive !== (existing as any).isActive) {
+    if (data.isActive !== undefined && data.isActive !== existing.isActive) {
       details.isActive = data.isActive;
     }
 
@@ -207,12 +252,12 @@ const SorteoService = {
    * Activa o desactiva un sorteo sin importar su estado
    * Útil para activar sorteos que están en CLOSED o EVALUATED
    */
-  async setActive(id: string, isActive: boolean, userId: string) {
-    const existing = await prisma.sorteo.findUnique({
-      where: { id },
-      include: { loteria: { select: { name: true } } }
-    });
-    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+  async setActive(id: string, isActive: boolean, userId: string, bancaId?: string, role?: Role) {
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para modificar un sorteo global", 403);
+    }
 
     const s = await SorteoRepository.update(id, {
       isActive,
@@ -229,7 +274,7 @@ const SorteoService = {
       targetId: id,
       details: { 
         isActive, 
-        previousIsActive: (existing as any).isActive,
+        previousIsActive: existing.isActive,
         description: `Sorteo ${sorteoDesc} marcado como ${isActive ? 'ACTIVO' : 'INACTIVO'}`
       },
     });
@@ -241,12 +286,12 @@ const SorteoService = {
    * Fuerza el cambio de estado a OPEN desde cualquier estado (excepto EVALUATED)
    * Útil para reabrir sorteos que están en CLOSED
    */
-  async forceOpen(id: string, userId: string) {
-    const existing = await prisma.sorteo.findUnique({
-      where: { id },
-      include: { loteria: { select: { name: true } } }
-    });
-    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+  async forceOpen(id: string, userId: string, bancaId?: string, role?: Role) {
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para modificar un sorteo global", 403);
+    }
     if (existing.status === SorteoStatus.EVALUATED) {
       throw new AppError("No se puede reabrir un sorteo evaluado. Usa revert-evaluation primero.", 409);
     }
@@ -279,9 +324,12 @@ const SorteoService = {
    * Activa un sorteo y lo pone en estado OPEN en una sola operación
    * Útil para reactivar sorteos que están inactivos y cerrados
    */
-  async activateAndOpen(id: string, userId: string) {
-    const existing = await SorteoRepository.findById(id);
-    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+  async activateAndOpen(id: string, userId: string, bancaId?: string, role?: Role) {
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para modificar un sorteo global", 403);
+    }
     if (existing.status === SorteoStatus.EVALUATED) {
       throw new AppError("No se puede reabrir un sorteo evaluado. Usa revert-evaluation primero.", 409);
     }
@@ -310,7 +358,7 @@ const SorteoService = {
     const details: Prisma.InputJsonObject = {
       from: {
         status: existing.status,
-        isActive: (existing as any).isActive,
+        isActive: existing.isActive,
       },
       to: {
         status: SorteoStatus.OPEN,
@@ -341,7 +389,7 @@ const SorteoService = {
       payload: {
         sorteoId: id,
         previousStatus: existing.status,
-        previousIsActive: (existing as any).isActive,
+        previousIsActive: existing.isActive,
       },
     });
 
@@ -352,9 +400,12 @@ const SorteoService = {
    * Actualiza un sorteo a estado SCHEDULED y isActive=true
    * Útil para resetear sorteos a estado inicial
    */
-  async resetToScheduled(id: string, userId: string) {
-    const existing = await SorteoRepository.findById(id);
-    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+  async resetToScheduled(id: string, userId: string, bancaId?: string, role?: Role) {
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para modificar un sorteo global", 403);
+    }
 
     //  NUEVA VALIDACIÓN: Permitir reset desde SCHEDULED, OPEN, CLOSED, EVALUATED
     // (cualquier estado excepto aquellos que requieren pasos previos)
@@ -412,7 +463,7 @@ const SorteoService = {
         status: SorteoStatus.SCHEDULED,
         isActive: true,
         previousStatus: existing.status,
-        previousIsActive: (existing as any).isActive,
+        previousIsActive: existing.isActive,
         description: `Sorteo ${sorteoDesc} reseteado a estado PROGRAMADO`
       },
     });
@@ -420,16 +471,16 @@ const SorteoService = {
     return serializeSorteo(s);
   },
 
-  async open(id: string, userId: string) {
-    const existing = await prisma.sorteo.findUnique({
-      where: { id },
-      include: { loteria: { select: { name: true } } }
-    });
-    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+  async open(id: string, userId: string, bancaId?: string, role?: Role) {
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para modificar un sorteo global", 403);
+    }
     if (existing.status !== SorteoStatus.SCHEDULED) {
       throw new AppError("Solo se puede abrir desde SCHEDULED", 409);
     }
-    if (!(existing as any).isActive) {
+    if (!existing.isActive) {
       throw new AppError("No se puede abrir un sorteo inactivo", 409);
     }
 
@@ -460,12 +511,12 @@ const SorteoService = {
     return serializeSorteo(s);
   },
 
-  async close(id: string, userId: string) {
-    const existing = await prisma.sorteo.findUnique({
-      where: { id },
-      include: { loteria: { select: { name: true } } }
-    });
-    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+  async close(id: string, userId: string, bancaId?: string, role?: Role) {
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para modificar un sorteo global", 403);
+    }
     if (existing.status !== SorteoStatus.OPEN && existing.status !== SorteoStatus.EVALUATED) {
       throw new AppError("Solo se puede cerrar desde OPEN o EVALUATED", 409);
     }
@@ -499,7 +550,7 @@ const SorteoService = {
     return serializeSorteo(s);
   },
 
-  async evaluate(id: string, body: EvaluateSorteoDTO, userId: string) {
+  async evaluate(id: string, body: EvaluateSorteoDTO, userId: string, bancaId?: string, role?: Role) {
     const {
       winningNumber,
       extraMultiplierId = null,
@@ -509,18 +560,18 @@ const SorteoService = {
     if (!winningNumber?.length)
       throw new AppError("winningNumber es requerido", 400);
 
-    // 1) Cargar sorteo y validar estado
-    const existing = await prisma.sorteo.findUnique({
-      where: { id },
-      include: { loteria: { select: { name: true } } }
-    });
-    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+    // 1) Cargar sorteo y validar estado/propiedad
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para evaluar un sorteo global", 403);
+    }
     if (!EVALUABLE_STATES.has(existing.status)) {
       throw new AppError("Solo se puede evaluar desde OPEN", 409);
     }
 
     // 2) Validar longitud del número ganador según configuración del sorteo
-    const requiredDigits = (existing as any).digits ?? 2;
+    const requiredDigits = existing.digits ?? 2;
     if (winningNumber.length !== requiredDigits) {
       throw new AppError(
         `El número ganador debe tener ${requiredDigits} dígitos (recibido: ${winningNumber.length})`,
@@ -614,7 +665,13 @@ const SorteoService = {
     return serializeSorteo(evaluated);
   },
 
-  async remove(id: string, userId: string, reason?: string) {
+  async remove(id: string, userId: string, reason?: string, bancaId?: string, role?: Role) {
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para eliminar un sorteo global", 403);
+    }
+
     // Inactivación manual: deletedByCascade = false
     const s = await SorteoRepository.softDelete(id, userId, reason, false);
 
@@ -636,7 +693,12 @@ const SorteoService = {
     return serializeSorteo(s);
   },
 
-  async restore(id: string, userId: string) {
+  async restore(id: string, userId: string, bancaId?: string, role?: Role) {
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para restaurar un sorteo global", 403);
+    }
     const s = await SorteoRepository.restore(id);
 
     // Invalidar cache de sorteos
@@ -654,12 +716,12 @@ const SorteoService = {
     return serializeSorteo(s);
   },
 
-  async revertEvaluation(id: string, userId: string, reason?: string) {
-    const existing = await prisma.sorteo.findUnique({
-      where: { id },
-      include: { loteria: { select: { name: true } } }
-    });
-    if (!existing) throw new AppError("Sorteo no encontrado", 404);
+  async revertEvaluation(id: string, userId: string, reason?: string, bancaId?: string, role?: Role) {
+    const existing = await this.validateSorteoOwnership(id, bancaId, role);
+    
+    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
+      throw new AppError("No tiene permisos para revertir un sorteo global", 403);
+    }
     if (existing.status !== SorteoStatus.EVALUATED) {
       throw new AppError("Solo se puede revertir un sorteo evaluado", 409);
     }

@@ -45,15 +45,14 @@ async function resolveExtraMultiplierX(
   return mul.valueX;
 }
 
-const toPrismaCreate = (d: CreateSorteoDTO): Prisma.SorteoCreateInput => ({
+const toPrismaCreate = (d: CreateSorteoDTO & { bancaId?: string }): Prisma.SorteoCreateInput => ({
   name: d.name,
-  //  Confiar en la fecha ya normalizada por zodDateCR() en el validator
   scheduledAt: d.scheduledAt instanceof Date
     ? d.scheduledAt
-    : parseCostaRicaDateTime(d.scheduledAt), // Fallback por si acaso
+    : parseCostaRicaDateTime(d.scheduledAt),
   loteria: { connect: { id: d.loteriaId } },
-  digits: d.digits ?? 2, //  Mapear campo digits (default 2 si no viene, aunque debería venir del service)
-  // extraOutcomeCode, extraMultiplierId/X se quedan nulos al crear
+  digits: d.digits ?? 2,
+  banca: d.bancaId ? { connect: { id: d.bancaId } } : undefined,
 });
 
 const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
@@ -71,7 +70,7 @@ const toPrismaUpdate = (d: UpdateSorteoDTO): Prisma.SorteoUpdateInput => ({
 });
 
 const SorteoRepository = {
-  async create(data: CreateSorteoDTO) {
+  async create(data: CreateSorteoDTO & { bancaId?: string }) {
     const s = await prisma.sorteo.create({
       data: toPrismaCreate(data),
       include: {

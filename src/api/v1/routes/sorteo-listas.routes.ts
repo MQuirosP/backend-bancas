@@ -6,11 +6,13 @@ import {
     validateIncludeLista,
 } from "../validators/sorteo-listas.validator";
 import { protect } from "../../../middlewares/auth.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import { requireAdminOrBanca, requireAdminBancaOrVentana } from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
 
 router.use(protect);
+router.use(bancaContextMiddleware);
 
 // GET /api/v1/sorteos/:id/listas - Obtener resumen de listas (ADMIN + BANCA + VENTANA)
 router.get("/:id/listas", requireAdminBancaOrVentana, validateIdParam, SorteoListasController.getListas);

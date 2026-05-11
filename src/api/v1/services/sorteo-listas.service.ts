@@ -51,6 +51,7 @@ export const SorteoListasService = {
      */
     async getListas(
         sorteoId: string,
+        bancaId: string,
         includeExcluded: boolean = true,
         vendedorIdFilter?: string,
         multiplierIdFilter?: string,
@@ -118,6 +119,7 @@ export const SorteoListasService = {
                 END
             ) = m.id
             WHERE t."sorteoId" = CAST(${sorteoId} AS uuid)
+              AND t."bancaId" = CAST(${bancaId} AS uuid)
               AND t."deletedAt" IS NULL
               AND j."deletedAt" IS NULL
               AND j."isActive" = TRUE
@@ -132,7 +134,7 @@ export const SorteoListasService = {
 
         // 3. Cargar registros de exclusión de la tabla (fuente de verdad para exclusionScope)
         const exclusionRecords = await prisma.sorteoListaExclusion.findMany({
-            where: { sorteoId },
+            where: { sorteoId, bancaId },
             select: { id: true, ventanaId: true, vendedorId: true, multiplierId: true },
         });
 
@@ -454,7 +456,8 @@ export const SorteoListasService = {
     async excludeLista(
         sorteoId: string,
         data: ExcludeListaDTO,
-        userId: string
+        userId: string,
+        bancaId: string
     ): Promise<ExcludeIncludeResponse> {
         // Verificar que el sorteo existe y está en estado OPEN
         const sorteo = await prisma.sorteo.findUnique({
@@ -487,7 +490,7 @@ export const SorteoListasService = {
 
         let ventana = await prisma.ventana.findUnique({
             where: { id: data.ventanaId },
-            select: { id: true, name: true, isActive: true },
+            select: { id: true, name: true, isActive: true, bancaId: true },
         });
 
         // Fallback: Si no se encuentra como ventana, buscar como usuario (Listero)
@@ -508,7 +511,7 @@ export const SorteoListasService = {
                     role: true,
                     ventanaId: true,
                     ventana: {
-                        select: { id: true, name: true, isActive: true }
+                        select: { id: true, name: true, isActive: true, bancaId: true }
                     }
                 }
             });
@@ -524,7 +527,7 @@ export const SorteoListasService = {
                     action: "EXCLUDE_LISTA_RESOLVED_FROM_USER",
                     payload: {
                         originalId: user.id,
-                        resolvedVentanaId: ventana.id,
+                        resolvedVentanaId: (ventana as any).id,
                         message: "ID resuelto exitosamente desde usuario listero"
                     }
                 });
@@ -542,17 +545,18 @@ export const SorteoListasService = {
             }
         });
 
-        if (!ventana) {
+        if (!ventana || ventana.bancaId !== bancaId) {
             logger.warn({
                 layer: "service",
                 action: "OPERATIONAL_ERROR",
                 payload: {
-                    message: "Ventana no encontrada (ni como ventana ni como usuario listero)",
+                    message: "Ventana no encontrada o no pertenece a la banca",
                     ventanaId: data.ventanaId,
-                    sorteoId
+                    sorteoId,
+                    bancaId
                 }
             });
-            throw new AppError("Ventana no encontrada", 404);
+            throw new AppError("Ventana no encontrada o acceso denegado", 404);
         }
 
         // Si se especifica vendedorId, verificar que existe y pertenece a la ventana
@@ -598,6 +602,7 @@ export const SorteoListasService = {
             exclusionRecord = await prisma.sorteoListaExclusion.create({
                 data: {
                     sorteoId,
+                    bancaId,
                     ventanaId: data.ventanaId,
                     vendedorId: data.vendedorId || null,
                     multiplierId: data.multiplierId || null,
@@ -844,7 +849,8 @@ export const SorteoListasService = {
     async includeLista(
         sorteoId: string,
         data: IncludeListaDTO,
-        userId: string
+        userId: string,
+        bancaId: string
     ): Promise<{ success: boolean; message: string }> {
         logger.info({
             layer: "service",
@@ -878,13 +884,13 @@ export const SorteoListasService = {
         // un Ventana.id o un User.id (listero); normalizamos a Ventana.id
         let ventanaInclude = await prisma.ventana.findUnique({
             where: { id: data.ventanaId },
-            select: { id: true },
+            select: { id: true, bancaId: true },
         });
 
         if (!ventanaInclude) {
             const user = await prisma.user.findUnique({
                 where: { id: data.ventanaId },
-                select: { role: true, ventana: { select: { id: true } } },
+                select: { role: true, ventana: { select: { id: true, bancaId: true } } },
             });
             if (user?.role === 'VENTANA' && user.ventana) {
                 ventanaInclude = user.ventana;
@@ -892,8 +898,8 @@ export const SorteoListasService = {
             }
         }
 
-        if (!ventanaInclude) {
-            throw new AppError("Ventana no encontrada", 404);
+        if (!ventanaInclude || ventanaInclude.bancaId !== bancaId) {
+            throw new AppError("Ventana no encontrada o acceso denegado", 404);
         }
 
         //  PASO 1: Eliminar registro de sorteo_lista_exclusion (tabla de auditoría)
@@ -1123,6 +1129,7 @@ export const SorteoListasService = {
         fromDate?: Date;
         toDate?: Date;
         loteriaId?: string;
+        bancaId: string;
     }): Promise<ListaExclusionResponse[]> {
         // Construir WHERE sobre la tabla de exclusiones
         const exclusionWhere: any = {};
@@ -1130,6 +1137,8 @@ export const SorteoListasService = {
         if (filters.sorteoId) {
             exclusionWhere.sorteoId = filters.sorteoId;
         }
+
+        exclusionWhere.bancaId = filters.bancaId;
 
         if (filters.ventanaId) {
             exclusionWhere.ventanaId = filters.ventanaId;
@@ -1198,7 +1207,7 @@ export const SorteoListasService = {
         // Clave: ventanaId:vendedorId|null:multiplierId|null
         const jugadaTotals = new Map<string, { totalJugadas: number; totalAmount: number }>();
 
-        const jugadaTicketWhere: any = { deletedAt: null };
+        const jugadaTicketWhere: any = { deletedAt: null, bancaId: filters.bancaId };
         if (filters.sorteoId) jugadaTicketWhere.sorteoId = filters.sorteoId;
         if (filters.ventanaId) jugadaTicketWhere.ventanaId = filters.ventanaId;
         if (filters.vendedorId) jugadaTicketWhere.vendedorId = filters.vendedorId;

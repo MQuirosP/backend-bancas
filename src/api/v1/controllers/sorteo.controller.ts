@@ -4,67 +4,82 @@ import { AuthenticatedRequest } from "../../../core/types";
 
 export const SorteoController = {
   async create(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.create(req.body, req.user!.id);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const s = await SorteoService.create(req.body, req.user!.id, bancaId);
     res.status(201).json({ success: true, data: s });
   },
 
   async update(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.update(req.params.id, req.body, req.user!.id);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const s = await SorteoService.update(req.params.id, req.body, req.user!.id, bancaId, req.user!.role);
     res.json({ success: true, data: s });
   },
 
   async setActive(req: AuthenticatedRequest, res: Response) {
     const isActive = req.body.isActive === true || req.body.isActive === "true";
-    const s = await SorteoService.setActive(req.params.id, isActive, req.user!.id);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const s = await SorteoService.setActive(req.params.id, isActive, req.user!.id, bancaId, req.user!.role);
     res.json({ success: true, data: s });
   },
 
   async open(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.open(req.params.id, req.user!.id);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const s = await SorteoService.open(req.params.id, req.user!.id, bancaId, req.user!.role);
     res.json({ success: true, data: s });
   },
 
   async forceOpen(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.forceOpen(req.params.id, req.user!.id);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const s = await SorteoService.forceOpen(req.params.id, req.user!.id, bancaId, req.user!.role);
     res.json({ success: true, data: s });
   },
 
   async activateAndOpen(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.activateAndOpen(req.params.id, req.user!.id);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const s = await SorteoService.activateAndOpen(req.params.id, req.user!.id, bancaId, req.user!.role);
     res.json({ success: true, data: s });
   },
 
   async close(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.close(req.params.id, req.user!.id);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const s = await SorteoService.close(req.params.id, req.user!.id, bancaId, req.user!.role);
     res.json({ success: true, data: s });
   },
 
   async evaluate(req: AuthenticatedRequest, res: Response) {
     // Body ya validado por validateEvaluateSorteo
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
     const s = await SorteoService.evaluate(
       req.params.id,
       req.body,
-      req.user!.id
+      req.user!.id,
+      bancaId,
+      req.user!.role
     );
     res.json({ success: true, data: s });
   },
 
   async delete(req: AuthenticatedRequest, res: Response) {
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
     const s = await SorteoService.remove(
       req.params.id,
       req.user!.id,
-      req.body?.reason
+      req.body?.reason,
+      bancaId,
+      req.user!.role
     );
     res.json({ success: true, data: s });
   },
 
   async restore(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.restore(req.params.id, req.user!.id);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const s = await SorteoService.restore(req.params.id, req.user!.id, bancaId, req.user!.role);
     res.json({ success: true, data: s });
   },
 
   async resetToScheduled(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.resetToScheduled(req.params.id, req.user!.id);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const s = await SorteoService.resetToScheduled(req.params.id, req.user!.id, bancaId, req.user!.role);
     res.json({ success: true, data: s });
   },
 
@@ -176,10 +191,13 @@ export const SorteoController = {
   },
 
   async revertEvaluation(req: AuthenticatedRequest, res: Response) {
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
     const s = await SorteoService.revertEvaluation(
       req.params.id,
       req.user!.id,
-      req.body?.reason
+      req.body?.reason,
+      bancaId,
+      req.user!.role
     );
     res.json({ success: true, data: s });
   },
