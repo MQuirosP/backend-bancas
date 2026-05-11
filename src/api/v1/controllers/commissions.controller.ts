@@ -10,6 +10,7 @@ import { resolveDateRange } from "../../../utils/dateRange";
 import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
 import prisma from "../../../core/prismaClient";
 import { ExportFormat } from "../types/commissions-export.types";
+import { getActiveBancaId } from "../../../middlewares/bancaContext.middleware";
 
 export const CommissionsController = {
   /**
@@ -224,6 +225,7 @@ export const CommissionsController = {
       userId: req.user.id,
       role: req.user.role,
       ventanaId: req.user.ventanaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, rest);
 
@@ -354,6 +356,7 @@ export const CommissionsController = {
       userId: req.user.id,
       role: req.user.role,
       ventanaId: req.user.ventanaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, rest);
 

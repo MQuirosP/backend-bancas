@@ -791,7 +791,11 @@ export const CommissionsService = {
           AND j."deletedAt" IS NULL
           ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
           ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-          ${filters.bancaId ? Prisma.sql`AND t."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+          ${filters.bancaId ? Prisma.sql`AND EXISTS (
+            SELECT 1 FROM "Ventana" v
+            WHERE v.id = t."ventanaId"
+            AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
+          )` : Prisma.empty}
           ${exclusionJugadaFilter}
         ),
         multiplier_summary AS (
