@@ -18,13 +18,15 @@ import {
   validateIncludeLista,
 } from "../validators/sorteo-listas.validator";
 import { protect } from "../../../middlewares/auth.middleware";
-import { requireAdmin, requireAdminOrVentana } from "../../../middlewares/roleGuards.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
+import { requireAdmin, requireAdminOrBanca, requireAdminBancaOrVentana } from "../../../middlewares/roleGuards.middleware";
 import { SorteosAutoController } from "../controllers/sorteosAuto.controller";
 import { validateBody } from "../../../middlewares/validate.middleware";
 import { UpdateSorteosAutoConfigSchema } from "../validators/sorteosAuto.validator";
 
 const router = Router();
 router.use(protect);
+router.use(bancaContextMiddleware);
 
 // IMPORTANTE: Rutas literales específicas DEBEN ir ANTES de las rutas con parámetros :id
 // Rutas de automatización de sorteos (rutas literales primero)
@@ -36,74 +38,74 @@ router.patch(
   SorteosAutoController.updateConfig
 );
 router.get('/auto-status', SorteosAutoController.getHealthStatus);
-router.post('/auto-open/execute', requireAdmin, SorteosAutoController.executeAutoOpen);
-router.post('/auto-create/execute', requireAdmin, SorteosAutoController.executeAutoCreate);
-router.post('/auto-close/execute', requireAdmin, SorteosAutoController.executeAutoClose);
+router.post('/auto-open/execute', requireAdminOrBanca, SorteosAutoController.executeAutoOpen);
+router.post('/auto-create/execute', requireAdminOrBanca, SorteosAutoController.executeAutoCreate);
+router.post('/auto-close/execute', requireAdminOrBanca, SorteosAutoController.executeAutoClose);
 
 // Admin - Rutas de sorteos
-router.post("/", requireAdmin, validateCreateSorteo, SorteoController.create);
+router.post("/", requireAdminOrBanca, validateCreateSorteo, SorteoController.create);
 router.put(
   "/:id",
-  requireAdmin,
+  requireAdminOrBanca,
   validateIdParam,
   validateUpdateSorteo,
   SorteoController.update
 );
 router.patch(
   "/:id",
-  requireAdmin,
+  requireAdminOrBanca,
   validateIdParam,
   validateUpdateSorteo,
   SorteoController.update
 );
 router.patch(
   "/:id/restore",
-  requireAdmin,
+  requireAdminOrBanca,
   validateIdParam,
   SorteoController.restore
 );
 router.patch(
   "/:id/reset-to-scheduled",
-  requireAdmin,
+  requireAdminOrBanca,
   validateIdParam,
   SorteoController.resetToScheduled
 );
 router.patch(
   "/:id/close",
-  requireAdmin,
+  requireAdminOrBanca,
   validateIdParam,
   SorteoController.close
 );
-router.patch("/:id/open", requireAdmin, validateIdParam, SorteoController.open);
-router.patch("/:id/force-open", requireAdmin, validateIdParam, SorteoController.forceOpen);
-router.patch("/:id/activate-and-open", requireAdmin, validateIdParam, SorteoController.activateAndOpen);
+router.patch("/:id/open", requireAdminOrBanca, validateIdParam, SorteoController.open);
+router.patch("/:id/force-open", requireAdminOrBanca, validateIdParam, SorteoController.forceOpen);
+router.patch("/:id/activate-and-open", requireAdminOrBanca, validateIdParam, SorteoController.activateAndOpen);
 router.patch(
   "/:id/set-active",
-  requireAdmin,
+  requireAdminOrBanca,
   validateIdParam,
   validateSetActiveSorteo,
   SorteoController.setActive
 );
 router.patch(
   "/:id/evaluate",
-  requireAdmin,
+  requireAdminOrBanca,
   validateIdParam,
   validateEvaluateSorteo,
   SorteoController.evaluate
 );
 router.patch(
   "/:id/revert-evaluation",
-  requireAdmin,
+  requireAdminOrBanca,
   validateIdParam,
   validateRevertSorteo,
   SorteoController.revertEvaluation
 );
-router.delete("/:id", requireAdmin, validateIdParam, SorteoController.delete);
+router.delete("/:id", requireAdminOrBanca, validateIdParam, SorteoController.delete);
 
 // Rutas de exclusión de listas (ADMIN only, pero VENTANA puede ver el resumen)
-router.get("/:id/listas", requireAdminOrVentana, validateListaIdParam, SorteoListasController.getListas);
-router.post("/:id/listas/exclude", requireAdmin, validateListaIdParam, validateExcludeLista, SorteoListasController.excludeLista);
-router.post("/:id/listas/include", requireAdmin, validateListaIdParam, validateIncludeLista, SorteoListasController.includeLista);
+router.get("/:id/listas", requireAdminBancaOrVentana, validateListaIdParam, SorteoListasController.getListas);
+router.post("/:id/listas/exclude", requireAdminOrBanca, validateListaIdParam, validateExcludeLista, SorteoListasController.excludeLista);
+router.post("/:id/listas/include", requireAdminOrBanca, validateListaIdParam, validateIncludeLista, SorteoListasController.includeLista);
 
 // Lecturas
 // IMPORTANTE: Las rutas literales deben ir ANTES de las rutas con parámetros

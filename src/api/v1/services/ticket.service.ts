@@ -1165,6 +1165,7 @@ export const TicketService = {
       sorteoStatus?: string;
       page?: number;
       pageSize?: number;
+      bancaId?: string;
     },
     role: string,
     userId: string
@@ -1236,6 +1237,10 @@ export const TicketService = {
       if (params.loteriaId) sqlWhere.push(Prisma.sql`t."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
       if (params.sorteoId) sqlWhere.push(Prisma.sql`t."sorteoId" = CAST(${params.sorteoId} AS uuid)`);
       if (params.ventanaId) sqlWhere.push(Prisma.sql`t."ventanaId" = CAST(${params.ventanaId} AS uuid)`);
+      if (params.bancaId) {
+        // Unir con Ventana para filtrar por bancaId
+        sqlWhere.push(Prisma.sql`t."ventanaId" IN (SELECT id FROM "Ventana" WHERE "bancaId" = CAST(${params.bancaId} AS uuid))`);
+      }
 
       if (params.vendedorId) {
         sqlWhere.push(Prisma.sql`t."vendedorId" = CAST(${params.vendedorId} AS uuid)`);
@@ -2492,8 +2497,10 @@ export const TicketService = {
       }
 
       // Verificar permisos (RBAC)
-      if (role === Role.VENDEDOR && ticket.vendedorId !== userId) {
-        throw new AppError("No autorizado para ver este ticket", 403);
+      if (role === Role.VENDEDOR) {
+        if (ticket.vendedorId !== userId) {
+          throw new AppError("No autorizado para ver este ticket", 403);
+        }
       } else if (role === Role.VENTANA) {
         const user = await prisma.user.findUnique({
           where: { id: userId },
@@ -2502,7 +2509,24 @@ export const TicketService = {
         if (!user?.ventanaId || ticket.ventanaId !== user.ventanaId) {
           throw new AppError("No autorizado para ver este ticket", 403);
         }
+      } else if (role === Role.BANCA) {
+        // BANCA: solo puede ver tickets de su propia banca
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { bancaId: true },
+        });
+        
+        // Obtener bancaId del ticket a través de la ventana
+        const ticketBanca = await prisma.ventana.findUnique({
+          where: { id: ticket.ventanaId },
+          select: { bancaId: true }
+        });
+
+        if (!user?.bancaId || ticketBanca?.bancaId !== user.bancaId) {
+          throw new AppError("No autorizado para ver este ticket", 403);
+        }
       }
+      // ADMIN puede ver cualquier ticket
       // ADMIN puede ver cualquier ticket
 
       // Obtener configuraciones de impresión

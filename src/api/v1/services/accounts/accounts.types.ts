@@ -18,7 +18,7 @@ export interface AccountsFilters {
     vendedorId?: string;
     bancaId?: string; //  NUEVO: Filtro opcional por banca (puede combinarse con ventanaId/vendedorId)
     sort?: "asc" | "desc";
-    userRole?: "ADMIN" | "VENTANA" | "VENDEDOR"; //  CRÍTICO: Rol del usuario para calcular balance correctamente
+    userRole?: Role; //  CRÍTICO: Rol del usuario para calcular balance correctamente
 }
 
 /**

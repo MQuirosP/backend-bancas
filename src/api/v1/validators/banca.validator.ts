@@ -7,13 +7,14 @@ export const BancaIdParamSchema = z.object({
 export const CreateBancaSchema = z.object({
   name: z.string().trim().min(2).max(100),
   code: z.string().trim().min(2).max(20),
-  email: z.email("email inválido").trim().toLowerCase().optional(),
+  email: z.string().email("email inválido").trim().toLowerCase().optional(),
   address: z.string().trim().max(200).optional(),
   phone: z.string().trim().max(20).optional(),
   isActive: z.coerce.boolean().optional(),
   defaultMinBet: z.coerce.number().positive().min(1).optional(),
   globalMaxPerNumber: z.coerce.number().positive().min(1).optional(),
   salesCutoffMinutes: z.coerce.number().int().positive().optional(),
+  vendorLimit: z.coerce.number().int().nonnegative().optional(),
 }).strict();
 
 export const UpdateBancaSchema = CreateBancaSchema.partial().strict();

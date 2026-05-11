@@ -4,7 +4,8 @@
 
 import { Router } from 'express';
 import { protect } from '../../../middlewares/auth.middleware';
-import { requireAdmin, requireAdminOrVentana } from '../../../middlewares/roleGuards.middleware';
+import { bancaContextMiddleware } from '../../../middlewares/bancaContext.middleware';
+import { requireAdmin, requireAdminOrBanca, requireAdminBancaOrVentana } from '../../../middlewares/roleGuards.middleware';
 import { ReportsController } from '../controllers/reports.controller';
 import { validateQuery, validateParams } from '../../../middlewares/validate.middleware';
 import {
@@ -27,32 +28,33 @@ const router = Router();
 
 // Middleware de autenticación PRIMERO
 router.use(protect);
+router.use(bancaContextMiddleware);
 
 // Reportes de Tickets
 router.get(
   '/tickets/winners-payments',
-  requireAdmin,
+  requireAdminOrBanca,
   validateQuery(WinnersPaymentsQuerySchema),
   ReportsController.getWinnersPayments
 );
 
 router.get(
   '/tickets/numbers-analysis',
-  requireAdminOrVentana,
+  requireAdminBancaOrVentana,
   validateQuery(NumbersAnalysisQuerySchema),
   ReportsController.getNumbersAnalysis
 );
 
 router.get(
   '/tickets/numbers-analysis/detail',
-  requireAdmin,
+  requireAdminOrBanca,
   validateQuery(NumbersAnalysisDetailQuerySchema),
   ReportsController.getNumbersAnalysisDetail
 );
 
 router.get(
   '/tickets/cancelled',
-  requireAdmin,
+  requireAdminOrBanca,
   validateQuery(CancelledTicketsQuerySchema),
   ReportsController.getCancelledTickets
 );
@@ -60,7 +62,7 @@ router.get(
 // Reportes de Loterías
 router.get(
   '/loterias/performance',
-  requireAdmin,
+  requireAdminOrBanca,
   validateQuery(LoteriasPerformanceQuerySchema),
   ReportsController.getLoteriasPerformance
 );
@@ -68,7 +70,7 @@ router.get(
 // Reportes de Listeros
 router.get(
   '/ventanas/ranking',
-  requireAdmin,
+  requireAdminOrBanca,
   validateQuery(VentanasRankingQuerySchema),
   ReportsController.getVentanasRanking
 );
@@ -76,14 +78,14 @@ router.get(
 // Reportes de Vendedores
 router.get(
   '/vendedores/commissions-chart',
-  requireAdmin,
+  requireAdminOrBanca,
   validateQuery(VendedoresCommissionsChartQuerySchema),
   ReportsController.getVendedoresCommissionsChart
 );
 
 router.get(
   '/vendedores/ranking',
-  requireAdmin,
+  requireAdminOrBanca,
   validateQuery(VendedoresRankingQuerySchema),
   ReportsController.getVendedoresRanking
 );
@@ -91,21 +93,21 @@ router.get(
 // Nuevos Endpoints de Tickets
 router.get(
   '/tickets/exposure',
-  requireAdmin,
+  requireAdminOrBanca,
   validateQuery(ExposureQuerySchema),
   ReportsController.getExposure
 );
 
 router.get(
   '/tickets/profitability',
-  requireAdmin,
+  requireAdminOrBanca,
   validateQuery(ProfitabilityQuerySchema),
   ReportsController.getProfitability
 );
 
 router.get(
   '/tickets/time-analysis',
-  requireAdmin,
+  requireAdminOrBanca,
   validateQuery(TimeAnalysisQuerySchema),
   ReportsController.getTimeAnalysis
 );

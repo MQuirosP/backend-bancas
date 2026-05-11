@@ -100,6 +100,30 @@ export const UserService = {
         role: Role.VENDEDOR,
         ventanaId: enforcedVentanaId,
       } as CreateUserDTO;
+    } else if (actingRole === Role.BANCA) {
+      //  NUEVO: Aislamiento para rol BANCA
+      if (dto.role && !( [Role.VENTANA, Role.VENDEDOR] as Role[]).includes(dto.role as Role)) {
+        throw new AppError('Solo puedes crear usuarios VENTANA o VENDEDOR', 403);
+      }
+      if (!dto.ventanaId) {
+        throw new AppError('ventanaId is required for role BANCA', 400);
+      }
+      
+      // Validar que la ventana pertenece a una de sus bancas
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: dto.ventanaId },
+        select: { bancaId: true },
+      });
+      
+      if (!ventana) throw new AppError('Ventana no encontrada', 404);
+      
+      const assignment = await prisma.userBanca.findFirst({
+        where: { userId: actorId, bancaId: ventana.bancaId },
+      });
+      
+      if (!assignment) {
+        throw new AppError('No tienes permiso para crear usuarios en esta ventana/banca', 403, 'FORBIDDEN');
+      }
     }
 
     const username = dto.username.trim();
@@ -109,8 +133,8 @@ export const UserService = {
     const phone = dto.phone !== undefined ? normalizePhone(dto.phone) : null;
     const isActive = dto.isActive ?? true;
 
-    // Regla role  ventanaId
-    if (role === Role.ADMIN) {
+    // Regla role -> ventanaId / bancaId
+    if (role === Role.ADMIN || role === Role.BANCA) {
       dto.ventanaId = null as any;
     } else {
       if (!dto.ventanaId) throw new AppError('ventanaId is required for role ' + role, 400);
@@ -142,6 +166,62 @@ export const UserService = {
       if (userByCode) throw new AppError('Code already in use', 409);
     }
 
+    // VALIDACIÓN DE LÍMITE DE VENDEDORES
+    if (role === Role.VENDEDOR) {
+      // 1. Obtener el ID de la banca (ya sea del DTO o via ventanaId)
+      const targetVentanaId = enforcedVentanaId ?? dto.ventanaId!;
+      let targetBancaId = dto.bancaId;
+      
+      if (!targetBancaId && targetVentanaId) {
+        const ventana = await withConnectionRetry(
+          () => prisma.ventana.findUnique({ 
+            where: { id: targetVentanaId }, 
+            select: { bancaId: true } 
+          }),
+          { context: 'UserService.create.getBancaIdForLimit' }
+        );
+        targetBancaId = ventana?.bancaId || null;
+      }
+
+      if (targetBancaId) {
+        // 2. Consultar el límite definido en la banca
+        const banca = await withConnectionRetry(
+          () => prisma.banca.findUnique({
+            where: { id: targetBancaId! },
+            select: { vendorLimit: true }
+          }),
+          { context: 'UserService.create.getBancaLimit' }
+        );
+
+        // 3. Si hay un límite definido, contar vendedores actuales
+        if (banca?.vendorLimit && banca.vendorLimit > 0) {
+          const currentSellers = await withConnectionRetry(
+            () => prisma.user.count({
+              where: { 
+                bancaId: targetBancaId!,
+                role: Role.VENDEDOR,
+                isActive: true,
+                deletedAt: null
+              }
+            }),
+            { context: 'UserService.create.countSellers' }
+          );
+
+          // 4. Validar cupo
+          if (currentSellers >= banca.vendorLimit) {
+            throw new AppError(
+              `La banca ha alcanzado su límite de ${banca.vendorLimit} vendedores activos.`, 
+              403, 
+              'QUOTA_EXCEEDED'
+            );
+          }
+        }
+        
+        // Asegurar que el DTO tenga el bancaId para la creación del usuario
+        dto.bancaId = targetBancaId;
+      }
+    }
+
     const hashed = await hashPassword(dto.password);
 
     const created = await UserRepository.create({
@@ -151,17 +231,32 @@ export const UserService = {
       phone,
       password: hashed,
       role,
-      ventanaId: role === Role.ADMIN ? null : (enforcedVentanaId ?? dto.ventanaId!),
+      ventanaId: (role === Role.ADMIN || role === Role.BANCA) ? null : (enforcedVentanaId ?? dto.ventanaId!),
+      bancaId: dto.bancaId,
       code,                 
       isActive: actingRole === Role.VENTANA ? true : isActive,             
     });
+
+    // Sincronizar con UserBanca si es rol BANCA y tiene bancaId
+    if (role === Role.BANCA && dto.bancaId) {
+      await withConnectionRetry(
+        () => prisma.userBanca.create({
+          data: {
+            userId: created.id,
+            bancaId: dto.bancaId as string,
+            isDefault: true
+          }
+        }),
+        { context: 'UserService.create.syncUserBanca' }
+      );
+    }
 
     const result = await withConnectionRetry(
       () => prisma.user.findUnique({
         where: { id: created.id },
         select: {
           id: true, name: true, username: true, email: true, role: true,
-          ventanaId: true, isActive: true, code: true,
+          ventanaId: true, bancaId: true, isActive: true, code: true,
           createdAt: true, settings: true, platform: true, appVersion: true,
         },
       }),
@@ -193,7 +288,7 @@ export const UserService = {
         where: { id },
         select: {
           id: true, name: true, email: true, username: true, role: true,
-          ventanaId: true, isActive: true, code: true,
+          ventanaId: true, bancaId: true, isActive: true, code: true,
           createdAt: true, settings: true, platform: true, appVersion: true,
         },
       }),
@@ -211,9 +306,32 @@ export const UserService = {
     ventanaId?: string;
     bancaId?: string;
     isActive?: boolean;
+    actor?: { id: string; role: Role };
   }) {
     const page = params.page && params.page > 0 ? params.page : 1;
     const pageSize = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
+
+    let effectiveBancaId = params.bancaId;
+    let allowedBancaIds: string[] | undefined = undefined;
+
+    //  NUEVO: Aislamiento para rol BANCA
+    if (params.actor && params.actor.role === Role.BANCA) {
+      const userBancas = await prisma.userBanca.findMany({
+        where: { userId: params.actor.id },
+        select: { bancaId: true },
+      });
+      const assignedBancaIds = userBancas.map(ub => ub.bancaId);
+
+      if (effectiveBancaId) {
+        if (!assignedBancaIds.includes(effectiveBancaId)) {
+          throw new AppError('No tienes permiso para ver usuarios de esta banca', 403, 'FORBIDDEN');
+        }
+      } else {
+        // Si no especifica banca, filtrar por todas las asignadas
+        allowedBancaIds = assignedBancaIds;
+        if (allowedBancaIds.length === 0) return { data: [], meta: { total: 0, page, pageSize, totalPages: 0, hasNextPage: false, hasPrevPage: false } };
+      }
+    }
 
     const { data, total } = await UserRepository.listPaged({
       page,
@@ -221,14 +339,36 @@ export const UserService = {
       role: params.role as Role | undefined,
       search: params.search?.trim() || undefined,
       ventanaId: params.ventanaId,
-      bancaId: params.bancaId,
+      bancaId: effectiveBancaId,
       isActive: params.isActive,
     });
 
-    const totalPages = Math.ceil(total / pageSize);
+    //  NUEVO: Si hay múltiples bancas permitidas y no se pasó una específica,
+    // necesitamos que el repositorio soporte `bancaId: { in: allowedBancaIds }`.
+    // Pero por ahora, si allowedBancaIds está presente, haremos una query manual o ajustaremos el repo.
+    
+    // CORRECCIÓN: Ajustar query si es BANCA sin bancaId específico
+    let finalData = data;
+    let finalTotal = total;
+
+    if (allowedBancaIds && !effectiveBancaId) {
+        const { data: isolatedData, total: isolatedTotal } = await UserRepository.listPaged({
+            page,
+            pageSize,
+            role: params.role as Role | undefined,
+            search: params.search?.trim() || undefined,
+            ventanaId: params.ventanaId,
+            isActive: params.isActive,
+            bancaId: { in: allowedBancaIds }, 
+        });
+        finalData = isolatedData;
+        finalTotal = isolatedTotal;
+    }
+
+    const totalPages = Math.ceil(finalTotal / pageSize);
     return {
-      data,
-      meta: { total, page, pageSize, totalPages, hasNextPage: page < totalPages, hasPrevPage: page > 1 },
+      data: finalData,
+      meta: { total: finalTotal, page, pageSize, totalPages, hasNextPage: page < totalPages, hasPrevPage: page > 1 },
     };
   },
 
@@ -243,7 +383,7 @@ export const UserService = {
       () => prisma.user.findUnique({
         where: { id },
         select: {
-          id: true, username: true, email: true, role: true, ventanaId: true, code: true,
+          id: true, username: true, email: true, role: true, ventanaId: true, code: true, bancaId: true,
         },
       }),
       { context: 'UserService.update.fetchCurrent' }
@@ -261,6 +401,26 @@ export const UserService = {
       for (const field of forbiddenForVentana) {
         if ((dto as any)[field] !== undefined) {
           throw new AppError(`Campo no permitido para VENTANA: ${field}`, 403);
+        }
+      }
+    } else if (actingRole === Role.BANCA) {
+      //  NUEVO: Aislamiento para rol BANCA
+      if (!actorId) throw new AppError('No autenticado', 401);
+      if (!editingSelf) {
+        // Verificar que el usuario a editar pertenece a sus bancas
+        if (!current.ventanaId) throw new AppError('No puedes modificar este usuario', 403);
+        const ventana = await prisma.ventana.findUnique({
+          where: { id: current.ventanaId },
+          select: { bancaId: true },
+        });
+        if (!ventana) throw new AppError('Ventana no encontrada', 404);
+        
+        const assignment = await prisma.userBanca.findFirst({
+          where: { userId: actorId, bancaId: ventana.bancaId },
+        });
+        
+        if (!assignment) {
+          throw new AppError('No tienes permiso para modificar este usuario (fuera de tus bancas)', 403, 'FORBIDDEN');
         }
       }
     }
@@ -309,8 +469,8 @@ export const UserService = {
       const newRole = dto.role as Role;
       toUpdate.role = newRole;
 
-      if (newRole === Role.ADMIN) {
-        // Forzar desvinculación
+      if (newRole === Role.ADMIN || newRole === Role.BANCA) {
+        // Forzar desvinculación de ventana
         toUpdate.ventanaId = null;
       } else {
         // Requiere ventanaId (nuevo o conservar el actual)
@@ -324,14 +484,73 @@ export const UserService = {
         throw new AppError('No puedes cambiar la ventana asociada', 403);
       }
       // Cambian solo ventanaId (sin cambiar role): validar si el role actual lo requiere
-      if (current.role === Role.ADMIN) {
-        // Admin no debería estar ligado a ventana
+      if (current.role === Role.ADMIN || current.role === Role.BANCA) {
+        // Admin/Banca no deberían estar ligado a ventana
         toUpdate.ventanaId = null;
       } else {
         if (!dto.ventanaId) throw new AppError('ventanaId is required for role ' + current.role, 400);
         await ensureVentanaActiveOrThrow(dto.ventanaId);
         toUpdate.ventanaId = dto.ventanaId;
+
+        // NUEVO: Si cambia la ventana, actualizar automáticamente el bancaId
+        if (toUpdate.ventanaId !== current.ventanaId) {
+          const ventana = await prisma.ventana.findUnique({
+            where: { id: toUpdate.ventanaId },
+            select: { bancaId: true }
+          });
+          if (ventana) {
+            toUpdate.bancaId = ventana.bancaId;
+          }
+        }
       }
+    }
+
+    if (dto.bancaId !== undefined) {
+      toUpdate.bancaId = dto.bancaId;
+      
+      // Si el rol resultante es BANCA, sincronizar con la tabla UserBanca
+      const finalRole = toUpdate.role ?? current.role;
+      if (finalRole === Role.BANCA && dto.bancaId) {
+        // Ejecutar upsert en UserBanca para asegurar que el middleware lo reconozca
+        await withConnectionRetry(
+          () => prisma.userBanca.upsert({
+            where: {
+              userId_bancaId: {
+                userId: id,
+                bancaId: dto.bancaId as string
+              }
+            },
+            update: {
+              isDefault: true // Al ser el bancaId del perfil, lo marcamos como default
+            },
+            create: {
+              userId: id,
+              bancaId: dto.bancaId as string,
+              isDefault: true
+            }
+          }),
+          { context: 'UserService.update.syncUserBanca' }
+        );
+      }
+    } else if (dto.role === Role.BANCA && current.bancaId) {
+       // Si solo cambian el rol a BANCA pero ya tiene un bancaId en el perfil, sincronizar
+       await withConnectionRetry(
+          () => prisma.userBanca.upsert({
+            where: {
+              userId_bancaId: {
+                userId: id,
+                bancaId: current.bancaId!
+              }
+            },
+            update: { isDefault: true },
+            create: {
+              userId: id,
+              bancaId: current.bancaId!,
+              isDefault: true
+            }
+          }),
+          { context: 'UserService.update.syncUserBancaFromCurrent' }
+        );
     }
 
     // toggle de actividad (deprecated isDeleted → usar isActive inverso)
@@ -385,7 +604,8 @@ export const UserService = {
         where: { id: updated.id },
         select: {
           id: true, name: true, username: true, email: true, role: true,
-          ventanaId: true, isActive: true, createdAt: true, settings: true,
+          ventanaId: true, bancaId: true, isActive: true, code: true, 
+          createdAt: true, settings: true,
           platform: true, appVersion: true,
         },
       }),

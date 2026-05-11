@@ -39,6 +39,7 @@ async function getCachedUser(userId: string): Promise<UserSession | null> {
         role: true,
         isActive: true,
         ventanaId: true,
+        bancaId: true,
         ventana: {
           select: { bancaId: true }
         }
@@ -54,7 +55,7 @@ async function getCachedUser(userId: string): Promise<UserSession | null> {
     role: user.role,
     isActive: user.isActive,
     ventanaId: user.ventanaId,
-    bancaId: user.ventana?.bancaId ?? null
+    bancaId: user.bancaId ?? user.ventana?.bancaId ?? null
   };
 
   // 3. Persistir en caché (300s en Redis, 60s en Memoria mediante el flag true)
@@ -158,37 +159,46 @@ export const restrictToAdminSelfOrVentanaVendor = async (
     throw new AppError("User id is required", 400);
   }
 
+  // 1. ADMIN o Auto-gestión siempre permitido
   if (authUser.role === Role.ADMIN || authUser.id === targetId) {
     return next();
   }
 
-  if (authUser.role !== Role.VENTANA) {
-    throw new AppError("No tienes permisos para realizar esta acción", 403);
-  }
-
-  // 1. Obtener datos del actor (VENTANA) de caché
+  // 2. Obtener datos del actor de caché
   const actor = await getCachedUser(authUser.id);
+  if (!actor) throw new AppError("Actor not found", 401);
 
-  if (!actor?.ventanaId) {
-    throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
+  // 3. Lógica según el rol del actor
+  if (authUser.role === Role.BANCA) {
+    // Un usuario BANCA puede gestionar a cualquier usuario de su misma banca
+    const target = await getCachedUser(targetId);
+    if (!target) throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+
+    if (target.bancaId !== actor.bancaId) {
+      throw new AppError("Solo puedes gestionar usuarios de tu propia banca", 403);
+    }
+    return next();
   }
 
-  // 2. Obtener datos del target (VENDEDOR) de caché
-  const target = await getCachedUser(targetId);
+  if (authUser.role === Role.VENTANA) {
+    if (!actor.ventanaId) {
+      throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
+    }
 
-  if (!target) {
-    throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+    const target = await getCachedUser(targetId);
+    if (!target) throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+
+    if (target.role !== Role.VENDEDOR || target.ventanaId !== actor.ventanaId) {
+      throw new AppError(
+        "Solo puedes gestionar usuarios vendedores de tu ventana",
+        403,
+        "FORBIDDEN"
+      );
+    }
+    return next();
   }
 
-  if (target.role !== Role.VENDEDOR || target.ventanaId !== actor.ventanaId) {
-    throw new AppError(
-      "Solo puedes gestionar usuarios vendedores de tu ventana",
-      403,
-      "FORBIDDEN"
-    );
-  }
-
-  next();
+  throw new AppError("No tienes permisos para realizar esta acción", 403);
 };
 
 export const restrictToCommissionAdminSelfOrVentanaVendor = async (
@@ -211,33 +221,38 @@ export const restrictToCommissionAdminSelfOrVentanaVendor = async (
     return next();
   }
 
-  if (authUser.role !== Role.VENTANA) {
-    throw new AppError("No tienes permisos para realizar esta acción", 403);
-  }
-
-  // 1. Obtener actor (VENTANA) de caché
   const actor = await getCachedUser(authUser.id);
+  if (!actor) throw new AppError("Actor not found", 401);
 
-  if (!actor?.ventanaId) {
-    throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
+  if (authUser.role === Role.BANCA) {
+    const target = await getCachedUser(targetId);
+    if (!target) throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+
+    if (target.bancaId !== actor.bancaId) {
+      throw new AppError("Solo puedes gestionar políticas de usuarios de tu propia banca", 403);
+    }
+    return next();
   }
 
-  // 2. Obtener target de caché
-  const target = await getCachedUser(targetId);
+  if (authUser.role === Role.VENTANA) {
+    if (!actor.ventanaId) {
+      throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
+    }
 
-  if (!target) {
-    throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+    const target = await getCachedUser(targetId);
+    if (!target) throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+
+    if (target.role !== Role.VENDEDOR || target.ventanaId !== actor.ventanaId) {
+      throw new AppError(
+        "Solo puedes gestionar políticas de usuarios vendedores de tu ventana",
+        403,
+        "FORBIDDEN"
+      );
+    }
+    return next();
   }
 
-  if (target.role !== Role.VENDEDOR || target.ventanaId !== actor.ventanaId) {
-    throw new AppError(
-      "Solo puedes gestionar políticas de usuarios vendedores de tu ventana",
-      403,
-      "FORBIDDEN"
-    );
-  }
-
-  next();
+  throw new AppError("No tienes permisos para realizar esta acción", 403);
 };
 
 /**
@@ -260,31 +275,44 @@ export const restrictToAdminOrVentanaSelf = async (
     throw new AppError("Ventana id is required", 400);
   }
 
-  // ADMIN puede gestionar cualquier ventana
+  // 1. ADMIN puede gestionar cualquier ventana
   if (authUser.role === Role.ADMIN) {
     return next();
   }
 
-  // VENTANA solo puede gestionar su propia ventana
-  if (authUser.role !== Role.VENTANA) {
-    throw new AppError("No tienes permisos para acceder a este recurso", 403);
-  }
-
-  // Obtener la ventana del usuario autenticado (desde caché)
   const actor = await getCachedUser(authUser.id);
+  if (!actor) throw new AppError("Actor not found", 401);
 
-  if (!actor?.ventanaId) {
-    throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
+  // 2. BANCA puede gestionar cualquier ventana de su banca
+  if (authUser.role === Role.BANCA) {
+    const targetVentana = await prisma.ventana.findUnique({
+      where: { id: ventanaId },
+      select: { bancaId: true }
+    });
+
+    if (!targetVentana) throw new AppError("Ventana no encontrada", 404);
+
+    if (targetVentana.bancaId !== actor.bancaId) {
+      throw new AppError("Solo puedes gestionar ventanas de tu propia banca", 403);
+    }
+    return next();
   }
 
-  // Verificar que el ventanaId del endpoint coincide con la ventana del usuario
-  if (actor.ventanaId !== ventanaId) {
-    throw new AppError(
-      "Solo puedes gestionar la política de comisiones de tu propia ventana",
-      403,
-      "FORBIDDEN"
-    );
+  // 3. VENTANA solo puede gestionar su propia ventana
+  if (authUser.role === Role.VENTANA) {
+    if (!actor.ventanaId) {
+      throw new AppError("El usuario VENTANA no tiene una ventana asignada", 403, "NO_VENTANA");
+    }
+
+    if (actor.ventanaId !== ventanaId) {
+      throw new AppError(
+        "Solo puedes gestionar la política de comisiones de tu propia ventana",
+        403,
+        "FORBIDDEN"
+      );
+    }
+    return next();
   }
 
-  next();
+  throw new AppError("No tienes permisos para acceder a este recurso", 403);
 };

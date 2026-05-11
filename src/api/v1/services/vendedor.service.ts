@@ -184,7 +184,7 @@ export const VendedorService = {
     return user;
   },
 
-  async findAll(current: CurrentUser, page?: number, pageSize?: number, ventanaIdFilter?: string, search?: string) {
+  async findAll(current: CurrentUser, page?: number, pageSize?: number, ventanaIdFilter?: string, search?: string, isActive?: boolean) {
     assertCanReadList(current, ventanaIdFilter);
 
     if (current.role === Role.VENDEDOR) {
@@ -198,7 +198,7 @@ export const VendedorService = {
 
     const ventanaId = current.role === Role.VENTANA ? current.ventanaId || undefined : ventanaIdFilter;
 
-    const { data, total } = await VendedorRepository.list(p, ps, { ventanaId, search });
+    const { data, total } = await VendedorRepository.list(p, ps, { ventanaId, search, isActive });
     const totalPages = Math.ceil(total / ps);
 
     return {

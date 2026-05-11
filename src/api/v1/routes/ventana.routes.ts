@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { VentanaController } from "../controllers/ventana.controller";
 import { protect, restrictToAdminOrSelf } from "../../../middlewares/auth.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import { validateBody, validateParams, validateQuery } from "../../../middlewares/validate.middleware";
 import {
   CreateVentanaSchema,
@@ -14,6 +15,7 @@ import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
 const router = Router();
 
 router.use(protect);
+router.use(bancaContextMiddleware);
 
 // Solo ADMIN puede crear, editar o eliminar Ventanas
 router.post("/", requireAdmin, validateBody(CreateVentanaSchema), VentanaController.create);

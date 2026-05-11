@@ -75,8 +75,9 @@ export const createUserSchema = z
     phone: phoneOptional,
     username: z.string().trim().min(3).max(32),
     password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
-    role: z.enum(['ADMIN', 'VENTANA', 'VENDEDOR']).optional(),
+    role: z.enum(['ADMIN', 'BANCA', 'VENTANA', 'VENDEDOR']).optional(),
     ventanaId: z.uuid('ventanaId inválido').nullable().optional(),
+    bancaId: z.uuid('bancaId inválido').nullable().optional(),
     isActive: z.boolean().optional(),
   })
   .strict()
@@ -88,11 +89,12 @@ export const updateUserSchema = z
     phone: phoneOptional,
     username: z.string().trim().min(3).max(32).nullable().optional(),
     password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').nullable().optional(),
-    role: z.enum(['ADMIN', 'VENTANA', 'VENDEDOR']).nullable().optional(),
+    role: z.enum(['ADMIN', 'BANCA', 'VENTANA', 'VENDEDOR']).nullable().optional(),
     ventanaId: z
       .uuid('ventanaId inválido')
       .nullable()
       .optional(),
+    bancaId: z.uuid('bancaId inválido').nullable().optional(),
     isActive: z.boolean().nullable().optional(),
     code: z.string().trim().min(2).max(32).nullable().optional(),
     settings: UserSettingsSchema.nullable().optional(),
@@ -130,7 +132,7 @@ export const listUsersQuerySchema = z
   .object({
     page: z.coerce.number().int().min(1).optional(),
     pageSize: z.coerce.number().int().min(1).max(100).optional(),
-    role: z.enum(['ADMIN', 'VENTANA', 'VENDEDOR']).optional(),
+    role: z.enum(['ADMIN', 'BANCA', 'VENTANA', 'VENDEDOR']).optional(),
     search: z
       .string()
       .trim()

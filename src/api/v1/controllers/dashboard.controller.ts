@@ -32,6 +32,9 @@ async function applyDashboardRbac(req: AuthenticatedRequest, query: any) {
     if (req.bancaContext?.bancaId) {
       bancaId = req.bancaContext.bancaId;
     }
+  } else if (req.user!.role === Role.BANCA) {
+    // BANCA siempre filtra por su propia banca
+    bancaId = req.user!.bancaId || req.bancaContext?.bancaId || undefined;
   }
   
   return { ventanaId, vendedorId, bancaId };

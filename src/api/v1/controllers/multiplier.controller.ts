@@ -4,7 +4,8 @@ import MultiplierService from "../services/multiplier.service";
 
 export const MultiplierController = {
   async create(req: AuthenticatedRequest, res: Response) {
-    const r = await MultiplierService.create(req.user!.id, req.body);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const r = await MultiplierService.create(req.user!.id, { ...req.body, bancaId });
     return res.status(201).json({ success: true, data: r });
   },
 
@@ -30,7 +31,8 @@ export const MultiplierController = {
   },
 
   async list(req: AuthenticatedRequest, res: Response) {
-    const r = await MultiplierService.list(req.query);
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const r = await MultiplierService.list({ ...req.query, bancaId });
     return res.json({ success: true, data: r.data, meta: r.meta });
   },
 };

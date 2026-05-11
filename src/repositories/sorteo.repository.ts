@@ -590,8 +590,9 @@ const SorteoRepository = {
     role?: string;
     userId?: string;
     ventanaId?: string | null;
+    bancaId?: string;
   }) {
-    const { loteriaId, page, pageSize, status, search, isActive, dateFrom, dateTo, lastId, lastScheduledAt, role, userId, ventanaId } = params;
+    const { loteriaId, page, pageSize, status, search, isActive, dateFrom, dateTo, lastId, lastScheduledAt, role, userId, ventanaId, bancaId } = params;
 
     logger.info({
       layer: "repository",
@@ -605,6 +606,7 @@ const SorteoRepository = {
         role,
         userId,
         ventanaId,
+        bancaId,
         message: "Parámetros recibidos en repository"
       }
     });
@@ -674,6 +676,9 @@ const SorteoRepository = {
     }
     if (dateTo) {
       whereConditions.push(Prisma.sql`s."scheduledAt" <= ${dateTo}`);
+    }
+    if (bancaId) {
+      whereConditions.push(Prisma.sql`l."bancaId" = CAST(${bancaId} AS uuid)`);
     }
 
     // Keyset pagination: scheduledAt DESC, createdAt DESC, id DESC

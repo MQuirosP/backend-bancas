@@ -10,8 +10,8 @@ import {
   ToggleMultiplierSchema,
 } from "../validators/multiplier.validator";
 import {
-  requireAdmin,
-  requireAdminOrVentana,
+  requireAdminOrBanca,
+  requireAdminBancaOrVentana,
   requireAdminVentanaOrVendedor,
 } from "../../../middlewares/roleGuards.middleware";
 
@@ -19,7 +19,7 @@ const router = Router();
 
 router.use(protect);
 
-router.post("/", requireAdmin, validateBody(CreateMultiplierSchema), MultiplierController.create);
+router.post("/", requireAdminOrBanca, validateBody(CreateMultiplierSchema), MultiplierController.create);
 
 router.get(
   "/",
@@ -28,11 +28,11 @@ router.get(
   MultiplierController.list
 );
 
-router.get("/:id", requireAdmin, validateParams(MultiplierIdParamSchema), MultiplierController.getById);
+router.get("/:id", requireAdminOrBanca, validateParams(MultiplierIdParamSchema), MultiplierController.getById);
 
 router.put(
   "/:id",
-  requireAdmin,
+  requireAdminOrBanca,
   validateParams(MultiplierIdParamSchema),
   validateBody(UpdateMultiplierSchema),
   MultiplierController.update
@@ -40,7 +40,7 @@ router.put(
 
 router.patch(
   "/:id",
-  requireAdmin,
+  requireAdminOrBanca,
   validateParams(MultiplierIdParamSchema),
   validateBody(UpdateMultiplierSchema),
   MultiplierController.update
@@ -48,7 +48,7 @@ router.patch(
 
 router.patch(
   "/:id/restore",
-  requireAdmin,
+  requireAdminOrBanca,
   validateParams(MultiplierIdParamSchema),
   MultiplierController.restore
 );
@@ -56,7 +56,7 @@ router.patch(
 // toggle isActive (soft/hard según tu service)
 router.delete(
   "/:id",
-  requireAdmin,
+  requireAdminOrBanca,
   validateParams(MultiplierIdParamSchema),
   validateBody(ToggleMultiplierSchema), // { isActive: boolean }
   MultiplierController.softDelete

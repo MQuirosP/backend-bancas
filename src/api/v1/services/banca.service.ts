@@ -2,7 +2,7 @@ import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import ActivityService from "../../../core/activity.service";
 import BancaRepository from "../../../repositories/banca.repository";
-import { ActivityType } from "@prisma/client";
+import { ActivityType, Role } from "@prisma/client";
 import { CreateBancaInput, UpdateBancaInput } from "../dto/banca.dto";
 
 export const BancaService = {
@@ -70,7 +70,7 @@ export const BancaService = {
       action: ActivityType.BANCA_DELETE,
       targetType: "BANCA",
       targetId: id,
-      details: { 
+      details: {
         reason,
         description: `Banca desactivada: ${banca.name} (${banca.code}). Razón: ${reason ?? 'No especificada'}`
       },
@@ -83,9 +83,37 @@ export const BancaService = {
     const p = page && page > 0 ? page : 1;
     const ps = pageSize && pageSize > 0 ? pageSize : 10;
 
-    // ADMIN ve todas las bancas (sin filtro de asignación)
-    // VENTANA/VENDEDOR ven solo su banca (se filtra en el repositorio si es necesario)
-    const { data, total } = await BancaRepository.list(p, ps, search, isActive, undefined);
+    let allowedBancaIds: string[] | undefined = undefined;
+
+    //  NUEVO: Aislamiento para rol BANCA
+    if (userRole === Role.BANCA && userId) {
+      const userBancas = await prisma.userBanca.findMany({
+        where: { userId },
+        select: { bancaId: true },
+      });
+      allowedBancaIds = userBancas.map(ub => ub.bancaId);
+
+      // Si no tiene bancas asignadas, devolver lista vacía
+      if (allowedBancaIds.length === 0) {
+        return {
+          data: [],
+          meta: {
+            total: 0,
+            page: p,
+            pageSize: ps,
+            totalPages: 0,
+            hasNextPage: false,
+            hasPrevPage: false,
+          },
+        };
+      }
+    }
+
+    // ADMIN ve todas las bancas (allowedBancaIds = undefined)
+    // VENTANA/VENDEDOR: En teoría no deberían usar este endpoint global, 
+    // pero si lo hacen, allowedBancaIds seguirá siendo undefined a menos que implementemos más filtros.
+    // Sin embargo, el Repositorio ya maneja allowedBancaIds si se pasa.
+    const { data, total } = await BancaRepository.list(p, ps, search, isActive, allowedBancaIds);
     const totalPages = Math.ceil(total / ps);
 
     return {
@@ -101,9 +129,20 @@ export const BancaService = {
     };
   },
 
-  async findById(id: string) {
+  async findById(id: string, userId?: string, userRole?: string) {
     const banca = await BancaRepository.findById(id);
     if (!banca || !banca.isActive) throw new AppError("Banca no encontrada o inactiva", 404);
+
+    //  NUEVO: Validar acceso para rol BANCA
+    if (userRole === Role.BANCA && userId) {
+      const assignment = await prisma.userBanca.findFirst({
+        where: { userId, bancaId: id },
+      });
+      if (!assignment) {
+        throw new AppError("No tienes permiso para acceder a esta banca", 403, "FORBIDDEN");
+      }
+    }
+
     return banca;
   },
 
@@ -115,7 +154,7 @@ export const BancaService = {
       action: ActivityType.BANCA_RESTORE,
       targetType: "BANCA",
       targetId: id,
-      details: { 
+      details: {
         reason,
         description: `Banca restaurada: ${banca.name} (${banca.code}). Razón: ${reason ?? 'No especificada'}`
       },

@@ -8,6 +8,7 @@ export interface CreateUserDTO {
   password: string;          // >= 6 (valida el validator)
   role?: Role;
   ventanaId?: string | null; // requerido si role != ADMIN (lo aplica el service)
+  bancaId?: string | null;   // opcional: para ligar admin de banca a una banca primaria
   code?: string | null;
   isActive?: boolean;
 }
@@ -20,6 +21,7 @@ export interface UpdateUserDTO {
   password?: string;
   role?: Role;
   ventanaId?: string | null;
+  bancaId?: string | null;
   code?: string | null;
   isActive?: boolean;  // ya estaba permitido
   settings?: Record<string, any> | null;  // Configuraciones (print, theme, etc.)

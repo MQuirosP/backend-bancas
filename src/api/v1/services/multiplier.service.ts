@@ -10,7 +10,7 @@ import {
 } from "../dto/multiplier.dto";
 
 const MultiplierService = {
-  async create(userId: string, data: CreateMultiplierInput) {
+  async create(userId: string, data: CreateMultiplierInput & { bancaId?: string }) {
     const dup = await prisma.loteriaMultiplier.findFirst({
       where: { loteriaId: data.loteriaId, name: data.name, isActive: true },
       select: { id: true },
@@ -31,6 +31,7 @@ const MultiplierService = {
         appliesToDate: data.appliesToDate ?? null,
         appliesToSorteoId: data.appliesToSorteoId ?? null,
         isActive: data.isActive ?? true,
+        bancaId: data.bancaId,
       },
       //  devuelve también la lotería al crear (opcional pero útil para front)
       include: { loteria: { select: { id: true, name: true } } },
@@ -166,7 +167,7 @@ const MultiplierService = {
     return r;
   },
 
-  async list(query: ListMultiplierQueryInput) {
+  async list(query: ListMultiplierQueryInput & { bancaId?: string }) {
     const q = query;
 
     //  construir where con búsqueda por name y por nombre de lotería
@@ -186,6 +187,7 @@ const MultiplierService = {
       ...(q.kind ? { kind: q.kind } : {}),
       ...(typeof q.isActive === "boolean" ? { isActive: q.isActive } : {}),
       ...(q.appliesToSorteoId ? { appliesToSorteoId: q.appliesToSorteoId } : {}),
+      ...(q.bancaId ? { bancaId: q.bancaId } : {}),
       ...(and.length ? { AND: and } : {}),
     };
 

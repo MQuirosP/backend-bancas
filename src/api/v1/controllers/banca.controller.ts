@@ -22,28 +22,34 @@ export const BancaController = {
   },
 
   async findAll(req: AuthenticatedRequest, res: Response) {
-    const page = req.query.page ? Number(req.query.page) : undefined;
-    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
-    const search = req.query.search?.toString().trim();
+    const page = req.query.page ? Number(req.query.page) : 1;
+    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 10;
+    const search = typeof req.query.search === "string" ? req.query.search : undefined;
+    
+    let isActive: boolean | undefined = undefined;
+    if (String(req.query.isActive) === "true") isActive = true;
+    else if (String(req.query.isActive) === "false") isActive = false;
+
     const user = req.user;
     const result = await BancaService.findAll(
-      page, 
-      pageSize, 
-      search, 
-      undefined, 
-      user?.id, 
+      page,
+      pageSize,
+      search,
+      isActive,
+      user?.id,
       user?.role
     );
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 
-  async findById(req: Request, res: Response) {
+  async findById(req: AuthenticatedRequest, res: Response) {
     const { id } = req.params;
-    const banca = await BancaService.findById(id);
+    const user = req.user;
+    const banca = await BancaService.findById(id, user?.id, user?.role);
     res.json({ success: true, data: banca });
   },
 
-   async restore(req: AuthenticatedRequest, res: Response) {
+  async restore(req: AuthenticatedRequest, res: Response) {
     const { id } = req.params;
     const { reason } = req.body; // opcional, solo para auditoría
     const banca = await BancaService.restore(id, req.user!.id, reason);

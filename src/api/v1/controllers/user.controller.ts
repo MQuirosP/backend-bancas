@@ -6,9 +6,11 @@ import logger from "../../../core/logger";
 import { success, created } from "../../../utils/responses";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
+import { AuthenticatedRequest } from "../../../core/types";
+import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
 
 export const UserController = {
-  async create(req: Request, res: Response) {
+  async create(req: AuthenticatedRequest, res: Response) {
     const actor = (req as any)?.user ?? null;
     const actorId = actor?.id ?? null;
     const requestId = (req as any)?.requestId ?? null;
@@ -40,72 +42,51 @@ export const UserController = {
     return created(res, user);
   },
 
-  async getById(req: Request, res: Response) {
+  async getById(req: AuthenticatedRequest, res: Response) {
     const user = await UserService.getById(req.params.id);
     return success(res, user);
   },
 
-  async list(req: Request, res: Response) {
-    const currentUser = (req as any)?.user;
+  async list(req: AuthenticatedRequest, res: Response) {
+    const currentUser = req.user!;
 
     // Valores directamente del query validado por Zod
     const page = req.query.page ? Number(req.query.page) : 1;
     const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 10;
-    let role = (req.query.role as Role) ?? undefined;
+    const role = (req.query.role as Role) ?? undefined;
     const search = typeof req.query.search === "string" ? req.query.search : undefined;
-    let isActive = req.query.isActive as any;
-    const scope = req.query.scope as string | undefined;
+    const isActive = req.query.isActive !== undefined ? String(req.query.isActive) === "true" : (currentUser.role === Role.VENTANA ? true : undefined);
 
-    let ventanaId: string | undefined = undefined;
-    let bancaId: string | undefined = undefined;
+    // 1. Aplicar RBAC para determinar qué usuarios puede ver el actor
+    const context: AuthContext = {
+      userId: currentUser.id,
+      role: currentUser.role,
+      ventanaId: currentUser.ventanaId || undefined,
+      bancaId: req.bancaContext?.bancaId || undefined, // Usar contexto dinámico
+    };
 
-    // 1. Lógica de Ámbito (Scope)
-    if (scope === "mine" && currentUser) {
-      // Prioridad absoluta a la identidad del token
-      if (currentUser.role === Role.VENTANA) {
-        ventanaId = currentUser.ventanaId || undefined;
-        if (!ventanaId) {
-          const u = await prisma.user.findUnique({ where: { id: currentUser.id }, select: { ventanaId: true } });
-          ventanaId = u?.ventanaId || undefined;
-        }
-        if (!ventanaId) throw new AppError("No tienes una ventana asignada", 403);
-        
-        // Un listero pidiendo "lo suyo" usualmente busca a sus vendedores
-        if (!role) role = Role.VENDEDOR;
-        if (isActive === undefined) isActive = true;
-      } else if (currentUser.role === Role.ADMIN) {
-        // Para ADMIN, scope=mine significa todo el sistema, 
-        // así que ignoramos cualquier filtro manual de ID si viene scope=mine
-        ventanaId = undefined;
-        bancaId = undefined;
-      }
-    } else {
-      // Lógica tradicional/manual: respetar filtros del query si el rol tiene permiso
-      if (currentUser?.role === Role.VENTANA) {
-        ventanaId = currentUser.ventanaId || undefined;
-        if (!role) role = Role.VENDEDOR;
-        if (isActive === undefined) isActive = true;
-      } else {
-        // ADMIN o BANCA pueden pedir filtros específicos manualmente si no usan scope=mine
-        ventanaId = req.query.ventanaId as string;
-        bancaId = req.query.bancaId as string;
-      }
-    }
+    const effectiveFilters = await applyRbacFilters(context, {
+      ventanaId: req.query.ventanaId as string,
+      bancaId: req.query.bancaId as string,
+      scope: (req.query.scope as string) || "mine",
+    });
 
+    // 2. Ejecutar listado con los filtros efectivos
     const { data, meta } = await UserService.list({
       page,
       pageSize,
       role,
       search,
-      isActive: req.query.isActive !== undefined ? isActive : (currentUser?.role === Role.VENTANA ? true : undefined),
-      ventanaId,
-      bancaId,
+      isActive,
+      ventanaId: effectiveFilters.ventanaId || undefined,
+      bancaId: effectiveFilters.bancaId || undefined,
+      actor: currentUser,
     });
 
     return success(res, data, meta);
   },
 
-  async update(req: Request, res: Response) {
+  async update(req: AuthenticatedRequest, res: Response) {
     const actor = (req as any)?.user ?? null;
     const actorId = actor?.id ?? null;
     const requestId = (req as any)?.requestId ?? null;
@@ -145,7 +126,7 @@ export const UserController = {
     return success(res, user);
   },
 
-  async remove(req: Request, res: Response) {
+  async remove(req: AuthenticatedRequest, res: Response) {
     const actor = (req as any)?.user ?? null;
     const actorId = actor?.id ?? null;
     const requestId = (req as any)?.requestId ?? null;
@@ -177,7 +158,7 @@ export const UserController = {
     return success(res, user);
   },
 
-  async restore(req: Request, res: Response) {
+  async restore(req: AuthenticatedRequest, res: Response) {
     const actor = (req as any)?.user ?? null;
     const actorId = actor?.id ?? null;
     const requestId = (req as any)?.requestId ?? null;
@@ -204,7 +185,7 @@ export const UserController = {
     return success(res, user);
   },
 
-  async changePassword(req: Request, res: Response) {
+  async changePassword(req: AuthenticatedRequest, res: Response) {
     const actorId = (req as any)?.user?.id;
     const requestId = (req as any)?.requestId ?? null;
     const { currentPassword, newPassword } = req.body;
@@ -244,7 +225,7 @@ export const UserController = {
     return success(res, result);
   },
 
-  async getAllowedMultipliers(req: Request, res: Response) {
+  async getAllowedMultipliers(req: AuthenticatedRequest, res: Response) {
     const { userId } = req.params;
     const { loteriaId, betType } = req.query;
 
@@ -264,7 +245,7 @@ export const UserController = {
     return success(res, result.data, result.meta);
   },
 
-  async getAllowedMultipliersBatch(req: Request, res: Response) {
+  async getAllowedMultipliersBatch(req: AuthenticatedRequest, res: Response) {
     const { id } = req.params;
     const { betType, isActive } = req.query;
 

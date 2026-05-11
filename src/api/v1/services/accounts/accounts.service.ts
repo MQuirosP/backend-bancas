@@ -7,7 +7,7 @@ import { registerPayment, reversePayment, deleteStatement } from "./accounts.mov
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
 import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";
 import prisma from "../../../../core/prismaClient";
-import { Prisma } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { getCachedStatement, setCachedStatement } from "../../../../utils/accountStatementCache";
 import { crDateService } from "../../../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
@@ -373,7 +373,7 @@ export const AccountsService = {
             const startStr = crDateService.dateUTCToCRString(startDate);
             const endStr = crDateService.dateUTCToCRString(endDate);
             const todayCRStr = crDateService.dateUTCToCRString(new Date());
-            
+
             if (startStr.substring(0, 7) !== endStr.substring(0, 7)) {
                 if (todayCRStr >= startStr && todayCRStr <= endStr) {
                     effectiveMonth = todayCRStr.substring(0, 7);
@@ -969,7 +969,7 @@ export const AccountsService = {
             ventanaId?: string;
             vendedorId?: string;
             bancaId?: string;
-            userRole?: "ADMIN" | "VENTANA" | "VENDEDOR";
+            userRole?: Role;
         },
         includePreviousDayAccumulated: boolean = true, //  NUEVO: Flag para controlar si se incluye acumulado del día anterior
         tx: Prisma.TransactionClient = prisma

@@ -41,6 +41,7 @@ export const UserRepository = {
     phone?: string | null;
     role: Role;
     ventanaId?: string | null;
+    bancaId?: string | null;
     code?: string | null;
     isActive?: boolean;
   }) =>
@@ -54,6 +55,7 @@ export const UserRepository = {
           password: data.password,
           role: data.role,
           ventanaId: data.ventanaId ?? null,
+          bancaId: data.bancaId ?? null,
           ...(data.code !== undefined ? { code: data.code } : {}),
           ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
         },
@@ -63,7 +65,7 @@ export const UserRepository = {
 
   update: (id: string, data: Partial<{
     name: string; email: string | null; username: string; password: string;
-    role: Role; ventanaId: string | null; isActive: boolean; code: string | null; phone: string | null; settings: any;
+    role: Role; ventanaId: string | null; bancaId: string | null; isActive: boolean; code: string | null; phone: string | null; settings: any;
   }>) =>
     withConnectionRetry(
       () => prisma.user.update({ where: { id }, data }),
@@ -77,7 +79,7 @@ export const UserRepository = {
     search?: string;
     ventanaId?: string;
     isActive?: boolean;
-    bancaId?: string;
+    bancaId?: any;
     select?: Prisma.UserSelect;
     orderBy?: Prisma.UserOrderByWithRelationInput;
   }) {
@@ -85,9 +87,15 @@ export const UserRepository = {
     const skip = (page - 1) * pageSize;
 
     const where: Prisma.UserWhereInput = {
+      deletedAt: null,
       ...(role ? { role } : {}),
       ...(ventanaId ? { ventanaId } : {}),
-      ...(bancaId ? { ventana: { bancaId } } : {}),
+      ...(bancaId ? { 
+        OR: [
+          { bancaId },
+          { ventana: { bancaId } }
+        ]
+      } : {}),
       ...(typeof isActive === 'boolean' ? { isActive } : {}),
     };
 
@@ -116,7 +124,7 @@ export const UserRepository = {
           take: pageSize,
           select: select ?? {
             id: true, name: true, email: true, username: true, role: true,
-            ventanaId: true, isActive: true, code: true,
+            ventanaId: true, bancaId: true, isActive: true, code: true,
             createdAt: true, updatedAt: true, settings: true,
             platform: true, appVersion: true,
             ventana: {

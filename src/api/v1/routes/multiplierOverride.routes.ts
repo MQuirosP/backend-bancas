@@ -9,7 +9,7 @@ import {
 import MultiplierOverrideController from "../controllers/multiplierOverride.controller";
 import { validateBody, validateQuery, validateParams } from "../../../middlewares/validate.middleware";
 import { protect } from "../../../middlewares/auth.middleware";
-import { requireAdminOrVentana } from "../../../middlewares/roleGuards.middleware";
+import { requireAdminBancaOrVentana } from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
 
@@ -19,7 +19,7 @@ router.use(protect);
 // Create (ADMIN, VENTANA)
 router.post(
   "/",
-  requireAdminOrVentana,
+  requireAdminBancaOrVentana,
   validateBody(createMultiplierOverrideValidator),
   MultiplierOverrideController.create
 );
@@ -27,7 +27,7 @@ router.post(
 // Update (ADMIN, VENTANA)
 router.put(
   "/:id",
-  requireAdminOrVentana,
+  requireAdminBancaOrVentana,
   validateParams(idParamValidator),
   validateBody(updateMultiplierOverrideValidator),
   MultiplierOverrideController.update
@@ -36,7 +36,7 @@ router.put(
 // Soft Delete (ADMIN, VENTANA) - optionally accepts { deletedReason } in body
 router.delete(
   "/:id",
-  requireAdminOrVentana,
+  requireAdminBancaOrVentana,
   validateParams(idParamValidator),
   MultiplierOverrideController.remove
 );
@@ -44,7 +44,7 @@ router.delete(
 // Restore (ADMIN, VENTANA)
 router.patch(
   "/:id/restore",
-  requireAdminOrVentana,
+  requireAdminBancaOrVentana,
   validateParams(idParamValidator),
   MultiplierOverrideController.restore
 );

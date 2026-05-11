@@ -109,3 +109,7 @@ diff2.js
 process.exit(0))
 verify-eval-fix.ts
 .tmp/backfill-dryrun.ts
+
+# Scratch directory for temporary scripts
+scratch/
+src/scripts/

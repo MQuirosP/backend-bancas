@@ -23,6 +23,7 @@ type VendedorUpdateParams = {
 type ListFilters = {
   ventanaId?: string;
   search?: string;
+  isActive?: boolean;
 };
 
 const VendedorRepository = {
@@ -194,8 +195,8 @@ const VendedorRepository = {
     const skip = (page - 1) * pageSize;
 
     const where: Prisma.UserWhereInput = {
-      isActive: true,
       role: Role.VENDEDOR,
+      ...(filters?.isActive !== undefined ? { isActive: filters.isActive } : {}),
       ...(filters?.ventanaId ? { ventanaId: filters.ventanaId } : {}),
     };
 

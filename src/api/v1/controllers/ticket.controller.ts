@@ -428,6 +428,7 @@ export const TicketController = {
         sorteoStatus,
         page, //  FIX: Paginación para MONAZOS
         pageSize, //  FIX: Paginación para MONAZOS
+        bancaId: effectiveFilters.bancaId,
       },
       me.role,
       me.id
@@ -534,6 +535,7 @@ export const TicketController = {
           multiplierId,
           status,
           sorteoStatus,
+          bancaId: effectiveFilters.bancaId,
           // NO pasar page ni pageSize - siempre obtener todos los números
         },
         me.role,
@@ -954,6 +956,7 @@ export const TicketController = {
           loteriaId: effectiveFilters.loteriaId,
           sorteoId: effectiveFilters.sorteoId,
           multipliers,
+          bancaId: effectiveFilters.bancaId,
         },
         me.role,
         me.id,

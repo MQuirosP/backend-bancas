@@ -1,6 +1,6 @@
-// src/api/v1/controllers/loteria.controller.ts
-import { Request, Response } from "express";
+import { Response } from "express";
 import { ActivityType } from "@prisma/client";
+import { AuthenticatedRequest } from "../../../core/types";
 import LoteriaService from "../services/loteria.service";
 import ActivityService from "../../../core/activity.service";
 import { success, created } from "../../../utils/responses";
@@ -9,12 +9,14 @@ import { formatIsoLocal, parseCostaRicaDateTime, startOfLocalDay, endOfLocalDay,
 import prisma from "../../../core/prismaClient";
 
 export const LoteriaController = {
-  async create(req: Request, res: Response) {
+  async create(req: AuthenticatedRequest, res: Response) {
     const actorId = (req as any)?.user?.id as string;
     const requestId = (req as any)?.requestId ?? null;
 
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+
     const loteria = await LoteriaService.create(
-      req.body,
+      { ...req.body, bancaId },
       actorId,
       requestId ?? undefined
     );
@@ -40,7 +42,7 @@ export const LoteriaController = {
     return created(res, loteria);
   },
 
-  async list(req: Request, res: Response) {
+  async list(req: AuthenticatedRequest, res: Response) {
     const page = req.query.page ? Number(req.query.page) : undefined;
     const pageSize = req.query.pageSize
       ? Number(req.query.pageSize)
@@ -53,11 +55,14 @@ export const LoteriaController = {
     const search =
       typeof req.query.search === "string" ? req.query.search : undefined; //  nuevo
 
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+
     const { data, meta } = await LoteriaService.list({
       page,
       pageSize,
       isActive,
       search,
+      bancaId,
     });
 
     (req as any)?.logger?.info({
@@ -74,7 +79,7 @@ export const LoteriaController = {
     return success(res, data, meta);
   },
 
-  async getById(req: Request, res: Response) {
+  async getById(req: AuthenticatedRequest, res: Response) {
     const loteria = await LoteriaService.getById(req.params.id);
 
     (req as any)?.logger?.info({
@@ -87,7 +92,7 @@ export const LoteriaController = {
     return success(res, loteria);
   },
 
-  async update(req: Request, res: Response) {
+  async update(req: AuthenticatedRequest, res: Response) {
     const actorId = (req as any)?.user?.id as string;
     const requestId = (req as any)?.requestId ?? null;
 
@@ -119,7 +124,7 @@ export const LoteriaController = {
     return success(res, updated);
   },
 
-  async remove(req: Request, res: Response) {
+  async remove(req: AuthenticatedRequest, res: Response) {
     const actorId = (req as any)?.user?.id as string;
     const requestId = (req as any)?.requestId ?? null;
 
@@ -150,7 +155,7 @@ export const LoteriaController = {
     return success(res, loteria);
   },
 
-  async restore(req: Request, res: Response) {
+  async restore(req: AuthenticatedRequest, res: Response) {
     const actorId = (req as any)?.user?.id as string;
     const requestId = (req as any)?.requestId ?? null;
 
@@ -181,7 +186,7 @@ export const LoteriaController = {
     return success(res, loteria);
   },
 
-    async previewSchedule(req: Request, res: Response) {
+    async previewSchedule(req: AuthenticatedRequest, res: Response) {
     const loteriaId = req.params.id;
     const now = new Date(); // Hora actual del servidor
     const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : now;
@@ -257,7 +262,7 @@ export const LoteriaController = {
     });
   },
 
-  async seedSorteos(req: Request, res: Response) {
+  async seedSorteos(req: AuthenticatedRequest, res: Response) {
     const loteriaId = req.params.id
     const start = req.query.start ? parseCostaRicaDateTime(String(req.query.start)) : new Date()
     const days = req.query.days ? Number(req.query.days) : 1 // Cambiado de 7 a 1

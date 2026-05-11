@@ -17,7 +17,8 @@ import { resolveCommissionFromPolicy } from '../../../../services/commission/com
 async function computeListeroCommissionByVentana(
   fromDateStr: string,
   toDateStr: string,
-  ventanaId?: string
+  ventanaId?: string,
+  bancaId?: string
 ): Promise<Map<string, number>> {
   // Obtener jugadas en el rango con businessDate del ticket (solo sorteos evaluados)
   const jugadas = await prisma.jugada.findMany({
@@ -33,6 +34,7 @@ async function computeListeroCommissionByVentana(
           deletedAt: null,
         },
         ...(ventanaId ? { ventanaId } : {}),
+        ...(bancaId ? { ventana: { bancaId } } : {}),
       },
     },
     select: {
@@ -193,6 +195,7 @@ export const VentanasReportService = {
     top?: number;
     sortBy?: SortByVentanas;
     includeComparison?: boolean;
+    bancaId?: string;
   }): Promise<any> {
     const dateRange = resolveDateRange(
       filters.date || 'today',
@@ -252,6 +255,7 @@ export const VentanasReportService = {
           AND s."deletedAt" IS NULL
           AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
       ),
       ventana_stats AS (
         SELECT 
@@ -305,7 +309,8 @@ export const VentanasReportService = {
     const commissionByVentana = await computeListeroCommissionByVentana(
       fromDateStr,
       toDateStr,
-      filters.ventanaId
+      filters.ventanaId,
+      filters.bancaId
     );
 
     // Aplicar comisiones de listero calculadas desde políticas

@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { comparePassword, hashPassword } from '../../../utils/crypto';
 import { logger } from '../../../core/logger';
 import ActivityService from '../../../core/activity.service';
-import { ActivityType } from '@prisma/client';
+import { ActivityType, Role } from '@prisma/client';
 import { withConnectionRetry } from '../../../core/withConnectionRetry';
 
 const ACCESS_SECRET = config.jwtAccessSecret;
@@ -33,15 +33,15 @@ export const AuthService = {
     }
 
     const hashed = await hashPassword(data.password);
-    const role = data.role ?? 'VENTANA';
+    const role = data.role ?? Role.VENTANA;
 
-    // Prevent public registration from creating ADMIN users
-    if (role === 'ADMIN') {
-      throw new AppError('ADMIN users must be created by system administrator', 403);
+    // Prevent public registration from creating ADMIN or BANCA users
+    if (role === Role.ADMIN || role === Role.BANCA) {
+      throw new AppError('ADMIN and BANCA users must be created by system administrator', 403);
     }
 
     // Validar que VENTANA y VENDEDOR tengan ventanaId
-    if ((role === 'VENTANA' || role === 'VENDEDOR') && !data.ventanaId) {
+    if ((role === Role.VENTANA || role === Role.VENDEDOR) && !data.ventanaId) {
       throw new AppError('ventanaId is required for VENTANA and VENDEDOR roles', 400);
     }
 
@@ -76,7 +76,7 @@ export const AuthService = {
   async login(
     data: LoginDTO,
     context?: RequestContext
-  ): Promise<TokenPair & { user: { id: string; username: string; email: string | null; role: string; ventanaId: string | null } }> {
+  ): Promise<TokenPair & { user: { id: string; username: string; email: string | null; role: Role; ventanaId: string | null; bancaId: string | null } }> {
     const { username, password } = data;
     const { ipAddress, userAgent } = context || {};
 
@@ -247,7 +247,8 @@ export const AuthService = {
         username: user.username,
         email: user.email,
         role: user.role,
-        ventanaId: user.ventanaId
+        ventanaId: user.ventanaId,
+        bancaId: user.bancaId
       }
     };
   },

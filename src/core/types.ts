@@ -23,4 +23,5 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthUser;
   bancaContext?: BancaContext;
   requestId?: string;
+  logger?: any;
 }

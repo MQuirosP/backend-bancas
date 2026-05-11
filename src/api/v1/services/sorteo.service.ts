@@ -90,7 +90,7 @@ function formatDateOnly(date: Date): string {
   return `${year}-${mm}-${dd}`;
 }
 
-export const SorteoService = {
+const SorteoService = {
   async create(data: CreateSorteoDTO, userId: string) {
     //  Obtener lotería con rulesJson para heredar digits
     const loteria = await prisma.loteria.findUnique({
@@ -885,6 +885,7 @@ export const SorteoService = {
     userId?: string;
     role?: Role;
     ventanaId?: string | null;
+    bancaId?: string;
   }) {
     // Early return: sin groupBy, usar lógica existente
     if (!params.groupBy) {
@@ -912,6 +913,7 @@ export const SorteoService = {
           // NUEVO: Identidad del usuario para separar cache
           role: params.role,
           ventanaId: params.ventanaId,
+          bancaId: params.bancaId,
         });
 
         if (cached) {
@@ -934,6 +936,7 @@ export const SorteoService = {
         role: params.role,
         userId: params.userId,
         ventanaId: params.ventanaId,
+        bancaId: params.bancaId,
       });
 
       //  Aplicar filtrado por política de comisiones solo para VENDEDOR
@@ -997,6 +1000,7 @@ export const SorteoService = {
             // NUEVO: Identidad del usuario para separar cache
             role: params.role,
             ventanaId: params.ventanaId,
+            bancaId: params.bancaId,
           },
           result.data,
           result.meta
@@ -1028,6 +1032,7 @@ export const SorteoService = {
     isActive?: boolean;
     dateFrom?: Date;
     dateTo?: Date;
+    bancaId?: string;
   }) {
     // Construir condiciones WHERE
     const whereConditions: Prisma.Sql[] = [
@@ -1046,13 +1051,15 @@ export const SorteoService = {
       whereConditions.push(Prisma.sql`s."isActive" = ${params.isActive} `);
     }
 
-    if (params.dateFrom || params.dateTo) {
-      if (params.dateFrom) {
-        whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom} `);
-      }
-      if (params.dateTo) {
-        whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} `);
-      }
+    if (params.dateFrom) {
+      whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom} `);
+    }
+    if (params.dateTo) {
+      whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} `);
+    }
+
+    if (params.bancaId) {
+      whereConditions.push(Prisma.sql`l."bancaId" = CAST(${params.bancaId} AS uuid)`);
     }
 
     const whereClause = whereConditions.length
@@ -1139,6 +1146,7 @@ gs."loteriaName" ASC,
         where: {
           id: { in: sorteoIdsArray },
           ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+          ...(params.bancaId ? { loteria: { bancaId: params.bancaId } } : {}),
         },
         select: {
           id: true,
@@ -1186,6 +1194,7 @@ gs."loteriaName" ASC,
     isActive?: boolean;
     dateFrom?: Date;
     dateTo?: Date;
+    bancaId?: string;
   }) {
     // Construir condiciones WHERE
     const whereConditions: Prisma.Sql[] = [
@@ -1204,13 +1213,15 @@ gs."loteriaName" ASC,
       whereConditions.push(Prisma.sql`s."isActive" = ${params.isActive} `);
     }
 
-    if (params.dateFrom || params.dateTo) {
-      if (params.dateFrom) {
-        whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom} `);
-      }
-      if (params.dateTo) {
-        whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} `);
-      }
+    if (params.dateFrom) {
+      whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom} `);
+    }
+    if (params.dateTo) {
+      whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} `);
+    }
+
+    if (params.bancaId) {
+      whereConditions.push(Prisma.sql`l."bancaId" = CAST(${params.bancaId} AS uuid)`);
     }
 
     const whereClause = whereConditions.length
@@ -1234,6 +1245,7 @@ gs."loteriaName" ASC,
     MAX(s."scheduledAt") as "mostRecentDate",
     STRING_AGG(s.id:: text, ',') as "sorteoIds"
         FROM "Sorteo" s
+        INNER JOIN "Loteria" l ON l.id = s."loteriaId"
         ${whereClause}
         GROUP BY 
           TO_CHAR(
@@ -1287,6 +1299,7 @@ gs."hour24" ASC
         where: {
           id: { in: sorteoIdsArray },
           ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+          ...(params.bancaId ? { loteria: { bancaId: params.bancaId } } : {}),
         },
         select: {
           id: true,
@@ -1321,7 +1334,6 @@ gs."hour24" ASC
       },
     };
   },
-
   async findById(id: string) {
     const sorteo = await SorteoRepository.findById(id);
     if (!sorteo) throw new AppError("Sorteo no encontrado", 404);

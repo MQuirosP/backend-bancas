@@ -1,9 +1,7 @@
 import { Router } from "express";
 import { VendedorController } from "../controllers/vendedor.controller";
 import { protect } from "../../../middlewares/auth.middleware";
-import { Role } from "@prisma/client";
-import { AuthenticatedRequest } from "../../../core/types";
-import { AppError } from "../../../core/errors";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import {
   validateBody,
   validateParams,
@@ -15,23 +13,24 @@ import {
   VendedorIdParamSchema,
   ListVendedoresQuerySchema,
 } from "../validators/vendedor.validator";
-import { requireAdminOrVentana } from "../../../middlewares/roleGuards.middleware";
+import { requireAdminOrBanca, requireAdminBancaOrVentana } from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
 
 router.use(protect);
+router.use(bancaContextMiddleware);
 
 // Escritura
 router.post(
   "/",
-  requireAdminOrVentana,
+  requireAdminOrBanca,
   validateBody(CreateVendedorSchema),
   VendedorController.create
 );
 
 router.put(
   "/:id",
-  requireAdminOrVentana,
+  requireAdminOrBanca,
   validateParams(VendedorIdParamSchema),
   validateBody(UpdateVendedorSchema),
   VendedorController.update
@@ -39,7 +38,7 @@ router.put(
 
 router.patch(
   "/:id",
-  requireAdminOrVentana,
+  requireAdminOrBanca,
   validateParams(VendedorIdParamSchema),
   validateBody(UpdateVendedorSchema),
   VendedorController.update
@@ -47,14 +46,14 @@ router.patch(
 
 router.delete(
   "/:id",
-  requireAdminOrVentana,
+  requireAdminOrBanca,
   validateParams(VendedorIdParamSchema),
   VendedorController.delete
 );
 
 router.patch(
   "/:id/restore",
-  requireAdminOrVentana,
+  requireAdminOrBanca,
   validateParams(VendedorIdParamSchema),
   VendedorController.restore
 );
@@ -62,12 +61,14 @@ router.patch(
 // Lectura
 router.get(
   "/",
+  requireAdminBancaOrVentana,
   validateQuery(ListVendedoresQuerySchema),
   VendedorController.findAll
 );
 
 router.get(
   "/:id",
+  requireAdminBancaOrVentana,
   validateParams(VendedorIdParamSchema),
   VendedorController.findById
 );

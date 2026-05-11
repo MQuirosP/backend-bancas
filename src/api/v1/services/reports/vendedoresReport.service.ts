@@ -21,6 +21,7 @@ export const VendedoresReportService = {
     toDate?: string;
     ticketStatus?: string; // Ej: "ACTIVE,EVALUATED,RESTORED"
     excludeTicketStatus?: string; // Ej: "CANCELLED"
+    bancaId?: string;
   }): Promise<any> {
     const dateRange = resolveDateRange(
       filters.date || 'today',
@@ -30,7 +31,10 @@ export const VendedoresReportService = {
 
     // Obtener ventana
     const ventana = await prisma.ventana.findUnique({
-      where: { id: filters.ventanaId },
+      where: { 
+        id: filters.ventanaId,
+        ...(filters.bancaId && filters.bancaId.trim() !== '' && { bancaId: filters.bancaId }),
+      },
       select: { id: true, name: true, code: true },
     });
 
@@ -182,6 +186,7 @@ export const VendedoresReportService = {
     top?: number;
     sortBy?: 'ventas' | 'tickets' | 'comisiones' | 'margen';
     includeInactive?: boolean;
+    bancaId?: string;
   }): Promise<any> {
     const dateRange = resolveDateRange(
       filters.date || 'today',
@@ -211,6 +216,7 @@ export const VendedoresReportService = {
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
           ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND vn."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
       ),
       ventas_por_vendedor AS (
         SELECT

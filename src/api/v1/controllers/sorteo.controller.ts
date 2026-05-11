@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { SorteoService } from "../services/sorteo.service";
+import SorteoService from "../services/sorteo.service";
 import { AuthenticatedRequest } from "../../../core/types";
 
 export const SorteoController = {
@@ -139,6 +139,8 @@ export const SorteoController = {
       dateFrom: dateFromResolved,
       dateTo: dateToResolved,
       groupBy,
+      //  NUEVO: Aislamiento por banca (header X-Active-Banca-Id)
+      bancaId: req.bancaContext?.bancaId ?? undefined,
       //  NUEVO: Información del usuario para filtrado por política de comisiones
       userId: req.user?.id,
       role: req.user?.role,

@@ -1262,6 +1262,7 @@ export const TicketRepository = {
           data: {
             ticketNumber: nextNumber,
             businessDate: bd.businessDate,
+            bancaId, // <-- INJECTED
             loteriaId,
             sorteoId,
             ventanaId,
@@ -1273,7 +1274,12 @@ export const TicketRepository = {
             clienteNombre: normalizedClienteNombre,
             createdBy: options?.createdBy ?? null,
             createdByRole: options?.createdByRole ?? null,
-            jugadas: { create: jugadasWithCommissions },
+            jugadas: { 
+              create: jugadasWithCommissions.map(j => ({
+                ...j,
+                bancaId // <-- INJECTED
+              })) 
+            },
           },
           include: { jugadas: true },
         });
@@ -2243,6 +2249,7 @@ export const TicketRepository = {
               betType: j.type,
               multiplierX: j.finalMultiplierX,
               jugadaAmount: j.amount,
+              bancaId,
             });
  
             return {
@@ -2274,6 +2281,7 @@ export const TicketRepository = {
           data: {
             ticketNumber: nextNumber,
             businessDate: bd.businessDate,
+            bancaId, // <-- INJECTED
             loteriaId,
             sorteoId,
             ventanaId,
@@ -2296,6 +2304,7 @@ export const TicketRepository = {
           await tx.jugada.createMany({
             data: batch.map((j) => ({
               ticketId: createdTicket.id,
+              bancaId, // <-- INJECTED
               type: j.type,
               number: j.number,
               reventadoNumber: j.reventadoNumber,

@@ -8,6 +8,7 @@ export type CreateBancaInput = {
   defaultMinBet?: number;
   globalMaxPerNumber?: number;
   salesCutoffMinutes?: number;
+  vendorLimit?: number;
 };
 
 export type UpdateBancaInput = Partial<CreateBancaInput>;

@@ -51,10 +51,7 @@ export const VendedorController = {
   },
 
   async findAll(req: AuthenticatedRequest, res: Response) {
-    const page = req.query.page ? Number(req.query.page) : undefined;
-    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
-    const search = req.query.search ? String(req.query.search) : undefined;
-    const ventanaIdFilter = req.query.ventanaId ? String(req.query.ventanaId) : undefined;
+    const { page, pageSize, search, ventanaId: ventanaIdFilter, isActive } = req.query as any;
 
     let ventanaId: string | null = null;
     if (req.user?.role === Role.VENTANA) {
@@ -62,7 +59,7 @@ export const VendedorController = {
       ventanaId = actor?.ventanaId ?? null;
     }
     const current = { id: req.user!.id, role: req.user!.role, ventanaId };
-    const result = await VendedorService.findAll(current, page, pageSize, ventanaIdFilter, search);
+    const result = await VendedorService.findAll(current, page, pageSize, ventanaIdFilter, search, isActive);
     res.json({ success: true, data: result.data, meta: result.meta });
   },
 

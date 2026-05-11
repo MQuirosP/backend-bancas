@@ -351,7 +351,7 @@ export async function getSorteoBreakdownBatch(
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string,
-    userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" //  CRÍTICO: Rol del usuario para calcular balance
+    userRole?: Role //  CRÍTICO: Rol del usuario para calcular balance
 ): Promise<Map<string, Array<{
     sorteoId: string;
     sorteoName: string;
@@ -455,8 +455,8 @@ export async function getSorteoBreakdownBatch(
     // Para 'vendedor': es t."vendedorId"
     const entityIdExpr: Prisma.Sql =
         dimension === 'banca' ? Prisma.sql`b.id` :
-        dimension === 'ventana' ? Prisma.sql`t."ventanaId"` :
-        Prisma.sql`t."vendedorId"`;
+            dimension === 'ventana' ? Prisma.sql`t."ventanaId"` :
+                Prisma.sql`t."vendedorId"`;
 
     // ── 6. Query final ─────────────────────────────────────────────────────────────
     interface SorteoAggRow {
@@ -588,7 +588,7 @@ export async function getSorteoBreakdown(
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string,
-    userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" //  CRÍTICO: Rol del usuario para calcular balance
+    userRole?: Role //  CRÍTICO: Rol del usuario para calcular balance
 ): Promise<Array<{
     sorteoId: string;
     sorteoName: string;
@@ -824,24 +824,26 @@ export async function getSorteoBreakdown(
  */
 export async function getMovementsForDay(
     statementId: string
-): Promise<{ data: Array<{
-    id: string;
-    accountStatementId: string;
-    date: string;
-    time: string | null; //  NUEVO: HH:MM (opcional, hora del movimiento en CR)
-    amount: number;
-    type: "payment" | "collection";
-    method: "cash" | "transfer" | "check" | "other";
-    notes: string | null;
-    isFinal: boolean;
-    isReversed: boolean;
-    reversedAt: string | null; //  Cambiado a string para serialización ISO
-    reversedBy: string | null;
-    paidById: string;
-    paidByName: string;
-    createdAt: string;
-    updatedAt: string;
-}>, totalCount: number }> {
+): Promise<{
+    data: Array<{
+        id: string;
+        accountStatementId: string;
+        date: string;
+        time: string | null; //  NUEVO: HH:MM (opcional, hora del movimiento en CR)
+        amount: number;
+        type: "payment" | "collection";
+        method: "cash" | "transfer" | "check" | "other";
+        notes: string | null;
+        isFinal: boolean;
+        isReversed: boolean;
+        reversedAt: string | null; //  Cambiado a string para serialización ISO
+        reversedBy: string | null;
+        paidById: string;
+        paidByName: string;
+        createdAt: string;
+        updatedAt: string;
+    }>, totalCount: number
+}> {
     const result = await AccountPaymentRepository.findByStatementId(statementId);
     const payments = (result as any).data || [];
 

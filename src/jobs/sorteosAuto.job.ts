@@ -129,7 +129,7 @@ async function executeAutoCreate(): Promise<void> {
     }
 
     //  Pasar null para jobs cron (sin usuario autenticado)
-    const result = await SorteosAutoService.executeAutoCreate(7, null as any); // 7 días por defecto
+    const result = await SorteosAutoService.executeAutoCreate(1, null as any); // 1 día por defecto (ajustado de 7)
 
     logger.info({
       layer: 'job',

@@ -87,6 +87,7 @@ export const AuthController = {
           name: true,
           role: true,
           ventanaId: true,
+          bancaId: true,
           settings: true,
           platform: true,
           appVersion: true,
@@ -108,35 +109,83 @@ export const AuthController = {
     }> = [];
     let activeBancaId: string | null = null;
 
-    if (userRole === Role.ADMIN) {
-      // Obtener todas las bancas activas (sin asignación)
-      const allBancas = await withConnectionRetry(
-        () => prisma.banca.findMany({
-          where: {
-            isActive: true,
-            deletedAt: null,
-          },
-          select: {
-            id: true,
-            name: true,
-            code: true,
-            isActive: true,
-          },
-          orderBy: {
-            name: 'asc',
-          },
-        }),
-        { context: 'AuthController.me.bancas' }
-      );
+    if (userRole === Role.ADMIN || userRole === Role.BANCA) {
+      if (userRole === Role.ADMIN) {
+        // ...
+        const allBancas = await withConnectionRetry(
+          () => prisma.banca.findMany({
+            where: {
+              isActive: true,
+              deletedAt: null,
+            },
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              isActive: true,
+            },
+            orderBy: {
+              name: 'asc',
+            },
+          }),
+          { context: 'AuthController.me.bancas.admin' }
+        );
 
-      bancas = allBancas.map(b => ({
-        id: b.id,
-        name: b.name,
-        code: b.code,
-        isActive: b.isActive,
-      }));
+        bancas = allBancas.map(b => ({
+          id: b.id,
+          name: b.name,
+          code: b.code,
+          isActive: b.isActive,
+        }));
+      } else {
+        // Para rol BANCA, obtener SOLO las bancas asignadas
+        let userBancas = await withConnectionRetry(
+          () => prisma.userBanca.findMany({
+            where: { 
+              userId: u.id,
+              banca: {
+                isActive: true,
+                deletedAt: null
+              }
+            },
+            include: { banca: true },
+            orderBy: {
+              banca: { name: 'asc' }
+            }
+          }),
+          { context: 'AuthController.me.bancas.banca' }
+        );
 
-      // Obtener banca activa del contexto (header X-Active-Banca-Id)
+        // ✅ AUTO-FIX: Si es rol BANCA, tiene bancaId en el perfil pero NO en UserBanca, crearlo al vuelo
+        if (userBancas.length === 0 && u.bancaId) {
+          try {
+            await prisma.userBanca.create({
+              data: {
+                userId: u.id,
+                bancaId: u.bancaId,
+                isDefault: true
+              }
+            });
+            
+            // Re-consultar para que el payload sea correcto
+            userBancas = await prisma.userBanca.findMany({
+              where: { userId: u.id },
+              include: { banca: true }
+            });
+          } catch (fixError) {
+            // Silencioso en producción, pero útil para depuración
+          }
+        }
+
+        bancas = userBancas.map(ub => ({
+          id: ub.banca.id,
+          name: ub.banca.name,
+          code: ub.banca.code,
+          isActive: ub.banca.isActive,
+        }));
+      }
+
+      // Obtener banca activa del contexto (header X-Active-Banca-Id manejado por middleware)
       const bancaContext = (req as any).bancaContext;
       activeBancaId = bancaContext?.bancaId || null;
     }
@@ -161,7 +210,8 @@ export const AuthController = {
           : u.role === Role.VENDEDOR
             ? u.ventanaId ?? null
             : null,
-      ...(userRole === Role.ADMIN && {
+      bancaId: u.bancaId,
+      ...((userRole === Role.ADMIN || userRole === Role.BANCA) && {
         bancas,
         activeBancaId,
       }),

@@ -24,22 +24,23 @@ import { z } from "zod";
 import { Role } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 
 const router = Router();
+router.use(protect);
+router.use(bancaContextMiddleware);
 
 const idParamSchema = z.object({ id: z.uuid("Invalid user id") });
 
 // ADMIN-only
 router.post(
   "/",
-  protect,
-  restrictTo(Role.ADMIN, Role.VENTANA),
+  restrictTo(Role.ADMIN, Role.BANCA, Role.VENTANA),
   validateBody(createUserSchema),
   UserController.create
 );
 router.patch(
   "/:id",
-  protect,
   restrictToAdminSelfOrVentanaVendor,
   validateParams(idParamSchema),
   validateBody(updateUserSchema),
@@ -47,15 +48,13 @@ router.patch(
 );
 router.delete(
   "/:id",
-  protect,
-  restrictTo(Role.ADMIN, Role.VENTANA),
+  restrictTo(Role.ADMIN, Role.BANCA, Role.VENTANA),
   validateParams(idParamSchema),
   UserController.remove
 );
 router.patch(
   "/:id/restore",
-  protect,
-  restrictTo(Role.ADMIN, Role.VENTANA),
+  restrictTo(Role.ADMIN, Role.BANCA, Role.VENTANA),
   validateParams(idParamSchema),
   UserController.restore
 );
@@ -63,7 +62,6 @@ router.patch(
 // Change password (permite que el usuario autenticado cambie su propia contraseña)
 router.put(
   "/me/password",
-  protect,
   validateBody(ChangePasswordSchema),
   UserController.changePassword
 );
@@ -71,14 +69,12 @@ router.put(
 // List & Get (list admin-only; get self allowed if necesitas, por ahora admin)
 router.get(
   "/",
-  protect,
-  restrictTo(Role.ADMIN, Role.VENTANA),
+  restrictTo(Role.ADMIN, Role.BANCA, Role.VENTANA),
   validateQuery(listUsersQuerySchema),
   UserController.list
 );
 router.get(
   "/:id",
-  protect,
   restrictToAdminSelfOrVentanaVendor,
   validateParams(idParamSchema),
   UserController.getById
@@ -87,7 +83,6 @@ router.get(
 // GET /api/v1/users/:userId/allowed-multipliers
 router.get(
   "/:userId/allowed-multipliers",
-  protect,
   async (req: Request, res: Response, next: NextFunction) => {
     const authUser = (req as any)?.user;
     const targetId = req.params.userId;
@@ -148,7 +143,6 @@ router.get(
 // GET /api/v1/users/:id/allowed-multipliers-batch
 router.get(
   "/:id/allowed-multipliers-batch",
-  protect,
   restrictToAdminSelfOrVentanaVendor,
   validateParams(getAllowedMultipliersBatchParamsSchema),
   validateQuery(getAllowedMultipliersBatchQuerySchema),

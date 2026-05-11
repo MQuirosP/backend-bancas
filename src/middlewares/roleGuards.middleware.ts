@@ -7,18 +7,19 @@ import { AuthenticatedRequest } from "../core/types";
 export const requireRole =
   (...roles: Role[]) =>
   (req: AuthenticatedRequest, _res: Response, next: NextFunction) => {
-    if (!req.user) throw new AppError("Unauthorized", 401);
-    if (!roles.includes(req.user.role)) throw new AppError("Forbidden", 403);
+    if (!req.user) throw new AppError("No autenticado", 401);
+    if (!roles.includes(req.user.role)) throw new AppError("No tienes permisos para realizar esta acción", 403);
     next();
   };
 
 /** Azúcares sintácticos */
 export const requireAdmin = requireRole(Role.ADMIN);
-export const requireAdminOrVentana = requireRole(Role.ADMIN, Role.VENTANA);
-export const requireAdminVentanaOrVendedor = requireRole(Role.ADMIN, Role.VENTANA, Role.VENDEDOR);
+export const requireAdminOrBanca = requireRole(Role.ADMIN, Role.BANCA);
+export const requireAdminBancaOrVentana = requireRole(Role.ADMIN, Role.BANCA, Role.VENTANA);
+export const requireAdminVentanaOrVendedor = requireRole(Role.ADMIN, Role.BANCA, Role.VENTANA, Role.VENDEDOR);
 
 /** Cualquiera autenticado */
 export const requireAuth = (req: AuthenticatedRequest, _res: Response, next: NextFunction) => {
-  if (!req.user) throw new AppError("Unauthorized", 401);
+  if (!req.user) throw new AppError("No autenticado", 401);
   next();
 };

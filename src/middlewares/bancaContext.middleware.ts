@@ -26,8 +26,68 @@ export async function bancaContextMiddleware(
       return next();
     }
 
-    // Para VENTANA/VENDEDOR, usar bancaId del JWT si disponible (evita query a BD)
-    if (user.role !== Role.ADMIN) {
+    // ========================================================================
+    // 1. CASO: USUARIO BANCA (Multi-tenant Admin)
+    // ========================================================================
+    if (user.role === Role.BANCA) {
+      // Leer header de banca activa solicitado por el FE
+      const headerLower = req.headers['x-active-banca-id'] as string | undefined;
+      const headerUpper = req.headers['X-Active-Banca-Id'] as string | undefined;
+      const requestedBancaId = headerLower || headerUpper || undefined;
+
+      // Obtener todas las bancas asignadas al usuario en UserBanca
+      const userBancas = await prisma.userBanca.findMany({
+        where: { userId: user.id },
+        select: { bancaId: true },
+      });
+
+      const assignedBancaIds = userBancas.map(ub => ub.bancaId);
+
+      if (assignedBancaIds.length === 0) {
+        // Fallback: si no tiene bancas en UserBanca, intentar usar la de su perfil (si existe)
+        if (user.bancaId) {
+          req.bancaContext = {
+            bancaId: user.bancaId,
+            userId: user.id,
+            hasAccess: true,
+          };
+          return next();
+        }
+        // No tiene acceso a ninguna banca
+        throw new AppError("No tienes bancas asignadas", 403, "FORBIDDEN");
+      }
+
+      let activeBancaId: string | null = null;
+
+      if (requestedBancaId && assignedBancaIds.includes(requestedBancaId)) {
+        // La banca solicitada es una de sus bancas asignadas
+        activeBancaId = requestedBancaId;
+      } else {
+        // Fallback: usar la banca por defecto del perfil o la primera asignada
+        activeBancaId = (user.bancaId && assignedBancaIds.includes(user.bancaId))
+          ? user.bancaId
+          : assignedBancaIds[0];
+      }
+
+      req.bancaContext = {
+        bancaId: activeBancaId,
+        userId: user.id,
+        hasAccess: true,
+      };
+
+      //  NUEVO: Informar al FE si el contexto cambió respecto a lo solicitado
+      // Esto ayuda a que el Store de la banca en el FE se sincronice
+      if (requestedBancaId && requestedBancaId !== activeBancaId) {
+        res.setHeader('X-Banca-Context-Fallback', activeBancaId);
+      }
+
+      return next();
+    }
+
+    // ========================================================================
+    // 2. CASO: VENTANA / VENDEDOR (Single-tenant)
+    // ========================================================================
+    if (user.role === Role.VENTANA || user.role === Role.VENDEDOR) {
       if (user.bancaId) {
         // bancaId ya viene en el JWT — sin query
         req.bancaContext = {
@@ -70,8 +130,10 @@ export async function bancaContextMiddleware(
       return next();
     }
 
+    // ========================================================================
+    // 3. CASO: ADMIN (Global Admin)
+    // ========================================================================
     // Para ADMIN: leer header (solo filtro de vista, sin validación de asignación)
-    // Express normaliza headers a lowercase automáticamente, pero verificar todas las variantes
     const headerLower = req.headers['x-active-banca-id'] as string | undefined;
     const headerUpper = req.headers['X-Active-Banca-Id'] as string | undefined;
     const requestedBancaId = headerLower || headerUpper || undefined;
@@ -96,7 +158,6 @@ export async function bancaContextMiddleware(
     }
 
     // Si no hay header o la banca no es válida, no filtrar (ADMIN ve todas)
-    // activeBancaId puede ser null, lo cual significa "ver todas las bancas"
     req.bancaContext = {
       bancaId: activeBancaId, // null = ver todas, string = filtrar por esa banca
       userId: user.id,
@@ -105,7 +166,11 @@ export async function bancaContextMiddleware(
 
     next();
   } catch (error) {
-    // Continuar sin contexto de banca (no bloquear request)
+    logger.error({
+      layer: 'middleware',
+      action: 'BANCA_CONTEXT_ERROR',
+      payload: { error: (error as Error).message, userId: req.user?.id },
+    });
     next();
   }
 }

@@ -28,16 +28,21 @@ export const VentanaController = {
     res.json({ success: true, data: ventana });
   },
 
-  async findAll(req: Request, res: Response) {
-  const page     = req.query.page ? Number(req.query.page) : undefined;
-  const pageSize = req.query.pageSize ? Number(req.query.pageSize) : undefined;
-  const search   = typeof req.query.search === "string" ? req.query.search : undefined;
+  async findAll(req: AuthenticatedRequest, res: Response) {
+    const page = req.query.page ? Number(req.query.page) : 1;
+    const pageSize = req.query.pageSize ? Number(req.query.pageSize) : 10;
+    const search = typeof req.query.search === "string" ? req.query.search : undefined;
+    
+    let isActive: boolean | undefined = undefined;
+    if (String(req.query.isActive) === "true") isActive = true;
+    else if (String(req.query.isActive) === "false") isActive = false;
 
-  const result = await VentanaService.findAll(page, pageSize, search);
-  res.json({ success: true, data: result.data, meta: result.meta });
-},
+    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const result = await VentanaService.findAll(page, pageSize, search, isActive, bancaId);
+    res.json({ success: true, data: result.data, meta: result.meta });
+  },
 
-  async findById(req: Request, res: Response) {
+  async findById(req: AuthenticatedRequest, res: Response) {
     const { id } = req.params;
     const ventana = await VentanaService.findById(id);
     res.json({ success: true, data: ventana });

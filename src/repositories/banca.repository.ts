@@ -27,6 +27,7 @@ const toPrismaCreate = (d: CreateBancaInput): Prisma.BancaCreateInput => ({
       },
     }
     : {}),
+  vendorLimit: d.vendorLimit,
 });
 
 const toPrismaUpdate = (d: UpdateBancaInput): Prisma.BancaUpdateInput => ({
@@ -42,6 +43,7 @@ const toPrismaUpdate = (d: UpdateBancaInput): Prisma.BancaUpdateInput => ({
   ...(typeof d.salesCutoffMinutes === 'number'
     ? { salesCutoffMinutes: Math.trunc(d.salesCutoffMinutes) }
     : {}),
+  vendorLimit: d.vendorLimit,
 })
 
 const BancaRepository = {

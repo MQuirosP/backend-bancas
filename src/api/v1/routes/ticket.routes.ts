@@ -12,12 +12,14 @@ import {
 } from "../validators/ticket.validator";
 import { salesRateLimiter } from "../../../middlewares/rateLimit.middleware";
 import { protect, restrictTo } from "../../../middlewares/auth.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import { Role } from "@prisma/client";
 
 const router = Router();
 
 router.use(protect);
-router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.ADMIN));
+router.use(bancaContextMiddleware);
+router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.BANCA, Role.ADMIN));
 
 // Ticket CRUD
 router.post("/", salesRateLimiter, validateBody(CreateTicketSchema), TicketController.create);

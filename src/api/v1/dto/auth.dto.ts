@@ -1,9 +1,11 @@
+import { Role } from '@prisma/client';
+
 export interface RegisterDTO {
     name: string,
     email: string,
     username: string,
     password: string,
-    role?: 'ADMIN' | 'VENTANA' | 'VENDEDOR',
+    role?: Role,
     ventanaId?: string,  // UUID de ventana (requerido para VENTANA y VENDEDOR)
 }
 

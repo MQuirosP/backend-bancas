@@ -273,6 +273,56 @@ export async function applyRbacFilters(
       }
     }
     // Si no tiene banca activa ni bancaId en request, aplica filtros tal cual (ve todas las bancas)
+  } else if (context.role === Role.BANCA) {
+    // BANCA: siempre filtrar por su propia banca
+    const bancaId = context.bancaId;
+
+    if (!bancaId) {
+      throw new AppError('BANCA user must have bancaId assigned', 403, {
+        code: 'RBAC_006',
+        details: [{ field: 'bancaId', reason: 'User configuration error: BANCA role requires bancaId' }]
+      });
+    }
+
+    effective.bancaId = bancaId;
+
+    // Si solicita un ventanaId específico, validar que pertenezca a su banca
+    if (requestFilters.ventanaId) {
+      const ventana = await withConnectionRetry(
+        () => prisma.ventana.findUnique({
+          where: { id: requestFilters.ventanaId! },
+          select: { bancaId: true }
+        }),
+        { context: 'rbac.applyRbacFilters.bancaVentanaValidate' }
+      );
+
+      if (!ventana || ventana.bancaId !== bancaId) {
+        throw new AppError('Cannot access that ventana', 403, {
+          code: 'RBAC_007',
+          details: [{ field: 'ventanaId', reason: 'Ventana does not belong to your banca' }]
+        });
+      }
+      effective.ventanaId = requestFilters.ventanaId;
+    }
+
+    // Si solicita un vendedorId específico, validar que pertenezca a una ventana de su banca
+    if (requestFilters.vendedorId) {
+      const vendedor = await withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id: requestFilters.vendedorId! },
+          select: { ventana: { select: { bancaId: true } } }
+        }),
+        { context: 'rbac.applyRbacFilters.bancaVendedorValidate' }
+      );
+
+      if (!vendedor || vendedor.ventana?.bancaId !== bancaId) {
+        throw new AppError('Cannot access that vendedor', 403, {
+          code: 'RBAC_008',
+          details: [{ field: 'vendedorId', reason: 'Vendedor does not belong to your banca' }]
+        });
+      }
+      effective.vendedorId = requestFilters.vendedorId;
+    }
   }
 
   return effective;

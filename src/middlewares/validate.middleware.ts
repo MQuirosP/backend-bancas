@@ -42,21 +42,29 @@ function buildSummary(details: Array<any>, source: "body" | "query" | "params") 
 
   const extras = details.flatMap(d => d.unexpectedKeys ?? []);
 
+  const sourceLabels = {
+    body: "la información enviada",
+    query: "los filtros de búsqueda",
+    params: "el identificador en la URL"
+  };
+
+  const label = sourceLabels[source] || "la petición";
+
   const parts: string[] = [];
-  if (missing.length) parts.push(`faltantes: ${missing.join(", ")}`);
-  if (extras.length) parts.push(`no permitidas: ${extras.join(", ")}`);
+  if (missing.length) parts.push(`faltan datos obligatorios: ${missing.join(", ")}`);
+  if (extras.length) parts.push(`datos no permitidos: ${extras.join(", ")}`);
 
   if (parts.length) {
-    return `Hay errores de validación en ${source} (${parts.join(" | ")})`;
+    return `Hay errores en ${label} (${parts.join(" | ")})`;
   }
 
   // Si no hay faltantes/extras, pero hay otros errores, mostrar el primero para ser más específicos
   if (details.length > 0) {
     const first = details[0];
-    return `Error en ${source} (${first.field}): ${first.issue}`;
+    return `Error en ${label} (${first.field}): ${first.issue}`;
   }
 
-  return `Hay errores de validación en ${source}`;
+  return `Hay errores de validación en ${label}`;
 }
 
 /** Fuerza .strict() y emite AppError con meta {context, details} */

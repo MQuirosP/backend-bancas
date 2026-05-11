@@ -316,7 +316,7 @@ export const VentanaService = {
   },
 
   // services/ventana.service.ts
-async findAll(page?: number, pageSize?: number, search?: string, isActive?: boolean) {
+async findAll(page?: number, pageSize?: number, search?: string, isActive?: boolean, bancaId?: string) {
   const p  = page && page > 0 ? page : 1
   const ps = pageSize && pageSize > 0 ? pageSize : 10
 
@@ -324,7 +324,8 @@ async findAll(page?: number, pageSize?: number, search?: string, isActive?: bool
   page: p,
   pageSize: ps,
   search: search?.trim() || undefined,
-  isActive, // 👈 este lo estabas ignorando
+  isActive, 
+  bancaId,
 })
 
   return {

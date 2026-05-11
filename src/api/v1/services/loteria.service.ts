@@ -12,7 +12,7 @@ import { resolveDigits } from '../../../utils/loteriaRules';
 
 export const LoteriaService = {
   async create(
-    data: { name: string; rulesJson?: Record<string, any>, isActive?: boolean },
+    data: { name: string; rulesJson?: Record<string, any>, isActive?: boolean, bancaId?: string },
     userId: string,
     requestId?: string
   ) {
@@ -23,6 +23,7 @@ export const LoteriaService = {
             name: data.name,
             rulesJson: data.rulesJson ?? {},
             isActive: data.isActive ?? true,
+            bancaId: data.bancaId,
           },
         }),
         { context: 'LoteriaService.create' }
@@ -82,16 +83,22 @@ export const LoteriaService = {
     pageSize = 10,
     isActive,
     search,
+    bancaId,
   }: {
     page?: number;
     pageSize?: number;
     isActive?: boolean;
     search?: string;
+    bancaId?: string;
   }) {
     const where: Prisma.LoteriaWhereInput = {};
 
     if (typeof isActive === "boolean") {
       where.isActive = isActive;
+    }
+
+    if (bancaId) {
+      where.bancaId = bancaId;
     }
 
     const s = typeof search === "string" ? search.trim() : "";

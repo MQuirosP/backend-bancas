@@ -17,7 +17,8 @@ import { resolveCommissionFromPolicy } from '../../../../services/commission/com
 async function computeListeroCommissionByLoteria(
   fromDateStr: string,
   toDateStr: string,
-  loteriaId?: string
+  loteriaId?: string,
+  bancaId?: string
 ): Promise<Map<string, number>> {
   // Obtener jugadas en el rango con businessDate del ticket
   const jugadas = await prisma.jugada.findMany({
@@ -29,6 +30,7 @@ async function computeListeroCommissionByLoteria(
         isActive: true,
         status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] },
         ...(loteriaId ? { loteriaId } : {}),
+        ...(bancaId ? { ventana: { bancaId } } : {}),
       },
     },
     select: {
@@ -187,6 +189,7 @@ export const LoteriasReportService = {
     toDate?: string;
     loteriaId?: string;
     includeComparison?: boolean;
+    bancaId?: string;
   }): Promise<any> {
     const dateRange = resolveDateRange(
       filters.date || 'today',
@@ -216,6 +219,7 @@ export const LoteriasReportService = {
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${filters.bancaId} AS uuid))` : Prisma.empty}
       ),
       jugadas_count_per_loteria AS (
         SELECT 
@@ -280,7 +284,8 @@ export const LoteriasReportService = {
     const commissionByLoteria = await computeListeroCommissionByLoteria(
       fromDateStr,
       toDateStr,
-      filters.loteriaId
+      filters.loteriaId,
+      filters.bancaId
     );
 
     // Aplicar comisiones de listero calculadas desde políticas

@@ -75,7 +75,7 @@ export async function calculateDayStatement(
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string,
-    userRole?: "ADMIN" | "VENTANA" | "VENDEDOR" //  CRÍTICO: Rol del usuario para calcular balance correctamente
+    userRole?: Role //  CRÍTICO: Rol del usuario para calcular balance correctamente
 ): Promise<DayStatement> {
     //  OPTIMIZACIÓN: Intentar obtener del caché primero
     const dateStr = crDateService.postgresDateToCRString(date);
@@ -708,7 +708,7 @@ export async function getStatementDirect(
     ventanaId?: string,
     vendedorId?: string,
     bancaId?: string,
-    userRole: "ADMIN" | "VENTANA" | "VENDEDOR" = "ADMIN",
+    userRole: Role = Role.ADMIN,
     sort: "asc" | "desc" = "desc"
 ): Promise<StatementResponse> {
     //  CORRECCIÓN: Usar servicio centralizado para conversión de fechas

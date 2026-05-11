@@ -33,6 +33,7 @@ async function getOrCreateConfig() {
       data: {
         autoOpenEnabled: false,
         autoCreateEnabled: false,
+        autoCloseEnabled: false,
       },
         }),
       {

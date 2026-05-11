@@ -19,12 +19,22 @@ export const ReportsController = {
   async getWinnersPayments(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
 
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.user!.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, query);
+
     const result = await TicketsReportService.getWinnersPayments({
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
-      ventanaId: query.ventanaId,
-      vendedorId: query.vendedorId,
+      ventanaId: effectiveFilters.ventanaId || undefined,
+      vendedorId: effectiveFilters.vendedorId,
+      bancaId: effectiveFilters.bancaId,
       loteriaId: query.loteriaId,
       paymentStatus: query.paymentStatus || 'all',
       page: query.page ? Number(query.page) : undefined,
@@ -51,7 +61,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.user!.bancaId,
+      bancaId: req.bancaContext?.bancaId,
     };
 
     // Aplicar RBAC a los filtros del cliente
@@ -67,6 +77,7 @@ export const ReportsController = {
       loteriaId: query.loteriaId,
       ventanaId: effectiveFilters.ventanaId || undefined,
       vendedorId: effectiveFilters.vendedorId,
+      bancaId: effectiveFilters.bancaId,
       betType: query.betType || 'all',
       top: query.top ? Number(query.top) : undefined,
       includeComparison: query.includeComparison === 'true' || query.includeComparison === true,
@@ -84,11 +95,21 @@ export const ReportsController = {
   async getNumbersAnalysisDetail(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
 
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.bancaContext?.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, query);
+
     const result = await TicketsReportService.getNumbersAnalysisDetail({
       number: query.number,
       loteriaId: query.loteriaId,
-      ventanaId: query.ventanaId,
-      vendedorId: query.vendedorId,
+      ventanaId: effectiveFilters.ventanaId || undefined,
+      vendedorId: effectiveFilters.vendedorId,
+      bancaId: effectiveFilters.bancaId,
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
@@ -105,12 +126,22 @@ export const ReportsController = {
   async getCancelledTickets(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
     
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.bancaContext?.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, query);
+
     const result = await TicketsReportService.getCancelledTickets({
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
-      ventanaId: query.ventanaId,
-      vendedorId: query.vendedorId,
+      ventanaId: effectiveFilters.ventanaId || undefined,
+      vendedorId: effectiveFilters.vendedorId,
+      bancaId: effectiveFilters.bancaId,
       loteriaId: query.loteriaId,
       page: query.page ? Number(query.page) : undefined,
       pageSize: query.pageSize ? Number(query.pageSize) : undefined,
@@ -126,11 +157,21 @@ export const ReportsController = {
   async getLoteriasPerformance(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
     
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.user!.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, query);
+
     const result = await LoteriasReportService.getPerformance({
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
       loteriaId: query.loteriaId,
+      bancaId: effectiveFilters.bancaId,
       includeComparison: query.includeComparison === 'true',
     });
 
@@ -144,11 +185,21 @@ export const ReportsController = {
   async getVentanasRanking(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
     
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.user!.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, query);
+
     const result = await VentanasReportService.getRanking({
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
-      ventanaId: query.ventanaId,
+      ventanaId: effectiveFilters.ventanaId || undefined,
+      bancaId: effectiveFilters.bancaId,
       top: query.top ? Number(query.top) : undefined,
       sortBy: query.sortBy || 'ventas',
       includeComparison: query.includeComparison === 'true',
@@ -165,7 +216,16 @@ export const ReportsController = {
   async getVendedoresCommissionsChart(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
 
-    if (!query.ventanaId) {
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.user!.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, query);
+
+    if (!effectiveFilters.ventanaId) {
       return res.status(400).json({
         success: false,
         error: {
@@ -176,12 +236,13 @@ export const ReportsController = {
     }
 
     const result = await VendedoresReportService.getCommissionsChart({
-      ventanaId: query.ventanaId,
+      ventanaId: effectiveFilters.ventanaId,
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
       ticketStatus: query.ticketStatus,
       excludeTicketStatus: query.excludeTicketStatus,
+      bancaId: effectiveFilters.bancaId,
     });
 
     return success(res, result.data, result.meta);
@@ -194,11 +255,21 @@ export const ReportsController = {
   async getVendedoresRanking(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
 
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.user!.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, query);
+
     const result = await VendedoresReportService.getRanking({
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
-      ventanaId: query.ventanaId,
+      ventanaId: effectiveFilters.ventanaId || undefined,
+      bancaId: effectiveFilters.bancaId,
       top: query.top ? Number(query.top) : undefined,
       sortBy: query.sortBy || 'ventas',
       includeInactive: query.includeInactive === 'true' || query.includeInactive === true,
@@ -215,9 +286,19 @@ export const ReportsController = {
   async getExposure(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
 
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.user!.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, query);
+
     const result = await TicketsReportService.getExposure({
       sorteoId: query.sorteoId,
       loteriaId: query.loteriaId,
+      bancaId: effectiveFilters.bancaId,
       top: query.top ? Number(query.top) : undefined,
       minExposure: query.minExposure ? Number(query.minExposure) : undefined,
     });
@@ -232,12 +313,22 @@ export const ReportsController = {
   async getProfitability(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
 
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.user!.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, query);
+
     const result = await TicketsReportService.getProfitability({
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
-      ventanaId: query.ventanaId,
-      vendedorId: query.vendedorId,
+      ventanaId: effectiveFilters.ventanaId || undefined,
+      vendedorId: effectiveFilters.vendedorId,
+      bancaId: effectiveFilters.bancaId,
       loteriaId: query.loteriaId,
       includeComparison: query.includeComparison === 'true' || query.includeComparison === true,
       groupBy: query.groupBy,
@@ -253,12 +344,22 @@ export const ReportsController = {
   async getTimeAnalysis(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
 
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.user!.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, query);
+
     const result = await TicketsReportService.getTimeAnalysis({
       date: query.date || 'today',
       fromDate: query.fromDate,
       toDate: query.toDate,
-      ventanaId: query.ventanaId,
-      vendedorId: query.vendedorId,
+      ventanaId: effectiveFilters.ventanaId || undefined,
+      vendedorId: effectiveFilters.vendedorId,
+      bancaId: effectiveFilters.bancaId,
       loteriaId: query.loteriaId,
       metric: query.metric || 'ventas',
     });
@@ -278,12 +379,19 @@ export const ReportsController = {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    // Si no es ADMIN, forzar que solo vea sus propios ganadores
-    if (req.user.role !== 'ADMIN') {
-      vendedorId = req.user.id;
-    }
+    // Aplicar RBAC
+    const context: AuthContext = {
+      userId: req.user.id,
+      role: req.user.role,
+      ventanaId: req.user.ventanaId,
+      bancaId: req.user.bancaId,
+    };
+    const effectiveFilters = await applyRbacFilters(context, { vendedorId });
 
-    const result = await TicketsReportService.getWinnersList(sorteoId, { vendedorId });
+    const result = await TicketsReportService.getWinnersList(sorteoId, { 
+      vendedorId: effectiveFilters.vendedorId,
+      bancaId: effectiveFilters.bancaId
+    });
 
     return success(res, result.data);
   },

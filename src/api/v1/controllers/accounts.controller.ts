@@ -5,6 +5,7 @@ import { AccountsService } from "../services/accounts.service";
 import { AccountsExportService } from "../services/accounts-export.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
+import { getActiveBancaId } from "../../../middlewares/bancaContext.middleware";
 import { AppError } from "../../../core/errors";
 import { Role, ActivityType } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
@@ -637,6 +638,22 @@ export const AccountsController = {
       return success(res, data, { total: totalCount, page: p, pageSize: ps });
     }
 
+    //  NUEVO: BANCA puede ver historial de sus bancas asignadas
+    if (user.role === Role.BANCA) {
+      const activeBancaId = getActiveBancaId(req);
+      if (!activeBancaId) {
+        throw new AppError("Banca no seleccionada", 400, "NO_BANCA_SELECTED");
+      }
+
+      // Validar que la banca solicitada (si existe) sea la activa o pertenezca al usuario
+      // getPaymentHistory filtrará por ventanaId/vendedorId, pero debemos asegurar que pertenezcan a la banca
+      const filters = { ventanaId, vendedorId, bancaId: activeBancaId, page: p, pageSize: ps };
+      const result = await AccountsService.getPaymentHistory(date, filters);
+      const { data, totalCount } = result;
+
+      return success(res, data, { total: totalCount, page: p, pageSize: ps });
+    }
+
     throw new AppError("Rol no permitido", 403, "FORBIDDEN");
   },
 
@@ -662,6 +679,31 @@ export const AccountsController = {
     //  NUEVO: Validar permisos según rol
     if (user.role === Role.ADMIN) {
       // ADMIN puede revertir cualquier pago
+    } else if (user.role === Role.BANCA) {
+      //  BANCA solo puede revertir pagos de sus propias bancas
+      // Obtener la banca del pago (ya sea directa o vía ventana)
+      let paymentBancaId = payment.bancaId;
+
+      if (!paymentBancaId && payment.ventanaId) {
+        const ventana = await prisma.ventana.findUnique({
+          where: { id: payment.ventanaId },
+          select: { bancaId: true },
+        });
+        paymentBancaId = ventana?.bancaId || null;
+      }
+
+      if (!paymentBancaId) {
+        throw new AppError("No se puede determinar la banca del pago", 403, "FORBIDDEN");
+      }
+
+      // Validar asignación en UserBanca
+      const assignment = await prisma.userBanca.findFirst({
+        where: { userId: user.id, bancaId: paymentBancaId },
+      });
+
+      if (!assignment) {
+        throw new AppError("No tienes permiso para revertir pagos de esta banca", 403, "FORBIDDEN");
+      }
     } else if (user.role === Role.VENTANA) {
       //  VENTANA solo puede revertir pagos de sus propios vendedores
       //  OPTIMIZACIÓN: Obtener ventanaId del usuario solo si no está en el token
@@ -701,7 +743,7 @@ export const AccountsController = {
       }
     } else {
       // Otros roles no pueden revertir pagos
-      throw new AppError("Solo usuarios con rol ADMIN o VENTANA pueden revertir pagos/cobros", 403, "FORBIDDEN");
+      throw new AppError("Solo usuarios con rol ADMIN, BANCA o VENTANA pueden revertir pagos/cobros", 403, "FORBIDDEN");
     }
 
     //  OPTIMIZACIÓN: Pasar el payment ya obtenido en lugar de solo el ID
@@ -1061,7 +1103,10 @@ export const AccountsController = {
       } else {
         throw new AppError("Scope inválido", 400, "INVALID_SCOPE");
       }
-    } else if (user.role === Role.ADMIN) {
+    } else if (user.role === Role.ADMIN || user.role === Role.BANCA) {
+      // Usar banca del contexto (ya sea filtro de ADMIN o banca asignada de BANCA)
+      const activeBancaId = getActiveBancaId(req);
+
       filters = {
         month,
         date,
@@ -1071,7 +1116,7 @@ export const AccountsController = {
         dimension,
         ventanaId,
         vendedorId,
-        bancaId: user.bancaId,
+        bancaId: activeBancaId || undefined,
         sort: sort || "desc",
         userRole: user.role,
       };
