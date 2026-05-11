@@ -234,14 +234,14 @@ export const AccountsController = {
       }
     }
 
-    // ADMIN puede usar cualquier scope y dimension
-    if (user.role === Role.ADMIN) {
+    // ADMIN y BANCA pueden usar cualquier scope y dimension (dentro de su banca)
+    if (user.role === Role.ADMIN || user.role === Role.BANCA) {
       // Aplicar RBAC para obtener filtros efectivos (incluye filtro de banca si está activa)
       const context: AuthContext = {
         userId: user.id,
         role: user.role,
         ventanaId: user.ventanaId,
-        bancaId: req.bancaContext?.bancaId || null,
+        bancaId: getActiveBancaId(req) || null,
       };
       const effectiveFilters = await applyRbacFilters(context, {
         ventanaId,
@@ -434,6 +434,39 @@ export const AccountsController = {
         effectiveVentanaId = undefined;
         // effectiveBancaId ya asignado arriba
       }
+    } else if (user.role === Role.BANCA) {
+      // BANCA debe operar dentro de su banca activa
+      const activeBancaId = getActiveBancaId(req);
+      if (!activeBancaId || (bancaId && bancaId !== activeBancaId)) {
+        throw new AppError("No tiene permiso para operar en esta banca", 403, "FORBIDDEN");
+      }
+      effectiveBancaId = activeBancaId;
+
+      // Validar relaciones si se proporcionan
+      if (vendedorId) {
+        const vendedor = await prisma.user.findUnique({
+          where: { id: vendedorId },
+          select: { ventana: { select: { bancaId: true } } },
+        });
+        if (!vendedor || vendedor.ventana?.bancaId !== effectiveBancaId) {
+          throw new AppError("El vendedor no pertenece a tu banca", 403, "FORBIDDEN");
+        }
+        effectiveVentanaId = undefined;
+        effectiveVendedorId = vendedorId;
+      } else if (ventanaId) {
+        const ventana = await prisma.ventana.findUnique({
+          where: { id: ventanaId },
+          select: { bancaId: true },
+        });
+        if (!ventana || ventana.bancaId !== effectiveBancaId) {
+          throw new AppError("La ventana no pertenece a tu banca", 403, "FORBIDDEN");
+        }
+        effectiveVentanaId = ventanaId;
+        effectiveVendedorId = undefined;
+      } else {
+        effectiveVendedorId = undefined;
+        effectiveVentanaId = undefined;
+      }
     }
 
     // Validar que al menos uno de los tres esté presente después del procesamiento
@@ -528,7 +561,7 @@ export const AccountsController = {
   async getPaymentHistory(req: AuthenticatedRequest, res: Response) {
     if (!req.user) throw new AppError("Unauthorized", 401);
 
-    const { date, ventanaId, vendedorId, page, pageSize } = req.query as any;
+    const { date, ventanaId, vendedorId, bancaId, page, pageSize } = req.query as any;
     const user = req.user;
     const p = parseInt(page) || 1;
     const ps = parseInt(pageSize) || 20;
@@ -612,9 +645,28 @@ export const AccountsController = {
       return success(res, data, { total: totalCount, page: p, pageSize: ps });
     }
 
-    // ADMIN puede ver cualquier historial
-    if (user.role === Role.ADMIN) {
-      const filters = { ventanaId, vendedorId, page: p, pageSize: ps };
+    // ADMIN y BANCA pueden ver cualquier historial (dentro de su banca)
+    if (user.role === Role.ADMIN || user.role === Role.BANCA) {
+      const context: AuthContext = {
+        userId: user.id,
+        role: user.role,
+        ventanaId: user.ventanaId,
+        bancaId: getActiveBancaId(req) || null,
+      };
+
+      const effectiveFilters = await applyRbacFilters(context, {
+        ventanaId,
+        vendedorId,
+      });
+
+      const filters = {
+        ventanaId: effectiveFilters.ventanaId,
+        vendedorId: effectiveFilters.vendedorId,
+        bancaId: effectiveFilters.bancaId || bancaId || undefined,
+        page: p,
+        pageSize: ps
+      };
+
       const result = await AccountsService.getPaymentHistory(date, filters);
       const { data, totalCount } = result;
 
@@ -628,28 +680,13 @@ export const AccountsController = {
           date,
           ventanaId: filters.ventanaId || null,
           vendedorId: filters.vendedorId || null,
+          bancaId: filters.bancaId || null,
           count: data.length,
           totalCount,
         },
         layer: "controller",
         requestId: req.requestId,
       });
-
-      return success(res, data, { total: totalCount, page: p, pageSize: ps });
-    }
-
-    //  NUEVO: BANCA puede ver historial de sus bancas asignadas
-    if (user.role === Role.BANCA) {
-      const activeBancaId = getActiveBancaId(req);
-      if (!activeBancaId) {
-        throw new AppError("Banca no seleccionada", 400, "NO_BANCA_SELECTED");
-      }
-
-      // Validar que la banca solicitada (si existe) sea la activa o pertenezca al usuario
-      // getPaymentHistory filtrará por ventanaId/vendedorId, pero debemos asegurar que pertenezcan a la banca
-      const filters = { ventanaId, vendedorId, bancaId: activeBancaId, page: p, pageSize: ps };
-      const result = await AccountsService.getPaymentHistory(date, filters);
-      const { data, totalCount } = result;
 
       return success(res, data, { total: totalCount, page: p, pageSize: ps });
     }
@@ -1016,6 +1053,7 @@ export const AccountsController = {
       sort,
       includeBreakdown,
       includeMovements,
+      bancaId,
     } = req.query as any;
 
     const user = req.user;
@@ -1104,19 +1142,30 @@ export const AccountsController = {
         throw new AppError("Scope inválido", 400, "INVALID_SCOPE");
       }
     } else if (user.role === Role.ADMIN || user.role === Role.BANCA) {
-      // Usar banca del contexto (ya sea filtro de ADMIN o banca asignada de BANCA)
-      const activeBancaId = getActiveBancaId(req);
+      // Aplicar RBAC para obtener filtros efectivos (incluye filtro de banca si está activa)
+      const context: AuthContext = {
+        userId: user.id,
+        role: user.role,
+        ventanaId: user.ventanaId,
+        bancaId: getActiveBancaId(req) || null,
+      };
+
+      const effectiveFilters = await applyRbacFilters(context, {
+        ventanaId,
+        vendedorId,
+        bancaId,
+      });
 
       filters = {
         month,
         date,
         fromDate,
         toDate,
-        scope,
-        dimension,
-        ventanaId,
-        vendedorId,
-        bancaId: activeBancaId || undefined,
+        scope: scope || "all",
+        dimension: dimension || "ventana",
+        ventanaId: effectiveFilters.ventanaId,
+        vendedorId: effectiveFilters.vendedorId,
+        bancaId: effectiveFilters.bancaId || null,
         sort: sort || "desc",
         userRole: user.role,
       };
