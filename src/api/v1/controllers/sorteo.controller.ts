@@ -143,7 +143,17 @@ export const SorteoController = {
       ? (req.query.groupBy as "hour" | "loteria-hour" | undefined)
       : undefined;
 
-    //  Pasar información del usuario para filtrado por política de comisiones (solo VENDEDOR)
+    // DEBUG: Log bancaId
+    req.logger?.info({
+      layer: "controller",
+      action: "SORTEO_LIST_BANCA_ID",
+      payload: {
+        bancaId: req.bancaContext?.bancaId,
+        role: req.user?.role,
+        message: "BancaId extraído del contexto para listar sorteos"
+      }
+    });
+
     const result = await SorteoService.list({
       loteriaId,
       page,

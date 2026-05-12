@@ -115,7 +115,8 @@ export const TicketController = {
   },
 
   async getById(req: AuthenticatedRequest, res: Response) {
-    const result = await TicketService.getById(req.params.id);
+    const bancaId = req.bancaContext?.bancaId || undefined;
+    const result = await TicketService.getById(req.params.id, bancaId);
     return success(res, result);
   },
 
@@ -256,13 +257,15 @@ export const TicketController = {
 
   async cancel(req: AuthenticatedRequest, res: Response) {
     const userId = req.user!.id;
-    const result = await TicketService.cancel(req.params.id, userId, req.requestId);
+    const bancaId = req.bancaContext?.bancaId || undefined;
+    const result = await TicketService.cancel(req.params.id, userId, req.requestId, bancaId);
     return success(res, result);
   },
 
   async restore(req: AuthenticatedRequest, res: Response) {
     const userId = req.user!.id;
-    const result = await TicketService.restore(req.params.id, userId, req.requestId);
+    const bancaId = req.bancaContext?.bancaId || undefined;
+    const result = await TicketService.restore(req.params.id, userId, req.requestId, bancaId);
     return success(res, result);
   },
 

@@ -677,7 +677,7 @@ const SorteoRepository = {
       whereConditions.push(Prisma.sql`s."scheduledAt" <= ${dateTo}`);
     }
     if (bancaId) {
-      whereConditions.push(Prisma.sql`l."bancaId" = CAST(${bancaId} AS uuid)`);
+      whereConditions.push(Prisma.sql`s."bancaId" = CAST(${bancaId} AS uuid)`);
     }
 
     // Keyset pagination: scheduledAt DESC, createdAt DESC, id DESC
@@ -840,6 +840,8 @@ const SorteoRepository = {
       ticketCount: row.ticketCount,
       loteria: row.loteria,
       extraMultiplier: row.extraMultiplier,
+      //  NUEVO: Fecha formateada para el FE (sin confusión de TZ)
+      scheduledAtLocal: formatIsoLocal(row.scheduledAt),
     }));
 
     return { data, total };

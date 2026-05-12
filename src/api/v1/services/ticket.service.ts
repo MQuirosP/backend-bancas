@@ -525,8 +525,8 @@ export const TicketService = {
   }
 },
 
-  async getById(id: string) {
-    const ticket = await TicketRepository.getById(id);
+  async getById(id: string, bancaId?: string) {
+    const ticket = await TicketRepository.getById(id, bancaId);
 
     if (!ticket) {
       throw new AppError("Ticket no encontrado", 404);
@@ -606,9 +606,9 @@ export const TicketService = {
     return TicketRepository.list(page, pageSize, filters);
   },
 
-  async cancel(id: string, userId: string, requestId?: string) {
-    // 1) Obtener ticket completo para validación de cutoff
-    const existing = await TicketRepository.getById(id);
+  async cancel(id: string, userId: string, requestId?: string, bancaId?: string) {
+    // 1) Obtener ticket completo para validación de cutoff con filtro de banca
+    const existing = await TicketRepository.getById(id, bancaId);
     if (!existing) {
       throw new AppError("Ticket no encontrado", 404, "NOT_FOUND");
     }
@@ -640,7 +640,7 @@ export const TicketService = {
       );
     }
 
-    const ticket = await TicketRepository.cancel(id, userId);
+    const ticket = await TicketRepository.cancel(id, userId, bancaId);
 
     //  FASE BE-2: Invalidar caché del vendedor
     if (ticket.vendedorId) {
@@ -676,8 +676,8 @@ export const TicketService = {
     return ticket;
   },
 
-  async restore(id: string, userId: string, requestId?: string) {
-    const ticket = await TicketRepository.restore(id, userId);
+  async restore(id: string, userId: string, requestId?: string, bancaId?: string) {
+    const ticket = await TicketRepository.restore(id, userId, bancaId);
 
     await ActivityService.log({
       userId,

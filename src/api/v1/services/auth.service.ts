@@ -185,6 +185,9 @@ export const AuthService = {
         select: { bancaId: true },
       });
       bancaId = ventana?.bancaId ?? null;
+    } else {
+      // Fallback para usuarios con rol BANCA o ADMIN que tienen bancaId directo
+      bancaId = user.bancaId;
     }
 
     const accessToken = jwt.sign(
@@ -335,6 +338,9 @@ export const AuthService = {
         select: { bancaId: true },
       });
       bancaId = ventana?.bancaId ?? null;
+    } else {
+      // Fallback para usuarios con rol BANCA o ADMIN que tienen bancaId directo
+      bancaId = user.bancaId;
     }
 
     const accessToken = jwt.sign(

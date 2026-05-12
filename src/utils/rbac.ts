@@ -223,13 +223,14 @@ export async function applyRbacFilters(
       // No lanzar error, simplemente ignorar el ventanaId del request
     }
   } else if (context.role === Role.ADMIN) {
-    // ADMIN: si tiene banca activa (filtro de vista), filtrar por banca
-    // Si no tiene banca activa, ve todas las bancas
-    //  CRÍTICO: Priorizar bancaId del request sobre bancaId del context
+    // ADMIN: Si tiene banca activa (filtro de vista) o bancaId en request, filtrar.
+    // Priorizamos el requestId sobre la banca activa del contexto.
     const effectiveBancaId = requestFilters.bancaId || context.bancaId;
     if (effectiveBancaId) {
       effective.bancaId = effectiveBancaId;
       // Si también hay ventanaId en request, validar que pertenece a la banca activa
+      // NOTA: Para ADMIN, permitimos acceso a cualquier ventana; si no coincide con la banca activa, 
+      // simplemente dejamos que el filtro de ventana mande.
       if (requestFilters.ventanaId) {
         const ventana = await withConnectionRetry(
           () => prisma.ventana.findUnique({
@@ -238,16 +239,11 @@ export async function applyRbacFilters(
           }),
           { context: 'rbac.applyRbacFilters.adminVentana' }
         );
-        if (!ventana || ventana.bancaId !== effectiveBancaId) {
-          throw new AppError('Cannot access that ventana', 403, {
-            code: 'RBAC_004',
-            details: [
-              {
-                field: 'ventanaId',
-                reason: 'Ventana does not belong to the active banca filter'
-              }
-            ]
-          });
+        
+        // Si la ventana no coincide con la banca activa, para un ADMIN preferimos 
+        // desactivar el filtro de banca y priorizar la ventana específica.
+        if (ventana && ventana.bancaId !== effectiveBancaId) {
+          delete effective.bancaId;
         }
       }
       // Si también hay vendedorId en request, validar que pertenece a la banca activa
@@ -259,16 +255,11 @@ export async function applyRbacFilters(
           }),
           { context: 'rbac.applyRbacFilters.adminVendedor' }
         );
-        if (!vendedor || vendedor.ventana?.bancaId !== effectiveBancaId) {
-          throw new AppError('Cannot access that vendedor', 403, {
-            code: 'RBAC_005',
-            details: [
-              {
-                field: 'vendedorId',
-                reason: 'Vendedor does not belong to the active banca filter'
-              }
-            ]
-          });
+        
+        // Si el vendedor no coincide con la banca activa, para un ADMIN preferimos 
+        // desactivar el filtro de banca y priorizar al vendedor específico.
+        if (vendedor && vendedor.ventana?.bancaId !== effectiveBancaId) {
+          delete effective.bancaId;
         }
       }
     }

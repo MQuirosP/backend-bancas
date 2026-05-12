@@ -2,6 +2,7 @@
 import { Router } from "express";
 import { LoteriaController } from "../controllers/loteria.controller";
 import { protect } from "../../../middlewares/auth.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import { validateBody, validateParams, validateQuery } from "../../../middlewares/validate.middleware";
 import {
   createLoteriaSchema,
@@ -15,6 +16,7 @@ import z from "zod";
 
 const router = Router();
 router.use(protect);
+router.use(bancaContextMiddleware);
 
 // Colección
 router.post(

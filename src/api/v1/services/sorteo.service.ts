@@ -1132,7 +1132,7 @@ const SorteoService = {
     }
 
     if (params.bancaId) {
-      whereConditions.push(Prisma.sql`l."bancaId" = CAST(${params.bancaId} AS uuid)`);
+      whereConditions.push(Prisma.sql`s."bancaId" = CAST(${params.bancaId} AS uuid)`);
     }
 
     const whereClause = whereConditions.length
@@ -1219,7 +1219,7 @@ gs."loteriaName" ASC,
         where: {
           id: { in: sorteoIdsArray },
           ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
-          ...(params.bancaId ? { loteria: { bancaId: params.bancaId } } : {}),
+          ...(params.bancaId ? { bancaId: params.bancaId } : {}),
         },
         select: {
           id: true,
@@ -1294,7 +1294,7 @@ gs."loteriaName" ASC,
     }
 
     if (params.bancaId) {
-      whereConditions.push(Prisma.sql`l."bancaId" = CAST(${params.bancaId} AS uuid)`);
+      whereConditions.push(Prisma.sql`s."bancaId" = CAST(${params.bancaId} AS uuid)`);
     }
 
     const whereClause = whereConditions.length
@@ -1372,7 +1372,7 @@ gs."hour24" ASC
         where: {
           id: { in: sorteoIdsArray },
           ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
-          ...(params.bancaId ? { loteria: { bancaId: params.bancaId } } : {}),
+          ...(params.bancaId ? { bancaId: params.bancaId } : {}),
         },
         select: {
           id: true,

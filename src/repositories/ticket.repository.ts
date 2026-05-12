@@ -2427,10 +2427,10 @@ export const TicketRepository = {
 },
 
 
-  async getById(id: string) {
+  async getById(id: string, bancaId?: string) {
     return withConnectionRetry(
       () => prisma.ticket.findUnique({
-        where: { id },
+        where: bancaId ? { id, bancaId } : { id },
         include: {
           jugadas: {
             where: { deletedAt: null },
@@ -2470,6 +2470,7 @@ export const TicketRepository = {
       number?: string; //  NUEVO: Búsqueda por número de jugada (1-2 dígitos)
       winningNumber?: string; // NUEVO: Búsqueda por número ganador específico
       scheduledTime?: string; // NUEVO: Filtro por hora programada (HH:mm)
+      bancaId?: string; //  NUEVO: Filtro por banca
       lastId?: string; // Keyset pagination: ID del último elemento
       lastCreatedAt?: Date; // Keyset pagination: createdAt del último elemento
     } = {}
@@ -2490,6 +2491,7 @@ export const TicketRepository = {
         : {}),
       ...(filters.userId ? { vendedorId: filters.userId } : {}),
       ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
+      ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
       ...(filters.winnersOnly === true ? { isWinner: true } : {}),
       ...(filters.businessDateFrom || filters.businessDateTo
         ? {
@@ -2710,13 +2712,13 @@ export const TicketRepository = {
     return { data, meta };
   },
 
-  async cancel(id: string, userId: string) {
+  async cancel(id: string, userId: string, bancaId?: string) {
     // Cancelación bajo retry + timeouts (misma estrategia que create)
     const ticket = await withTransactionRetry(
       async (tx) => {
-        // 1) Verificar existencia y estado
+        // 1) Verificar existencia y estado con filtro de banca
         const existing = await tx.ticket.findUnique({
-          where: { id },
+          where: bancaId ? { id, bancaId } : { id },
           include: { sorteo: true },
         });
 
@@ -2796,12 +2798,12 @@ export const TicketRepository = {
   /**
    * Restaura un ticket cancelado si el sorteo aún no ha pasado
    */
-  async restore(id: string, userId: string) {
+  async restore(id: string, userId: string, bancaId?: string) {
     const ticket = await withTransactionRetry(
       async (tx) => {
-        // 1) Verificar existencia y estado
+        // 1) Verificar existencia y estado con filtro de banca
         const existing = await tx.ticket.findUnique({
-          where: { id },
+          where: bancaId ? { id, bancaId } : { id },
           include: { sorteo: true },
         });
 

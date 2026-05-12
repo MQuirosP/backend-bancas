@@ -100,8 +100,7 @@ export async function paginateOffset<T>(
     orderBy?: Record<string, any>;
     pagination?: PaginationParams;
   }
-): Promise<PaginatedResult<T>> {
-  const { page, pageSize } = sanitizePagination(options?.pagination);
+): Promise<PaginatedResult<T>> {  const { page, pageSize } = sanitizePagination(options?.pagination);
   const { skip, take } = getSkipTake(page, pageSize);
 
   const [data, total] = await withConnectionRetry(
