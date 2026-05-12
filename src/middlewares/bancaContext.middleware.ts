@@ -22,7 +22,6 @@ export async function bancaContextMiddleware(
 ): Promise<void> {
   try {
     const user = req.user;
-    console.log(`[BancaContext] ENTRY - User: ${user?.id}, Role: ${user?.role}, RoleType: ${typeof user?.role}`);
     if (!user) {
       return next();
     }
@@ -33,7 +32,6 @@ export async function bancaContextMiddleware(
     // 1. CASO: USUARIO BANCA (Multi-tenant Admin)
     // ========================================================================
     if (roleStr === 'BANCA') {
-      console.log(`[BancaContext] HIT Case 1: BANCA`);
       const headerLower = req.headers['x-active-banca-id'] as string | undefined;
       const headerUpper = req.headers['X-Active-Banca-Id'] as string | undefined;
       const requestedBancaId = (headerLower || headerUpper || undefined)?.trim();

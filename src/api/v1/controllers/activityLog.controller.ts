@@ -18,7 +18,6 @@ export const ActivityLogController = {
   async list(req: AuthenticatedRequest, res: Response) {
     const query = req.query as unknown as ListActivityLogsQuery;
     const bancaId = getActiveBancaId(req);
-    console.log(`[ActivityLogController] User: ${req.user?.id}, Role: ${req.user?.role}, Resolved BancaId: ${bancaId} (${typeof bancaId})`);
 
     // SEGURIDAD EXTRA: Un usuario BANCA NUNCA debe ver logs sin bancaId (globales)
     // Si por alguna razón el middleware no resolvió una banca, forzamos el error
