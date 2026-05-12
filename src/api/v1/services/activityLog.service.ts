@@ -53,7 +53,7 @@ export const ActivityLogService = {
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
       search,
-      bancaId: bancaId ?? undefined, // Pasar bancaId al repositorio (que espera string | undefined)
+      bancaId, // Pasar bancaId al repositorio (que ahora maneja string | null)
     });
 
     const totalPages = Math.ceil(total / pageSize);
@@ -72,7 +72,7 @@ export const ActivityLogService = {
   },
 
   async getByUser(userId: string, page = 1, pageSize = 20, bancaId?: string | null) {
-    const { data, total } = await ActivityLogRepository.listByUser(userId, page, pageSize, bancaId ?? undefined);
+    const { data, total } = await ActivityLogRepository.listByUser(userId, page, pageSize, bancaId);
     const totalPages = Math.ceil(total / pageSize);
     return {
       data,
@@ -88,7 +88,7 @@ export const ActivityLogService = {
   },
 
   async getByTarget(targetType: string, targetId: string, page = 1, pageSize = 20, bancaId?: string | null) {
-    const { data, total } = await ActivityLogRepository.listByTarget(targetType, targetId, page, pageSize, bancaId ?? undefined);
+    const { data, total } = await ActivityLogRepository.listByTarget(targetType, targetId, page, pageSize, bancaId);
     const totalPages = Math.ceil(total / pageSize);
     return {
       data,
@@ -104,7 +104,7 @@ export const ActivityLogService = {
   },
 
   async getByAction(action: ActivityType, page = 1, pageSize = 20, bancaId?: string | null) {
-    const { data, total } = await ActivityLogRepository.listByAction(action, page, pageSize, bancaId ?? undefined);
+    const { data, total } = await ActivityLogRepository.listByAction(action, page, pageSize, bancaId);
     const totalPages = Math.ceil(total / pageSize);
     return {
       data,
@@ -123,7 +123,7 @@ export const ActivityLogService = {
     if (days < 1) {
       throw new AppError('El número de días debe ser mayor a 0', 400);
     }
-    const result = await ActivityLogRepository.deleteOlderThan(days, bancaId ?? undefined);
+    const result = await ActivityLogRepository.deleteOlderThan(days, bancaId);
     return {
       message: `Se eliminaron ${result.count} registros de auditoría`,
       deletedCount: result.count,

@@ -4,6 +4,8 @@ import { ListActivityLogsQuery } from '../dto/activityLog.dto';
 import { success } from '../../../utils/responses';
 import { AuthenticatedRequest } from '../../../core/types';
 import { getActiveBancaId } from '../../../middlewares/bancaContext.middleware';
+import { Role } from '@prisma/client';
+import { AppError } from '../../../core/errors';
 
 export const ActivityLogController = {
   async getById(req: AuthenticatedRequest, res: Response) {
@@ -16,6 +18,14 @@ export const ActivityLogController = {
   async list(req: AuthenticatedRequest, res: Response) {
     const query = req.query as unknown as ListActivityLogsQuery;
     const bancaId = getActiveBancaId(req);
+    console.log(`[ActivityLogController] User: ${req.user?.id}, Role: ${req.user?.role}, Resolved BancaId: ${bancaId} (${typeof bancaId})`);
+
+    // SEGURIDAD EXTRA: Un usuario BANCA NUNCA debe ver logs sin bancaId (globales)
+    // Si por alguna razón el middleware no resolvió una banca, forzamos el error
+    if (req.user?.role === Role.BANCA && !bancaId) {
+      throw new AppError('No se pudo determinar el contexto de banca para esta consulta. Por favor, selecciona una banca o contacta al administrador.', 403);
+    }
+
     const result = await ActivityLogService.list(query, bancaId);
     return success(res, result.data, result.meta);
   },

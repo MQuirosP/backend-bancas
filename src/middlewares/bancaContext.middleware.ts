@@ -22,18 +22,21 @@ export async function bancaContextMiddleware(
 ): Promise<void> {
   try {
     const user = req.user;
+    console.log(`[BancaContext] ENTRY - User: ${user?.id}, Role: ${user?.role}, RoleType: ${typeof user?.role}`);
     if (!user) {
       return next();
     }
 
+    const roleStr = String(user.role).toUpperCase();
+
     // ========================================================================
     // 1. CASO: USUARIO BANCA (Multi-tenant Admin)
     // ========================================================================
-    if (user.role === Role.BANCA) {
-      // Leer header de banca activa solicitado por el FE
+    if (roleStr === 'BANCA') {
+      console.log(`[BancaContext] HIT Case 1: BANCA`);
       const headerLower = req.headers['x-active-banca-id'] as string | undefined;
       const headerUpper = req.headers['X-Active-Banca-Id'] as string | undefined;
-      const requestedBancaId = headerLower || headerUpper || undefined;
+      const requestedBancaId = (headerLower || headerUpper || undefined)?.trim();
 
       // Obtener todas las bancas asignadas al usuario en UserBanca
       const userBancas = await prisma.userBanca.findMany({
@@ -70,15 +73,14 @@ export async function bancaContextMiddleware(
       }
 
       req.bancaContext = {
-        bancaId: activeBancaId,
+        bancaId: activeBancaId || null, // Para BANCA siempre es null si falla (bloqueo)
         userId: user.id,
         hasAccess: true,
       };
 
       //  NUEVO: Informar al FE si el contexto cambió respecto a lo solicitado
-      // Esto ayuda a que el Store de la banca en el FE se sincronice
       if (requestedBancaId && requestedBancaId !== activeBancaId) {
-        res.setHeader('X-Banca-Context-Fallback', activeBancaId);
+        res.setHeader('X-Banca-Context-Fallback', activeBancaId || '');
       }
 
       return next();
@@ -87,7 +89,7 @@ export async function bancaContextMiddleware(
     // ========================================================================
     // 2. CASO: VENTANA / VENDEDOR (Single-tenant)
     // ========================================================================
-    if (user.role === Role.VENTANA || user.role === Role.VENDEDOR) {
+    if (roleStr === 'VENTANA' || roleStr === 'VENDEDOR') {
       if (user.bancaId) {
         // bancaId ya viene en el JWT — sin query
         req.bancaContext = {
@@ -130,13 +132,12 @@ export async function bancaContextMiddleware(
       return next();
     }
 
-    // ========================================================================
     // 3. CASO: ADMIN (Global Admin)
     // ========================================================================
     // Para ADMIN: leer header (solo filtro de vista, sin validación de asignación)
     const headerLower = req.headers['x-active-banca-id'] as string | undefined;
     const headerUpper = req.headers['X-Active-Banca-Id'] as string | undefined;
-    const requestedBancaId = headerLower || headerUpper || undefined;
+    const requestedBancaId = (headerLower || headerUpper || undefined)?.trim();
 
     let activeBancaId: string | null = null;
     let hasAccess = false;
@@ -157,11 +158,14 @@ export async function bancaContextMiddleware(
       }
     }
 
-    // Si no hay header o la banca no es válida, no filtrar (ADMIN ve todas)
+    // Si llegamos aquí, el rol no es BANCA ni VENTANA (normalmente es ADMIN)
+    const isGlobalAdmin = roleStr === 'ADMIN';
+    let finalBancaId = activeBancaId || (isGlobalAdmin ? undefined : null);
+
     req.bancaContext = {
-      bancaId: activeBancaId, // null = ver todas, string = filtrar por esa banca
+      bancaId: finalBancaId as any,
       userId: user.id,
-      hasAccess: hasAccess || activeBancaId === null, // Si no hay filtro, tiene acceso a todo
+      hasAccess: hasAccess || (isGlobalAdmin && activeBancaId === null),
     };
 
     next();

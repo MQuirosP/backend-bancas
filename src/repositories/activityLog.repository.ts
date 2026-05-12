@@ -11,7 +11,7 @@ interface ListActivityLogsParams {
   startDate?: Date;
   endDate?: Date;
   search?: string;
-  bancaId?: string;
+  bancaId?: string | null;
 }
 
 const ActivityLogRepository = {
@@ -48,7 +48,7 @@ const ActivityLogRepository = {
     const skip = (page - 1) * pageSize;
 
     const where: Prisma.ActivityLogWhereInput = {
-      ...(bancaId ? { bancaId } : {}),
+      bancaId: bancaId === undefined ? undefined : bancaId,
       ...(userId ? { userId } : {}),
       ...(action ? { action } : {}),
       ...(targetType ? { targetType } : {}),
@@ -104,11 +104,11 @@ const ActivityLogRepository = {
     return { data, total };
   },
 
-  async listByUser(userId: string, page = 1, pageSize = 20, bancaId?: string) {
+  async listByUser(userId: string, page = 1, pageSize = 20, bancaId?: string | null) {
     const skip = (page - 1) * pageSize;
     const where: Prisma.ActivityLogWhereInput = {
       userId,
-      ...(bancaId ? { bancaId } : {}),
+      bancaId: bancaId === undefined ? undefined : bancaId,
     };
 
     const [data, total] = await prisma.$transaction([
@@ -134,12 +134,12 @@ const ActivityLogRepository = {
     return { data, total };
   },
 
-  async listByTarget(targetType: string, targetId: string, page = 1, pageSize = 20, bancaId?: string) {
+  async listByTarget(targetType: string, targetId: string, page = 1, pageSize = 20, bancaId?: string | null) {
     const skip = (page - 1) * pageSize;
     const where: Prisma.ActivityLogWhereInput = {
       targetType,
       targetId,
-      ...(bancaId ? { bancaId } : {}),
+      bancaId: bancaId === undefined ? undefined : bancaId,
     };
 
     const [data, total] = await prisma.$transaction([
@@ -165,11 +165,11 @@ const ActivityLogRepository = {
     return { data, total };
   },
 
-  async listByAction(action: ActivityType, page = 1, pageSize = 20, bancaId?: string) {
+  async listByAction(action: ActivityType, page = 1, pageSize = 20, bancaId?: string | null) {
     const skip = (page - 1) * pageSize;
     const where: Prisma.ActivityLogWhereInput = {
       action,
-      ...(bancaId ? { bancaId } : {}),
+      bancaId: bancaId === undefined ? undefined : bancaId,
     };
 
     const [data, total] = await prisma.$transaction([
@@ -195,7 +195,7 @@ const ActivityLogRepository = {
     return { data, total };
   },
 
-  async deleteOlderThan(days: number, bancaId?: string) {
+  async deleteOlderThan(days: number, bancaId?: string | null) {
     const date = new Date();
     date.setDate(date.getDate() - days);
 
@@ -204,7 +204,7 @@ const ActivityLogRepository = {
         createdAt: {
           lt: date,
         },
-        ...(bancaId ? { bancaId } : {}),
+        bancaId: bancaId === undefined ? undefined : bancaId,
       },
     });
   },

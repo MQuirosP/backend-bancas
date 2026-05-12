@@ -15,12 +15,14 @@ import {
   cleanupLogsBodySchema,
 } from '../validators/activityLog.validator';
 import { Role } from '@prisma/client';
+import { bancaContextMiddleware } from '../../../middlewares/bancaContext.middleware';
 
 const router = Router();
 
-// Todos los endpoints requieren autenticación y solo ADMIN puede acceder
+// Todos los endpoints requieren autenticación y solo ADMIN o BANCA pueden acceder
 router.use(protect);
-router.use(restrictTo(Role.ADMIN));
+router.use(bancaContextMiddleware);
+router.use(restrictTo(Role.ADMIN, Role.BANCA));
 
 // POST /api/v1/activity-logs/cleanup - Limpiar logs antiguos
 router.post(
