@@ -39,6 +39,7 @@ export const LoteriaService = {
 
       await ActivityService.log({
         userId,
+        bancaId: loteria.bancaId,
         action: ActivityType.LOTERIA_CREATE,
         targetType: "LOTERIA",
         targetId: loteria.id,
@@ -198,6 +199,7 @@ export const LoteriaService = {
 
       await ActivityService.log({
         userId,
+        bancaId: existing.bancaId,
         action: ActivityType.LOTERIA_UPDATE,
         targetType: "LOTERIA",
         targetId: id,
@@ -238,6 +240,7 @@ export const LoteriaService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.LOTERIA_UPDATE,
       targetType: "LOTERIA",
       targetId: id,
@@ -288,6 +291,7 @@ export const LoteriaService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.LOTERIA_DELETE,
       targetType: "LOTERIA",
       targetId: id,
@@ -340,6 +344,7 @@ export const LoteriaService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.LOTERIA_RESTORE,
       targetType: "LOTERIA",
       targetId: id,

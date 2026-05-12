@@ -4,21 +4,17 @@ import { ActivityType, Prisma } from '@prisma/client';
 
 export type ActivityPayload = {
   userId?: string | null;
+  bancaId?: string | null;
   ventanaId?: string | null;
   action: ActivityType;
   targetType?: string | null;
   targetId?: string | null;
-  details?: Prisma.InputJsonValue | null; // <- aceptamos null aquí
+  details?: Prisma.InputJsonValue | null;
   requestId?: string | null;
   layer?: string; // 'controller' | 'service' | 'repository' | etc
 };
 
 function normalizeDetails(details: ActivityPayload['details']) {
-  // Prisma exige: InputJsonValue | NullableJsonNullValueInput | undefined
-  // Mapeo:
-  //  - undefined => undefined (no manda el campo)
-  //  - null      => Prisma.JsonNull (NULL real)
-  //  - otro      => tal cual
   if (details === undefined) return undefined;
   if (details === null) return Prisma.JsonNull;
   return details;
@@ -28,7 +24,7 @@ export const ActivityService = {
   async log(payload: ActivityPayload) {
     const {
       userId = null,
-      ventanaId = null,
+      bancaId = null,
       action,
       targetType = null,
       targetId = null,
@@ -41,6 +37,7 @@ export const ActivityService = {
       await prisma.activityLog.create({
         data: {
           userId,
+          bancaId,
           action,
           targetType,
           targetId,
@@ -54,7 +51,7 @@ export const ActivityService = {
         userId,
         requestId,
         payload: {
-          failedToPersistActivity: { action, targetType, targetId, details },
+          failedToPersistActivity: { action, targetType, targetId, details, bancaId },
         },
         meta: { error: (err as Error).message },
       });
@@ -65,6 +62,7 @@ export const ActivityService = {
       layer,
       action,
       userId,
+      bancaId,
       requestId,
       payload: { targetType, targetId, details },
     });
@@ -73,6 +71,7 @@ export const ActivityService = {
   async logWithTx(tx: Prisma.TransactionClient, payload: ActivityPayload) {
     const {
       userId = null,
+      bancaId = null,
       action,
       targetType = null,
       targetId = null,
@@ -85,6 +84,7 @@ export const ActivityService = {
       await tx.activityLog.create({
         data: {
           userId,
+          bancaId,
           action,
           targetType,
           targetId,
@@ -98,7 +98,7 @@ export const ActivityService = {
         userId,
         requestId,
         payload: {
-          failedToPersistActivity: { action, targetType, targetId, details },
+          failedToPersistActivity: { action, targetType, targetId, details, bancaId },
         },
         meta: { error: (err as Error).message },
       });
@@ -109,6 +109,7 @@ export const ActivityService = {
       layer,
       action,
       userId,
+      bancaId,
       requestId,
       payload: { targetType, targetId, details },
     });

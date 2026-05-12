@@ -57,8 +57,10 @@ export const VendedorService = {
       passwordHash,
     });
 
+    const v = await ensureVentanaActive(data.ventanaId);
     await ActivityService.log({
       userId: current.id,
+      bancaId: v.bancaId,
       action: ActivityType.USER_CREATE,
       targetType: "USER",
       targetId: user.id,
@@ -116,6 +118,7 @@ export const VendedorService = {
 
     await ActivityService.log({
       userId: current.id,
+      bancaId: existing.bancaId,
       action: ActivityType.USER_UPDATE,
       targetType: "USER",
       targetId: id,
@@ -149,6 +152,7 @@ export const VendedorService = {
 
     await ActivityService.log({
       userId: current.id,
+      bancaId: existing.bancaId,
       action: ActivityType.USER_DELETE,
       targetType: "USER",
       targetId: id,
@@ -172,6 +176,7 @@ export const VendedorService = {
 
     await ActivityService.log({
       userId: current.id,
+      bancaId: existing.bancaId,
       action: ActivityType.USER_RESTORE,
       targetType: "USER",
       targetId: id,

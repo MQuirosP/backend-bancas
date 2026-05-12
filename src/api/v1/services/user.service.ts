@@ -267,6 +267,7 @@ export const UserService = {
     if (result && actorId) {
       await ActivityService.log({
         userId: actorId,
+        bancaId: result.bancaId,
         action: ActivityType.USER_CREATE,
         targetType: 'USER',
         targetId: result.id,
@@ -616,6 +617,7 @@ export const UserService = {
     if (result && actorId && Object.keys(toUpdate).length > 0) {
       await ActivityService.log({
         userId: actorId,
+        bancaId: result.bancaId,
         action: ActivityType.USER_UPDATE,
         targetType: 'USER',
         targetId: id,
@@ -662,8 +664,10 @@ export const UserService = {
 
     // Log de auditoría
     if (actorId) {
+      const u = await prisma.user.findUnique({ where: { id }, select: { bancaId: true } });
       await ActivityService.log({
         userId: actorId,
+        bancaId: u?.bancaId,
         action: ActivityType.USER_DELETE,
         targetType: 'USER',
         targetId: id,

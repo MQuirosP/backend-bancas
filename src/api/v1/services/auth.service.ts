@@ -89,6 +89,7 @@ export const AuthService = {
       await ActivityService.log({
         action: ActivityType.LOGIN,
         targetType: 'USER',
+        bancaId: null,
         details: { 
           username, ipAddress, userAgent,
           reason: 'User not found',
@@ -102,6 +103,7 @@ export const AuthService = {
     if (!user.isActive || user.deletedAt) {
       await ActivityService.log({
         userId: user.id,
+        bancaId: user.bancaId,
         action: ActivityType.LOGIN,
         targetType: 'USER',
         targetId: user.id,
@@ -119,6 +121,7 @@ export const AuthService = {
     if (!match) {
       await ActivityService.log({
         userId: user.id,
+        bancaId: user.bancaId,
         action: ActivityType.LOGIN,
         targetType: 'USER',
         targetId: user.id,
@@ -219,6 +222,7 @@ export const AuthService = {
     // Log success asíncrono
     ActivityService.log({
       userId: user.id,
+      bancaId: user.bancaId,
       action: ActivityType.LOGIN,
       targetType: 'USER',
       targetId: user.id,

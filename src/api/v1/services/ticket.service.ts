@@ -475,6 +475,7 @@ export const TicketService = {
 
     await ActivityService.log({
       userId,
+      bancaId: ventanaWithBanca.bancaId,
       action: ActivityType.TICKET_CREATE,
       targetType: "TICKET",
       targetId: ticket.id,
@@ -650,6 +651,7 @@ export const TicketService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.ventana.bancaId,
       action: ActivityType.TICKET_CANCEL,
       targetType: "TICKET",
       targetId: id,
@@ -679,6 +681,7 @@ export const TicketService = {
 
     await ActivityService.log({
       userId,
+      bancaId: ticket.bancaId,
       action: ActivityType.TICKET_RESTORE,
       targetType: "TICKET",
       targetId: id,
@@ -854,6 +857,7 @@ export const TicketService = {
       // Log de actividad
       await ActivityService.log({
         userId,
+        bancaId: ticket.bancaId,
         action: ActivityType.TICKET_PAY,
         targetType: "TICKET",
         targetId: ticketId,
@@ -989,6 +993,7 @@ export const TicketService = {
       // Log de actividad
       await ActivityService.log({
         userId,
+        bancaId: ticket.bancaId,
         action: ActivityType.TICKET_PAYMENT_REVERSE,
         targetType: "TICKET",
         targetId: ticketId,
@@ -1104,6 +1109,7 @@ export const TicketService = {
       // Log de actividad
       await ActivityService.log({
         userId,
+        bancaId: ticket.bancaId,
         action: ActivityType.TICKET_PAY_FINALIZE,
         targetType: "TICKET",
         targetId: ticketId,

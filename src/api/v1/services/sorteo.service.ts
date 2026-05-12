@@ -177,6 +177,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: s.bancaId,
       action: ActivityType.SORTEO_CREATE,
       targetType: "SORTEO",
       targetId: s.id,
@@ -236,6 +237,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.SORTEO_UPDATE,
       targetType: "SORTEO",
       targetId: id,
@@ -269,6 +271,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.SORTEO_UPDATE,
       targetType: "SORTEO",
       targetId: id,
@@ -311,6 +314,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.SORTEO_OPEN,
       targetType: "SORTEO",
       targetId: id,
@@ -373,6 +377,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.SORTEO_UPDATE,
       targetType: "SORTEO",
       targetId: id,
@@ -456,6 +461,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.SORTEO_UPDATE,
       targetType: "SORTEO",
       targetId: id,
@@ -541,6 +547,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.SORTEO_CLOSE,
       targetType: "SORTEO",
       targetId: id,
@@ -654,6 +661,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.SORTEO_EVALUATE,
       targetType: "SORTEO",
       targetId: id,
@@ -684,6 +692,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.SOFT_DELETE,
       targetType: "SORTEO",
       targetId: id,
@@ -707,6 +716,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.RESTORE,
       targetType: "SORTEO",
       targetId: id,
@@ -751,6 +761,7 @@ const SorteoService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.SORTEO_REOPEN,
       targetType: "SORTEO",
       targetId: id,

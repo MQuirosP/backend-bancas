@@ -4,15 +4,21 @@ import { AppError } from '../../../core/errors';
 import { ActivityType } from '@prisma/client';
 
 export const ActivityLogService = {
-  async getById(id: string) {
+  async getById(id: string, bancaId?: string | null) {
     const log = await ActivityLogRepository.getById(id);
     if (!log) {
       throw new AppError('Registro de auditoría no encontrado', 404);
     }
+
+    // Seguridad: Si hay bancaId, validar que el log pertenece a esa banca
+    if (bancaId && log.bancaId !== bancaId) {
+      throw new AppError('No tiene permiso para ver este registro', 403);
+    }
+
     return log;
   },
 
-  async list(params: ListActivityLogsQuery) {
+  async list(params: ListActivityLogsQuery, bancaId?: string | null) {
     const {
       page = 1,
       pageSize = 10,
@@ -47,6 +53,7 @@ export const ActivityLogService = {
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
       search,
+      bancaId: bancaId ?? undefined, // Pasar bancaId al repositorio (que espera string | undefined)
     });
 
     const totalPages = Math.ceil(total / pageSize);
@@ -64,8 +71,8 @@ export const ActivityLogService = {
     };
   },
 
-  async getByUser(userId: string, page = 1, pageSize = 20) {
-    const { data, total } = await ActivityLogRepository.listByUser(userId, page, pageSize);
+  async getByUser(userId: string, page = 1, pageSize = 20, bancaId?: string | null) {
+    const { data, total } = await ActivityLogRepository.listByUser(userId, page, pageSize, bancaId ?? undefined);
     const totalPages = Math.ceil(total / pageSize);
     return {
       data,
@@ -80,8 +87,8 @@ export const ActivityLogService = {
     };
   },
 
-  async getByTarget(targetType: string, targetId: string, page = 1, pageSize = 20) {
-    const { data, total } = await ActivityLogRepository.listByTarget(targetType, targetId, page, pageSize);
+  async getByTarget(targetType: string, targetId: string, page = 1, pageSize = 20, bancaId?: string | null) {
+    const { data, total } = await ActivityLogRepository.listByTarget(targetType, targetId, page, pageSize, bancaId ?? undefined);
     const totalPages = Math.ceil(total / pageSize);
     return {
       data,
@@ -96,8 +103,8 @@ export const ActivityLogService = {
     };
   },
 
-  async getByAction(action: ActivityType, page = 1, pageSize = 20) {
-    const { data, total } = await ActivityLogRepository.listByAction(action, page, pageSize);
+  async getByAction(action: ActivityType, page = 1, pageSize = 20, bancaId?: string | null) {
+    const { data, total } = await ActivityLogRepository.listByAction(action, page, pageSize, bancaId ?? undefined);
     const totalPages = Math.ceil(total / pageSize);
     return {
       data,
@@ -112,11 +119,11 @@ export const ActivityLogService = {
     };
   },
 
-  async cleanupOldLogs(days: number = 45) {
+  async cleanupOldLogs(days: number = 45, bancaId?: string | null) {
     if (days < 1) {
       throw new AppError('El número de días debe ser mayor a 0', 400);
     }
-    const result = await ActivityLogRepository.deleteOlderThan(days);
+    const result = await ActivityLogRepository.deleteOlderThan(days, bancaId ?? undefined);
     return {
       message: `Se eliminaron ${result.count} registros de auditoría`,
       deletedCount: result.count,

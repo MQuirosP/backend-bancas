@@ -123,6 +123,7 @@ export const VentanaService = {
 
     await ActivityService.log({
       userId,
+      bancaId: data.bancaId,
       action: ActivityType.VENTANA_CREATE,
       targetType: "VENTANA",
       targetId: result.ventana.id,
@@ -284,6 +285,7 @@ export const VentanaService = {
 
     await ActivityService.log({
       userId,
+      bancaId: existing.bancaId,
       action: ActivityType.VENTANA_UPDATE,
       targetType: "VENTANA",
       targetId: id,
@@ -303,6 +305,7 @@ export const VentanaService = {
 
     await ActivityService.log({
       userId,
+      bancaId: ventana.bancaId,
       action: ActivityType.VENTANA_DELETE,
       targetType: "VENTANA",
       targetId: id,
@@ -346,6 +349,7 @@ async findAll(page?: number, pageSize?: number, search?: string, isActive?: bool
 
     await ActivityService.log({
       userId,
+      bancaId: ventana.bancaId,
       action: ActivityType.VENTANA_RESTORE,
       targetType: "VENTANA",
       targetId: id,

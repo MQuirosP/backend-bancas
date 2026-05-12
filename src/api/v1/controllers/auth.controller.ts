@@ -36,6 +36,7 @@ export const AuthController = {
 
     await ActivityService.log({
       userId: user.id,
+      bancaId: user.bancaId,
       action: ActivityType.USER_CREATE,
       targetType: 'USER',
       targetId: user.id,
@@ -315,6 +316,7 @@ export const AuthController = {
 
     await ActivityService.log({
       userId: actorId,
+      bancaId: user.bancaId,
       action: ActivityType.USER_UPDATE,
       targetType: 'USER',
       targetId: actorId,

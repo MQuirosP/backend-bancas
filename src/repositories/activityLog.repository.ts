@@ -11,6 +11,7 @@ interface ListActivityLogsParams {
   startDate?: Date;
   endDate?: Date;
   search?: string;
+  bancaId?: string;
 }
 
 const ActivityLogRepository = {
@@ -41,11 +42,13 @@ const ActivityLogRepository = {
       startDate,
       endDate,
       search,
+      bancaId,
     } = params;
 
     const skip = (page - 1) * pageSize;
 
     const where: Prisma.ActivityLogWhereInput = {
+      ...(bancaId ? { bancaId } : {}),
       ...(userId ? { userId } : {}),
       ...(action ? { action } : {}),
       ...(targetType ? { targetType } : {}),
@@ -101,12 +104,16 @@ const ActivityLogRepository = {
     return { data, total };
   },
 
-  async listByUser(userId: string, page = 1, pageSize = 20) {
+  async listByUser(userId: string, page = 1, pageSize = 20, bancaId?: string) {
     const skip = (page - 1) * pageSize;
+    const where: Prisma.ActivityLogWhereInput = {
+      userId,
+      ...(bancaId ? { bancaId } : {}),
+    };
 
     const [data, total] = await prisma.$transaction([
       prisma.activityLog.findMany({
-        where: { userId },
+        where,
         skip,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
@@ -121,18 +128,23 @@ const ActivityLogRepository = {
           },
         },
       }),
-      prisma.activityLog.count({ where: { userId } }),
+      prisma.activityLog.count({ where }),
     ]);
 
     return { data, total };
   },
 
-  async listByTarget(targetType: string, targetId: string, page = 1, pageSize = 20) {
+  async listByTarget(targetType: string, targetId: string, page = 1, pageSize = 20, bancaId?: string) {
     const skip = (page - 1) * pageSize;
+    const where: Prisma.ActivityLogWhereInput = {
+      targetType,
+      targetId,
+      ...(bancaId ? { bancaId } : {}),
+    };
 
     const [data, total] = await prisma.$transaction([
       prisma.activityLog.findMany({
-        where: { targetType, targetId },
+        where,
         skip,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
@@ -147,18 +159,22 @@ const ActivityLogRepository = {
           },
         },
       }),
-      prisma.activityLog.count({ where: { targetType, targetId } }),
+      prisma.activityLog.count({ where }),
     ]);
 
     return { data, total };
   },
 
-  async listByAction(action: ActivityType, page = 1, pageSize = 20) {
+  async listByAction(action: ActivityType, page = 1, pageSize = 20, bancaId?: string) {
     const skip = (page - 1) * pageSize;
+    const where: Prisma.ActivityLogWhereInput = {
+      action,
+      ...(bancaId ? { bancaId } : {}),
+    };
 
     const [data, total] = await prisma.$transaction([
       prisma.activityLog.findMany({
-        where: { action },
+        where,
         skip,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
@@ -173,13 +189,13 @@ const ActivityLogRepository = {
           },
         },
       }),
-      prisma.activityLog.count({ where: { action } }),
+      prisma.activityLog.count({ where }),
     ]);
 
     return { data, total };
   },
 
-  async deleteOlderThan(days: number) {
+  async deleteOlderThan(days: number, bancaId?: string) {
     const date = new Date();
     date.setDate(date.getDate() - days);
 
@@ -188,6 +204,7 @@ const ActivityLogRepository = {
         createdAt: {
           lt: date,
         },
+        ...(bancaId ? { bancaId } : {}),
       },
     });
   },
