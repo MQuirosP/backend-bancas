@@ -10,6 +10,7 @@ import { TicketsReportService } from '../services/reports/ticketsReport.service'
 import { LoteriasReportService } from '../services/reports/loteriasReport.service';
 import { VentanasReportService } from '../services/reports/ventanasReport.service';
 import { VendedoresReportService } from '../services/reports/vendedoresReport.service';
+import { getActiveBancaId } from '../../../middlewares/bancaContext.middleware';
 
 export const ReportsController = {
   /**
@@ -24,7 +25,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.user!.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, query);
 
@@ -61,7 +62,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.bancaContext?.bancaId,
+      bancaId: getActiveBancaId(req),
     };
 
     // Aplicar RBAC a los filtros del cliente
@@ -100,7 +101,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.bancaContext?.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, query);
 
@@ -131,7 +132,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.bancaContext?.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, query);
 
@@ -162,7 +163,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.user!.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, query);
 
@@ -190,7 +191,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.user!.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, query);
 
@@ -221,7 +222,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.user!.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, query);
 
@@ -260,7 +261,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.user!.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, query);
 
@@ -291,7 +292,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.user!.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, query);
 
@@ -318,7 +319,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.user!.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, query);
 
@@ -349,7 +350,7 @@ export const ReportsController = {
       userId: req.user!.id,
       role: req.user!.role,
       ventanaId: req.user!.ventanaId,
-      bancaId: req.user!.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, query);
 
@@ -384,7 +385,7 @@ export const ReportsController = {
       userId: req.user.id,
       role: req.user.role,
       ventanaId: req.user.ventanaId,
-      bancaId: req.user.bancaId,
+      bancaId: getActiveBancaId(req),
     };
     const effectiveFilters = await applyRbacFilters(context, { vendedorId });
 

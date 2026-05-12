@@ -14,6 +14,7 @@ import {
 } from '../types/cierre.types';
 import { createHash } from 'crypto';
 import prisma from '../../../core/prismaClient';
+import { getActiveBancaId } from '../../../middlewares/bancaContext.middleware';
 
 const TIMEZONE = 'America/Costa_Rica';
 
@@ -154,7 +155,7 @@ export const CierreController = {
       toDate,
       query.ventanaId,
       query.scope,
-      req.bancaContext?.bancaId || null
+      getActiveBancaId(req) || null
     );
 
     // Ejecutar agregación (servicio retorna data + _performance)
@@ -238,7 +239,7 @@ export const CierreController = {
       toDate,
       query.ventanaId,
       query.scope,
-      req.bancaContext?.bancaId || null
+      getActiveBancaId(req) || null
     );
 
     // Parámetros de ordenamiento y profundidad
@@ -338,7 +339,7 @@ export const CierreController = {
       toDate,
       query.ventanaId,
       query.scope,
-      req.bancaContext?.bancaId || null
+      getActiveBancaId(req) || null
     );
 
     // Calcular si el periodo es extenso (más de un día)
@@ -413,7 +414,7 @@ export const CierreController = {
       toDate,
       query.ventanaId,
       query.scope,
-      req.bancaContext?.bancaId || null
+      getActiveBancaId(req) || null
     );
 
     const exportData = await CierreService.aggregateBySellerForExport(filters);
@@ -503,7 +504,7 @@ export const CierreController = {
       toDate,
       query.ventanaId,
       query.scope,
-      req.bancaContext?.bancaId || null
+      getActiveBancaId(req) || null
     );
 
     // Timeout corto ya que es una query quirúrgica
