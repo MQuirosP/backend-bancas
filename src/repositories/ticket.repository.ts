@@ -2883,6 +2883,148 @@ export const TicketRepository = {
 
     return ticket;
   },
+
+  /**
+   * Obtiene los saldos disponibles para todos los números (00-99 o 000-999) de un sorteo específico.
+   * Evalúa todas las reglas de restricción (MaxTotal) y límites dinámicos aplicables.
+   */
+  async getSorteoBalances(params: {
+    sorteoId: string;
+    vendedorId: string;
+    bancaId?: string;
+  }): Promise<Record<string, { remaining: number; limit: number; accumulated: number }>> {
+    const { sorteoId, vendedorId, bancaId } = params;
+
+    return await withConnectionRetry(async () => {
+      // 1. Obtener contexto del vendedor (ventanaId, bancaId real)
+      const user = await prisma.user.findUnique({
+        where: { id: vendedorId },
+        select: { id: true, ventanaId: true, role: true, ventana: { select: { bancaId: true } } },
+      });
+
+      if (!user || !user.ventanaId) return {};
+
+      const effectiveBancaId = user.ventana?.bancaId || bancaId;
+      if (!effectiveBancaId) return {};
+
+      // 2. Obtener sorteo y su lotería
+      const sorteo = await prisma.sorteo.findUnique({
+        where: { id: sorteoId },
+        select: { id: true, loteriaId: true, scheduledAt: true, digits: true },
+      });
+
+      if (!sorteo) return {};
+
+      // 3. Obtener reglas de restricción aplicables
+      const now = new Date();
+      const candidateRules = await prisma.restrictionRule.findMany({
+        where: {
+          isActive: true,
+          OR: [
+            { userId: vendedorId },
+            { ventanaId: user.ventanaId },
+            { bancaId: effectiveBancaId },
+            { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] },
+          ],
+        },
+        include: { loteria: true, multiplier: true },
+      });
+
+      const applicableRules = candidateRules.filter((r) => {
+        if (r.loteriaId && r.loteriaId !== sorteo.loteriaId) return false;
+        if (r.appliesToDate && !isSameLocalDay(new Date(r.appliesToDate), now)) return false;
+        if (typeof r.appliesToHour === "number" && r.appliesToHour !== now.getHours()) return false;
+        return r.maxTotal != null || r.baseAmount != null || r.salesPercentage != null;
+      });
+
+      // 4. Generar lista de números según los dígitos del sorteo
+      const maxDigits = sorteo.digits || 2;
+      const totalNumbers = Math.pow(10, maxDigits);
+      const numbers = Array.from({ length: totalNumbers }, (_, i) => String(i).padStart(maxDigits, '0'));
+
+      // 5. Calcular acumulados actuales de forma paralela
+      const [bancaAccumulated, ventanaAccumulated, userAccumulated] = await Promise.all([
+        calculateAccumulatedByNumbersAndScope(prisma as any, {
+          numbers,
+          scopeType: 'BANCA',
+          scopeId: effectiveBancaId,
+          sorteoId,
+        }),
+        calculateAccumulatedByNumbersAndScope(prisma as any, {
+          numbers,
+          scopeType: 'VENTANA',
+          scopeId: user.ventanaId,
+          sorteoId,
+        }),
+        calculateAccumulatedByNumbersAndScope(prisma as any, {
+          numbers,
+          scopeType: 'USER',
+          scopeId: vendedorId,
+          sorteoId,
+        }),
+      ]);
+
+      // 6. Pre-calcular límites dinámicos
+      const dynamicLimits = new Map<string, number>();
+      for (const rule of applicableRules) {
+        if (rule.salesPercentage != null || rule.baseAmount != null) {
+          const limit = await calculateDynamicLimit(prisma as any, {
+            baseAmount: rule.baseAmount,
+            salesPercentage: rule.salesPercentage,
+            appliesToVendedor: rule.appliesToVendedor,
+            ruleUserId: rule.userId,
+            bancaId: rule.bancaId,
+            ventanaId: rule.ventanaId,
+          }, {
+            userId: vendedorId,
+            ventanaId: user.ventanaId,
+            bancaId: effectiveBancaId,
+            sorteoId,
+            at: now,
+          });
+          dynamicLimits.set(rule.id, limit);
+        }
+      }
+
+      // 7. Evaluar reglas por número
+      const balances: Record<string, { remaining: number; limit: number; accumulated: number }> = {};
+      for (const num of numbers) {
+        let minRemaining = Infinity;
+        let selectedLimit = Infinity;
+        let selectedAccumulated = 0;
+        let hasRestrictiveRule = false;
+
+        for (const rule of applicableRules) {
+          if (rule.number) {
+            const ruleNumbers = resolveNumbersToValidate(rule, now);
+            if (ruleNumbers.length > 0 && !ruleNumbers.includes(num)) continue;
+          }
+
+          const scopeType = (rule.appliesToVendedor || rule.userId) ? 'USER' : rule.ventanaId ? 'VENTANA' : 'BANCA';
+          const accumulated = scopeType === 'USER' ? (userAccumulated.get(num) ?? 0) : scopeType === 'VENTANA' ? (ventanaAccumulated.get(num) ?? 0) : (bancaAccumulated.get(num) ?? 0);
+          
+          const staticLimit = rule.maxTotal ?? Infinity;
+          const dynamicLimit = dynamicLimits.get(rule.id) ?? Infinity;
+          const limit = Math.min(staticLimit, dynamicLimit);
+          const remaining = Math.max(0, limit - accumulated);
+          
+          if (remaining < minRemaining) {
+            minRemaining = remaining;
+            selectedLimit = limit;
+            selectedAccumulated = accumulated;
+            hasRestrictiveRule = true;
+          }
+        }
+
+        if (!hasRestrictiveRule) {
+          balances[num] = { remaining: 10000000, limit: 10000000, accumulated: (userAccumulated.get(num) ?? 0) };
+        } else {
+          balances[num] = { remaining: minRemaining, limit: selectedLimit, accumulated: selectedAccumulated };
+        }
+      }
+      return balances;
+    }, { context: 'TicketRepository.getSorteoBalances' });
+  },
 };
 
 export default TicketRepository;

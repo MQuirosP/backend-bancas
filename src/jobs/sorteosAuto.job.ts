@@ -10,8 +10,8 @@
  *   - Llamar startSorteosAutoJobs() para inicializar
  *
  * Schedule:
- *   - Auto Open: Diariamente a las 7:00 AM UTC (1:00 AM CR)
- *   - Auto Create: Diariamente a las 7:30 AM UTC (1:30 AM CR)
+ *   - Auto Create: Diariamente a las 7:00 AM UTC (1:00 AM CR)
+ *   - Auto Open: Diariamente a las 7:30 AM UTC (1:30 AM CR)
  *   - Auto Close: Diariamente a las 4:00 AM UTC (10:00 PM CR)
  *
  * NOTA: Estos jobs verifican la configuración antes de ejecutar.
@@ -178,7 +178,7 @@ function scheduleAutoOpen(): void {
     openRecurringTimer = null;
   }
 
-  const delayMs = getMillisecondsUntilNextRun(7, 0); // 7:00 AM UTC = 1:00 AM CR
+  const delayMs = getMillisecondsUntilNextRun(7, 30); // 7:30 AM UTC = 1:30 AM CR
   const nextRun = new Date(Date.now() + delayMs);
 
   logger.info({
@@ -214,7 +214,7 @@ function scheduleAutoCreate(): void {
     createRecurringTimer = null;
   }
 
-  const delayMs = getMillisecondsUntilNextRun(7, 30); // 7:30 AM UTC = 1:30 AM CR
+  const delayMs = getMillisecondsUntilNextRun(7, 0); // 7:00 AM UTC = 1:00 AM CR
   const nextRun = new Date(Date.now() + delayMs);
 
   logger.info({

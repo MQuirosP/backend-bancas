@@ -1052,7 +1052,7 @@ export const SorteoListasService = {
             sorteoId,
             ventanaId: data.ventanaId,
             deletedAt: null,
-            status: 'EXCLUDED',
+            isActive: false, // Indiferente al campo 'status'; nos importa que esté inactivo operativamente
         };
 
         if (data.vendedorId) {
@@ -1227,12 +1227,19 @@ export const SorteoListasService = {
         });
 
         for (const j of rawJugadas) {
-            // Clave para exclusiones de vendedor específico
-            const keyVendedor = `${j.ticket.ventanaId}:${j.ticket.vendedorId || 'null'}:${j.multiplierId || 'null'}`;
-            // Clave para exclusiones de ventana completa (vendedorId null)
-            const keyVentana = `${j.ticket.ventanaId}:null:${j.multiplierId || 'null'}`;
+            // Un ticket excluido o vendedor/ventana puede no tener filtro de multiplicador.
+            // Para asegurar que los totales cuadren con las reglas genéricas (multiplierId=null),
+            // sumamos los montos a todas las combinaciones de reglas a las que pertenece la jugada.
+            const keysToUpdate = [
+                `${j.ticket.ventanaId}:${j.ticket.vendedorId || 'null'}:${j.multiplierId || 'null'}`,
+                `${j.ticket.ventanaId}:${j.ticket.vendedorId || 'null'}:null`,
+                `${j.ticket.ventanaId}:null:${j.multiplierId || 'null'}`,
+                `${j.ticket.ventanaId}:null:null`
+            ];
 
-            for (const key of [keyVendedor, keyVentana]) {
+            const uniqueKeys = Array.from(new Set(keysToUpdate));
+
+            for (const key of uniqueKeys) {
                 const existing = jugadaTotals.get(key);
                 if (existing) {
                     existing.totalJugadas++;

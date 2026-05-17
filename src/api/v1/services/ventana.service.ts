@@ -6,6 +6,7 @@ import VentanaRepository from "../../../repositories/ventana.repository";
 import { CreateVentanaInput, UpdateVentanaInput } from "../dto/ventana.dto";
 import { hashPassword } from "../../../utils/crypto";
 import logger from "../../../core/logger";
+import { CacheService } from "../../../core/cache.service";
 
 /**
  * Deep merge de configuraciones (parcial)
@@ -192,6 +193,7 @@ export const VentanaService = {
     }
 
     const ventana = await VentanaRepository.update(id, toUpdate);
+    await CacheService.invalidateTag(`ventana:${id}`);
 
     //  Actualizar o crear usuario asociado a la ventana (rol VENTANA)
     if (passwordToUpdate || usernameToUpdate) {
@@ -302,6 +304,7 @@ export const VentanaService = {
 
   async softDelete(id: string, userId: string, reason?: string) {
     const ventana = await VentanaRepository.softDelete(id, userId, reason);
+    await CacheService.invalidateTag(`ventana:${id}`);
 
     await ActivityService.log({
       userId,
@@ -346,6 +349,7 @@ async findAll(page?: number, pageSize?: number, search?: string, isActive?: bool
 
   async restore(id: string, userId: string, reason?: string) {
     const ventana = await VentanaRepository.restore(id);
+    await CacheService.invalidateTag(`ventana:${id}`);
 
     await ActivityService.log({
       userId,

@@ -5,17 +5,11 @@ import { PaginatedResult, buildMeta, getSkipTake } from "../../../utils/paginati
 import { Prisma, Role } from "@prisma/client";
 import logger from "../../../core/logger";
 import { formatIsoLocal } from "../../../utils/datetime";
+import { tz } from '../../../utils/timezone';
 import { resolveCommission } from "../../../services/commission.resolver";
 import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
 
-const BUSINESS_TZ = "America/Costa_Rica";
-const COSTA_RICA_OFFSET_HOURS = -6;
 
-function toCostaRicaDateString(date: Date): string {
-  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
-  const local = new Date(date.getTime() + offsetMs);
-  return local.toISOString().split("T")[0];
-}
 
 function combineSqlWithAnd(parts: Prisma.Sql[]): Prisma.Sql {
   if (parts.length === 0) {
@@ -155,8 +149,8 @@ function buildRawDateConditions(filters: VentasFilters) {
     return { dateCondition: null };
   }
 
-  const fromDateStr = filters.dateFrom ? toCostaRicaDateString(filters.dateFrom) : null;
-  const toDateStr = filters.dateTo ? toCostaRicaDateString(filters.dateTo) : null;
+  const fromDateStr = filters.dateFrom ? tz.toDateStr(filters.dateFrom) : null;
+  const toDateStr = filters.dateTo ? tz.toDateStr(filters.dateTo) : null;
 
   const businessParts: Prisma.Sql[] = [];
 
@@ -374,7 +368,7 @@ export const VentasService = {
     try {
       //  FAST PATH: Usar AccountStatement si es consulta de una ventana con fecha
       if (filters.ventanaId && filters.dateFrom) {
-        const crDate = toCostaRicaDateString(filters.dateFrom);
+        const crDate = tz.toDateStr(filters.dateFrom);
         const statement = await prisma.accountStatement.findFirst({
           where: {
             date: new Date(crDate + 'T00:00:00.000Z'),
@@ -1153,7 +1147,7 @@ export const VentasService = {
         SELECT
           DATE_TRUNC(${truncKeyword}, COALESCE(
             t."businessDate",
-            (t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${BUSINESS_TZ})
+            (t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE ${tz.name})
           )) as ts,
           SUM(t."totalAmount")::text as "ventasTotal",
           COUNT(DISTINCT t.id)::text as "ticketsCount",

@@ -4,14 +4,74 @@ import ActivityService from "../../../core/activity.service";
 import BancaRepository from "../../../repositories/banca.repository";
 import { ActivityType, Role } from "@prisma/client";
 import { CreateBancaInput, UpdateBancaInput } from "../dto/banca.dto";
+import { LoteriaService } from "./loteria.service";
+import { hashPassword } from "../../../utils/crypto";
+import { CacheService } from "../../../core/cache.service";
 
 export const BancaService = {
   async create(data: CreateBancaInput, userId: string) {
-    // Unicidad por code y por name (ambos @unique en schema)
+    // 1. Validaciones previas de unicidad
     if (await BancaRepository.findByCode(data.code)) throw new AppError("El código de la banca ya existe", 400);
     if (await BancaRepository.findByName(data.name)) throw new AppError("El nombre de la banca ya existe", 400);
 
-    const banca = await BancaRepository.create(data);
+    if (data.username) {
+      const existingUser = await prisma.user.findUnique({ where: { username: data.username } });
+      if (existingUser) throw new AppError(`El nombre de usuario "${data.username}" ya está en uso`, 400);
+    }
+
+    console.log(`[BancaService] Creando banca: ${data.name}, importBaseLoterias: ${data.importBaseLoterias}`);
+
+    // 2. Ejecutar creación en transacción para asegurar consistencia
+    const result = await prisma.$transaction(async (tx) => {
+      // A. Crear la Banca
+      const banca = await tx.banca.create({
+        data: {
+          name: data.name,
+          code: data.code,
+          email: data.email,
+          address: data.address,
+          phone: data.phone,
+          isActive: data.isActive ?? true,
+          defaultMinBet: data.defaultMinBet ?? 100,
+          globalMaxPerNumber: data.globalMaxPerNumber ?? 5000,
+          salesCutoffMinutes: data.salesCutoffMinutes ?? 1,
+          vendorLimit: data.vendorLimit,
+          // Si hay cutoff, crear la regla inicial (esto replica la lógica del repositorio)
+          ...(data.salesCutoffMinutes ? {
+            restrictionRules: {
+              create: [{ salesCutoffMinutes: Math.trunc(data.salesCutoffMinutes) }]
+            }
+          } : {})
+        }
+      });
+
+      // B. Si hay datos de usuario, crearlo vinculado a la banca
+      if (data.username && data.password) {
+        const hashedPassword = await hashPassword(data.password);
+        const newUser = await tx.user.create({
+          data: {
+            username: data.username,
+            password: hashedPassword,
+            name: `Admin ${data.name}`,
+            role: Role.BANCA,
+            bancaId: banca.id,
+          }
+        });
+
+        // C. Crear vínculo en UserBanca para que aparezca en su listado
+        await tx.userBanca.create({
+          data: {
+            userId: newUser.id,
+            bancaId: banca.id,
+            isDefault: true
+          }
+        });
+      }
+
+      return banca;
+    });
+
+    const banca = result;
 
     await ActivityService.log({
       userId,
@@ -20,9 +80,18 @@ export const BancaService = {
       targetId: banca.id,
       details: {
         ...data,
-        description: `Banca creada: ${banca.name} (${banca.code})`
+        password: '***',
+        confirmPassword: '***',
+        description: `Banca creada con administrador: ${banca.name} (${banca.code})`
       },
     });
+
+    // 3. Importación opcional de loterías base (Worker asíncrono)
+    if (data.importBaseLoterias) {
+      LoteriaService.cloneGlobalToBanca(banca.id, userId).catch(err => {
+        console.error(`[BancaService] Error in background lottery cloning: ${err.message}`);
+      });
+    }
 
     return banca;
   },
@@ -41,6 +110,7 @@ export const BancaService = {
     }
 
     const banca = await BancaRepository.update(id, data);
+    await CacheService.invalidateTag(`banca:${id}`);
 
     await ActivityService.log({
       userId,
@@ -64,6 +134,7 @@ export const BancaService = {
     }
 
     const banca = await BancaRepository.softDelete(id, userId, reason);
+    await CacheService.invalidateTag(`banca:${id}`);
 
     await ActivityService.log({
       userId,

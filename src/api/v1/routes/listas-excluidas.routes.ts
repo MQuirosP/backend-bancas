@@ -1,13 +1,16 @@
 import { Router } from "express";
 import { SorteoListasController } from "../controllers/sorteo-listas.controller";
-import { protect, restrictTo } from "../../../middlewares/auth.middleware";
+import { protect } from "../../../middlewares/auth.middleware";
 import { Role } from "@prisma/client";
+import { requireAdminBancaOrVentana } from "../../../middlewares/roleGuards.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 
 const router = Router();
 
-// Todas las rutas requieren autenticación - permitir VENTANA y ADMIN
+// Todas las rutas requieren autenticación
 router.use(protect);
-router.use(restrictTo(Role.VENTANA, Role.ADMIN));
+router.use(bancaContextMiddleware);
+router.use(requireAdminBancaOrVentana);
 
 /**
  * GET /api/v1/listas-excluidas

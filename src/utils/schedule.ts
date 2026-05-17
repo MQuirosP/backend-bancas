@@ -4,7 +4,8 @@ export type DrawSchedule = {
   daysOfWeek?: number[]         // 0..6 (0=Domingo)
 }
 
-import { atLocalTime, addLocalDays, startOfLocalDay } from './datetime'
+import { tz } from './timezone'
+import { atLocalTime } from './datetime'
 
 export function computeOccurrences(params: {
   loteriaName: string
@@ -20,16 +21,16 @@ export function computeOccurrences(params: {
 
   const pad = (n: number) => String(n).padStart(2, '0')
 
-  const from = startOfLocalDay(start)
-  const to = addLocalDays(from, days)
+  const from = tz.startOfDay(start)
+  const to = tz.addDays(from, days)
 
   const out: Array<{ scheduledAt: Date; name: string }> = []
-  const cursor = startOfLocalDay(from)
+  const cursor = tz.startOfDay(from)
 
   if (times.length === 0) return out
 
   while (cursor <= to && out.length < limit) {
-    const dow = cursor.getDay() // 0..6 (0=Domingo, hora local)
+    const dow = tz.dayOfWeek(cursor) // 0..6 (0=Domingo) según TZ del negocio
     const includeDay =
       frequency === 'diario'
         ? true
@@ -51,8 +52,8 @@ export function computeOccurrences(params: {
         }
       }
     }
-    cursor.setDate(cursor.getDate() + 1)
-    cursor.setHours(0, 0, 0, 0)
+    const nextDay = tz.addDays(cursor, 1)
+    cursor.setTime(tz.startOfDay(nextDay).getTime())
   }
 
   out.sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime())

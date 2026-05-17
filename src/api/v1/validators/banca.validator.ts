@@ -5,16 +5,20 @@ export const BancaIdParamSchema = z.object({
 }).strict();
 
 export const CreateBancaSchema = z.object({
-  name: z.string().trim().min(2).max(100),
-  code: z.string().trim().min(2).max(20),
-  email: z.string().email("email inválido").trim().toLowerCase().optional(),
-  address: z.string().trim().max(200).optional(),
-  phone: z.string().trim().max(20).optional(),
+  name: z.string().trim().min(2, "El nombre debe tener al menos 2 caracteres").max(100, "Nombre demasiado largo"),
+  code: z.string().trim().min(2, "El código debe tener al menos 2 caracteres").max(20, "Código demasiado largo"),
+  email: z.string().email("El correo electrónico no es válido").trim().toLowerCase().optional(),
+  address: z.string().trim().max(200, "La dirección es demasiado larga").optional(),
+  phone: z.string().trim().max(20, "El teléfono es demasiado largo").optional(),
   isActive: z.coerce.boolean().optional(),
-  defaultMinBet: z.coerce.number().positive().min(1).optional(),
-  globalMaxPerNumber: z.coerce.number().positive().min(1).optional(),
-  salesCutoffMinutes: z.coerce.number().int().positive().optional(),
-  vendorLimit: z.coerce.number().int().nonnegative().optional(),
+  defaultMinBet: z.coerce.number().positive("La apuesta mínima debe ser mayor a 0").min(1).optional(),
+  globalMaxPerNumber: z.coerce.number().positive("El máximo por número debe ser mayor a 0").min(1).optional(),
+  salesCutoffMinutes: z.coerce.number().int().positive("Los minutos de cierre deben ser un número positivo").optional(),
+  vendorLimit: z.coerce.number().int().nonnegative("El límite de vendedores no puede ser negativo").optional(),
+  importBaseLoterias: z.coerce.boolean().optional(),
+  username: z.string().trim().min(3, "El nombre de usuario debe tener al menos 3 caracteres").max(100).optional(),
+  password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres").optional(),
+  confirmPassword: z.string().optional(),
 }).strict();
 
 export const UpdateBancaSchema = CreateBancaSchema.partial().strict();

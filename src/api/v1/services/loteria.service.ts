@@ -1,6 +1,6 @@
 import prisma from "../../../core/prismaClient";
 import { withConnectionRetry } from "../../../core/withConnectionRetry";
-import { ActivityType, Prisma } from "@prisma/client";
+import { ActivityType, Prisma, SorteoStatus } from "@prisma/client";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
 import { AppError } from "../../../core/errors";
@@ -364,7 +364,7 @@ export const LoteriaService = {
   async seedSorteosFromRules(loteriaId: string, start: Date, days: number, dryRun = false, scheduledDates?: Date[], forceCreate = false) {
     const loteria = await prisma.loteria.findUnique({
       where: { id: loteriaId },
-      select: { name: true, rulesJson: true, isActive: true },
+      select: { name: true, rulesJson: true, isActive: true, bancaId: true },
     })
     if (!loteria) throw new Error("Lotería no encontrada")
     if (!loteria.isActive) throw new Error("Lotería inactiva")
@@ -478,8 +478,8 @@ export const LoteriaService = {
       };
     }
 
-    //  Pasar digits de la lotería para que los sorteos lo hereden
-    const result = await SorteoRepository.bulkCreateIfMissing(loteriaId, subset, loteriaDigits)
+    //  Pasar digits y bancaId de la lotería para que los sorteos lo hereden
+    const result = await SorteoRepository.bulkCreateIfMissing(loteriaId, subset, loteriaDigits, loteria.bancaId ?? undefined)
     
     // Invalidar cache de sorteos si se crearon nuevos
     const createdCount = Array.isArray(result.created) ? result.created.length : (typeof result.created === 'number' ? result.created : 0);
@@ -501,6 +501,133 @@ export const LoteriaService = {
     });
 
     return result
+  },
+
+  /**
+   * Clonar todas las loterías y multiplicadores globales (bancaId = null)
+   * hacia una banca específica.
+   */
+  async cloneGlobalToBanca(bancaId: string, userId: string, requestId?: string) {
+    try {
+      const globalLoterias = await prisma.loteria.findMany({
+        where: { bancaId: null },
+        include: { multipliers: true }
+      });
+
+      if (globalLoterias.length === 0) {
+        logger.info({
+          layer: "service",
+          action: "LOTERIA_CLONE_GLOBAL_SKIPPED",
+          payload: { bancaId, reason: "No global lotteries found" },
+          requestId
+        });
+        return;
+      }
+
+      const results = await prisma.$transaction(async (tx) => {
+        const cloned = [];
+        for (const loteria of globalLoterias) {
+          // Crear copia de la lotería
+          const newLoteria = await tx.loteria.create({
+            data: {
+              name: loteria.name,
+              rulesJson: loteria.rulesJson as any,
+              isActive: loteria.isActive,
+              bancaId,
+            }
+          });
+
+          // Clonar sus multiplicadores vinculándolos a la nueva lotería y a la banca
+          for (const m of loteria.multipliers) {
+            await tx.loteriaMultiplier.create({
+              data: {
+                name: m.name,
+                valueX: m.valueX,
+                kind: m.kind,
+                isActive: m.isActive,
+                loteriaId: newLoteria.id,
+                bancaId,
+              }
+            });
+          }
+          cloned.push(newLoteria.id);
+        }
+        return cloned;
+      });
+
+      logger.info({
+        layer: "service",
+        action: "LOTERIA_CLONE_GLOBAL_TO_BANCA_SUCCESS",
+        payload: { bancaId, clonedCount: results.length },
+        requestId
+      });
+
+      // Registrar en log de actividad la importación
+      await ActivityService.log({
+        userId,
+        bancaId,
+        action: ActivityType.LOTERIA_CREATE,
+        targetType: "BANCA",
+        targetId: bancaId,
+        details: {
+          description: `Importación automática de ${results.length} loterías base completada.`
+        },
+        requestId,
+        layer: "service"
+      });
+
+      // 4. GENERACIÓN INMEDIATA DE SORTEOS PARA HOY
+      // Esto asegura que la banca pueda empezar a vender de inmediato
+      logger.info({
+        layer: "service",
+        action: "LOTERIA_CLONE_GLOBAL_SEEDING_SORTEOS",
+        payload: { bancaId, loteriaCount: results.length }
+      });
+
+      // Usar la fecha calendario actual en Costa Rica
+      const { crDateService } = require('../../../utils/crDateService');
+      const startOfDay = crDateService.getStartOfToday();
+
+      for (const newLoteriaId of results) {
+        try {
+          await this.seedSorteosFromRules(newLoteriaId, startOfDay, 1, false, undefined, true);
+        } catch (seedErr) {
+          logger.error({
+            layer: "service",
+            action: "LOTERIA_CLONE_GLOBAL_SEED_ERROR",
+            payload: { loteriaId: newLoteriaId, error: (seedErr as Error).message }
+          });
+        }
+      }
+
+      // 5. APERTURA AUTOMÁTICA DE SORTEOS CREADOS
+      // Ponemos los sorteos en estado OPEN para que sean visibles en el FE de inmediato
+      const openedCount = await prisma.sorteo.updateMany({
+        where: {
+          bancaId,
+          status: SorteoStatus.SCHEDULED,
+          scheduledAt: {
+            gte: startOfDay,
+            lte: new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000)
+          }
+        },
+        data: { status: SorteoStatus.OPEN }
+      });
+
+      logger.info({
+        layer: "service",
+        action: "LOTERIA_CLONE_GLOBAL_OPENED_SORTEOS",
+        payload: { bancaId, openedCount: openedCount.count }
+      });
+
+    } catch (err) {
+      logger.error({
+        layer: "service",
+        action: "LOTERIA_CLONE_GLOBAL_TO_BANCA_ERROR",
+        payload: { bancaId, error: (err as Error).message },
+        requestId
+      });
+    }
   },
 };
 

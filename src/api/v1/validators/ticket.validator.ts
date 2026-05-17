@@ -162,6 +162,7 @@ export const NumbersSummaryQuerySchema = z
     //  NUEVO: Paginación para MONAZOS (1000 números)
     page: z.coerce.number().int().min(0).max(9).optional(), // 0-9 para 10 centenas (0=000-099, 1=100-199, ..., 9=900-999)
     pageSize: z.coerce.number().int().min(1).max(1000).optional().default(100), // Tamaño de página (default: 100)
+    isExcluded: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"), // ✅ NUEVO: Permitir filtro de exclusiones en la consulta del JSON
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .transform((val) => {

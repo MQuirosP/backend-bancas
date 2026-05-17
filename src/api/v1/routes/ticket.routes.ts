@@ -24,6 +24,7 @@ router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.BANCA, Role.ADMIN));
 // Ticket CRUD
 router.post("/", salesRateLimiter, validateBody(CreateTicketSchema), TicketController.create);
 // IMPORTANTE: Las rutas literales deben ir ANTES de las rutas con parámetros
+router.get("/validation/balances", TicketController.getBalances);
 router.get("/filter-options", TicketController.getFilterOptions);
 router.get("/numbers-summary/filter-options", validateNumbersSummaryQuery, TicketController.getNumbersSummaryFilterOptions);
 router.get("/numbers-summary", validateNumbersSummaryQuery, TicketController.numbersSummary);

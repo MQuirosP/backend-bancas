@@ -9,6 +9,9 @@ export type CreateBancaInput = {
   globalMaxPerNumber?: number;
   salesCutoffMinutes?: number;
   vendorLimit?: number;
+  importBaseLoterias?: boolean;
+  username?: string;
+  password?: string;
 };
 
 export type UpdateBancaInput = Partial<CreateBancaInput>;

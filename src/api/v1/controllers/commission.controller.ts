@@ -5,6 +5,7 @@ import { success } from "../../../utils/responses";
 import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
 import { Prisma } from "@prisma/client";
+import { CacheService } from "../../../core/cache.service";
 
 type MultiplierEmbed = {
   id: string;
@@ -121,6 +122,8 @@ export const CommissionController = {
       },
     });
 
+    await CacheService.invalidateTag(`banca:${id}`);
+
     req.logger?.info({
       layer: "controller",
       action: "UPDATE_BANCA_COMMISSION_POLICY",
@@ -187,6 +190,8 @@ export const CommissionController = {
         commissionPolicyJson: true,
       },
     });
+
+    await CacheService.invalidateTag(`ventana:${id}`);
 
     req.logger?.info({
       layer: "controller",
@@ -255,6 +260,8 @@ export const CommissionController = {
         commissionPolicyJson: true,
       },
     });
+
+    await CacheService.invalidateTag(`user:${id}`);
 
     req.logger?.info({
       layer: "controller",

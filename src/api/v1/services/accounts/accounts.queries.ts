@@ -63,7 +63,7 @@ export async function getAggregatedTicketsData(params: {
     const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" IN ('EVALUATED', 'PAID', 'PAGADO')`, // Excluir ACTIVE
+        Prisma.sql`t."status" IN ('EVALUATED', 'PAID', 'PAGADO')`,
         Prisma.sql`EXISTS (
             SELECT 1 FROM "Sorteo" s
             WHERE s.id = t."sorteoId"
@@ -159,6 +159,7 @@ export async function getAggregatedTicketsData(params: {
             SELECT 
                 j."ticketId",
                 COALESCE(SUM(j.amount), 0) as total_amount,
+                COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j.payout ELSE 0 END), 0) as total_payouts,
                 COALESCE(SUM(j."listeroCommissionAmount"), 0) as total_listero_commission,
                 COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as total_vendedor_commission
             FROM "Jugada" j
@@ -177,7 +178,7 @@ export async function getAggregatedTicketsData(params: {
             MAX(u.name) as vendedor_name,
             MAX(u.code) as vendedor_code,
             COALESCE(SUM(ja.total_amount), 0) as total_sales,
-            0 as total_payouts,
+            COALESCE(SUM(ja.total_payouts), 0) as total_payouts,
             COUNT(DISTINCT t.id) as total_tickets,
             COALESCE(SUM(ja.total_listero_commission), 0) as commission_listero,
             COALESCE(SUM(ja.total_vendedor_commission), 0) as commission_vendedor
@@ -271,31 +272,55 @@ export async function getDailySummariesFromMaterializedView(
         const orderClause = sort === "desc" ? "DESC" : "ASC";
 
         // Query la vista materializada
-        const summaries = await prisma.$queryRawUnsafe<Array<{
-            date: Date;
-            ventanaId: string | null;
-            vendedorId: string | null;
-            ticket_count: bigint;
-            total_sales: number;
-            total_payouts: number;
-            vendedor_commission: number;
-            listero_commission: number;
-            balance: number;
-        }>>(`
-      SELECT 
-        date,
-        "ventanaId",
-        "vendedorId",
-        ticket_count,
-        total_sales,
-        total_payouts,
-        vendedor_commission,
-        listero_commission,
-        balance
-      FROM mv_daily_account_summary
-      WHERE ${whereClause}
-      ORDER BY date ${orderClause}
-    `);
+        // ️ REFUERZO: Si es dimensión banca, debemos AGREGAR (SUM) todas las ventanas de esa banca
+        const summaries = dimension === "banca" 
+          ? await prisma.$queryRawUnsafe<Array<{
+              date: Date;
+              ticket_count: bigint;
+              total_sales: number;
+              total_payouts: number;
+              vendedor_commission: number;
+              listero_commission: number;
+              balance: number;
+            }>>(`
+              SELECT 
+                date,
+                SUM(ticket_count) as ticket_count,
+                SUM(total_sales) as total_sales,
+                SUM(total_payouts) as total_payouts,
+                SUM(vendedor_commission) as vendedor_commission,
+                SUM(listero_commission) as listero_commission,
+                SUM(balance) as balance
+              FROM mv_daily_account_summary
+              WHERE ${whereClause}
+              GROUP BY date
+              ORDER BY date ${orderClause}
+            `)
+          : await prisma.$queryRawUnsafe<Array<{
+              date: Date;
+              ventanaId: string | null;
+              vendedorId: string | null;
+              ticket_count: bigint;
+              total_sales: number;
+              total_payouts: number;
+              vendedor_commission: number;
+              listero_commission: number;
+              balance: number;
+            }>>(`
+              SELECT 
+                date,
+                "ventanaId",
+                "vendedorId",
+                ticket_count,
+                total_sales,
+                total_payouts,
+                vendedor_commission,
+                listero_commission,
+                balance
+              FROM mv_daily_account_summary
+              WHERE ${whereClause}
+              ORDER BY date ${orderClause}
+            `);
 
         // Convertir a Map por dateKey
         const resultMap = new Map<string, {
@@ -315,10 +340,13 @@ export async function getDailySummariesFromMaterializedView(
             // Usar servicio centralizado para obtener la fecha CR correcta
             // summary.date viene de PostgreSQL DATE, usar postgresDateToCRString
             const dateKey = crDateService.postgresDateToCRString(summary.date);
+            
+            //  FIX: Manejar caso donde ventanaId/vendedorId no existen en el resumen de banca
+            const summaryAny = summary as any;
             resultMap.set(dateKey, {
                 date: summary.date,
-                ventanaId: summary.ventanaId,
-                vendedorId: summary.vendedorId,
+                ventanaId: summaryAny.ventanaId || null,
+                vendedorId: summaryAny.vendedorId || null,
                 ticket_count: Number(summary.ticket_count),
                 total_sales: summary.total_sales,
                 total_payouts: summary.total_payouts,
@@ -399,7 +427,7 @@ export async function getSorteoBreakdownBatch(
     const whereClauses: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" NOT IN ('CANCELLED', 'EXCLUDED')`,
+        Prisma.sql`t."status" IN ('EVALUATED', 'PAID', 'PAGADO')`,
         Prisma.sql`s.status = 'EVALUATED'`,
         Prisma.sql`j."deletedAt" IS NULL`,
         // Filtramos businessDate con IN sobre las fechas YYYY-MM-DD

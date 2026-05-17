@@ -1,19 +1,16 @@
 /**
- * Business date utilities for Costa Rica timezone (America/Costa_Rica, UTC-6, no DST).
+ * Business date utilities — delegan a src/utils/timezone.ts
  *
- * Rules:
- * - Prefer the Sorteo.scheduledAt local calendar day in CR when provided.
- * - Fallback to a business-day cutoff hour (HH:mm) over nowUtc in CR.
- * - Returns prefix YYMMDD and a Date (UTC midnight) representing the business calendar day.
+ * ✅ API pública intacta. Sin CR_TZ_OFFSET_MS manual.
  */
+
+import { tz } from './timezone';
 
 type GetBusinessDateArgs = {
   scheduledAt?: Date | null;
-  nowUtc: Date; // server current time in UTC
-  cutoffHour: string; // 'HH:mm' in 24h (e.g., '06:00')
+  nowUtc: Date;
+  cutoffHour: string; // 'HH:mm' 24h
 };
-
-const CR_TZ_OFFSET_MS = -6 * 60 * 60 * 1000; // UTC-6, no DST in CR
 
 function parseCutoff(hhmm: string): { h: number; m: number } {
   const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(hhmm);
@@ -21,29 +18,34 @@ function parseCutoff(hhmm: string): { h: number; m: number } {
   return { h: Number(m[1]), m: Number(m[2]) };
 }
 
-function getCRYMDFromUtc(instantUtc: Date): { year: number; month: number; day: number; hour: number; minute: number } {
-  const ms = instantUtc.getTime() + CR_TZ_OFFSET_MS;
-  const d = new Date(ms);
-  return {
-    year: d.getUTCFullYear(),
-    month: d.getUTCMonth() + 1,
-    day: d.getUTCDate(),
-    hour: d.getUTCHours(),
-    minute: d.getUTCMinutes(),
-  };
-}
-
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-/**
- * Returns { prefixYYMMDD, businessDate, businessDateISO, source }
- * - prefixYYMMDD: string 'YYMMDD'
- * - businessDate: Date at UTC midnight of the business calendar day
- * - businessDateISO: 'YYYY-MM-DD'
- * - source: 'sorteo' | 'cutoff'
- */
+/** Extrae componentes locales en TZ del negocio de un instante UTC */
+export function getCRLocalComponents(dateUtc: Date): {
+  year: number; month: number; day: number; dow: number; hour: number; minute: number;
+} {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz.name,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+    weekday: 'short',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(dateUtc);
+  const get = (type: string) => parts.find(p => p.type === type)?.value ?? '0';
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return {
+    year: parseInt(get('year')),
+    month: parseInt(get('month')),
+    day: parseInt(get('day')),
+    dow: days.indexOf(get('weekday')),
+    hour: parseInt(get('hour')),
+    minute: parseInt(get('minute')),
+  };
+}
+
 export function getBusinessDateCRInfo(args: GetBusinessDateArgs): {
   prefixYYMMDD: string;
   businessDate: Date;
@@ -52,80 +54,50 @@ export function getBusinessDateCRInfo(args: GetBusinessDateArgs): {
 } {
   const { scheduledAt, nowUtc, cutoffHour } = args;
 
-  // If scheduledAt provided, use its CR calendar day directly
   if (scheduledAt) {
-    const ymd = getCRYMDFromUtc(scheduledAt);
-    const yy = pad2(ymd.year % 100);
-    const mm = pad2(ymd.month);
-    const dd = pad2(ymd.day);
-    const businessDate = new Date(Date.UTC(ymd.year, ymd.month - 1, ymd.day, 0, 0, 0, 0));
+    const dateStr = tz.toDateStr(scheduledAt);
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const yy = pad2(y % 100);
+    const mm = pad2(m);
+    const dd = pad2(d);
     return {
       prefixYYMMDD: `${yy}${mm}${dd}`,
-      businessDate,
-      businessDateISO: `${ymd.year}-${mm}-${dd}`,
+      businessDate: new Date(Date.UTC(y, m - 1, d)),
+      businessDateISO: `${y}-${mm}-${dd}`,
       source: 'sorteo',
     };
   }
 
-  // Fallback: cutoff by clock in CR against nowUtc
-  const { h, m } = parseCutoff(cutoffHour);
-  const ymdNow = getCRYMDFromUtc(nowUtc);
+  const { h: cutH, m: cutM } = parseCutoff(cutoffHour);
+  const { year, month, day, hour, minute } = getCRLocalComponents(nowUtc);
+  const beforeCutoff = hour < cutH || (hour === cutH && minute < cutM);
 
-  // If current CR time is before cutoff, business date is the previous day
-  let year = ymdNow.year;
-  let month = ymdNow.month;
-  let day = ymdNow.day;
-  const beforeCutoff = ymdNow.hour < h || (ymdNow.hour === h && ymdNow.minute < m);
+  let fy = year, fm = month, fd = day;
   if (beforeCutoff) {
-    // subtract 1 day in CR
-    const crMidnightUtc = Date.UTC(ymdNow.year, ymdNow.month - 1, ymdNow.day, 0, 0, 0, 0);
-    const prevCrMidnightUtc = crMidnightUtc - 24 * 60 * 60 * 1000; // minus one day
-    const ymdPrev = getCRYMDFromUtc(new Date(prevCrMidnightUtc - CR_TZ_OFFSET_MS));
-    year = ymdPrev.year;
-    month = ymdPrev.month;
-    day = ymdPrev.day;
+    const prevDay = tz.addDays(new Date(Date.UTC(year, month - 1, day, 12)), -1);
+    const prevStr = tz.toDateStr(prevDay);
+    [fy, fm, fd] = prevStr.split('-').map(Number);
   }
 
-  const yy = pad2(year % 100);
-  const mm = pad2(month);
-  const dd = pad2(day);
-  const businessDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+  const yy = pad2(fy % 100);
+  const mm = pad2(fm);
+  const dd = pad2(fd);
   return {
     prefixYYMMDD: `${yy}${mm}${dd}`,
-    businessDate,
-    businessDateISO: `${year}-${mm}-${dd}`,
+    businessDate: new Date(Date.UTC(fy, fm - 1, fd)),
+    businessDateISO: `${fy}-${mm}-${dd}`,
     source: 'cutoff',
   };
 }
 
-/** Convenience: returns just the YYMMDD prefix */
 export function getBusinessDateCR(args: GetBusinessDateArgs): string {
   return getBusinessDateCRInfo(args).prefixYYMMDD;
 }
 
-/** Returns CR local components (year, month, day, dow, hour, minute) for a UTC instant */
-export function getCRLocalComponents(dateUtc: Date): {
-  year: number; month: number; day: number; dow: number; hour: number; minute: number;
-} {
-  const ms = dateUtc.getTime() + CR_TZ_OFFSET_MS;
-  const d = new Date(ms);
-  // Use UTC getters because we've shifted by the offset already
-  return {
-    year: d.getUTCFullYear(),
-    month: d.getUTCMonth() + 1,
-    day: d.getUTCDate(),
-    dow: d.getUTCDay(),
-    hour: d.getUTCHours(),
-    minute: d.getUTCMinutes(),
-  };
-}
-
-/** Day range in UTC instants for the CR calendar day containing `nowUtc`. */
+/** Rango UTC del día calendario de negocio que contiene `nowUtc` */
 export function getCRDayRangeUTC(nowUtc: Date): { fromAt: Date; toAtExclusive: Date; isoDate: string } {
-  const { year, month, day } = getCRLocalComponents(nowUtc);
-  const fromAt = new Date(Date.UTC(year, month - 1, day, 6, 0, 0, 0)); // 00:00 CR = 06:00Z
-  const toAtExclusive = new Date(Date.UTC(year, month - 1, day + 1, 6, 0, 0, 0));
-  const mm = pad2(month);
-  const dd = pad2(day);
-  return { fromAt, toAtExclusive, isoDate: `${year}-${mm}-${dd}` };
+  const dateStr = tz.toDateStr(nowUtc);
+  const fromAt = tz.startOfDay(nowUtc);
+  const toAtExclusive = tz.addDays(fromAt, 1);
+  return { fromAt, toAtExclusive, isoDate: dateStr };
 }

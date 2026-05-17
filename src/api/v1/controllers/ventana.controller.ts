@@ -1,10 +1,22 @@
-import { Request, Response } from "express";
+import { Response } from "express";
+import { Role } from "@prisma/client";
 import { VentanaService } from "../services/ventana.service";
 import { AuthenticatedRequest } from "../../../core/types";
 
 export const VentanaController = {
   async create(req: AuthenticatedRequest, res: Response) {
-    const result = await VentanaService.create(req.body, req.user!.id);
+    // Si es rol BANCA, forzar su propio bancaId. Si es ADMIN, usar el del body.
+    const actor = req.user!;
+    // Prioridad: 1. Body (si es ADMIN), 2. Contexto de Banca Activa, 3. Perfil de Usuario
+    const bancaId = actor.role === Role.ADMIN 
+      ? (req.body.bancaId || req.bancaContext?.bancaId) 
+      : (req.bancaContext?.bancaId || actor.bancaId);
+
+    if (!bancaId) {
+      return res.status(400).json({ success: false, message: "No se proporcionó un ID de banca válido" });
+    }
+
+    const result = await VentanaService.create({ ...req.body, bancaId }, actor.id);
     const { _meta, ...ventanaData } = result as any;
     
     res.status(201).json({

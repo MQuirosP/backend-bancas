@@ -106,22 +106,27 @@ export const TicketService = {
     //    OPTIMIZACIÓN: se agregan name, phone, settings para evitar el
     //    fetch post-transacción que existía antes.
     // ─────────────────────────────────────────────────────────────────────
-    const actor = await withConnectionRetry(
-      () => prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          role: true,
-          ventanaId: true,
-          isActive: true,
-          commissionPolicyJson: true,
-          name: true,
-          code: true,
-          phone: true,
-          settings: true,
-        },
-      }),
-      { context: 'TicketService.create.actor' }
+    const actor = await CacheService.wrap(
+      `user:${userId}`,
+      () => withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            id: true,
+            role: true,
+            ventanaId: true,
+            isActive: true,
+            commissionPolicyJson: true,
+            name: true,
+            code: true,
+            phone: true,
+            settings: true,
+          },
+        }),
+        { context: 'TicketService.create.actor' }
+      ),
+      3600, // 1 hour TTL
+      [`user:${userId}`]
     );
     if (!actor) throw new AppError("Authenticated user not found", 401);
 
@@ -142,23 +147,28 @@ export const TicketService = {
         throw new AppError("No tienes permisos para realizar esta acción", 403);
       }
 
-      // OPTIMIZACIÓN: se agregan name, phone, settings al target también
-      const target = await withConnectionRetry(
-        () => prisma.user.findUnique({
-          where: { id: requestedVendedorId },
-          select: {
-            id: true,
-            role: true,
-            ventanaId: true,
-            isActive: true,
-            commissionPolicyJson: true,
-            name: true,
-            code: true,
-            phone: true,
-            settings: true,
-          },
-        }),
-        { context: 'TicketService.create.targetVendedor' }
+      // OPTIMIZACIÓN: se agregan name, phone, settings al target también y se envuelve en caché
+      const target = await CacheService.wrap(
+        `user:${requestedVendedorId}`,
+        () => withConnectionRetry(
+          () => prisma.user.findUnique({
+            where: { id: requestedVendedorId },
+            select: {
+              id: true,
+              role: true,
+              ventanaId: true,
+              isActive: true,
+              commissionPolicyJson: true,
+              name: true,
+              code: true,
+              phone: true,
+              settings: true,
+            },
+          }),
+          { context: 'TicketService.create.targetVendedor' }
+        ),
+        3600,
+        [`user:${requestedVendedorId}`]
       );
       if (!target || !target.isActive)
         throw new AppError("Vendedor no encontrado o inactivo", 404);
@@ -194,41 +204,62 @@ export const TicketService = {
     //    OPTIMIZACIÓN: se agregan name, phone, settings a ventana para
     //    eliminar el fetch post-transacción que antes hacía 2 queries extra.
     // ─────────────────────────────────────────────────────────────────────
-    const [sorteo, ventanaWithBanca, listeroUser] = await withConnectionRetry(
-      () => Promise.all([
-        prisma.sorteo.findUnique({
-          where: { id: sorteoId },
-          select: {
-            id: true,
-            name: true,
-            scheduledAt: true,
-            status: true,
-            loteriaId: true,
-            loteria: { select: { id: true, name: true, rulesJson: true } },
-          },
-        }),
-        prisma.ventana.findUnique({
-          where: { id: ventanaId },
-          select: {
-            id: true,
-            bancaId: true,
-            isActive: true,
-            commissionPolicyJson: true,
-            name: true,
-            code: true,
-            phone: true,
-            settings: true,
-            banca: { select: { id: true, commissionPolicyJson: true } },
-          },
-        }),
-        prisma.user.findFirst({
-          where: { role: Role.VENTANA, ventanaId: ventanaId, isActive: true, deletedAt: null },
-          select: { id: true, commissionPolicyJson: true },
-          orderBy: { updatedAt: "desc" },
-        }),
-      ]),
-      { context: 'TicketService.create.consolidatedMetadata' }
-    );
+    const [sorteo, ventanaWithBanca, listeroUser] = await Promise.all([
+      CacheService.wrap(
+        `sorteo:${sorteoId}`,
+        () => withConnectionRetry(
+          () => prisma.sorteo.findUnique({
+            where: { id: sorteoId },
+            select: {
+              id: true,
+              name: true,
+              scheduledAt: true,
+              status: true,
+              loteriaId: true,
+              loteria: { select: { id: true, name: true, rulesJson: true } },
+            },
+          }),
+          { context: 'TicketService.create.sorteo' }
+        ),
+        300, // 5 minutes TTL
+        [`sorteo:${sorteoId}`]
+      ),
+      CacheService.wrap(
+        `ventana:${ventanaId}`,
+        () => withConnectionRetry(
+          () => prisma.ventana.findUnique({
+            where: { id: ventanaId },
+            select: {
+              id: true,
+              bancaId: true,
+              isActive: true,
+              commissionPolicyJson: true,
+              name: true,
+              code: true,
+              phone: true,
+              settings: true,
+              banca: { select: { id: true, commissionPolicyJson: true } },
+            },
+          }),
+          { context: 'TicketService.create.ventana' }
+        ),
+        3600,
+        [`ventana:${ventanaId}`, `banca:${ventanaId}`] // To be cleared when ventana or its banca changes
+      ),
+      CacheService.wrap(
+        `listero:${ventanaId}`,
+        () => withConnectionRetry(
+          () => prisma.user.findFirst({
+            where: { role: Role.VENTANA, ventanaId: ventanaId, isActive: true, deletedAt: null },
+            select: { id: true, commissionPolicyJson: true },
+            orderBy: { updatedAt: "desc" },
+          }),
+          { context: 'TicketService.create.listero' }
+        ),
+        3600,
+        [`ventana:${ventanaId}`]
+      ),
+    ]);
 
     if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
     if (sorteo.status === "CLOSED")
@@ -1172,6 +1203,7 @@ export const TicketService = {
       page?: number;
       pageSize?: number;
       bancaId?: string;
+      isExcluded?: boolean | string;
     },
     role: string,
     userId: string
@@ -1226,15 +1258,24 @@ export const TicketService = {
         ? null 
         : resolveDateRange(params.date || "today", params.fromDate, params.toDate);
 
+      const isExcludedRequest = params.isExcluded === 'true' || params.isExcluded === true;
+
       // 5. Construir Query de SQL Raw (Lean & Fast)
       const sqlWhere: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t."isActive" = true`
       ];
+
+      // Cuando isExcluded=true no filtramos por isActive ni status del ticket:
+      // Los tickets pueden quedar en cualquier estado después de la evaluación del sorteo.
+      // El criterio de filtrado es j."isExcluded" (a nivel de jugada) que es la fuente de verdad.
+      if (!isExcludedRequest) {
+        sqlWhere.push(Prisma.sql`t."isActive" = true`);
+      }
 
       if (params.sorteoStatus) sqlWhere.push(Prisma.sql`s.status::text = ${params.sorteoStatus}`);
       if (params.status) sqlWhere.push(Prisma.sql`t."status" = ${params.status}`);
-      else sqlWhere.push(Prisma.sql`t."status" NOT IN ('CANCELLED', 'EXCLUDED')`);
+      else if (!isExcludedRequest) sqlWhere.push(Prisma.sql`t."status" NOT IN ('CANCELLED', 'EXCLUDED')`);
+
 
       if (dateRange) {
         sqlWhere.push(Prisma.sql`t."businessDate" BETWEEN ${dateRange.fromBusinessDate}::date AND ${dateRange.toBusinessDate}::date`);
@@ -1255,7 +1296,7 @@ export const TicketService = {
       }
 
       // Aplicar exclusiones (convertir condition a SQL Raw)
-      if (exclusionCondition.NOT?.OR) {
+      if (!isExcludedRequest && exclusionCondition.NOT?.OR) {
         const exclusions = exclusionCondition.NOT.OR.map((ex: any) => {
           let cond = Prisma.sql`t."ventanaId" = CAST(${ex.ventanaId} AS uuid)`;
           if (ex.vendedorId) cond = Prisma.sql`${cond} AND t."vendedorId" = CAST(${ex.vendedorId} AS uuid)`;
@@ -1304,9 +1345,9 @@ export const TicketService = {
           ${params.sorteoStatus ? Prisma.sql`INNER JOIN "Sorteo" s ON t."sorteoId" = s.id` : Prisma.empty}
           INNER JOIN "Jugada" j ON t.id = j."ticketId"
           WHERE ${combinedWhere}
-            AND j."isActive" = true 
+            ${isExcludedRequest ? Prisma.empty : Prisma.sql`AND j."isActive" = true`}
             AND j."deletedAt" IS NULL
-            AND j."isExcluded" = false
+            ${isExcludedRequest ? Prisma.sql`AND j."isExcluded" = true` : Prisma.sql`AND j."isExcluded" = false`}
             ${multiplierFilterTicket}
           GROUP BY j.number
         `,
@@ -2312,16 +2353,31 @@ export const TicketService = {
         }),
       ];
 
-      if (vendedorGroups.length > 0) {
+      if (vendedorGroups.length > 0 || effectiveFilters.bancaId) {
         masterTasks.push(() => prisma.user.findMany({
-          where: { id: { in: vendedorGroups.map((g: any) => g.vendedorId).filter(Boolean) } },
+          where: { 
+            role: Role.VENDEDOR,
+            isActive: true,
+            deletedAt: null,
+            ...(effectiveFilters.bancaId 
+              ? { ventana: { bancaId: effectiveFilters.bancaId } } 
+              : { id: { in: vendedorGroups.map((g: any) => g.vendedorId).filter(Boolean) } }
+            )
+          },
           select: { id: true, name: true, ventanaId: true, ventana: { select: { id: true, name: true } } },
         }));
       }
 
-      if (ventanaGroups.length > 0) {
+      if (ventanaGroups.length > 0 || effectiveFilters.bancaId) {
         masterTasks.push(() => prisma.ventana.findMany({
-          where: { id: { in: ventanaGroups.map((g: any) => g.ventanaId).filter(Boolean) } },
+          where: { 
+            isActive: true,
+            deletedAt: null,
+            ...(effectiveFilters.bancaId 
+              ? { bancaId: effectiveFilters.bancaId } 
+              : { id: { in: ventanaGroups.map((g: any) => g.ventanaId).filter(Boolean) } }
+            )
+          },
           select: { id: true, name: true, code: true },
         }));
       }
@@ -2331,8 +2387,8 @@ export const TicketService = {
       const sorteosMaster = masterResults[1] as any[];
       const multipliers = masterResults[2] as any[];
       let masterNextIdx = 3;
-      const vendedoresMaster = (vendedorGroups.length > 0) ? masterResults[masterNextIdx++] as any[] : [];
-      const ventanasMaster = (ventanaGroups.length > 0) ? masterResults[masterNextIdx] as any[] : [];
+      const vendedoresMaster = (vendedorGroups.length > 0 || effectiveFilters.bancaId) ? masterResults[masterNextIdx++] as any[] : [];
+      const ventanasMaster = (ventanaGroups.length > 0 || effectiveFilters.bancaId) ? masterResults[masterNextIdx] as any[] : [];
 
       // Fase 3: Para vendedores, filtrar multiplicadores según política de comisión
       let allowedMultiplierIds: Set<string> | null = null;
@@ -2640,6 +2696,17 @@ export const TicketService = {
       }
     });
     return ticket;
+  },
+
+  /**
+   * Obtiene los saldos disponibles para todos los números de un sorteo
+   */
+  async getBalances(sorteoId: string, vendedorId: string, bancaId?: string) {
+    return TicketRepository.getSorteoBalances({
+      sorteoId,
+      vendedorId,
+      bancaId,
+    });
   },
 };
 

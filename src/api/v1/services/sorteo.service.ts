@@ -159,6 +159,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag(`sorteo:${s.id}`).catch(() => {});
 
     const loteriaObj = await prisma.loteria.findUnique({
       where: { id: data.loteriaId },
@@ -217,6 +218,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const details: Record<string, any> = {};
     if (data.name && data.name !== existing.name) details.name = data.name;
@@ -264,6 +266,7 @@ const SorteoService = {
     const s = await SorteoRepository.update(id, {
       isActive,
     } as UpdateSorteoDTO);
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
     const lotName = existing.loteria?.name || 'Lotería';
@@ -300,6 +303,7 @@ const SorteoService = {
     }
 
     const s = await SorteoRepository.forceOpen(id);
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
     const lotName = existing.loteria?.name || 'Lotería';
@@ -358,6 +362,7 @@ const SorteoService = {
         },
       },
     });
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const details: Prisma.InputJsonObject = {
       from: {
@@ -454,6 +459,7 @@ const SorteoService = {
         },
       },
     });
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const sFormattedAt = formatDateCRWithTZ(s.scheduledAt);
     const lotName = s.loteria?.name || 'Lotería';
@@ -495,6 +501,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
     const lotName = existing.loteria?.name || 'Lotería';
@@ -533,6 +540,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
     const lotName = existing.loteria?.name || 'Lotería';
@@ -658,6 +666,7 @@ const SorteoService = {
     // 5. Logs y Limpieza
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     await ActivityService.log({
       userId,
@@ -686,6 +695,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const details: Record<string, any> = {};
     if (reason) details.reason = reason;
@@ -713,6 +723,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     await ActivityService.log({
       userId,
@@ -754,6 +765,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
     const lotName = existing.loteria?.name || 'Lotería';
@@ -1488,7 +1500,7 @@ gs."hour24" ASC
       // Aplicar filtros RBAC dinámicos (Vendedor, Ventana, Banca)
       if (vendedorId) ticketConditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
       if (params.ventanaId) ticketConditions.push(Prisma.sql`t."ventanaId" = CAST(${params.ventanaId} AS uuid)`);
-      if (params.bancaId) ticketConditions.push(Prisma.sql`v."bancaId" = CAST(${params.bancaId} AS uuid)`);
+      if (params.bancaId) ticketConditions.push(Prisma.sql`t."bancaId" = CAST(${params.bancaId} AS uuid)`);
       if (params.loteriaId) ticketConditions.push(Prisma.sql`s."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
 
       const whereClause = Prisma.join(ticketConditions, ' AND ');

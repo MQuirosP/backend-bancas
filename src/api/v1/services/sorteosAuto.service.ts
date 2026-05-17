@@ -5,7 +5,7 @@ import { SorteoStatus, Prisma } from '@prisma/client';
 import logger from '../../../core/logger';
 import SorteoService from './sorteo.service';
 import LoteriaService from './loteria.service';
-import { startOfLocalDay, addLocalDays } from '../../../utils/datetime';
+import { tz } from '../../../utils/timezone';
 import { withConnectionRetry } from '../../../core/withConnectionRetry';
 import { ActivityService } from '../../../core/activity.service';
 
@@ -53,20 +53,9 @@ async function getOrCreateConfig() {
   return config;
 }
 
-/**
- * Obtiene el rango del día actual en hora CR (00:00:00 - 23:59:59.999)
- * 
- * IMPORTANTE: Usa hora local de Costa Rica consistentemente.
- * El 'end' es el inicio del día siguiente menos 1ms para incluir todo el día.
- */
 function getTodayRangeCR(): { start: Date; end: Date } {
   const now = new Date();
-  const start = startOfLocalDay(now);
-  // El final del día es el inicio del día siguiente menos 1ms
-  // Esto asegura que incluimos todos los sorteos del día hasta 23:59:59.999
-  const nextDayStart = addLocalDays(start, 1);
-  const end = new Date(nextDayStart.getTime() - 1);
-  return { start, end };
+  return { start: tz.startOfDay(now), end: tz.endOfDay(now) };
 }
 
 export const SorteosAutoService = {
@@ -315,8 +304,8 @@ export const SorteosAutoService = {
     let totalCreated = 0;
     let totalSkipped = 0;
 
-    const today = startOfLocalDay(new Date());
-    const minDaysAhead = 3; // Mínimo de días futuros que deben existir
+    const today = tz.startOfDay(new Date());
+    const minDaysAhead = 1; // Mínimo de días futuros: 1 día (el cron corre diario)
     
     for (const loteria of loterias) {
       try {
@@ -383,14 +372,14 @@ export const SorteosAutoService = {
             },
           });
         } else {
-          const lastSorteoDate = startOfLocalDay(lastSorteo.scheduledAt);
+          const lastSorteoDate = tz.startOfDay(lastSorteo.scheduledAt);
           const daysUntilLast = Math.ceil(
             (lastSorteoDate.getTime() - today.getTime()) / (24 * 60 * 60 * 1000)
           );
 
           if (daysUntilLast < minDaysAhead) {
             // El último sorteo está muy cerca, generar desde el día siguiente al último
-            startDate = addLocalDays(lastSorteoDate, 1);
+            startDate = tz.addDays(lastSorteoDate, 1);
             // Generar suficientes días para tener al menos minDaysAhead + daysAhead días futuros
             actualDaysAhead = Math.max(daysAhead, minDaysAhead - daysUntilLast + daysAhead);
             

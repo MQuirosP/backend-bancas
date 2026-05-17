@@ -506,7 +506,7 @@ const SorteoRepository = {
       await tx.ticket.updateMany({
         where: { 
           sorteoId: id,
-          status: { not: 'CANCELLED' },
+          status: { notIn: ['CANCELLED', 'EXCLUDED'] },
           deletedAt: null
         },
         data: { status: 'EVALUATED', isWinner: false },
@@ -723,6 +723,7 @@ const SorteoRepository = {
     const dataQuery = Prisma.sql`
       SELECT 
         s.id,
+        s."bancaId",
         s."loteriaId",
         s."scheduledAt",
         s."status",
@@ -784,6 +785,7 @@ const SorteoRepository = {
     const [dataRows, countRows] = await Promise.all([
       prisma.$queryRaw<Array<{
         id: string;
+        bancaId: string | null;
         loteriaId: string;
         scheduledAt: Date;
         status: string;
@@ -816,6 +818,7 @@ const SorteoRepository = {
     // Mapear resultados a formato esperado por Prisma
     const data = dataRows.map((row) => ({
       id: row.id,
+      bancaId: row.bancaId,
       loteriaId: row.loteriaId,
       scheduledAt: row.scheduledAt,
       status: row.status as SorteoStatus,
@@ -1243,7 +1246,7 @@ const SorteoRepository = {
     return { count: result.count, sorteosIds };
   },
 
-  async bulkCreateIfMissing(loteriaId: string, occurrences: Array<{ scheduledAt: Date; name: string }>, digits: number = 2) {
+  async bulkCreateIfMissing(loteriaId: string, occurrences: Array<{ scheduledAt: Date; name: string }>, digits: number = 2, bancaId?: string) {
     if (occurrences.length === 0) return { created: [], skipped: [], alreadyExists: [], processed: [] }
 
     // Ordenar y construir claves por timestamp para deduplicación robusta
@@ -1259,7 +1262,7 @@ const SorteoRepository = {
     const bufferedMax = new Date(maxAt.getTime() + 60_000)
 
     const existing = await prisma.sorteo.findMany({
-      where: { loteriaId, scheduledAt: { gte: bufferedMin, lte: bufferedMax } },
+      where: { loteriaId, scheduledAt: { gte: bufferedMin, lte: bufferedMax }, bancaId: bancaId ?? null },
       select: { id: true, scheduledAt: true },
     })
     const existingBefore = new Set(existing.map(e => e.scheduledAt.getTime()))
@@ -1267,13 +1270,14 @@ const SorteoRepository = {
     const toInsert = items.filter(it => !existingBefore.has(it.ts))
     const alreadyExists = items.filter(it => existingBefore.has(it.ts))
 
-    // Inserción masiva idempotente con respaldo de @@unique(loteriaId, scheduledAt)
+    // Inserción masiva idempotente con respaldo de @@unique(loteriaId, scheduledAt, bancaId)
     if (toInsert.length > 0) {
       logger.info({
         layer: "repository",
         action: "SORTEO_BULK_CREATE_IF_MISSING_BEFORE_INSERT",
         payload: {
           loteriaId,
+          bancaId,
           toInsertCount: toInsert.length,
           alreadyExistsCount: alreadyExists.length,
           sampleToInsert: toInsert.slice(0, 3).map(it => ({
@@ -1288,6 +1292,7 @@ const SorteoRepository = {
         const createResult = await prisma.sorteo.createMany({
           data: toInsert.map(it => ({
             loteriaId,
+            bancaId: bancaId ?? null,
             name: it.name,
             scheduledAt: new Date(it.ts),
             status: SorteoStatus.SCHEDULED,
@@ -1302,6 +1307,7 @@ const SorteoRepository = {
           action: "SORTEO_BULK_CREATE_IF_MISSING_INSERT_RESULT",
           payload: {
             loteriaId,
+            bancaId,
             createManyCount: createResult.count,
             attemptedCount: toInsert.length,
             difference: toInsert.length - createResult.count,
@@ -1338,7 +1344,7 @@ const SorteoRepository = {
 
     // Verificación post-inserción para reflejar creados reales bajo concurrencia
     const existingAfter = await prisma.sorteo.findMany({
-      where: { loteriaId, scheduledAt: { gte: bufferedMin, lte: bufferedMax } },
+      where: { loteriaId, scheduledAt: { gte: bufferedMin, lte: bufferedMax }, bancaId: bancaId ?? null },
       select: { scheduledAt: true },
     })
     const afterSet = new Set(existingAfter.map(e => e.scheduledAt.getTime()))

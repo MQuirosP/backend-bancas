@@ -322,7 +322,7 @@ export const TicketController = {
   },
 
   async numbersSummary(req: AuthenticatedRequest, res: Response) {
-    const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, sorteoStatus, page, pageSize } = req.query as any;
+    const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, sorteoStatus, page, pageSize, isExcluded } = req.query as any;
 
     const me = req.user!;
 
@@ -375,11 +375,11 @@ export const TicketController = {
       effectiveScope = scope || 'all';
     }
 
-    // Validar que ADMIN no intente usar scope='all' sin permisos
-    if (effectiveScope === 'all' && me.role !== Role.ADMIN) {
+    // Validar permisos: solo ADMIN y BANCA pueden usar scope='all'
+    if (effectiveScope === 'all' && me.role !== Role.ADMIN && me.role !== Role.BANCA) {
       return res.status(403).json({
         success: false,
-        error: "Solo los administradores pueden usar scope='all'",
+        error: "No tienes permisos para usar scope='all'",
       });
     }
 
@@ -432,6 +432,7 @@ export const TicketController = {
         page, //  FIX: Paginación para MONAZOS
         pageSize, //  FIX: Paginación para MONAZOS
         bancaId: effectiveFilters.bancaId,
+        isExcluded: isExcluded === 'true' || isExcluded === true,
       },
       me.role,
       me.id
@@ -454,7 +455,7 @@ export const TicketController = {
   async numbersSummaryPdf(req: AuthenticatedRequest, res: Response) {
     try {
       const startTime = Date.now();
-      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, sorteoStatus, format, page, pageSize, onlyWithSales } = req.body;
+      const { date, fromDate, toDate, scope, dimension, ventanaId, vendedorId, loteriaId, sorteoId, multiplierId, status, sorteoStatus, format, page, pageSize, onlyWithSales, isExcluded } = req.body;
 
       const me = req.user!;
 
@@ -503,11 +504,11 @@ export const TicketController = {
         effectiveScope = scope || 'all';
       }
 
-      // Validar permisos
-      if (effectiveScope === 'all' && me.role !== Role.ADMIN) {
+      // Validar permisos: solo ADMIN y BANCA pueden usar scope='all'
+      if (effectiveScope === 'all' && me.role !== Role.ADMIN && me.role !== Role.BANCA) {
         return res.status(403).json({
           success: false,
-          error: "Solo los administradores pueden usar scope='all'",
+          error: "No tienes permisos para usar scope='all'",
         });
       }
 
@@ -539,6 +540,7 @@ export const TicketController = {
           status,
           sorteoStatus,
           bancaId: effectiveFilters.bancaId,
+          isExcluded: isExcluded === 'true' || isExcluded === true,
           // NO pasar page ni pageSize - siempre obtener todos los números
         },
         me.role,
@@ -1177,6 +1179,43 @@ export const TicketController = {
         success: false,
         error: 'INTERNAL_ERROR',
         message: 'Error al obtener opciones de filtros para numbers-summary',
+      });
+    }
+  },
+
+  /**
+   * GET /api/v1/tickets/validation/balances
+   * Obtiene los saldos disponibles para todos los números de un sorteo
+   */
+  async getBalances(req: AuthenticatedRequest, res: Response) {
+    const { sorteoId, vendedorId } = req.query as any;
+    const bancaId = req.bancaContext?.bancaId || undefined;
+
+    if (!sorteoId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'MISSING_SORTEO_ID', 
+        message: 'sorteoId es requerido' 
+      });
+    }
+
+    try {
+      const result = await TicketService.getBalances(sorteoId, vendedorId || req.user!.id, bancaId);
+      return success(res, result);
+    } catch (err: any) {
+      req.logger?.error({
+        layer: 'controller',
+        action: 'TICKET_GET_BALANCES_ERROR',
+        payload: { 
+          error: err.message, 
+          sorteoId, 
+          vendedorId 
+        },
+      });
+      return res.status(500).json({
+        success: false,
+        error: 'INTERNAL_ERROR',
+        message: 'Error al obtener saldos del sorteo',
       });
     }
   },

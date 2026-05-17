@@ -1153,7 +1153,7 @@ export async function getStatementDirect(
         ventanaId,
         vendedorId,
         bancaId,
-        false //  NUEVO: Incluir movimientos de dependientes (includeChildren) cuando es banca
+        dimension === "banca" // includeChildren: true para banca para ver movimientos de listeros
     );
 
     //  NUEVO: Obtener saldos del mes anterior para agregarlos como movimiento especial al primer día
