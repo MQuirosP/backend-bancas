@@ -99,6 +99,24 @@ router.get(
       return next();
     }
 
+    if (authUser.role === Role.BANCA) {
+      // Un usuario BANCA puede ver multiplicadores permitidos para cualquier usuario de su misma banca
+      const target = await prisma.user.findUnique({
+        where: { id: targetId },
+        select: { bancaId: true, ventana: { select: { bancaId: true } } }
+      });
+      if (!target) {
+        throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+      }
+      
+      const targetBancaId = target.bancaId || target.ventana?.bancaId;
+      const actorBancaId = authUser.bancaId || (req as any).bancaContext?.bancaId;
+      if (targetBancaId !== actorBancaId) {
+        throw new AppError("Solo puedes consultar usuarios de tu propia banca", 403);
+      }
+      return next();
+    }
+
     if (authUser.role !== Role.VENTANA) {
       throw new AppError("Forbidden", 403);
     }

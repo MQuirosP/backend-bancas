@@ -60,7 +60,7 @@ export async function calculateRealMonthBalance(
             ticketConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         }
         if (dimension === "banca" && bancaId) {
-            ticketConditions.push(Prisma.sql`EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${bancaId} AS uuid))`);
+            ticketConditions.push(Prisma.sql`t."bancaId" = CAST(${bancaId} AS uuid)`);
         }
 
         const ticketWhereClause = Prisma.sql`WHERE ${Prisma.join(ticketConditions, " AND ")}`;

@@ -216,7 +216,7 @@ export const VendedoresReportService = {
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
           ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND vn."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
       ),
       ventas_por_vendedor AS (
         SELECT

@@ -30,7 +30,7 @@ async function computeListeroCommissionByLoteria(
         isActive: true,
         status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] },
         ...(loteriaId ? { loteriaId } : {}),
-        ...(bancaId ? { ventana: { bancaId } } : {}),
+        ...(bancaId ? { bancaId } : {}),
       },
     },
     select: {
@@ -219,7 +219,7 @@ export const LoteriasReportService = {
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${filters.bancaId} AS uuid))` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
       ),
       jugadas_count_per_loteria AS (
         SELECT 

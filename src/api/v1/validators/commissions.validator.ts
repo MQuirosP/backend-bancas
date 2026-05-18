@@ -2,6 +2,14 @@
 import { z } from "zod";
 import { validateQuery } from "../../../middlewares/validate.middleware";
 
+// Helper para validar UUIDs opcionales que pueden venir como "all", vacío o null desde el frontend
+const OptionalUUIDOrAll = z.preprocess((val) => {
+  if (val === 'all' || val === '' || val === null) {
+    return undefined;
+  }
+  return val;
+}, z.string().uuid().optional());
+
 /**
  * Schema para GET /api/v1/commissions
  * Lista de comisiones por periodo
@@ -18,9 +26,9 @@ export const CommissionsListQuerySchema = z
     dimension: z.enum(["ventana", "vendedor", "loteria"]),
 
     // Filtros opcionales (solo para ADMIN)
-    ventanaId: z.string().uuid().optional(),
-    vendedorId: z.string().uuid().optional(),
-    loteriaId: z.string().uuid().optional(),
+    ventanaId: OptionalUUIDOrAll,
+    vendedorId: OptionalUUIDOrAll,
+    loteriaId: OptionalUUIDOrAll,
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
@@ -76,8 +84,8 @@ export const CommissionsDetailQuerySchema = z
     dimension: z.enum(["ventana", "vendedor", "loteria"]),
 
     // Filtros opcionales (solo para ADMIN)
-    ventanaId: z.string().uuid().optional(),
-    vendedorId: z.string().uuid().optional(),
+    ventanaId: OptionalUUIDOrAll,
+    vendedorId: OptionalUUIDOrAll,
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
@@ -100,8 +108,8 @@ export const CommissionsTicketsQuerySchema = z
     dimension: z.enum(["ventana", "vendedor", "loteria"]),
 
     // Filtros opcionales (solo para ADMIN)
-    ventanaId: z.string().uuid().optional(),
-    vendedorId: z.string().uuid().optional(),
+    ventanaId: OptionalUUIDOrAll,
+    vendedorId: OptionalUUIDOrAll,
 
     // Paginación
     page: z.coerce.number().int().min(1).optional().default(1),
@@ -129,9 +137,9 @@ export const CommissionsExportQuerySchema = z
     dimension: z.enum(["ventana", "vendedor", "loteria"]),
 
     // Filtros opcionales (solo para ADMIN)
-    ventanaId: z.string().uuid().optional(),
-    vendedorId: z.string().uuid().optional(),
-    loteriaId: z.string().uuid().optional(),
+    ventanaId: OptionalUUIDOrAll,
+    vendedorId: OptionalUUIDOrAll,
+    loteriaId: OptionalUUIDOrAll,
 
     // Opciones de exportación
     includeBreakdown: z.coerce.boolean().optional().default(true),
@@ -194,8 +202,8 @@ export const CommissionsBreakdownParamsSchema = z.object({
 export const CommissionsBreakdownQuerySchema = z.object({
   scope: z.enum(["mine", "all"]),
   dimension: z.enum(["ventana", "vendedor", "loteria"]),
-  ventanaId: z.string().uuid().optional(),
-  vendedorId: z.string().uuid().optional(),
+  ventanaId: OptionalUUIDOrAll,
+  vendedorId: OptionalUUIDOrAll,
   _: z.string().optional(),
 }).strict();
 

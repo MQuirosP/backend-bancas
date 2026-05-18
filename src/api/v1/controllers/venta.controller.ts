@@ -230,7 +230,8 @@ export const VentaController = {
     const context: AuthContext = {
       userId: req.user!.id,
       role: req.user!.role,
-      ventanaId: req.user!.ventanaId
+      ventanaId: req.user!.ventanaId,
+      bancaId: req.bancaContext?.bancaId || null
     };
 
     // DEBUG: Log context and filters BEFORE RBAC

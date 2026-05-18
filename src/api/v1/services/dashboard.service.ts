@@ -340,11 +340,7 @@ function buildTicketBaseFilters(
 
   // Filtrar por banca activa (para ADMIN multibanca)
   if (filters.bancaId) {
-    conditions.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "Ventana" v
-      WHERE v.id = ${Prisma.raw(`${alias}."ventanaId"`)}
-      AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
-    )`);
+    conditions.push(Prisma.sql`${Prisma.raw(`${alias}."bancaId"`)} = CAST(${filters.bancaId} AS uuid)`);
   }
 
   if (filters.loteriaId) {

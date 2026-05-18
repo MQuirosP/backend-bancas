@@ -1245,7 +1245,7 @@ export class CierreService {
     const conditions: Prisma.Sql[] = [];
     conditions.push(Prisma.sql`mv."businessDate" BETWEEN ${startStr}::date AND ${endStr}::date`);
 
-    if (filters.bancaId) conditions.push(Prisma.sql`mv."ventanaId" IN (SELECT id FROM "Ventana" WHERE "bancaId" = CAST(${filters.bancaId} AS uuid))`);
+    if (filters.bancaId) conditions.push(Prisma.sql`mv."bancaId" = CAST(${filters.bancaId} AS uuid)`);
     if (filters.ventanaId) conditions.push(Prisma.sql`mv."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
     if (filters.loteriaId) conditions.push(Prisma.sql`mv."loteriaId" = CAST(${filters.loteriaId} AS uuid)`);
     if (filters.vendedorId) conditions.push(Prisma.sql`mv."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);

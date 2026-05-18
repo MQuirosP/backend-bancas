@@ -187,7 +187,7 @@ const MultiplierService = {
       ...(q.kind ? { kind: q.kind } : {}),
       ...(typeof q.isActive === "boolean" ? { isActive: q.isActive } : {}),
       ...(q.appliesToSorteoId ? { appliesToSorteoId: q.appliesToSorteoId } : {}),
-      ...(q.bancaId ? { bancaId: q.bancaId } : {}),
+      bancaId: q.bancaId ?? null,
       ...(and.length ? { AND: and } : {}),
     };
 

@@ -36,12 +36,20 @@ export const PaginationSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20).optional(),
 });
 
+// Helper para validar UUIDs opcionales que pueden venir como "all", vacío o null desde el frontend
+const OptionalUUIDOrAll = z.preprocess((val) => {
+  if (val === 'all' || val === '' || val === null) {
+    return undefined;
+  }
+  return val;
+}, z.string().uuid().optional());
+
 // Schema común para filtros de entidad
 export const EntityFiltersSchema = z.object({
-  ventanaId: z.string().uuid().optional(),
-  vendedorId: z.string().uuid().optional(),
-  loteriaId: z.string().uuid().optional(),
-  sorteoId: z.string().uuid().optional(),
+  ventanaId: OptionalUUIDOrAll,
+  vendedorId: OptionalUUIDOrAll,
+  loteriaId: OptionalUUIDOrAll,
+  sorteoId: OptionalUUIDOrAll,
 });
 
 // ============================================================================

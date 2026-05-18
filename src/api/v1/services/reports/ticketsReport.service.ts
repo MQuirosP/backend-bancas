@@ -144,7 +144,7 @@ export const TicketsReportService = {
       ...(filters.ventanaId && filters.ventanaId.trim() !== '' && { ventanaId: filters.ventanaId }),
       ...(filters.vendedorId && filters.vendedorId.trim() !== '' && { vendedorId: filters.vendedorId }),
       ...(filters.loteriaId && filters.loteriaId.trim() !== '' && { loteriaId: filters.loteriaId }),
-      ...(filters.bancaId && filters.bancaId.trim() !== '' && { ventana: { bancaId: filters.bancaId } }),
+      ...(filters.bancaId && filters.bancaId.trim() !== '' && { bancaId: filters.bancaId }),
     };
 
     // Filtro por estado de pago
@@ -253,7 +253,7 @@ export const TicketsReportService = {
       ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
       ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
       ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
-      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = ${filters.bancaId}::uuid)` : Prisma.empty}
+      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
       ${filters.paymentStatus === 'paid' ? Prisma.sql`AND t."remainingAmount" <= 0` : Prisma.empty}
       ${filters.paymentStatus === 'partial' ? Prisma.sql`AND t."remainingAmount" > 0 AND t."totalPaid" > 0` : Prisma.empty}
       ${filters.paymentStatus === 'unpaid' ? Prisma.sql`AND t."totalPaid" <= 0` : Prisma.empty}
@@ -547,7 +547,7 @@ export const TicketsReportService = {
       ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
       ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
       ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
-      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${filters.bancaId} AS uuid))` : Prisma.empty}
+      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid) AND j."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
       ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
     `;
 
@@ -950,7 +950,7 @@ export const TicketsReportService = {
       ...(filters.ventanaId && filters.ventanaId.trim() !== '' && { ventanaId: filters.ventanaId }),
       ...(filters.vendedorId && filters.vendedorId.trim() !== '' && { vendedorId: filters.vendedorId }),
       ...(filters.loteriaId && filters.loteriaId.trim() !== '' && { loteriaId: filters.loteriaId }),
-      ...(filters.bancaId && filters.bancaId.trim() !== '' && { ventana: { bancaId: filters.bancaId } }),
+      ...(filters.bancaId && filters.bancaId.trim() !== '' && { bancaId: filters.bancaId }),
     };
 
     const total = await prisma.ticket.count({ where });
@@ -1059,7 +1059,7 @@ export const TicketsReportService = {
       ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
       ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
       ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${filters.bancaId} AS uuid))` : Prisma.empty}
+      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
     `;
 
     let cByVentana: any[] | undefined;
@@ -1351,7 +1351,7 @@ export const TicketsReportService = {
         AND j."deletedAt" IS NULL
         AND j."isActive" = true
         ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-        ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${filters.bancaId} AS uuid))` : Prisma.empty}
+        ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
       GROUP BY j.number
       ORDER BY total_amount DESC
     `;
@@ -1445,7 +1445,7 @@ export const TicketsReportService = {
           AND t."deletedAt" IS NULL
           AND j."deletedAt" IS NULL
           AND j."isActive" = true
-          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${filters.bancaId} AS uuid))` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
         GROUP BY t."sorteoId", t."ventanaId", j.number
       ),
       top_numbers AS (
@@ -1552,7 +1552,7 @@ export const TicketsReportService = {
     ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
     ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
     ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-    ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${filters.bancaId} AS uuid))` : Prisma.empty}
+    ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
   `;
 
   // ======================================================
@@ -1869,7 +1869,7 @@ export const TicketsReportService = {
       ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
       ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
       ${filters.loteriaId ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${filters.bancaId} AS uuid))` : Prisma.empty}
+      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
     `;
 
     // Por hora (convertir a hora local de Costa Rica)
@@ -2188,7 +2188,7 @@ export const TicketsReportService = {
         isActive: true,
         deletedAt: null,
         ...(filters.vendedorId && filters.vendedorId.trim() !== '' && { vendedorId: filters.vendedorId }),
-        ...(filters.bancaId && filters.bancaId.trim() !== '' && { ventana: { bancaId: filters.bancaId } }),
+        ...(filters.bancaId && filters.bancaId.trim() !== '' && { bancaId: filters.bancaId }),
       },
       select: {
         id: true,
@@ -2347,7 +2347,7 @@ export const TicketsReportService = {
           AND j."deletedAt" IS NULL
           ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
           ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
-          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND EXISTS (SELECT 1 FROM "Ventana" v WHERE v.id = t."ventanaId" AND v."bancaId" = CAST(${filters.bancaId} AS uuid))` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
           ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
       ),
       sorteo_agg AS (

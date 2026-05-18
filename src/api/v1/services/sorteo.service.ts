@@ -978,11 +978,12 @@ const SorteoService = {
       const ps = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
 
       //  Para VENDEDOR, no usar caché (cada vendedor tiene políticas diferentes)
-      // Para otros roles, usar caché normalmente
+      //  Para ADMIN y BANCA, tampoco usar caché para garantizar tiempo real y evitar problemas al cambiar de banca en el selector del header
       const isVendedor = params.role === Role.VENDEDOR;
+      const isAdminOrBanca = params.role === Role.ADMIN || params.role === Role.BANCA;
 
-      if (!isVendedor) {
-        // Intentar obtener del cache solo para ADMIN/VENTANA
+      if (!isVendedor && !isAdminOrBanca) {
+        // Intentar obtener del cache solo para VENTANA
         const { getCachedSorteoList } = require('../../../utils/sorteoCache');
         const cached = getCachedSorteoList({
           loteriaId: params.loteriaId,
@@ -1069,8 +1070,8 @@ const SorteoService = {
         },
       };
 
-      // Guardar en cache solo para ADMIN/VENTANA
-      if (!isVendedor) {
+      // Guardar en cache solo si no es vendedor ni admin/banca
+      if (!isVendedor && !isAdminOrBanca) {
         const { setCachedSorteoList } = require('../../../utils/sorteoCache');
         setCachedSorteoList(
           {

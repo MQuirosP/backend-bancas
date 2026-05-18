@@ -66,10 +66,7 @@ export const ReportsController = {
     };
 
     // Aplicar RBAC a los filtros del cliente
-    const effectiveFilters = await applyRbacFilters(context, {
-      ventanaId: query.ventanaId,
-      vendedorId: query.vendedorId,
-    });
+    const effectiveFilters = await applyRbacFilters(context, query);
 
     const result = await TicketsReportService.getNumbersAnalysis({
       date: query.date || 'today',

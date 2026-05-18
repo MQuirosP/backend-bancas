@@ -19,8 +19,8 @@ const router = Router();
 // Middleware de autenticación (todas las rutas)
 router.use(protect);
 
-// Middleware de autorización (solo ADMIN y VENTANA)
-router.use(restrictTo(Role.ADMIN, Role.VENTANA));
+// Middleware de autorización (solo ADMIN, BANCA y VENTANA)
+router.use(restrictTo(Role.ADMIN, Role.BANCA, Role.VENTANA));
 
 // Middleware de contexto de banca DESPUÉS de protect (para que req.user esté disponible)
 router.use(bancaContextMiddleware);

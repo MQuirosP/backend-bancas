@@ -2,6 +2,14 @@
 import { z } from "zod";
 import { validateQuery } from "../../../middlewares/validate.middleware";
 
+// Helper para validar UUIDs opcionales que pueden venir como "all", vacío o null desde el frontend
+const OptionalUUIDOrAll = z.preprocess((val) => {
+  if (val === 'all' || val === '' || val === null) {
+    return undefined;
+  }
+  return val;
+}, z.string().uuid().optional());
+
 /**
  * Schema para Dashboard principal y subrutas
  * Fecha: date (today|yesterday|week|month|year|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range
@@ -14,11 +22,11 @@ export const DashboardQuerySchema = z
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     // Scope (ventana específica)
-    ventanaId: z.uuid().optional(),
+    ventanaId: OptionalUUIDOrAll,
     scope: z.enum(["mine", "all"]).optional(),
 
     // Filtros adicionales
-    loteriaId: z.string().uuid().optional(),
+    loteriaId: OptionalUUIDOrAll,
     betType: z.enum(["NUMERO", "REVENTADO"]).optional(),
 
     // Time series

@@ -2,6 +2,14 @@
 import { z } from "zod";
 import { validateQuery } from "../../../middlewares/validate.middleware";
 
+// Helper para validar UUIDs opcionales que pueden venir como "all", vacío o null desde el frontend
+const OptionalUUIDOrAll = z.preprocess((val) => {
+  if (val === 'all' || val === '' || val === null) {
+    return undefined;
+  }
+  return val;
+}, z.string().uuid().optional());
+
 /**
  * Schema para listar ventas (detalle transaccional)
  * Fechas: date (today|yesterday|week|month|year|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range
@@ -23,12 +31,12 @@ export const ListVentasQuerySchema = z
     // Filtros adicionales
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED"]).optional(),
     winnersOnly: z.coerce.boolean().optional(),
-    bancaId: z.uuid().optional(),
-    ventanaId: z.uuid().optional(),
-    vendedorId: z.uuid().optional(),
-    loteriaId: z.uuid().optional(),
-    sorteoId: z.uuid().optional(),
-    multiplierId: z.uuid().optional(),
+    bancaId: OptionalUUIDOrAll,
+    ventanaId: OptionalUUIDOrAll,
+    vendedorId: OptionalUUIDOrAll,
+    loteriaId: OptionalUUIDOrAll,
+    sorteoId: OptionalUUIDOrAll,
+    multiplierId: OptionalUUIDOrAll,
     search: z.string().trim().min(1).max(100).optional(),
     orderBy: z.string().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
@@ -50,11 +58,11 @@ export const VentasSummaryQuerySchema = z
 
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED"]).optional(),
     winnersOnly: z.coerce.boolean().optional(),
-    bancaId: z.uuid().optional(),
-    ventanaId: z.uuid().optional(),
-    vendedorId: z.uuid().optional(),
-    loteriaId: z.uuid().optional(),
-    sorteoId: z.uuid().optional(),
+    bancaId: OptionalUUIDOrAll,
+    ventanaId: OptionalUUIDOrAll,
+    vendedorId: OptionalUUIDOrAll,
+    loteriaId: OptionalUUIDOrAll,
+    sorteoId: OptionalUUIDOrAll,
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
@@ -78,11 +86,11 @@ export const VentasBreakdownQuerySchema = z
 
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED"]).optional(),
     winnersOnly: z.coerce.boolean().optional(),
-    bancaId: z.uuid().optional(),
-    ventanaId: z.uuid().optional(),
-    vendedorId: z.uuid().optional(),
-    loteriaId: z.uuid().optional(),
-    sorteoId: z.uuid().optional(),
+    bancaId: OptionalUUIDOrAll,
+    ventanaId: OptionalUUIDOrAll,
+    vendedorId: OptionalUUIDOrAll,
+    loteriaId: OptionalUUIDOrAll,
+    sorteoId: OptionalUUIDOrAll,
     search: z.string().trim().min(1).max(100).optional(),
     orderBy: z.string().optional(),
     order: z.enum(["asc", "desc"]).optional(),
@@ -107,11 +115,11 @@ export const VentasTimeseriesQuerySchema = z
 
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED"]).optional(),
     winnersOnly: z.coerce.boolean().optional(),
-    bancaId: z.uuid().optional(),
-    ventanaId: z.uuid().optional(),
-    vendedorId: z.uuid().optional(),
-    loteriaId: z.uuid().optional(),
-    sorteoId: z.uuid().optional(),
+    bancaId: OptionalUUIDOrAll,
+    ventanaId: OptionalUUIDOrAll,
+    vendedorId: OptionalUUIDOrAll,
+    loteriaId: OptionalUUIDOrAll,
+    sorteoId: OptionalUUIDOrAll,
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();

@@ -38,7 +38,7 @@ function parseDateCR(dateStr: string, boundary: 'start' | 'end'): Date {
  * Incluye soporte para filtro de banca activa (multibanca)
  */
 async function applyRbacToFilters(
-  user: { id: string; role: Role; ventanaId?: string | null },
+  user: { id: string; role: Role; ventanaId?: string | null; bancaId?: string | null },
   fromDate: Date,
   toDate: Date,
   requestedVentanaId?: string,
@@ -70,6 +70,36 @@ async function applyRbacToFilters(
       throw new AppError('Cannot access other ventanas', 403, {
         code: 'RBAC_001',
       });
+    }
+  } else if (user.role === Role.BANCA) {
+    // BANCA: siempre filtrar por su propia banca
+    const actorBancaId = user.bancaId || bancaId;
+    if (!actorBancaId) {
+      throw new AppError('BANCA user must have bancaId assigned', 403, {
+        code: 'RBAC_006',
+      });
+    }
+    effectiveBancaId = actorBancaId;
+
+    // Si solicita una ventanaId específica, validar que pertenezca a su banca
+    if (requestedVentanaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: requestedVentanaId },
+        select: { bancaId: true },
+      });
+
+      if (!ventana || ventana.bancaId !== effectiveBancaId) {
+        throw new AppError('Cannot access that ventana', 403, {
+          code: 'RBAC_007',
+          details: [
+            {
+              field: 'ventanaId',
+              reason: 'Ventana does not belong to your banca'
+            }
+          ]
+        });
+      }
+      ventanaId = requestedVentanaId;
     }
   } else if (user.role === Role.ADMIN) {
     // ADMIN: puede ver todas las ventanas o una específica

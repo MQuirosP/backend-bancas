@@ -240,13 +240,12 @@ export async function getDailySummariesFromMaterializedView(
             `date < '${endDateNextDayCR}'::date`, // ️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
         ];
 
-        //  NUEVO: Filtros para dimension='banca'
-        // Nota: La vista materializada no tiene bancaId directamente, así que filtramos por ventanas de esa banca
+        // Aplicar filtro de bancaId directamente sobre la vista materializada para máximo rendimiento
+        if (bancaId) {
+            conditions.push(`"bancaId" = CAST('${bancaId}' AS uuid)`);
+        }
+
         if (dimension === "banca") {
-            if (bancaId) {
-                // Filtrar por ventanas de esta banca específica
-                conditions.push(`"ventanaId" IN (SELECT id FROM "Ventana" WHERE "bancaId" = CAST('${bancaId}' AS uuid))`);
-            }
             if (ventanaId) {
                 conditions.push(`"ventanaId" = CAST('${ventanaId}' AS uuid)`);
             }

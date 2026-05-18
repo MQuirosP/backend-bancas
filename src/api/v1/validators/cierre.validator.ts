@@ -5,6 +5,14 @@ import { validateQuery } from '../../../middlewares/validate.middleware';
  * Validadores Zod para módulo de Cierre Operativo
  */
 
+// Helper para validar UUIDs opcionales que pueden venir como "all", vacío o null desde el frontend
+const OptionalUUIDOrAll = z.preprocess((val) => {
+  if (val === 'all' || val === '' || val === null) {
+    return undefined;
+  }
+  return val;
+}, z.string().uuid('ventanaId debe ser UUID válido').optional());
+
 // Schema base para parámetros comunes
 const BaseCierreQuerySchema = z.object({
   from: z
@@ -15,10 +23,7 @@ const BaseCierreQuerySchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato debe ser YYYY-MM-DD')
     .describe('Fecha fin (YYYY-MM-DD)'),
-  ventanaId: z
-    .string()
-    .uuid('ventanaId debe ser UUID válido')
-    .optional()
+  ventanaId: OptionalUUIDOrAll
     .describe('ID de ventana (opcional para ADMIN)'),
   scope: z
     .enum(['mine', 'all'])

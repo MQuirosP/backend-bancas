@@ -17,7 +17,7 @@ const router = Router();
 
 // Autenticación y autorización (todos los endpoints requieren JWT)
 router.use(protect);
-router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.ADMIN));
+router.use(restrictTo(Role.VENDEDOR, Role.VENTANA, Role.BANCA, Role.ADMIN));
 
 // Middleware de contexto de banca DESPUÉS de protect (para que req.user esté disponible)
 router.use(bancaContextMiddleware);

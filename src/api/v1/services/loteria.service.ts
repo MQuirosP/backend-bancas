@@ -98,9 +98,7 @@ export const LoteriaService = {
       where.isActive = isActive;
     }
 
-    if (bancaId) {
-      where.bancaId = bancaId;
-    }
+    where.bancaId = bancaId ?? null;
 
     const s = typeof search === "string" ? search.trim() : "";
     if (s.length > 0) {

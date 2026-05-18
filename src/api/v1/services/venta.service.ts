@@ -764,7 +764,7 @@ export const VentasService = {
               WHERE t."deletedAt" IS NULL 
                 AND t."isActive" = true
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
+                ${filters.bancaId ? `AND t."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
                 ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
                 ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
                 ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
@@ -819,7 +819,7 @@ export const VentasService = {
               WHERE t."deletedAt" IS NULL 
                 AND t."isActive" = true
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
+                ${filters.bancaId ? `AND t."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
                 ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
                 ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
                 ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
@@ -903,7 +903,7 @@ export const VentasService = {
               WHERE t."deletedAt" IS NULL 
                 AND t."isActive" = true
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
+                ${filters.bancaId ? `AND t."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
                 ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
                 ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
                 ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
@@ -959,7 +959,7 @@ export const VentasService = {
               WHERE t."deletedAt" IS NULL 
                 AND t."isActive" = true
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
+                ${filters.bancaId ? `AND t."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
                 ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
                 ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
                 ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
@@ -1017,7 +1017,7 @@ export const VentasService = {
                 AND t."isActive" = true
                 AND s.status = 'EVALUATED'
                 AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND EXISTS (SELECT 1 FROM "Ventana" v_sub WHERE v_sub.id = t."ventanaId" AND v_sub."bancaId" = CAST('${filters.bancaId}' AS uuid))` : ''}
+                ${filters.bancaId ? `AND t."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
                 ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
                 ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
                 ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}

@@ -34,7 +34,7 @@ async function computeListeroCommissionByVentana(
           deletedAt: null,
         },
         ...(ventanaId ? { ventanaId } : {}),
-        ...(bancaId ? { ventana: { bancaId } } : {}),
+        ...(bancaId ? { bancaId } : {}),
       },
     },
     select: {
@@ -255,7 +255,7 @@ export const VentanasReportService = {
           AND s."deletedAt" IS NULL
           AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
       ),
       ventana_stats AS (
         SELECT 
