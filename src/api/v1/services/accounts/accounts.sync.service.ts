@@ -512,6 +512,24 @@ export class AccountStatementSyncService {
         affectedTickets
       );
 
+      // 🔄 NUEVO: Refrescar vistas materializadas en segundo plano (fire-and-forget)
+      Promise.all([
+        prisma.$executeRawUnsafe('SELECT refresh_daily_account_summary();'),
+        prisma.$executeRawUnsafe('SELECT refresh_diario_ventas_totales();')
+      ]).then(() => {
+        logger.info({
+          layer: "service",
+          action: "MATERIALIZED_VIEWS_REFRESH_SUCCESS",
+          payload: { sorteoId, dateStr }
+        });
+      }).catch(err => {
+        logger.error({
+          layer: "service",
+          action: "MATERIALIZED_VIEWS_REFRESH_ERROR",
+          payload: { sorteoId, dateStr, error: (err as Error).message }
+        });
+      });
+
     } catch (error) {
       logger.error({ layer: "service", action: "SYNC_SORTEO_STATEMENTS_ERROR", payload: { sorteoId, sorteoDateStrCR, error: (error as Error).message } });
       throw error;

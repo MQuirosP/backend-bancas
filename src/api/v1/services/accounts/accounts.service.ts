@@ -495,10 +495,13 @@ export const AccountsService = {
             }
         };
 
+        // Filtro por bancaId si se especifica en los filtros
+        if (bancaId) {
+            where.bancaId = bancaId;
+        }
+
         if (dimension === "banca") {
-            if (bancaId) {
-                where.bancaId = bancaId;
-            } else {
+            if (!bancaId) {
                 //  SI ES GLOBAL (bancaId null): Asegurar que sumamos SOLO registros de bancas reales
                 // para evitar duplicar con registros globales (si existieran)
                 where.bancaId = { not: null };
@@ -836,10 +839,12 @@ export const AccountsService = {
         const mCollected = monthlyStatements.reduce((sum, s) => sum + (s.totalCollected || 0), 0);
 
         const mBalance = mSales - mPayouts - mComToUse + mPaid - mCollected;
-        // Saldo absoluto al cierre: es el remainingBalance del día más reciente del mes solicitado
-        // (fullMonthStatements ya está ordenado DESC por fecha)
-        const latestInMonth = monthlyStatements.length > 0 ? monthlyStatements[0] : null;
-        const mRemainingBalance = latestInMonth ? Number(latestInMonth.remainingBalance || 0) : 0;
+        // Saldo absoluto al cierre: es el remainingBalance del último día con datos reales del mes
+        //  CRÍTICO: Ignorar gap-days (días sin actividad creados para rellenar) que tienen remainingBalance
+        // arrastrado pero totalSales=0. Buscar el último día real (con ventas o liquidado).
+        // monthlyStatements está ordenado DESC (más reciente primero) gracias al sort previo.
+        const latestRealInMonth = monthlyStatements.find(s => s.totalSales > 0 || s.isSettled || s.totalPaid > 0 || s.totalCollected > 0);
+        const mRemainingBalance = latestRealInMonth ? Number(latestRealInMonth.remainingBalance || 0) : 0;
 
         const monthlyAccumulated: StatementTotals = {
             totalSales: parseFloat(mSales.toFixed(2)),
@@ -862,7 +867,8 @@ export const AccountsService = {
                 totalBalance: parseFloat(pMovementBalance.toFixed(2)),
                 totalPaid: parseFloat(pPaid.toFixed(2)),
                 totalCollected: parseFloat(pCollected.toFixed(2)),
-                totalRemainingBalance: parseFloat(pMovementBalance.toFixed(2)), // CxC / CxP del periodo
+                totalRemainingBalance: parseFloat(pMovementBalance.toFixed(2)), // Resultado operativo neto del período
+
                 settledDays: periodStatements.filter(s => s.isSettled).length,
                 pendingDays: periodStatements.filter(s => !s.isSettled).length,
             },
@@ -1017,6 +1023,7 @@ export const AccountsService = {
                 // Si dimension="banca" sin bancaId, buscar statement consolidado (bancaId: null, ventanaId: null, vendedorId: null)
                 // Si dimension="banca" con bancaId, buscar por bancaId (bancaId: X, ventanaId: null, vendedorId: null)
                 let dbStatement: any = null;
+                let fallbackStatement: any = null;
 
                 //  CRÍTICO: Solo buscar statement individual si tenemos un ID específico
                 // Si es una consulta global ("All Bancas", "All Ventanas"), dbStatement queda en null
@@ -1063,6 +1070,8 @@ export const AccountsService = {
                             select: { id: true, remainingBalance: true, date: true },
                             orderBy: { date: 'desc' },
                         });
+
+                        fallbackStatement = anyStatementInMonth;
 
                         if (!anyStatementInMonth) {
                             // 🆕 Entidad sin datos en el mes → lastDayAccumulated = 0, sin sync costoso
@@ -1173,29 +1182,96 @@ export const AccountsService = {
                             lastDayAccumulated,
                         },
                     });
-                } else if (!isSingleStatementQuery && filters.dimension === 'banca' && !filters.bancaId) {
-                    //  OPTIMIZACIÓN: Para "ALL bancas", usar aggregate directo en AccountStatement
-                    // en vez de getStatementDirect() (que recalcula todo el mes y consume mucha memoria)
-                    const aggregated = await tx.accountStatement.aggregate({
-                        where: {
-                            date: previousDayDate,
-                            bancaId: { not: null },
-                            ventanaId: null,
-                            vendedorId: null,
-                        },
-                        _sum: { remainingBalance: true },
-                    });
+                } else if (!isSingleStatementQuery) {
+                    // ⚡ OPTIMIZACIÓN: Evitar getStatementDirect para consultas agregadas (ALL ventanas, ALL vendedores, ALL bancas)
+                    if (filters.bancaId) {
+                        // Si hay bancaId especificado, el acumulado consolidado de esa banca es la suma de todas sus entidades
+                        const dbBancaStatement = await tx.accountStatement.findFirst({
+                            where: {
+                                date: previousDayDate,
+                                bancaId: filters.bancaId,
+                                ventanaId: null,
+                                vendedorId: null,
+                            },
+                            select: { remainingBalance: true },
+                        });
 
-                    lastDayAccumulated = Number(aggregated._sum.remainingBalance ?? 0);
+                        lastDayAccumulated = Number(dbBancaStatement?.remainingBalance ?? 0);
+
+                        logger.info({
+                            layer: "service",
+                            action: "GET_BY_SORTEO_USING_CONSOLIDATED_BANCA",
+                            payload: {
+                                date,
+                                previousDate: previousDateStr,
+                                bancaId: filters.bancaId,
+                                dimension: filters.dimension,
+                                lastDayAccumulated,
+                                note: `Usando remainingBalance del statement consolidado de la banca para ALL ${filters.dimension}s (evita getStatementDirect)`,
+                            },
+                        });
+                    } else if (filters.dimension === 'banca') {
+                        // ALL bancas (sin bancaId)
+                        const aggregated = await tx.accountStatement.aggregate({
+                            where: {
+                                date: previousDayDate,
+                                bancaId: { not: null },
+                                ventanaId: null,
+                                vendedorId: null,
+                            },
+                            _sum: { remainingBalance: true },
+                        });
+
+                        lastDayAccumulated = Number(aggregated._sum.remainingBalance ?? 0);
+
+                        logger.info({
+                            layer: "service",
+                            action: "GET_BY_SORTEO_USING_AGGREGATE_ALL_BANCAS",
+                            payload: {
+                                date,
+                                previousDate: previousDateStr,
+                                lastDayAccumulated,
+                                note: "Usando SUM(remainingBalance) de AccountStatement para ALL bancas (evita getStatementDirect)",
+                            },
+                        });
+                    } else if (filters.dimension === 'ventana') {
+                        // ALL ventanas (sin bancaId)
+                        const aggregated = await tx.accountStatement.aggregate({
+                            where: {
+                                date: previousDayDate,
+                                ventanaId: { not: null },
+                                vendedorId: null,
+                            },
+                            _sum: { remainingBalance: true },
+                        });
+
+                        lastDayAccumulated = Number(aggregated._sum.remainingBalance ?? 0);
+                    } else if (filters.dimension === 'vendedor') {
+                        // ALL vendedores (sin bancaId)
+                        const aggregated = await tx.accountStatement.aggregate({
+                            where: {
+                                date: previousDayDate,
+                                vendedorId: { not: null },
+                            },
+                            _sum: { remainingBalance: true },
+                        });
+
+                        lastDayAccumulated = Number(aggregated._sum.remainingBalance ?? 0);
+                    }
+                } else if (isSingleStatementQuery && fallbackStatement) {
+                    // ⚡ OPTIMIZACIÓN: Si es consulta unitaria y dbStatement es null (día sin actividad),
+                    // usar el statement más cercano en el mes como carry-forward directo para evitar getStatementDirect.
+                    lastDayAccumulated = Number(fallbackStatement.remainingBalance || 0);
 
                     logger.info({
                         layer: "service",
-                        action: "GET_BY_SORTEO_USING_AGGREGATE_ALL_BANCAS",
+                        action: "GET_BY_SORTEO_USING_FALLBACK_STATEMENT",
                         payload: {
                             date,
                             previousDate: previousDateStr,
+                            dimension: filters.dimension,
                             lastDayAccumulated,
-                            note: "Usando SUM(remainingBalance) de AccountStatement para ALL bancas (evita getStatementDirect)",
+                            note: "dbStatement no existe tras sincronizar (día sin actividad), usando el balance del statement más cercano del mes como carry-forward rápido",
                         },
                     });
                 } else {
@@ -1209,7 +1285,7 @@ export const AccountsService = {
                             bancaId: filters.bancaId,
                             ventanaId: filters.ventanaId,
                             vendedorId: filters.vendedorId,
-                            note: "No se encontró dbStatement después de sincronizar, calculando con getStatementDirect",
+                            note: "No se encontró dbStatement ni fallbackStatement después de sincronizar, calculando con getStatementDirect",
                         },
                     });
                     //  Si aún no existe después de sincronizar, calcular con getStatementDirect (fallback)
