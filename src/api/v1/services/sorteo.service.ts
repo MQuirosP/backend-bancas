@@ -1138,10 +1138,10 @@ const SorteoService = {
     }
 
     if (params.dateFrom) {
-      whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom} `);
+      whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom} AT TIME ZONE 'UTC'`);
     }
     if (params.dateTo) {
-      whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} `);
+      whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} AT TIME ZONE 'UTC'`);
     }
 
     if (params.bancaId) {
@@ -1202,8 +1202,8 @@ gs."loteriaId",
                 s2."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica',
                 'HH24:MI'
               ) = gs."hour24"
-            ${params.dateFrom ? Prisma.sql`AND s2."scheduledAt" >= ${params.dateFrom}` : Prisma.empty}
-            ${params.dateTo ? Prisma.sql`AND s2."scheduledAt" <= ${params.dateTo}` : Prisma.empty}
+            ${params.dateFrom ? Prisma.sql`AND s2."scheduledAt" >= ${params.dateFrom} AT TIME ZONE 'UTC'` : Prisma.empty}
+            ${params.dateTo ? Prisma.sql`AND s2."scheduledAt" <= ${params.dateTo} AT TIME ZONE 'UTC'` : Prisma.empty}
           ORDER BY s2."scheduledAt" DESC
           LIMIT 1
         ) as "mostRecentSorteoId"
@@ -1300,10 +1300,10 @@ gs."loteriaName" ASC,
     }
 
     if (params.dateFrom) {
-      whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom} `);
+      whereConditions.push(Prisma.sql`s."scheduledAt" >= ${params.dateFrom} AT TIME ZONE 'UTC'`);
     }
     if (params.dateTo) {
-      whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} `);
+      whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} AT TIME ZONE 'UTC'`);
     }
 
     if (params.bancaId) {

@@ -671,10 +671,10 @@ const SorteoRepository = {
       whereConditions.push(Prisma.sql`s."isActive" = ${isActive}`);
     }
     if (dateFrom) {
-      whereConditions.push(Prisma.sql`s."scheduledAt" >= ${dateFrom}`);
+      whereConditions.push(Prisma.sql`s."scheduledAt" >= ${dateFrom} AT TIME ZONE 'UTC'`);
     }
     if (dateTo) {
-      whereConditions.push(Prisma.sql`s."scheduledAt" <= ${dateTo}`);
+      whereConditions.push(Prisma.sql`s."scheduledAt" <= ${dateTo} AT TIME ZONE 'UTC'`);
     }
     if (bancaId) {
       whereConditions.push(Prisma.sql`s."bancaId" = CAST(${bancaId} AS uuid)`);
@@ -684,8 +684,8 @@ const SorteoRepository = {
     if (lastId) {
       if (lastScheduledAt) {
         whereConditions.push(Prisma.sql`(
-          s."scheduledAt" < ${lastScheduledAt} OR 
-          (s."scheduledAt" = ${lastScheduledAt} AND s.id < CAST(${lastId} AS uuid))
+          s."scheduledAt" < ${lastScheduledAt} AT TIME ZONE 'UTC' OR 
+          (s."scheduledAt" = ${lastScheduledAt} AT TIME ZONE 'UTC' AND s.id < CAST(${lastId} AS uuid))
         )`);
       } else {
         whereConditions.push(Prisma.sql`s.id < CAST(${lastId} AS uuid)`);
