@@ -672,53 +672,107 @@ export class AccountStatementSyncService {
     );
   }
 
-  /**
-   * Lógica interna de propagación (Hilo Único)
-   */
   private static async _propagateBalanceChangeInternal(
     startDate: Date,
     dimension: "banca" | "ventana" | "vendedor",
     entityId?: string
   ): Promise<void> {
     const startDateStr = crDateService.postgresDateToCRString(startDate);
-      // 1. Fase de Cómputo (FUERA de tx)
-      const where: any = { date: { gt: startDate } };
-      if (dimension === "vendedor") where.vendedorId = entityId;
-      else if (dimension === "ventana") { where.ventanaId = entityId; where.vendedorId = null; }
-      else if (dimension === "banca") { where.bancaId = entityId; where.ventanaId = null; where.vendedorId = null; }
+    const criteria: any = {};
+    if (dimension === "vendedor") criteria.vendedorId = entityId;
+    else if (dimension === "ventana") { criteria.ventanaId = entityId; criteria.vendedorId = null; }
+    else if (dimension === "banca") { criteria.bancaId = entityId; criteria.ventanaId = null; criteria.vendedorId = null; }
 
-      const statementsToUpdate = await prisma.accountStatement.findMany({ 
-        where, 
-        orderBy: { date: "asc" },
-        select: { date: true }
-      });
+    // 1. Obtener el statement original para saber qué saldo arrastrar
+    const startStatement = await prisma.accountStatement.findFirst({
+      where: { date: startDate, ...criteria },
+      select: { remainingBalance: true }
+    });
 
-      if (statementsToUpdate.length === 0) return;
-
-      logger.info({
+    if (!startStatement) {
+      logger.warn({
         layer: "service",
-        action: "PROPAGATE_BALANCE_CHANGE_STARTED",
-        payload: { dimension, entityId, startDateStr, count: statementsToUpdate.length }
+        action: "PROPAGATE_BALANCE_CHANGE_SKIPPED",
+        payload: { reason: "Start statement not found", dimension, entityId, startDateStr }
       });
+      return;
+    }
 
-      // 2. Procesar cada día en orden cronológico abriendo transacciones cortas por cada día
-      for (const stmt of statementsToUpdate) {
-        try {
-          const stmtDateStr = crDateService.postgresDateToCRString(stmt.date);
-          await this._syncDayStatementFromBySorteoInternal(stmtDateStr, dimension, entityId);
-        } catch (error) {
-          logger.error({ 
-            layer: "service", 
-            action: "PROPAGATE_BALANCE_CHANGE_DAY_ERROR", 
-            payload: { 
-              date: crDateService.postgresDateToCRString(stmt.date), 
-              dimension, 
-              entityId, 
-              error: (error as Error).message 
-            } 
+    let currentAccumulated = Number(startStatement.remainingBalance);
+
+    // 2. Obtener todos los statements posteriores
+    const where: any = { date: { gt: startDate }, ...criteria };
+    const statementsToUpdate = await prisma.accountStatement.findMany({ 
+      where, 
+      orderBy: { date: "asc" },
+      select: { 
+        id: true,
+        date: true,
+        balance: true,
+        totalCollected: true,
+        totalPaid: true,
+        ticketCount: true,
+        accumulatedBalance: true,
+        remainingBalance: true
+      }
+    });
+
+    if (statementsToUpdate.length === 0) return;
+
+    logger.info({
+      layer: "service",
+      action: "PROPAGATE_BALANCE_CHANGE_STARTED",
+      payload: { dimension, entityId, startDateStr, count: statementsToUpdate.length, initialAccumulated: currentAccumulated }
+    });
+
+    const { calculateIsSettled } = await import('./accounts.commissions');
+
+    // 3. Procesar cada día arrastrando el acumulado matemático
+    for (const stmt of statementsToUpdate) {
+      try {
+        const stmtDateStr = crDateService.postgresDateToCRString(stmt.date);
+        
+        // Nuevo saldo arrastrado
+        const newAccumulated = parseFloat(currentAccumulated.toFixed(2));
+        
+        // Nuevo saldo final: arrastrado + balance del día + cobros - pagos
+        const newRemaining = parseFloat((newAccumulated + Number(stmt.balance) + Number(stmt.totalCollected) - Number(stmt.totalPaid)).toFixed(2));
+        
+        const newIsSettled = calculateIsSettled(
+          stmt.ticketCount, 
+          newAccumulated, 
+          Number(stmt.totalPaid), 
+          Number(stmt.totalCollected)
+        );
+
+        // Actualizar en base de datos si hay cambios
+        if (Math.abs(Number(stmt.remainingBalance) - newRemaining) > 0.01 || Math.abs(Number(stmt.accumulatedBalance) - newAccumulated) > 0.01) {
+          await prisma.accountStatement.update({
+            where: { id: stmt.id },
+            data: {
+              accumulatedBalance: newAccumulated,
+              remainingBalance: newRemaining,
+              isSettled: newIsSettled
+            }
           });
         }
+        
+        // El saldo final de hoy es el arrastrado de mañana
+        currentAccumulated = newRemaining;
+
+      } catch (error) {
+        logger.error({ 
+          layer: "service", 
+          action: "PROPAGATE_BALANCE_CHANGE_DAY_ERROR", 
+          payload: { 
+            date: crDateService.postgresDateToCRString(stmt.date), 
+            dimension, 
+            entityId, 
+            error: (error as Error).message 
+          } 
+        });
       }
+    }
   }
 }
 
