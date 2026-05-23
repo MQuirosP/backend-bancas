@@ -86,7 +86,7 @@ export class CierreService {
       loteriaId: filters.loteriaId || null,
     })).digest('hex')}`;
 
-    return cierreWrap(cacheKey, 3600, async () => {
+    return cierreWrap(cacheKey, 60, async () => {
       const startTime = Date.now();
       let queryCount = 0;
       const labelPrefix = `CW-${Math.random().toString(36).substring(7)}`;
@@ -149,7 +149,7 @@ export class CierreService {
       depth: filters.depth || 'full',
     })).digest('hex')}`;
 
-    return cierreWrap(cacheKey, 3600, async () => {
+    return cierreWrap(cacheKey, 60, async () => {
       const startTime = Date.now();
       let queryCount = 0;
       const labelPrefix = `CS-${Math.random().toString(36).substring(7)}`;
@@ -579,7 +579,7 @@ export class CierreService {
         0::FLOAT as refuerzos,
         "ticketsCount",
         "jugadasCount"
-      FROM mv_diario_ventas_totales mv
+      FROM "ResumenCierreDiario" mv
       INNER JOIN "Loteria" l ON l.id = mv."loteriaId"
       INNER JOIN "Sorteo" s ON s.id = mv."sorteoId"
       WHERE ${whereConditions}
@@ -801,7 +801,7 @@ export class CierreService {
         0::FLOAT as refuerzos,
         SUM("ticketsCount")::INT as "ticketsCount",
         SUM("jugadasCount")::INT as "jugadasCount"
-      FROM mv_diario_ventas_totales mv
+      FROM "ResumenCierreDiario" mv
       INNER JOIN "User" u ON u.id = mv."vendedorId"
       INNER JOIN "Ventana" v ON v.id = mv."ventanaId"
       WHERE ${whereConditions}

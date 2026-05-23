@@ -910,3 +910,26 @@ enum JobStatus {
   FAILED
   CANCELLED
 }
+
+model ResumenCierreDiario {
+  id              String   @id @default(uuid()) @db.Uuid
+  bancaId         String?  @db.Uuid
+  businessDate    DateTime @db.Date
+  vendedorId      String   @db.Uuid
+  ventanaId       String   @db.Uuid
+  loteriaId       String   @db.Uuid
+  sorteoId        String   @db.Uuid
+  tipo            BetType
+  banda           Float
+  totalVendida    Float
+  ganado          Float
+  comisionTotal   Float
+  ticketsCount    Int
+  jugadasCount    Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([businessDate, bancaId, vendedorId, ventanaId, loteriaId, sorteoId, tipo, banda], name: "cierre_diario_unique")
+  @@index([businessDate])
+  @@index([bancaId])
+}
