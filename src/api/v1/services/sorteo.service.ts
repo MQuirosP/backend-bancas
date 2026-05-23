@@ -46,7 +46,7 @@ function sanitizeLoteria(loteria: any) {
   return rest;
 }
 
-function serializeSorteo<T extends { scheduledAt?: Date | null; loteria?: any; hasSales?: boolean; ticketCount?: number }>(sorteo: T) {
+function serializeSorteo<T extends { scheduledAt?: Date | null; loteria?: any; hasSales?: boolean; ticketCount?: number; hasExclusions?: boolean }>(sorteo: T) {
   if (!sorteo) return sorteo;
   const reventadoEnabled = extractReventadoEnabled(sorteo.loteria);
   const serialized = {
@@ -56,6 +56,7 @@ function serializeSorteo<T extends { scheduledAt?: Date | null; loteria?: any; h
     //  NUEVO: Campos de ventas (opcionales para compatibilidad)
     ...(sorteo.hasSales !== undefined ? { hasSales: sorteo.hasSales } : {}),
     ...(sorteo.ticketCount !== undefined ? { ticketCount: sorteo.ticketCount } : {}),
+    ...(sorteo.hasExclusions !== undefined ? { hasExclusions: sorteo.hasExclusions } : {}),
   };
   if (sorteo.loteria) {
     (serialized as any).loteria = sanitizeLoteria(sorteo.loteria);

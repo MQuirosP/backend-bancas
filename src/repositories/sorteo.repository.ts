@@ -752,6 +752,10 @@ const SorteoRepository = {
           SELECT COUNT(*)::int FROM "Ticket" t
           WHERE ${rbacCountsWhere}
         ) as "ticketCount",
+        EXISTS(
+          SELECT 1 FROM "sorteo_lista_exclusion" e
+          WHERE e.sorteo_id = s.id
+        ) as "hasExclusions",
         -- Relaciones
         json_build_object(
           'id', l.id,
@@ -807,6 +811,7 @@ const SorteoRepository = {
         deletedByCascadeId: string | null;
         hasSales: boolean;
         ticketCount: number;
+        hasExclusions: boolean;
         loteria: { id: string; name: string; rulesJson: any };
         extraMultiplier: { id: string; name: string; valueX: number } | null;
       }>>(dataQuery),
@@ -841,6 +846,7 @@ const SorteoRepository = {
       //  NUEVO: Campos de ventas
       hasSales: row.hasSales,
       ticketCount: row.ticketCount,
+      hasExclusions: row.hasExclusions,
       loteria: row.loteria,
       extraMultiplier: row.extraMultiplier,
       //  NUEVO: Fecha formateada para el FE (sin confusión de TZ)
