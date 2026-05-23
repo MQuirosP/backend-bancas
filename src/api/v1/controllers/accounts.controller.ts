@@ -966,7 +966,8 @@ export const AccountsController = {
     let effectiveDimension = dimension;
     let effectiveVentanaId = ventanaId;
     let effectiveVendedorId = vendedorId;
-    let effectiveBancaId = bancaId;
+    // CRÍTICO: Leer bancaId desde los headers si no viene en el query, igual que en el resto de endpoints
+    let effectiveBancaId = bancaId || getActiveBancaId(req);
 
     if (user.role === Role.VENDEDOR) {
       if (dimension !== "vendedor") {

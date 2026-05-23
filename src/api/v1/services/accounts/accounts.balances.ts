@@ -23,7 +23,7 @@ interface BalanceFromSourceParams {
  * @param filters - Filtros de dimensión
  * @returns Saldo final del mes anterior calculado desde fuente
  */
-async function calculatePreviousMonthBalanceFromSource(
+export async function calculatePreviousMonthBalanceFromSource(
     effectiveMonth: string,
     dimension: "banca" | "ventana" | "vendedor",
     filters: BalanceFromSourceParams
