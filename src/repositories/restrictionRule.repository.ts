@@ -474,8 +474,8 @@ export const RestrictionRuleRepository = {
           isActive: true,
           OR: [
             { userId },
-            { ventanaId },
-            { bancaId },
+            { ventanaId, userId: null },
+            { bancaId, ventanaId: null, userId: null },
             // Reglas globales (incluyendo específicas de lotería sin scope de usuario)
             { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] }
           ],

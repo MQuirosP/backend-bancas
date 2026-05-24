@@ -605,8 +605,8 @@ export const TicketRepository = {
             isActive: true,
             OR: [
               { userId },
-              { ventanaId },
-              { bancaId },
+              { ventanaId, userId: null },
+              { bancaId, ventanaId: null, userId: null },
               //  Incluir reglas globales (sin scope específico) que aplican a lotería/multiplicador
               { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] }
             ],
@@ -1611,8 +1611,8 @@ export const TicketRepository = {
               isActive: true,
               OR: [
                 { userId },
-                { ventanaId },
-                { bancaId },
+                { ventanaId, userId: null },
+                { bancaId, ventanaId: null, userId: null },
                 {
                   AND: [
                     { userId: null },
@@ -2922,8 +2922,8 @@ export const TicketRepository = {
           isActive: true,
           OR: [
             { userId: vendedorId },
-            { ventanaId: user.ventanaId },
-            { bancaId: effectiveBancaId },
+            { ventanaId: user.ventanaId, userId: null },
+            { bancaId: effectiveBancaId, ventanaId: null, userId: null },
             { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] },
           ],
         },
@@ -2931,6 +2931,7 @@ export const TicketRepository = {
       });
 
       const applicableRules = candidateRules.filter((r) => {
+        if (r.multiplierId) return false;
         if (r.loteriaId && r.loteriaId !== sorteo.loteriaId) return false;
         if (r.appliesToDate && !isSameLocalDay(new Date(r.appliesToDate), now)) return false;
         if (typeof r.appliesToHour === "number" && r.appliesToHour !== now.getHours()) return false;
@@ -3016,9 +3017,7 @@ export const TicketRepository = {
           }
         }
 
-        if (!hasRestrictiveRule) {
-          balances[num] = { remaining: 10000000, limit: 10000000, accumulated: (userAccumulated.get(num) ?? 0) };
-        } else {
+        if (hasRestrictiveRule) {
           balances[num] = { remaining: minRemaining, limit: selectedLimit, accumulated: selectedAccumulated };
         }
       }

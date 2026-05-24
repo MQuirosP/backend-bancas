@@ -692,7 +692,16 @@ async function executeValidationTask(
       if (effectiveMaxAmount != null) {
         // Validar maxAmount por número
         for (const num of numbersToValidate) {
-          const jugadasDelNumero = context.numbers.filter(n => n.number === num);
+          const jugadasDelNumero = context.numbers.filter(n => {
+            if (n.number !== num) return false;
+            if (rule.multiplierId) {
+              if (rule.multiplier?.kind === 'REVENTADO') {
+                return n.type === 'REVENTADO';
+              }
+              return n.multiplierId === rule.multiplierId;
+            }
+            return true;
+          });
           const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amountForNumber, 0);
 
           if (sumForNumber > effectiveMaxAmount) {
@@ -742,7 +751,17 @@ async function executeValidationTask(
         const effectiveMaxTotal = task.dynamicLimit ?? rule.maxTotal ?? Infinity;
 
         const numbersToCheck = numbersToValidate.map(num => {
-          const amount = context.numbers.find(n => n.number === num)?.amountForNumber || 0;
+          const matchingJugadas = context.numbers.filter(n => {
+            if (n.number !== num) return false;
+            if (rule.multiplierId) {
+              if (rule.multiplier?.kind === 'REVENTADO') {
+                return n.type === 'REVENTADO';
+              }
+              return n.multiplierId === rule.multiplierId;
+            }
+            return true;
+          });
+          const amount = matchingJugadas.reduce((sum, j) => sum + j.amountForNumber, 0);
           return { number: num, amountForNumber: amount };
         }).filter(n => n.amountForNumber > 0);
 
@@ -774,7 +793,16 @@ async function executeValidationTask(
 
       if (effectiveMaxAmount != null) {
         for (const num of uniqueNumbers) {
-          const jugadasDelNumero = context.numbers.filter(n => n.number === num);
+          const jugadasDelNumero = context.numbers.filter(n => {
+            if (n.number !== num) return false;
+            if (rule.multiplierId) {
+              if (rule.multiplier?.kind === 'REVENTADO') {
+                return n.type === 'REVENTADO';
+              }
+              return n.multiplierId === rule.multiplierId;
+            }
+            return true;
+          });
           const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amountForNumber, 0);
 
           if (sumForNumber > effectiveMaxAmount) {
@@ -829,6 +857,9 @@ async function executeValidationTask(
             if (n.number !== num) return false;
             // Si la regla es específica de multiplicador, filtrar por él
             if (rule.multiplierId) {
+              if (rule.multiplier?.kind === 'REVENTADO') {
+                return n.type === 'REVENTADO';
+              }
               return n.multiplierId === rule.multiplierId;
             }
             // Si la regla no tiene multiplicador pero pedimos "REVENTADO" (en algunos casos esto se maneja por tipo)
