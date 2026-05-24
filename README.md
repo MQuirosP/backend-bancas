@@ -23,10 +23,10 @@ Notas:
 <!-- markdownlint-disable MD024 -->
 <!-- markdownlint-disable MD047 -->
 
-#  Banca Management Backend
+# 🏦 Banca Management Backend (Multi-Tenant)
 
-> **Backend modular y escalable** para la gestión integral de bancas de lotería.  
-> Desarrollado con **TypeScript, Express y Prisma ORM**, bajo arquitectura por capas, validaciones estrictas (`Zod`) y trazabilidad total con `ActivityLog`.
+> **Backend modular, escalable y Multi-Tenant** para la gestión integral de múltiples bancas de lotería en una sola base de datos.  
+> Desarrollado con **TypeScript, Express y Prisma ORM**, bajo arquitectura por capas, validaciones estrictas (`Zod`), aislamiento total de datos por `bancaId` y trazabilidad con `ActivityLog`.
 
 ## ️ ESTÁNDAR CRÍTICO: ZONA HORARIA
 
@@ -86,7 +86,27 @@ src/
 
 ---
 
-##  Autenticación y Roles
+## 🏢 Arquitectura Multi-Tenant (Aislamiento de Datos)
+
+El sistema opera bajo un modelo **Multi-Tenant (Inquilinos Múltiples)** donde una única base de datos y despliegue de código sirve a múltiples Bancas independientes.
+
+- **Aislamiento por `bancaId`**: Las tablas núcleo (`Ticket`, `Jugada`, `Sorteo`, `Loteria`, `User`, `Ventana`, `ActivityLog`, `AccountStatement`, `ResumenCierreDiario`) poseen la columna `bancaId`. 
+- **Filtros Automáticos**: Todas las consultas a nivel de `Repository` y `Service` exigen o inyectan el `bancaId` del contexto del usuario autenticado, garantizando que una Banca jamás pueda acceder o cruzar datos con otra.
+- **Loterías y Sorteos Clonados**: Al crear una Banca, el sistema clona las Loterías base para que la Banca tenga su propia instancia de configuración (`rulesJson`) y pueda crear sus propios Sorteos de forma aislada.
+
+---
+
+## ⚡ Performance y Arquitectura Incremental (Rollups)
+
+Para manejar el alto volumen de transacciones sin degradar los reportes, el sistema implementa:
+
+1. **Rollups Incrementales (`ResumenCierreDiario`)**: En lugar de consultar vistas materializadas pesadas para los reportes semanales, el servicio `CierreRollupService` consolida las ventas diarias matemáticamente por `businessDate`. Esto permite cargar el reporte de ventas semanal en milisegundos.
+2. **Circuit Breaker & Resilience**: Middleware maestro (`ResilienceService`) que protege la base de datos de saturación (Connection Pool Exhaustion) limitando la concurrencia y usando backoff exponencial.
+3. **Caché Híbrida (L1/L2)**: Los catálogos pesados y los reportes tienen TTL ultra corto (1 minuto) en Redis (L2), con un fallback local en RAM (`L1_CACHE`) para erradicar el efecto "Thundering Herd" en los cierres de lotería.
+
+---
+
+## 🔐 Autenticación y Roles
 
 - **Tokens JWT**:
   - `Access Token` de corta duración.
@@ -595,5 +615,5 @@ Proyecto bajo licencia **MIT** (ver `LICENSE`).
 
 ---
 
->  *Versión actual:* `v1.2.0`
-> **Notas v1.2.0**: Endpoint `evaluated-summary` para sorteos evaluados; filtros avanzados en tickets (`loteriaId`, `sorteoId`, `multiplierId`, `winnersOnly`); agrupación de sorteos por hora (`groupBy`); correcciones de comisiones de listero; fix de timezone en timeseries; correcciones de AccountStatement; búsqueda en activity-logs.
+>  *Versión actual:* `v1.3.0` (Multi-Tenant Edition)
+> **Notas v1.3.0**: Migración masiva a arquitectura Multi-Tenant con `bancaId` en todas las entidades base; implementación de agregación incremental `ResumenCierreDiario` (`CierreRollupService`) para reportes ultra rápidos; protección de base de datos con `ResilienceService` (L1/L2 cache); clonación automática de loterías y parámetros; aislamiento completo de roles por Banca.
