@@ -155,11 +155,11 @@ function buildRawDateConditions(filters: VentasFilters) {
   const businessParts: Prisma.Sql[] = [];
 
   if (fromDateStr) {
-    businessParts.push(Prisma.sql`t."businessDate" >= CAST(${new Date(`${fromDateStr}T00:00:00.000Z`)} AS date)`);
+    businessParts.push(Prisma.sql`t."businessDate" >= CAST(${fromDateStr} AS date)`);
   }
 
   if (toDateStr) {
-    businessParts.push(Prisma.sql`t."businessDate" <= CAST(${new Date(`${toDateStr}T00:00:00.000Z`)} AS date)`);
+    businessParts.push(Prisma.sql`t."businessDate" <= CAST(${toDateStr} AS date)`);
   }
 
   const dateCondition = businessParts.length ? combineSqlWithAnd(businessParts) : Prisma.sql`TRUE`;

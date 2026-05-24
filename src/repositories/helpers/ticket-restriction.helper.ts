@@ -476,9 +476,10 @@ export async function validateMaxTotalForNumbers(
         },
       });
 
+      const typeSuffix = multiplierFilter ? ` (${multiplierFilter.kind})` : '';
       const userMessage = available > 0
-        ? `El número ${number}${isAutoDateLabel}: Disponible ₡${available.toFixed(2)}`
-        : `El número ${number}${isAutoDateLabel}: Agotado para este sorteo`;
+        ? `El número ${number}${isAutoDateLabel}${typeSuffix}: Disponible ₡${available.toFixed(2)}`
+        : `El número ${number}${isAutoDateLabel}${typeSuffix}: Agotado para este sorteo`;
 
       throw new AppError(
         userMessage,

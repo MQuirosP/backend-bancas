@@ -1278,7 +1278,10 @@ export const TicketService = {
 
 
       if (dateRange) {
-        sqlWhere.push(Prisma.sql`t."businessDate" BETWEEN ${dateRange.fromBusinessDate}::date AND ${dateRange.toBusinessDate}::date`);
+        // Formatear a string 'YYYY-MM-DD' para evitar problemas con la zona horaria al castear en la base de datos
+        const fromDateStr = dateRange.fromBusinessDate.toISOString().split('T')[0];
+        const toDateStr = dateRange.toBusinessDate.toISOString().split('T')[0];
+        sqlWhere.push(Prisma.sql`t."businessDate" BETWEEN CAST(${fromDateStr} AS DATE) AND CAST(${toDateStr} AS DATE)`);
       }
 
       if (params.loteriaId) sqlWhere.push(Prisma.sql`t."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
@@ -2240,10 +2243,12 @@ export const TicketService = {
         sqlConditions.push(Prisma.sql`t."ventanaId" = CAST(${effectiveFilters.ventanaId} AS uuid)`);
       }
       if (dateFrom) {
-        sqlConditions.push(Prisma.sql`t."businessDate" >= ${dateFrom}`);
+        const fromStr = dateFrom.toISOString().split('T')[0];
+        sqlConditions.push(Prisma.sql`t."businessDate" >= CAST(${fromStr} AS DATE)`);
       }
       if (dateTo) {
-        sqlConditions.push(Prisma.sql`t."businessDate" <= ${dateTo}`);
+        const toStr = dateTo.toISOString().split('T')[0];
+        sqlConditions.push(Prisma.sql`t."businessDate" <= CAST(${toStr} AS DATE)`);
       }
       if (params.loteriaId) {
         sqlConditions.push(Prisma.sql`t."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
