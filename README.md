@@ -56,13 +56,14 @@ src/
 
 ## 🔒 Seguridad y Control de Acceso (RBAC)
 
-El acceso al sistema está jerarquizado en 3 niveles de autoridad:
+El acceso y los privilegios operativos operan bajo un estricto modelo jerárquico de **4 niveles de autoridad**, diseñado para entornos Multi-Tenant:
 
-1.  **ADMIN:** Control absoluto de la plataforma, auditoría y parametrización global.
-2.  **VENTANA:** Gestión de operaciones comerciales, límites de riesgo y reportes de sucursal.
-3.  **VENDEDOR:** Nivel transaccional. Creación de tickets y liquidación de turnos operativos.
+1.  **ADMIN:** Superadministrador de la plataforma (Root). Control transversal de todas las Bancas, auditoría global y parametrización base del sistema.
+2.  **BANCA:** Administrador Principal del inquilino (Tenant). Control exclusivo sobre todas sus Ventanas, reportes financieros consolidados y reglas de negocio propias.
+3.  **VENTANA:** Administrador de Sucursal. Gestiona a sus Vendedores asignados, aplica límites de riesgo locales y rinde cuenta de los flujos de su grupo.
+4.  **VENDEDOR:** Nivel estrictamente transaccional. Terminal de venta final, limitada a la emisión de tickets y liquidación de su propio turno.
 
-> **Criptografía:** JWT asimétrico (Access & Refresh tokens) rotativos. Trazabilidad inmutable de eventos críticos financieros a través de `ActivityLog`.
+> **Criptografía y Auditoría:** Autenticación protegida mediante JWT asimétrico (Access & Refresh) con rotación. Toda acción financiera o alteración de riesgo deja una huella inmutable en el `ActivityLog`, garantizando trazabilidad absoluta.
 
 ---
 
