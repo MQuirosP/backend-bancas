@@ -113,3 +113,7 @@ verify-eval-fix.ts
 # Scratch directory for temporary scripts
 scratch/
 src/scripts/
+
+# Graphify output
+graphify-out/
+supabase_prod_fresco.dump

@@ -1,4 +1,4 @@
-// src/api/v1/controllers/sorteosAuto.controller.ts
+﻿// src/api/v1/controllers/sorteosAuto.controller.ts
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../../core/types';
 import SorteosAutoService from '../services/sorteosAuto.service';
@@ -17,22 +17,22 @@ export const SorteosAutoController = {
 
   async executeAutoOpen(req: AuthenticatedRequest, res: Response) {
     //  Pasar userId del JWT autenticado al servicio
-    const result = await SorteosAutoService.executeAutoOpen(req.user!.id);
+    const result = await SorteosAutoService.executeAutoOpen(req.user!.id, true);
     return success(res, result);
   },
 
   async executeAutoCreate(req: AuthenticatedRequest, res: Response) {
     const daysAhead = req.query.daysAhead
       ? Number(req.query.daysAhead)
-      : 7;
+      : 1;
     //  Pasar userId del JWT autenticado al servicio
-    const result = await SorteosAutoService.executeAutoCreate(daysAhead, req.user!.id);
+    const result = await SorteosAutoService.executeAutoCreate(daysAhead, req.user!.id, true);
     return success(res, result);
   },
 
   async executeAutoClose(req: AuthenticatedRequest, res: Response) {
     //  Pasar userId del JWT autenticado al servicio
-    const result = await SorteosAutoService.executeAutoClose(req.user!.id);
+    const result = await SorteosAutoService.executeAutoClose(req.user!.id, true);
     return success(res, result);
   },
 
@@ -41,4 +41,6 @@ export const SorteosAutoController = {
     return success(res, status);
   },
 };
+
+
 

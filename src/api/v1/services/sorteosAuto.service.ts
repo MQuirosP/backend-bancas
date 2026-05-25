@@ -1,4 +1,4 @@
-// src/api/v1/services/sorteosAuto.service.ts
+﻿// src/api/v1/services/sorteosAuto.service.ts
 import prisma from '../../../core/prismaClient';
 import { AppError } from '../../../core/errors';
 import { SorteoStatus, Prisma } from '@prisma/client';
@@ -10,18 +10,18 @@ import { withConnectionRetry } from '../../../core/withConnectionRetry';
 import { ActivityService } from '../../../core/activity.service';
 
 /**
- * Obtiene o crea la configuración de automatización (singleton)
- *  MEJORADO: Con reintentos automáticos ante errores de conexión con Supabase
+ * Obtiene o crea la configuraciÃ³n de automatizaciÃ³n (singleton)
+ *  MEJORADO: Con reintentos automÃ¡ticos ante errores de conexiÃ³n con Supabase
  */
 async function getOrCreateConfig() {
-  //  NUEVO: Reintentos automáticos para errores de conexión (P1001, P1017, etc.)
+  //  NUEVO: Reintentos automÃ¡ticos para errores de conexiÃ³n (P1001, P1017, etc.)
   // El pooler de Supabase puede tener problemas intermitentes de conectividad
   let config = await withConnectionRetry(
     () => prisma.sorteosAutoConfig.findFirst(),
     {
       maxRetries: 3,
       backoffMinMs: 1000, // 1 segundo inicial
-      backoffMaxMs: 5000, // máximo 5 segundos
+      backoffMaxMs: 5000, // mÃ¡ximo 5 segundos
       context: 'getOrCreateConfig',
     }
   );
@@ -60,7 +60,7 @@ function getTodayRangeCR(): { start: Date; end: Date } {
 
 export const SorteosAutoService = {
   /**
-   * Obtiene la configuración actual
+   * Obtiene la configuraciÃ³n actual
    */
   async getConfig() {
     const config = await getOrCreateConfig();
@@ -82,7 +82,7 @@ export const SorteosAutoService = {
   },
 
   /**
-   * Actualiza la configuración
+   * Actualiza la configuraciÃ³n
    */
   async updateConfig(data: {
     autoOpenEnabled?: boolean;
@@ -126,9 +126,9 @@ export const SorteosAutoService = {
   },
 
   /**
-   * Ejecuta la apertura automática de sorteos del día
+   * Ejecuta la apertura automÃ¡tica de sorteos del dÃ­a
    */
-  async executeAutoOpen(userId: string): Promise<{
+  async executeAutoOpen(userId: string | null, isManual: boolean = false): Promise<{
     success: boolean;
     openedCount: number;
     errors: Array<{ sorteoId: string; error: string }>;
@@ -136,7 +136,7 @@ export const SorteosAutoService = {
   }> {
     const config = await getOrCreateConfig();
     
-    if (!config.autoOpenEnabled) {
+    if (!config.autoOpenEnabled && !isManual) {
       logger.info({
         layer: 'service',
         action: 'SORTEOS_AUTO_OPEN_SKIPPED',
@@ -152,7 +152,7 @@ export const SorteosAutoService = {
 
     const { start, end } = getTodayRangeCR();
     
-    // Buscar sorteos SCHEDULED del día actual (en hora CR)
+    // Buscar sorteos SCHEDULED del dÃ­a actual (en hora CR)
     const sorteos = await prisma.sorteo.findMany({
       where: {
         status: SorteoStatus.SCHEDULED,
@@ -185,7 +185,7 @@ export const SorteosAutoService = {
     for (const sorteo of sorteos) {
       try {
         //  Usar userId del admin autenticado
-        await SorteoService.open(sorteo.id, userId);
+        await SorteoService.open(sorteo.id, userId as string);
         openedCount++;
         
         logger.info({
@@ -208,7 +208,7 @@ export const SorteosAutoService = {
       }
     }
 
-    // Actualizar configuración con última ejecución
+    // Actualizar configuraciÃ³n con Ãºltima ejecuciÃ³n
     await prisma.sorteosAutoConfig.update({
       where: { id: config.id },
       data: {
@@ -250,9 +250,9 @@ export const SorteosAutoService = {
   },
 
   /**
-   * Ejecuta la creación automática de sorteos futuros
+   * Ejecuta la creaciÃ³n automÃ¡tica de sorteos futuros
    */
-  async executeAutoCreate(daysAhead: number = 7, userId?: string): Promise<{
+  async executeAutoCreate(daysAhead: number = 1, userId?: string | null, isManual: boolean = false): Promise<{
     success: boolean;
     createdCount: number;
     skippedCount: number;
@@ -261,7 +261,7 @@ export const SorteosAutoService = {
   }> {
     const config = await getOrCreateConfig();
     
-    if (!config.autoCreateEnabled) {
+    if (!config.autoCreateEnabled && !isManual) {
       logger.info({
         layer: 'service',
         action: 'SORTEOS_AUTO_CREATE_SKIPPED',
@@ -276,7 +276,7 @@ export const SorteosAutoService = {
       };
     }
 
-    // Buscar loterías activas con reglas configuradas
+    // Buscar loterÃ­as activas con reglas configuradas
     const loterias = await prisma.loteria.findMany({
       where: {
         isActive: true,
@@ -305,7 +305,7 @@ export const SorteosAutoService = {
     let totalSkipped = 0;
 
     const today = tz.startOfDay(new Date());
-    const minDaysAhead = 1; // Mínimo de días futuros: 1 día (el cron corre diario)
+    const minDaysAhead = 1; // MÃ­nimo de dÃ­as futuros: 1 dÃ­a (el cron corre diario)
     
     for (const loteria of loterias) {
       try {
@@ -338,7 +338,7 @@ export const SorteosAutoService = {
           continue;
         }
 
-        // Verificar cuál es el último sorteo futuro para esta lotería
+        // Verificar cuÃ¡l es el Ãºltimo sorteo futuro para esta loterÃ­a
         const lastSorteo = await prisma.sorteo.findFirst({
           where: {
             loteriaId: loteria.id,
@@ -353,7 +353,7 @@ export const SorteosAutoService = {
           },
         });
 
-        // Determinar desde dónde generar sorteos
+        // Determinar desde dÃ³nde generar sorteos
         let startDate: Date;
         let actualDaysAhead: number;
 
@@ -378,10 +378,10 @@ export const SorteosAutoService = {
           );
 
           if (daysUntilLast < minDaysAhead) {
-            // El último sorteo está muy cerca, generar desde el día siguiente al último
+            // El Ãºltimo sorteo estÃ¡ muy cerca, generar desde el dÃ­a siguiente al Ãºltimo
             startDate = tz.addDays(lastSorteoDate, 1);
-            // Generar suficientes días para tener al menos minDaysAhead + daysAhead días futuros
-            actualDaysAhead = Math.max(daysAhead, minDaysAhead - daysUntilLast + daysAhead);
+            // Generar suficientes dÃ­as para tener al menos minDaysAhead + daysAhead dÃ­as futuros
+            actualDaysAhead = daysAhead;
             
             logger.info({
               layer: 'service',
@@ -411,7 +411,7 @@ export const SorteosAutoService = {
         }
 
         // Crear sorteos usando el servicio existente
-        // forceCreate = false para respetar la bandera autoCreateSorteos en autogeneración automática
+        // forceCreate = false para respetar la bandera autoCreateSorteos en autogeneraciÃ³n automÃ¡tica
         const result = await LoteriaService.seedSorteosFromRules(
           loteria.id,
           startDate,
@@ -456,7 +456,7 @@ export const SorteosAutoService = {
       }
     }
 
-    // Actualizar configuración con última ejecución
+    // Actualizar configuraciÃ³n con Ãºltima ejecuciÃ³n
     await prisma.sorteosAutoConfig.update({
       where: { id: config.id },
       data: {
@@ -501,16 +501,16 @@ export const SorteosAutoService = {
   },
 
   /**
-   * Ejecuta el cierre automático de sorteos sin ventas
+   * Ejecuta el cierre automÃ¡tico de sorteos sin ventas
    *
-   * Cierra automáticamente sorteos que cumplen TODAS estas condiciones:
+   * Cierra automÃ¡ticamente sorteos que cumplen TODAS estas condiciones:
    * - Estado: SCHEDULED u OPEN
-   * - scheduledAt hace más de 5 minutos
+   * - scheduledAt hace mÃ¡s de 5 minutos
    * - 0 tickets vendidos (incluyendo anulados)
    * - isActive = true
    * - deletedAt IS NULL
    */
-  async executeAutoClose(userId: string): Promise<{
+  async executeAutoClose(userId: string | null, isManual: boolean = false): Promise<{
     success: boolean;
     closedCount: number;
     errors: Array<{ sorteoId: string; sorteoName: string; error: string }>;
@@ -518,7 +518,7 @@ export const SorteosAutoService = {
   }> {
     const config = await getOrCreateConfig();
 
-    if (!config.autoCloseEnabled) {
+    if (!config.autoCloseEnabled && !isManual) {
       logger.info({
         layer: 'service',
         action: 'SORTEOS_AUTO_CLOSE_SKIPPED',
@@ -535,8 +535,8 @@ export const SorteosAutoService = {
     const now = new Date();
     const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
 
-    //  MEJORADO: Buscar sorteos candidatos con reintentos ante errores de conexión
-    // Buscar sorteos candidatos: SCHEDULED u OPEN hace más de 5 minutos
+    //  MEJORADO: Buscar sorteos candidatos con reintentos ante errores de conexiÃ³n
+    // Buscar sorteos candidatos: SCHEDULED u OPEN hace mÃ¡s de 5 minutos
     const candidates = await withConnectionRetry(
       () =>
         prisma.sorteo.findMany({
@@ -600,7 +600,7 @@ export const SorteosAutoService = {
         //  Para sorteos SCHEDULED, cambiar directamente a CLOSED sin usar SorteoService.close()
         // (que solo acepta OPEN/EVALUATED)
         if (sorteo.status === SorteoStatus.SCHEDULED) {
-          //  MEJORADO: Reintentos ante errores de conexión
+          //  MEJORADO: Reintentos ante errores de conexiÃ³n
           await withConnectionRetry(
             () =>
               prisma.sorteo.update({
@@ -632,7 +632,7 @@ export const SorteosAutoService = {
           });
         } else {
           // Para sorteos OPEN, usar el servicio normal
-          await SorteoService.close(sorteo.id, userId);
+          await SorteoService.close(sorteo.id, userId as string);
           closedCount++;
 
           logger.info({
@@ -667,7 +667,7 @@ export const SorteosAutoService = {
       }
     }
 
-    //  MEJORADO: Actualizar configuración con última ejecución (con reintentos)
+    //  MEJORADO: Actualizar configuraciÃ³n con Ãºltima ejecuciÃ³n (con reintentos)
     await withConnectionRetry(
       () =>
         prisma.sorteosAutoConfig.update({
@@ -757,4 +757,8 @@ export const SorteosAutoService = {
 };
 
 export default SorteosAutoService;
+
+
+
+
 

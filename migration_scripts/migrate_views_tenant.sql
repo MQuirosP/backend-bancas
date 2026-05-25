@@ -14,14 +14,14 @@ BEGIN;
 -- --------------------------------------------------------------------
 -- 1. ELIMINAR VISTAS Y LOGICA ANTIGUA
 -- --------------------------------------------------------------------
-RAISE NOTICE 'Eliminando vistas materializadas antiguas...';
+-- RAISE NOTICE 'Eliminando vistas materializadas antiguas...';
 DROP MATERIALIZED VIEW IF EXISTS mv_daily_account_summary CASCADE;
 DROP MATERIALIZED VIEW IF EXISTS mv_diario_ventas_totales CASCADE;
 
 -- --------------------------------------------------------------------
 -- 2. CREACIÓN DE mv_daily_account_summary CON bancaId
 -- --------------------------------------------------------------------
-RAISE NOTICE 'Creando mv_daily_account_summary con columna bancaId...';
+-- RAISE NOTICE 'Creando mv_daily_account_summary con columna bancaId...';
 CREATE MATERIALIZED VIEW mv_daily_account_summary AS
 SELECT 
   DATE(COALESCE(t."businessDate", t."createdAt")) as date,
@@ -58,7 +58,7 @@ COMMENT ON MATERIALIZED VIEW mv_daily_account_summary IS 'Resúmenes diarios agr
 -- --------------------------------------------------------------------
 -- 3. CREACIÓN DE mv_diario_ventas_totales CON bancaId
 -- --------------------------------------------------------------------
-RAISE NOTICE 'Creando mv_diario_ventas_totales con columna bancaId...';
+-- RAISE NOTICE 'Creando mv_diario_ventas_totales con columna bancaId...';
 CREATE MATERIALIZED VIEW mv_diario_ventas_totales AS
 WITH relevant_tickets AS (
   SELECT 
@@ -155,7 +155,7 @@ COMMENT ON MATERIALIZED VIEW mv_diario_ventas_totales IS 'Agregación detallada 
 -- --------------------------------------------------------------------
 -- 4. RECREACIÓN DE FUNCIONES DE REFRESCO
 -- --------------------------------------------------------------------
-RAISE NOTICE 'Actualizando funciones de refresco...';
+-- RAISE NOTICE 'Actualizando funciones de refresco...';
 CREATE OR REPLACE FUNCTION refresh_daily_account_summary()
 RETURNS void AS $$
 BEGIN
