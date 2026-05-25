@@ -25,11 +25,11 @@ router.post(
 );
 
 // Listar pagos con filtros
-router.get(
-  "/",
-  validateQuery(ListPaymentsQuerySchema),
-  TicketPaymentController.list
-);
+// router.get(
+//   "/",
+//   validateQuery(ListPaymentsQuerySchema),
+//   TicketPaymentController.list
+// );
 
 // Obtener detalles de un pago
 router.get(
