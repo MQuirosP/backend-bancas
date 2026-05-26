@@ -15,6 +15,12 @@ export const CreateBancaSchema = z.object({
   globalMaxPerNumber: z.coerce.number().positive("El máximo por número debe ser mayor a 0").min(1).optional(),
   salesCutoffMinutes: z.coerce.number().int().positive("Los minutos de cierre deben ser un número positivo").optional(),
   vendorLimit: z.coerce.number().int().nonnegative("El límite de vendedores no puede ser negativo").optional(),
+  maxSessionsPerVendedor: z.coerce
+    .number()
+    .int()
+    .min(1, 'Debe permitir al menos 1 sesión por vendedor')
+    .max(20, 'El máximo de sesiones por vendedor no puede superar 20')
+    .optional(),
   importBaseLoterias: z.coerce.boolean().optional(),
   username: z.string().trim().min(3, "El nombre de usuario debe tener al menos 3 caracteres").max(100).optional(),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres").optional(),

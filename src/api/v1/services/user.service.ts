@@ -9,6 +9,7 @@ import { normalizePhone } from "../../../utils/phoneNormalizer";
 import ActivityService from '../../../core/activity.service';
 import { parseCommissionPolicy, CommissionRule } from '../../../services/commission.resolver';
 import { CacheService } from '../../../core/cache.service';
+import { logger } from '../../../core/logger';
 
 /**
  * Deep merge de configuraciones (parcial)
@@ -565,6 +566,19 @@ export const UserService = {
       }
     }
 
+    // maxSessionsPerVendedor
+    if (dto.maxSessionsPerVendedor !== undefined) {
+      if (actingRole === Role.BANCA) {
+        const finalRole = toUpdate.role ?? current.role;
+        if (finalRole !== Role.VENDEDOR) {
+          throw new AppError('BANCA solo puede modificar maxSessionsPerVendedor a usuarios con rol VENDEDOR', 403);
+        }
+      } else if (actingRole !== Role.ADMIN) {
+        throw new AppError('No tienes permisos para modificar maxSessionsPerVendedor', 403);
+      }
+      toUpdate.maxSessionsPerVendedor = dto.maxSessionsPerVendedor;
+    }
+
     //  settings: merge parcial con los settings existentes
     // VENTANA puede modificar settings de usuarios de su ventana (validación de ventana ya aplicada arriba)
     if (dto.settings !== undefined) {
@@ -589,7 +603,22 @@ export const UserService = {
       }
     }
 
-    const updated = await UserRepository.update(id, toUpdate);
+    let updated;
+    if (toUpdate.isActive === false) {
+      updated = await prisma.$transaction(async (tx) => {
+        const _updated = await tx.user.update({
+          where: { id },
+          data: toUpdate,
+        });
+        await tx.refreshToken.updateMany({
+          where: { userId: id, revoked: false },
+          data: { revoked: true, revokedAt: new Date(), revokedReason: 'user_deactivated' },
+        });
+        return _updated;
+      });
+    } else {
+      updated = await UserRepository.update(id, toUpdate);
+    }
 
     // Invalidar caché de sesión (L1/L2) si cambian datos críticos
     const criticalFields = ['role', 'ventanaId', 'isActive', 'password'];
@@ -642,7 +671,7 @@ export const UserService = {
 
     const current = await prisma.user.findUnique({
       where: { id },
-      select: { ventanaId: true },
+      select: { ventanaId: true, role: true, bancaId: true },
     });
     if (!current) throw new AppError('User not found', 404);
 
@@ -654,20 +683,29 @@ export const UserService = {
       }
     }
 
-    const user = await prisma.user.update({
-      where: { id },
-      data: {
-        isActive: false,
-      },
-      select: { id: true, name: true, username: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
+    const user = await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id },
+        data: { isActive: false },
+        select: { id: true, name: true, username: true, email: true, role: true, ventanaId: true, bancaId: true, isActive: true, createdAt: true },
+      });
+      await tx.refreshToken.updateMany({
+        where: { userId: id, revoked: false },
+        data: { revoked: true, revokedAt: new Date(), revokedReason: 'user_deactivated' },
+      });
+      return updated;
     });
+
+    // Invalidar caché (fuera de TX, un fallo aquí no revierte la DB)
+    await CacheService.invalidateTag(`user:${id}`).catch((err) =>
+      logger.warn({ layer: 'service', action: 'CACHE_INVALIDATE_FAIL', userId: id, meta: { error: err.message } })
+    );
 
     // Log de auditoría
     if (actorId) {
-      const u = await prisma.user.findUnique({ where: { id }, select: { bancaId: true } });
       await ActivityService.log({
         userId: actorId,
-        bancaId: u?.bancaId,
+        bancaId: user.bancaId,
         action: ActivityType.USER_DELETE,
         targetType: 'USER',
         targetId: id,

@@ -28,6 +28,7 @@ const toPrismaCreate = (d: CreateBancaInput): Prisma.BancaCreateInput => ({
     }
     : {}),
   vendorLimit: d.vendorLimit,
+  maxSessionsPerVendedor: d.maxSessionsPerVendedor,
 });
 
 const toPrismaUpdate = (d: UpdateBancaInput): Prisma.BancaUpdateInput => ({
@@ -44,6 +45,7 @@ const toPrismaUpdate = (d: UpdateBancaInput): Prisma.BancaUpdateInput => ({
     ? { salesCutoffMinutes: Math.trunc(d.salesCutoffMinutes) }
     : {}),
   vendorLimit: d.vendorLimit,
+  maxSessionsPerVendedor: d.maxSessionsPerVendedor,
 })
 
 const BancaRepository = {

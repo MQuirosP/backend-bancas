@@ -27,6 +27,7 @@ model Banca {
   isActive                         Boolean                            @default(true)
   salesCutoffMinutes               Int                                @default(1)
   vendorLimit                      Int?
+  maxSessionsPerVendedor           Int                                @default(1)
   commissionPolicyJson             Json?
   accountPayments                  AccountPayment[]
   accountStatements                AccountStatement[]
@@ -101,6 +102,7 @@ model User {
   isActive                                Boolean                            @default(true)
   username                                String                             @unique @db.Citext
   code                                    String?                            @unique
+  maxSessionsPerVendedor                  Int?
   commissionPolicyJson                    Json?
   settings                                Json?
   platform                                String?
@@ -136,6 +138,7 @@ model User {
   @@index([name])
   @@index([username])
   @@index([bancaId])
+  @@index([bancaId, role], map: "idx_user_banca_role")
   @@index([code(ops: raw("gin_trgm_ops"))], map: "idx_user_code_trgm", type: Gin)
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_user_name_trgm", type: Gin)
 }

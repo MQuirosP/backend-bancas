@@ -9,6 +9,7 @@ export type CreateBancaInput = {
   globalMaxPerNumber?: number;
   salesCutoffMinutes?: number;
   vendorLimit?: number;
+  maxSessionsPerVendedor?: number;
   importBaseLoterias?: boolean;
   username?: string;
   password?: string;

@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { comparePassword, hashPassword } from '../../../utils/crypto';
 import { logger } from '../../../core/logger';
 import ActivityService from '../../../core/activity.service';
-import { ActivityType, Role } from '@prisma/client';
+import { ActivityType, Role, Prisma } from '@prisma/client';
 import { withConnectionRetry } from '../../../core/withConnectionRetry';
 
 const ACCESS_SECRET = config.jwtAccessSecret;
@@ -152,31 +152,6 @@ export const AuthService = {
       });
     }
 
-    // Si viene deviceId, revocar tokens anteriores de este dispositivo
-    if (data.deviceId) {
-      const revokedCount = await prisma.refreshToken.updateMany({
-        where: {
-          userId: user.id,
-          deviceId: data.deviceId,
-          revoked: false,
-        },
-        data: {
-          revoked: true,
-          revokedAt: new Date(),
-          revokedReason: 'new_login',
-        },
-      });
-
-      if (revokedCount.count > 0) {
-        logger.info({
-          layer: 'service',
-          action: 'REVOKE_DEVICE_TOKENS',
-          userId: user.id,
-          payload: { deviceId: data.deviceId, revokedCount: revokedCount.count },
-        });
-      }
-    }
-
     // Obtener bancaId desde ventana para incluirlo en JWT (evita query en bancaContext middleware)
     let bancaId: string | null = null;
     if (user.ventanaId) {
@@ -190,6 +165,133 @@ export const AuthService = {
       bancaId = user.bancaId;
     }
 
+    let refreshTokenRaw: string;
+
+    if (user.role === Role.VENDEDOR && bancaId) {
+      // VENDEDOR: Transacción con pool check
+      refreshTokenRaw = await withConnectionRetry(() => prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        // STEP 1: Lock exclusivo en Banca
+        const [banca] = await tx.$queryRaw<
+          [{ vendorLimit: number | null; maxSessionsPerVendedor: number }]
+        >`
+          SELECT "vendorLimit", "maxSessionsPerVendedor"
+          FROM "Banca"
+          WHERE id = ${bancaId}::uuid
+          FOR UPDATE
+        `;
+
+        // Límite de sesiones individuales de este vendedor
+        // User settings could override banca setting, but for now we query the user's direct maxSessionsPerVendedor
+        // We already fetched user, let's see if we have maxSessionsPerVendedor on user object. Wait, it's not in the select of findUnique in login. Let's do a quick query.
+        const userOverride = await tx.user.findUnique({
+          where: { id: user.id },
+          select: { maxSessionsPerVendedor: true },
+        });
+
+        const sessionLimit = userOverride?.maxSessionsPerVendedor ?? banca?.maxSessionsPerVendedor ?? 1;
+
+        // STEP 2: COUNT sesiones activas del propio VENDEDOR
+        const userSessionCount = await tx.refreshToken.count({
+          where: {
+            userId: user.id,
+            revoked: false,
+            expiresAt: { gt: new Date() },
+          },
+        });
+
+        // STEP 3: Validar límite por usuario
+        if (userSessionCount >= sessionLimit) {
+          throw new AppError(
+            `Ya tienes ${userSessionCount} sesión(es) activa(s). El límite por vendedor es ${sessionLimit}.`,
+            429,
+            'USER_SESSION_LIMIT'
+          );
+        }
+
+        // STEP 4: COUNT sesiones activas del pool de la banca
+        if (banca?.vendorLimit != null) {
+          const poolCount = await tx.refreshToken.count({
+            where: {
+              revoked: false,
+              expiresAt: { gt: new Date() },
+              user: {
+                bancaId,
+                role: Role.VENDEDOR,
+                isActive: true,
+              },
+            },
+          });
+
+          // STEP 5: Validar pool global
+          if (poolCount >= banca.vendorLimit) {
+            throw new AppError(
+              `El pool de vendedores está lleno (${poolCount}/${banca.vendorLimit} sesiones activas).`,
+              429,
+              'POOL_EXHAUSTED'
+            );
+          }
+        }
+
+        // STEP 6: Crear nueva sesión dentro de la misma TX
+        const token = uuidv4();
+        await tx.refreshToken.create({
+          data: {
+            userId: user.id,
+            token,
+            expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
+            deviceId: data.deviceId ?? null,
+            deviceName: data.deviceName ?? null,
+            userAgent: context?.userAgent ?? null,
+            ipAddress: context?.ipAddress ?? null,
+            lastUsedAt: new Date(),
+          },
+        });
+
+        return token;
+      }, { isolationLevel: 'Serializable' }), { context: 'login.poolCheck' });
+
+    } else {
+      // No-VENDEDOR: comportamiento actual sin cambios
+      if (data.deviceId) {
+        const revokedCount = await prisma.refreshToken.updateMany({
+          where: {
+            userId: user.id,
+            deviceId: data.deviceId,
+            revoked: false,
+          },
+          data: {
+            revoked: true,
+            revokedAt: new Date(),
+            revokedReason: 'new_login',
+          },
+        });
+
+        if (revokedCount.count > 0) {
+          logger.info({
+            layer: 'service',
+            action: 'REVOKE_DEVICE_TOKENS',
+            userId: user.id,
+            payload: { deviceId: data.deviceId, revokedCount: revokedCount.count },
+          });
+        }
+      }
+
+      refreshTokenRaw = uuidv4();
+
+      await prisma.refreshToken.create({
+        data: {
+          userId: user.id,
+          token: refreshTokenRaw,
+          expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
+          deviceId: data.deviceId ?? null,
+          deviceName: data.deviceName ?? null,
+          userAgent: context?.userAgent ?? null,
+          ipAddress: context?.ipAddress ?? null,
+          lastUsedAt: new Date(),
+        },
+      });
+    }
+
     const accessToken = jwt.sign(
       {
         sub: user.id,
@@ -201,24 +303,7 @@ export const AuthService = {
       { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
     );
 
-    const refreshToken = uuidv4();
-
-    // Crear token con campos de dispositivo
-    await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        token: refreshToken,
-        expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
-        // Campos de tracking de dispositivo
-        deviceId: data.deviceId ?? null,
-        deviceName: data.deviceName ?? null,
-        userAgent: context?.userAgent ?? null,
-        ipAddress: context?.ipAddress ?? null,
-        lastUsedAt: new Date(),
-      },
-    });
-
-    const signedRefresh = jwt.sign({ tid: refreshToken }, REFRESH_SECRET, {
+    const signedRefresh = jwt.sign({ tid: refreshTokenRaw }, REFRESH_SECRET, {
       expiresIn: config.jwtRefreshExpires as jwt.SignOptions['expiresIn'],
     });
 
@@ -444,19 +529,28 @@ export const AuthService = {
     // Buscar el token
     const token = await prisma.refreshToken.findUnique({
       where: { id: sessionId },
-      select: {
-        id: true,
-        userId: true,
-        revoked: true,
-      },
+      include: {
+        user: { select: { bancaId: true } }
+      }
     });
 
     if (!token) {
       throw new AppError('Session not found', 404);
     }
 
-    // Verificar permisos: solo el dueño o un admin puede revocar
-    if (!isAdmin && token.userId !== requestingUserId) {
+    // Obtener actor para RBAC
+    const actor = await prisma.user.findUnique({
+      where: { id: requestingUserId },
+      select: { role: true, bancaId: true },
+    });
+    
+    const isBancaSameTenant =
+      actor?.role === Role.BANCA &&
+      actor.bancaId !== null &&
+      actor.bancaId === token.user?.bancaId;
+
+    // Verificar permisos: dueño, admin, o banca del mismo tenant
+    if (!isAdmin && !isBancaSameTenant && token.userId !== requestingUserId) {
       throw new AppError('No tiene permisos para revocar esta sesión', 403);
     }
 

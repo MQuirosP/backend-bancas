@@ -11,6 +11,7 @@ export interface CreateUserDTO {
   bancaId?: string | null;   // opcional: para ligar admin de banca a una banca primaria
   code?: string | null;
   isActive?: boolean;
+  maxSessionsPerVendedor?: number | null;
 }
 
 export interface UpdateUserDTO {
@@ -24,6 +25,7 @@ export interface UpdateUserDTO {
   bancaId?: string | null;
   code?: string | null;
   isActive?: boolean;  // ya estaba permitido
+  maxSessionsPerVendedor?: number | null;
   settings?: Record<string, any> | null;  // Configuraciones (print, theme, etc.)
 }
 

@@ -1,4 +1,4 @@
-﻿# ðŸ›¡ï¸ GuÃ­a de Ensayo de MigraciÃ³n (Local)
+# ðŸ›¡ï¸ GuÃ­a de Ensayo de MigraciÃ³n (Local)
 
 Esta guÃ­a detalla los pasos para realizar ensayos locales antes de la migraciÃ³n a ProducciÃ³n.
 
@@ -94,15 +94,22 @@ Puebla `bancaId` en los registros histÃ³ricos para que los nuevos constraints 
   npx ts-node migration_scripts/fix_indexes.ts
   ```
 
-- [ ] **SincronizaciÃ³n de Esquema**: Aplica las nuevas columnas, FKs y constraints limpios.
+- [ ] **Sincronización de Esquema**: Aplica las nuevas columnas, FKs y constraints limpios.
 
   ```powershell
   npx prisma db push
   ```
-  *(Responde `y` si Prisma advierte sobre pÃ©rdida de datos por duplicados).*
+  *(Responde `y` si Prisma advierte sobre pérdida de datos por duplicados).*
 
   > [!CAUTION]
-  > Si falla con `foreign key constraint` o `violates foreign key`, el backfill no estÃ¡ completo. Volver al Paso 2 y verificar que el conteo de nulos sea 0.
+  > Si falla con `foreign key constraint` o `violates foreign key`, el backfill no está completo. Volver al Paso 2 y verificar que el conteo de nulos sea 0.
+
+- [ ] **Creación del Índice de Pool de Sesiones (VENDEDOR)**:
+  Prisma `db push` no soporta índices con cláusula `WHERE`. Debemos inyectarlo manualmente:
+
+  ```powershell
+  npx ts-node migration_scripts/add_session_pool_index.ts
+  ```
 
 - [ ] **Clonado y Bootstrap**:
 

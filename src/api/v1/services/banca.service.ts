@@ -110,6 +110,33 @@ export const BancaService = {
     }
 
     const banca = await BancaRepository.update(id, data);
+
+    // Logout masivo: solo si vendorLimit disminuye
+    const vendorLimitReduced =
+      data.vendorLimit !== undefined &&
+      existing.vendorLimit !== null &&
+      data.vendorLimit < existing.vendorLimit;
+
+    if (vendorLimitReduced) {
+      // Revocar SOLO sesiones de VENDEDOR de ESTA banca
+      const revoked = await prisma.refreshToken.updateMany({
+        where: {
+          revoked: false,
+          user: {
+            bancaId: id,         // acotado al tenant que cambió
+            role: Role.VENDEDOR, // solo VENDEDOR
+          },
+        },
+        data: {
+          revoked: true,
+          revokedAt: new Date(),
+          revokedReason: 'vendor_limit_reduced',
+        },
+      });
+
+      console.log(`[BancaService] VENDOR_LIMIT_REDUCED_LOGOUT: bancaId=${id}, revokedSessions=${revoked.count}`);
+    }
+
     await CacheService.invalidateTag(`banca:${id}`);
 
     await ActivityService.log({
@@ -119,6 +146,7 @@ export const BancaService = {
       targetId: id,
       details: {
         ...data,
+        ...(vendorLimitReduced ? { vendorLimitReducedFrom: existing.vendorLimit } : {}),
         description: `Banca actualizada: ${banca.name} (${banca.code})`
       },
     });

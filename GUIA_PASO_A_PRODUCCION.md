@@ -1,4 +1,4 @@
-﻿# ðŸš€ GuÃ­a de Paso a ProducciÃ³n: Multi-Tenant (Supabase + Render)
+# ðŸš€ GuÃ­a de Paso a ProducciÃ³n: Multi-Tenant (Supabase + Render)
 
 Esta guÃ­a documenta el protocolo estricto para desplegar la arquitectura Multi-Tenant en el entorno de ProducciÃ³n real. A diferencia del ensayo local, aquÃ­ aprovechamos el poder del motor de Supabase para minimizar el tiempo de inactividad (Downtime).
 
@@ -38,18 +38,16 @@ Dado que el motor de Supabase bloquea scripts SQL masivos por `statement_timeout
    ```
    
 > [!NOTE]
-> **Â¿QuÃ© hace el Orquestador automÃ¡ticamente?**
-> - **Fase 1:** AuditorÃ­a Pre-MigraciÃ³n (`pre_migration_audit_v2.js`).
-> - **Fase 2:** CuraciÃ³n de Datos (`complete_backfill_production.ts`) que procesa 3.6M+ jugadas en lotes con exponential backoff, elimina huÃ©rfanos, y mapea inteligentemente los cierres histÃ³ricos en `MonthlyClosingBalance` hacia sus respectivas bancas.
-> - **Fase 2.5:** Limpieza preventiva de Ãndices (`fix_indexes.ts`) para evitar choques en Supabase.
-> - **Fase 3:** SincronizaciÃ³n Estructural (`prisma db push`) para inyectar constraints Multi-Tenant.
-> - **Fase 4:** Clonado de LoterÃ­as por Banca (`clone-loterias-multi-tenant.ts`).
-> - **Fase 4.5:** *[NUEVO]* MigraciÃ³n de Reglas de RestricciÃ³n preexistentes a catÃ¡logos locales (`migrate_restriction_rules.ts`).
-> - **Fase 5:** RecreaciÃ³n de Vistas Materializadas SQL (`create_views_tenant.ts`).
+> **¿Qué hace el Orquestador automáticamente?**
+> - **Fase 1:** Auditoría Pre-Migración (`pre_migration_audit_v2.js`).
+> - **Fase 2:** Curación de Datos (`complete_backfill_production.ts`) que procesa 3.6M+ jugadas en lotes con exponential backoff, elimina huérfanos, y mapea inteligentemente los cierres históricos en `MonthlyClosingBalance` hacia sus respectivas bancas.
+> - **Fase 2.5:** Limpieza preventiva de Índices (`fix_indexes.ts`) para evitar choques en Supabase.
+> - **Fase 3:** Sincronización Estructural (`prisma db push`) para inyectar constraints Multi-Tenant.
+> - **Fase 3.5:** *[NUEVO]* Inyección de Índice Concurrente (`add_session_pool_index.ts`) para optimizar el Pool de Sesiones.
+> - **Fase 4:** Clonado de Loterías por Banca (`clone-loterias-multi-tenant.ts`).
+> - **Fase 4.5:** *[NUEVO]* Migración de Reglas de Restricción preexistentes a catálogos locales (`migrate_restriction_rules.ts`).
+> - **Fase 5:** Recreación de Vistas Materializadas SQL (`create_views_tenant.ts`).
 > - **Fase 5.5:** Poblado Inicial de la Tabla de Cierres Diarios Rollup (`backfill_rollup.ts`).
-> - **Fase 6:** AuditorÃ­a Final de VerificaciÃ³n.
-
----
 
 ## ðŸŸ¢ Fase 3: ReactivaciÃ³n y VerificaciÃ³n (Minuto 20)
 

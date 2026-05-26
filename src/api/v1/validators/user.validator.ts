@@ -79,6 +79,7 @@ export const createUserSchema = z
     ventanaId: z.uuid('ventanaId inválido').nullable().optional(),
     bancaId: z.uuid('bancaId inválido').nullable().optional(),
     isActive: z.boolean().optional(),
+    maxSessionsPerVendedor: z.coerce.number().int().min(1, 'El mínimo es 1 sesión').max(20, 'El máximo es 20 sesiones').nullable().optional(),
   })
   .strict()
 
@@ -97,6 +98,7 @@ export const updateUserSchema = z
     bancaId: z.uuid('bancaId inválido').nullable().optional(),
     isActive: z.boolean().nullable().optional(),
     code: z.string().trim().min(2).max(32).nullable().optional(),
+    maxSessionsPerVendedor: z.coerce.number().int().min(1, 'El mínimo es 1 sesión').max(20, 'El máximo es 20 sesiones').nullable().optional(),
     settings: UserSettingsSchema.nullable().optional(),
   })
   .superRefine((val, ctx) => {
