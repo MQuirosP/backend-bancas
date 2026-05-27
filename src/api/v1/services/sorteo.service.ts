@@ -1495,8 +1495,8 @@ gs."hour24" ASC
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = ${ticketIsActive}`,
         Prisma.sql`s.status = 'EVALUATED'`,
-        Prisma.sql`s."scheduledAt" >= ${dateRange.fromAt}`,
-        Prisma.sql`s."scheduledAt" <= ${dateRange.toAt}`
+        Prisma.sql`s."scheduledAt" >= ${dateRange.fromAt} AT TIME ZONE 'UTC'`,
+        Prisma.sql`s."scheduledAt" <= ${dateRange.toAt} AT TIME ZONE 'UTC'`
       ];
 
       // Aplicar filtros RBAC dinámicos (Vendedor, Ventana, Banca)

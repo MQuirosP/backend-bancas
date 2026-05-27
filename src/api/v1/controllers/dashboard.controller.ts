@@ -460,17 +460,88 @@ export const DashboardController = {
 
     const { ventanaId, vendedorId, bancaId } = await applyDashboardRbac(req, query);
 
-    const dashboard = await DashboardService.getFullDashboard({
-      fromDate: dateRange.fromAt,
-      toDate: dateRange.toAt,
-      ventanaId,
-      vendedorId,
-      bancaId,
-      loteriaId: query.loteriaId,
-      betType: query.betType,
-      scope: query.scope || 'all',
-      dimension: query.dimension, // 'ventana' | 'loteria' | 'vendedor'
-    }, req.user!.role); // Pasar el rol del usuario para calcular correctamente la ganancia neta
+    const [fullDashboard, summaryResult, entitiesResult] = await Promise.all([
+      DashboardService.getFullDashboard({
+        fromDate: dateRange.fromAt,
+        toDate: dateRange.toAt,
+        ventanaId,
+        vendedorId,
+        bancaId,
+        loteriaId: query.loteriaId,
+        betType: query.betType,
+        scope: query.scope || 'all',
+        dimension: query.dimension,
+      }, req.user!.role),
+      DashboardService.calculateDashboardSummary({
+        fromDate: dateRange.fromAt,
+        toDate: dateRange.toAt,
+        ventanaId,
+        bancaId,
+      }),
+      DashboardService.calculateDashboardEntities({
+        fromDate: dateRange.fromAt,
+        toDate: dateRange.toAt,
+        ventanaId,
+        bancaId,
+      }),
+    ]);
+
+    const dashboardData = {
+      meta: {
+        fromAt: dateRange.fromAt.toISOString(),
+        toAt: dateRange.toAt.toISOString(),
+        tz: dateRange.tz || 'America/Costa_Rica',
+        generatedAt: new Date().toISOString(),
+      },
+      summary: {
+        period: {
+          totalSales: summaryResult.kpis.totalSales,
+          totalPayouts: summaryResult.kpis.totalPayouts,
+          commissionVentana: summaryResult.kpis.listeroCommission,
+          commissionUser: summaryResult.kpis.vendedorCommission,
+          totalNet: summaryResult.kpis.totalNet,
+          margin: summaryResult.kpis.margin,
+          totalTickets: summaryResult.kpis.ticketCount,
+          winningTickets: fullDashboard.summary.winningTickets || 0,
+          winRate: fullDashboard.summary.winRate || 0,
+        },
+        monthToDate: {
+          totalSales: summaryResult.monthToDate.totalSales,
+          totalPayouts: summaryResult.monthToDate.totalPayouts,
+          commissionVentana: summaryResult.monthToDate.listeroCommission,
+          commissionUser: summaryResult.monthToDate.vendedorCommission,
+          totalNet: summaryResult.monthToDate.totalNet,
+          margin: summaryResult.monthToDate.margin,
+        }
+      },
+      balances: {
+        byVentana: summaryResult.byVentana.map((v: any) => ({
+          ventanaName: v.ventanaName,
+          isActive: v.isActive,
+          sales: v.totalSales,
+          payouts: v.totalPayouts,
+          commissionVentana: v.listeroCommission,
+          commissionUser: v.vendedorCommission,
+          net: v.net,
+          margin: v.margin,
+          monthAccumulatedBalance: v.remainingBalance,
+        })),
+        byVendedor: entitiesResult.vendedores.map((v: any) => ({
+          vendedorName: v.vendedorName,
+          ventanaName: v.ventanaName,
+          isActive: v.isActive,
+          sales: v.totalSales,
+          payouts: v.totalPayouts,
+          commissionVentana: v.listeroCommission,
+          commissionUser: v.vendedorCommission,
+          net: v.net,
+          margin: v.margin,
+          monthAccumulatedBalance: v.remainingBalance,
+        }))
+      },
+      timeSeries: fullDashboard.timeSeries,
+      exposure: fullDashboard.exposure
+    };
 
     const timestamp = new Date().toISOString().split('T')[0];
     const filename = `dashboard-${timestamp}.${format}`;
@@ -479,12 +550,12 @@ export const DashboardController = {
 
     if (format === 'csv') {
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      const csv = DashboardExportService.generateCSV(dashboard as any);
+      const csv = DashboardExportService.generateCSV(dashboardData as any);
       // Agregar BOM para UTF-8 en Excel
       return res.send('\ufeff' + csv);
     } else if (format === 'xlsx') {
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      const workbook = await DashboardExportService.generateWorkbook(dashboard as any);
+      const workbook = await DashboardExportService.generateWorkbook(dashboardData as any);
       await workbook.xlsx.write(res);
       return res.end();
     } else if (format === 'pdf') {
@@ -492,7 +563,7 @@ export const DashboardController = {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       
-      const pdfDoc = DashboardExportService.generatePDF(dashboard as any);
+      const pdfDoc = DashboardExportService.generatePDF(dashboardData as any);
       
       // getBuffer callback: (buffer) => void
       // Nota: pdfmake getBuffer solo pasa el buffer, no un error como segundo parámetro
@@ -548,7 +619,7 @@ export const DashboardController = {
     }
 
     // Fallback: retornar JSON si el formato no es reconocido (no debería llegar aquí)
-    return success(res, dashboard);
+    return success(res, dashboardData);
   },
 
   /**
