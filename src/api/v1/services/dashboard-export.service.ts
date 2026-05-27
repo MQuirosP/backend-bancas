@@ -1265,10 +1265,10 @@ export class DashboardExportService {
   }
 
   private static autoSizeColumns(sheet: ExcelJS.Worksheet): void {
-    sheet.columns.forEach((column) => {
+    const processColumn = (column: any) => {
       if (column && column.eachCell) {
         let maxLength = 0;
-        column.eachCell({ includeEmpty: false }, (cell) => {
+        column.eachCell({ includeEmpty: false }, (cell: ExcelJS.Cell) => {
           const columnLength = cell.value ? cell.value.toString().length : 10;
           if (columnLength > maxLength) {
             maxLength = columnLength;
@@ -1276,7 +1276,15 @@ export class DashboardExportService {
         });
         column.width = maxLength < 10 ? 10 : maxLength + 2;
       }
-    });
+    };
+
+    if (sheet.columns && sheet.columns.length > 0) {
+      sheet.columns.forEach(processColumn);
+    } else if (sheet.columnCount > 0) {
+      for (let i = 1; i <= sheet.columnCount; i++) {
+        processColumn(sheet.getColumn(i));
+      }
+    }
   }
 
   private static getSeverityColor(severity: string): string {
