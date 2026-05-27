@@ -96,7 +96,16 @@ export const BancaService = {
     return banca;
   },
 
-  async update(id: string, data: UpdateBancaInput, userId: string) {
+  async update(id: string, data: UpdateBancaInput, userId: string, userRole?: string) {
+    if (userRole === Role.BANCA) {
+      const assignment = await prisma.userBanca.findFirst({
+        where: { userId, bancaId: id },
+      });
+      if (!assignment) {
+        throw new AppError("No tienes permiso para modificar esta banca", 403, "FORBIDDEN");
+      }
+    }
+
     const existing = await BancaRepository.findById(id);
     if (!existing || !existing.isActive) throw new AppError("Banca no encontrada o inactiva", 404);
 

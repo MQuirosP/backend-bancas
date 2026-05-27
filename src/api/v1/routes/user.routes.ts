@@ -25,10 +25,13 @@ import { Role } from "@prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
+import userBancaRoutes from "./userBanca.routes";
 
 const router = Router();
 router.use(protect);
 router.use(bancaContextMiddleware);
+
+router.use("/:id/bancas", userBancaRoutes);
 
 const idParamSchema = z.object({ id: z.uuid("Invalid user id") });
 
@@ -110,7 +113,7 @@ router.get(
       }
       
       const targetBancaId = target.bancaId || target.ventana?.bancaId;
-      const actorBancaId = authUser.bancaId || (req as any).bancaContext?.bancaId;
+      const actorBancaId = (req as any).bancaContext?.bancaId || authUser.bancaId;
       if (targetBancaId !== actorBancaId) {
         throw new AppError("Solo puedes consultar usuarios de tu propia banca", 403);
       }

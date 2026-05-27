@@ -212,13 +212,9 @@ export const AuthService = {
         if (banca?.vendorLimit != null) {
           const poolCount = await tx.refreshToken.count({
             where: {
+              bancaId,
               revoked: false,
               expiresAt: { gt: new Date() },
-              user: {
-                bancaId,
-                role: Role.VENDEDOR,
-                isActive: true,
-              },
             },
           });
 
@@ -237,6 +233,7 @@ export const AuthService = {
         await tx.refreshToken.create({
           data: {
             userId: user.id,
+            bancaId,
             token,
             expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
             deviceId: data.deviceId ?? null,
@@ -281,6 +278,7 @@ export const AuthService = {
       await prisma.refreshToken.create({
         data: {
           userId: user.id,
+          bancaId,
           token: refreshTokenRaw,
           expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
           deviceId: data.deviceId ?? null,
@@ -387,6 +385,17 @@ export const AuthService = {
     // ROTACIÓN ATÓMICA: Revocar token actual + crear nuevo en una sola transacción
     // Si la DB falla a mitad de camino, la transacción hace rollback
     // y el token original sigue válido (el usuario puede reintentar)
+    let bancaId: string | null = null;
+    if (user.ventanaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: user.ventanaId },
+        select: { bancaId: true },
+      });
+      bancaId = ventana?.bancaId ?? null;
+    } else {
+      bancaId = user.bancaId;
+    }
+    
     const newRefreshTokenId = uuidv4();
     await withConnectionRetry(
       () => prisma.$transaction([
@@ -401,6 +410,7 @@ export const AuthService = {
         prisma.refreshToken.create({
           data: {
             userId: user.id,
+            bancaId,
             token: newRefreshTokenId,
             expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
             // Heredar datos del dispositivo del token anterior
@@ -415,18 +425,7 @@ export const AuthService = {
       { context: 'authRefresh.rotateToken', maxRetries: 2 }
     );
 
-    // Obtener bancaId desde ventana para incluirlo en JWT
-    let bancaId: string | null = null;
-    if (user.ventanaId) {
-      const ventana = await prisma.ventana.findUnique({
-        where: { id: user.ventanaId },
-        select: { bancaId: true },
-      });
-      bancaId = ventana?.bancaId ?? null;
-    } else {
-      // Fallback para usuarios con rol BANCA o ADMIN que tienen bancaId directo
-      bancaId = user.bancaId;
-    }
+    // bancaId ya fue resuelto arriba para la inyección del token
 
     const accessToken = jwt.sign(
       {
@@ -458,8 +457,13 @@ export const AuthService = {
           revokedReason: 'logout',
         },
       });
-    } catch {
-      // ignore errors to avoid leaking info
+    } catch (error: any) {
+      logger.warn({
+        layer: 'service',
+        action: 'LOGOUT_FAILED',
+        meta: { error: error.message, tokenProvided: !!refreshToken }
+      });
+      // ignore errors to avoid leaking info to client, but log it internally
     }
   },
 

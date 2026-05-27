@@ -55,7 +55,7 @@ export const RestrictionRuleController = {
     // Si es VENTANA, forzar filtro de listero
     if (req.user!.role === 'VENTANA') {
       query.listeroVentanaId = req.user!.ventanaId;
-      query.listeroBancaId = req.user!.bancaId || req.bancaContext?.bancaId;
+      query.listeroBancaId = req.bancaContext?.bancaId || req.user!.bancaId;
     }
 
     req.logger?.info({
@@ -98,7 +98,7 @@ export const RestrictionRuleController = {
     // Si es VENTANA, forzar filtro de listero
     if (req.user!.role === 'VENTANA') {
       query.listeroVentanaId = req.user!.ventanaId;
-      query.listeroBancaId = req.user!.bancaId || req.bancaContext?.bancaId;
+      query.listeroBancaId = req.bancaContext?.bancaId || req.user!.bancaId;
     }
 
     const result = await RestrictionRuleService.listGrouped(query);

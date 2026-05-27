@@ -44,6 +44,7 @@ export const UserRepository = {
     bancaId?: string | null;
     code?: string | null;
     isActive?: boolean;
+    maxSessionsPerVendedor?: number | null;
   }) =>
     withConnectionRetry(
       () => prisma.user.create({
@@ -58,6 +59,7 @@ export const UserRepository = {
           bancaId: data.bancaId ?? null,
           ...(data.code !== undefined ? { code: data.code } : {}),
           ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+          ...(data.maxSessionsPerVendedor !== undefined ? { maxSessionsPerVendedor: data.maxSessionsPerVendedor } : {}),
         },
       }),
       { context: 'UserRepository.create' }
@@ -126,7 +128,7 @@ export const UserRepository = {
             id: true, name: true, email: true, username: true, role: true,
             ventanaId: true, bancaId: true, isActive: true, code: true,
             createdAt: true, updatedAt: true, settings: true,
-            platform: true, appVersion: true,
+            platform: true, appVersion: true, maxSessionsPerVendedor: true,
             ventana: {
               select: {
                 id: true,

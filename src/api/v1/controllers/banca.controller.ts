@@ -10,7 +10,7 @@ export const BancaController = {
 
   async update(req: AuthenticatedRequest, res: Response) {
     const { id } = req.params;
-    const banca = await BancaService.update(id, req.body, req.user!.id);
+    const banca = await BancaService.update(id, req.body, req.user!.id, req.user!.role);
     res.json({ success: true, data: banca });
   },
 

@@ -178,7 +178,7 @@ export const restrictToAdminSelfOrVentanaVendor = async (
     const target = await getCachedUser(targetId);
     if (!target) throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
 
-    const actorBancaId = actor.bancaId || (req as any).bancaContext?.bancaId;
+    const actorBancaId = (req as any).bancaContext?.bancaId || actor.bancaId;
     if (target.bancaId !== actorBancaId) {
       throw new AppError("Solo puedes gestionar usuarios de tu propia banca", 403);
     }
@@ -233,7 +233,7 @@ export const restrictToCommissionAdminSelfOrVentanaVendor = async (
     const target = await getCachedUser(targetId);
     if (!target) throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
 
-    const actorBancaId = actor.bancaId || (req as any).bancaContext?.bancaId;
+    const actorBancaId = (req as any).bancaContext?.bancaId || actor.bancaId;
     if (target.bancaId !== actorBancaId) {
       throw new AppError("Solo puedes gestionar políticas de usuarios de tu propia banca", 403);
     }
@@ -298,7 +298,7 @@ export const restrictToAdminOrVentanaSelf = async (
 
     if (!targetVentana) throw new AppError("Ventana no encontrada", 404);
 
-    const actorBancaId = actor.bancaId || (req as any).bancaContext?.bancaId;
+    const actorBancaId = (req as any).bancaContext?.bancaId || actor.bancaId;
     if (targetVentana.bancaId !== actorBancaId) {
       throw new AppError("Solo puedes gestionar ventanas de tu propia banca", 403);
     }

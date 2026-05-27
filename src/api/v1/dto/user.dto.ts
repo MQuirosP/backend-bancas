@@ -9,6 +9,7 @@ export interface CreateUserDTO {
   role?: Role;
   ventanaId?: string | null; // requerido si role != ADMIN (lo aplica el service)
   bancaId?: string | null;   // opcional: para ligar admin de banca a una banca primaria
+  bancaIds?: string[];       // opcional: para asignar múltiples bancas a un rol BANCA
   code?: string | null;
   isActive?: boolean;
   maxSessionsPerVendedor?: number | null;

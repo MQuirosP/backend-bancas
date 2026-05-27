@@ -2,6 +2,8 @@ import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
 import { getRedisClient, isRedisAvailable } from '../core/redisClient';
 import logger from '../core/logger';
+import { Request, Response, NextFunction } from 'express';
+import { Role } from '@prisma/client';
 
 /**
  * Configuración base para Rate Limiters
@@ -55,12 +57,23 @@ const createLimiter = (options: {
 /**
  * 1. Límite Global: 100 peticiones / minuto por IP
  */
-export const globalRateLimiter = createLimiter({
+const baseGlobalLimiter = createLimiter({
   windowMs: 60 * 1000,
   max: 100,
   prefix: 'global',
   message: 'Demasiadas peticiones. Por favor, intenta de nuevo en un minuto.'
 });
+
+export const globalRateLimiter = (req: Request, res: Response, next: NextFunction) => {
+  const user = (req as any).user;
+  if (user && (user.role === Role.ADMIN || user.role === Role.BANCA)) {
+    const isReportOrDashboard = req.path.startsWith('/api/v1/admin/') || req.path.startsWith('/api/v1/tickets/');
+    if (isReportOrDashboard) {
+      return next();
+    }
+  }
+  return baseGlobalLimiter(req, res, next);
+};
 
 /**
  * 2. Auth (Login): 5 intentos / minuto por IP

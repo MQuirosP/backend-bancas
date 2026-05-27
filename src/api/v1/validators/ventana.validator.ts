@@ -58,11 +58,11 @@ export const CreateVentanaSchema = z
       .nullable()
       .transform((v) => (v === "" ? null : (v ?? null))),
     isActive: z.coerce.boolean().default(true).optional(),
-    commissionMarginX: z.coerce
+    commissionMarginX: z
       .number()
       .min(0, "commissionMarginX debe ser >= 0")
-      .optional()
       .nullable()
+      .optional()
       .transform((v) => (v === undefined ? null : v)),
     address: z
       .string()

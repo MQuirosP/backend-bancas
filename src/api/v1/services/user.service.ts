@@ -225,43 +225,58 @@ export const UserService = {
 
     const hashed = await hashPassword(dto.password);
 
-    const created = await UserRepository.create({
-      name: dto.name,
-      email,
-      username,
-      phone,
-      password: hashed,
-      role,
-      ventanaId: (role === Role.ADMIN || role === Role.BANCA) ? null : (enforcedVentanaId ?? dto.ventanaId!),
-      bancaId: dto.bancaId,
-      code,                 
-      isActive: actingRole === Role.VENTANA ? true : isActive,             
-    });
-
-    // Sincronizar con UserBanca si es rol BANCA y tiene bancaId
-    if (role === Role.BANCA && dto.bancaId) {
-      await withConnectionRetry(
-        () => prisma.userBanca.create({
-          data: {
-            userId: created.id,
-            bancaId: dto.bancaId as string,
-            isDefault: true
-          }
-        }),
-        { context: 'UserService.create.syncUserBanca' }
-      );
+    // Determinar la banca principal si vienen bancaIds
+    let finalBancaId = dto.bancaId;
+    if (role === Role.BANCA && dto.bancaIds && dto.bancaIds.length > 0) {
+      finalBancaId = dto.bancaIds[0];
     }
 
     const result = await withConnectionRetry(
-      () => prisma.user.findUnique({
-        where: { id: created.id },
-        select: {
-          id: true, name: true, username: true, email: true, role: true,
-          ventanaId: true, bancaId: true, isActive: true, code: true,
-          createdAt: true, settings: true, platform: true, appVersion: true,
-        },
+      () => prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            name: dto.name,
+            email,
+            username,
+            phone: phone ?? null,
+            password: hashed,
+            role,
+            ventanaId: (role === Role.ADMIN || role === Role.BANCA) ? null : (enforcedVentanaId ?? dto.ventanaId!),
+            bancaId: finalBancaId ?? null,
+            ...(code !== undefined ? { code } : {}),
+            ...(isActive !== undefined ? { isActive: actingRole === Role.VENTANA ? true : isActive } : {}),
+            ...(dto.maxSessionsPerVendedor !== undefined ? { maxSessionsPerVendedor: dto.maxSessionsPerVendedor } : {}),
+          }
+        });
+
+        // Sincronizar con UserBanca si es rol BANCA
+        if (role === Role.BANCA && dto.bancaIds && dto.bancaIds.length > 0) {
+          const userBancasData = dto.bancaIds.map((bId, index) => ({
+            userId: created.id,
+            bancaId: bId,
+            isDefault: index === 0
+          }));
+          await tx.userBanca.createMany({ data: userBancasData });
+        } else if (role === Role.BANCA && finalBancaId) {
+          await tx.userBanca.create({
+            data: {
+              userId: created.id,
+              bancaId: finalBancaId,
+              isDefault: true
+            }
+          });
+        }
+
+        return tx.user.findUnique({
+          where: { id: created.id },
+          select: {
+            id: true, name: true, username: true, email: true, role: true,
+            ventanaId: true, bancaId: true, isActive: true, code: true,
+            createdAt: true, settings: true, platform: true, appVersion: true, maxSessionsPerVendedor: true,
+          },
+        });
       }),
-      { context: 'UserService.create.fetchResult' }
+      { context: 'UserService.create.transaction' }
     );
 
     // Log de auditoría
@@ -291,7 +306,7 @@ export const UserService = {
         select: {
           id: true, name: true, email: true, username: true, role: true,
           ventanaId: true, bancaId: true, isActive: true, code: true,
-          createdAt: true, settings: true, platform: true, appVersion: true,
+          createdAt: true, settings: true, platform: true, appVersion: true, maxSessionsPerVendedor: true,
         },
       }),
       { context: 'UserService.getById' }
@@ -493,17 +508,17 @@ export const UserService = {
         if (!dto.ventanaId) throw new AppError('ventanaId is required for role ' + current.role, 400);
         await ensureVentanaActiveOrThrow(dto.ventanaId);
         toUpdate.ventanaId = dto.ventanaId;
+      }
+    }
 
-        // NUEVO: Si cambia la ventana, actualizar automáticamente el bancaId
-        if (toUpdate.ventanaId !== current.ventanaId) {
-          const ventana = await prisma.ventana.findUnique({
-            where: { id: toUpdate.ventanaId },
-            select: { bancaId: true }
-          });
-          if (ventana) {
-            toUpdate.bancaId = ventana.bancaId;
-          }
-        }
+    // NUEVO: Si cambia la ventana (ya sea por role o por ventanaId explícito), actualizar automáticamente el bancaId
+    if (toUpdate.ventanaId && toUpdate.ventanaId !== current.ventanaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: toUpdate.ventanaId },
+        select: { bancaId: true }
+      });
+      if (ventana) {
+        toUpdate.bancaId = ventana.bancaId;
       }
     }
 
@@ -621,11 +636,12 @@ export const UserService = {
     }
 
     // Invalidar caché de sesión (L1/L2) si cambian datos críticos
-    const criticalFields = ['role', 'ventanaId', 'isActive', 'password'];
+    const criticalFields = ['role', 'ventanaId', 'bancaId', 'isActive', 'password'];
     const hasCriticalChanges = Object.keys(toUpdate).some(k => criticalFields.includes(k));
     
     if (hasCriticalChanges) {
       await CacheService.invalidateTag(`user:${id}`);
+      await CacheService.del(`auth:session:${id}`); // Fuerza invalidación directa de L1 y L2 para la sesión
     }
 
     // Respuesta coherente (incluye username)
@@ -636,7 +652,7 @@ export const UserService = {
           id: true, name: true, username: true, email: true, role: true,
           ventanaId: true, bancaId: true, isActive: true, code: true, 
           createdAt: true, settings: true,
-          platform: true, appVersion: true,
+          platform: true, appVersion: true, maxSessionsPerVendedor: true,
         },
       }),
       { context: 'UserService.update.fetchResult' }

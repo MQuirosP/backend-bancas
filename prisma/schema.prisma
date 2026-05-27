@@ -53,6 +53,7 @@ model Banca {
   sorteoListaExclusiones           SorteoListaExclusion[]
   multiplierOverrides              MultiplierOverride[]
   jugadas                          Jugada[]
+  refreshTokens                    RefreshToken[]
 }
 
 model Ventana {
@@ -474,6 +475,7 @@ model MultiplierOverride {
 model RefreshToken {
   id            String    @id @default(uuid()) @db.Uuid
   userId        String    @db.Uuid
+  bancaId       String?   @db.Uuid
   token         String    @unique
   revoked       Boolean   @default(false)
   expiresAt     DateTime
@@ -486,9 +488,12 @@ model RefreshToken {
   lastUsedAt    DateTime? @default(now())
   revokedAt     DateTime?
   revokedReason String?   @db.VarChar(50)
+  
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  banca         Banca?    @relation(fields: [bancaId], references: [id], onDelete: Cascade)
 
   @@index([userId], map: "idx_refresh_token_user_id")
+  @@index([bancaId, revoked, expiresAt], map: "idx_refreshtoken_pool_count")
 }
 
 model UserBanca {

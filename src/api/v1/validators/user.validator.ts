@@ -78,6 +78,7 @@ export const createUserSchema = z
     role: z.enum(['ADMIN', 'BANCA', 'VENTANA', 'VENDEDOR']).optional(),
     ventanaId: z.uuid('ventanaId inválido').nullable().optional(),
     bancaId: z.uuid('bancaId inválido').nullable().optional(),
+    bancaIds: z.array(z.string().uuid()).optional(),
     isActive: z.boolean().optional(),
     maxSessionsPerVendedor: z.coerce.number().int().min(1, 'El mínimo es 1 sesión').max(20, 'El máximo es 20 sesiones').nullable().optional(),
   })
@@ -103,17 +104,14 @@ export const updateUserSchema = z
   })
   .superRefine((val, ctx) => {
     // Si cambian role en update, validamos la coherencia con ventanaId
-    if (val.role && val.role !== 'ADMIN') {
+    if (val.role === 'VENDEDOR' || val.role === 'VENTANA') {
       if (!val.ventanaId || `${val.ventanaId}`.trim().length === 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['ventanaId'],
-          message: 'Selecciona una ventana',
+          message: 'Selecciona un listero',
         })
       }
-    }
-    if (val.role === 'ADMIN') {
-      // En ADMIN permitimos ventanaId null/undefined; si viene string vacía, la tratamos como null en el servicio.
     }
   })
   .strict()

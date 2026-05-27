@@ -34,7 +34,7 @@ async function applyDashboardRbac(req: AuthenticatedRequest, query: any) {
     }
   } else if (req.user!.role === Role.BANCA) {
     // BANCA siempre filtra por su propia banca
-    bancaId = req.user!.bancaId || req.bancaContext?.bancaId || undefined;
+    bancaId = req.bancaContext?.bancaId || req.user!.bancaId || undefined;
   }
   
   return { ventanaId, vendedorId, bancaId };

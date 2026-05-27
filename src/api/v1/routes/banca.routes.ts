@@ -9,7 +9,7 @@ import {
   ListBancasQuerySchema,
   ReasonBodySchema,
 } from "../validators/banca.validator";
-import { requireAdmin } from "../../../middlewares/roleGuards.middleware";
+import { requireAdmin, requireAdminOrBanca } from "../../../middlewares/roleGuards.middleware";
 
 const router = Router();
 
@@ -20,7 +20,7 @@ router.post("/", requireAdmin, validateBody(CreateBancaSchema), BancaController.
 
 router.put(
   "/:id",
-  requireAdmin,
+  requireAdminOrBanca,
   validateParams(BancaIdParamSchema),
   validateBody(UpdateBancaSchema),
   BancaController.update
@@ -28,7 +28,7 @@ router.put(
 
 router.patch(
   "/:id",
-  requireAdmin,
+  requireAdminOrBanca,
   validateParams(BancaIdParamSchema),
   validateBody(UpdateBancaSchema),
   BancaController.update

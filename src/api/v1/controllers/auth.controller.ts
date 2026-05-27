@@ -9,6 +9,8 @@ import { ActivityType, Role } from '@prisma/client';
 import { success, created } from '../../../utils/responses';
 import { RequestContext } from '../dto/auth.dto';
 import { AppError } from '../../../core/errors';
+import jwt from 'jsonwebtoken';
+import { config } from '../../../config';
 
 // Helper para extraer contexto del request
 function getRequestContext(req: Request): RequestContext {
@@ -225,12 +227,32 @@ export const AuthController = {
     const user = (req as any).user;
     const { bancaId } = req.body;
 
-    // Validar que el usuario es ADMIN
-    if (user.role !== Role.ADMIN) {
+    // Validar que el usuario es ADMIN o BANCA
+    if (user.role !== Role.ADMIN && user.role !== Role.BANCA) {
       return res.status(403).json({
         success: false,
-        message: 'Solo usuarios ADMIN pueden cambiar de banca activa',
+        message: 'No tienes permisos para cambiar de banca activa',
       });
+    }
+
+    if (user.role === Role.BANCA) {
+      // Validar que la banca pertenezca a sus bancas asignadas
+      const userBanca = await withConnectionRetry(
+        () => prisma.userBanca.findFirst({
+          where: {
+            userId: user.id,
+            bancaId: bancaId,
+          }
+        }),
+        { context: 'AuthController.setActiveBanca.validateUserBanca' }
+      );
+
+      if (!userBanca) {
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permisos para acceder a esta banca',
+        });
+      }
     }
 
     // Validar que la banca existe y está activa (sin validar asignación)
@@ -261,9 +283,22 @@ export const AuthController = {
       });
     }
 
-    // Retornar éxito (el frontend manejará el header en futuras requests)
+    // Re-firmar el JWT con el nuevo contexto de bancaId
+    const accessToken = jwt.sign(
+      {
+        sub: user.id,
+        role: user.role,
+        ventanaId: user.ventanaId ?? null,
+        bancaId: bancaId,
+      },
+      config.jwtAccessSecret,
+      { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
+    );
+
+    // Retornar éxito (el frontend manejará el header en futuras requests o actualizará el token)
     return success(res, {
       activeBancaId: bancaId,
+      accessToken,
       banca: {
         id: banca.id,
         name: banca.name,
