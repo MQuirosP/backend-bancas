@@ -12,11 +12,8 @@ export const SorteoListasController = {
         const mode = (req.query.mode as string) === 'compact' ? 'compact' : 'full';
         
         const me = req.user!;
+        // bancaId puede ser undefined para ADMIN global viendo datos históricos sin banca seleccionada
         const bancaId = req.bancaContext?.bancaId ?? undefined;
-
-        if (!bancaId) {
-            return res.status(400).json({ success: false, error: "BANCA_CONTEXT_REQUIRED", message: "Se requiere el contexto de banca para esta operación." });
-        }
         
         // Aplicar RBAC: Si es VENDEDOR, forzar ver solo sus propias listas
         if (me.role === Role.VENDEDOR) {
@@ -31,7 +28,7 @@ export const SorteoListasController = {
 
         const response = await SorteoListasService.getListas(
             req.params.id,
-            bancaId!, // Asserting not undefined because of check above (mostly for TS)
+            bancaId,
             includeExcluded,
             vendedorId,
             multiplierId,
@@ -112,15 +109,12 @@ export const SorteoListasController = {
     },
 
     async getExcludedListas(req: AuthenticatedRequest, res: Response) {
+        // bancaId puede ser undefined para ADMIN global viendo datos históricos sin banca seleccionada
         const bancaId = req.bancaContext?.bancaId ?? undefined;
-        if (!bancaId) {
-            return res.status(400).json({ success: false, error: "BANCA_CONTEXT_REQUIRED" });
-        }
 
         // Parse query parameters
-        const filters: any = {
-            bancaId: bancaId!
-        };
+        const filters: any = {};
+        if (bancaId) filters.bancaId = bancaId;
 
         if (req.query.sorteoId) filters.sorteoId = req.query.sorteoId as string;
         if (req.query.ventanaId) filters.ventanaId = req.query.ventanaId as string;

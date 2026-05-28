@@ -1084,7 +1084,6 @@ const SorteoService = {
             isActive: params.isActive,
             dateFrom: params.dateFrom,
             dateTo: params.dateTo,
-            // NUEVO: Identidad del usuario para separar cache
             role: params.role,
             ventanaId: params.ventanaId,
             bancaId: params.bancaId,
@@ -1145,7 +1144,9 @@ const SorteoService = {
       whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} AT TIME ZONE 'UTC'`);
     }
 
-    if (params.bancaId) {
+    if (!params.bancaId) {
+      whereConditions.push(Prisma.sql`s."bancaId" IS NULL`);
+    } else {
       whereConditions.push(Prisma.sql`s."bancaId" = CAST(${params.bancaId} AS uuid)`);
     }
 
@@ -1233,7 +1234,7 @@ gs."loteriaName" ASC,
         where: {
           id: { in: sorteoIdsArray },
           ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
-          ...(params.bancaId ? { bancaId: params.bancaId } : {}),
+          ...(params.bancaId ? { bancaId: params.bancaId } : { bancaId: null }),
         },
         select: {
           id: true,
@@ -1307,7 +1308,9 @@ gs."loteriaName" ASC,
       whereConditions.push(Prisma.sql`s."scheduledAt" <= ${params.dateTo} AT TIME ZONE 'UTC'`);
     }
 
-    if (params.bancaId) {
+    if (!params.bancaId) {
+      whereConditions.push(Prisma.sql`s."bancaId" IS NULL`);
+    } else {
       whereConditions.push(Prisma.sql`s."bancaId" = CAST(${params.bancaId} AS uuid)`);
     }
 
@@ -1386,7 +1389,7 @@ gs."hour24" ASC
         where: {
           id: { in: sorteoIdsArray },
           ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
-          ...(params.bancaId ? { bancaId: params.bancaId } : {}),
+          ...(params.bancaId ? { bancaId: params.bancaId } : { bancaId: null }),
         },
         select: {
           id: true,

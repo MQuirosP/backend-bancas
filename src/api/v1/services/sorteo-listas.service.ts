@@ -51,7 +51,7 @@ export const SorteoListasService = {
      */
     async getListas(
         sorteoId: string,
-        bancaId: string,
+        bancaId: string | undefined,
         includeExcluded: boolean = true,
         vendedorIdFilter?: string,
         multiplierIdFilter?: string,
@@ -119,7 +119,7 @@ export const SorteoListasService = {
                 END
             ) = m.id
             WHERE t."sorteoId" = CAST(${sorteoId} AS uuid)
-              AND t."bancaId" = CAST(${bancaId} AS uuid)
+              ${bancaId ? Prisma.sql`AND t."bancaId" = CAST(${bancaId} AS uuid)` : Prisma.empty}
               AND t."deletedAt" IS NULL
               AND j."deletedAt" IS NULL
               AND j."isActive" = TRUE
@@ -134,7 +134,10 @@ export const SorteoListasService = {
 
         // 3. Cargar registros de exclusión de la tabla (fuente de verdad para exclusionScope)
         const exclusionRecords = await prisma.sorteoListaExclusion.findMany({
-            where: { sorteoId, bancaId },
+            where: {
+                sorteoId,
+                ...(bancaId ? { bancaId } : {}),
+            },
             select: { id: true, ventanaId: true, vendedorId: true, multiplierId: true },
         });
 
@@ -1129,7 +1132,7 @@ export const SorteoListasService = {
         fromDate?: Date;
         toDate?: Date;
         loteriaId?: string;
-        bancaId: string;
+        bancaId?: string;
     }): Promise<ListaExclusionResponse[]> {
         // Construir WHERE sobre la tabla de exclusiones
         const exclusionWhere: any = {};
@@ -1138,7 +1141,9 @@ export const SorteoListasService = {
             exclusionWhere.sorteoId = filters.sorteoId;
         }
 
-        exclusionWhere.bancaId = filters.bancaId;
+        if (filters.bancaId) {
+            exclusionWhere.bancaId = filters.bancaId;
+        }
 
         if (filters.ventanaId) {
             exclusionWhere.ventanaId = filters.ventanaId;

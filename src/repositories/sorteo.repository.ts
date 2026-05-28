@@ -676,7 +676,9 @@ const SorteoRepository = {
     if (dateTo) {
       whereConditions.push(Prisma.sql`s."scheduledAt" <= ${dateTo} AT TIME ZONE 'UTC'`);
     }
-    if (bancaId) {
+    if (!bancaId) {
+      whereConditions.push(Prisma.sql`s."bancaId" IS NULL`);
+    } else {
       whereConditions.push(Prisma.sql`s."bancaId" = CAST(${bancaId} AS uuid)`);
     }
 

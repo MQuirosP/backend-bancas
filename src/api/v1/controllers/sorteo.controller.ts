@@ -97,7 +97,7 @@ export const SorteoController = {
         : undefined;
     const search =
       typeof req.query.search === "string" ? req.query.search : undefined;
-    const isActive = typeof req.query.isActive !== "undefined" ? req.query.isActive === "true" || req.query.isActive === "1" : undefined;
+    const isActive = typeof req.query.isActive !== "undefined" ? req.query.isActive === "true" || req.query.isActive === "1" || (req.query.isActive as any) === true : undefined;
     const date = typeof req.query.date === "string" ? req.query.date : undefined;
     const fromDate = typeof req.query.fromDate === "string" ? req.query.fromDate : undefined;
     const toDate = typeof req.query.toDate === "string" ? req.query.toDate : undefined;
@@ -164,7 +164,6 @@ export const SorteoController = {
       dateFrom: dateFromResolved,
       dateTo: dateToResolved,
       groupBy,
-      //  NUEVO: Aislamiento por banca (header X-Active-Banca-Id)
       bancaId: req.bancaContext?.bancaId ?? undefined,
       //  NUEVO: Información del usuario para filtrado por política de comisiones
       userId: req.user?.id,
