@@ -17,6 +17,7 @@ interface UserSession {
   isActive: boolean;
   ventanaId: string | null;
   bancaId: string | null;
+  activeSessionIds: string[]; // List of active/valid session IDs
 }
 
 /**
@@ -30,23 +31,38 @@ async function getCachedUser(userId: string): Promise<UserSession | null> {
   const cached = await CacheService.get<UserSession>(cacheKey, true);
   if (cached) return cached;
 
-  // 2. DB Lean Query: Solo los campos indispensables
-  const user = await withConnectionRetry(
-    () => prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        role: true,
-        isActive: true,
-        ventanaId: true,
-        bancaId: true,
-        ventana: {
-          select: { bancaId: true }
+  // 2. DB Lean Query: Solo los campos indispensables + Sesiones activas en paralelo
+  const [user, activeTokens] = await Promise.all([
+    withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          role: true,
+          isActive: true,
+          ventanaId: true,
+          bancaId: true,
+          ventana: {
+            select: { bancaId: true }
+          }
         }
-      }
-    }),
-    { context: 'authMiddleware.getCachedUser', maxRetries: 2 }
-  );
+      }),
+      { context: 'authMiddleware.getCachedUser', maxRetries: 2 }
+    ),
+    withConnectionRetry(
+      () => prisma.refreshToken.findMany({
+        where: {
+          userId,
+          revoked: false,
+          expiresAt: { gt: new Date() }
+        },
+        select: {
+          token: true
+        }
+      }),
+      { context: 'authMiddleware.getActiveSessions', maxRetries: 2 }
+    )
+  ]);
 
   if (!user) return null;
 
@@ -55,7 +71,8 @@ async function getCachedUser(userId: string): Promise<UserSession | null> {
     role: user.role,
     isActive: user.isActive,
     ventanaId: user.ventanaId,
-    bancaId: user.bancaId ?? user.ventana?.bancaId ?? null
+    bancaId: user.bancaId ?? user.ventana?.bancaId ?? null,
+    activeSessionIds: activeTokens.map((t) => t.token)
   };
 
   // 3. Persistir en caché (300s en Redis, 60s en Memoria mediante el flag true)
@@ -106,6 +123,13 @@ export const protect = async (
   // 2) Validar si el usuario está activo
   if (!user.isActive) {
     throw new AppError("Tu cuenta ha sido desactivada. Contacta al administrador.", 401, "USER_INACTIVE");
+  }
+
+  // 3) Validar si la sesión específica sigue activa (sid)
+  // Para tokens antiguos/migrados que no tengan 'sid', permitimos el acceso temporalmente,
+  // pero para los nuevos tokens con 'sid' validamos estrictamente su presencia en la base de datos/caché.
+  if (decoded.sid && (!user.activeSessionIds || !user.activeSessionIds.includes(decoded.sid))) {
+    throw new AppError("Sesión cerrada en otro dispositivo", 401, "SESSION_REVOKED");
   }
 
   req.user = { 

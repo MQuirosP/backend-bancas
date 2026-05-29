@@ -10,6 +10,7 @@ import { logger } from '../../../core/logger';
 import ActivityService from '../../../core/activity.service';
 import { ActivityType, Role, Prisma } from '@prisma/client';
 import { withConnectionRetry } from '../../../core/withConnectionRetry';
+import { CacheService } from '../../../core/cache.service';
 
 const ACCESS_SECRET = config.jwtAccessSecret;
 const REFRESH_SECRET = config.jwtRefreshSecret;
@@ -190,22 +191,53 @@ export const AuthService = {
 
         const sessionLimit = userOverride?.maxSessionsPerVendedor ?? banca?.maxSessionsPerVendedor ?? 1;
 
-        // STEP 2: COUNT sesiones activas del propio VENDEDOR
-        const userSessionCount = await tx.refreshToken.count({
+        // STEP 2: Obtener sesiones activas del propio VENDEDOR ordenadas por desuso (FIFO)
+        const activeSessions = await tx.refreshToken.findMany({
           where: {
             userId: user.id,
             revoked: false,
             expiresAt: { gt: new Date() },
           },
+          orderBy: {
+            lastUsedAt: 'asc', // De la más antigua (inactiva) a la más nueva
+          },
+          select: {
+            id: true,
+          },
         });
 
-        // STEP 3: Validar límite por usuario
+        const userSessionCount = activeSessions.length;
+
+        // STEP 3: Si se supera o iguala el límite, desplazar la más antigua
         if (userSessionCount >= sessionLimit) {
-          throw new AppError(
-            `Ya tienes ${userSessionCount} sesión(es) activa(s). El límite por vendedor es ${sessionLimit}.`,
-            429,
-            'USER_SESSION_LIMIT'
-          );
+          const sessionsToRevokeCount = userSessionCount - sessionLimit + 1;
+          const sessionsToRevoke = activeSessions.slice(0, sessionsToRevokeCount);
+          const sessionIdsToRevoke = sessionsToRevoke.map((s) => s.id);
+
+          await tx.refreshToken.updateMany({
+            where: {
+              id: { in: sessionIdsToRevoke },
+            },
+            data: {
+              revoked: true,
+              revokedAt: new Date(),
+              revokedReason: 'fifo_displacement',
+            },
+          });
+
+          // Invalida el caché en memoria para este usuario
+          await CacheService.del(`auth:session:${user.id}`);
+
+          logger.info({
+            layer: 'service',
+            action: 'SESSION_FIFO_DISPLACEMENT',
+            userId: user.id,
+            payload: {
+              revokedSessions: sessionIdsToRevoke,
+              totalSessions: userSessionCount,
+              limit: sessionLimit,
+            },
+          });
         }
 
         // STEP 4: COUNT sesiones activas del pool de la banca
@@ -296,6 +328,7 @@ export const AuthService = {
         role: user.role,
         ventanaId: user.ventanaId ?? null,
         bancaId,
+        sid: refreshTokenRaw, // Unique session identifier for real-time verification
       },
       ACCESS_SECRET,
       { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
@@ -433,6 +466,7 @@ export const AuthService = {
         role: user.role,
         ventanaId: user.ventanaId ?? null,
         bancaId,
+        sid: newRefreshTokenId, // Unique session identifier after rotation
       },
       ACCESS_SECRET,
       { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
@@ -449,14 +483,16 @@ export const AuthService = {
   async logout(refreshToken: string) {
     try {
       const decoded = jwt.verify(refreshToken, REFRESH_SECRET) as { tid: string };
-      await prisma.refreshToken.update({
+      const tokenRecord = await prisma.refreshToken.update({
         where: { token: decoded.tid },
         data: {
           revoked: true,
           revokedAt: new Date(),
           revokedReason: 'logout',
         },
+        select: { userId: true },
       });
+      await CacheService.del(`auth:session:${tokenRecord.userId}`);
     } catch (error: any) {
       logger.warn({
         layer: 'service',
@@ -570,6 +606,8 @@ export const AuthService = {
         revokedReason: isAdmin ? 'revoked_by_admin' : 'revoked_by_user',
       },
     });
+
+    await CacheService.del(`auth:session:${token.userId}`);
 
     logger.info({
       layer: 'service',
