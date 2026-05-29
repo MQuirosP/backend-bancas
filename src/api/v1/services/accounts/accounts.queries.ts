@@ -234,46 +234,47 @@ export async function getDailySummariesFromMaterializedView(
         endDateObj.setUTCDate(endDateObj.getUTCDate() + 1); // Día siguiente
         const endDateNextDayCR = `${endDateObj.getUTCFullYear()}-${String(endDateObj.getUTCMonth() + 1).padStart(2, '0')}-${String(endDateObj.getUTCDate()).padStart(2, '0')}`;
 
-        // Construir condiciones WHERE dinámicamente
-        const conditions: string[] = [
-            `date >= '${startDateCR}'::date`,
-            `date < '${endDateNextDayCR}'::date`, // ️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
+        // Construir condiciones WHERE con Prisma.Sql para evitar interpolación insegura
+        const conditions: Prisma.Sql[] = [
+            Prisma.sql`date >= ${startDateCR}::date`,
+            Prisma.sql`date < ${endDateNextDayCR}::date`, // ️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
         ];
 
         // Aplicar filtro de bancaId directamente sobre la vista materializada para máximo rendimiento
         if (bancaId) {
-            conditions.push(`"bancaId" = CAST('${bancaId}' AS uuid)`);
+            conditions.push(Prisma.sql`"bancaId" = ${bancaId}::uuid`);
         }
 
         if (dimension === "banca") {
             if (ventanaId) {
-                conditions.push(`"ventanaId" = CAST('${ventanaId}' AS uuid)`);
+                conditions.push(Prisma.sql`"ventanaId" = ${ventanaId}::uuid`);
             }
             if (vendedorId) {
-                conditions.push(`"vendedorId" = CAST('${vendedorId}' AS uuid)`);
+                conditions.push(Prisma.sql`"vendedorId" = ${vendedorId}::uuid`);
             }
             // Para dimension='banca', no filtramos por vendedorId IS NULL porque puede haber vendedores
         } else if (dimension === "ventana" && ventanaId) {
-            conditions.push(`"ventanaId" = CAST('${ventanaId}' AS uuid)`);
-            conditions.push(`"vendedorId" IS NULL`);
+            conditions.push(Prisma.sql`"ventanaId" = ${ventanaId}::uuid`);
+            conditions.push(Prisma.sql`"vendedorId" IS NULL`);
         } else if (dimension === "ventana") {
-            conditions.push(`"ventanaId" IS NOT NULL`);
-            conditions.push(`"vendedorId" IS NULL`);
+            conditions.push(Prisma.sql`"ventanaId" IS NOT NULL`);
+            conditions.push(Prisma.sql`"vendedorId" IS NULL`);
         } else if (dimension === "vendedor" && vendedorId) {
-            conditions.push(`"vendedorId" = CAST('${vendedorId}' AS uuid)`);
-            conditions.push(`"ventanaId" IS NULL`);
+            conditions.push(Prisma.sql`"vendedorId" = ${vendedorId}::uuid`);
+            conditions.push(Prisma.sql`"ventanaId" IS NULL`);
         } else if (dimension === "vendedor") {
-            conditions.push(`"vendedorId" IS NOT NULL`);
-            conditions.push(`"ventanaId" IS NULL`);
+            conditions.push(Prisma.sql`"vendedorId" IS NOT NULL`);
+            conditions.push(Prisma.sql`"ventanaId" IS NULL`);
         }
 
-        const whereClause = conditions.join(' AND ');
-        const orderClause = sort === "desc" ? "DESC" : "ASC";
+        const whereClause = Prisma.join(conditions, ' AND ');
+        // sort es un enum TypeScript 'asc'|'desc' — los únicos dos valores posibles
+        const orderClause = Prisma.raw(sort === "desc" ? "DESC" : "ASC");
 
         // Query la vista materializada
         // ️ REFUERZO: Si es dimensión banca, debemos AGREGAR (SUM) todas las ventanas de esa banca
-        const summaries = dimension === "banca" 
-          ? await prisma.$queryRawUnsafe<Array<{
+        const summaries = dimension === "banca"
+          ? await prisma.$queryRaw<Array<{
               date: Date;
               ticket_count: bigint;
               total_sales: number;
@@ -281,8 +282,8 @@ export async function getDailySummariesFromMaterializedView(
               vendedor_commission: number;
               listero_commission: number;
               balance: number;
-            }>>(`
-              SELECT 
+            }>>(Prisma.sql`
+              SELECT
                 date,
                 SUM(ticket_count) as ticket_count,
                 SUM(total_sales) as total_sales,
@@ -295,7 +296,7 @@ export async function getDailySummariesFromMaterializedView(
               GROUP BY date
               ORDER BY date ${orderClause}
             `)
-          : await prisma.$queryRawUnsafe<Array<{
+          : await prisma.$queryRaw<Array<{
               date: Date;
               ventanaId: string | null;
               vendedorId: string | null;
@@ -305,8 +306,8 @@ export async function getDailySummariesFromMaterializedView(
               vendedor_commission: number;
               listero_commission: number;
               balance: number;
-            }>>(`
-              SELECT 
+            }>>(Prisma.sql`
+              SELECT
                 date,
                 "ventanaId",
                 "vendedorId",

@@ -724,10 +724,8 @@ export const VentasService = {
 
       // Parámetros de ordenamiento y límites
       const limit = Number(top) || 10;
-      const sortOrder = filters.order === "asc" ? "ASC" : "DESC";
-      const sortBy = filters.orderBy || "ventasTotal";
-      
-      // Mapeo de métricas para el ORDER BY
+
+      // Mapeo de métricas para el ORDER BY — conjunto cerrado y estático
       // Nota: Usar NULLS LAST para que los valores nulos no aparezcan primero en DESC
       const metricMap: Record<string, string> = {
         ventasTotal: 'SUM(ft."totalAmount")',
@@ -748,27 +746,53 @@ export const VentasService = {
           ELSE 100 
         END`,
       };
-      
-      const orderBySql = metricMap[sortBy] || '"ventasTotal"';
+
+      // Validación explícita de 'order' — rechaza cualquier valor fuera del conjunto cerrado
+      const rawOrder = filters.order?.toLowerCase();
+      if (rawOrder && rawOrder !== "asc" && rawOrder !== "desc") {
+        throw new AppError("El parámetro 'order' debe ser 'asc' o 'desc'", 400, {
+          code: "VAL_3002",
+          details: [{ field: "order", message: "Valores permitidos: asc, desc" }],
+        });
+      }
+
+      // Validación explícita de 'orderBy' — rechaza cualquier valor fuera del metricMap
+      const sortBy = filters.orderBy || "ventasTotal";
+      if (filters.orderBy && !metricMap[filters.orderBy]) {
+        throw new AppError("El parámetro 'orderBy' no es válido", 400, {
+          code: "VAL_3003",
+          details: [{ field: "orderBy", message: `Valores permitidos: ${Object.keys(metricMap).join(", ")}` }],
+        });
+      }
+
+      // Prisma.raw() es seguro aquí porque ambos valores provienen de conjuntos cerrados validados arriba
+      const sortOrderSql = Prisma.raw(rawOrder === "asc" ? "ASC" : "DESC");
+      const orderBySql = Prisma.raw(metricMap[sortBy] || 'SUM(ft."totalAmount")');
+
       const searchTerm = filters.search?.trim();
       const searchSql = searchTerm ? `%${searchTerm}%` : null;
 
       switch (dimension) {
         case "ventana": {
-          const { dateCondition } = buildRawDateConditions(filters);
-          
-          const rawResult = await prisma.$queryRawUnsafe<any[]>(`
+          const dateCondition = buildRawDateConditions(filters).dateCondition;
+          const ticketConds: Prisma.Sql[] = [
+            Prisma.sql`t."deletedAt" IS NULL`,
+            Prisma.sql`t."isActive" = true`,
+            Prisma.sql`t.status != 'CANCELLED'`,
+          ];
+          if (filters.bancaId) ticketConds.push(Prisma.sql`t."bancaId" = ${filters.bancaId}::uuid`);
+          if (filters.ventanaId) ticketConds.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          if (filters.loteriaId) ticketConds.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+          if (filters.sorteoId) ticketConds.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}::uuid`);
+          if (dateCondition) ticketConds.push(dateCondition);
+          const ticketWhere = Prisma.join(ticketConds, ' AND ');
+          const searchFilter = searchSql ? Prisma.sql`AND v.name ILIKE ${searchSql}` : Prisma.empty;
+
+          const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
             WITH filtered_tickets AS (
               SELECT t.id, t."ventanaId", t."totalAmount", t."isWinner", t.status
               FROM "Ticket" t
-              WHERE t."deletedAt" IS NULL 
-                AND t."isActive" = true
-                AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND t."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
-                ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
-                ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
-                ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
-                ${dateCondition ? `AND ${dateCondition.text}` : ''}
+              WHERE ${ticketWhere}
             ),
             jugada_stats AS (
               SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
@@ -791,11 +815,11 @@ export const VentasService = {
             INNER JOIN filtered_tickets ft ON ft."ventanaId" = v.id
             LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
             WHERE 1=1
-              ${searchSql ? `AND v.name ILIKE $${(dateCondition?.values?.length || 0) + 1}` : ''}
+              ${searchFilter}
             GROUP BY v.id, v.name
-            ORDER BY ${orderBySql} ${sortOrder} NULLS LAST
+            ORDER BY ${orderBySql} ${sortOrderSql} NULLS LAST
             LIMIT ${limit}
-          `, ...(dateCondition?.values || []), ...(searchSql ? [searchSql] : []));
+          `);
 
           return rawResult.map(r => ({
             ...r,
@@ -810,21 +834,28 @@ export const VentasService = {
         }
 
         case "vendedor": {
-          const { dateCondition } = buildRawDateConditions(filters);
-          
-          const rawResult = await prisma.$queryRawUnsafe<any[]>(`
+          const dateCondition = buildRawDateConditions(filters).dateCondition;
+          const ticketConds: Prisma.Sql[] = [
+            Prisma.sql`t."deletedAt" IS NULL`,
+            Prisma.sql`t."isActive" = true`,
+            Prisma.sql`t.status != 'CANCELLED'`,
+          ];
+          if (filters.bancaId) ticketConds.push(Prisma.sql`t."bancaId" = ${filters.bancaId}::uuid`);
+          if (filters.ventanaId) ticketConds.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          if (filters.vendedorId) ticketConds.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+          if (filters.loteriaId) ticketConds.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+          if (filters.sorteoId) ticketConds.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}::uuid`);
+          if (dateCondition) ticketConds.push(dateCondition);
+          const ticketWhere = Prisma.join(ticketConds, ' AND ');
+          const searchFilter = searchSql
+            ? Prisma.sql`AND (u.name ILIKE ${searchSql} OR u.code ILIKE ${searchSql})`
+            : Prisma.empty;
+
+          const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
             WITH filtered_tickets AS (
               SELECT t.id, t."vendedorId", t."ventanaId", t."totalAmount", t."isWinner", t.status, t."createdAt", t."businessDate"
               FROM "Ticket" t
-              WHERE t."deletedAt" IS NULL 
-                AND t."isActive" = true
-                AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND t."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
-                ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
-                ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
-                ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
-                ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
-                ${dateCondition ? `AND ${dateCondition.text}` : ''}
+              WHERE ${ticketWhere}
             ),
             jugada_stats AS (
               SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
@@ -865,11 +896,11 @@ export const VentasService = {
             LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
             LEFT JOIN payment_stats ps ON ps."ticketId" = ft.id
             WHERE 1=1
-              ${searchSql ? `AND (u.name ILIKE $${(dateCondition?.values?.length || 0) + 1} OR u.code ILIKE $${(dateCondition?.values?.length || 0) + 1})` : ''}
+              ${searchFilter}
             GROUP BY u.id, u.name, u.code, u."isActive", v.name
-            ORDER BY ${orderBySql} ${sortOrder} NULLS LAST
+            ORDER BY ${orderBySql} ${sortOrderSql} NULLS LAST
             LIMIT ${limit}
-          `, ...(dateCondition?.values || []), ...(searchSql ? [searchSql] : []));
+          `);
 
           return rawResult.map(r => ({
             ...r,
@@ -894,21 +925,26 @@ export const VentasService = {
         }
 
         case "loteria": {
-          const { dateCondition } = buildRawDateConditions(filters);
-          
-          const rawResult = await prisma.$queryRawUnsafe<any[]>(`
+          const dateCondition = buildRawDateConditions(filters).dateCondition;
+          const ticketConds: Prisma.Sql[] = [
+            Prisma.sql`t."deletedAt" IS NULL`,
+            Prisma.sql`t."isActive" = true`,
+            Prisma.sql`t.status != 'CANCELLED'`,
+          ];
+          if (filters.bancaId) ticketConds.push(Prisma.sql`t."bancaId" = ${filters.bancaId}::uuid`);
+          if (filters.ventanaId) ticketConds.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          if (filters.vendedorId) ticketConds.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+          if (filters.loteriaId) ticketConds.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+          if (filters.sorteoId) ticketConds.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}::uuid`);
+          if (dateCondition) ticketConds.push(dateCondition);
+          const ticketWhere = Prisma.join(ticketConds, ' AND ');
+          const searchFilter = searchSql ? Prisma.sql`AND l.name ILIKE ${searchSql}` : Prisma.empty;
+
+          const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
             WITH filtered_tickets AS (
               SELECT t.id, t."loteriaId", t."ventanaId", t."totalAmount", t."isWinner", t.status
               FROM "Ticket" t
-              WHERE t."deletedAt" IS NULL 
-                AND t."isActive" = true
-                AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND t."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
-                ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
-                ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
-                ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
-                ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
-                ${dateCondition ? `AND ${dateCondition.text}` : ''}
+              WHERE ${ticketWhere}
             ),
             jugada_stats AS (
               SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
@@ -931,11 +967,11 @@ export const VentasService = {
             INNER JOIN filtered_tickets ft ON ft."loteriaId" = l.id
             LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
             WHERE 1=1
-              ${searchSql ? `AND l.name ILIKE $${(dateCondition?.values?.length || 0) + 1}` : ''}
+              ${searchFilter}
             GROUP BY l.id, l.name
-            ORDER BY ${orderBySql} ${sortOrder} NULLS LAST
+            ORDER BY ${orderBySql} ${sortOrderSql} NULLS LAST
             LIMIT ${limit}
-          `, ...(dateCondition?.values || []), ...(searchSql ? [searchSql] : []));
+          `);
 
           return rawResult.map(r => ({
             ...r,
@@ -950,21 +986,26 @@ export const VentasService = {
         }
 
         case "sorteo": {
-          const { dateCondition } = buildRawDateConditions(filters);
-          
-          const rawResult = await prisma.$queryRawUnsafe<any[]>(`
+          const dateCondition = buildRawDateConditions(filters).dateCondition;
+          const ticketConds: Prisma.Sql[] = [
+            Prisma.sql`t."deletedAt" IS NULL`,
+            Prisma.sql`t."isActive" = true`,
+            Prisma.sql`t.status != 'CANCELLED'`,
+          ];
+          if (filters.bancaId) ticketConds.push(Prisma.sql`t."bancaId" = ${filters.bancaId}::uuid`);
+          if (filters.ventanaId) ticketConds.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          if (filters.vendedorId) ticketConds.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+          if (filters.loteriaId) ticketConds.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+          if (filters.sorteoId) ticketConds.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}::uuid`);
+          if (dateCondition) ticketConds.push(dateCondition);
+          const ticketWhere = Prisma.join(ticketConds, ' AND ');
+          const searchFilter = searchSql ? Prisma.sql`AND s.name ILIKE ${searchSql}` : Prisma.empty;
+
+          const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
             WITH filtered_tickets AS (
               SELECT t.id, t."sorteoId", t."ventanaId", t."totalAmount", t."isWinner", t.status
               FROM "Ticket" t
-              WHERE t."deletedAt" IS NULL 
-                AND t."isActive" = true
-                AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND t."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
-                ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
-                ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
-                ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
-                ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
-                ${dateCondition ? `AND ${dateCondition.text}` : ''}
+              WHERE ${ticketWhere}
             ),
             jugada_stats AS (
               SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
@@ -987,11 +1028,11 @@ export const VentasService = {
             INNER JOIN filtered_tickets ft ON ft."sorteoId" = s.id
             LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
             WHERE 1=1
-              ${searchSql ? `AND s.name ILIKE $${(dateCondition?.values?.length || 0) + 1}` : ''}
+              ${searchFilter}
             GROUP BY s.id, s.name
-            ORDER BY ${orderBySql} ${sortOrder} NULLS LAST
+            ORDER BY ${orderBySql} ${sortOrderSql} NULLS LAST
             LIMIT ${limit}
-          `, ...(dateCondition?.values || []), ...(searchSql ? [searchSql] : []));
+          `);
 
           return rawResult.map(r => ({
             ...r,
@@ -1006,25 +1047,30 @@ export const VentasService = {
         }
 
         case "numero": {
-          const { dateCondition } = buildRawDateConditions(filters);
-          
-          const rawResult = await prisma.$queryRawUnsafe<any[]>(`
+          const dateCondition = buildRawDateConditions(filters).dateCondition;
+          const ticketConds: Prisma.Sql[] = [
+            Prisma.sql`t."deletedAt" IS NULL`,
+            Prisma.sql`t."isActive" = true`,
+            Prisma.sql`s.status = 'EVALUATED'`,
+            Prisma.sql`t.status != 'CANCELLED'`,
+          ];
+          if (filters.bancaId) ticketConds.push(Prisma.sql`t."bancaId" = ${filters.bancaId}::uuid`);
+          if (filters.ventanaId) ticketConds.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
+          if (filters.vendedorId) ticketConds.push(Prisma.sql`t."vendedorId" = ${filters.vendedorId}::uuid`);
+          if (filters.loteriaId) ticketConds.push(Prisma.sql`t."loteriaId" = ${filters.loteriaId}::uuid`);
+          if (filters.sorteoId) ticketConds.push(Prisma.sql`t."sorteoId" = ${filters.sorteoId}::uuid`);
+          if (dateCondition) ticketConds.push(dateCondition);
+          const ticketWhere = Prisma.join(ticketConds, ' AND ');
+          const searchFilter = searchSql ? Prisma.sql`AND j.number ILIKE ${searchSql}` : Prisma.empty;
+
+          const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
             WITH filtered_tickets AS (
               SELECT t.id, t."ventanaId", t."isWinner", t.status
               FROM "Ticket" t
               INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
-              WHERE t."deletedAt" IS NULL 
-                AND t."isActive" = true
-                AND s.status = 'EVALUATED'
-                AND t.status != 'CANCELLED'
-                ${filters.bancaId ? `AND t."bancaId" = CAST('${filters.bancaId}' AS uuid)` : ''}
-                ${filters.ventanaId ? `AND t."ventanaId" = CAST('${filters.ventanaId}' AS uuid)` : ''}
-                ${filters.vendedorId ? `AND t."vendedorId" = CAST('${filters.vendedorId}' AS uuid)` : ''}
-                ${filters.loteriaId ? `AND t."loteriaId" = CAST('${filters.loteriaId}' AS uuid)` : ''}
-                ${filters.sorteoId ? `AND t."sorteoId" = CAST('${filters.sorteoId}' AS uuid)` : ''}
-                ${dateCondition ? `AND ${dateCondition.text}` : ''}
+              WHERE ${ticketWhere}
             )
-            SELECT 
+            SELECT
                 j.number as key,
                 CONCAT('Número ', j.number) as name,
                 SUM(j.amount) as "ventasTotal",
@@ -1037,11 +1083,11 @@ export const VentasService = {
             FROM "Jugada" j
             INNER JOIN filtered_tickets ft ON ft.id = j."ticketId"
             WHERE j."deletedAt" IS NULL AND j."isActive" = true
-              ${searchSql ? `AND j.number ILIKE $${(dateCondition?.values?.length || 0) + 1}` : ''}
+              ${searchFilter}
             GROUP BY j.number
-            ORDER BY ${orderBySql} ${sortOrder} NULLS LAST
+            ORDER BY ${orderBySql} ${sortOrderSql} NULLS LAST
             LIMIT ${limit}
-          `, ...(dateCondition?.values || []), ...(searchSql ? [searchSql] : []));
+          `);
 
           return rawResult.map(r => ({
             ...r,

@@ -646,11 +646,12 @@ export const TicketRepository = {
           .map(r => r.id);
 
         if (sharedRuleIds.length > 0) {
-          await tx.$queryRawUnsafe(`
-            SELECT id FROM "RestrictionRule" 
-            WHERE id IN (${sharedRuleIds.map(id => `'${id}'::uuid`).join(',')})
-            FOR UPDATE
-          `);
+          await tx.$queryRaw`
+            SELECT id FROM "RestrictionRule"
+            WHERE id IN (${Prisma.join(
+              sharedRuleIds.map(id => Prisma.sql`${id}::uuid`)
+            )})
+            FOR UPDATE`;
           
           logger.info({
             layer: "repository",

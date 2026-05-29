@@ -114,6 +114,7 @@ export const SorteoListasService = {
                           AND j2."number" = j."number" 
                           AND j2."type" = 'NUMERO'
                           AND j2."deletedAt" IS NULL
+                        ORDER BY j2."finalMultiplierX" ASC
                         LIMIT 1
                     )
                 END
