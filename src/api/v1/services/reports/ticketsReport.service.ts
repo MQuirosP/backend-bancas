@@ -137,9 +137,9 @@ export const TicketsReportService = {
       isActive: true,
       deletedAt: null,
       status: { in: ticketStatuses },
-      createdAt: {
-        gte: dateRange.from,
-        lte: dateRange.to,
+      businessDate: {
+        gte: new Date(dateRange.fromString),
+        lte: new Date(dateRange.toString),
       },
       ...(filters.ventanaId && filters.ventanaId.trim() !== '' && { ventanaId: filters.ventanaId }),
       ...(filters.vendedorId && filters.vendedorId.trim() !== '' && { vendedorId: filters.vendedorId }),
@@ -249,7 +249,7 @@ export const TicketsReportService = {
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
       AND t."status"::text IN (${Prisma.join(ticketStatuses)})
-      AND t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+      AND t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
       ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
       ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
       ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = ${filters.loteriaId}::uuid` : Prisma.empty}
@@ -561,7 +561,7 @@ export const TicketsReportService = {
         AVG(j.amount) as avg_amount
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+      WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
         AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
@@ -588,7 +588,7 @@ export const TicketsReportService = {
         COUNT(DISTINCT j."ticketId") as total_tickets
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+      WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
         AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
         AND t."isActive" = true
         AND t."deletedAt" IS NULL
@@ -617,7 +617,7 @@ export const TicketsReportService = {
           AVG(j."finalMultiplierX") as avg_multiplier
         FROM "Jugada" j
         INNER JOIN "Ticket" t ON j."ticketId" = t.id
-        WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+        WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
           AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND t."isActive" = true
           AND t."deletedAt" IS NULL
@@ -691,7 +691,7 @@ export const TicketsReportService = {
           SELECT DISTINCT j.number
           FROM "Jugada" j
           INNER JOIN "Ticket" t ON j."ticketId" = t.id
-          WHERE t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+          WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
             ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
         ),
@@ -766,7 +766,7 @@ export const TicketsReportService = {
     // DESGLOSES (breakdowns) según filtros aplicados
     // ======================================================
     const numbersBaseFilter = Prisma.sql`
-      t."createdAt" BETWEEN ${dateRange.from} AND ${dateRange.to}
+      t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
       AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
@@ -943,9 +943,9 @@ export const TicketsReportService = {
     const where: Prisma.TicketWhereInput = {
       status: TicketStatus.CANCELLED,
       // NO filtrar por deletedAt: los tickets cancelados DEBEN tener deletedAt
-      createdAt: {
-        gte: dateRange.from,
-        lte: dateRange.to,
+      businessDate: {
+        gte: new Date(dateRange.fromString),
+        lte: new Date(dateRange.toString),
       },
       ...(filters.ventanaId && filters.ventanaId.trim() !== '' && { ventanaId: filters.ventanaId }),
       ...(filters.vendedorId && filters.vendedorId.trim() !== '' && { vendedorId: filters.vendedorId }),
@@ -983,9 +983,9 @@ export const TicketsReportService = {
     // Calcular tasa de cancelación (necesitaríamos total de tickets para esto)
     const totalTicketsInPeriod = await prisma.ticket.count({
       where: {
-        createdAt: {
-          gte: dateRange.from,
-          lte: dateRange.to,
+        businessDate: {
+          gte: new Date(dateRange.fromString),
+          lte: new Date(dateRange.toString),
         },
       },
     });
@@ -1074,7 +1074,7 @@ export const TicketsReportService = {
           FROM "Ticket" t
           INNER JOIN "Ventana" v ON t."ventanaId" = v.id
           WHERE t."status"::text = 'CANCELLED'
-            AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            AND t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${cancelledEntityFilter}
           GROUP BY t."ventanaId", v.name
         ),
@@ -1131,7 +1131,7 @@ export const TicketsReportService = {
           INNER JOIN "User" u ON t."vendedorId" = u.id
           INNER JOIN "Ventana" v ON t."ventanaId" = v.id
           WHERE t."status"::text = 'CANCELLED'
-            AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            AND t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${cancelledEntityFilter}
           GROUP BY t."vendedorId", u.name, v.name
         ),
@@ -1187,7 +1187,7 @@ export const TicketsReportService = {
           FROM "Ticket" t
           INNER JOIN "Loteria" l ON t."loteriaId" = l.id
           WHERE t."status"::text = 'CANCELLED'
-            AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            AND t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${cancelledEntityFilter}
           GROUP BY t."loteriaId", l.name
         ),
@@ -1241,7 +1241,7 @@ export const TicketsReportService = {
           FROM "Ticket" t
           INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
           WHERE t."status"::text = 'CANCELLED'
-            AND t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+            AND t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${cancelledEntityFilter}
           GROUP BY t."sorteoId", s.name
         ),
