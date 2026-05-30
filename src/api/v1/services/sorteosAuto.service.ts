@@ -14,27 +14,31 @@ import { ActivityService } from '../../../core/activity.service';
  *  MEJORADO: Con reintentos automÃ¡ticos ante errores de conexiÃ³n con Supabase
  */
 async function getOrCreateConfig() {
-  //  NUEVO: Reintentos automÃ¡ticos para errores de conexiÃ³n (P1001, P1017, etc.)
-  // El pooler de Supabase puede tener problemas intermitentes de conectividad
-  let config = await withConnectionRetry(
-    () => prisma.sorteosAutoConfig.findFirst(),
+  // 1. Obtener todas las configuraciones globales ordenadas consistentemente por fecha de creación
+  let configs = await withConnectionRetry(
+    () => prisma.sorteosAutoConfig.findMany({
+      where: { bancaId: null },
+      orderBy: { createdAt: 'asc' }
+    }),
     {
       maxRetries: 3,
-      backoffMinMs: 1000, // 1 segundo inicial
-      backoffMaxMs: 5000, // mÃ¡ximo 5 segundos
-      context: 'getOrCreateConfig',
+      backoffMinMs: 1000,
+      backoffMaxMs: 5000,
+      context: 'getOrCreateConfigList',
     }
   );
   
-  if (!config) {
-    config = await withConnectionRetry(
+  // 2. Si no existe ninguna, crear una sola
+  if (configs.length === 0) {
+    const config = await withConnectionRetry(
       () =>
         prisma.sorteosAutoConfig.create({
-      data: {
-        autoOpenEnabled: false,
-        autoCreateEnabled: false,
-        autoCloseEnabled: false,
-      },
+          data: {
+            bancaId: null,
+            autoOpenEnabled: false,
+            autoCreateEnabled: false,
+            autoCloseEnabled: false,
+          },
         }),
       {
         maxRetries: 3,
@@ -48,9 +52,78 @@ async function getOrCreateConfig() {
       action: 'SORTEOS_AUTO_CONFIG_CREATED',
       payload: { configId: config.id },
     });
+    return config;
   }
   
-  return config;
+  // 3. AUTOCURACIÓN PROGRAMÁTICA: Si existen registros duplicados históricos en tu DB
+  if (configs.length > 1) {
+    logger.warn({
+      layer: 'service',
+      action: 'SORTEOS_AUTO_CONFIG_DUPLICATES_DETECTED',
+      payload: { count: configs.length },
+    });
+    
+    const primary = configs[0];
+    const duplicates = configs.slice(1);
+    
+    // Fusionar las fechas de ejecución más recientes entre todos los registros duplicados en memoria
+    let latestOpen = primary.lastOpenExecution;
+    let latestCreate = primary.lastCreateExecution;
+    let latestClose = primary.lastCloseExecution;
+    let latestOpenCount = primary.lastOpenCount;
+    let latestCreateCount = primary.lastCreateCount;
+    let latestCloseCount = primary.lastCloseCount;
+    
+    for (const dup of duplicates) {
+      if (dup.lastOpenExecution && (!latestOpen || dup.lastOpenExecution > latestOpen)) {
+        latestOpen = dup.lastOpenExecution;
+        latestOpenCount = dup.lastOpenCount;
+      }
+      if (dup.lastCreateExecution && (!latestCreate || dup.lastCreateExecution > latestCreate)) {
+        latestCreate = dup.lastCreateExecution;
+        latestCreateCount = dup.lastCreateCount;
+      }
+      if (dup.lastCloseExecution && (!latestClose || dup.lastCloseExecution > latestClose)) {
+        latestClose = dup.lastCloseExecution;
+        latestCloseCount = dup.lastCloseCount;
+      }
+    }
+    
+    // Actualizar el registro primario con la información consolidada
+    await prisma.sorteosAutoConfig.update({
+      where: { id: primary.id },
+      data: {
+        lastOpenExecution: latestOpen,
+        lastOpenCount: latestOpenCount,
+        lastCreateExecution: latestCreate,
+        lastCreateCount: latestCreateCount,
+        lastCloseExecution: latestClose,
+        lastCloseCount: latestCloseCount,
+        autoOpenEnabled: configs.some(c => c.autoOpenEnabled),
+        autoCreateEnabled: configs.some(c => c.autoCreateEnabled),
+        autoCloseEnabled: configs.some(c => c.autoCloseEnabled),
+      }
+    });
+    
+    // Eliminar programáticamente los registros duplicados huérfanos
+    const duplicateIds = duplicates.map(d => d.id);
+    await prisma.sorteosAutoConfig.deleteMany({
+      where: { id: { in: duplicateIds } }
+    });
+    
+    logger.info({
+      layer: 'service',
+      action: 'SORTEOS_AUTO_CONFIG_DEDUPLICATED',
+      payload: { primaryId: primary.id, deletedIds: duplicateIds },
+    });
+    
+    // Retornar el registro único y consolidado
+    return prisma.sorteosAutoConfig.findUniqueOrThrow({
+      where: { id: primary.id }
+    });
+  }
+  
+  return configs[0];
 }
 
 function getTodayRangeCR(): { start: Date; end: Date } {
