@@ -1323,7 +1323,7 @@ export const TicketService = {
             WHERE j2."ticketId" = t.id 
               AND j2."multiplierId" = CAST(${params.multiplierId} AS uuid)
               AND j2.type = 'NUMERO'
-              AND j2."isActive" = true 
+              ${isExcludedRequest ? Prisma.sql`AND j2."isExcluded" = true` : Prisma.sql`AND j2."isActive" = true`}
               AND j2."deletedAt" IS NULL
           )`
         : Prisma.empty;
@@ -1357,9 +1357,11 @@ export const TicketService = {
         // OPTIMIZACIÓN: Fetch total count while connection is open
         prisma.ticket.count({ where: { 
           deletedAt: null,
-          isActive: true,
+          ...(isExcludedRequest ? {} : {
+            isActive: true,
+            status: params.status ? (params.status as any) : { notIn: ["CANCELLED", "EXCLUDED"] },
+          }),
           ...(dateRange ? { businessDate: { gte: dateRange.fromBusinessDate, lte: dateRange.toBusinessDate } } : {}),
-          status: params.status ? (params.status as any) : { notIn: ["CANCELLED", "EXCLUDED"] },
           ...(params.sorteoStatus ? { sorteo: { status: params.sorteoStatus as any } } : {}),
           ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
           ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
