@@ -462,10 +462,10 @@ export const RestrictionRuleRepository = {
     }
 
     const at = params.at ?? new Date();
-    const hour = at.getHours();
+    const { hour, year, month, day } = getCRLocalComponents(at);
 
-    // Normalizar fecha para comparación (sin hora)
-    const dateOnly = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+    // Normalizar fecha para comparación (sin hora) en UTC
+    const dateOnly = new Date(Date.UTC(year, month - 1, day));
 
     // 1. Obtener candidatos (Global, Banca, Ventana, Usuario)
     const candidateRules = await withConnectionRetry(
@@ -627,8 +627,8 @@ export const RestrictionRuleRepository = {
     }
 
     const at = new Date();
-    const hour = at.getHours();
-    const dateOnly = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+    const { hour, year, month, day } = getCRLocalComponents(at);
+    const dateOnly = new Date(Date.UTC(year, month - 1, day));
 
     const timeFilters = [
       { OR: [{ appliesToDate: null }, { appliesToDate: dateOnly }] },
