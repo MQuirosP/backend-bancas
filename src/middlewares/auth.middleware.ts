@@ -53,7 +53,14 @@ async function getCachedUser(userId: string): Promise<UserSession | null> {
       () => prisma.refreshToken.findMany({
         where: {
           userId,
-          revoked: false,
+          OR: [
+            { revoked: false },
+            {
+              revoked: true,
+              revokedReason: 'rotation',
+              revokedAt: { gt: new Date(Date.now() - 60000) } // Período de gracia de 60 segundos
+            }
+          ],
           expiresAt: { gt: new Date() }
         },
         select: {

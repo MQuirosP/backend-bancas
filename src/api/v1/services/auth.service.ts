@@ -322,6 +322,10 @@ export const AuthService = {
       });
     }
 
+    // Invalida el caché de sesión de forma incondicional para asegurar que el nuevo token
+    // esté en la lista activeSessionIds en la próxima consulta
+    await CacheService.del(`auth:session:${user.id}`).catch(() => {});
+
     const accessToken = jwt.sign(
       {
         sub: user.id,
@@ -458,6 +462,15 @@ export const AuthService = {
       { context: 'authRefresh.rotateToken', maxRetries: 2 }
     );
 
+    // Invalida el caché de sesión de forma defensiva tras la rotación de tokens
+    await CacheService.del(`auth:session:${user.id}`).catch((err) => {
+      logger.warn({
+        layer: 'cache',
+        action: 'INVALIDATE_ERROR_ON_REFRESH',
+        payload: { userId: user.id, error: err.message },
+      });
+    });
+  
     // bancaId ya fue resuelto arriba para la inyección del token
 
     const accessToken = jwt.sign(

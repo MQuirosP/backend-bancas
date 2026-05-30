@@ -90,6 +90,7 @@ export async function initRedisClient(): Promise<void> {
         // Crear cliente Redis estándar con ioredis
         redisClient = new Redis(config.redis.url, {
             password: config.redis.token, // Usar REDIS_TOKEN si está disponible
+            keyPrefix: process.env.REDIS_PREFIX ?? (process.env.NODE_ENV === 'production' ? 'prod:' : 'local:'),
             connectTimeout: config.redis.connectTimeout,
             retryStrategy: (times: number) => {
                 if (times > 3) {
