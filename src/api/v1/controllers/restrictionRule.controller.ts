@@ -9,7 +9,7 @@ import * as responses from "../../../utils/responses";
 
 export const RestrictionRuleController = {
   async create(req: AuthenticatedRequest, res: Response) {
-    const rule = await RestrictionRuleService.create(req.user!, req.body);
+    const rule = await RestrictionRuleService.create(req.user!, req.body, req.bancaContext?.bancaId);
     responses.created(res, rule);
   },
 
@@ -17,7 +17,8 @@ export const RestrictionRuleController = {
     const rule = await RestrictionRuleService.update(
       req.user!,
       req.params.id,
-      req.body
+      req.body,
+      req.bancaContext?.bancaId
     );
     responses.success(res, rule);
   },
@@ -26,7 +27,8 @@ export const RestrictionRuleController = {
     const rule = await RestrictionRuleService.remove(
       req.user!,
       req.params.id,
-      req.body?.reason
+      req.body?.reason,
+      req.bancaContext?.bancaId
     );
     responses.success(res, rule);
   },
@@ -34,7 +36,8 @@ export const RestrictionRuleController = {
   async restore(req: AuthenticatedRequest, res: Response) {
     const rule = await RestrictionRuleService.restore(
       req.user!,
-      req.params.id
+      req.params.id,
+      req.bancaContext?.bancaId
     );
     responses.success(res, rule);
   },
@@ -47,8 +50,8 @@ export const RestrictionRuleController = {
   async list(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
 
-    // Si es ADMIN con banca activa, agregar filtro de bancaId
-    if (req.user!.role === 'ADMIN' && req.bancaContext?.bancaId && req.bancaContext.hasAccess) {
+    // Si es ADMIN o BANCA con banca activa, agregar filtro de bancaId
+    if ((req.user!.role === 'ADMIN' || req.user!.role === 'BANCA') && req.bancaContext?.bancaId && req.bancaContext.hasAccess) {
       query.bancaId = req.bancaContext.bancaId;
     }
 
@@ -91,7 +94,8 @@ export const RestrictionRuleController = {
   async listGrouped(req: AuthenticatedRequest, res: Response) {
     const query = req.query as any;
 
-    if (req.user!.role === 'ADMIN' && req.bancaContext?.bancaId && req.bancaContext.hasAccess) {
+    // Si es ADMIN o BANCA con banca activa, agregar filtro de bancaId
+    if ((req.user!.role === 'ADMIN' || req.user!.role === 'BANCA') && req.bancaContext?.bancaId && req.bancaContext.hasAccess) {
       query.bancaId = req.bancaContext.bancaId;
     }
 
@@ -110,7 +114,8 @@ export const RestrictionRuleController = {
     const result = await RestrictionRuleService.bulkUpdate(
       req.user!,
       ids,
-      data
+      data,
+      req.bancaContext?.bancaId
     );
     responses.success(res, result);
   },
@@ -120,7 +125,8 @@ export const RestrictionRuleController = {
     const result = await RestrictionRuleService.bulkRemove(
       req.user!,
       ids,
-      reason
+      reason,
+      req.bancaContext?.bancaId
     );
     responses.success(res, result);
   },

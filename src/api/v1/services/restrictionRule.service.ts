@@ -116,8 +116,60 @@ async function validateListeroPermissions(actor: AuthUser, data: any, existingRu
   }
 }
 
+
+/**
+ * Valida que un rol BANCA no exceda sus permisos ni su alcance.
+ */
+async function validateBancaAdminPermissions(actor: import('../../../core/types').AuthUser, data: any, contextBancaId?: string | null, existingRule?: any) {
+  if (actor.role !== 'BANCA') return;
+
+  if (!contextBancaId) {
+    throw new (require('../../../core/errors').AppError)("Contexto de banca no encontrado", 403);
+  }
+
+  // 1. Forzar/Validar que bancaId coincida
+  if (data.bancaId && data.bancaId !== contextBancaId) {
+    throw new (require('../../../core/errors').AppError)("No puedes crear o editar restricciones para otra banca", 403);
+  }
+
+  // 2. Si asigna ventana, debe pertenecer a la banca
+  if (data.ventanaId) {
+    const ventana = await (require('../../../core/prismaClient').default).ventana.findUnique({
+      where: { id: data.ventanaId },
+      select: { bancaId: true }
+    });
+    if (!ventana || ventana.bancaId !== contextBancaId) {
+      throw new (require('../../../core/errors').AppError)("La ventana indicada no pertenece a tu banca", 403);
+    }
+  }
+
+  // 3. Si asigna vendedor, debe pertenecer a una ventana de tu banca
+  if (data.userId) {
+    const user = await (require('../../../core/prismaClient').default).user.findUnique({
+      where: { id: data.userId },
+      select: { ventana: { select: { bancaId: true } } }
+    });
+    if (!user || !user.ventana || user.ventana.bancaId !== contextBancaId) {
+      throw new (require('../../../core/errors').AppError)("El vendedor indicado no pertenece a tu banca", 403);
+    }
+  }
+
+  // 4. Edición / Eliminación: la regla debe ser de su banca
+  if (existingRule) {
+     if (existingRule.bancaId && existingRule.bancaId !== contextBancaId) {
+        throw new (require('../../../core/errors').AppError)("No tienes permisos para modificar esta regla", 403);
+     }
+     if (existingRule.ventana?.bancaId && existingRule.ventana.bancaId !== contextBancaId) {
+        throw new (require('../../../core/errors').AppError)("No tienes permisos para modificar esta regla", 403);
+     }
+     if (existingRule.user?.ventana?.bancaId && existingRule.user.ventana.bancaId !== contextBancaId) {
+        throw new (require('../../../core/errors').AppError)("No tienes permisos para modificar esta regla", 403);
+     }
+  }
+}
+
 export const RestrictionRuleService = {
-  async create(actor: AuthUser, data: CreateRestrictionRuleInput) {
+  async create(actor: AuthUser, data: CreateRestrictionRuleInput, contextBancaId?: string | null) {
     const actorId = actor.id;
 
     //  NUEVO: Soporte para rol VENTANA (Listero)
@@ -127,6 +179,11 @@ export const RestrictionRuleService = {
          data.ventanaId = actor.ventanaId || undefined;
        }
        await validateListeroPermissions(actor, data);
+    } else if (actor.role === Role.BANCA) {
+      if (!data.ventanaId && !data.userId && !data.bancaId) {
+        data.bancaId = contextBancaId || undefined;
+      }
+      await validateBancaAdminPermissions(actor, data, contextBancaId);
     }
     const isLotteryRule = Boolean(data.loteriaId || data.multiplierId);
     let multiplierName = "";
@@ -282,7 +339,7 @@ export const RestrictionRuleService = {
     return createdRules;
   },
 
-  async update(actor: AuthUser, id: string, data: UpdateRestrictionRuleInput) {
+  async update(actor: AuthUser, id: string, data: UpdateRestrictionRuleInput, contextBancaId?: string | null) {
     const actorId = actor.id;
     const current = await RestrictionRuleRepository.findById(id);
     if (!current) throw new AppError("RestrictionRule not found", 404);
@@ -406,7 +463,7 @@ export const RestrictionRuleService = {
   /**
    * Actualización masiva transaccional
    */
-  async bulkUpdate(actor: AuthUser, ids: string[], data: UpdateRestrictionRuleInput) {
+  async bulkUpdate(actor: AuthUser, ids: string[], data: UpdateRestrictionRuleInput, contextBancaId?: string | null) {
     const actorId = actor.id;
     if (!ids || ids.length === 0) throw new AppError("No ids provided", 400);
 
@@ -459,7 +516,7 @@ export const RestrictionRuleService = {
   /**
    * Borrado masivo (desactivación lógica)
    */
-  async bulkRemove(actor: AuthUser, ids: string[], reason?: string) {
+  async bulkRemove(actor: AuthUser, ids: string[], reason?: string, contextBancaId?: string | null) {
     const actorId = actor.id;
     if (!ids || ids.length === 0) throw new AppError("No ids provided", 400);
 
@@ -509,7 +566,7 @@ export const RestrictionRuleService = {
     return deletedRules;
   },
 
-  async remove(actor: AuthUser, id: string, reason?: string) {
+  async remove(actor: AuthUser, id: string, reason?: string, contextBancaId?: string | null) {
     const actorId = actor.id;
     
     //  NUEVO: Soporte para rol VENTANA (Listero)
@@ -535,7 +592,7 @@ export const RestrictionRuleService = {
     return deleted;
   },
 
-  async restore(actor: AuthUser, id: string) {
+  async restore(actor: AuthUser, id: string, contextBancaId?: string | null) {
     const actorId = actor.id;
 
     //  NUEVO: Soporte para rol VENTANA (Listero)
