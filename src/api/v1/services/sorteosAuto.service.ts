@@ -1,4 +1,4 @@
-﻿// src/api/v1/services/sorteosAuto.service.ts
+// src/api/v1/services/sorteosAuto.service.ts
 import prisma from '../../../core/prismaClient';
 import { AppError } from '../../../core/errors';
 import { SorteoStatus, Prisma } from '@prisma/client';
@@ -744,9 +744,9 @@ export const SorteosAutoService = {
     }
 
     return {
-      open: buildStatus(config.lastOpenExecution, config.lastOpenCount, 25),
-      create: buildStatus(config.lastCreateExecution, config.lastCreateCount, 25),
-      close: buildStatus(config.lastCloseExecution, config.lastCloseCount, 25),
+      open: buildStatus(config.lastOpenExecution, config.lastOpenCount, 30),
+      create: buildStatus(config.lastCreateExecution, config.lastCreateCount, 30),
+      close: buildStatus(config.lastCloseExecution, config.lastCloseCount, 30),
       config: {
         autoOpenEnabled: config.autoOpenEnabled,
         autoCreateEnabled: config.autoCreateEnabled,

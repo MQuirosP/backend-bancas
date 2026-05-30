@@ -17,6 +17,9 @@
 const { Client } = require('pg');
 require('dotenv').config();
 
+// Ignorar errores de certificado self-signed de Supabase en Node.js
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 // Usar la variable de entorno, NO credenciales hardcodeadas
 const DB_URL = process.env.DATABASE_URL || process.env.DIRECT_URL;
 
