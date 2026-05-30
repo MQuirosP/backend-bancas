@@ -11,6 +11,10 @@ import { crDateService } from "../../../utils/crDateService";
 const { dateRangeUTCToCRStrings, postgresDateToCRString, isDateInCRRange } = crDateService;
 import { isExclusionListEmpty } from "../../../core/exclusionListCache";
 
+const isUuid = (val: any): boolean => {
+  return typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+};
+
 /**
  * Filtros para queries de comisiones
  */
@@ -91,8 +95,8 @@ export const CommissionsService = {
       // o cuando dimension=vendedor y vendedorId NO está especificado
       //  CRÍTICO: Verificar tanto undefined como null y cadena vacía
       const shouldGroupByDate =
-        (filters.dimension === "ventana" && (!filters.ventanaId || filters.ventanaId === "" || filters.ventanaId === null)) ||
-        (filters.dimension === "vendedor" && (!filters.vendedorId || filters.vendedorId === "" || filters.vendedorId === null));
+        (filters.dimension === "ventana" && (!filters.ventanaId || !isUuid(filters.ventanaId))) ||
+        (filters.dimension === "vendedor" && (!filters.vendedorId || !isUuid(filters.vendedorId)));
 
       //  DEBUG: Log para verificar agrupación
       logger.info({
@@ -132,7 +136,7 @@ export const CommissionsService = {
       }
 
       // Filtrar por banca activa (para ADMIN multibanca)
-      if (filters.bancaId) {
+      if (filters.bancaId && isUuid(filters.bancaId)) {
         whereConditions.push(Prisma.sql`EXISTS (
           SELECT 1 FROM "Ventana" v
           WHERE v.id = t."ventanaId"
@@ -142,17 +146,17 @@ export const CommissionsService = {
 
       // Aplicar filtros de RBAC según scope
       if (filters.dimension === "vendedor") {
-        if (filters.vendedorId) {
+        if (filters.vendedorId && isUuid(filters.vendedorId)) {
           // Filtrar por vendedor específico (ADMIN con filtro)
           whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
         }
         // Si scope=mine, el RBAC ya aplicó el filtro de vendedorId
         // También aplicar ventanaId si está presente (para filtrar vendedores de una ventana específica)
-        if (filters.ventanaId) {
+        if (filters.ventanaId && isUuid(filters.ventanaId)) {
           whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
       } else if (filters.dimension === "ventana") {
-        if (filters.ventanaId) {
+        if (filters.ventanaId && isUuid(filters.ventanaId)) {
           // Filtrar por ventana específica (ADMIN con filtro)
           whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
@@ -384,7 +388,7 @@ export const CommissionsService = {
       }
 
       // Filtrar por banca activa (para ADMIN multibanca)
-      if (filters.bancaId) {
+      if (filters.bancaId && isUuid(filters.bancaId)) {
         whereConditions.push(Prisma.sql`EXISTS (
           SELECT 1 FROM "Ventana" v
           WHERE v.id = t."ventanaId"
@@ -394,14 +398,14 @@ export const CommissionsService = {
 
       // Aplicar filtros de RBAC según dimension
       if (filters.dimension === "vendedor") {
-        if (filters.vendedorId) {
+        if (filters.vendedorId && isUuid(filters.vendedorId)) {
           whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
         }
-        if (filters.ventanaId) {
+        if (filters.ventanaId && isUuid(filters.ventanaId)) {
           whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
       } else if (filters.dimension === "ventana") {
-        if (filters.ventanaId) {
+        if (filters.ventanaId && isUuid(filters.ventanaId)) {
           whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
       }
@@ -585,27 +589,39 @@ export const CommissionsService = {
           AND s.status = 'EVALUATED'
         )`,
         Prisma.sql`t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date`,
-        Prisma.sql`t."loteriaId" = CAST(${loteriaId} AS uuid)`,
       ];
+
+      if (loteriaId && isUuid(loteriaId)) {
+        whereConditions.push(Prisma.sql`t."loteriaId" = CAST(${loteriaId} AS uuid)`);
+      }
 
       // Manejar multiplierId: "unknown" significa NULL (REVENTADO sin multiplicador)
       if (multiplierId === "unknown") {
         whereConditions.push(Prisma.sql`j."multiplierId" IS NULL`);
-      } else {
+      } else if (multiplierId && isUuid(multiplierId)) {
         whereConditions.push(Prisma.sql`j."multiplierId" = CAST(${multiplierId} AS uuid)`);
+      }
+
+      // Filtrar por banca activa (para ADMIN multibanca)
+      if (filters.bancaId && isUuid(filters.bancaId)) {
+        whereConditions.push(Prisma.sql`EXISTS (
+          SELECT 1 FROM "Ventana" v
+          WHERE v.id = t."ventanaId"
+          AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
+        )`);
       }
 
       // Aplicar filtros de RBAC según dimension
       if (filters.dimension === "vendedor") {
-        if (filters.vendedorId) {
+        if (filters.vendedorId && isUuid(filters.vendedorId)) {
           whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
         }
         // También aplicar ventanaId si está presente (para filtrar vendedores de una ventana específica)
-        if (filters.ventanaId) {
+        if (filters.ventanaId && isUuid(filters.ventanaId)) {
           whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
       } else if (filters.dimension === "ventana") {
-        if (filters.ventanaId) {
+        if (filters.ventanaId && isUuid(filters.ventanaId)) {
           whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
       }
@@ -789,9 +805,9 @@ export const CommissionsService = {
           AND t."status" != 'CANCELLED'
           AND j."isExcluded" IS FALSE
           AND j."deletedAt" IS NULL
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-          ${filters.bancaId ? Prisma.sql`AND EXISTS (
+          ${filters.ventanaId && isUuid(filters.ventanaId) ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.vendedorId && isUuid(filters.vendedorId) ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+          ${filters.bancaId && isUuid(filters.bancaId) ? Prisma.sql`AND EXISTS (
             SELECT 1 FROM "Ventana" v
             WHERE v.id = t."ventanaId"
             AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
