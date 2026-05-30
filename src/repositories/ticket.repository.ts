@@ -272,10 +272,12 @@ type RestrictionRuleWithRelations = Prisma.RestrictionRuleGetPayload<{
 }>;
 
 function isSameLocalDay(a: Date, b: Date) {
+  const crA = getCRLocalComponents(a);
+  const crB = getCRLocalComponents(b);
   return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
+    crA.year === crB.year &&
+    crA.month === crB.month &&
+    crA.day === crB.day
   );
 }
 
@@ -617,6 +619,7 @@ export const TicketRepository = {
           },
         });
 
+        const crNowHour = getCRLocalComponents(now).hour;
         const applicable: RestrictionRuleWithRelations[] = candidateRules
           .filter((r) => {
             if (
@@ -626,7 +629,7 @@ export const TicketRepository = {
               return false;
             if (
               typeof r.appliesToHour === "number" &&
-              r.appliesToHour !== now.getHours()
+              r.appliesToHour !== crNowHour
             )
               return false;
             return true;
@@ -1649,6 +1652,7 @@ export const TicketRepository = {
         }
 
         const now = new Date();
+        const crNowHour = getCRLocalComponents(now).hour;
         const applicable: RestrictionRuleWithRelations[] = candidateRules
           .filter((r) => {
             if (
@@ -1658,7 +1662,7 @@ export const TicketRepository = {
               return false;
             if (
               typeof r.appliesToHour === 'number' &&
-              r.appliesToHour !== now.getHours()
+              r.appliesToHour !== crNowHour
             )
               return false;
             return true;
@@ -2931,11 +2935,12 @@ export const TicketRepository = {
         include: { loteria: true, multiplier: true },
       });
 
+      const crNowHour = getCRLocalComponents(now).hour;
       const applicableRules = candidateRules.filter((r) => {
         if (r.multiplierId) return false;
         if (r.loteriaId && r.loteriaId !== sorteo.loteriaId) return false;
         if (r.appliesToDate && !isSameLocalDay(new Date(r.appliesToDate), now)) return false;
-        if (typeof r.appliesToHour === "number" && r.appliesToHour !== now.getHours()) return false;
+        if (typeof r.appliesToHour === "number" && r.appliesToHour !== crNowHour) return false;
         return r.maxTotal != null || r.baseAmount != null || r.salesPercentage != null;
       });
 

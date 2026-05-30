@@ -1,4 +1,5 @@
 import { Prisma, Role } from "@prisma/client";
+import { getCRLocalComponents } from '../../../utils/businessDate';
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import logger from "../../../core/logger";
@@ -998,7 +999,7 @@ export const DashboardService = {
 
     const [periodPreviousMonthBalances, accumulatedBalances] = await Promise.all([
       (async () => {
-        const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+        const firstDayOfMonth = new Date(Date.UTC(getCRLocalComponents(filters.fromDate).year, getCRLocalComponents(filters.fromDate).month - 1, 1));
         if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
           return getPreviousMonthFinalBalancesBatch(effectiveMonth, "ventana", allVentanaIds, filters.bancaId);
         }
@@ -1135,7 +1136,7 @@ export const DashboardService = {
 
     const [periodPreviousMonthBalances, accumulatedBalances] = await Promise.all([
       (async () => {
-        const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+        const firstDayOfMonth = new Date(Date.UTC(getCRLocalComponents(filters.fromDate).year, getCRLocalComponents(filters.fromDate).month - 1, 1));
         if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
           return getPreviousMonthFinalBalancesBatch(effectiveMonth, "vendedor", allVendedorIds, filters.bancaId);
         }
@@ -1280,7 +1281,7 @@ export const DashboardService = {
 
     const [periodPreviousMonthBalances, accumulatedBalances] = await Promise.all([
       (async () => {
-        const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+        const firstDayOfMonth = new Date(Date.UTC(getCRLocalComponents(filters.fromDate).year, getCRLocalComponents(filters.fromDate).month - 1, 1));
         if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
           return getPreviousMonthFinalBalancesBatch(effectiveMonth, "ventana", allVentanaIds, filters.bancaId);
         }
@@ -1418,7 +1419,7 @@ export const DashboardService = {
 
     const [periodPreviousMonthBalances, accumulatedBalances] = await Promise.all([
       (async () => {
-        const firstDayOfMonth = new Date(filters.fromDate.getFullYear(), filters.fromDate.getMonth(), 1);
+        const firstDayOfMonth = new Date(Date.UTC(getCRLocalComponents(filters.fromDate).year, getCRLocalComponents(filters.fromDate).month - 1, 1));
         if (filters.fromDate.getTime() <= firstDayOfMonth.getTime() && filters.toDate.getTime() >= firstDayOfMonth.getTime()) {
           return getPreviousMonthFinalBalancesBatch(effectiveMonth, "vendedor", allVendedorIds, filters.bancaId);
         }

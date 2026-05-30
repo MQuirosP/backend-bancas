@@ -4,15 +4,8 @@ import { validate as isUuid } from 'uuid';
 import { AccountsExportCsvService } from './accounts-export-csv.service';
 import { AccountsExportExcelService } from './accounts-export-excel.service';
 import { AccountsExportPdfService } from './accounts-export-pdf.service';
-import {
-  AccountStatementExportPayload,
-  AccountStatementExportItem,
-  AccountStatementSorteoItem,
-  AccountMovementItem,
-  AccountStatementTotals,
-  ExportFormat,
-  AccountStatementExportOptions,
-} from '../types/accounts-export.types';
+import { AccountMovementItem, AccountStatementExportItem, AccountStatementExportPayload, AccountStatementSorteoItem, ExportFormat, AccountStatementExportOptions, AccountStatementTotals } from '../types/accounts-export.types';
+import { getCRLocalComponents } from '../../../utils/businessDate';
 import { AccountsFilters, DayStatement, StatementResponse } from './accounts/accounts.types';
 import { getSorteoBreakdownBatch } from './accounts/accounts.queries';
 import { intercalateSorteosAndMovements } from './accounts/accounts.intercalate';
@@ -834,11 +827,7 @@ export class AccountsExportService {
     vendedorCode: string | null
   ): AccountStatementSorteoItem {
     const scheduledDate = new Date(sorteo.scheduledAt);
-    const crTime = new Date(
-      scheduledDate.toLocaleString('en-US', { timeZone: 'America/Costa_Rica' })
-    );
-    const hours = crTime.getHours();
-    const minutes = crTime.getMinutes();
+    const { hour: hours, minute: minutes } = getCRLocalComponents(scheduledDate);
     const ampm = hours >= 12 ? 'PM' : 'AM';
     const displayHours = hours % 12 || 12;
     const sorteoTime = `${displayHours}:${minutes.toString().padStart(2, '0')} ${ampm}`;

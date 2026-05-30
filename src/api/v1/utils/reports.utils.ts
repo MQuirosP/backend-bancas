@@ -4,6 +4,7 @@
 
 import { DateToken, DateRange } from '../types/reports.types';
 import { startOfLocalDay, addLocalDays, endOfLocalDay, nowCR } from '../../../utils/datetime';
+import { getCRLocalComponents } from '../../../utils/businessDate';
 
 /**
  * Resuelve un token de fecha a un rango de fechas en hora de Costa Rica
@@ -117,10 +118,10 @@ export function calculatePreviousPeriod(range: DateRange): DateRange {
  * Formatea una fecha a YYYY-MM-DD
  */
 function formatDateOnly(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  const { year, month, day } = getCRLocalComponents(date);
+  const monthStr = String(month).padStart(2, '0');
+  const dayStr = String(day).padStart(2, '0');
+  return `${year}-${monthStr}-${dayStr}`;
 }
 
 /**
