@@ -131,73 +131,10 @@ export const TicketService = {
     if (!actor) throw new AppError("Authenticated user not found", 401);
 
     // ─────────────────────────────────────────────────────────────────────
-    // 2. Resolver Vendedor y Ventana
+    // 2. Resolver Vendedor y Ventana (MODULARIZADO)
     // ─────────────────────────────────────────────────────────────────────
-    const requestedVendedorId: string | undefined = data?.vendedorId;
-    let effectiveVendedorId: string;
-    let ventanaId: string;
-    let vendedorToPass: any = actor;
-
-    if (requestedVendedorId && requestedVendedorId !== actor.id) {
-      if (
-        actor.role !== Role.VENDEDOR &&
-        actor.role !== Role.ADMIN &&
-        actor.role !== Role.VENTANA
-      ) {
-        throw new AppError("No tienes permisos para realizar esta acción", 403);
-      }
-
-      // OPTIMIZACIÓN: se agregan name, phone, settings al target también y se envuelve en caché
-      const target = await CacheService.wrap(
-        `user:${requestedVendedorId}`,
-        () => withConnectionRetry(
-          () => prisma.user.findUnique({
-            where: { id: requestedVendedorId },
-            select: {
-              id: true,
-              role: true,
-              ventanaId: true,
-              isActive: true,
-              commissionPolicyJson: true,
-              name: true,
-              code: true,
-              phone: true,
-              settings: true,
-            },
-          }),
-          { context: 'TicketService.create.targetVendedor' }
-        ),
-        3600,
-        [`user:${requestedVendedorId}`]
-      );
-      if (!target || !target.isActive)
-        throw new AppError("Vendedor no encontrado o inactivo", 404);
-      if (target.role !== Role.VENDEDOR)
-        throw new AppError("vendedorId debe pertenecer a un usuario con rol VENDEDOR", 400);
-      if (!target.ventanaId)
-        throw new AppError("El vendedor seleccionado no tiene Ventana asignada", 400);
-
-      if (actor.role === Role.VENTANA) {
-        if (!actor.ventanaId || actor.ventanaId !== target.ventanaId) {
-          throw new AppError("vendedorId no pertenece a tu Ventana", 403);
-        }
-      }
-
-      effectiveVendedorId = target.id;
-      ventanaId = target.ventanaId;
-      vendedorToPass = target;
-    } else {
-      if (actor.role === Role.VENDEDOR) {
-        if (!actor.ventanaId)
-          throw new AppError("El vendedor no tiene una Ventana asignada", 400);
-        effectiveVendedorId = actor.id;
-        ventanaId = actor.ventanaId;
-        // OPTIMIZACIÓN: Reutilizar el objeto 'actor' ya que tiene los campos necesarios
-        vendedorToPass = actor;
-      } else {
-        throw new AppError("vendedorId es requerido para este rol", 400);
-      }
-    }
+    const { effectiveVendedorId, ventanaId, vendedorToPass } =
+      await resolveEffectiveActor(actor, data?.vendedorId);
 
     // ─────────────────────────────────────────────────────────────────────
     // 3. Fetch Masivo Consolidado
@@ -311,45 +248,9 @@ export const TicketService = {
       throw new AppError(`Venta bloqueada: faltan ${minsLeft} min para el sorteo`, 409);
     }
 
-    // Procesamiento de jugadas
-    const jugadasIn: Array<{
-      type?: "NUMERO" | "REVENTADO";
-      number?: string;
-      reventadoNumber?: string | null;
-      amount: number;
-    }> = Array.isArray(data.jugadas) ? data.jugadas : [];
-    if (jugadasIn.length === 0)
-      throw new AppError("At least one jugada is required", 400);
-
-    // Seguridad: match Numero-Reventado
-    const numeros = new Set(
-      jugadasIn
-        .filter((j) => (j.type ?? "NUMERO") === "NUMERO")
-        .map((j) => j.number!)
-    );
-    for (const j of jugadasIn) {
-      if ((j.type ?? "NUMERO") === "REVENTADO") {
-        const target = j.reventadoNumber ?? j.number;
-        if (!target || !numeros.has(target))
-          throw new AppError(`REVENTADO requiere NUMERO para ${target}`, 400);
-      }
-    }
-
-    // Validaciones por rulesJson de la Lotería
-    const rules = (sorteo.loteria?.rulesJson ?? {}) as any;
-    if (!isWithinSalesHours(now, rules))
-      throw new AppError("Fuera del horario de ventas", 409);
-
-    const rulesCheck = validateTicketAgainstRules({
-      loteriaRules: rules,
-      jugadas: jugadasIn.map((j) => ({
-        type: (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO",
-        number: j.number ?? j.reventadoNumber ?? "",
-        amount: j.amount,
-        reventadoNumber: j.reventadoNumber ?? undefined,
-      })),
-    });
-    if (!rulesCheck.ok) throw new AppError(rulesCheck.reason, 400);
+    // Procesamiento de jugadas e integridad de tipo de apuesta (MODULARIZADO)
+    const jugadasIn: any[] = Array.isArray(data.jugadas) ? data.jugadas : [];
+    validateTicketRulesAndHours(sorteo, jugadasIn, now);
 
     // Preparar contexto de comisiones sin nuevas consultas
     const commissionContext = await commissionService.prepareContext(
@@ -363,7 +264,7 @@ export const TicketService = {
     );
 
     // Normalizar jugadas para repo
-    const normalizedJugadas = jugadasIn.map((j) => {
+    const normalizedJugadas = jugadasIn.map((j: any) => {
       const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
       const isNumero = type === "NUMERO";
       const number = isNumero ? j.number! : (j.reventadoNumber ?? j.number)!;
@@ -457,42 +358,15 @@ export const TicketService = {
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    // 5. Construir response
-    //    OPTIMIZACIÓN: ya no se hace el fetch post-transacción de vendedor
-    //    y ventana. Usamos los datos que ya están en memoria desde los
-    //    pasos 1-2 (vendedorToPass) y paso 3 (ventanaWithBanca).
-    //
-    //    Antes: 2 queries extra aquí (~200-350ms en Render)
-    //    Ahora: 0 queries — datos ya disponibles en memoria
-    // ─────────────────────────────────────────────────────────────────────
-    const sorteoWithFormattedName = {
-      ...sorteo,
-      name: formatSorteoNameWithTime(sorteo.name, sorteo.scheduledAt),
-    };
-
-    const response = {
-      ...ticket,
-      sorteo: sorteoWithFormattedName,
-      loteria: sorteo.loteria
-        ? { id: sorteo.loteria.id, name: sorteo.loteria.name }
-        : undefined,
-      vendedor: {
-        id: effectiveVendedorId,
-        ...extractPrintConfig(
-          vendedorToPass?.settings,
-          vendedorToPass?.name ?? null,
-          vendedorToPass?.phone ?? null
-        ),
-      },
-      ventana: {
-        id: ventanaId,
-        ...extractPrintConfig(
-          ventanaWithBanca?.settings,
-          ventanaWithBanca?.name ?? null,
-          ventanaWithBanca?.phone ?? null
-        ),
-      },
-    };
+    // 5. Construir response (MODULARIZADO)
+    const response = buildEnrichedResponse(
+      ticket,
+      sorteo,
+      vendedorToPass,
+      ventanaWithBanca,
+      effectiveVendedorId,
+      ventanaId
+    );
 
     // ActivityLog
     const jugadasList = (ticket as any).jugadas || [];
@@ -514,7 +388,7 @@ export const TicketService = {
         ticketNumber: ticket.ticketNumber,
         totalAmount: ticket.totalAmount,
         jugadas: jugadasCount,
-        description: `Ticket #${ticket.ticketNumber} creado por [${effectiveVendedorId}] - ${vendedorToPass?.name || 'N/A'} para ${sorteo.loteria.name} - ${sorteoWithFormattedName.name} por un monto de ₡${ticket.totalAmount.toLocaleString()}. Jugadas: [${jugadasSummary}]`,
+        description: `Ticket #${ticket.ticketNumber} creado por [${effectiveVendedorId}] - ${vendedorToPass?.name || 'N/A'} para ${sorteo.loteria.name} - ${formatSorteoNameWithTime(sorteo.name, sorteo.scheduledAt)} por un monto de ₡${ticket.totalAmount.toLocaleString()}. Jugadas: [${jugadasSummary}]`,
       },
       requestId,
       layer: "service",
@@ -2716,5 +2590,156 @@ export const TicketService = {
     });
   },
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FUNCIONES AUXILIARES DE SOPORTE PARA MODULARIZACIÓN Y LEGIBILIDAD
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function resolveEffectiveActor(
+  actor: any,
+  requestedVendedorId: string | undefined
+): Promise<{ effectiveVendedorId: string; ventanaId: string; vendedorToPass: any }> {
+  let effectiveVendedorId: string;
+  let ventanaId: string;
+  let vendedorToPass: any = actor;
+
+  if (requestedVendedorId && requestedVendedorId !== actor.id) {
+    if (
+      actor.role !== Role.VENDEDOR &&
+      actor.role !== Role.ADMIN &&
+      actor.role !== Role.VENTANA
+    ) {
+      throw new AppError("No tienes permisos para realizar esta acción", 403);
+    }
+
+    const target = await CacheService.wrap(
+      `user:${requestedVendedorId}`,
+      () => withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id: requestedVendedorId },
+          select: {
+            id: true,
+            role: true,
+            ventanaId: true,
+            isActive: true,
+            commissionPolicyJson: true,
+            name: true,
+            code: true,
+            phone: true,
+            settings: true,
+          },
+        }),
+        { context: 'TicketService.create.targetVendedor' }
+      ),
+      3600,
+      [`user:${requestedVendedorId}`]
+    );
+    if (!target || !target.isActive)
+      throw new AppError("Vendedor no encontrado o inactivo", 404);
+    if (target.role !== Role.VENDEDOR)
+      throw new AppError("vendedorId debe pertenecer a un usuario con rol VENDEDOR", 400);
+    if (!target.ventanaId)
+      throw new AppError("El vendedor seleccionado no tiene Ventana asignada", 400);
+
+    if (actor.role === Role.VENTANA) {
+      if (!actor.ventanaId || actor.ventanaId !== target.ventanaId) {
+        throw new AppError("vendedorId no pertenece a tu Ventana", 403);
+      }
+    }
+
+    effectiveVendedorId = target.id;
+    ventanaId = target.ventanaId;
+    vendedorToPass = target;
+  } else {
+    if (actor.role === Role.VENDEDOR) {
+      if (!actor.ventanaId)
+        throw new AppError("El vendedor no tiene una Ventana asignada", 400);
+      effectiveVendedorId = actor.id;
+      ventanaId = actor.ventanaId;
+      vendedorToPass = actor;
+    } else {
+      throw new AppError("vendedorId es requerido para este rol", 400);
+    }
+  }
+
+  return { effectiveVendedorId, ventanaId, vendedorToPass };
+}
+
+function validateTicketRulesAndHours(
+  sorteo: any,
+  jugadasIn: any[],
+  now: Date
+) {
+  if (jugadasIn.length === 0)
+    throw new AppError("At least one jugada is required", 400);
+
+  // Seguridad: match Numero-Reventado
+  const numeros = new Set(
+    jugadasIn
+      .filter((j) => (j.type ?? "NUMERO") === "NUMERO")
+      .map((j) => j.number!)
+  );
+  for (const j of jugadasIn) {
+    if ((j.type ?? "NUMERO") === "REVENTADO") {
+      const target = j.reventadoNumber ?? j.number;
+      if (!target || !numeros.has(target))
+        throw new AppError(`REVENTADO requiere NUMERO para ${target}`, 400);
+    }
+  }
+
+  // Validaciones por rulesJson de la Lotería
+  const rules = (sorteo.loteria?.rulesJson ?? {}) as any;
+  if (!isWithinSalesHours(now, rules))
+    throw new AppError("Fuera del horario de ventas", 409);
+
+  const rulesCheck = validateTicketAgainstRules({
+    loteriaRules: rules,
+    jugadas: jugadasIn.map((j) => ({
+      type: (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO",
+      number: j.number ?? j.reventadoNumber ?? "",
+      amount: j.amount,
+      reventadoNumber: j.reventadoNumber ?? undefined,
+    })),
+  });
+  if (!rulesCheck.ok) throw new AppError(rulesCheck.reason, 400);
+}
+
+function buildEnrichedResponse(
+  ticket: any,
+  sorteo: any,
+  vendedorToPass: any,
+  ventanaWithBanca: any,
+  effectiveVendedorId: string,
+  ventanaId: string
+) {
+  const sorteoWithFormattedName = {
+    ...sorteo,
+    name: formatSorteoNameWithTime(sorteo.name, sorteo.scheduledAt),
+  };
+
+  return {
+    ...ticket,
+    sorteo: sorteoWithFormattedName,
+    loteria: sorteo.loteria
+      ? { id: sorteo.loteria.id, name: sorteo.loteria.name }
+      : undefined,
+    vendedor: {
+      id: effectiveVendedorId,
+      ...extractPrintConfig(
+        vendedorToPass?.settings,
+        vendedorToPass?.name ?? null,
+        vendedorToPass?.phone ?? null
+      ),
+    },
+    ventana: {
+      id: ventanaId,
+      ...extractPrintConfig(
+        ventanaWithBanca?.settings,
+        ventanaWithBanca?.name ?? null,
+        ventanaWithBanca?.phone ?? null
+      ),
+    },
+  };
+}
 
 export default TicketService;

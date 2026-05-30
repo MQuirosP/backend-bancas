@@ -1525,6 +1525,16 @@ export const TicketRepository = {
         if (!ventana)
           throw new AppError('Ventana not found', 404, 'FK_VIOLATION');
 
+        // Double check sorteo status inside transaction to prevent race conditions on CLOSED sorteos
+        const actualSorteo = await tx.sorteo.findUnique({
+          where: { id: sorteoId },
+          select: { status: true }
+        });
+        if (!actualSorteo) throw new AppError('Sorteo no encontrado', 404, 'FK_VIOLATION');
+        if (actualSorteo.status === 'CLOSED') {
+          throw new AppError("No se pueden crear tickets en un sorteo cerrado", 409, 'SORTEO_CLOSED');
+        }
+
         if (sorteo.loteriaId !== loteriaId) {
           throw new AppError(
             'El sorteo no pertenece a la lotería indicada',
@@ -1682,81 +1692,10 @@ export const TicketRepository = {
           (rule) => rule.loteriaId && rule.multiplierId
         );
 
-        // 7) Validaciones de rulesJson
-        const RJ = (loteria.rulesJson ?? {}) as any;
-        const numberRange =
-          RJ.numberRange &&
-            typeof RJ.numberRange.min === 'number' &&
-            typeof RJ.numberRange.max === 'number'
-            ? { min: RJ.numberRange.min, max: RJ.numberRange.max }
-            : { min: 0, max: 99 };
+        // 7) Validaciones de rulesJson (MODULARIZADAS)
+        validateLoteriaRulesJson(loteria.rulesJson, jugadas);
 
-        const minBetAmount =
-          typeof RJ.minBetAmount === 'number' ? RJ.minBetAmount : undefined;
-        const maxBetAmount =
-          typeof RJ.maxBetAmount === 'number' ? RJ.maxBetAmount : undefined;
-        const maxNumbersPerTicket =
-          typeof RJ.maxNumbersPerTicket === 'number'
-            ? RJ.maxNumbersPerTicket
-            : undefined;
-
-        for (const j of jugadas) {
-          const num = Number(j.number);
-          if (
-            Number.isNaN(num) ||
-            num < numberRange.min ||
-            num > numberRange.max
-          ) {
-            throw new AppError(
-              `Número fuera de rango permitido (${numberRange.min}..${numberRange.max}): ${j.number}`,
-              400,
-              'NUMBER_OUT_OF_RANGE'
-            );
-          }
-          if (
-            typeof minBetAmount === 'number' &&
-            j.amount < minBetAmount
-          ) {
-            throw new AppError(
-              `Monto mínimo por jugada: ${minBetAmount}`,
-              400,
-              'BET_MIN_VIOLATION'
-            );
-          }
-          if (
-            typeof maxBetAmount === 'number' &&
-            j.amount > maxBetAmount
-          ) {
-            throw new AppError(
-              `Monto máximo por jugada: ${maxBetAmount}`,
-              400,
-              'BET_MAX_VIOLATION'
-            );
-          }
-        }
-
-        if (typeof maxNumbersPerTicket === 'number') {
-          const uniqueNumeros = new Set(
-            jugadas.filter((j) => j.type === 'NUMERO').map((j) => j.number)
-          );
-          if (uniqueNumeros.size > maxNumbersPerTicket) {
-            throw new AppError(
-              `Máximo de números por ticket: ${maxNumbersPerTicket}`,
-              400,
-              'MAX_NUMBERS_PER_TICKET'
-            );
-          }
-        }
-
-        // 8) Normalizar jugadas y obtener multiplicadores
-        const numeroMultiplierIds = Array.from(
-          new Set(
-            jugadas
-              .filter((j) => j.type === 'NUMERO' && j.multiplierId)
-              .map((j) => j.multiplierId!)
-          )
-        );
-
+        // 8) Normalizar jugadas y obtener multiplicadores (MODULARIZADAS)
         const multiplierCache = new Map<
           string,
           {
@@ -1783,129 +1722,16 @@ export const TicketRepository = {
           });
         }
 
-        const preparedJugadas = jugadas.map((j) => {
-          if (j.type === 'REVENTADO') {
-            return {
-              type: 'REVENTADO' as const,
-              number: j.number,
-              reventadoNumber: j.reventadoNumber,
-              amount: j.amount,
-              finalMultiplierX: 0,
-              multiplierId: null,
-            };
-          }
-
-          if (!j.multiplierId) {
-            throw new AppError(
-              'Debe seleccionar un multiplicador para jugadas tipo NUMERO',
-              400,
-              'MISSING_MULTIPLIER_ID'
-            );
-          }
-
-          const multiplier = multiplierCache.get(j.multiplierId);
-          if (!multiplier)
-            throw new AppError(
-              'Multiplicador inválido para jugada NUMERO',
-              400,
-              'INVALID_MULTIPLIER'
-            );
-          if (multiplier.kind !== 'NUMERO')
-            throw new AppError(
-              'Multiplicador incompatible con jugada NUMERO',
-              400,
-              'INVALID_MULTIPLIER_KIND'
-            );
-          if (multiplier.loteriaId !== loteriaId) {
-            logger.error({
-              layer: 'repository',
-              action: 'MULTIPLIER_LOTERIA_MISMATCH',
-              payload: {
-                multiplierId: j.multiplierId,
-                multiplierLoteriaId: multiplier.loteriaId,
-                requestLoteriaId: loteriaId,
-                multiplierName: multiplier.name,
-              },
-            });
-            throw new AppError(
-              'Multiplicador no pertenece a la lotería',
-              400,
-              'INVALID_MULTIPLIER_LOTERIA'
-            );
-          }
-          if (!multiplier.isActive)
-            throw new AppError('Multiplicador inactivo', 400, 'INACTIVE_MULTIPLIER');
-
-          const multiplierX = multiplier.valueX;
-          if (typeof multiplierX !== 'number' || multiplierX <= 0)
-            throw new AppError(
-              'Multiplicador con valor inválido',
-              400,
-              'INVALID_MULTIPLIER_VALUE'
-            );
-
-          const matchingRule = lotteryMultiplierRules.find(
-            (rule) =>
-              rule.loteriaId === loteriaId &&
-              rule.multiplierId === j.multiplierId
-          );
-
-          if (matchingRule) {
-            const ruleScope: 'USER' | 'VENTANA' | 'BANCA' = matchingRule.userId
-              ? 'USER'
-              : matchingRule.ventanaId
-                ? 'VENTANA'
-                : 'BANCA';
-
-            const loteriaNameForWarning =
-              matchingRule.loteria?.name ?? loteriaName;
-            const multiplierNameForWarning =
-              multiplier.name ?? matchingRule.multiplier?.name ?? null;
-            const defaultMessage = multiplier.name
-              ? `El multiplicador '${multiplier.name}' está restringido para esta lotería.`
-              : 'El multiplicador seleccionado está restringido para esta lotería.';
-            const message =
-              (matchingRule.message && matchingRule.message.trim()) ||
-              defaultMessage;
-
-            if (actorRole === Role.ADMIN) {
-              if (!warningRuleIds.has(matchingRule.id)) {
-                warnings.push({
-                  code: 'LOTTERY_MULTIPLIER_RESTRICTED',
-                  restrictedButAllowed: true,
-                  ruleId: matchingRule.id,
-                  scope: ruleScope,
-                  loteriaId,
-                  loteriaName: loteriaNameForWarning,
-                  multiplierId: j.multiplierId,
-                  multiplierName: multiplierNameForWarning,
-                  message,
-                });
-                warningRuleIds.add(matchingRule.id);
-              }
-            } else {
-              throw new AppError(message, 400, {
-                code: 'LOTTERY_MULTIPLIER_RESTRICTED',
-                ruleId: matchingRule.id,
-                scope: ruleScope,
-                loteriaId,
-                loteriaName: loteriaNameForWarning,
-                multiplierId: j.multiplierId,
-                multiplierName: multiplierNameForWarning,
-              });
-            }
-          }
-
-          return {
-            type: 'NUMERO' as const,
-            number: j.number,
-            reventadoNumber: null,
-            amount: j.amount,
-            finalMultiplierX: multiplierX,
-            multiplierId: j.multiplierId,
-            isActive: (j as any).isActive !== false,
-          };
-        });
+        const preparedJugadas = validateAndMapMultipliers(
+          jugadas,
+          multiplierCache,
+          lotteryMultiplierRules,
+          loteriaId,
+          loteriaName,
+          actorRole,
+          warnings,
+          warningRuleIds
+        );
 
         const totalAmountTx = preparedJugadas.reduce(
           (acc, j) => acc + j.amount,
@@ -2302,8 +2128,8 @@ export const TicketRepository = {
           },
         });
 
-        // 13) Jugadas en batches
-        const BATCH_SIZE = 100;
+        // 13) Jugadas en batches (optimizado a un tamaño de lote mayor)
+        const BATCH_SIZE = 500;
         for (let i = 0; i < jugadasWithCommissions.length; i += BATCH_SIZE) {
           const batch = jugadasWithCommissions.slice(i, i + BATCH_SIZE);
           await tx.jugada.createMany({
@@ -3031,6 +2857,212 @@ export const TicketRepository = {
     }, { context: 'TicketRepository.getSorteoBalances' });
   },
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FUNCIONES AUXILIARES DE SOPORTE PARA MODULARIZACIÓN Y LEGIBILIDAD
+// ─────────────────────────────────────────────────────────────────────────────
+
+function validateLoteriaRulesJson(rulesJson: any, jugadas: any[]) {
+  const RJ = (rulesJson ?? {}) as any;
+  const numberRange =
+    RJ.numberRange &&
+      typeof RJ.numberRange.min === 'number' &&
+      typeof RJ.numberRange.max === 'number'
+      ? { min: RJ.numberRange.min, max: RJ.numberRange.max }
+      : { min: 0, max: 99 };
+
+  const minBetAmount =
+    typeof RJ.minBetAmount === 'number' ? RJ.minBetAmount : undefined;
+  const maxBetAmount =
+    typeof RJ.maxBetAmount === 'number' ? RJ.maxBetAmount : undefined;
+  const maxNumbersPerTicket =
+    typeof RJ.maxNumbersPerTicket === 'number'
+      ? RJ.maxNumbersPerTicket
+      : undefined;
+
+  for (const j of jugadas) {
+    const num = Number(j.number);
+    if (
+      Number.isNaN(num) ||
+      num < numberRange.min ||
+      num > numberRange.max
+    ) {
+      throw new AppError(
+        `Número fuera de rango permitido (${numberRange.min}..${numberRange.max}): ${j.number}`,
+        400,
+        'NUMBER_OUT_OF_RANGE'
+      );
+    }
+    if (
+      typeof minBetAmount === 'number' &&
+      j.amount < minBetAmount
+    ) {
+      throw new AppError(
+        `Monto mínimo por jugada: ${minBetAmount}`,
+        400,
+        'BET_MIN_VIOLATION'
+      );
+    }
+    if (
+      typeof maxBetAmount === 'number' &&
+      j.amount > maxBetAmount
+    ) {
+      throw new AppError(
+        `Monto máximo por jugada: ${maxBetAmount}`,
+        400,
+        'BET_MAX_VIOLATION'
+      );
+    }
+  }
+
+  if (typeof maxNumbersPerTicket === 'number') {
+    const uniqueNumeros = new Set(
+      jugadas.filter((j) => j.type === 'NUMERO').map((j) => j.number)
+    );
+    if (uniqueNumeros.size > maxNumbersPerTicket) {
+      throw new AppError(
+        `Máximo de números por ticket: ${maxNumbersPerTicket}`,
+        400,
+        'MAX_NUMBERS_PER_TICKET'
+      );
+    }
+  }
+}
+
+function validateAndMapMultipliers(
+  jugadas: any[],
+  multiplierCache: Map<string, any>,
+  lotteryMultiplierRules: any[],
+  loteriaId: string,
+  loteriaName: string | null,
+  actorRole: Role,
+  warnings: TicketWarning[],
+  warningRuleIds: Set<string>
+) {
+  return jugadas.map((j) => {
+    if (j.type === 'REVENTADO') {
+      return {
+        type: 'REVENTADO' as const,
+        number: j.number,
+        reventadoNumber: j.reventadoNumber,
+        amount: j.amount,
+        finalMultiplierX: 0,
+        multiplierId: null,
+      };
+    }
+
+    if (!j.multiplierId) {
+      throw new AppError(
+        'Debe seleccionar un multiplicador para jugadas tipo NUMERO',
+        400,
+        'MISSING_MULTIPLIER_ID'
+      );
+    }
+
+    const multiplier = multiplierCache.get(j.multiplierId);
+    if (!multiplier)
+      throw new AppError(
+        'Multiplicador inválido para jugada NUMERO',
+        400,
+        'INVALID_MULTIPLIER'
+      );
+    if (multiplier.kind !== 'NUMERO')
+      throw new AppError(
+        'Multiplicador incompatible con jugada NUMERO',
+        400,
+        'INVALID_MULTIPLIER_KIND'
+      );
+    if (multiplier.loteriaId !== loteriaId) {
+      logger.error({
+        layer: 'repository',
+        action: 'MULTIPLIER_LOTERIA_MISMATCH',
+        payload: {
+          multiplierId: j.multiplierId,
+          multiplierLoteriaId: multiplier.loteriaId,
+          requestLoteriaId: loteriaId,
+          multiplierName: multiplier.name,
+        },
+      });
+      throw new AppError(
+        'Multiplicador no pertenece a la lotería',
+        400,
+        'INVALID_MULTIPLIER_LOTERIA'
+      );
+    }
+    if (!multiplier.isActive)
+      throw new AppError('Multiplicador inactivo', 400, 'INACTIVE_MULTIPLIER');
+
+    const multiplierX = multiplier.valueX;
+    if (typeof multiplierX !== 'number' || multiplierX <= 0)
+      throw new AppError(
+        'Multiplicador con valor inválido',
+        400,
+        'INVALID_MULTIPLIER_VALUE'
+      );
+
+    const matchingRule = lotteryMultiplierRules.find(
+      (rule) =>
+        rule.loteriaId === loteriaId &&
+        rule.multiplierId === j.multiplierId
+    );
+
+    if (matchingRule) {
+      const ruleScope: 'USER' | 'VENTANA' | 'BANCA' = matchingRule.userId
+        ? 'USER'
+        : matchingRule.ventanaId
+          ? 'VENTANA'
+          : 'BANCA';
+
+      const loteriaNameForWarning =
+        matchingRule.loteria?.name ?? loteriaName;
+      const multiplierNameForWarning =
+        multiplier.name ?? matchingRule.multiplier?.name ?? null;
+      const defaultMessage = multiplier.name
+        ? `El multiplicador '${multiplier.name}' está restringido para esta lotería.`
+        : 'El multiplicador seleccionado está restringido para esta lotería.';
+      const message =
+        (matchingRule.message && matchingRule.message.trim()) ||
+        defaultMessage;
+
+      if (actorRole === Role.ADMIN) {
+        if (!warningRuleIds.has(matchingRule.id)) {
+          warnings.push({
+            code: 'LOTTERY_MULTIPLIER_RESTRICTED',
+            restrictedButAllowed: true,
+            ruleId: matchingRule.id,
+            scope: ruleScope,
+            loteriaId,
+            loteriaName: loteriaNameForWarning,
+            multiplierId: j.multiplierId,
+            multiplierName: multiplierNameForWarning,
+            message,
+          });
+          warningRuleIds.add(matchingRule.id);
+        }
+      } else {
+        throw new AppError(message, 400, {
+          code: 'LOTTERY_MULTIPLIER_RESTRICTED',
+          ruleId: matchingRule.id,
+          scope: ruleScope,
+          loteriaId,
+          loteriaName: loteriaNameForWarning,
+          multiplierId: j.multiplierId,
+          multiplierName: multiplierNameForWarning,
+        });
+      }
+    }
+
+    return {
+      type: 'NUMERO' as const,
+      number: j.number,
+      reventadoNumber: null,
+      amount: j.amount,
+      finalMultiplierX: multiplierX,
+      multiplierId: j.multiplierId,
+      isActive: (j as any).isActive !== false,
+    };
+  });
+}
 
 export default TicketRepository;
 
