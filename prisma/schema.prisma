@@ -305,6 +305,7 @@ model Jugada {
   @@index([multiplierId, isExcluded])
   @@index([excludedBy], map: "idx_Jugada_excludedBy")
   @@index([bancaId])
+  @@index([ticketId])
 }
 
 model Sorteo {
