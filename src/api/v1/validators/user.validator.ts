@@ -140,6 +140,8 @@ export const listUsersQuerySchema = z
       .transform((v) => (v && v.length > 0 ? v : undefined)),
     isActive: queryBoolean,
     scope: z.string().optional(),
+    ventanaId: z.string().uuid().optional(),
+    bancaId: z.string().uuid().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
