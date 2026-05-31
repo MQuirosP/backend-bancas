@@ -1,6 +1,7 @@
 import { Router } from "express";
 import MultiplierController from "../controllers/multiplier.controller";
 import { protect } from "../../../middlewares/auth.middleware";
+import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware"; // <-- NUEVO: Middleware de contexto banca
 import { validateBody, validateParams, validateQuery } from "../../../middlewares/validate.middleware";
 import {
   CreateMultiplierSchema,
@@ -18,6 +19,7 @@ import {
 const router = Router();
 
 router.use(protect);
+router.use(bancaContextMiddleware); // <-- NUEVO: Activar contexto de banca para los endpoints de multiplicadores
 
 router.post("/", requireAdminOrBanca, validateBody(CreateMultiplierSchema), MultiplierController.create);
 

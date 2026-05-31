@@ -352,7 +352,9 @@ const SorteoRepository = {
             "finalMultiplierX" = CASE WHEN j."type" = 'REVENTADO' THEN 0 ELSE j."finalMultiplierX" END,
             "multiplierId" = CASE WHEN j."type" = 'REVENTADO' THEN NULL ELSE j."multiplierId" END
         FROM "Ticket" t
-        WHERE j."ticketId" = t.id AND t."sorteoId" = CAST(${id} AS uuid)
+        WHERE j."ticketId" = t.id 
+        AND t."sorteoId" = CAST(${id} AS uuid)
+        AND j."deletedAt" IS NULL
       `;
 
       // 4️⃣ Resetear tickets (status ACTIVE, isWinner false, montos a 0)
@@ -370,6 +372,7 @@ const SorteoRepository = {
             "paymentHistory" = NULL
         WHERE "sorteoId" = CAST(${id} AS uuid) 
         AND "status" IN ('EVALUATED', 'PAID')
+        AND "deletedAt" IS NULL
       `;
 
       const updated = await tx.sorteo.update({
@@ -459,7 +462,6 @@ const SorteoRepository = {
         },
       })
 
-      // 3.2) Marcar ganadores por NUMERO y REVENTADO en una sola operación por tabla
       // Primero: NUMERO winners
       await tx.$executeRaw`
         UPDATE "Jugada" j
@@ -474,6 +476,7 @@ const SorteoRepository = {
         AND j."type" = 'NUMERO'
         AND j."number" = ${winningNumber}
         AND j."isActive" = true
+        AND j."deletedAt" IS NULL
       `;
 
       // Segundo: REVENTADO winners (si aplica)
@@ -499,6 +502,7 @@ const SorteoRepository = {
           AND j."type" = 'REVENTADO'
           AND j."reventadoNumber" = ${winningNumber}
           AND j."isActive" = true
+          AND j."deletedAt" IS NULL
         `;
       }
 
@@ -517,8 +521,13 @@ const SorteoRepository = {
         WITH Payouts AS (
           SELECT "ticketId", SUM("payout") as total
           FROM "Jugada"
-          WHERE "ticketId" IN (SELECT id FROM "Ticket" WHERE "sorteoId" = CAST(${id} AS uuid))
+          WHERE "ticketId" IN (
+            SELECT id FROM "Ticket" 
+            WHERE "sorteoId" = CAST(${id} AS uuid)
+            AND "deletedAt" IS NULL
+          )
           AND "isWinner" = true
+          AND "deletedAt" IS NULL
           GROUP BY "ticketId"
         )
         UPDATE "Ticket" t
@@ -528,6 +537,7 @@ const SorteoRepository = {
             "totalPaid" = 0
         FROM Payouts p
         WHERE t.id = p."ticketId"
+        AND t."deletedAt" IS NULL
       `;
 
       // 3.6) Actualizar sorteo con hasWinner
@@ -535,7 +545,9 @@ const SorteoRepository = {
         UPDATE "Sorteo"
         SET "hasWinner" = EXISTS (
           SELECT 1 FROM "Ticket" 
-          WHERE "sorteoId" = CAST(${id} AS uuid) AND "isWinner" = true
+          WHERE "sorteoId" = CAST(${id} AS uuid) 
+          AND "isWinner" = true
+          AND "deletedAt" IS NULL
         )
         WHERE id = CAST(${id} AS uuid)
       `;

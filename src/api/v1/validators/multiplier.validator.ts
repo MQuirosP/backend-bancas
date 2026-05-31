@@ -31,6 +31,7 @@ export const ListMultipliersQuerySchema = z.object({
   kind: MultiplierKindSchema.optional(),
   isActive: z.coerce.boolean().optional(),
   appliesToSorteoId: z.uuid("appliesToSorteoId inválido").optional(),
+  bancaId: z.uuid("bancaId inválido").optional(), // <-- NUEVO: Permitir filtrado por banca
   q: z.string().trim().min(1).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),

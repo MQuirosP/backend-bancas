@@ -31,7 +31,9 @@ export const MultiplierController = {
   },
 
   async list(req: AuthenticatedRequest, res: Response) {
-    const bancaId = req.bancaContext?.bancaId ?? undefined;
+    const queryBancaId = req.query.bancaId as string | undefined;
+    const contextBancaId = req.bancaContext?.bancaId ?? undefined;
+    const bancaId = queryBancaId || contextBancaId;
     const r = await MultiplierService.list({ ...req.query, bancaId });
     return res.json({ success: true, data: r.data, meta: r.meta });
   },

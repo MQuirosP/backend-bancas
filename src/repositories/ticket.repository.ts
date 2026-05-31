@@ -487,7 +487,7 @@ export const TicketRepository = {
           }),
           tx.sorteo.findUnique({
             where: { id: sorteoId },
-            select: { id: true, status: true, loteriaId: true, scheduledAt: true },
+            select: { id: true, status: true, loteriaId: true, scheduledAt: true, bancaId: true },
           }),
           tx.ventana.findUnique({
             where: { id: ventanaId },
@@ -543,6 +543,15 @@ export const TicketRepository = {
             "El sorteo no pertenece a la lotería indicada",
             400,
             "SORTEO_LOTERIA_MISMATCH"
+          );
+        }
+
+        //  VALIDACIÓN DE SEGURIDAD MULTI-TENANT: El sorteo debe ser global (null) o de la misma banca que la ventana
+        if (sorteo.bancaId && sorteo.bancaId !== ventana.bancaId) {
+          throw new AppError(
+            "Operación denegada: El sorteo pertenece a otra banca",
+            403,
+            "CROSS_TENANT_FORBIDDEN"
           );
         }
 
@@ -1484,6 +1493,7 @@ export const TicketRepository = {
                   status: true,
                   loteriaId: true,
                   scheduledAt: true,
+                  bancaId: true, // <-- CRÍTICO: Cargar bancaId del sorteo para validación multi-tenant
                 },
               }),
             options?.preFetched?.ventana
@@ -1540,6 +1550,15 @@ export const TicketRepository = {
             'El sorteo no pertenece a la lotería indicada',
             400,
             'SORTEO_LOTERIA_MISMATCH'
+          );
+        }
+
+        //  VALIDACIÓN DE SEGURIDAD MULTI-TENANT: El sorteo debe ser global (null) o de la misma banca que la ventana
+        if (sorteo.bancaId && sorteo.bancaId !== ventana.bancaId) {
+          throw new AppError(
+            'Operación denegada: El sorteo pertenece a otra banca',
+            403,
+            'CROSS_TENANT_FORBIDDEN'
           );
         }
 

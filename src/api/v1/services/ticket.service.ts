@@ -153,6 +153,7 @@ export const TicketService = {
               scheduledAt: true,
               status: true,
               loteriaId: true,
+              bancaId: true, // <-- CRÍTICO: Cargar bancaId del sorteo para validación multi-tenant
               loteria: { select: { id: true, name: true, rulesJson: true } },
             },
           }),
@@ -209,6 +210,11 @@ export const TicketService = {
     }
     if (!ventanaWithBanca || !ventanaWithBanca.isActive)
       throw new AppError("La Ventana no existe o está inactiva", 404);
+
+    //  VALIDACIÓN DE SEGURIDAD MULTI-TENANT: El sorteo debe ser global (null) o de la misma banca que la ventana
+    if (sorteo.bancaId && sorteo.bancaId !== ventanaWithBanca.bancaId) {
+      throw new AppError("Operación denegada: El sorteo pertenece a otra banca", 403, "CROSS_TENANT_FORBIDDEN");
+    }
 
     // Validación defensiva de scheduledAt
     try {
