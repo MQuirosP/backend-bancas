@@ -5,7 +5,7 @@ import logger from "../core/logger";
 import { Role } from "@prisma/client";
 import { getCRLocalComponents } from "../utils/businessDate";
 import { SalesService } from "../api/v1/services/sales.service";
-import { getCachedCutoff, setCachedCutoff, invalidateRestrictionCaches, getCachedRestrictions, setCachedRestrictions } from "../utils/restrictionCache";
+import { restrictionCacheV2 } from "../utils/restrictionCacheV2";
 
 export type EffectiveRestriction = {
   source: "USER" | "VENTANA" | "BANCA" | "GLOBAL" | null;
@@ -93,7 +93,7 @@ export const RestrictionRuleRepository = {
     );
 
     //  OPTIMIZACIÓN: Invalidar caché cuando se crea una restricción
-    await invalidateRestrictionCaches({
+    await restrictionCacheV2.invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
       userId: rule.userId || undefined,
@@ -113,7 +113,7 @@ export const RestrictionRuleRepository = {
     );
 
     //  OPTIMIZACIÓN: Invalidar caché cuando se actualiza una restricción
-    await invalidateRestrictionCaches({
+    await restrictionCacheV2.invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
       userId: rule.userId || undefined,
@@ -134,7 +134,7 @@ export const RestrictionRuleRepository = {
     );
 
     //  OPTIMIZACIÓN: Invalidar caché cuando se elimina (inactiva) una restricción
-    await invalidateRestrictionCaches({
+    await restrictionCacheV2.invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
       userId: rule.userId || undefined,
@@ -154,7 +154,7 @@ export const RestrictionRuleRepository = {
     );
 
     //  OPTIMIZACIÓN: Invalidar caché cuando se restaura una restricción
-    await invalidateRestrictionCaches({
+    await restrictionCacheV2.invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
       userId: rule.userId || undefined,
@@ -457,7 +457,7 @@ export const RestrictionRuleRepository = {
     // Si hay loteriaId o multiplierId, evitamos el caché por ahora o extendemos la key.
     const isCacheable = !loteriaId && !multiplierId;
     if (isCacheable) {
-      const cached = await getCachedRestrictions({ bancaId, ventanaId, userId, number });
+      const cached = await restrictionCacheV2.getCachedRestrictions({ bancaId, ventanaId, userId, number });
       if (cached) return cached;
     }
 
@@ -591,7 +591,7 @@ export const RestrictionRuleRepository = {
     };
 
     if (isCacheable) {
-      await setCachedRestrictions({ bancaId, ventanaId, userId, number }, result);
+      await restrictionCacheV2.setCachedRestrictions({ bancaId, ventanaId, userId, number }, result);
     }
 
     return result;
@@ -621,7 +621,7 @@ export const RestrictionRuleRepository = {
     const { bancaId, ventanaId, userId, defaultCutoff = 1 } = params;
 
     // Intentar obtener de caché
-    const cached = await getCachedCutoff({ bancaId, ventanaId, userId });
+    const cached = await restrictionCacheV2.getCachedCutoff({ bancaId, ventanaId, userId });
     if (cached && typeof cached.minutes === 'number' && !isNaN(cached.minutes) && cached.minutes >= 0) {
       return cached;
     }
@@ -727,7 +727,7 @@ export const RestrictionRuleRepository = {
       },
     });
 
-    await setCachedCutoff({ bancaId, ventanaId, userId }, result);
+    await restrictionCacheV2.setCachedCutoff({ bancaId, ventanaId, userId }, result);
     return result;
   },
 };

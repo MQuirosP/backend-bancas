@@ -17,6 +17,7 @@ export class ResilienceService {
     private static prismaBreaker: CircuitBreaker;
     private static redisBreaker: CircuitBreaker;
     private static l1Cache = new Map<string, RedisL1CacheEntry>();
+    private static MAX_L1_SIZE = 1000; // Límite de seguridad para evitar fuga de memoria
     private static inflightRedisRequests = new Map<string, Promise<any>>();
     private static initialized = false;
 
@@ -126,6 +127,9 @@ export class ResilienceService {
         // 3. Ejecutar a través del Breaker
         const promise = this.redisBreaker.fire(action).then(result => {
             if (result !== undefined) {
+                if (this.l1Cache.size >= this.MAX_L1_SIZE) {
+                    this.l1Cache.clear(); // Limpiar para prevenir fuga de memoria
+                }
                 this.l1Cache.set(key, {
                     value: result,
                     expiry: Date.now() + (ttl * 1000)
