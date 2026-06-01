@@ -12,7 +12,7 @@ import { CommissionContext } from "../../../services/commission/types/Commission
 import { getExclusionWhereCondition } from "./sorteo-listas.helpers";
 import { resolveDateRange, DateRangeResolution } from "../../../utils/dateRange";
 import { UserService } from "./user.service";
-import { nowCR, validateDate, formatDateCRWithTZ } from "../../../utils/datetime";
+import { nowCR, validateDate, formatDateCRWithTZ, normalizeDateCR } from "../../../utils/datetime";
 import { getCRLocalComponents } from "../../../utils/businessDate";
 import { PDFDocument } from "pdf-lib";
 import { ConcurrencyManager } from "../../../utils/concurrency";
@@ -200,6 +200,9 @@ export const TicketService = {
     ]);
 
     if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
+    if (sorteo.scheduledAt) {
+      sorteo.scheduledAt = normalizeDateCR(sorteo.scheduledAt, 'sorteo.scheduledAt');
+    }
     if (sorteo.status === "CLOSED")
       throw new AppError("No se pueden crear tickets en un sorteo cerrado", 409);
     if (loteriaId !== sorteo.loteriaId) {
