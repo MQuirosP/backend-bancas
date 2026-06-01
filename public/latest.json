@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.10",
-  "versionCode": 16,
-  "buildNumber": 16,
+  "versionName": "1.0.11",
+  "versionCode": 17,
+  "buildNumber": 17,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
   "changelog": "Implementa historial por rango personalizado.",
-  "releasedAt": "2026-04-27T21:00:00Z",
+  "releasedAt": "2026-06-01T00:05:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "f7876b6b5bd6d258c884fef4775f837dc968a3180c67820ba8ccaef3c7296cb1"
+      "sha256": "e0201baba0e2120459b3149a48427fc6085fc02dabcdd46a4da4bfcbf40503f6"
     },
     "arm64-v8a": {
-      "sha256": "f7876b6b5bd6d258c884fef4775f837dc968a3180c67820ba8ccaef3c7296cb1"
+      "sha256": "e0201baba0e2120459b3149a48427fc6085fc02dabcdd46a4da4bfcbf40503f6"
     }
   }
 }
