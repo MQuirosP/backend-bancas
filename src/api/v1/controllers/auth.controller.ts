@@ -94,6 +94,21 @@ export const AuthController = {
           settings: true,
           platform: true,
           appVersion: true,
+          ventana: {
+            select: {
+              id: true,
+              bancaId: true,
+              name: true,
+              code: true,
+              banca: {
+                select: {
+                  id: true,
+                  name: true,
+                  code: true,
+                }
+              }
+            }
+          }
         },
       }),
       { context: 'AuthController.me.user' }
@@ -213,7 +228,18 @@ export const AuthController = {
           : u.role === Role.VENDEDOR
             ? u.ventanaId ?? null
             : null,
-      bancaId: u.bancaId,
+      bancaId: u.bancaId ?? (u as any).ventana?.bancaId ?? null,
+      ventana: (u as any).ventana ? {
+        id: (u as any).ventana.id,
+        bancaId: (u as any).ventana.bancaId,
+        name: (u as any).ventana.name,
+        code: (u as any).ventana.code,
+        banca: (u as any).ventana.banca ? {
+          id: (u as any).ventana.banca.id,
+          name: (u as any).ventana.banca.name,
+          code: (u as any).ventana.banca.code,
+        } : null
+      } : null,
       ...((userRole === Role.ADMIN || userRole === Role.BANCA) && {
         bancas,
         activeBancaId,

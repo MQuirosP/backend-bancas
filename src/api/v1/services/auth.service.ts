@@ -77,12 +77,21 @@ export const AuthService = {
   async login(
     data: LoginDTO,
     context?: RequestContext
-  ): Promise<TokenPair & { user: { id: string; username: string; email: string | null; role: Role; ventanaId: string | null; bancaId: string | null } }> {
+  ): Promise<TokenPair & { user: { id: string; username: string; email: string | null; role: Role; ventanaId: string | null; bancaId: string | null; ventana?: any } }> {
     const { username, password } = data;
     const { ipAddress, userAgent } = context || {};
 
     const user = await withConnectionRetry(
-      () => prisma.user.findUnique({ where: { username } }),
+      () => prisma.user.findUnique({
+        where: { username },
+        include: {
+          ventana: {
+            include: {
+              banca: true,
+            },
+          },
+        },
+      }),
       { context: 'auth.login' }
     );
     
@@ -375,7 +384,18 @@ export const AuthService = {
         email: user.email,
         role: user.role,
         ventanaId: user.ventanaId,
-        bancaId: user.bancaId
+        bancaId: bancaId,
+        ventana: (user as any).ventana ? {
+          id: (user as any).ventana.id,
+          bancaId: (user as any).ventana.bancaId,
+          name: (user as any).ventana.name,
+          code: (user as any).ventana.code,
+          banca: (user as any).ventana.banca ? {
+            id: (user as any).ventana.banca.id,
+            name: (user as any).ventana.banca.name,
+            code: (user as any).ventana.banca.code,
+          } : null
+        } : null
       }
     };
   },
