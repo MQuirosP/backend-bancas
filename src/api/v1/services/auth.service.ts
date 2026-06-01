@@ -200,6 +200,22 @@ export const AuthService = {
 
         const sessionLimit = userOverride?.maxSessionsPerVendedor ?? banca?.maxSessionsPerVendedor ?? 1;
 
+        // STEP 1.5: Si viene deviceId, revocar de forma preventiva sesiones previas de este usuario en este mismo dispositivo
+        if (data.deviceId) {
+          await tx.refreshToken.updateMany({
+            where: {
+              userId: user.id,
+              deviceId: data.deviceId,
+              revoked: false,
+            },
+            data: {
+              revoked: true,
+              revokedAt: new Date(),
+              revokedReason: 'new_login',
+            },
+          });
+        }
+
         // STEP 2: Obtener sesiones activas del propio VENDEDOR ordenadas por desuso (FIFO)
         const activeSessions = await tx.refreshToken.findMany({
           where: {
