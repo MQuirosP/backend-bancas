@@ -290,7 +290,8 @@ export const AuthService = {
 
     } else {
       // No-VENDEDOR: comportamiento actual sin cambios
-      if (data.deviceId) {
+      // Excluir roles ADMIN y BANCA de la revocación automática de sesiones previas en el mismo dispositivo
+      if (data.deviceId && user.role !== Role.ADMIN && user.role !== Role.BANCA) {
         const revokedCount = await prisma.refreshToken.updateMany({
           where: {
             userId: user.id,
