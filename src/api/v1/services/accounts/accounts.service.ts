@@ -839,12 +839,10 @@ export const AccountsService = {
         const mCollected = monthlyStatements.reduce((sum, s) => sum + (s.totalCollected || 0), 0);
 
         const mBalance = mSales - mPayouts - mComToUse + mPaid - mCollected;
-        // Saldo absoluto al cierre: es el remainingBalance del último día con datos reales del mes
-        //  CRÍTICO: Ignorar gap-days (días sin actividad creados para rellenar) que tienen remainingBalance
-        // arrastrado pero totalSales=0. Buscar el último día real (con ventas o liquidado).
-        // monthlyStatements está ordenado DESC (más reciente primero) gracias al sort previo.
-        const latestRealInMonth = monthlyStatements.find(s => s.totalSales > 0 || s.isSettled || s.totalPaid > 0 || s.totalCollected > 0);
-        const mRemainingBalance = latestRealInMonth ? Number(latestRealInMonth.remainingBalance || 0) : 0;
+        const latestRealInMonth = monthlyStatements.find(s => s.totalSales > 0 || s.isSettled || s.totalPaid > 0 || s.totalCollected > 0 || (s.id && !s.id.startsWith('gap-')));
+        const mRemainingBalance = latestRealInMonth 
+            ? Number(latestRealInMonth.remainingBalance || 0) 
+            : (monthlyStatements.length > 0 ? Number(monthlyStatements[0].remainingBalance || 0) : 0);
 
         const monthlyAccumulated: StatementTotals = {
             totalSales: parseFloat(mSales.toFixed(2)),

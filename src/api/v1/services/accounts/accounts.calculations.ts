@@ -3502,7 +3502,12 @@ export async function getStatementDirect(
             select: { accumulatedBalance: true },
             orderBy: { date: 'desc' },
         });
-        monthlyRemainingBalance = Number(lastStatement?.accumulatedBalance || 0);
+        if (lastStatement) {
+            monthlyRemainingBalance = Number(lastStatement.accumulatedBalance || 0);
+        } else {
+            const prev = await getPreviousMonthFinalBalance(currentMonthStr, "vendedor", undefined, vendedorId, undefined);
+            monthlyRemainingBalance = Number(prev || 0) + monthlyTotalBalance;
+        }
     } else if (dimension === "ventana" && ventanaId) {
         const lastStatement = await prisma.accountStatement.findFirst({
             where: {
@@ -3513,7 +3518,12 @@ export async function getStatementDirect(
             select: { accumulatedBalance: true },
             orderBy: { date: 'desc' },
         });
-        monthlyRemainingBalance = Number(lastStatement?.accumulatedBalance || 0);
+        if (lastStatement) {
+            monthlyRemainingBalance = Number(lastStatement.accumulatedBalance || 0);
+        } else {
+            const prev = await getPreviousMonthFinalBalance(currentMonthStr, "ventana", ventanaId, undefined, undefined);
+            monthlyRemainingBalance = Number(prev || 0) + monthlyTotalBalance;
+        }
     } else if (dimension === "banca" && bancaId) {
         const lastStatement = await prisma.accountStatement.findFirst({
             where: {
@@ -3525,7 +3535,12 @@ export async function getStatementDirect(
             select: { accumulatedBalance: true },
             orderBy: { date: 'desc' },
         });
-        monthlyRemainingBalance = Number(lastStatement?.accumulatedBalance || 0);
+        if (lastStatement) {
+            monthlyRemainingBalance = Number(lastStatement.accumulatedBalance || 0);
+        } else {
+            const prev = await getPreviousMonthFinalBalance(currentMonthStr, "banca", undefined, undefined, bancaId);
+            monthlyRemainingBalance = Number(prev || 0) + monthlyTotalBalance;
+        }
     } else if (dimension === "banca" && !bancaId) {
         // Sumar accumulatedBalance del último día de CADA banca DENTRO DEL MES
         const allBancaIds = await prisma.accountStatement.findMany({
