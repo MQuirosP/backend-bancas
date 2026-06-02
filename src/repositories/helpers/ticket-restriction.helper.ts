@@ -99,32 +99,37 @@ export async function calculateAccumulatedByNumbersAndScope(
       }
     }
 
-    //  OPTIMIZACIÓN: Query SQL que calcula todos los acumulados en una sola consulta
-    //  SEGURIDAD: Validar números antes de usar (ya validados por resolveNumbersToValidate)
-    // Construir condiciones OR para cada número (más seguro que ANY con raw)
-    const numberConditions: Prisma.Sql[] = [];
-    for (const num of numbers) {
-      // Validar que el número sea válido (solo dígitos, 0-999)
-      if (!/^\d{1,3}$/.test(num)) {
-        logger.warn({
-          layer: 'repository',
-          action: 'INVALID_NUMBER_IN_QUERY',
-          payload: { number: num, numbers },
-        });
-        continue; // Saltar números inválidos
+    //  OPTIMIZACIÓN: Si se consultan muchos números (ej. el grid completo), es mucho más rápido 
+    //  traer todos los acumulados del sorteo y mapear en memoria en vez de inyectar 200 ORs.
+    const useFullScan = numbers.length > 30;
+    let whereNumberClause = Prisma.sql``;
+
+    if (!useFullScan) {
+      const numberConditions: Prisma.Sql[] = [];
+      for (const num of numbers) {
+        // Validar que el número sea válido (solo dígitos, 0-999)
+        if (!/^\d{1,3}$/.test(num)) {
+          logger.warn({
+            layer: 'repository',
+            action: 'INVALID_NUMBER_IN_QUERY',
+            payload: { number: num, numbers },
+          });
+          continue; // Saltar números inválidos
+        }
+
+        numberConditions.push(
+          Prisma.sql`(j."number" = ${num} AND j."type" = 'NUMERO')`
+        );
+        numberConditions.push(
+          Prisma.sql`(j."reventadoNumber" = ${num} AND j."type" = 'REVENTADO')`
+        );
       }
 
-      numberConditions.push(
-        Prisma.sql`(j."number" = ${num} AND j."type" = 'NUMERO')`
-      );
-      numberConditions.push(
-        Prisma.sql`(j."reventadoNumber" = ${num} AND j."type" = 'REVENTADO')`
-      );
-    }
-
-    // Si no hay condiciones válidas, retornar map vacío
-    if (numberConditions.length === 0) {
-      return new Map();
+      // Si no hay condiciones válidas, retornar map vacío
+      if (numberConditions.length === 0) {
+        return new Map();
+      }
+      whereNumberClause = Prisma.sql`AND (${Prisma.join(numberConditions, ' OR ')})`;
     }
 
     const result = await tx.$queryRaw<Array<{ number: string; total: number }>>(
@@ -147,7 +152,7 @@ export async function calculateAccumulatedByNumbersAndScope(
           AND j."isActive" = true  --  Exclusivo activas
           AND j."deletedAt" IS NULL
           ${multiplierCondition}   --  Inyectar filtro de multiplicador
-          AND (${Prisma.join(numberConditions, ' OR ')})
+          ${whereNumberClause}
         GROUP BY COALESCE(j."number", j."reventadoNumber")
       `
     );
