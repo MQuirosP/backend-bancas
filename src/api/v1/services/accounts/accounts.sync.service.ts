@@ -23,6 +23,8 @@ import { getExcludedTicketIdsForDate } from "./accounts.calculations";
 import { intercalateSorteosAndMovements } from "./accounts.intercalate";
 import { KeyedTaskQueue } from "../../../../core/keyedTaskQueue";
 import { ConcurrencyManager } from "../../../../utils/concurrency";
+import { CierreRollupService } from "../cierre.rollup.service";
+
 
 const SYNC_BATCH_SIZE = 5;
 
@@ -512,10 +514,10 @@ export class AccountStatementSyncService {
         affectedTickets
       );
 
-      // 🔄 NUEVO: Refrescar vistas materializadas en segundo plano (fire-and-forget)
+      // 🔄 NUEVO: Refrescar vista de cuenta y actualizar tabla de rollups en segundo plano (fire-and-forget)
       Promise.all([
         prisma.$executeRawUnsafe('SELECT refresh_daily_account_summary();'),
-        prisma.$executeRawUnsafe('SELECT refresh_diario_ventas_totales();')
+        CierreRollupService.aggregateRange(dateStr, dateStr)
       ]).then(() => {
         logger.info({
           layer: "service",
