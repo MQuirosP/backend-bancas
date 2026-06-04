@@ -2241,7 +2241,9 @@ export const TicketsReportService = {
     let totalPayoutByReventado = 0;
 
     const ticketsData = tickets.map(t => {
-      totalAmountVal += t.totalAmount || 0;
+      // Sumar solo los montos apostados a las jugadas ganadoras de este ticket
+      const winningAmount = t.jugadas.reduce((sum, j) => sum + (j.amount || 0), 0);
+      totalAmountVal += winningAmount;
       totalPayoutVal += t.totalPayout || 0;
 
       // Desglose por tipo de jugada para los totales
@@ -2256,7 +2258,7 @@ export const TicketsReportService = {
       return {
         ticketNumber: t.ticketNumber,
         clienteNombre: t.clienteNombre,
-        totalAmount: t.totalAmount,
+        totalAmount: winningAmount,
         totalPayout: t.totalPayout,
         winningJugadas: t.jugadas.map(j => ({
           number: j.number,
