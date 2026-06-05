@@ -13,6 +13,7 @@ interface BalanceFromSourceParams {
     ventanaId?: string | null;
     vendedorId?: string | null;
     bancaId?: string | null;
+    ignoreReset?: boolean;
 }
 
 /**
@@ -54,13 +55,34 @@ export async function calculatePreviousMonthBalanceFromSource(
         const firstDayCRStr = `${previousYear}-${String(previousMonth).padStart(2, '0')}-01`;
         const lastDayCRStr = `${previousYear}-${String(previousMonth).padStart(2, '0')}-${String(lastDayOfPreviousMonth).padStart(2, '0')}`;
 
+        // Verificar si existe fecha de corte balanceResetAt en settings del vendedor
+        let balanceResetAtDayStr: string | null = null;
+        if (filters.vendedorId && !filters.ignoreReset) {
+            const user = await prisma.user.findUnique({
+                where: { id: filters.vendedorId },
+                select: { settings: true }
+            });
+            if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+                const balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+                balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
+            }
+        }
+
+        if (balanceResetAtDayStr && balanceResetAtDayStr > lastDayCRStr) {
+            return 0; // El reset es después de este mes, saldo anterior a reset es 0
+        }
+
+        const effectiveFirstDayCRStr = (balanceResetAtDayStr && balanceResetAtDayStr > firstDayCRStr)
+            ? balanceResetAtDayStr
+            : firstDayCRStr;
+
         // Construir condiciones WHERE para tickets
         const ticketConditions: Prisma.Sql[] = [
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
             Prisma.sql`t."status" != 'CANCELLED'`,
             Prisma.sql`EXISTS (SELECT 1 FROM "Sorteo" s WHERE s.id = t."sorteoId" AND s.status = 'EVALUATED')`,
-            Prisma.sql`t."businessDate" BETWEEN ${firstDayCRStr}::date AND ${lastDayCRStr}::date`,
+            Prisma.sql`t."businessDate" BETWEEN ${effectiveFirstDayCRStr}::date AND ${lastDayCRStr}::date`,
         ];
 
         // Excluir tickets de listas bloqueadas (solo si hay exclusiones activas)
@@ -127,7 +149,7 @@ export async function calculatePreviousMonthBalanceFromSource(
         // 4. Obtener pagos y cobros del mes anterior
         const paymentsWhere: Prisma.AccountPaymentWhereInput = {
             date: {
-                gte: new Date(firstDayCRStr + "T00:00:00.000Z"),
+                gte: new Date(effectiveFirstDayCRStr + "T00:00:00.000Z"),
                 lte: new Date(lastDayCRStr + "T23:59:59.999Z"),
             },
             isReversed: false,
@@ -183,7 +205,8 @@ export async function getPreviousMonthFinalBalance(
     dimension: "banca" | "ventana" | "vendedor",
     ventanaId?: string | null,
     vendedorId?: string | null,
-    bancaId?: string | null
+    bancaId?: string | null,
+    ignoreReset?: boolean
 ): Promise<number> {
     try {
         if (!effectiveMonth || typeof effectiveMonth !== 'string' || !effectiveMonth.includes('-')) {
@@ -200,8 +223,24 @@ export async function getPreviousMonthFinalBalance(
         // Priorizar accumulatedBalance del último día disponible ANTES del mes actual
         //  MEJORA: Buscar el último statement histórico antes del mes actual, no solo del mes inmediatamente anterior
         let isConsolidated = false;
+
+        let balanceResetAtDayStr: string | null = null;
+        if (vendedorId && !ignoreReset) {
+            const user = await prisma.user.findUnique({
+                where: { id: vendedorId },
+                select: { settings: true }
+            });
+            if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+                const balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+                balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
+            }
+        }
+
         const where: Prisma.AccountStatementWhereInput = {
-            date: { lt: firstDayOfCurrentMonth }, // Buscar cualquier statement anterior al inicio del mes actual
+            date: {
+                lt: firstDayOfCurrentMonth,
+                ...(balanceResetAtDayStr ? { gte: new Date(balanceResetAtDayStr + "T00:00:00Z") } : {})
+            }, // Buscar cualquier statement anterior al inicio del mes actual respetando la fecha de corte
         };
 
         if (dimension === "vendedor") {

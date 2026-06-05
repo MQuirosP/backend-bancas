@@ -204,6 +204,7 @@ export const AccountsController = {
           vendedorId,
           sort: sort || "desc",
           userRole: user.role, //  CRÍTICO: Pasar rol del usuario
+          ignoreReset: req.query.ignoreReset === 'true',
         };
         const result = await AccountsService.getStatement(filters) as StatementResponse;
 
@@ -261,6 +262,7 @@ export const AccountsController = {
         bancaId: effectiveFilters.bancaId || bancaId || null, //  CRÍTICO: Usar bancaId del query si no está en effectiveFilters
         sort: sort || "desc",
         userRole: user.role, //  CRÍTICO: Pasar rol del usuario para calcular balance correctamente
+        ignoreReset: req.query.ignoreReset === 'true',
       };
 
       const result = await AccountsService.getStatement(filters) as StatementResponse;
@@ -1218,6 +1220,108 @@ export const AccountsController = {
     res.setHeader("Content-Type", mimeType);
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.send(buffer);
+  },
+
+  /**
+   * POST /api/v1/accounts/reset-balance
+   * Resetea el saldo de un vendedor (Borrón y cuenta nueva) guardando la fecha de corte en sus settings
+   */
+  async resetBalance(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+
+    const { vendedorId } = req.body;
+    if (!vendedorId) {
+      throw new AppError("El ID del vendedor es requerido", 400, "MISSING_VENDEDOR_ID");
+    }
+
+    // Obtener el vendedor
+    const vendedor = await prisma.user.findUnique({
+      where: { id: vendedorId },
+      select: {
+        id: true,
+        role: true,
+        settings: true,
+        ventana: { select: { bancaId: true } },
+      },
+    });
+
+    if (!vendedor || vendedor.role !== Role.VENDEDOR) {
+      throw new AppError("Vendedor no encontrado o no tiene rol VENDEDOR", 404, "VENDEDOR_NOT_FOUND");
+    }
+
+    // Validar permisos según rol del usuario autenticado
+    const user = req.user;
+    if (user.role === Role.BANCA) {
+      const activeBancaId = getActiveBancaId(req);
+      if (!activeBancaId || vendedor.ventana?.bancaId !== activeBancaId) {
+        throw new AppError("No tienes permiso para gestionar este vendedor en esta banca", 403, "FORBIDDEN");
+      }
+    }
+
+    // Obtener la fecha y hora actuales en Costa Rica
+    const { crDateService } = await import("../../../utils/crDateService");
+    const now = new Date();
+    const todayCRStr = crDateService.dateUTCToCRString(now);
+
+    const { revert } = req.body;
+
+    // Guardar o eliminar el balanceResetAt en settings
+    const currentSettings = (vendedor.settings as Record<string, any>) || {};
+    let updatedSettings: Record<string, any>;
+    if (revert) {
+      const { balanceResetAt, ...rest } = currentSettings;
+      updatedSettings = rest;
+    } else {
+      updatedSettings = {
+        ...currentSettings,
+        balanceResetAt: now.toISOString(),
+      };
+    }
+
+    await prisma.user.update({
+      where: { id: vendedorId },
+      data: { settings: updatedSettings },
+    });
+
+    // Invalidar el caché del estado de cuenta para el vendedor a partir de hoy
+    const { invalidateAccountStatementCache } = await import("../../../utils/accountStatementCache");
+    await invalidateAccountStatementCache({
+      date: todayCRStr,
+      vendedorId: vendedor.id,
+    });
+
+    // Forzar la resincronización del día de hoy
+    try {
+      const { AccountStatementSyncService } = await import("../services/accounts/accounts.sync.service");
+      const [year, month, day] = todayCRStr.split("-").map(Number);
+      const dateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+      await AccountStatementSyncService.syncDayStatement(dateUTC, "vendedor", vendedor.id, { force: true });
+    } catch (syncErr: any) {
+      logger.error({
+        layer: "controller",
+        action: "RESET_BALANCE_SYNC_ERROR",
+        payload: { vendedorId, error: syncErr.message }
+      });
+    }
+
+    // Registrar actividad de auditoría
+    await ActivityService.log({
+      userId: user.id,
+      action: ActivityType.USER_UPDATE,
+      targetType: "USER",
+      targetId: vendedorId,
+      details: {
+        action: revert ? "REVERT_RESET_BALANCE" : "RESET_BALANCE",
+        balanceResetAt: updatedSettings.balanceResetAt || null,
+      },
+      layer: "controller",
+      requestId: req.requestId,
+    });
+
+    return success(res, {
+      success: true,
+      balanceResetAt: updatedSettings.balanceResetAt || null,
+    });
   },
 };
 

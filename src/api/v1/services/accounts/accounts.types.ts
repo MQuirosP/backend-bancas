@@ -19,6 +19,7 @@ export interface AccountsFilters {
     bancaId?: string; //  NUEVO: Filtro opcional por banca (puede combinarse con ventanaId/vendedorId)
     sort?: "asc" | "desc";
     userRole?: Role; //  CRÍTICO: Rol del usuario para calcular balance correctamente
+    ignoreReset?: boolean; //  NUEVO: Si true, ignora el corte de deuda del vendedor (solo admin/banca/listero)
 }
 
 /**

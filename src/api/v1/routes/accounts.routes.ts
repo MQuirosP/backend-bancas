@@ -65,6 +65,10 @@ router.delete("/statement/:id", AccountsController.deleteStatement);
 // GET /accounts/balance/current
 router.get("/balance/current", validateGetCurrentBalanceQuery, AccountsController.getCurrentBalance);
 
+// 8) Cancelar deuda (Borrón y cuenta nueva - solo ADMIN y BANCA)
+// POST /accounts/reset-balance
+router.post("/reset-balance", restrictTo(Role.ADMIN, Role.BANCA), AccountsController.resetBalance);
+
 // 7) Exportar estados de cuenta (CSV, Excel, PDF)
 // GET /accounts/export
 router.get("/export", exportLimiter, validateAccountStatementExportQuery, AccountsController.export);

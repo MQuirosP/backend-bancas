@@ -644,6 +644,21 @@ export const UserService = {
       await CacheService.del(`auth:session:${id}`); // Fuerza invalidación directa de L1 y L2 para la sesión
     }
 
+    // Si cambió la banca/ventana del vendedor, invalidar también su caché de estados de cuenta
+    // para que se muestre el historial completo correctamente en la nueva banca
+    const isBancaTransfer = toUpdate.ventanaId !== undefined || toUpdate.bancaId !== undefined;
+    if (isBancaTransfer && (current.role === 'VENDEDOR' || (toUpdate.role ?? current.role) === 'VENDEDOR')) {
+      try {
+        const { CacheService: CS } = await import('../../../core/cache.service');
+        // Invalidar todos los statement caches que tengan el vendedorId
+        await CS.delPattern(`account:statement:*:*:*:*:*:*:*:${id}:*`);
+        await CS.delPattern(`account:day:*:*:*:*:vendedor:*:${id}:*`);
+      } catch (cacheErr) {
+        // No crítico: el TTL del caché lo resolverá automáticamente
+        logger.warn({ layer: 'service', action: 'CACHE_INVALIDATE_STATEMENT_WARN', userId: id, meta: { error: (cacheErr as Error).message } });
+      }
+    }
+
     // Respuesta coherente (incluye username)
     const result = await withConnectionRetry(
       () => prisma.user.findUnique({

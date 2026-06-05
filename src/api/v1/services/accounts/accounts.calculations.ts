@@ -711,39 +711,37 @@ export async function getStatementDirect(
     userRole: Role = Role.ADMIN,
     sort: "asc" | "desc" = "desc"
 ): Promise<StatementResponse> {
+    // Verificar si existe fecha de corte balanceResetAt en settings del vendedor
+    let balanceResetAtDayStr: string | null = null;
+    if (vendedorId && !filters.ignoreReset) {
+        const user = await prisma.user.findUnique({
+            where: { id: vendedorId },
+            select: { settings: true }
+        });
+        if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+            const balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+            balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
+        }
+    }
+
+    let effectiveStartDate = startDate;
+    if (balanceResetAtDayStr) {
+        const resetDate = new Date(balanceResetAtDayStr + "T00:00:00Z");
+        if (effectiveStartDate < resetDate) {
+            effectiveStartDate = resetDate;
+        }
+    }
+
     //  CORRECCIÓN: Usar servicio centralizado para conversión de fechas
-    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(startDate, endDate);
+    const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(effectiveStartDate, endDate);
 
     //  VALIDACIÓN DEFENSIVA: Asegurar que las fechas convertidas sean válidas
     if (!startDateCRStr || !endDateCRStr) {
-        // logger.error({
-        //     layer: "service",
-        //     action: "GET_STATEMENT_DIRECT_INVALID_DATE_STRINGS",
-        //     payload: {
-        //         startDate,
-        //         endDate,
-        //         startDateCRStr,
-        //         endDateCRStr,
-        //         note: "Date conversion returned empty string",
-        //     },
-        // });
         throw new Error("Error converting dates to CR timezone strings");
     }
 
     //  CRÍTICO: Validar que effectiveMonth sea un string válido
     if (!effectiveMonth || typeof effectiveMonth !== 'string' || !effectiveMonth.includes('-')) {
-        // logger.error({
-        //     layer: "service",
-        //     action: "GET_STATEMENT_DIRECT_INVALID_MONTH",
-        //     payload: {
-        //         effectiveMonth,
-        //         dimension,
-        //         ventanaId,
-        //         vendedorId,
-        //         bancaId,
-        //         note: "effectiveMonth is invalid, cannot proceed",
-        //     },
-        // });
         throw new Error(`effectiveMonth debe ser un string en formato YYYY-MM, recibido: ${effectiveMonth}`);
     }
 
@@ -754,7 +752,15 @@ export async function getStatementDirect(
         throw new Error(`effectiveMonth inválido para split: ${effectiveMonth}`);
     }
     const [yearForMonth, monthForMonth] = effectiveMonth.split("-").map(Number);
-    const monthStartDateForQuery = new Date(Date.UTC(yearForMonth, monthForMonth - 1, 1));
+    let monthStartDateForQuery = new Date(Date.UTC(yearForMonth, monthForMonth - 1, 1));
+    
+    if (balanceResetAtDayStr) {
+        const resetDate = new Date(balanceResetAtDayStr + "T00:00:00Z");
+        if (monthStartDateForQuery < resetDate) {
+            monthStartDateForQuery = resetDate;
+        }
+    }
+    
     const monthStartDateCRStrForQuery = crDateService.dateUTCToCRString(monthStartDateForQuery);
     // Helper: primer día del mes efectivo en formato YYYY-MM-DD
     const firstDayOfMonthStr = `${yearForMonth}-${String(monthForMonth).padStart(2, '0')}-01`;
@@ -1266,14 +1272,19 @@ export async function getStatementDirect(
     //  CRÍTICO: Asegurar que el primer día tenga una entrada en byDateAndDimension si hay movimiento especial
     //  CORRECCIÓN: Usar la misma clave groupKey que se usa para los tickets para evitar duplicación
     {
+        // Clave del día de apertura (normalmente el 01 del mes, o el reset day)
+        const openingDayStr = (balanceResetAtDayStr && balanceResetAtDayStr > firstDayOfOpeningMonthStr)
+            ? balanceResetAtDayStr
+            : firstDayOfOpeningMonthStr;
+
         // Calcular la misma clave que se usaría para tickets en ese día (primer día del mes objetivo)
         const firstDayGroupKey = shouldGroupByDate
-            ? firstDayOfOpeningMonthStr // Solo fecha cuando hay agrupación
+            ? openingDayStr // Solo fecha cuando hay agrupación
             : (dimension === "banca"
-                ? `${firstDayOfOpeningMonthStr}_${bancaId || 'null'}`
+                ? `${openingDayStr}_${bancaId || 'null'}`
                 : dimension === "ventana"
-                    ? `${firstDayOfOpeningMonthStr}_${ventanaId || 'null'}`
-                    : `${firstDayOfOpeningMonthStr}_${vendedorId || 'null'}`);
+                    ? `${openingDayStr}_${ventanaId || 'null'}`
+                    : `${openingDayStr}_${vendedorId || 'null'}`);
 
         if (!byDateAndDimension.has(firstDayGroupKey)) {
             // Crear entrada vacía para el primer día si no existe (para que el movimiento especial se muestre)
@@ -1342,6 +1353,16 @@ export async function getStatementDirect(
                     commissionVendedor: 0,
                     payoutTicketsCount: 0, //  OPTIMIZACIÓN: Contador en lugar de Set
                 });
+            }
+        }
+    }
+
+    // Eliminar entradas del mapa antes de la fecha de corte (si aplica)
+    if (balanceResetAtDayStr) {
+        for (const key of byDateAndDimension.keys()) {
+            const dateStr = shouldGroupByDate ? key : key.split("_")[0];
+            if (dateStr < balanceResetAtDayStr) {
+                byDateAndDimension.delete(key);
             }
         }
     }
@@ -2250,7 +2271,10 @@ export async function getStatementDirect(
                 //  NUEVO: Usar mapa simple de entityId para carry-over robusto
                 const runningValue = runningAccumulatedByEntity.get(entityId);
 
-                if (runningValue !== undefined && runningValue !== null && !previousDateIsDifferentMonth) {
+                if (balanceResetAtDayStr && date === balanceResetAtDayStr) {
+                    // Si es el día del reset, el saldo inicial acumulado empieza en 0
+                    initialAccumulated = 0;
+                } else if (runningValue !== undefined && runningValue !== null && !previousDateIsDifferentMonth) {
                     // Si ya calculamos algo en esta ejecución para esta entidad, usarlo (MÁS CONFIABLE)
                     initialAccumulated = runningValue;
                 } else if (previousDateIsDifferentMonth || runningValue === undefined) {

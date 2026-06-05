@@ -18,6 +18,7 @@ export const GetStatementQuerySchema = z
     ventanaId: z.string().uuid().optional(),
     vendedorId: z.string().uuid().optional(),
     sort: z.enum(["asc", "desc"]).optional().default("desc"),
+    ignoreReset: z.string().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
@@ -177,7 +178,7 @@ export const AccountStatementExportQuerySchema = z
     includeBreakdown: z.coerce.boolean().optional().default(true),
     includeMovements: z.coerce.boolean().optional().default(true),
     sort: z.enum(["asc", "desc"]).optional().default("desc"),
-
+    ignoreReset: z.string().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()

@@ -109,11 +109,9 @@ export class AccountStatementSyncService {
     let finalBancaId = bancaId;
 
     if (!finalVentanaId && vendedorId) {
-      const vendedor = await prisma.user.findUnique({
-        where: { id: vendedorId },
-        select: { ventanaId: true },
-      });
-      finalVentanaId = vendedor?.ventanaId || undefined;
+      const resolved = await this.resolveHistoricalVentanaAndBanca(vendedorId, date);
+      finalVentanaId = resolved.ventanaId;
+      finalBancaId = resolved.bancaId;
     }
 
     if (!finalBancaId && finalVentanaId) {
@@ -126,13 +124,22 @@ export class AccountStatementSyncService {
 
     // 1. Fase de Cómputo (FUERA de transacción)
     // Validación inicial mínima para early exit (opcional, sin bloqueo)
-    if (!options?.force) {
-      const exists = await prisma.accountStatement.findFirst({
-        where: dimension === "vendedor" ? { date, vendedorId } : dimension === "ventana" ? { date, ventanaId: finalVentanaId, vendedorId: null } : { date, bancaId: finalBancaId, ventanaId: null, vendedorId: null },
-        select: { id: true }
+    let balanceResetAtDayStr: string | null = null;
+    let balanceResetAt: Date | null = null;
+    if (vendedorId) {
+      const user = await prisma.user.findUnique({
+        where: { id: vendedorId },
+        select: { settings: true }
       });
-      if (!exists) return;
+      if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+        balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+        balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
+      }
     }
+
+    const isResetDayOrAfter = balanceResetAtDayStr && dateStrCR >= balanceResetAtDayStr;
+    const ticketFilterAddon = (isResetDayOrAfter && balanceResetAt) ? { createdAt: { gte: balanceResetAt } } : {};
+    const paymentFilterAddon = (isResetDayOrAfter && balanceResetAt) ? { createdAt: { gte: balanceResetAt } } : {};
 
     const dateFilter = buildTicketDateFilter(date);
     const excludedTicketIds = await getExcludedTicketIdsForDate(date);
@@ -141,6 +148,7 @@ export class AccountStatementSyncService {
     const tickets = await prisma.ticket.findMany({
       where: {
         ...dateFilter,
+        ...ticketFilterAddon,
         deletedAt: null,
         isActive: true,
         status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
@@ -156,6 +164,7 @@ export class AccountStatementSyncService {
     const ticketsWithWinningJugadas = await prisma.ticket.findMany({
       where: {
         ...dateFilter,
+        ...ticketFilterAddon,
         deletedAt: null,
         isActive: true,
         status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
@@ -172,6 +181,7 @@ export class AccountStatementSyncService {
     const ticketsForCommissions = await prisma.ticket.findMany({
       where: {
         ...dateFilter,
+        ...ticketFilterAddon,
         deletedAt: null,
         isActive: true,
         status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
@@ -206,6 +216,7 @@ export class AccountStatementSyncService {
       prisma.accountPayment.aggregate({
         where: {
           date,
+          ...paymentFilterAddon,
           vendedorId: vendedorId || null,
           // Si es dimensión vendedor, no filtramos por ventanaId (incluye pagos con/sin ventana)
           // Si es dimensión ventana, buscamos solo los de la ventana que NO son de un vendedor
@@ -222,6 +233,7 @@ export class AccountStatementSyncService {
       prisma.accountPayment.aggregate({
         where: {
           date,
+          ...paymentFilterAddon,
           vendedorId: vendedorId || null,
           // Si es dimensión vendedor, no filtramos por ventanaId (incluye pagos con/sin ventana)
           // Si es dimensión ventana, buscamos solo los de la ventana que NO son de un vendedor
@@ -242,12 +254,20 @@ export class AccountStatementSyncService {
     const balance = totalSales - totalPayouts - (dimension === "vendedor" ? vendedorCommission : listeroCommission);
 
     let previousDayAccumulated = 0;
-    if (day === 1) {
+    const dateStr = crDateService.dateUTCToCRString(date);
+
+    if (balanceResetAtDayStr && dateStr === balanceResetAtDayStr) {
+      previousDayAccumulated = 0;
+    } else if (day === 1) {
       previousDayAccumulated = await getPreviousMonthFinalBalance(monthStr, dimension, ventanaId || undefined, vendedorId || undefined, bancaId || undefined);
     } else {
+      const gteDate = (balanceResetAtDayStr && balanceResetAtDayStr >= `${year}-${String(month).padStart(2, '0')}-01`)
+        ? new Date(balanceResetAtDayStr + "T00:00:00Z")
+        : new Date(Date.UTC(year, month - 1, 1));
+
       const prevStmt = await prisma.accountStatement.findFirst({
         where: {
-          date: { lt: date, gte: new Date(Date.UTC(year, month - 1, 1)) },
+          date: { lt: date, gte: gteDate },
           ...(vendedorId ? { vendedorId } : dimension === "ventana" ? { ventanaId, vendedorId: null } : { bancaId, ventanaId: null, vendedorId: null })
         },
         orderBy: { date: 'desc' },
@@ -255,7 +275,11 @@ export class AccountStatementSyncService {
       });
       previousDayAccumulated = Number(prevStmt?.remainingBalance || prevStmt?.accumulatedBalance || 0);
       if (!prevStmt) {
-        previousDayAccumulated = await getPreviousMonthFinalBalance(monthStr, dimension, ventanaId || undefined, vendedorId || undefined, bancaId || undefined);
+        if (balanceResetAtDayStr && dateStr > balanceResetAtDayStr) {
+          previousDayAccumulated = 0;
+        } else {
+          previousDayAccumulated = await getPreviousMonthFinalBalance(monthStr, dimension, ventanaId || undefined, vendedorId || undefined, bancaId || undefined);
+        }
       }
     }
 
@@ -371,8 +395,13 @@ export class AccountStatementSyncService {
       let vendedorId: string | undefined, ventanaId: string | undefined, bancaId: string | undefined;
       if (dimension === 'vendedor') {
         vendedorId = entityId;
-        const v = await prisma.user.findUnique({ where: { id: entityId }, select: { ventanaId: true } });
-        ventanaId = v?.ventanaId || undefined;
+        if (vendedorId) {
+          const [year, month, day] = dateStr.split('-').map(Number);
+          const dateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+          const resolved = await this.resolveHistoricalVentanaAndBanca(vendedorId, dateUTC);
+          ventanaId = resolved.ventanaId;
+          bancaId = resolved.bancaId;
+        }
       } else if (dimension === 'ventana') ventanaId = entityId;
       else bancaId = entityId;
 
@@ -623,13 +652,31 @@ export class AccountStatementSyncService {
 
     if (!existingStmt) return;
 
+    let balanceResetAtDayStr: string | null = null;
+    if (dimension === 'vendedor' && entityId) {
+      const user = await prisma.user.findUnique({
+        where: { id: entityId },
+        select: { settings: true }
+      });
+      if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+        const balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+        balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
+      }
+    }
+
     let previousDayAccumulated = 0;
     const isFirstDayOfMonth = day === 1;
 
-    if (isFirstDayOfMonth) {
+    if (balanceResetAtDayStr && dateStr === balanceResetAtDayStr) {
+      previousDayAccumulated = 0;
+    } else if (isFirstDayOfMonth) {
       previousDayAccumulated = Number(await getPreviousMonthFinalBalance(monthStr, dimension, dimension === 'ventana' ? entityId : undefined, dimension === 'vendedor' ? entityId : undefined, dimension === 'banca' ? entityId : undefined)) || 0;
     } else {
-      const previousCriteria: any = { date: { lt: dateUTC, gte: new Date(Date.UTC(year, month - 1, 1)) } };
+      const gteDate = (balanceResetAtDayStr && balanceResetAtDayStr >= `${year}-${String(month).padStart(2, '0')}-01`)
+        ? new Date(balanceResetAtDayStr + "T00:00:00Z")
+        : new Date(Date.UTC(year, month - 1, 1));
+
+      const previousCriteria: any = { date: { lt: dateUTC, gte: gteDate } };
       if (dimension === 'vendedor') previousCriteria.vendedorId = entityId;
       else if (dimension === 'ventana') { previousCriteria.ventanaId = entityId; previousCriteria.vendedorId = null; }
       else if (dimension === 'banca') { previousCriteria.bancaId = entityId; previousCriteria.ventanaId = null; previousCriteria.vendedorId = null; }
@@ -643,7 +690,11 @@ export class AccountStatementSyncService {
       if (previousStatement) {
         previousDayAccumulated = Number(previousStatement.remainingBalance) || Number(previousStatement.accumulatedBalance) || 0;
       } else {
-        previousDayAccumulated = Number(await getPreviousMonthFinalBalance(monthStr, dimension, dimension === 'ventana' ? entityId : undefined, dimension === 'vendedor' ? entityId : undefined, dimension === 'banca' ? entityId : undefined)) || 0;
+        if (balanceResetAtDayStr && dateStr > balanceResetAtDayStr) {
+          previousDayAccumulated = 0;
+        } else {
+          previousDayAccumulated = Number(await getPreviousMonthFinalBalance(monthStr, dimension, dimension === 'ventana' ? entityId : undefined, dimension === 'vendedor' ? entityId : undefined, dimension === 'banca' ? entityId : undefined)) || 0;
+        }
       }
     }
 
@@ -775,6 +826,86 @@ export class AccountStatementSyncService {
         });
       }
     }
+  }
+
+  /**
+   * Resuelve la ventanaId y bancaId históricas de un vendedor para una fecha específica.
+   */
+  private static async resolveHistoricalVentanaAndBanca(
+    vendedorId: string,
+    date: Date
+  ): Promise<{ ventanaId?: string; bancaId?: string }> {
+    // 1. Intentar desde tiquetes del día
+    const ticketOnDate = await prisma.ticket.findFirst({
+      where: { vendedorId, businessDate: date, deletedAt: null },
+      select: { ventanaId: true, bancaId: true }
+    });
+
+    if (ticketOnDate) {
+      return {
+        ventanaId: ticketOnDate.ventanaId || undefined,
+        bancaId: ticketOnDate.bancaId || undefined,
+      };
+    }
+
+    // 2. Intentar desde pagos del día
+    const paymentOnDate = await prisma.accountPayment.findFirst({
+      where: { vendedorId, date, isReversed: false },
+      select: { ventanaId: true, bancaId: true }
+    });
+
+    if (paymentOnDate) {
+      return {
+        ventanaId: paymentOnDate.ventanaId || undefined,
+        bancaId: paymentOnDate.bancaId || undefined,
+      };
+    }
+
+    // 3. Intentar desde registro de cuenta actual
+    const existingStmt = await prisma.accountStatement.findFirst({
+      where: { date, vendedorId },
+      select: { ventanaId: true, bancaId: true }
+    });
+
+    if (existingStmt) {
+      return {
+        ventanaId: existingStmt.ventanaId || undefined,
+        bancaId: existingStmt.bancaId || undefined,
+      };
+    }
+
+    // 4. Intentar desde el último estado de cuenta previo
+    const lastStmt = await prisma.accountStatement.findFirst({
+      where: { date: { lt: date }, vendedorId },
+      orderBy: { date: 'desc' },
+      select: { ventanaId: true, bancaId: true }
+    });
+
+    if (lastStmt) {
+      return {
+        ventanaId: lastStmt.ventanaId || undefined,
+        bancaId: lastStmt.bancaId || undefined,
+      };
+    }
+
+    // 5. Fallback: Perfil actual del usuario
+    const vendedor = await prisma.user.findUnique({
+      where: { id: vendedorId },
+      select: { ventanaId: true },
+    });
+
+    if (vendedor?.ventanaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: vendedor.ventanaId },
+        select: { bancaId: true },
+      });
+      return {
+        ventanaId: vendedor.ventanaId,
+        bancaId: ventana?.bancaId || undefined,
+      };
+    }
+
+    return {};
   }
 }
 

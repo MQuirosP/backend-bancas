@@ -53,13 +53,15 @@ export async function getMonthlyRemainingBalancesBatch(
 
     if (dimension === "vendedor") {
         where.vendedorId = { in: entityIds };
+        //  FIX: Para vendedores específicos, NO filtrar por bancaId.
+        // Sus statements históricos conservan el bancaId de la banca original.
     } else if (dimension === "ventana") {
         where.ventanaId = { in: entityIds };
         where.vendedorId = null; // Statement consolidado de ventana
-    }
-
-    if (bancaId) {
-        where.bancaId = bancaId;
+        if (bancaId) where.bancaId = bancaId;
+    } else {
+        // dimension === "banca"
+        if (bancaId) where.bancaId = bancaId;
     }
 
     // Obtener el último statement de cada entidad hasta hoy
@@ -172,7 +174,8 @@ export async function getMonthlyRemainingBalance(
     dimension: "ventana" | "vendedor",
     ventanaId?: string,
     vendedorId?: string,
-    bancaId?: string
+    bancaId?: string,
+    ignoreReset?: boolean
 ): Promise<number> {
     //  VALIDACIÓN: Asegurar que month sea válido
     if (!month || typeof month !== 'string' || !month.includes('-')) {
@@ -195,21 +198,39 @@ export async function getMonthlyRemainingBalance(
     const { startDate, endDate } = getStatementDateRange(month);
 
     //  OPTIMIZACIÓN: Primero intentar obtener desde AccountStatement (mucho más rápido)
+    let balanceResetAtDayStr: string | null = null;
+    if (dimension === "vendedor" && vendedorId && !ignoreReset) {
+        const user = await prisma.user.findUnique({
+            where: { id: vendedorId },
+            select: { settings: true }
+        });
+        if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+            const balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+            balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
+        }
+    }
+
+    const effectiveStartDate = (balanceResetAtDayStr && balanceResetAtDayStr > crDateService.dateUTCToCRString(startDate))
+        ? new Date(balanceResetAtDayStr + "T00:00:00Z")
+        : startDate;
+
     const where: Prisma.AccountStatementWhereInput = {
         date: {
-            gte: startDate,
+            gte: effectiveStartDate,
             lte: endDate,
         },
     };
 
     if (dimension === "vendedor" && vendedorId) {
         where.vendedorId = vendedorId;
+        //  FIX: Para vendedor específico, NO filtrar por bancaId.
+        // El constraint único (date, vendedorId) garantiza unicidad. Filtrar por bancaId
+        // rompería la consulta cuando el vendedor fue trasladado a otra banca.
     } else if (dimension === "ventana" && ventanaId) {
         where.ventanaId = ventanaId;
         where.vendedorId = null; // Statement consolidado de ventana
-    }
-
-    if (bancaId) {
+        if (bancaId) where.bancaId = bancaId;
+    } else if (bancaId) {
         where.bancaId = bancaId;
     }
 
@@ -219,7 +240,7 @@ export async function getMonthlyRemainingBalance(
         where: {
             ...where,
             date: {
-                gte: startDate,
+                gte: effectiveStartDate,
                 lte: endDate,
             }
         },
@@ -460,10 +481,30 @@ export const AccountsService = {
         // Reutilizamos effectiveMonth para calcular mStartDate y mEndDate.
         const { startDate: mStartDate, endDate: mEndDate } = getStatementDateRange(effectiveMonth);
 
+        // Verificar si existe fecha de corte balanceResetAt en settings del vendedor
+        let balanceResetAtDayStr: string | null = null;
+        if (vendedorId && !filters.ignoreReset) {
+            const user = await prisma.user.findUnique({
+                where: { id: vendedorId },
+                select: { settings: true }
+            });
+            if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+                const balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+                balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
+            }
+        }
+
         //  CRÍTICO: El rango de la consulta debe cubrir el mes completo del reporte Y el periodo solicitado
         // Esto permite que monthlyAccumulated (Saldo a Hoy) sea inmutable y no se vea afectado
         // por periodos que cruzan meses (solo sumará los días del effectiveMonth)
-        const queryStartDate = startDate < mStartDate ? startDate : mStartDate;
+        let queryStartDate = startDate < mStartDate ? startDate : mStartDate;
+
+        if (balanceResetAtDayStr) {
+            const resetDate = new Date(balanceResetAtDayStr + "T00:00:00Z");
+            if (queryStartDate < resetDate) {
+                queryStartDate = resetDate;
+            }
+        }
 
         const isCurrentMonth = effectiveMonth === todayCR.substring(0, 7);
 
@@ -496,7 +537,13 @@ export const AccountsService = {
         };
 
         // Filtro por bancaId si se especifica en los filtros
-        if (bancaId) {
+        //  FIX: Cuando se consulta un vendedor específico por ID, NO aplicar el filtro bancaId.
+        // Razón: AccountStatement tiene unique constraint (date, vendedorId), por lo que un vendedor
+        // solo puede tener UN statement por fecha. Si el vendedor fue trasladado de banca, sus
+        // statements históricos conservan el bancaId de la banca original, y aplicar el filtro
+        // bancaId de la banca activa excluiría esos registros históricos, mostrando saldo en 0.
+        const isSpecificVendedor = dimension === "vendedor" && !!vendedorId;
+        if (bancaId && !isSpecificVendedor) {
             where.bancaId = bancaId;
         }
 
@@ -714,44 +761,52 @@ export const AccountsService = {
         // Si el inicio es el día 1, usar el saldo del mes anterior.
         // Si no, tendremos que inferirlo del primer statement disponible o fetch previo.
         let lastKnownRemainingBalance = 0;
-        const [startYear, startMonth, startDay] = crDateService.dateUTCToCRString(currentDate).split('-').map(Number);
+        const startOfLoopCRStr = crDateService.dateUTCToCRString(currentDate);
 
-        if (startDay === 1) {
-            // Caso estándar: Inicio de mes
-            lastKnownRemainingBalance = await getPreviousMonthFinalBalance(
-                `${startYear}-${String(startMonth).padStart(2, '0')}`,
-                dimension,
-                ventanaId || undefined,
-                vendedorId || undefined,
-                bancaId || undefined
-            );
+        if (balanceResetAtDayStr && startOfLoopCRStr === balanceResetAtDayStr) {
+            lastKnownRemainingBalance = 0;
         } else {
-            // Caso Rango Personalizado (ej. Dic 29): Buscar el balance al día anterior
-            const dayBefore = new Date(currentDate);
-            dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+            const [startYear, startMonth, startDay] = startOfLoopCRStr.split('-').map(Number);
 
-            // Intentar obtener el statement del día anterior desde la BD
-            const prevStmt = await prisma.accountStatement.findFirst({
-                where: {
-                    date: dayBefore,
-                    ...(dimension === "vendedor" && vendedorId ? { vendedorId } : {}),
-                    ...(dimension === "ventana" && ventanaId ? { ventanaId, vendedorId: null } : {}),
-                    ...(dimension === "banca" && bancaId ? { bancaId, ventanaId: null, vendedorId: null } : {}),
-                },
-                select: { remainingBalance: true }
-            });
-
-            if (prevStmt) {
-                lastKnownRemainingBalance = Number(prevStmt.remainingBalance);
-            } else {
-                // Si no hay statement, fallback al saldo del mes anterior (aproximación si hay huecos grandes)
+            if (startDay === 1) {
+                // Caso estándar: Inicio de mes
                 lastKnownRemainingBalance = await getPreviousMonthFinalBalance(
                     `${startYear}-${String(startMonth).padStart(2, '0')}`,
                     dimension,
                     ventanaId || undefined,
                     vendedorId || undefined,
-                    bancaId || undefined
+                    bancaId || undefined,
+                    filters.ignoreReset
                 );
+            } else {
+                // Caso Rango Personalizado (ej. Dic 29): Buscar el balance al día anterior
+                const dayBefore = new Date(currentDate);
+                dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+
+                // Intentar obtener el statement del día anterior desde la BD
+                const prevStmt = await prisma.accountStatement.findFirst({
+                    where: {
+                        date: dayBefore,
+                        ...(dimension === "vendedor" && vendedorId ? { vendedorId } : {}),
+                        ...(dimension === "ventana" && ventanaId ? { ventanaId, vendedorId: null } : {}),
+                        ...(dimension === "banca" && bancaId ? { bancaId, ventanaId: null, vendedorId: null } : {}),
+                    },
+                    select: { remainingBalance: true }
+                });
+
+                if (prevStmt) {
+                    lastKnownRemainingBalance = Number(prevStmt.remainingBalance);
+                } else {
+                    // Si no hay statement, fallback al saldo del mes anterior (aproximación si hay huecos grandes)
+                    lastKnownRemainingBalance = await getPreviousMonthFinalBalance(
+                        `${startYear}-${String(startMonth).padStart(2, '0')}`,
+                        dimension,
+                        ventanaId || undefined,
+                        vendedorId || undefined,
+                        bancaId || undefined,
+                        filters.ignoreReset
+                    );
+                }
             }
         }
 
@@ -974,6 +1029,7 @@ export const AccountsService = {
             vendedorId?: string;
             bancaId?: string;
             userRole?: Role;
+            ignoreReset?: boolean;
         },
         includePreviousDayAccumulated: boolean = true, //  NUEVO: Flag para controlar si se incluye acumulado del día anterior
         tx: Prisma.TransactionClient = prisma
@@ -1471,7 +1527,8 @@ export const AccountsService = {
                     "banca",
                     undefined,
                     undefined,
-                    filters.bancaId || null
+                    filters.bancaId || null,
+                    filters.ignoreReset
                 );
             } else if (filters.dimension === "ventana") {
                 previousMonthBalance = await getPreviousMonthFinalBalance(
@@ -1479,7 +1536,8 @@ export const AccountsService = {
                     "ventana",
                     filters.ventanaId || null,
                     undefined,
-                    filters.bancaId
+                    filters.bancaId,
+                    filters.ignoreReset
                 );
             } else {
                 previousMonthBalance = await getPreviousMonthFinalBalance(
@@ -1487,7 +1545,8 @@ export const AccountsService = {
                     "vendedor",
                     undefined,
                     filters.vendedorId || null,
-                    filters.bancaId
+                    filters.bancaId,
+                    filters.ignoreReset
                 );
             }
 
