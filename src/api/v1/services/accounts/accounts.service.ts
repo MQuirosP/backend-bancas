@@ -84,6 +84,20 @@ export async function getMonthlyRemainingBalancesBatch(
     const latestByEntity = new Map<string, { remainingBalance: number; date: Date; isUpToDate: boolean }>();
     const todayCR = crDateService.dateUTCToCRString(new Date());
 
+    // Obtener las fechas de balanceResetAt para vendedores si aplica
+    const balanceResetAtMap = new Map<string, Date>();
+    if (dimension === "vendedor" && entityIds.length > 0) {
+        const users = await prisma.user.findMany({
+            where: { id: { in: entityIds } },
+            select: { id: true, settings: true }
+        });
+        for (const u of users) {
+            if (u.settings && (u.settings as Record<string, any>).balanceResetAt) {
+                balanceResetAtMap.set(u.id, new Date((u.settings as Record<string, any>).balanceResetAt));
+            }
+        }
+    }
+
     for (const stmt of statements) {
         const entityId = dimension === "vendedor" ? stmt.vendedorId : stmt.ventanaId;
         if (!entityId) continue;
@@ -91,6 +105,13 @@ export async function getMonthlyRemainingBalancesBatch(
         //  CRÍTICO: Solo usar statements hasta HOY (no futuros) y con remainingBalance válido
         const stmtDateCR = crDateService.postgresDateToCRString(stmt.date);
         if (stmtDateCR > todayCR) continue; // Ignorar statements futuros
+
+        // Si es vendedor, y el statement es anterior a su balanceResetAt, ignorar
+        const resetAt = balanceResetAtMap.get(entityId);
+        if (resetAt) {
+            const resetAtDayStr = crDateService.dateUTCToCRString(resetAt);
+            if (stmtDateCR < resetAtDayStr) continue;
+        }
 
         const existing = latestByEntity.get(entityId);
         if (!existing || stmt.date > existing.date) {
@@ -128,24 +149,41 @@ export async function getMonthlyRemainingBalancesBatch(
 
     //  Para entidades SIN statements en el mes actual, obtener saldo del mes anterior
     if (entitiesWithoutStatement.length > 0) {
-        const { getPreviousMonthFinalBalancesBatch } = await import('./accounts.balances');
-
-        try {
-            const previousBalances = await getPreviousMonthFinalBalancesBatch(
-                month,
-                dimension,
-                entitiesWithoutStatement,
-                bancaId
-            );
-
-            for (const entityId of entitiesWithoutStatement) {
-                const previousBalance = previousBalances.get(entityId) || 0;
-                result.set(entityId, previousBalance);
+        const entitiesToQuery: string[] = [];
+        for (const id of entitiesWithoutStatement) {
+            const resetAt = balanceResetAtMap.get(id);
+            if (resetAt) {
+                const resetAtDayStr = crDateService.dateUTCToCRString(resetAt);
+                const startDateCRStr = crDateService.dateUTCToCRString(startDate);
+                if (resetAtDayStr >= startDateCRStr && resetAtDayStr <= todayCR) {
+                    // Reset en el mes actual y <= hoy, sin statements posteriores. Saldo = 0
+                    result.set(id, 0);
+                    continue;
+                }
             }
-        } catch (error) {
-            // Si falla, asignar 0 a las entidades sin statement
-            for (const entityId of entitiesWithoutStatement) {
-                result.set(entityId, 0);
+            entitiesToQuery.push(id);
+        }
+
+        if (entitiesToQuery.length > 0) {
+            const { getPreviousMonthFinalBalancesBatch } = await import('./accounts.balances');
+
+            try {
+                const previousBalances = await getPreviousMonthFinalBalancesBatch(
+                    month,
+                    dimension,
+                    entitiesToQuery,
+                    bancaId
+                );
+
+                for (const entityId of entitiesToQuery) {
+                    const previousBalance = previousBalances.get(entityId) || 0;
+                    result.set(entityId, previousBalance);
+                }
+            } catch (error) {
+                // Si falla, asignar 0 a las entidades sin statement
+                for (const entityId of entitiesToQuery) {
+                    result.set(entityId, 0);
+                }
             }
         }
     }
@@ -327,6 +365,22 @@ export async function getMonthlyRemainingBalance(
     }
 
     //  ÚLTIMO FALLBACK: Si no hay statements hasta hoy, usar el saldo del mes anterior
+    if (dimension === "vendedor" && vendedorId && !ignoreReset) {
+        const user = await prisma.user.findUnique({
+            where: { id: vendedorId },
+            select: { settings: true }
+        });
+        if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+            const balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+            const balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
+            const startDateCRStr = crDateService.dateUTCToCRString(startDate);
+            const todayCR = crDateService.dateUTCToCRString(new Date());
+            if (balanceResetAtDayStr >= startDateCRStr && balanceResetAtDayStr <= todayCR) {
+                return 0;
+            }
+        }
+    }
+
     const { getPreviousMonthFinalBalance } = await import('./accounts.balances');
     const previousMonthBalance = await getPreviousMonthFinalBalance(
         month,
@@ -498,13 +552,6 @@ export const AccountsService = {
         // Esto permite que monthlyAccumulated (Saldo a Hoy) sea inmutable y no se vea afectado
         // por periodos que cruzan meses (solo sumará los días del effectiveMonth)
         let queryStartDate = startDate < mStartDate ? startDate : mStartDate;
-
-        if (balanceResetAtDayStr) {
-            const resetDate = new Date(balanceResetAtDayStr + "T00:00:00Z");
-            if (queryStartDate < resetDate) {
-                queryStartDate = resetDate;
-            }
-        }
 
         const isCurrentMonth = effectiveMonth === todayCR.substring(0, 7);
 
@@ -864,7 +911,14 @@ export const AccountsService = {
         });
 
         // Filter statements for the specifically requested period
-        const periodStatements = fullMonthStatements.filter(s => s.date >= startDateStr && s.date <= endDateStr);
+        let periodStatements = fullMonthStatements.filter(s => s.date >= startDateStr && s.date <= endDateStr);
+
+        // Ocultar días anteriores al reset para el vendedor, o si ignoreReset no está activo
+        const requestingRole = filters.userRole || Role.ADMIN;
+        if (balanceResetAtDayStr && (requestingRole === Role.VENDEDOR || !filters.ignoreReset)) {
+            periodStatements = periodStatements.filter(s => s.date >= balanceResetAtDayStr);
+        }
+
         const latestInPeriod = periodStatements.length > 0 ? periodStatements[0] : null;
 
         // 4. Calcular Totales del Periodo (LO QUE EL USER PIDIÓ: suma simple de los campos balance del periodo)

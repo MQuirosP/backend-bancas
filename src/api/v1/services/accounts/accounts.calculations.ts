@@ -725,12 +725,6 @@ export async function getStatementDirect(
     }
 
     let effectiveStartDate = startDate;
-    if (balanceResetAtDayStr) {
-        const resetDate = new Date(balanceResetAtDayStr + "T00:00:00Z");
-        if (effectiveStartDate < resetDate) {
-            effectiveStartDate = resetDate;
-        }
-    }
 
     //  CORRECCIÓN: Usar servicio centralizado para conversión de fechas
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(effectiveStartDate, endDate);
@@ -754,12 +748,7 @@ export async function getStatementDirect(
     const [yearForMonth, monthForMonth] = effectiveMonth.split("-").map(Number);
     let monthStartDateForQuery = new Date(Date.UTC(yearForMonth, monthForMonth - 1, 1));
     
-    if (balanceResetAtDayStr) {
-        const resetDate = new Date(balanceResetAtDayStr + "T00:00:00Z");
-        if (monthStartDateForQuery < resetDate) {
-            monthStartDateForQuery = resetDate;
-        }
-    }
+
     
     const monthStartDateCRStrForQuery = crDateService.dateUTCToCRString(monthStartDateForQuery);
     // Helper: primer día del mes efectivo en formato YYYY-MM-DD

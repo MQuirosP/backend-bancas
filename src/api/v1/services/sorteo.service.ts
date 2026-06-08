@@ -19,6 +19,7 @@ import { parseCommissionPolicy, CommissionPolicy, CommissionRule } from "../../.
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { crDateService } from "../../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts/accounts.balances";
+import { getMonthlyRemainingBalance } from "./accounts/accounts.service";
 import { CacheService } from "../../../core/cache.service";
 import crypto from 'crypto';
 import { ConcurrencyManager } from "../../../utils/concurrency";
@@ -1447,6 +1448,7 @@ gs."hour24" ASC
       ventanaId?: string;
       bancaId?: string;
       sorteoId?: string;
+      userRole?: string;
     },
     vendedorId?: string
   ) {
@@ -1865,9 +1867,22 @@ gs."hour24" ASC
       //  PASO 5: Calcular acumulado y chronologicalIndex por evento (sorteo/movimiento)
       //  CRÍTICO: Inicializar con el acumulado del día anterior al rango (o saldo mes anterior si es día 1)
       //  Esto garantiza que el accumulated sea ABSOLUTO, no relativo al período consultado
+      let balanceResetAt: Date | null = null;
+      if (vendedorId) {
+        const user = await prisma.user.findUnique({
+          where: { id: vendedorId },
+          select: { settings: true }
+        });
+        if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+          balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+        }
+      }
+
       let eventAccumulated = initialAccumulatedForRange;
       let lastProcessedDate = '';
       const totalEvents = allEvents.length;
+      let resetApplied = false;
+
       const dataWithAccumulated = allEvents.map((event, index) => {
         const eventDate = event.date;
 
@@ -1878,6 +1893,15 @@ gs."hour24" ASC
           //  así que solo continuamos sumando (el carry-over es automático)
         }
         lastProcessedDate = eventDate;
+
+        // Si hay balanceResetAt, y el evento ocurre en/después del reset, y no lo hemos reiniciado aún
+        if (balanceResetAt && !resetApplied && balanceResetAt.getTime() >= dateRange.fromAt.getTime()) {
+          const eventTime = new Date(event.scheduledAt).getTime();
+          if (eventTime >= balanceResetAt.getTime()) {
+            eventAccumulated = 0;
+            resetApplied = true;
+          }
+        }
 
         //  CRÍTICO: Usar Number() para garantizar suma numérica (evitar concatenación de strings)
         eventAccumulated += Number(event.subtotal) || 0;
@@ -2035,19 +2059,26 @@ gs."hour24" ASC
         day.dayTotals.accumulated = accumulatedByDate.get(day.date) ?? 0;
       }
 
-      // Calcular totales agregados (suma de todos los días)
+      // Ocultar días anteriores al reset únicamente para el vendedor
+      let finalDaysArray = daysArray;
+      if (balanceResetAt && params.userRole === Role.VENDEDOR) {
+        const resetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
+        finalDaysArray = daysArray.filter(day => day.date >= resetAtDayStr);
+      }
+
+      // Calcular totales agregados (suma de todos los días filtrados)
       const totals = {
-        totalSales: daysArray.reduce((sum, d) => sum + d.dayTotals.totalSales, 0),
-        totalCommission: daysArray.reduce((sum, d) => sum + d.dayTotals.totalCommission, 0),
-        commissionByNumber: daysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByNumber || 0), 0),
-        commissionByReventado: daysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByReventado || 0), 0),
-        totalPrizes: daysArray.reduce((sum, d) => sum + d.dayTotals.totalPrizes, 0),
-        totalTickets: daysArray.reduce((sum, d) => sum + d.dayTotals.totalTickets, 0),
-        totalPaid: daysArray.reduce((sum, d) => sum + d.dayTotals.totalPaid, 0),
-        totalCollected: daysArray.reduce((sum, d) => sum + d.dayTotals.totalCollected, 0),
-        totalBalance: daysArray.reduce((sum, d) => sum + d.dayTotals.totalBalance, 0),
-        totalRemainingBalance: daysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
-        totalSubtotal: daysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0), //  DEPRECATED: igual a totalRemainingBalance
+        totalSales: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalSales, 0),
+        totalCommission: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalCommission, 0),
+        commissionByNumber: finalDaysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByNumber || 0), 0),
+        commissionByReventado: finalDaysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByReventado || 0), 0),
+        totalPrizes: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalPrizes, 0),
+        totalTickets: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalTickets, 0),
+        totalPaid: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalPaid, 0),
+        totalCollected: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalCollected, 0),
+        totalBalance: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalBalance, 0),
+        totalRemainingBalance: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
+        totalSubtotal: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
       };
 
       //  C3.1 OPTIMIZACIÓN: Calcular monthlyAccumulated
@@ -2063,6 +2094,10 @@ gs."hour24" ASC
         ? rangePreviousMonthBalance  // Mismo mes → reusar
         : await getPreviousMonthFinalBalance(effectiveMonth, "vendedor", undefined, vendedorId, undefined);
       const numericPreviousMonthBalance = Number(previousMonthBalance) || 0;
+
+      const realMonthlyRemainingBalance = vendedorId
+        ? await getMonthlyRemainingBalance(effectiveMonth, "vendedor", undefined, vendedorId)
+        : null;
 
       let monthlyAccumulated;
 
@@ -2097,8 +2132,8 @@ gs."hour24" ASC
           totalPaid: monthlyTotalPaid,
           totalCollected: monthlyTotalCollected,
           totalBalance: numericPreviousMonthBalance + monthlyTotalBalance,
-          totalRemainingBalance: numericPreviousMonthBalance + monthlyTotalRemainingBalance,
-          totalSubtotal: numericPreviousMonthBalance + monthlyTotalRemainingBalance,
+          totalRemainingBalance: realMonthlyRemainingBalance !== null ? realMonthlyRemainingBalance : (numericPreviousMonthBalance + monthlyTotalRemainingBalance),
+          totalSubtotal: realMonthlyRemainingBalance !== null ? realMonthlyRemainingBalance : (numericPreviousMonthBalance + monthlyTotalRemainingBalance),
         };
       } else {
         //  Caso general: queries mensuales necesarias (diferente rango o filtro de lotería)
@@ -2192,12 +2227,12 @@ gs."hour24" ASC
           totalPaid: monthlyTotalPaid,
           totalCollected: monthlyTotalCollected,
           totalBalance: numericPreviousMonthBalance + monthlyTotalBalance,
-          totalRemainingBalance: numericPreviousMonthBalance + monthlyTotalRemainingBalance,
-          totalSubtotal: numericPreviousMonthBalance + monthlyTotalRemainingBalance,
+          totalRemainingBalance: realMonthlyRemainingBalance !== null ? realMonthlyRemainingBalance : (numericPreviousMonthBalance + monthlyTotalRemainingBalance),
+          totalSubtotal: realMonthlyRemainingBalance !== null ? realMonthlyRemainingBalance : (numericPreviousMonthBalance + monthlyTotalRemainingBalance),
         };
       }
       const result = {
-        data: daysArray,
+        data: finalDaysArray,
         meta: {
           totals,
           monthlyAccumulated, //  NUEVO: Acumulado del mes completo
@@ -2205,7 +2240,7 @@ gs."hour24" ASC
           ...(params.fromDate ? { fromDate: params.fromDate } : {}),
           ...(params.toDate ? { toDate: params.toDate } : {}),
           totalSorteos: sorteoData.length,
-          totalDays: daysArray.length,
+          totalDays: finalDaysArray.length,
         },
       };
 

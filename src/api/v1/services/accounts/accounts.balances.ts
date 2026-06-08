@@ -68,11 +68,9 @@ export async function calculatePreviousMonthBalanceFromSource(
             }
         }
 
-        if (balanceResetAtDayStr && balanceResetAtDayStr > lastDayCRStr) {
-            return 0; // El reset es después de este mes, saldo anterior a reset es 0
-        }
 
-        const effectiveFirstDayCRStr = (balanceResetAtDayStr && balanceResetAtDayStr > firstDayCRStr)
+
+        const effectiveFirstDayCRStr = (balanceResetAtDayStr && balanceResetAtDayStr > firstDayCRStr && balanceResetAtDayStr <= lastDayCRStr)
             ? balanceResetAtDayStr
             : firstDayCRStr;
 
@@ -239,8 +237,7 @@ export async function getPreviousMonthFinalBalance(
         const where: Prisma.AccountStatementWhereInput = {
             date: {
                 lt: firstDayOfCurrentMonth,
-                ...(balanceResetAtDayStr ? { gte: new Date(balanceResetAtDayStr + "T00:00:00Z") } : {})
-            }, // Buscar cualquier statement anterior al inicio del mes actual respetando la fecha de corte
+            }, // Buscar cualquier statement anterior al inicio del mes actual sin alterar su histórico
         };
 
         if (dimension === "vendedor") {

@@ -234,6 +234,7 @@ export const SorteoController = {
         loteriaId,
         status,
         isActive,
+        userRole: req.user!.role,
       },
       vendedorId
     );

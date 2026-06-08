@@ -254,7 +254,7 @@ export class AccountStatementSyncService {
     const balance = totalSales - totalPayouts - (dimension === "vendedor" ? vendedorCommission : listeroCommission);
 
     let previousDayAccumulated = 0;
-    const dateStr = crDateService.dateUTCToCRString(date);
+    const dateStr = dateStrCR;
 
     if (balanceResetAtDayStr && dateStr === balanceResetAtDayStr) {
       previousDayAccumulated = 0;
