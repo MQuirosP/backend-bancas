@@ -205,17 +205,42 @@ export const LoteriaController = {
     const startOfDay = startOfLocalDay(start);
     const endOfDays = endOfLocalDay(addLocalDays(startOfDay, days - 1));
 
-    const occurrences = computeOccurrences({
-      loteriaName: loteria.name,
-      schedule: {
-        frequency: rules?.drawSchedule?.frequency,
-        times: rules?.drawSchedule?.times,
-        daysOfWeek: rules?.drawSchedule?.daysOfWeek,
-      },
-      start: startOfDay,
-      days,
-      limit,
-    });
+    const occurrencesList: any[] = [];
+
+    if (Array.isArray(rules?.drawSchedules)) {
+      for (const s of rules.drawSchedules) {
+        const occs = computeOccurrences({
+          loteriaName: loteria.name,
+          schedule: {
+            frequency: s.frequency,
+            times: s.times,
+            daysOfWeek: s.daysOfWeek,
+          },
+          start: startOfDay,
+          days,
+          limit,
+        });
+        occurrencesList.push(...occs);
+      }
+    } else {
+      const occs = computeOccurrences({
+        loteriaName: loteria.name,
+        schedule: {
+          frequency: rules?.drawSchedule?.frequency,
+          times: rules?.drawSchedule?.times,
+          daysOfWeek: rules?.drawSchedule?.daysOfWeek,
+        },
+        start: startOfDay,
+        days,
+        limit,
+      });
+      occurrencesList.push(...occs);
+    }
+
+    // Evitar duplicados por solapamiento y ordenar cronológicamente
+    const occurrences = Array.from(
+      new Map(occurrencesList.map(o => [o.scheduledAt.getTime(), o])).values()
+    ).sort((a: any, b: any) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
 
     //  Filtrar por rango calculado (no por "ahora")
     // Si allowPast=true, mostrar todos; si false, solo futuros respecto a now

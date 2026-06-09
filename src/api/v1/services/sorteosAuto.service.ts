@@ -384,15 +384,17 @@ export const SorteosAutoService = {
       try {
         const rules = loteria.rulesJson as any;
         
-        // Verificar si tiene drawSchedule configurado
-        const schedule = rules?.drawSchedule;
-        if (!schedule || !schedule.times || schedule.times.length === 0) {
+        // Verificar si tiene drawSchedule o drawSchedules configurados con horas válidas
+        const hasClassicSchedule = rules?.drawSchedule?.times && rules.drawSchedule.times.length > 0;
+        const hasMultiSchedule = Array.isArray(rules?.drawSchedules) && rules.drawSchedules.some((s: any) => s.times && s.times.length > 0);
+
+        if (!hasClassicSchedule && !hasMultiSchedule) {
           logger.debug({
             layer: 'service',
             action: 'SORTEOS_AUTO_CREATE_SKIP_LOTERIA',
             payload: {
               loteriaId: loteria.id,
-              reason: 'No tiene drawSchedule configurado',
+              reason: 'No tiene horarios (drawSchedule o drawSchedules) configurados',
             },
           });
           continue;

@@ -419,18 +419,45 @@ export const LoteriaService = {
       });
     } else {
       // Modo: calcular occurrences por reglas de schedule
-      const schedule = rules?.drawSchedule ?? {}
-      const occurrences = computeOccurrences({
-        loteriaName: loteria.name,
-        schedule: {
-          frequency: schedule.frequency,
-          times: schedule.times,
-          daysOfWeek: schedule.daysOfWeek,
-        },
-        start,
-        days,
-        limit: 1000,
-      })
+      const occurrences: any[] = [];
+
+      if (Array.isArray(rules?.drawSchedules)) {
+        // Soporte para múltiples bloques de horarios (Nuevo formato)
+        for (const s of rules.drawSchedules) {
+          const occs = computeOccurrences({
+            loteriaName: loteria.name,
+            schedule: {
+              frequency: s.frequency,
+              times: s.times,
+              daysOfWeek: s.daysOfWeek,
+            },
+            start,
+            days,
+            limit: 1000,
+          });
+          occurrences.push(...occs);
+        }
+      } else {
+        // Fallback al formato clásico (drawSchedule único)
+        const schedule = rules?.drawSchedule ?? {};
+        const occs = computeOccurrences({
+          loteriaName: loteria.name,
+          schedule: {
+            frequency: schedule.frequency,
+            times: schedule.times,
+            daysOfWeek: schedule.daysOfWeek,
+          },
+          start,
+          days,
+          limit: 1000,
+        });
+        occurrences.push(...occs);
+      }
+
+      // Evitar duplicados por solapamiento y ordenar cronológicamente
+      const uniqueOccurrences = Array.from(
+        new Map(occurrences.map(o => [o.scheduledAt.getTime(), o])).values()
+      ).sort((a: any, b: any) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
 
       logger.info({
         layer: "service",
@@ -441,11 +468,11 @@ export const LoteriaService = {
           start: start.toISOString(),
           days,
           dryRun,
-          totalOccurrences: occurrences.length,
+          totalOccurrences: uniqueOccurrences.length,
         },
       });
 
-      subset = occurrences;
+      subset = uniqueOccurrences;
     }
 
     if (dryRun) {
