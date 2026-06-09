@@ -212,7 +212,7 @@ export const SorteoController = {
   },
 
   async evaluatedSummary(req: AuthenticatedRequest, res: Response) {
-    const { date, fromDate, toDate, scope, loteriaId, status, isActive } = req.query as any;
+    const { date, fromDate, toDate, scope, loteriaId, status, isActive, ignoreReset } = req.query as any;
 
     // Validar scope (solo 'mine' permitido)
     if (scope && scope !== 'mine') {
@@ -225,6 +225,9 @@ export const SorteoController = {
     // Obtener vendedorId del usuario autenticado
     const vendedorId = req.user!.id;
 
+    // Solo ADMIN, BANCA y VENTANA pueden usar ignoreReset (ver historial)
+    const canIgnoreReset = req.user!.role !== "VENDEDOR";
+
     const result = await SorteoService.evaluatedSummary(
       {
         date,
@@ -235,6 +238,7 @@ export const SorteoController = {
         status,
         isActive,
         userRole: req.user!.role,
+        ignoreReset: canIgnoreReset && ignoreReset === 'true',
       },
       vendedorId
     );

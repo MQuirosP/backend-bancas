@@ -80,6 +80,7 @@ export const EvaluatedSummaryQuerySchema = z.object({
   status: z.string().optional(), // Ej: "EVALUATED", "OPEN", "EVALUATED,OPEN"
   // isActive: filtrar tickets activos (true) o inactivos (false)
   isActive: z.string().optional(), // Ej: "true", "false"
+  ignoreReset: z.string().optional(),
   _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
 

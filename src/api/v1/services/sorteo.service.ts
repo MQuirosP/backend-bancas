@@ -1449,6 +1449,7 @@ gs."hour24" ASC
       bancaId?: string;
       sorteoId?: string;
       userRole?: string;
+      ignoreReset?: boolean;
     },
     vendedorId?: string
   ) {
@@ -2059,9 +2060,9 @@ gs."hour24" ASC
         day.dayTotals.accumulated = accumulatedByDate.get(day.date) ?? 0;
       }
 
-      // Ocultar días anteriores al reset únicamente para el vendedor
+      // Ocultar días anteriores al reset únicamente para el vendedor si ignoreReset no está activo
       let finalDaysArray = daysArray;
-      if (balanceResetAt && params.userRole === Role.VENDEDOR) {
+      if (balanceResetAt && params.userRole === Role.VENDEDOR && !params.ignoreReset) {
         const resetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
         finalDaysArray = daysArray.filter(day => day.date >= resetAtDayStr);
       }
