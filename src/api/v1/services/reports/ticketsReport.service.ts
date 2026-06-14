@@ -262,7 +262,7 @@ export const TicketsReportService = {
     `;
 
     const summaryQuery = Prisma.sql`
-      WITH filtered AS (
+      WITH filtered AS MATERIALIZED (
         SELECT
           t.id,
           t."ticketNumber",
@@ -274,7 +274,7 @@ export const TicketsReportService = {
           s."updatedAt"     AS sorteo_updated_at
         FROM "Ticket" t
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-        WHERE ${summaryBaseWhere}
+        WHERE \${summaryBaseWhere}
       )
       SELECT
         COUNT(*)::int AS total_winning_tickets,
@@ -360,10 +360,10 @@ export const TicketsReportService = {
     // FASE 4: Obtener DESGLOSES consolidados (Query 4 de 4)
     // Combina todas las dimensiones en una sola consulta SQL para minimizar conexiones
     const breakdownsQuery = Prisma.sql`
-      WITH filtered_tickets AS (
+      WITH filtered_tickets AS MATERIALIZED (
         SELECT t.id, t."sorteoId", t."loteriaId", t."ventanaId", t."vendedorId", t."totalPayout", t."totalPaid", t."remainingAmount"
         FROM "Ticket" t
-        WHERE ${summaryBaseWhere}
+        WHERE \${summaryBaseWhere}
       ),
       desglose_sorteo AS (
         SELECT

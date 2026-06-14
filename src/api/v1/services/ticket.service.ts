@@ -1823,11 +1823,11 @@ export const TicketService = {
           };
 
           const [rawAgg] = await prisma.$queryRaw<RawAggResult[]>`
-            WITH filtered_tickets AS (
+            WITH filtered_tickets AS MATERIALIZED (
               SELECT t.id, t."loteriaId", t."sorteoId", t."vendedorId", t."ventanaId"
               FROM "Ticket" t
-              ${joinsSQL}
-              WHERE ${whereSQL}
+              \${joinsSQL}
+              WHERE \${whereSQL}
             ),
             loteria_counts AS (
               SELECT "loteriaId"::text AS id, COUNT(*)::int AS cnt FROM filtered_tickets GROUP BY "loteriaId"
@@ -2209,11 +2209,11 @@ export const TicketService = {
       };
 
       const [rawAgg] = await prisma.$queryRaw<RawAggResult[]>`
-        WITH filtered_tickets AS (
+        WITH filtered_tickets AS MATERIALIZED (
           SELECT t.id, t."loteriaId", t."sorteoId", t."vendedorId", t."ventanaId"
           FROM "Ticket" t
-          ${joinsSQL}
-          WHERE ${whereSQL}
+          \${joinsSQL}
+          WHERE \${whereSQL}
         ),
         loteria_counts AS (
           SELECT "loteriaId"::text AS id, COUNT(*)::int AS cnt FROM filtered_tickets GROUP BY "loteriaId"
