@@ -274,7 +274,7 @@ export const TicketsReportService = {
           s."updatedAt"     AS sorteo_updated_at
         FROM "Ticket" t
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-        WHERE \${summaryBaseWhere}
+        WHERE ${summaryBaseWhere}
       )
       SELECT
         COUNT(*)::int AS total_winning_tickets,
@@ -363,7 +363,7 @@ export const TicketsReportService = {
       WITH filtered_tickets AS MATERIALIZED (
         SELECT t.id, t."sorteoId", t."loteriaId", t."ventanaId", t."vendedorId", t."totalPayout", t."totalPaid", t."remainingAmount"
         FROM "Ticket" t
-        WHERE \${summaryBaseWhere}
+        WHERE ${summaryBaseWhere}
       ),
       desglose_sorteo AS (
         SELECT

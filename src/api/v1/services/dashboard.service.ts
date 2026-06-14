@@ -1214,7 +1214,7 @@ export const DashboardService = {
 
     // SQL consolidada para evitar picos de memoria y múltiples round-trips
     const ventanaData = await prisma.$queryRaw<any[]>(Prisma.sql`
-      WITH tickets_in_range AS (
+      WITH tickets_in_range AS MATERIALIZED (
         SELECT t.id, t."ventanaId", t."sorteoId", t."vendedorId"
         FROM "Ticket" t WHERE ${baseFilters}
       ),
@@ -1351,7 +1351,7 @@ export const DashboardService = {
         )`;
 
     const vendedorData = await prisma.$queryRaw<any[]>(Prisma.sql`
-      WITH tickets_in_range AS (
+      WITH tickets_in_range AS MATERIALIZED (
         SELECT t.id, t."vendedorId", t."ventanaId", t."sorteoId"
         FROM "Ticket" t WHERE ${baseFilters} AND t."vendedorId" IS NOT NULL
       ),
@@ -1524,7 +1524,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS (
+        WITH tickets_in_range AS MATERIALIZED (
           SELECT
             t.id,
             t."totalAmount",
@@ -1944,7 +1944,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS (
+        WITH tickets_in_range AS MATERIALIZED (
           SELECT t.id, t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
@@ -1988,7 +1988,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS (
+        WITH tickets_in_range AS MATERIALIZED (
           SELECT t.id, t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
@@ -2027,7 +2027,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS (
+        WITH tickets_in_range AS MATERIALIZED (
           SELECT t.id, t."loteriaId", t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
@@ -2098,7 +2098,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS (
+        WITH tickets_in_range AS MATERIALIZED (
           SELECT t.id, t."loteriaId", t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}

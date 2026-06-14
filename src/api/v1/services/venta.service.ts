@@ -789,7 +789,7 @@ export const VentasService = {
           const searchFilter = searchSql ? Prisma.sql`AND v.name ILIKE ${searchSql}` : Prisma.empty;
 
           const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
-            WITH filtered_tickets AS (
+            WITH filtered_tickets AS MATERIALIZED (
               SELECT t.id, t."ventanaId", t."totalAmount", t."isWinner", t.status
               FROM "Ticket" t
               WHERE ${ticketWhere}
@@ -852,7 +852,7 @@ export const VentasService = {
             : Prisma.empty;
 
           const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
-            WITH filtered_tickets AS (
+            WITH filtered_tickets AS MATERIALIZED (
               SELECT t.id, t."vendedorId", t."ventanaId", t."totalAmount", t."isWinner", t.status, t."createdAt", t."businessDate"
               FROM "Ticket" t
               WHERE ${ticketWhere}
@@ -941,7 +941,7 @@ export const VentasService = {
           const searchFilter = searchSql ? Prisma.sql`AND l.name ILIKE ${searchSql}` : Prisma.empty;
 
           const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
-            WITH filtered_tickets AS (
+            WITH filtered_tickets AS MATERIALIZED (
               SELECT t.id, t."loteriaId", t."ventanaId", t."totalAmount", t."isWinner", t.status
               FROM "Ticket" t
               WHERE ${ticketWhere}
@@ -1002,7 +1002,7 @@ export const VentasService = {
           const searchFilter = searchSql ? Prisma.sql`AND s.name ILIKE ${searchSql}` : Prisma.empty;
 
           const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
-            WITH filtered_tickets AS (
+            WITH filtered_tickets AS MATERIALIZED (
               SELECT t.id, t."sorteoId", t."ventanaId", t."totalAmount", t."isWinner", t.status
               FROM "Ticket" t
               WHERE ${ticketWhere}
@@ -1064,7 +1064,7 @@ export const VentasService = {
           const searchFilter = searchSql ? Prisma.sql`AND j.number ILIKE ${searchSql}` : Prisma.empty;
 
           const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
-            WITH filtered_tickets AS (
+            WITH filtered_tickets AS MATERIALIZED (
               SELECT t.id, t."ventanaId", t."isWinner", t.status
               FROM "Ticket" t
               INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
