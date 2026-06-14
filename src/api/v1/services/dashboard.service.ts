@@ -1944,7 +1944,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS MATERIALIZED (
+        WITH tickets_in_range AS (
           SELECT t.id, t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
@@ -1988,7 +1988,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS MATERIALIZED (
+        WITH tickets_in_range AS (
           SELECT t.id, t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
@@ -2027,7 +2027,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS MATERIALIZED (
+        WITH tickets_in_range AS (
           SELECT t.id, t."loteriaId", t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
@@ -2098,7 +2098,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS MATERIALIZED (
+        WITH tickets_in_range AS (
           SELECT t.id, t."loteriaId", t."sorteoId"
           FROM "Ticket" t
           WHERE ${baseFilters}
