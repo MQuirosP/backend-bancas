@@ -277,8 +277,10 @@ export class CierreService {
   private static async executeSellerAggregationByDay(
     filters: CierreFilters
   ): Promise<VendedorAggregateRowWithDate[]> {
-    const whereConditions = await this.buildWhereConditions(filters);
+    const todayStr = crDateService.getTodayCRString();
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
+    const endDateCap = endDateCRStr > todayStr ? todayStr : endDateCRStr;
+    const whereConditions = await this.buildWhereConditionsWithRange(filters, startDateCRStr, endDateCap);
 
     const query = Prisma.sql`
       WITH
@@ -600,7 +602,8 @@ export class CierreService {
     startStr: string,
     endStr?: string
   ): Promise<CierreAggregateRow[]> {
-    const endStrFinal = endStr || startStr;
+    const todayStr = crDateService.getTodayCRString();
+    const endStrFinal = (endStr || startStr) > todayStr ? todayStr : (endStr || startStr);
     const whereConditions = await this.buildWhereConditionsWithRange(filters, startStr, endStrFinal);
 
     // 2. Query Principal optimizada con CTEs
@@ -676,13 +679,7 @@ export class CierreService {
             s."scheduledAt"     AS "scheduledAt",
             CASE
               -- NUMERO: Check contra CTE materializado (hash lookup)
-              WHEN aj.type = 'NUMERO' AND EXISTS (
-                SELECT 1 FROM lm_active lm
-                WHERE lm."loteriaId" = t."loteriaId"
-                  AND lm."valueX" = aj."finalMultiplierX"
-                  AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-              ) THEN aj."finalMultiplierX"
+              WHEN aj.type = 'NUMERO' AND lm.matched IS NOT NULL THEN aj."finalMultiplierX"
               -- REVENTADO: hereda banda de NUMERO asociado del mismo ticket
               WHEN aj.type = 'REVENTADO' THEN nb.banda
               ELSE NULL
@@ -693,6 +690,15 @@ export class CierreService {
           LEFT JOIN numero_bandas nb ON nb."ticketId" = aj."ticketId"
             AND nb.number = aj.number
             AND aj.type = 'REVENTADO'
+          LEFT JOIN LATERAL (
+            SELECT 1 AS matched
+            FROM lm_active lm
+            WHERE lm."loteriaId" = t."loteriaId"
+              AND lm."valueX" = aj."finalMultiplierX"
+              AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
+              AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
+            LIMIT 1
+          ) lm ON true
         )
       -- 3. Agregación Final por banda, tipo, fecha, lotería y turno
       SELECT
@@ -819,7 +825,8 @@ export class CierreService {
     startStr: string,
     endStr?: string
   ): Promise<VendedorAggregateRow[]> {
-    const endStrFinal = endStr || startStr;
+    const todayStr = crDateService.getTodayCRString();
+    const endStrFinal = (endStr || startStr) > todayStr ? todayStr : (endStr || startStr);
     const whereConditions = await this.buildWhereConditionsWithRange(filters, startStr, endStrFinal);
 
     // 1. Gatekeeper: relevant_tickets (Filtramos banca/ventana/vendedor antes de ir a Jugada)
@@ -894,13 +901,7 @@ export class CierreService {
             aj."jugadasCount",
             CASE
               -- NUMERO: Check contra CTE materializado
-              WHEN aj.type = 'NUMERO' AND EXISTS (
-                SELECT 1 FROM lm_active lm
-                WHERE lm."loteriaId" = t."loteriaId"
-                  AND lm."valueX" = aj."finalMultiplierX"
-                  AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-              ) THEN aj."finalMultiplierX"
+              WHEN aj.type = 'NUMERO' AND lm.matched IS NOT NULL THEN aj."finalMultiplierX"
               -- REVENTADO: hereda banda de NUMERO asociado
               WHEN aj.type = 'REVENTADO' THEN nb.banda
               ELSE NULL
@@ -913,6 +914,15 @@ export class CierreService {
           LEFT JOIN numero_bandas nb ON nb."ticketId" = aj."ticketId"
             AND nb.number = aj.number
             AND aj.type = 'REVENTADO'
+          LEFT JOIN LATERAL (
+            SELECT 1 AS matched
+            FROM lm_active lm
+            WHERE lm."loteriaId" = t."loteriaId"
+              AND lm."valueX" = aj."finalMultiplierX"
+              AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
+              AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
+            LIMIT 1
+          ) lm ON true
           WHERE s."status" = 'EVALUATED'
         )
       -- 3. Agregación Final
@@ -959,8 +969,10 @@ export class CierreService {
   private static async executeSellerAggregationBySorteo(
     filters: CierreFilters
   ): Promise<SellerSorteoAggregateRow[]> {
-    const whereConditions = await this.buildWhereConditions(filters);
+    const todayStr = crDateService.getTodayCRString();
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
+    const endDateCap = endDateCRStr > todayStr ? todayStr : endDateCRStr;
+    const whereConditions = await this.buildWhereConditionsWithRange(filters, startDateCRStr, endDateCap);
 
     const query = Prisma.sql`
       WITH
@@ -1014,13 +1026,7 @@ export class CierreService {
             t."sorteoId"  AS "sorteoId",
             s."scheduledAt" AS "scheduledAt",
             CASE
-              WHEN j.type = 'NUMERO' AND EXISTS (
-                SELECT 1 FROM lm_active lm
-                WHERE lm."loteriaId" = t."loteriaId"
-                  AND lm."valueX" = j."finalMultiplierX"
-                  AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-              ) THEN j."finalMultiplierX"
+              WHEN j.type = 'NUMERO' AND lm.matched IS NOT NULL THEN j."finalMultiplierX"
               WHEN j.type = 'REVENTADO' THEN nb.banda
               ELSE NULL
             END AS banda
@@ -1032,6 +1038,15 @@ export class CierreService {
           LEFT JOIN numero_bandas nb ON nb."ticketId" = j."ticketId"
             AND nb.number = j.number
             AND j.type = 'REVENTADO'
+          LEFT JOIN LATERAL (
+            SELECT 1 AS matched
+            FROM lm_active lm
+            WHERE lm."loteriaId" = t."loteriaId"
+              AND lm."valueX" = j."finalMultiplierX"
+              AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
+              AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
+            LIMIT 1
+          ) lm ON true
           WHERE
             j."deletedAt" IS NULL
             AND j."isActive" = true

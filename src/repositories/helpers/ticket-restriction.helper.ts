@@ -118,10 +118,7 @@ export async function calculateAccumulatedByNumbersAndScope(
         }
 
         numberConditions.push(
-          Prisma.sql`(j."number" = ${num} AND j."type" = 'NUMERO')`
-        );
-        numberConditions.push(
-          Prisma.sql`(j."reventadoNumber" = ${num} AND j."type" = 'REVENTADO')`
+          Prisma.sql`j."number" = ${num}`
         );
       }
 
@@ -135,7 +132,7 @@ export async function calculateAccumulatedByNumbersAndScope(
     const result = await tx.$queryRaw<Array<{ number: string; total: number }>>(
       Prisma.sql`
         SELECT 
-          COALESCE(j."number", j."reventadoNumber") as number,
+          j."number" as number,
           COALESCE(SUM(j.amount), 0)::numeric as total
         FROM "Ticket" t
         INNER JOIN "Jugada" j ON j."ticketId" = t.id
@@ -153,7 +150,7 @@ export async function calculateAccumulatedByNumbersAndScope(
           AND j."deletedAt" IS NULL
           ${multiplierCondition}   --  Inyectar filtro de multiplicador
           ${whereNumberClause}
-        GROUP BY COALESCE(j."number", j."reventadoNumber")
+        GROUP BY j."number"
       `
     );
 
