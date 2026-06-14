@@ -849,6 +849,20 @@ export const RestrictionRuleService = {
       userId: vendorId,
     });
 
+    // 1.5️⃣ Resolver el cutoff efectivo y desduplicar/filtrar reglas no efectivas
+    const effectiveCutoff = await RestrictionRuleRepository.resolveSalesCutoff({
+      bancaId,
+      ventanaId,
+      userId: vendorId,
+    });
+
+    const filteredGeneral = general.filter(
+      (r) => r.salesCutoffMinutes === null || r.salesCutoffMinutes === effectiveCutoff.minutes
+    );
+    const filteredVendorSpecific = vendorSpecific.data.filter(
+      (r) => r.salesCutoffMinutes === null || r.salesCutoffMinutes === effectiveCutoff.minutes
+    );
+
     // 2️⃣ Función de limpieza
     const cleanRule = (rule: any) => {
       return {
@@ -879,8 +893,8 @@ export const RestrictionRuleService = {
     };
 
     return {
-      general: general.map(cleanRule),
-      vendorSpecific: vendorSpecific.data.map(cleanRule),
+      general: filteredGeneral.map(cleanRule),
+      vendorSpecific: filteredVendorSpecific.map(cleanRule),
     };
   },
 };
