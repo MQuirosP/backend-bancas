@@ -36,7 +36,9 @@ export function computeOccurrences(params: {
         ? true
         : frequency === 'semanal'
           ? daysOfWeek.includes(dow)
-          : true // personalizado -> por ahora igual que diario (ajustable)
+          : frequency === 'personalizado'
+            ? daysOfWeek.includes(dow)
+            : true
 
     if (includeDay) {
       for (const t of times) {
