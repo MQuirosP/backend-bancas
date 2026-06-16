@@ -1807,14 +1807,24 @@ function hashConfig(bandsUsed: BandsUsedMetadata): string {
   return h;
 }
 
-// Anomalías: jugadas NUMERO sin configuración vigente
+// Anomalías: jugadas NUMERO sin configuración vigente (solo se audita el día de hoy en vivo)
 async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult> {
   const timeLabel = `CA-${Math.random().toString(36).substring(7)}`;
   console.time(timeLabel);
+
+  const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
+  const todayStr = crDateService.getTodayCRString();
+
+  // Si el rango no incluye el día de hoy, evitamos consultar tablas vivas históricas
+  const rangeIncludesToday = startDateCRStr <= todayStr && endDateCRStr >= todayStr;
+  if (!rangeIncludesToday) {
+    console.timeEnd(timeLabel);
+    return { outOfBandCount: 0, examples: [] };
+  }
+
   // Construir condiciones WHERE (repetimos lógica para uso fuera de la clase)
   const conditions: Prisma.Sql[] = [];
-  const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
-  conditions.push(Prisma.sql`t."businessDate" BETWEEN ${startDateCRStr}::date AND ${endDateCRStr}::date`);
+  conditions.push(Prisma.sql`t."businessDate" = ${todayStr}::date`);
   // Filtrar por banca activa (para ADMIN multibanca)
   if (filters.bancaId) {
     conditions.push(Prisma.sql`EXISTS (
