@@ -1838,9 +1838,9 @@ async function computeAnomalies(filters: CierreFilters): Promise<AnomaliesResult
   if (filters.vendedorId) conditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
   const whereConditions = conditions.length ? Prisma.sql`AND ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
 
-  // OPTIMIZACIÓN: CTE materializado compartido entre count y sample queries
+  // OPTIMIZACIÓN: CTE compartido entre count y sample queries (sin MATERIALIZED para permitir push-down de filtros e Index Scan)
   const lmActiveCte = Prisma.sql`
-    lm_active AS MATERIALIZED (
+    lm_active AS (
       SELECT
         lm."loteriaId",
         lm."valueX",
