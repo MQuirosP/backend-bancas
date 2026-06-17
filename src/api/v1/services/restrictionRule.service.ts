@@ -1,4 +1,4 @@
-import { ActivityType, Role } from "@prisma/client";
+import { ActivityType, Role } from "../../../generated/prisma/client";
 import { AuthUser } from "../../../core/types";
 import ActivityService from "../../../core/activity.service";
 import { AppError } from "../../../core/errors";

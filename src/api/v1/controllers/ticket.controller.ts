@@ -3,7 +3,7 @@ import { Response } from "express";
 import { TicketService } from "../services/ticket.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import { resolveDateRange, DateRangeResolution } from "../../../utils/dateRange";
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 
@@ -137,7 +137,9 @@ export const TicketController = {
 
       res.setHeader('Content-Type', 'image/png');
       res.setHeader('Content-Disposition', `inline; filename="ticket-${ticketId}.png"`);
-      res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache por 1 hora
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.setHeader('Content-Length', imageBuffer.length.toString());
 
       return res.send(imageBuffer);
@@ -266,6 +268,13 @@ export const TicketController = {
     const userId = req.user!.id;
     const bancaId = req.bancaContext?.bancaId || undefined;
     const result = await TicketService.restore(req.params.id, userId, req.requestId, bancaId);
+    return success(res, result);
+  },
+
+  async registerPrint(req: AuthenticatedRequest, res: Response) {
+    const ticketId = req.params.id;
+    const userId = req.user!.id;
+    const result = await TicketService.incrementPrintCount(ticketId, userId, req.requestId);
     return success(res, result);
   },
 

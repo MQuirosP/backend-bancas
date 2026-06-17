@@ -2,7 +2,7 @@
 import { withConnectionRetry } from '../core/withConnectionRetry';
 import prisma from '../core/prismaClient';
 import logger from '../core/logger';
-import { Prisma, Role } from '@prisma/client';
+import { Prisma, Role } from '../generated/prisma/client';
 
 export const UserRepository = {
   findById: (id: string) =>

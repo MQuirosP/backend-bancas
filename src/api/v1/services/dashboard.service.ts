@@ -1,4 +1,4 @@
-import { Prisma, Role } from "@prisma/client";
+import { Prisma, Role } from "../../../generated/prisma/client";
 import { getCRLocalComponents } from '../../../utils/businessDate';
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";

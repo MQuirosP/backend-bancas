@@ -7,7 +7,7 @@ import { registerPayment, reversePayment, deleteStatement } from "./accounts.mov
 import { AccountStatementRepository } from "../../../../repositories/accountStatement.repository";
 import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";
 import prisma from "../../../../core/prismaClient";
-import { Prisma, Role } from "@prisma/client";
+import { Prisma, Role } from "../../../../generated/prisma/client";
 import { getCachedStatement, setCachedStatement } from "../../../../utils/accountStatementCache";
 import { crDateService } from "../../../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";

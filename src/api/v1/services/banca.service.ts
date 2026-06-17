@@ -2,7 +2,7 @@ import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import ActivityService from "../../../core/activity.service";
 import BancaRepository from "../../../repositories/banca.repository";
-import { ActivityType, Role } from "@prisma/client";
+import { ActivityType, Role } from "../../../generated/prisma/client";
 import { CreateBancaInput, UpdateBancaInput } from "../dto/banca.dto";
 import { LoteriaService } from "./loteria.service";
 import { hashPassword } from "../../../utils/crypto";

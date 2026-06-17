@@ -2,7 +2,7 @@
  * Servicio de reportes de loterías
  */
 
-import { Prisma, SorteoStatus, Role } from '@prisma/client';
+import { Prisma, SorteoStatus, Role } from '../../../../generated/prisma/client';
 import prisma from '../../../../core/prismaClient';
 import { resolveDateRange, calculatePreviousPeriod, calculateChangePercent, calculatePercentage } from '../../utils/reports.utils';
 import { DateToken, ReportMeta } from '../../types/reports.types';

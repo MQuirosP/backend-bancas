@@ -1,4 +1,4 @@
-import { BetType } from "@prisma/client";
+import { BetType } from "../../../generated/prisma/client";
 
 /**
  * Commission Policy JSON structure (stored in Banca, Ventana, User)

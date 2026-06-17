@@ -14,7 +14,7 @@ import {
   getByActionParamSchema,
   cleanupLogsBodySchema,
 } from '../validators/activityLog.validator';
-import { Role } from '@prisma/client';
+import { Role } from '../../../generated/prisma/client';
 import { bancaContextMiddleware } from '../../../middlewares/bancaContext.middleware';
 
 const router = Router();

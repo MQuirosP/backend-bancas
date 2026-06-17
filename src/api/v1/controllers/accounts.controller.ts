@@ -7,7 +7,7 @@ import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { getActiveBancaId } from "../../../middlewares/bancaContext.middleware";
 import { AppError } from "../../../core/errors";
-import { Role, ActivityType } from "@prisma/client";
+import { Role, ActivityType } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";

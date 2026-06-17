@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../../generated/prisma/client';
 import prisma from '../../../core/prismaClient';
 import { CacheService } from '../../../core/cache.service';
 import crypto from 'crypto';

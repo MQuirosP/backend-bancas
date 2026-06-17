@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { SorteoListasController } from "../controllers/sorteo-listas.controller";
 import { protect } from "../../../middlewares/auth.middleware";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import { requireAdminBancaOrVentana } from "../../../middlewares/roleGuards.middleware";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 

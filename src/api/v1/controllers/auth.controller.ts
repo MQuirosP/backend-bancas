@@ -5,7 +5,7 @@ import ActivityService from '../../../core/activity.service';
 import { logger } from '../../../core/logger';
 import prisma from '../../../core/prismaClient';
 import { withConnectionRetry } from '../../../core/withConnectionRetry';
-import { ActivityType, Role } from '@prisma/client';
+import { ActivityType, Role } from '../../../generated/prisma/client';
 import { success, created } from '../../../utils/responses';
 import { RequestContext } from '../dto/auth.dto';
 import { AppError } from '../../../core/errors';

@@ -4,7 +4,7 @@ import { ListActivityLogsQuery } from '../dto/activityLog.dto';
 import { success } from '../../../utils/responses';
 import { AuthenticatedRequest } from '../../../core/types';
 import { getActiveBancaId } from '../../../middlewares/bancaContext.middleware';
-import { Role } from '@prisma/client';
+import { Role } from '../../../generated/prisma/client';
 import { AppError } from '../../../core/errors';
 
 export const ActivityLogController = {

@@ -46,7 +46,8 @@ interface TicketData {
       printBarcode: boolean;
       printFooter: string | null;
     };
-    isActive: boolean; // Add isActive property
+    isActive: boolean;
+    printCount: number | null;
   };
 }
 
@@ -198,6 +199,17 @@ export async function generateTicketImage(
   const ticketNumber = String(ticketData.ticket.ticketNumber ?? ticketData.ticket.id).toUpperCase();
   ctx.fillText(`CODIGO # ${ticketNumber}`, canvasWidth / 2, y);
   y += 14 * scale + 4 * scale; // fontSize + gap
+
+  // Dibujar condicionalmente el banner de REIMPRESIÓN u ORIGINAL
+  if (ticketData.ticket.printCount != null && ticketData.ticket.printCount >= 1) {
+    ctx.font = `900 ${14 * scale}px monospace`;
+    ctx.fillText(`*** REIMPRESION #${ticketData.ticket.printCount} ***`, canvasWidth / 2, y);
+    y += 14 * scale + 4 * scale;
+  } else {
+    ctx.font = `900 ${14 * scale}px monospace`;
+    ctx.fillText('*** ORIGINAL ***', canvasWidth / 2, y);
+    y += 14 * scale + 4 * scale;
+  }
 
   // Verificar si está ANULADO y mostrarlo visiblemente
   // if (ticketData.ticket.isActive === false) {
@@ -458,6 +470,14 @@ export async function generateTicketImage(
     }
   }
 
+  // ========== 8. FIRMA DE SEGURIDAD ==========
+  y += 4 * scale;
+  ctx.font = `900 ${11 * scale}px monospace`;
+  ctx.textAlign = 'center';
+  const signature = `${ticketData.ticket.id.slice(0, 4)}-${ticketData.ticket.id.slice(-4)}`.toUpperCase();
+  ctx.fillText(`Firma: ${signature}`, canvasWidth / 2, y);
+  y += 11 * scale + 4 * scale;
+
   // Convertir canvas a Buffer PNG
   return canvas.toBuffer('image/png');
 }
@@ -477,6 +497,8 @@ function calculateTicketHeight(
 
   // Encabezado
   height += 14 * scale * 2 + 4 * scale + sectionGap; // 2 líneas + gap
+  // Siempre se muestra ya sea *** ORIGINAL *** o *** REIMPRESION #X ***
+  height += 14 * scale + 4 * scale;
 
   // Información del ticket (aproximado)
   height += 13 * scale * 6 + sectionGap; // 6 líneas aproximadas
@@ -529,6 +551,12 @@ function calculateTicketHeight(
   if (shouldShowBarcode) {
     height += 12 * scale + 4 * scale + 50 * scale; // Texto + espacio para código de barras
   }
+
+  // FIRMA DE SEGURIDAD
+  height += 11 * scale + 8 * scale;
+
+  // Margen de seguridad adicional al final del ticket para evitar recortes
+  height += 12 * scale;
 
   return Math.ceil(height);
 }

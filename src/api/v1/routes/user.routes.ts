@@ -21,7 +21,7 @@ import {
   getAllowedMultipliersBatchParamsSchema,
 } from "../validators/user.validator";
 import { z } from "zod";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";

@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { AppError } from '../../../core/errors';
 import { success } from '../../../utils/responses';
 import { AuthenticatedRequest } from '../../../core/types';
-import { Role } from '@prisma/client';
+import { Role } from '../../../generated/prisma/client';
 import { CierreService } from '../services/cierre.service';
 import { CierreExportService } from '../services/cierre-export.service';
 import { validateVentanaUser } from '../../../utils/rbac';

@@ -1,5 +1,5 @@
 // src/repositories/helpers/ticket-restriction.helper.ts
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../../generated/prisma/client";
 import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
 import { getCRLocalComponents } from "../../utils/businessDate";

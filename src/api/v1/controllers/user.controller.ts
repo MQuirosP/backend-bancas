@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { ActivityType, Role } from "@prisma/client";
+import { ActivityType, Role } from "../../../generated/prisma/client";
 import UserService from "../services/user.service";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";

@@ -2,7 +2,7 @@
  * Servicio de reportes de vendedores
  */
 
-import { Prisma, TicketStatus } from '@prisma/client';
+import { Prisma, TicketStatus } from '../../../../generated/prisma/client';
 import prisma from '../../../../core/prismaClient';
 import { AppError } from '../../../../core/errors';
 import { resolveDateRange, normalizePagination, calculateChangePercent, calculatePercentage } from '../../utils/reports.utils';

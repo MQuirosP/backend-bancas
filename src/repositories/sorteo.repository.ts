@@ -2,7 +2,7 @@
 import prisma from "../core/prismaClient";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
-import { Prisma, SorteoStatus, TicketStatus } from "@prisma/client";
+import { Prisma, SorteoStatus, TicketStatus } from "../generated/prisma/client";
 import { CreateSorteoDTO, UpdateSorteoDTO } from "../api/v1/dto/sorteo.dto";
 import { formatIsoLocal, parseCostaRicaDateTime } from "../utils/datetime";
 

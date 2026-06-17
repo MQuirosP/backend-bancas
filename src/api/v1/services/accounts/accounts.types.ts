@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { Role } from "../../../../generated/prisma/client";
 
 /**
  * Filtros para queries de accounts

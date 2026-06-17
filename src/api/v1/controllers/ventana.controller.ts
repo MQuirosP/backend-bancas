@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import { VentanaService } from "../services/ventana.service";
 import { AuthenticatedRequest } from "../../../core/types";
 

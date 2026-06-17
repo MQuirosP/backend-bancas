@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../../../../generated/prisma/client";
 import { commissionSnapshotService } from "../../../../services/commission/CommissionSnapshotService";
 import { resolveCommission } from "../../../../services/commission.resolver"; // Mantener para fallback
 

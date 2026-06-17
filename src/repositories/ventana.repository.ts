@@ -1,6 +1,6 @@
 // repositories/ventana.repository.ts
 import prisma from "../core/prismaClient";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../generated/prisma/client";
 import { AppError } from "../core/errors";
 import logger from "../core/logger";
 

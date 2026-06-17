@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { config } from "../config";
 import { AppError } from "../core/errors";
 import { AuthenticatedRequest } from "../core/types";
-import { Role } from "@prisma/client";
+import { Role } from "../generated/prisma/client";
 import prisma from "../core/prismaClient";
 import { withConnectionRetry } from "../core/withConnectionRetry";
 import { CacheService } from "../core/cache.service";

@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { ActivityType } from "@prisma/client";
+import { ActivityType } from "../../../generated/prisma/client";
 import { AuthenticatedRequest } from "../../../core/types";
 import LoteriaService from "../services/loteria.service";
 import ActivityService from "../../../core/activity.service";

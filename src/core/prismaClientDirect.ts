@@ -1,7 +1,10 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { Pool } from "pg";
 
 declare global {
   var __prismaDirect: PrismaClient | undefined;
+  var __prismaDirectPool: Pool | undefined;
 }
 
 /**
@@ -16,22 +19,24 @@ declare global {
  * Si DIRECT_URL no está configurado, usa DATABASE_URL como fallback.
  */
 function createDirectClient(): PrismaClient {
-  const directUrl = process.env.DIRECT_URL;
+  const directUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
 
-  if (!directUrl) {
+  if (!process.env.DIRECT_URL) {
     console.warn(
       "[PRISMA_DIRECT] DIRECT_URL no configurada, usando DATABASE_URL como fallback"
     );
-    return new PrismaClient({ log: ["warn", "error"] });
   }
 
+  const pool = new Pool({
+    connectionString: directUrl,
+  });
+
+  global.__prismaDirectPool = pool;
+  const adapter = new PrismaPg(pool);
+
   return new PrismaClient({
+    adapter,
     log: ["warn", "error"],
-    datasources: {
-      db: {
-        url: directUrl,
-      },
-    },
   });
 }
 

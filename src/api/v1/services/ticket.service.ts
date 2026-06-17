@@ -1,4 +1,4 @@
-import { ActivityType, Prisma, Role, TicketStatus } from "@prisma/client";
+import { ActivityType, Prisma, Role, TicketStatus } from "../../../generated/prisma/client";
 import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import TicketRepository from "../../../repositories/ticket.repository";
 import ActivityService from "../../../core/activity.service";
@@ -585,6 +585,27 @@ export const TicketService = {
       userId,
       requestId,
       payload: { ticketId: id },
+    });
+
+    return ticket;
+  },
+
+  async incrementPrintCount(id: string, userId: string, requestId?: string) {
+    const ticket = await TicketRepository.incrementPrintCount(id);
+
+    await ActivityService.log({
+      userId,
+      bancaId: ticket.bancaId,
+      action: ActivityType.TICKET_REPRINT,
+      targetType: "TICKET",
+      targetId: id,
+      details: {
+        ticketNumber: ticket.ticketNumber,
+        printCount: ticket.printCount,
+        description: `Ticket #${ticket.ticketNumber} impreso (Conteo acumulado: ${ticket.printCount})`
+      },
+      requestId,
+      layer: "service"
     });
 
     return ticket;
@@ -1747,6 +1768,7 @@ export const TicketService = {
           const sqlConditions: Prisma.Sql[] = [
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
+            Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`,
           ];
           if (effectiveFilters.bancaId) {
             sqlConditions.push(Prisma.sql`v."bancaId" = CAST(${effectiveFilters.bancaId} AS uuid)`);
@@ -2139,6 +2161,7 @@ export const TicketService = {
       const sqlConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
+        Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`,
       ];
       if (params.sorteoStatus) {
         sqlConditions.push(Prisma.sql`s.status::text = ${params.sorteoStatus}`);
@@ -2423,6 +2446,7 @@ export const TicketService = {
         select: {
           id: true,
           ticketNumber: true,
+          printCount: true,
           totalAmount: true,
           clienteNombre: true,
           createdAt: true,
@@ -2537,6 +2561,7 @@ export const TicketService = {
           ticket: {
             id: ticket.id,
             ticketNumber: ticket.ticketNumber,
+            printCount: ticket.printCount,
             totalAmount: ticket.totalAmount,
             clienteNombre: ticket.clienteNombre,
             createdAt: ticket.createdAt,

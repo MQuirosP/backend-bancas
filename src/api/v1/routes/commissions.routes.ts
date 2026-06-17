@@ -10,7 +10,7 @@ import {
 } from "../validators/commissions.validator";
 import { protect, restrictTo } from "../../../middlewares/auth.middleware";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import rateLimit from "express-rate-limit";
 
 const router = Router();

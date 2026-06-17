@@ -3,7 +3,7 @@ import { Response } from "express";
 import { VentasService, VentasFilters } from "../services/venta.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import { AppError } from "../../../core/errors";
 import { resolveDateRange, validateTimeseriesRange } from "../../../utils/dateRange";
 import { applyRbacFilters, AuthContext } from "../../../utils/rbac";

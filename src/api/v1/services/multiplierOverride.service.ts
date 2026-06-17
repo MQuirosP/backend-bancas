@@ -1,5 +1,5 @@
 // src/api/v1/services/multiplierOverride.service.ts
-import { Role, ActivityType, OverrideScope } from "@prisma/client";
+import { Role, ActivityType, OverrideScope } from "../../../generated/prisma/client";
 import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
 import ActivityService from "../../../core/activity.service";

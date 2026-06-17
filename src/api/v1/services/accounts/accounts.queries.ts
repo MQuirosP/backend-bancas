@@ -1,4 +1,4 @@
-import { Role, Prisma } from "@prisma/client";
+import { Role, Prisma } from "../../../../generated/prisma/client";
 import prisma from "../../../../core/prismaClient";
 import logger from "../../../../core/logger";
 import { AccountPaymentRepository } from "../../../../repositories/accountPayment.repository";

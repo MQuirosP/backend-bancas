@@ -1,4 +1,4 @@
-import { SorteoStatus } from "@prisma/client";
+import { SorteoStatus } from "../../../generated/prisma/client";
 
 export interface CreateSorteoDTO {
   name: string;

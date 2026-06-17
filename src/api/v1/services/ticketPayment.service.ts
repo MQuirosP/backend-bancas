@@ -1,7 +1,7 @@
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import ActivityService from "../../../core/activity.service";
-import { ActivityType, Role, TicketPayment, TicketStatus } from "@prisma/client";
+import { ActivityType, Role, TicketPayment, TicketStatus } from "../../../generated/prisma/client";
 import { CreatePaymentInput } from "../dto/ticketPayment.dto";
 
 interface AuthActor {

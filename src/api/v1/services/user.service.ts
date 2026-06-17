@@ -4,7 +4,7 @@ import { AppError } from '../../../core/errors';
 import { CreateUserDTO, UpdateUserDTO } from '../dto/user.dto';
 import { hashPassword, comparePassword } from '../../../utils/crypto';
 import UserRepository from '../../../repositories/user.repository';
-import { Role, ActivityType } from '@prisma/client';
+import { Role, ActivityType } from '../../../generated/prisma/client';
 import { normalizePhone } from "../../../utils/phoneNormalizer";
 import ActivityService from '../../../core/activity.service';
 import { parseCommissionPolicy, CommissionRule } from '../../../services/commission.resolver';

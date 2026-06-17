@@ -5,7 +5,7 @@
  * Los filtros se aplican estrictamente según el rol del usuario en el JWT.
  */
 
-import { Role } from '@prisma/client';
+import { Role } from '../generated/prisma/client';
 import { AppError } from '../core/errors';
 import prisma from '../core/prismaClient';
 import { withConnectionRetry } from '../core/withConnectionRetry';

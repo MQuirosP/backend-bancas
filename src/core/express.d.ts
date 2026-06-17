@@ -1,5 +1,5 @@
 import type pino from "pino";
-import { Role } from "@prisma/client";
+import { Role } from "../generated/prisma/client";
 import "express-serve-static-core";
 
 declare module "express-serve-static-core" {

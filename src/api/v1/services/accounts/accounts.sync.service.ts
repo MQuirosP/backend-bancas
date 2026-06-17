@@ -7,7 +7,7 @@
  * Este servicio sincroniza AccountStatement para mantener accumulatedBalance como fuente de verdad.
  */
 
-import { Prisma, Role } from "@prisma/client";
+import { Prisma, Role } from "../../../../generated/prisma/client";
 import prisma from "../../../../core/prismaClient";
 import logger from "../../../../core/logger";
 import { AppError } from "../../../../core/errors";

@@ -4,7 +4,7 @@ import { CommissionsService } from "../services/commissions.service";
 import { CommissionsExportService } from "../services/commissions-export.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import { AppError } from "../../../core/errors";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { applyRbacFilters, AuthContext } from "../../../utils/rbac";

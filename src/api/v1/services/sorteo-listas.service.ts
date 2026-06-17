@@ -1,4 +1,4 @@
-import { SorteoStatus, Prisma } from "@prisma/client";
+import { SorteoStatus, Prisma } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import {

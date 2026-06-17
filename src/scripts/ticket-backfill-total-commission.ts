@@ -3,7 +3,7 @@
 
 import prisma from '../core/prismaClient';
 import logger from '../core/logger';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client';
 
 function parseArgs() {
   const args = process.argv.slice(2);

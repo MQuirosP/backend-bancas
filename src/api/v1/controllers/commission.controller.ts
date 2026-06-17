@@ -4,7 +4,7 @@ import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../../../generated/prisma/client";
 import { CacheService } from "../../../core/cache.service";
 
 type MultiplierEmbed = {

@@ -1,6 +1,6 @@
 // src/api/v1/services/multiplier.service.ts
 import { AppError } from "../../../core/errors";
-import { ActivityType } from "@prisma/client";
+import { ActivityType } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
 import ActivityService from "../../../core/activity.service";
 import {

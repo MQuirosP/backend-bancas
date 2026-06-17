@@ -1,6 +1,6 @@
 // src/api/v1/validators/commission.validator.ts
 import { z } from "zod";
-import { BetType } from "@prisma/client";
+import { BetType } from "../../../generated/prisma/client";
 import { validateBody } from "../../../middlewares/validate.middleware";
 import { v4 as uuidv4 } from "uuid";
 

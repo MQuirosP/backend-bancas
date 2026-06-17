@@ -3,7 +3,7 @@ import prisma from '../core/prismaClient';
 import logger from '../core/logger';
 import { AppError } from '../core/errors';
 import { AuthenticatedRequest, BancaContext } from '../core/types';
-import { Role } from '@prisma/client';
+import { Role } from '../generated/prisma/client';
 
 /**
  * Middleware para establecer el contexto de banca activa (filtro de vista)

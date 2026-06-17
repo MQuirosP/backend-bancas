@@ -1,5 +1,5 @@
 // src/modules/sorteos/services/sorteo.service.ts
-import { ActivityType, Prisma, Role, SorteoStatus, TicketStatus } from "@prisma/client";
+import { ActivityType, Prisma, Role, SorteoStatus, TicketStatus } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import ActivityService from "../../../core/activity.service";

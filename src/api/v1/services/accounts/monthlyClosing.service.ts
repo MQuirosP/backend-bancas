@@ -4,7 +4,7 @@
  */
 
 import prisma from "../../../../core/prismaClient";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../../../../generated/prisma/client";
 import logger from "../../../../core/logger";
 import { crDateService } from "../../../../utils/crDateService";
 import { isExclusionListEmpty } from "../../../../core/exclusionListCache";

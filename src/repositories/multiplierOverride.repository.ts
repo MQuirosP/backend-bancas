@@ -1,5 +1,5 @@
 // src/repositories/multiplierOverride.repository.ts
-import { OverrideScope, Prisma } from "@prisma/client";
+import { OverrideScope, Prisma } from "../generated/prisma/client";
 import prisma from "../core/prismaClient";
 import { AppError } from "../core/errors";
 

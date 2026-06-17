@@ -12,7 +12,7 @@ import {
   restrictToCommissionAdminSelfOrVentanaVendor,
   restrictToAdminOrVentanaSelf,
 } from "../../../middlewares/auth.middleware";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 
 const router = Router();
 

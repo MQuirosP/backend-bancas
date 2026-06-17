@@ -1,7 +1,7 @@
 import { Router } from "express";
 import UserBancaController from "../controllers/userBanca.controller";
 import { protect, restrictTo } from "../../../middlewares/auth.middleware";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import { validateBody, validateParams } from "../../../middlewares/validate.middleware";
 import { z } from "zod";
 

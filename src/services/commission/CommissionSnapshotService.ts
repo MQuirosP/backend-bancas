@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../../generated/prisma/client";
 import prisma from "../../core/prismaClient";
 import logger from "../../core/logger";
 import { CommissionSnapshot } from "./types/CommissionTypes";

@@ -7,7 +7,7 @@ import {
   validateCierreBySellerQuery,
   validateCierreExportQuery,
 } from '../validators/cierre.validator';
-import { Role } from '@prisma/client';
+import { Role } from '../../../generated/prisma/client';
 
 const router = Router();
 

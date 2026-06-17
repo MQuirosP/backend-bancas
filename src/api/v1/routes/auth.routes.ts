@@ -5,7 +5,7 @@ import { authRateLimiter } from '../../../middlewares/rateLimit.middleware';
 import { registerSchema, loginSchema, setActiveBancaSchema } from '../validators/auth.validator';
 import { updateUserSchema } from '../validators/user.validator';
 import { protect, restrictTo } from '../../../middlewares/auth.middleware';
-import { Role } from '@prisma/client';
+import { Role } from '../../../generated/prisma/client';
 
 const router = Router();
 

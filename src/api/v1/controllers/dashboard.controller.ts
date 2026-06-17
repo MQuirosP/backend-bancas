@@ -2,7 +2,7 @@ import { Response } from "express";
 import { AppError } from "../../../core/errors";
 import { success } from "../../../utils/responses";
 import { AuthenticatedRequest } from "../../../core/types";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import DashboardService from "../services/dashboard.service";
 import { DashboardExportService } from "../services/dashboard-export.service";
 import { resolveDateRange } from "../../../utils/dateRange";

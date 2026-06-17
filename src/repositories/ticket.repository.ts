@@ -1,5 +1,5 @@
 import prisma from "../core/prismaClient";
-import { Prisma, TicketStatus, Role } from "@prisma/client";
+import { Prisma, TicketStatus, Role } from "../generated/prisma/client";
 import { withConnectionRetry } from "../core/withConnectionRetry";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
@@ -2643,6 +2643,24 @@ export const TicketRepository = {
     });
 
     return ticket;
+  },
+
+  async incrementPrintCount(id: string) {
+    return withConnectionRetry(
+      () => prisma.ticket.update({
+        where: { id },
+        data: {
+          printCount: { increment: 1 }
+        },
+        include: {
+          sorteo: true,
+          loteria: true,
+          vendedor: true,
+          ventana: true
+        }
+      }),
+      { context: 'TicketRepository.incrementPrintCount' }
+    );
   },
 
   /**

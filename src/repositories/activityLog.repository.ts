@@ -1,5 +1,5 @@
 import prisma from '../core/prismaClient';
-import { Prisma, ActivityType } from '@prisma/client';
+import { Prisma, ActivityType } from '../generated/prisma/client';
 
 interface ListActivityLogsParams {
   page: number;

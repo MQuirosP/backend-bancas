@@ -13,7 +13,7 @@ import {
 import { salesRateLimiter } from "../../../middlewares/rateLimit.middleware";
 import { protect, restrictTo } from "../../../middlewares/auth.middleware";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 
 const router = Router();
 
@@ -37,6 +37,7 @@ router.get("/:id", TicketController.getById);
 router.get("/", validateListTicketsQuery, TicketController.list);
 router.patch("/:id/cancel", TicketController.cancel);
 router.patch("/:id/restore", TicketController.restore);
+router.post("/:id/print", TicketController.registerPrint);
 
 // Payment endpoints (unificados en Ticket)
 router.post(

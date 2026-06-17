@@ -1,5 +1,5 @@
 import prisma from "../../../../core/prismaClient";
-import { AccountStatement } from "@prisma/client";
+import { AccountStatement } from "../../../../generated/prisma/client";
 import logger from "../../../../core/logger";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
 

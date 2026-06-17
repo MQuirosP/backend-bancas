@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { VendedorService } from "../services/vendedor.service";
 import { AuthenticatedRequest } from "../../../core/types";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
 
 export const VendedorController = {

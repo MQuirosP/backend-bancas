@@ -2,7 +2,7 @@ import { is } from 'zod/locales';
 import prisma from "../core/prismaClient";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../generated/prisma/client";
 import { CreateBancaInput, UpdateBancaInput } from "../api/v1/dto/banca.dto";
 import { invalidateRestrictionCaches } from "../utils/restrictionCache";
 

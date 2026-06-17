@@ -1,5 +1,5 @@
 // src/api/v1/services/commissions.service.ts
-import { Prisma, Role } from "@prisma/client";
+import { Prisma, Role } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { PaginatedResult, buildMeta, getSkipTake } from "../../../utils/pagination";

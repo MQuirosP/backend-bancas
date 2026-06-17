@@ -1,5 +1,5 @@
 import prisma from "../core/prismaClient";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../generated/prisma/client";
 import logger from "../core/logger";
 
 export const AccountStatementRepository = {

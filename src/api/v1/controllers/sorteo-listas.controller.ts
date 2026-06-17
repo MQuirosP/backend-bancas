@@ -1,7 +1,7 @@
 import { Response } from "express";
 import { SorteoListasService } from "../services/sorteo-listas.service";
 import { AuthenticatedRequest } from "../../../core/types";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import { validateVentanaUser } from "../../../utils/rbac";
 
 export const SorteoListasController = {

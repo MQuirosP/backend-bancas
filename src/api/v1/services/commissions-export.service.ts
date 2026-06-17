@@ -13,7 +13,7 @@ import {
 } from '../types/commissions-export.types';
 import prisma from '../../../core/prismaClient';
 import { resolveDateRange } from '../../../utils/dateRange';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../../generated/prisma/client';
 import logger from '../../../core/logger';
 import { isExclusionListEmpty } from '../../../core/exclusionListCache';
 

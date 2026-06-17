@@ -1,5 +1,5 @@
 import prisma from "../../../core/prismaClient";
-import { Ticket } from "@prisma/client";
+import { Ticket } from "../../../generated/prisma/client";
 
 export const BATCH_SIZE = 100;
 

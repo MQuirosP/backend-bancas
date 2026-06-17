@@ -1,6 +1,6 @@
 import prisma from './prismaClient';
 import logger from './logger';
-import { ActivityType, Prisma } from '@prisma/client';
+import { ActivityType, Prisma } from '../generated/prisma/client';
 
 export type ActivityPayload = {
   userId?: string | null;

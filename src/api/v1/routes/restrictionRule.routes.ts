@@ -12,7 +12,7 @@ import {
 import { protect } from "../../../middlewares/auth.middleware";
 import { requireAdmin, requireAuth } from "../../../middlewares/roleGuards.middleware";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
-import { Role } from "@prisma/client";
+import { Role } from "../../../generated/prisma/client";
 import { AuthenticatedRequest } from "../../../core/types";
 import { Response, NextFunction } from "express";
 

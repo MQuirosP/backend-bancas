@@ -1,13 +1,26 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { Pool } from "pg";
 
 declare global {
   var __prisma: PrismaClient | undefined;
+  var __prismaPool: Pool | undefined;
 }
+
+if (!global.__prismaPool) {
+  global.__prismaPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+  });
+}
+
+const pool = global.__prismaPool;
+const adapter = new PrismaPg(pool);
 
 //  FIX: Cachear globalmente SIEMPRE (incluso en producción)
 // Antes: Solo se cacheaba en development → múltiples instancias en production
 // Ahora: Una sola instancia reutilizada → evita agotamiento de conexiones
 const prisma = global.__prisma ?? new PrismaClient({
+  adapter,
   log: ['warn', 'error'],
 });
 

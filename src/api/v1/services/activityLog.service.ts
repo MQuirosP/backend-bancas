@@ -1,7 +1,7 @@
 import ActivityLogRepository from '../../../repositories/activityLog.repository';
 import { ListActivityLogsQuery } from '../dto/activityLog.dto';
 import { AppError } from '../../../core/errors';
-import { ActivityType } from '@prisma/client';
+import { ActivityType } from '../../../generated/prisma/client';
 
 export const ActivityLogService = {
   async getById(id: string, bancaId?: string | null) {

@@ -2,7 +2,7 @@
  * Servicio de reportes de tickets
  */
 
-import { Prisma, TicketStatus, SorteoStatus } from '@prisma/client';
+import { Prisma, TicketStatus, SorteoStatus } from '../../../../generated/prisma/client';
 import prisma from '../../../../core/prismaClient';
 import { AppError } from '../../../../core/errors';
 import logger from '../../../../core/logger';

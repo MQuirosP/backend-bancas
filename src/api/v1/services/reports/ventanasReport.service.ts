@@ -2,7 +2,7 @@
  * Servicio de reportes de ventanas (listeros)
  */
 
-import { Prisma, Role } from '@prisma/client';
+import { Prisma, Role } from '../../../../generated/prisma/client';
 import prisma from '../../../../core/prismaClient';
 import { resolveDateRange, normalizePagination, calculatePreviousPeriod, calculateChangePercent } from '../../utils/reports.utils';
 import { DateToken, SortByVentanas, ReportMeta } from '../../types/reports.types';

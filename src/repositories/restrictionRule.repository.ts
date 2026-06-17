@@ -2,7 +2,7 @@
 import prisma from "../core/prismaClient";
 import { withConnectionRetry } from "../core/withConnectionRetry";
 import logger from "../core/logger";
-import { Role } from "@prisma/client";
+import { Role } from "../generated/prisma/client";
 import { getCRLocalComponents } from "../utils/businessDate";
 import { SalesService } from "../api/v1/services/sales.service";
 import { restrictionCacheV2 } from "../utils/restrictionCacheV2";

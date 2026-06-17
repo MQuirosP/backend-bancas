@@ -3,7 +3,7 @@ import { RedisStore } from 'rate-limit-redis';
 import { getRedisClient, isRedisAvailable } from '../core/redisClient';
 import logger from '../core/logger';
 import { Request, Response, NextFunction } from 'express';
-import { Role } from '@prisma/client';
+import { Role } from '../generated/prisma/client';
 
 /**
  * Configuración base para Rate Limiters

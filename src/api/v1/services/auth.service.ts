@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { comparePassword, hashPassword } from '../../../utils/crypto';
 import { logger } from '../../../core/logger';
 import ActivityService from '../../../core/activity.service';
-import { ActivityType, Role, Prisma } from '@prisma/client';
+import { ActivityType, Role, Prisma } from '../../../generated/prisma/client';
 import { withConnectionRetry } from '../../../core/withConnectionRetry';
 import { CacheService } from '../../../core/cache.service';
 

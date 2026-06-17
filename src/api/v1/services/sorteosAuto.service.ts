@@ -1,7 +1,7 @@
 // src/api/v1/services/sorteosAuto.service.ts
 import prisma from '../../../core/prismaClient';
 import { AppError } from '../../../core/errors';
-import { SorteoStatus, Prisma } from '@prisma/client';
+import { SorteoStatus, Prisma } from '../../../generated/prisma/client';
 import logger from '../../../core/logger';
 import SorteoService from './sorteo.service';
 import LoteriaService from './loteria.service';

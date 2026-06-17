@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ActivityType } from '@prisma/client';
+import { ActivityType } from '../../../generated/prisma/client';
 
 export const listActivityLogsQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),

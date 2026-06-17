@@ -1,6 +1,6 @@
 import prisma from "../../../core/prismaClient";
 import { withConnectionRetry } from "../../../core/withConnectionRetry";
-import { ActivityType, Prisma, SorteoStatus } from "@prisma/client";
+import { ActivityType, Prisma, SorteoStatus } from "../../../generated/prisma/client";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
 import { AppError } from "../../../core/errors";

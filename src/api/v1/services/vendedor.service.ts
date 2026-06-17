@@ -2,7 +2,7 @@ import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import ActivityService from "../../../core/activity.service";
 import VendedorRepository from "../../../repositories/vendedor.repository";
-import { ActivityType, Role } from "@prisma/client";
+import { ActivityType, Role } from "../../../generated/prisma/client";
 import { CreateVendedorInput, UpdateVendedorInput } from "../dto/vendedor.dto";
 import bcrypt from "bcryptjs";
 
