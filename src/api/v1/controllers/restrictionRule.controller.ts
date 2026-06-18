@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../../../core/types";
 import { RestrictionRuleService } from "../services/restrictionRule.service";
+import { rehydrateRedisAccumulated } from "../../../repositories/helpers/ticket-restriction.helper";
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 import prisma from "../../../core/prismaClient";
 import { withConnectionRetry } from "../../../core/withConnectionRetry";
@@ -274,5 +275,35 @@ export const RestrictionRuleController = {
     });
 
     responses.success(res, result);
+  },
+
+  async rehydrateRedis(req: AuthenticatedRequest, res: Response) {
+    const { sorteoId } = req.params;
+    
+    if (!sorteoId) {
+      return res.status(400).json({
+        success: false,
+        error: "MISSING_SORTEO_ID",
+        message: "El parámetro sorteoId es requerido.",
+      });
+    }
+
+    try {
+      await rehydrateRedisAccumulated(sorteoId);
+      responses.success(res, {
+        message: `Los acumulados de Redis para el sorteo ${sorteoId} se han rehidratado con éxito.`,
+      });
+    } catch (err: any) {
+      req.logger?.error({
+        layer: "controller",
+        action: "REHYDRATE_REDIS_ERROR",
+        payload: { sorteoId, error: err.message },
+      });
+      res.status(500).json({
+        success: false,
+        error: "REHYDRATION_FAILED",
+        message: err.message,
+      });
+    }
   },
 };

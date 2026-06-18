@@ -95,6 +95,16 @@ router.post(
 );
 
 /**
+ *  ADMIN: Rehidratar acumulados de Redis manualmente para un sorteo
+ * POST /api/v1/restrictions/rehydrate/:sorteoId
+ */
+router.post(
+  "/rehydrate/:sorteoId",
+  requireAdmin,
+  RestrictionRuleController.rehydrateRedis
+);
+
+/**
  *  VENDEDOR: Obtener mis restricciones (generales + específicas)
  * GET /api/v1/restrictions/me
  */

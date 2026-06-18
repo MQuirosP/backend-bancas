@@ -10,7 +10,9 @@ import { commissionService } from "../services/commission/CommissionService";
 import { commissionResolver } from "../services/commission/CommissionResolver";
 import { getBusinessDateCRInfo, getCRDayRangeUTC, getCRLocalComponents } from "../utils/businessDate";
 import { nowCR, validateDate, formatDateCRWithTZ } from "../utils/datetime";
-import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel, ScopeCache, calculateAccumulatedByNumbersAndScope } from "./helpers/ticket-restriction.helper";
+import { v4 as uuidv4 } from "uuid";
+import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel, ScopeCache, calculateAccumulatedByNumbersAndScope, calculateAccumulatedForMultipleScopes, acquireLock, releaseLock } from "./helpers/ticket-restriction.helper";
+import { getRedisClient, isRedisAvailable, markRedisError } from "../core/redisClient";
 
 
 interface CachedRules {
@@ -1405,6 +1407,47 @@ export const TicketRepository = {
       },
     });
 
+    const lockValue = uuidv4();
+    let lockKey = "";
+    let lockAcquired = false;
+
+    try {
+      if (isRedisAvailable()) {
+        let targetBancaId = options?.preFetched?.ventana?.bancaId;
+        if (!targetBancaId) {
+          const vent = await prisma.ventana.findUnique({
+            where: { id: ventanaId },
+            select: { bancaId: true },
+          });
+          targetBancaId = vent?.bancaId;
+        }
+
+        if (targetBancaId) {
+          lockKey = `lock:ticket-create:sorteo:${sorteoId}:banca:${targetBancaId}`;
+          let attempts = 0;
+          const maxAttempts = 50;
+          while (attempts < maxAttempts) {
+            lockAcquired = await acquireLock(lockKey, lockValue, 10); // 10s TTL
+            if (lockAcquired) break;
+            attempts++;
+            await new Promise((resolve) => setTimeout(resolve, 20 + Math.random() * 60));
+          }
+
+          if (!lockAcquired) {
+            logger.warn({
+              layer: 'repository',
+              action: 'TICKET_CREATE_LOCK_TIMEOUT',
+              payload: { lockKey, attempts },
+            });
+            throw new AppError(
+              'El sistema está procesando demasiadas solicitudes concurrentes para esta banca. Por favor, reintente en unos segundos.',
+              429,
+              'CONCURRENT_REQUEST_LIMIT'
+            );
+          }
+        }
+      }
+
     // ─────────────────────────────────────────────────────────────────────────
     // PRE-FETCH: Multiplicadores de jugadas (FUERA de la transacción)
     // ─────────────────────────────────────────────────────────────────────────
@@ -1806,6 +1849,12 @@ export const TicketRepository = {
           }
         }
 
+        const scopesArray: Array<{
+          scopeType: 'USER' | 'VENTANA' | 'BANCA';
+          scopeId: string;
+          multiplierFilter: { id: string; kind: 'NUMERO' | 'REVENTADO' } | null;
+        }> = [];
+
         for (const scopeKey of scopesToPreload) {
           const [scopeType, scopeId, multiplierKey] = scopeKey.split(':');
           const multiplierFilter =
@@ -1815,20 +1864,20 @@ export const TicketRepository = {
                 ? { id: 'REVENTADO', kind: 'REVENTADO' as any }
                 : { id: multiplierKey, kind: 'NUMERO' as any };
 
-          preloadingPromises.push(
-            calculateAccumulatedByNumbersAndScope(tx, {
-              numbers: uniqueNumberStrings,
-              scopeType: scopeType as any,
-              scopeId,
-              sorteoId,
-              multiplierFilter,
-              cache,
-            })
-          );
+          scopesArray.push({
+            scopeType: scopeType as any,
+            scopeId,
+            multiplierFilter,
+          });
         }
 
-        if (preloadingPromises.length > 0) {
-          await Promise.all(preloadingPromises);
+        if (scopesArray.length > 0) {
+          await calculateAccumulatedForMultipleScopes(tx, {
+            numbers: uniqueNumberStrings,
+            sorteoId,
+            scopes: scopesArray,
+            cache,
+          });
         }
 
         const dynamicLimits = new Map<string, number>();
@@ -2273,7 +2322,91 @@ export const TicketRepository = {
       },
     });
 
-    return { ticket, warnings };
+      // ─────────────────────────────────────────────────────────────────────────
+      // POST-TRANSACCIÓN: Incrementar acumulados en Redis
+      // ─────────────────────────────────────────────────────────────────────────
+      if (isRedisAvailable()) {
+        const redis = getRedisClient();
+        if (redis) {
+          try {
+            const pipeline = redis.pipeline();
+            
+            // Obtener la bancaId real para el incremento
+            let targetBancaId = options?.preFetched?.ventana?.bancaId;
+            if (!targetBancaId && ticket.ventana?.bancaId) {
+              targetBancaId = ticket.ventana.bancaId;
+            }
+            if (!targetBancaId) {
+              const vent = await prisma.ventana.findUnique({
+                where: { id: ventanaId },
+                select: { bancaId: true },
+              });
+              targetBancaId = vent?.bancaId;
+            }
+
+            if (targetBancaId) {
+              const scopes = [
+                { id: targetBancaId, type: 'BANCA' },
+                { id: ventanaId, type: 'VENTANA' },
+                { id: userId, type: 'USER' }
+              ];
+
+              for (const j of jugadas) {
+                const amount = j.amount;
+                const num = j.number;
+
+                for (const sc of scopes) {
+                  if (!sc.id) continue;
+
+                  // 1. Clave general
+                  const genKey = `sorteo:${sorteoId}:scope:${sc.id}:acumulados`;
+                  pipeline.hincrbyfloat(genKey, num, amount);
+                  pipeline.expire(genKey, 43200);
+
+                  // 2. Clave por multiplicador
+                  const resolvedJugada = jugadasWithCommissions.find(
+                    (jw: any) => jw.number === num && jw.type === j.type
+                  );
+                  const multId = j.type === 'REVENTADO' ? 'REVENTADO' : (resolvedJugada?.multiplierId || j.multiplierId);
+                  
+                  if (multId) {
+                    const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
+                    pipeline.hincrbyfloat(multKey, num, amount);
+                    pipeline.expire(multKey, 43200);
+                  }
+                }
+              }
+
+              await pipeline.exec();
+
+              logger.debug({
+                layer: 'redis-update',
+                action: 'ACCUMULATED_REDIS_INCREMENTED',
+                payload: {
+                  ticketId: ticket.id,
+                  sorteoId,
+                  bancaId: targetBancaId,
+                  jugadasCount: jugadas.length,
+                },
+              });
+            }
+          } catch (redisErr: any) {
+            markRedisError('createOptimized-increment');
+            logger.error({
+              layer: 'redis-update',
+              action: 'REDIS_INCREMENT_ERROR',
+              payload: { ticketId: ticket.id, error: redisErr.message },
+            });
+          }
+        }
+      }
+
+      return { ticket, warnings };
+    } finally {
+      if (lockAcquired && lockKey) {
+        await releaseLock(lockKey, lockValue);
+      }
+    }
   },
 
 

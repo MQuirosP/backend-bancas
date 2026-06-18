@@ -61,8 +61,60 @@ const includeLabels = {
   multiplier: { select: { id: true, name: true, valueX: true, kind: true } },
 } as const;
 
+async function resolveLocalLoteriaId(
+  loteriaId: string | null | undefined,
+  data: { bancaId?: string | null; ventanaId?: string | null; userId?: string | null }
+): Promise<string | null> {
+  if (!loteriaId) return null;
+
+  // Resolve targetBancaId
+  let targetBancaId: string | null = data.bancaId ?? null;
+  if (!targetBancaId) {
+    if (data.ventanaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: data.ventanaId },
+        select: { bancaId: true }
+      });
+      targetBancaId = ventana?.bancaId ?? null;
+    } else if (data.userId) {
+      const user = await prisma.user.findUnique({
+        where: { id: data.userId },
+        select: { bancaId: true, ventana: { select: { bancaId: true } } }
+      });
+      targetBancaId = user?.bancaId ?? user?.ventana?.bancaId ?? null;
+    }
+  }
+
+  if (!targetBancaId) return loteriaId;
+
+  // Check if the selected loteria is global (bancaId = null)
+  const loteria = await prisma.loteria.findUnique({
+    where: { id: loteriaId },
+    select: { name: true, bancaId: true }
+  });
+
+  if (loteria && loteria.bancaId === null) {
+    // It's a template global loteria, find the local copy for targetBancaId
+    const localLoteria = await prisma.loteria.findFirst({
+      where: {
+        name: loteria.name,
+        bancaId: targetBancaId,
+        isActive: true
+      },
+      select: { id: true }
+    });
+    if (localLoteria) {
+      return localLoteria.id;
+    }
+  }
+
+  return loteriaId;
+}
+
 export const RestrictionRuleRepository = {
   async create(data: any) {
+    const resolvedLoteriaId = await resolveLocalLoteriaId(data.loteriaId, data);
+
     // Filtrar solo los campos válidos del schema de Prisma
     const validData: any = {
       bancaId: data.bancaId ?? null,
@@ -80,7 +132,7 @@ export const RestrictionRuleRepository = {
       isAutoDate: data.isAutoDate ?? false,
       salesCutoffMinutes: data.salesCutoffMinutes ?? null,
       message: data.message ?? null,
-      loteriaId: data.loteriaId ?? null,
+      loteriaId: resolvedLoteriaId,
       multiplierId: data.multiplierId ?? null,
     };
 
@@ -103,10 +155,34 @@ export const RestrictionRuleRepository = {
   },
 
   async update(id: string, data: any) {
+    const existingRule = await prisma.restrictionRule.findUnique({
+      where: { id },
+      select: { bancaId: true, ventanaId: true, userId: true, loteriaId: true }
+    });
+    
+    let resolvedLoteriaId = data.loteriaId;
+
+    if (existingRule) {
+      const mergedData = {
+        bancaId: data.bancaId !== undefined ? data.bancaId : existingRule.bancaId,
+        ventanaId: data.ventanaId !== undefined ? data.ventanaId : existingRule.ventanaId,
+        userId: data.userId !== undefined ? data.userId : existingRule.userId,
+      };
+      const incomingLoteriaId = data.loteriaId !== undefined ? data.loteriaId : existingRule.loteriaId;
+      if (incomingLoteriaId) {
+        resolvedLoteriaId = await resolveLocalLoteriaId(incomingLoteriaId, mergedData);
+      }
+    }
+
+    const updateData = {
+      ...data,
+      ...(resolvedLoteriaId !== undefined ? { loteriaId: resolvedLoteriaId } : {})
+    };
+
     const rule = await withConnectionRetry(
       () => prisma.restrictionRule.update({
         where: { id },
-        data,
+        data: updateData,
         include: includeLabels,
       }),
       { context: 'RestrictionRuleRepository.update' }
@@ -121,6 +197,7 @@ export const RestrictionRuleRepository = {
 
     return rule;
   },
+
 
   async softDelete(id: string, _actorId: string, _reason?: string) {
     // baja lógica: isActive = false

@@ -4,6 +4,60 @@ import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
 import { getCRLocalComponents } from "../../utils/businessDate";
 import { restrictionCacheV2 } from "../../utils/restrictionCacheV2";
+import { getRedisClient, isRedisAvailable, markRedisError } from "../../core/redisClient";
+import prisma from "../../core/prismaClient";
+
+/**
+ * Intenta adquirir un lock distribuido en Redis.
+ * Retorna true si se adquirió, false en caso contrario.
+ */
+export async function acquireLock(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+  if (!isRedisAvailable()) return false;
+  const redis = getRedisClient();
+  if (!redis) return false;
+
+  try {
+    const result = await redis.set(key, value, "EX", ttlSeconds, "NX");
+    return result === "OK";
+  } catch (err: any) {
+    logger.error({
+      layer: "redis-lock",
+      action: "ACQUIRE_LOCK_ERROR",
+      payload: { key, error: err.message },
+    });
+    return false;
+  }
+}
+
+/**
+ * Libera un lock distribuido de forma segura usando un script Lua.
+ * Compara el valor actual con el proporcionado antes de eliminar.
+ */
+export async function releaseLock(key: string, value: string): Promise<boolean> {
+  if (!isRedisAvailable()) return false;
+  const redis = getRedisClient();
+  if (!redis) return false;
+
+  const luaScript = `
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+      return redis.call("del", KEYS[1])
+    else
+      return 0
+    end
+  `;
+
+  try {
+    const result = await redis.eval(luaScript, 1, key, value);
+    return result === 1;
+  } catch (err: any) {
+    logger.error({
+      layer: "redis-lock",
+      action: "RELEASE_LOCK_ERROR",
+      payload: { key, error: err.message },
+    });
+    return false;
+  }
+}
 
 /**
  * Caché interno para optimizar validaciones durante una transacción de creación de ticket.
@@ -70,6 +124,74 @@ export async function calculateAccumulatedByNumbersAndScope(
         }
       }
       if (allCached) return result;
+    }
+  }
+
+  // 2. Intentar obtener de Redis si está disponible
+  if (isRedisAvailable()) {
+    const redis = getRedisClient();
+    if (redis) {
+      try {
+        // Asegurar que el sorteo esté hidratado
+        const hydratedKey = `sorteo:${sorteoId}:hydrated`;
+        const isHydrated = await redis.get(hydratedKey);
+        if (!isHydrated) {
+          await rehydrateRedisAccumulated(sorteoId, tx);
+        }
+
+        // Construir clave
+        let redisKey = `sorteo:${sorteoId}:scope:${scopeId}:acumulados`;
+        if (multiplierFilter) {
+          const multId = multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : multiplierFilter.id;
+          redisKey = `sorteo:${sorteoId}:scope:${scopeId}:multiplier:${multId}:acumulados`;
+        }
+
+        // HMGET
+        const values = await redis.hmget(redisKey, ...numbers);
+
+        const accumulatedMap = new Map<string, number>();
+        for (let i = 0; i < numbers.length; i++) {
+          const num = numbers[i];
+          const val = parseFloat(values[i] || '0');
+          accumulatedMap.set(num, val);
+        }
+
+        // Guardar en caché local si existe
+        if (cache) {
+          let cachedMap = cache.numberTotals.get(cacheKey);
+          if (!cachedMap) {
+            cachedMap = new Map<string, number>();
+            cache.numberTotals.set(cacheKey, cachedMap);
+          }
+          for (const [num, total] of accumulatedMap) {
+            cachedMap.set(num, total);
+          }
+        }
+
+        logger.debug({
+          layer: 'redis-validation',
+          action: 'ACCUMULATED_BY_NUMBERS_SCOPE_REDIS_READ',
+          payload: {
+            scope: `${scopeType}:${scopeId}`,
+            sorteoId,
+            redisKey,
+            numerosCount: numbers.length,
+          },
+        });
+
+        return accumulatedMap;
+      } catch (redisErr: any) {
+        markRedisError('calculateAccumulatedByNumbersAndScope');
+        logger.warn({
+          layer: 'redis-validation',
+          action: 'REDIS_READ_ERROR_FALLBACK_TO_DB',
+          payload: {
+            scope: `${scopeType}:${scopeId}`,
+            sorteoId,
+            error: redisErr.message,
+          },
+        });
+      }
     }
   }
 
@@ -198,6 +320,314 @@ export async function calculateAccumulatedByNumbersAndScope(
         scope: `${scopeType}:${scopeId}`,
         sorteoId,
         numeros: numbers,
+        error: error.message,
+      },
+    });
+    throw error;
+  }
+}
+
+/**
+ * Calcula los acumulados del sorteo para múltiples ámbitos (scopes) y números en una sola consulta masiva
+ *
+ * @param tx Transacción de Prisma
+ * @param params Parámetros de cálculo masivo
+ */
+export async function calculateAccumulatedForMultipleScopes(
+  tx: Prisma.TransactionClient,
+  params: {
+    numbers: string[];
+    sorteoId: string;
+    scopes: Array<{
+      scopeType: 'USER' | 'VENTANA' | 'BANCA';
+      scopeId: string;
+      multiplierFilter?: { id: string; kind: 'NUMERO' | 'REVENTADO' } | null;
+    }>;
+    cache?: ScopeCache;
+  }
+): Promise<void> {
+  const { numbers, sorteoId, scopes, cache } = params;
+
+  if (numbers.length === 0 || scopes.length === 0) {
+    return;
+  }
+
+  // 1. Filtrar scopes que ya están en caché (para no volver a consultarlos si ya se pre-cargaron)
+  const scopesToQuery: typeof scopes = [];
+  for (const sc of scopes) {
+    const multiplierId = sc.multiplierFilter
+      ? (sc.multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : sc.multiplierFilter.id)
+      : 'NONE';
+    const cacheKey = `${sc.scopeType}:${sc.scopeId}:${sorteoId}:${multiplierId}`;
+    
+    let isCached = false;
+    if (cache) {
+      const cachedMap = cache.numberTotals.get(cacheKey);
+      if (cachedMap) {
+        let allCached = true;
+        for (const num of numbers) {
+          if (!cachedMap.has(num)) {
+            allCached = false;
+            break;
+          }
+        }
+        if (allCached) {
+          isCached = true;
+        }
+      }
+    }
+
+    if (!isCached) {
+      scopesToQuery.push(sc);
+    }
+  }
+
+  if (scopesToQuery.length === 0) {
+    return;
+  }
+
+  // 1.5 Intentar obtener de Redis en lote
+  if (isRedisAvailable()) {
+    const redis = getRedisClient();
+    if (redis) {
+      try {
+        // Asegurar hidratación
+        const hydratedKey = `sorteo:${sorteoId}:hydrated`;
+        const isHydrated = await redis.get(hydratedKey);
+        if (!isHydrated) {
+          await rehydrateRedisAccumulated(sorteoId, tx);
+        }
+
+        const pipeline = redis.pipeline();
+        
+        // Encolar llamadas HMGET para cada scope
+        for (const sc of scopesToQuery) {
+          let redisKey = `sorteo:${sorteoId}:scope:${sc.scopeId}:acumulados`;
+          if (sc.multiplierFilter) {
+            const multId = sc.multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : sc.multiplierFilter.id;
+            redisKey = `sorteo:${sorteoId}:scope:${sc.scopeId}:multiplier:${multId}:acumulados`;
+          }
+          pipeline.hmget(redisKey, ...numbers);
+        }
+
+        const pipelineResults = await pipeline.exec();
+
+        // Procesar los resultados
+        if (pipelineResults) {
+          for (let idx = 0; idx < scopesToQuery.length; idx++) {
+            const sc = scopesToQuery[idx];
+            const pipelineRes = pipelineResults[idx];
+            
+            // ioredis pipeline exec returns [err, result] pairs
+            const err = pipelineRes[0];
+            const values = pipelineRes[1] as string[] | null;
+
+            if (err) throw err;
+
+            const multiplierId = sc.multiplierFilter
+              ? (sc.multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : sc.multiplierFilter.id)
+              : 'NONE';
+            const cacheKey = `${sc.scopeType}:${sc.scopeId}:${sorteoId}:${multiplierId}`;
+
+            const accumulatedMap = new Map<string, number>();
+            for (let i = 0; i < numbers.length; i++) {
+              const num = numbers[i];
+              const val = parseFloat((values && values[i]) || '0');
+              accumulatedMap.set(num, val);
+            }
+
+            if (cache) {
+              let cachedMap = cache.numberTotals.get(cacheKey);
+              if (!cachedMap) {
+                cachedMap = new Map<string, number>();
+                cache.numberTotals.set(cacheKey, cachedMap);
+              }
+              for (const [num, total] of accumulatedMap) {
+                cachedMap.set(num, total);
+              }
+            }
+          }
+
+          logger.debug({
+            layer: 'redis-validation',
+            action: 'ACCUMULATED_FOR_MULTIPLE_SCOPES_REDIS_READ',
+            payload: {
+              sorteoId,
+              scopesCount: scopesToQuery.length,
+              numerosCount: numbers.length,
+            },
+          });
+
+          return; // Retorno exitoso
+        }
+      } catch (redisErr: any) {
+        markRedisError('calculateAccumulatedForMultipleScopes');
+        logger.warn({
+          layer: 'redis-validation',
+          action: 'REDIS_BATCH_READ_ERROR_FALLBACK_TO_DB',
+          payload: {
+            sorteoId,
+            scopesCount: scopesToQuery.length,
+            error: redisErr.message,
+          },
+        });
+      }
+    }
+  }
+
+  // 2. Construir el WHERE dinámico de scopes con ORs
+  const scopeConditions: Prisma.Sql[] = [];
+  for (const sc of scopesToQuery) {
+    let scopeCond: Prisma.Sql;
+    if (sc.scopeType === 'USER') {
+      scopeCond = Prisma.sql`t."vendedorId" = ${sc.scopeId}::uuid`;
+    } else if (sc.scopeType === 'VENTANA') {
+      scopeCond = Prisma.sql`t."ventanaId" = ${sc.scopeId}::uuid`;
+    } else if (sc.scopeType === 'BANCA') {
+      scopeCond = Prisma.sql`v."bancaId" = ${sc.scopeId}::uuid`;
+    } else {
+      continue;
+    }
+
+    let multCond = Prisma.sql``;
+    if (sc.multiplierFilter) {
+      if (sc.multiplierFilter.kind === 'REVENTADO') {
+        multCond = Prisma.sql`AND j."type" = 'REVENTADO'`;
+      } else {
+        multCond = Prisma.sql`AND j."multiplierId" = ${sc.multiplierFilter.id}::uuid`;
+      }
+    }
+
+    scopeConditions.push(Prisma.sql`(${scopeCond} ${multCond})`);
+  }
+
+  let whereScopesClause = Prisma.empty;
+  if (scopeConditions.length > 0) {
+    whereScopesClause = Prisma.sql`AND (${Prisma.join(scopeConditions, ' OR ')})`;
+  }
+
+  // 3. Construir el WHERE dinámico de números
+  const useFullScan = numbers.length > 30;
+  let whereNumberClause = Prisma.empty;
+
+  if (!useFullScan) {
+    const numberConditions: Prisma.Sql[] = [];
+    for (const num of numbers) {
+      if (!/^\d{1,3}$/.test(num)) {
+        continue;
+      }
+      numberConditions.push(Prisma.sql`j."number" = ${num}`);
+    }
+    if (numberConditions.length > 0) {
+      whereNumberClause = Prisma.sql`AND (${Prisma.join(numberConditions, ' OR ')})`;
+    }
+  }
+
+  try {
+    // 4. Ejecutar la query masiva
+    const result = await tx.$queryRaw<
+      Array<{
+        number: string;
+        vendedorId: string | null;
+        ventanaId: string | null;
+        bancaId: string | null;
+        jugadaType: string;
+        multiplierId: string | null;
+        total: string | number;
+      }>
+    >(
+      Prisma.sql`
+        SELECT 
+          j."number" as number,
+          t."vendedorId" as "vendedorId",
+          t."ventanaId" as "ventanaId",
+          v."bancaId" as "bancaId",
+          j."type" as "jugadaType",
+          j."multiplierId" as "multiplierId",
+          COALESCE(SUM(j.amount), 0)::numeric as total
+        FROM "Ticket" t
+        INNER JOIN "Jugada" j ON j."ticketId" = t.id
+        INNER JOIN "Ventana" v ON v.id = t."ventanaId"
+        WHERE 
+          t."sorteoId" = ${sorteoId}::uuid
+          AND t."status" != 'CANCELLED'
+          AND t."isActive" = true
+          AND t."deletedAt" IS NULL
+          AND j."isActive" = true
+          AND j."deletedAt" IS NULL
+          ${whereNumberClause}
+          ${whereScopesClause}
+        GROUP BY j."number", t."vendedorId", t."ventanaId", v."bancaId", j."type", j."multiplierId"
+      `
+    );
+
+    // 5. Agrupar/mapear los resultados en memoria para cada scope solicitado
+    for (const sc of scopesToQuery) {
+      const multiplierId = sc.multiplierFilter
+        ? (sc.multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : sc.multiplierFilter.id)
+        : 'NONE';
+      const cacheKey = `${sc.scopeType}:${sc.scopeId}:${sorteoId}:${multiplierId}`;
+
+      const accumulatedMap = new Map<string, number>();
+
+      // Inicializar todos los números solicitados con 0
+      for (const num of numbers) {
+        accumulatedMap.set(num, 0);
+      }
+
+      // Filtrar y sumar las filas correspondientes a este scope
+      for (const row of result) {
+        // Verificar si la fila pertenece al scope actual
+        let scopeMatches = false;
+        if (sc.scopeType === 'USER') {
+          scopeMatches = row.vendedorId === sc.scopeId;
+        } else if (sc.scopeType === 'VENTANA') {
+          scopeMatches = row.ventanaId === sc.scopeId;
+        } else if (sc.scopeType === 'BANCA') {
+          scopeMatches = row.bancaId === sc.scopeId;
+        }
+
+        if (!scopeMatches) continue;
+
+        // Verificar si la fila pertenece al multiplicador actual
+        let multiplierMatches = false;
+        if (!sc.multiplierFilter) {
+          // multiplierFilter null/NONE -> sumamos todo (tanto NUMERO como REVENTADO)
+          multiplierMatches = true;
+        } else if (sc.multiplierFilter.kind === 'REVENTADO') {
+          multiplierMatches = row.jugadaType === 'REVENTADO';
+        } else {
+          multiplierMatches = row.jugadaType === 'NUMERO' && row.multiplierId === sc.multiplierFilter.id;
+        }
+
+        if (!multiplierMatches) continue;
+
+        // Sumar al número correspondiente
+        const totalAmount = Number(row.total ?? 0);
+        if (accumulatedMap.has(row.number)) {
+          accumulatedMap.set(row.number, accumulatedMap.get(row.number)! + totalAmount);
+        }
+      }
+
+      // Guardar en caché si existe
+      if (cache) {
+        let cachedMap = cache.numberTotals.get(cacheKey);
+        if (!cachedMap) {
+          cachedMap = new Map<string, number>();
+          cache.numberTotals.set(cacheKey, cachedMap);
+        }
+        for (const [num, total] of accumulatedMap) {
+          cachedMap.set(num, total);
+        }
+      }
+    }
+  } catch (error: any) {
+    logger.error({
+      layer: 'repository',
+      action: 'ACCUMULATED_FOR_MULTIPLE_SCOPES_ERROR',
+      payload: {
+        sorteoId,
+        scopes: scopesToQuery,
         error: error.message,
       },
     });
@@ -1023,3 +1453,154 @@ export async function validateRulesInParallel(
     throw firstError;
   }
 }
+
+/**
+ * Rehidrata de forma masiva los acumulados de un sorteo en Redis desde PostgreSQL.
+ * Agrupa los acumulados en memoria y ejecuta un único HSET por clave dentro de un pipeline de Redis.
+ */
+export async function rehydrateRedisAccumulated(sorteoId: string, tx?: Prisma.TransactionClient): Promise<void> {
+  if (!isRedisAvailable()) {
+    logger.warn({
+      layer: "redis-rehydrate",
+      action: "REHYDRATE_SKIPPED_REDIS_UNAVAILABLE",
+      payload: { sorteoId },
+    });
+    return;
+  }
+  const redis = getRedisClient();
+  if (!redis) return;
+
+  logger.info({
+    layer: "redis-rehydrate",
+    action: "REHYDRATE_START",
+    payload: { sorteoId },
+  });
+
+  const startTime = Date.now();
+
+  try {
+    // 1. Obtener todos los acumulados consolidados desde la base de datos
+    const client = tx || prisma;
+    const result = await client.$queryRaw<
+      Array<{
+        number: string;
+        vendedorId: string | null;
+        ventanaId: string | null;
+        bancaId: string | null;
+        jugadaType: string;
+        multiplierId: string | null;
+        total: string | number;
+      }>
+    >(
+      Prisma.sql`
+        SELECT 
+          j."number" as number,
+          t."vendedorId" as "vendedorId",
+          t."ventanaId" as "ventanaId",
+          v."bancaId" as "bancaId",
+          j."type" as "jugadaType",
+          j."multiplierId" as "multiplierId",
+          COALESCE(SUM(j.amount), 0)::numeric as total
+        FROM "Ticket" t
+        INNER JOIN "Jugada" j ON j."ticketId" = t.id
+        INNER JOIN "Ventana" v ON v.id = t."ventanaId"
+        WHERE 
+          t."sorteoId" = ${sorteoId}::uuid
+          AND t."status" != 'CANCELLED'
+          AND t."isActive" = true
+          AND t."deletedAt" IS NULL
+          AND j."isActive" = true
+          AND j."deletedAt" IS NULL
+        GROUP BY j."number", t."vendedorId", t."ventanaId", v."bancaId", j."type", j."multiplierId"
+      `
+    );
+
+    // 2. Agrupar en memoria por clave de Redis
+    const redisData = new Map<string, Record<string, number>>();
+
+    function addValue(key: string, num: string, amount: number) {
+      let record = redisData.get(key);
+      if (!record) {
+        record = {};
+        redisData.set(key, record);
+      }
+      record[num] = (record[num] || 0) + amount;
+    }
+
+    for (const row of result) {
+      const amount = Number(row.total);
+      const num = row.number;
+      const scopes = [
+        { id: row.vendedorId, type: 'USER' },
+        { id: row.ventanaId, type: 'VENTANA' },
+        { id: row.bancaId, type: 'BANCA' }
+      ];
+
+      for (const sc of scopes) {
+        if (!sc.id) continue;
+
+        // A. Llave general
+        const genKey = `sorteo:${sorteoId}:scope:${sc.id}:acumulados`;
+        addValue(genKey, num, amount);
+
+        // B. Llave por multiplicador
+        const multId = row.jugadaType === 'REVENTADO' ? 'REVENTADO' : row.multiplierId;
+        if (multId) {
+          const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
+          addValue(multKey, num, amount);
+        }
+      }
+    }
+
+    // 3. Escribir masivamente en Redis usando un pipeline
+    const pipeline = redis.pipeline();
+
+    // Eliminar llaves existentes del sorteo antes de rehidratar
+    const keysPattern = `sorteo:${sorteoId}:scope:*`;
+    const existingKeys = await redis.keys(keysPattern);
+    if (existingKeys.length > 0) {
+      // Eliminar el prefijo local si está configurado en ioredis (ioredis maneja prefijos automáticamente)
+      // pero keys() retorna las llaves con el prefijo incluido si se consulta directo.
+      // ioredis keys() remueve el prefijo de la respuesta si está configurado.
+      for (const k of existingKeys) {
+        pipeline.del(k);
+      }
+    }
+
+    // Guardar los acumulados agrupados en lote
+    for (const [key, record] of redisData.entries()) {
+      const stringRecord = Object.fromEntries(
+        Object.entries(record).map(([num, amt]) => [num, String(amt)])
+      );
+      
+      // HSET masivo de pares clave-valor
+      pipeline.hset(key, stringRecord);
+      // TTL de 12 horas (43,200 segundos)
+      pipeline.expire(key, 43200);
+    }
+
+    // Guardar llave de control que marca el sorteo como hidratado
+    const hydratedKey = `sorteo:${sorteoId}:hydrated`;
+    pipeline.set(hydratedKey, "true", "EX", 43200);
+
+    await pipeline.exec();
+
+    logger.info({
+      layer: "redis-rehydrate",
+      action: "REHYDRATE_SUCCESS",
+      payload: {
+        sorteoId,
+        keysHydrated: redisData.size,
+        durationMs: Date.now() - startTime,
+      },
+    });
+  } catch (err: any) {
+    logger.error({
+      layer: "redis-rehydrate",
+      action: "REHYDRATE_ERROR",
+      payload: { sorteoId, error: err.message },
+    });
+    throw err;
+  }
+}
+
