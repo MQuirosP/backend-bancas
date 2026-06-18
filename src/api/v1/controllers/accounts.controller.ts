@@ -506,6 +506,7 @@ export const AccountsController = {
     // Log de auditoría
     await ActivityService.log({
       userId: user.id,
+      bancaId: effectiveBancaId || null,
       action: ActivityType.ACCOUNT_PAYMENT_CREATE,
       targetType: "ACCOUNT_PAYMENT",
       targetId: payment.id,
@@ -802,6 +803,7 @@ export const AccountsController = {
     // Log de auditoría
     await ActivityService.log({
       userId: user.id,
+      bancaId: payment.bancaId || null,
       action: ActivityType.ACCOUNT_PAYMENT_REVERSE,
       targetType: "ACCOUNT_PAYMENT",
       targetId: paymentId,
