@@ -2775,6 +2775,81 @@ export const TicketRepository = {
       },
     });
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // POST-TRANSACCIÓN: Decrementar acumulados en Redis tras anulación exitosa
+    // ─────────────────────────────────────────────────────────────────────────
+    if (isRedisAvailable()) {
+      const redis = getRedisClient();
+      if (redis) {
+        try {
+          const pipeline = redis.pipeline();
+          const sorteoId = ticket.sorteoId;
+          const vendedorId = ticket.vendedorId;
+          const ventanaId = ticket.ventanaId;
+
+          // Obtener la bancaId real para el decremento
+          let targetBancaId = null;
+          if (ventanaId) {
+            const vent = await prisma.ventana.findUnique({
+              where: { id: ventanaId },
+              select: { bancaId: true },
+            });
+            targetBancaId = vent?.bancaId;
+          }
+
+          if (targetBancaId) {
+            const scopes = [
+              { id: targetBancaId, type: 'BANCA' },
+              { id: ventanaId, type: 'VENTANA' },
+              { id: vendedorId, type: 'USER' }
+            ];
+
+            for (const j of ticket.jugadas) {
+              const amount = j.amount;
+              const num = j.number;
+
+              for (const sc of scopes) {
+                if (!sc.id) continue;
+
+                // 1. Restar de la clave general
+                const genKey = `sorteo:${sorteoId}:scope:${sc.id}:acumulados`;
+                pipeline.hincrbyfloat(genKey, num, -amount);
+                pipeline.expire(genKey, 43200);
+
+                // 2. Restar de la clave por multiplicador si corresponde
+                const multId = j.type === 'REVENTADO' ? 'REVENTADO' : j.multiplierId;
+                if (multId) {
+                  const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
+                  pipeline.hincrbyfloat(multKey, num, -amount);
+                  pipeline.expire(multKey, 43200);
+                }
+              }
+            }
+
+            await pipeline.exec();
+
+            logger.debug({
+              layer: 'redis-update',
+              action: 'ACCUMULATED_REDIS_DECREMENTED',
+              payload: {
+                ticketId: ticket.id,
+                sorteoId,
+                bancaId: targetBancaId,
+                jugadasCount: ticket.jugadas.length,
+              },
+            });
+          }
+        } catch (redisErr: any) {
+          markRedisError('cancel-decrement');
+          logger.error({
+            layer: 'redis-update',
+            action: 'REDIS_DECREMENT_ERROR',
+            payload: { ticketId: ticket.id, error: redisErr.message },
+          });
+        }
+      }
+    }
+
     return ticket;
   },
 
