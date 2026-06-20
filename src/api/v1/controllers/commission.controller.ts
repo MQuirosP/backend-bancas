@@ -48,13 +48,15 @@ async function embedMultipliersInPolicy(
   const loterias = allLoteriaIds.length > 0
     ? await prisma.loteria.findMany({
         where: { id: { in: allLoteriaIds } },
-        select: { id: true, name: true },
+        select: { id: true, name: true, rulesJson: true },
       })
     : [];
 
-  const loteriaLookup = new Map<string, { id: string; name: string }>();
+  const loteriaLookup = new Map<string, { id: string; name: string; reventadoEnabled: boolean }>();
   for (const l of loterias) {
-    loteriaLookup.set(l.id, l);
+    const rulesObj = (l.rulesJson ?? {}) as any;
+    const reventadoEnabled = rulesObj?.reventadoConfig?.enabled === true;
+    loteriaLookup.set(l.id, { id: l.id, name: l.name, reventadoEnabled });
   }
 
   // Reglas elegibles para multiplicador: tienen loteriaId y multiplicador específico (min === max)
