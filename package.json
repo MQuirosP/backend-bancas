@@ -46,6 +46,7 @@
     "test:coverage": "npx dotenv-cli -e .env.test -- jest --coverage"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.5",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@sentry/node": "^10.17.0",
@@ -69,6 +70,7 @@
     "ioredis": "^5.8.2",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.1",
+    "on-headers": "^1.1.0",
     "opossum": "^9.0.0",
     "pdf-lib": "^1.17.1",
     "pdf-to-png-converter": "^3.11.0",
@@ -123,6 +125,10 @@
       "uuid": "^11.1.1"
     },
     "glob": "^10.4.6",
-    "minimatch": "^9.0.7"
+    "minimatch": "^9.0.7",
+    "on-headers": "^1.1.0",
+    "@prisma/dev": {
+      "@hono/node-server": "^1.19.13"
+    }
   }
 }

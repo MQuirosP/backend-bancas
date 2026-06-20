@@ -68,6 +68,15 @@ async function main() {
             `SELECT count(*) as count FROM "User" WHERE "bancaId" IS NULL AND "ventanaId" IS NOT NULL;`
         );
 
+        // 1.5 REFRESH TOKENS (Sesiones)
+        await executeBatchUpdate(
+            'RefreshToken',
+            `WITH batch AS (SELECT id FROM "RefreshToken" WHERE "bancaId" IS NULL LIMIT ${BATCH_SIZE})
+             UPDATE "RefreshToken" r SET "bancaId" = u."bancaId" 
+             FROM batch, "User" u WHERE r.id = batch.id AND r."userId" = u.id AND u."bancaId" IS NOT NULL;`,
+            `SELECT count(*) as count FROM "RefreshToken" r JOIN "User" u ON r."userId" = u.id WHERE r."bancaId" IS NULL AND u."bancaId" IS NOT NULL;`
+        );
+
         // 2. TICKETS
         await executeBatchUpdate(
             'Ticket',

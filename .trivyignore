@@ -1,0 +1,4 @@
+# Ignorar archivos de configuración locales con secretos que no se versionan
+.env
+.env.local
+.claude/settings.local.json

@@ -265,6 +265,7 @@ export const AccountStatementRepository = {
       where.vendedorId = filters.vendedorId;
     }
 
+    // 1. Ejecutar la agregación de montos
     const result = await prisma.accountStatement.aggregate({
       where,
       _sum: {
@@ -281,13 +282,21 @@ export const AccountStatementRepository = {
       },
     });
 
-    const all = await prisma.accountStatement.findMany({
-      where,
-      select: { isSettled: true },
-    });
-
-    const settledDays = all.filter((s) => s.isSettled).length;
-    const pendingDays = all.filter((s) => !s.isSettled).length;
+    // 2. Concurrencia SQL-First: Contar días liquidados y pendientes de forma nativa en BD
+    const [settledDays, pendingDays] = await Promise.all([
+      prisma.accountStatement.count({
+        where: {
+          ...where,
+          isSettled: true,
+        },
+      }),
+      prisma.accountStatement.count({
+        where: {
+          ...where,
+          isSettled: false,
+        },
+      }),
+    ]);
 
     return {
       totalSales: result._sum.totalSales ?? 0,

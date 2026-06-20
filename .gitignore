@@ -117,3 +117,15 @@ src/scripts/
 # Graphify output
 graphify-out/
 supabase_prod_fresco.dump
+
+# Agent & Skills Bundles
+.agent/
+.agents/
+
+# Prisma Auto-generated Client
+src/generated/
+
+# Local Utilities / Binaries
+redis-cli.exe
+*.exe
+
