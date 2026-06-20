@@ -21,14 +21,13 @@ type RuleWithEmbed = {
   betType?: string | null;
   multiplierRange?: { min: number; max: number };
   multiplier?: MultiplierEmbed | null;
+  loteria?: { id: string; name: string } | null;
   [key: string]: unknown;
 };
 
 /**
- * Embebe el objeto multiplier en cada regla de la política para que el FE
- * no tenga que lanzar N queries a /multipliers al hidratar el formulario.
- * Resolución: 1 query a LoteriaMultiplier con todos los pares (loteriaId, valueX).
- * Si la regla tiene min !== max o loteriaId null, multiplier queda null.
+ * Embebe el objeto multiplier y el objeto loteria en cada regla de la política para que el FE
+ * no tenga que lanzar N queries ni cruzar por ID a ciegas en entornos multi-tenant.
  */
 async function embedMultipliersInPolicy(
   policyJson: Prisma.JsonValue | null
@@ -44,7 +43,21 @@ async function embedMultipliersInPolicy(
 
   const rules = policy.rules as RuleWithEmbed[];
 
-  // Reglas elegibles: tienen loteriaId y multiplicador específico (min === max)
+  // 1. Obtener todas las loterías presentes en las reglas para embeberlas
+  const allLoteriaIds = [...new Set(rules.map((r) => r.loteriaId).filter(Boolean) as string[])];
+  const loterias = allLoteriaIds.length > 0
+    ? await prisma.loteria.findMany({
+        where: { id: { in: allLoteriaIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+
+  const loteriaLookup = new Map<string, { id: string; name: string }>();
+  for (const l of loterias) {
+    loteriaLookup.set(l.id, l);
+  }
+
+  // Reglas elegibles para multiplicador: tienen loteriaId y multiplicador específico (min === max)
   const eligibleRules = rules.filter(
     (r) =>
       r.loteriaId &&
@@ -52,27 +65,27 @@ async function embedMultipliersInPolicy(
       r.multiplierRange.min === r.multiplierRange.max
   );
 
-  if (eligibleRules.length === 0) return policyJson;
-
-  const loteriaIds = [...new Set(eligibleRules.map((r) => r.loteriaId as string))];
+  const loteriaIdsForMultipliers = [...new Set(eligibleRules.map((r) => r.loteriaId as string))];
 
   // Un solo query para todos los multiplicadores base activos de las loterías presentes
-  const multipliers = await prisma.loteriaMultiplier.findMany({
-    where: {
-      loteriaId: { in: loteriaIds },
-      isActive: true,
-      appliesToDate: null,
-      appliesToSorteoId: null,
-    },
-    select: {
-      id: true,
-      name: true,
-      valueX: true,
-      kind: true,
-      loteriaId: true,
-      isActive: true,
-    },
-  });
+  const multipliers = loteriaIdsForMultipliers.length > 0
+    ? await prisma.loteriaMultiplier.findMany({
+        where: {
+          loteriaId: { in: loteriaIdsForMultipliers },
+          isActive: true,
+          appliesToDate: null,
+          appliesToSorteoId: null,
+        },
+        select: {
+          id: true,
+          name: true,
+          valueX: true,
+          kind: true,
+          loteriaId: true,
+          isActive: true,
+        },
+      })
+    : [];
 
   // Índice: "${loteriaId}:${valueX}:${kind}" → primer multiplicador encontrado
   const lookup = new Map<string, MultiplierEmbed>();
@@ -82,14 +95,16 @@ async function embedMultipliersInPolicy(
   }
 
   const enrichedRules = rules.map((rule): RuleWithEmbed => {
+    const loteria = rule.loteriaId ? (loteriaLookup.get(rule.loteriaId) ?? null) : null;
+
     if (!rule.loteriaId || !rule.multiplierRange || rule.multiplierRange.min !== rule.multiplierRange.max) {
-      return { ...rule, multiplier: null };
+      return { ...rule, loteria, multiplier: null };
     }
     const valueX = rule.multiplierRange.min;
     // betType null → intentar con NUMERO como fallback
     const kind = rule.betType ?? "NUMERO";
     const multiplier = lookup.get(`${rule.loteriaId}:${valueX}:${kind}`) ?? null;
-    return { ...rule, multiplier };
+    return { ...rule, loteria, multiplier };
   });
 
   return { ...policy, rules: enrichedRules } as Prisma.JsonValue;
