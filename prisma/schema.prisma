@@ -1,8 +1,9 @@
 generator client {
-  provider      = "prisma-client"
-  output        = "../src/generated/prisma"
-  moduleFormat  = "cjs"
-  binaryTargets = ["native", "debian-openssl-3.0.x"]
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
+  moduleFormat    = "cjs"
 }
 
 datasource db {
@@ -11,49 +12,49 @@ datasource db {
 }
 
 model Banca {
-  id                               String                             @id @default(uuid()) @db.Uuid
-  name                             String                             @unique
-  code                             String                             @unique
-  defaultMinBet                    Float                              @default(100.00)
-  globalMaxPerNumber               Int                                @default(5000)
-  deletedAt                        DateTime?
-  deletedBy                        String?
-  deletedReason                    String?
-  createdAt                        DateTime                           @default(now())
-  updatedAt                        DateTime                           @updatedAt
-  address                          String?
-  email                            String?
-  phone                            String?
-  isActive                         Boolean                            @default(true)
-  salesCutoffMinutes               Int                                @default(1)
-  vendorLimit                      Int?
-  maxSessionsPerVendedor           Int                                @default(1)
-  commissionPolicyJson             Json?
-  accountPayments                  AccountPayment[]
-  accountStatements                AccountStatement[]
-  loteriaSettings                  BancaLoteriaSetting[]
-  monthlyClosingBalances           MonthlyClosingBalance[]            @relation("MonthlyClosingBalanceBanca")
-  restrictionRules                 RestrictionRule[]
-  users                            UserBanca[]
-  ventanas                         Ventana[]
-  loterias                         Loteria[]
-  sorteos                          Sorteo[]
-  tickets                          Ticket[]
-  multipliers                      LoteriaMultiplier[]
-  activityLogs                     ActivityLog[]
-  sorteosAutoConfigs               SorteosAutoConfig[]
-  statementSettlementConfigs       AccountStatementSettlementConfig[]
-  appUsers                         User[]
-  savedReports                     SavedReport[]
-  exportJobs                       ExportJob[]
-  alerts                           Alert[]
-  apiKeys                          ApiKey[]
-  webhooks                         Webhook[]
-  goals                            Goal[]
-  sorteoListaExclusiones           SorteoListaExclusion[]
-  multiplierOverrides              MultiplierOverride[]
-  jugadas                          Jugada[]
-  refreshTokens                    RefreshToken[]
+  id                         String                             @id @default(uuid()) @db.Uuid
+  name                       String                             @unique
+  code                       String                             @unique
+  defaultMinBet              Float                              @default(100.00)
+  globalMaxPerNumber         Int                                @default(5000)
+  deletedAt                  DateTime?
+  deletedBy                  String?
+  deletedReason              String?
+  createdAt                  DateTime                           @default(now())
+  updatedAt                  DateTime                           @updatedAt
+  address                    String?
+  email                      String?
+  phone                      String?
+  isActive                   Boolean                            @default(true)
+  salesCutoffMinutes         Int                                @default(1)
+  commissionPolicyJson       Json?
+  maxSessionsPerVendedor     Int                                @default(1)
+  vendorLimit                Int?
+  accountPayments            AccountPayment[]
+  accountStatements          AccountStatement[]
+  statementSettlementConfigs AccountStatementSettlementConfig[]
+  activityLogs               ActivityLog[]
+  alerts                     Alert[]
+  apiKeys                    ApiKey[]
+  loteriaSettings            BancaLoteriaSetting[]
+  exportJobs                 ExportJob[]
+  goals                      Goal[]
+  jugadas                    Jugada[]
+  loterias                   Loteria[]
+  multipliers                LoteriaMultiplier[]
+  monthlyClosingBalances     MonthlyClosingBalance[]            @relation("MonthlyClosingBalanceBanca")
+  multiplierOverrides        MultiplierOverride[]
+  refreshTokens              RefreshToken[]
+  restrictionRules           RestrictionRule[]
+  savedReports               SavedReport[]
+  sorteos                    Sorteo[]
+  sorteosAutoConfigs         SorteosAutoConfig[]
+  tickets                    Ticket[]
+  appUsers                   User[]
+  users                      UserBanca[]
+  ventanas                   Ventana[]
+  webhooks                   Webhook[]
+  sorteoListaExclusiones     SorteoListaExclusion[]
 }
 
 model Ventana {
@@ -84,11 +85,11 @@ model Ventana {
   sorteoListaExclusiones SorteoListaExclusion[]  @relation("ExclusionVentana")
 
   @@index([name])
+  @@index([bancaId], map: "idx_ventana_bancaId_fk")
 }
 
 model User {
   id                                      String                             @id @default(uuid()) @db.Uuid
-  bancaId                                 String?                            @db.Uuid
   ventanaId                               String?                            @db.Uuid
   name                                    String
   email                                   String?                            @unique
@@ -103,11 +104,12 @@ model User {
   isActive                                Boolean                            @default(true)
   username                                String                             @unique @db.Citext
   code                                    String?                            @unique
-  maxSessionsPerVendedor                  Int?
   commissionPolicyJson                    Json?
   settings                                Json?
   platform                                String?
   appVersion                              String?                            @db.VarChar(50)
+  bancaId                                 String?                            @db.Uuid
+  maxSessionsPerVendedor                  Int?
   accountPaymentsPaid                     AccountPayment[]                   @relation("AccountPaymentPaidBy")
   accountPaymentsReversed                 AccountPayment[]                   @relation("AccountPaymentReversedBy")
   accountPayments                         AccountPayment[]
@@ -125,9 +127,9 @@ model User {
   restrictionRules                        RestrictionRule[]
   savedReports                            SavedReport[]
   sorteosAutoConfigUpdated                SorteosAutoConfig[]                @relation("SorteosAutoConfigUpdatedBy")
+  ticketsCreated                          Ticket[]                           @relation("TicketCreatedBy")
   ticketsPaid                             Ticket[]                           @relation("TicketPaidBy")
   tickets                                 Ticket[]                           @relation("TicketVendedor")
-  ticketsCreated                          Ticket[]                           @relation("TicketCreatedBy")
   TicketPayment                           TicketPayment[]
   banca                                   Banca?                             @relation(fields: [bancaId], references: [id])
   ventana                                 Ventana?                           @relation(fields: [ventanaId], references: [id])
@@ -142,11 +144,12 @@ model User {
   @@index([bancaId, role], map: "idx_user_banca_role")
   @@index([code(ops: raw("gin_trgm_ops"))], map: "idx_user_code_trgm", type: Gin)
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_user_name_trgm", type: Gin)
+  @@index([bancaId], map: "idx_user_banca_vendedor", where: raw("(role = 'VENDEDOR'::\"Role\")"))
+  @@index([ventanaId, role, isActive], map: "idx_user_ventana_role_active", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
 }
 
 model Loteria {
   id                  String                @id @default(uuid()) @db.Uuid
-  bancaId             String?               @db.Uuid
   name                String
   rulesJson           Json?
   deletedAt           DateTime?
@@ -155,8 +158,9 @@ model Loteria {
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
   isActive            Boolean               @default(true)
-  banca               Banca?                @relation(fields: [bancaId], references: [id])
+  bancaId             String?               @db.Uuid
   loteriaSettings     BancaLoteriaSetting[]
+  banca               Banca?                @relation(fields: [bancaId], references: [id])
   multipliers         LoteriaMultiplier[]
   multiplierOverrides MultiplierOverride[]
   restrictionRules    RestrictionRule[]
@@ -170,7 +174,6 @@ model Loteria {
 
 model BancaLoteriaSetting {
   id                String    @id @default(uuid()) @db.Uuid
-  bancaId           String?   @db.Uuid
   loteriaId         String    @db.Uuid
   baseMultiplierX   Float
   maxTotalPerSorteo Int?
@@ -179,19 +182,20 @@ model BancaLoteriaSetting {
   deletedReason     String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  bancaId           String?   @db.Uuid
   isActive          Boolean   @default(true)
   banca             Banca?    @relation(fields: [bancaId], references: [id])
   loteria           Loteria   @relation(fields: [loteriaId], references: [id])
 
   @@unique([bancaId, loteriaId])
   @@index([bancaId])
+  @@index([loteriaId], map: "idx_bancaloteriasetting_loteriaId_fk")
 }
 
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model Ticket {
   id              String          @id @default(uuid()) @db.Uuid
   ticketNumber    String          @unique @default(dbgenerated("generate_ticket_number()")) @db.VarChar(24)
-  printCount      Int?            @default(0)
-  bancaId         String?         @db.Uuid
   loteriaId       String          @db.Uuid
   ventanaId       String          @db.Uuid
   vendedorId      String          @db.Uuid
@@ -219,15 +223,17 @@ model Ticket {
   createdBy       String?         @db.Uuid
   createdByRole   Role?
   isSorteoClosed  Boolean         @default(false)
-  idempotencyKey  String?
+  idempotencyKey  String?         @unique(where: raw("(\"idempotencyKey\" IS NOT NULL)"))
+  bancaId         String?         @db.Uuid
+  printCount      Int?            @default(0)
   jugadas         Jugada[]
   banca           Banca?          @relation(fields: [bancaId], references: [id])
+  createdByUser   User?           @relation("TicketCreatedBy", fields: [createdBy], references: [id])
   loteria         Loteria         @relation(fields: [loteriaId], references: [id])
   paidBy          User?           @relation("TicketPaidBy", fields: [paidById], references: [id])
   sorteo          Sorteo          @relation(fields: [sorteoId], references: [id])
   vendedor        User            @relation("TicketVendedor", fields: [vendedorId], references: [id])
   ventana         Ventana         @relation(fields: [ventanaId], references: [id])
-  createdByUser   User?           @relation("TicketCreatedBy", fields: [createdBy], references: [id])
   TicketPayment   TicketPayment[]
 
   @@index([status, isWinner])
@@ -237,6 +243,17 @@ model Ticket {
   @@index([ventanaId, businessDate, deletedAt])
   @@index([loteriaId], map: "idx_Ticket_loteriaId")
   @@index([businessDate, isActive, status, deletedAt, vendedorId, sorteoId, ventanaId], map: "idx_ticket_cierre_consolidado")
+  @@index([bancaId, sorteoId], map: "idx_ticket_banca_sorteo_winner_perf", where: raw("((\"isActive\" = true) AND (\"isWinner\" = true) AND (\"deletedAt\" IS NULL))"))
+  @@index([businessDate, sorteoId, isActive], map: "idx_ticket_business_date_sorteo", where: raw("(\"deletedAt\" IS NULL)"))
+  @@index([businessDate, ventanaId, vendedorId], map: "idx_ticket_business_date_ventana_vendedor", where: raw("((\"deletedAt\" IS NULL) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
+  @@index([businessDate, ventanaId], map: "idx_ticket_businessdate_ventana", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
+  @@index([createdBy], map: "idx_ticket_createdBy_fk")
+  @@index([createdAt], map: "idx_ticket_created_at", where: raw("((\"deletedAt\" IS NULL) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
+  @@index([bancaId, businessDate, isActive, status], map: "idx_ticket_risk_banca_date", where: raw("(\"deletedAt\" IS NULL)"))
+  @@index([sorteoId, businessDate], map: "idx_ticket_sorteo_businessdate_active", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
+  @@index([sorteoId, status, isActive], map: "idx_ticket_sorteo_status", where: raw("(\"deletedAt\" IS NULL)"))
+  @@index([isWinner, status, createdAt], map: "idx_ticket_winner_status_date", where: raw("((\"isActive\" = true) AND (\"deletedAt\" IS NULL))"))
+  @@index([ventanaId, vendedorId, businessDate, status], map: "idx_tickets_ventana_vendedor_date", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
 }
 
 /// Contador global diario de tickets basado en businessDate (CR)
@@ -268,6 +285,7 @@ model TicketPayment {
 
   @@index([ticketId, isReversed])
   @@index([ticketId, createdAt])
+  @@index([paidById], map: "idx_ticketpayment_paidById_fk")
 }
 
 model Jugada {
@@ -285,7 +303,6 @@ model Jugada {
   updatedAt               DateTime           @updatedAt
   isWinner                Boolean            @default(false)
   multiplierId            String?            @db.Uuid
-  bancaId                 String?            @db.Uuid
   reventadoNumber         String?
   type                    BetType            @default(NUMERO)
   commissionPercent       Float              @default(0)
@@ -297,21 +314,27 @@ model Jugada {
   excludedAt              DateTime?
   excludedBy              String?            @db.Uuid
   excludedReason          String?
+  bancaId                 String?            @db.Uuid
+  banca                   Banca?             @relation(fields: [bancaId], references: [id])
   excludedByUser          User?              @relation("JugadaExcludedBy", fields: [excludedBy], references: [id])
   multiplier              LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
   ticket                  Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  banca                   Banca?             @relation(fields: [bancaId], references: [id])
 
   @@index([reventadoNumber])
   @@index([multiplierId, isExcluded])
   @@index([excludedBy], map: "idx_Jugada_excludedBy")
   @@index([bancaId])
   @@index([ticketId])
+  @@index([ticketId, multiplierId], map: "idx_jugada_exclusiones_lookup", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
+  @@index([ticketId, type, number, isActive, isExcluded, amount, payout, listeroCommissionAmount, finalMultiplierX], map: "idx_jugada_maestro_final", where: raw("(\"deletedAt\" IS NULL)"))
+  @@index([number, ticketId, amount, type], map: "idx_jugada_number_amount_active", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
+  @@index([ticketId, number, amount, type], map: "idx_jugada_ticket_active_number_covering", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
+  @@index([ticketId, deletedAt, commissionOrigin], map: "idx_jugada_ticket_deleted_commission", where: raw("(\"deletedAt\" IS NULL)"))
+  @@index([ticketId, isWinner, deletedAt, payout], map: "idx_jugada_ticket_winner", where: raw("((\"deletedAt\" IS NULL) AND (\"isWinner\" = true))"))
 }
 
 model Sorteo {
   id                   String                 @id @default(uuid()) @db.Uuid
-  bancaId              String?                @db.Uuid
   loteriaId            String                 @db.Uuid
   scheduledAt          DateTime
   status               SorteoStatus           @default(SCHEDULED)
@@ -331,6 +354,7 @@ model Sorteo {
   deletedByCascadeId   String?                @db.Uuid
   deletedByCascade     Boolean                @default(false)
   digits               Int                    @default(2)
+  bancaId              String?                @db.Uuid
   banca                Banca?                 @relation(fields: [bancaId], references: [id])
   extraMultiplier      LoteriaMultiplier?     @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
   loteria              Loteria                @relation(fields: [loteriaId], references: [id])
@@ -344,11 +368,12 @@ model Sorteo {
   @@index([name])
   @@index([winningNumber])
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_name_trgm", type: Gin)
+  @@index([id], map: "idx_sorteo_status_open", where: raw("(status = 'OPEN'::\"SorteoStatus\")"))
+  @@index([status, scheduledAt, loteriaId], map: "idx_sorteo_status_scheduled", where: raw("(\"deletedAt\" IS NULL)"))
 }
 
 model SorteoListaExclusion {
   id             String             @id @default(uuid()) @db.Uuid
-  bancaId        String?            @map("banca_id") @db.Uuid
   sorteoId       String             @map("sorteo_id") @db.Uuid
   ventanaId      String             @map("ventana_id") @db.Uuid
   vendedorId     String?            @map("vendedor_id") @db.Uuid
@@ -358,6 +383,7 @@ model SorteoListaExclusion {
   createdAt      DateTime           @default(now()) @map("created_at")
   updatedAt      DateTime           @updatedAt @map("updated_at")
   multiplierId   String?            @map("multiplier_id") @db.Uuid
+  bancaId        String?            @map("banca_id") @db.Uuid
   banca          Banca?             @relation(fields: [bancaId], references: [id])
   excludedByUser User               @relation("ExclusionExcludedBy", fields: [excludedBy], references: [id])
   multiplier     LoteriaMultiplier? @relation("ExclusionMultiplier", fields: [multiplierId], references: [id])
@@ -371,31 +397,31 @@ model SorteoListaExclusion {
   @@index([vendedorId])
   @@index([bancaId])
   @@index([multiplierId])
+  @@index([excludedBy], map: "idx_sorteo_lista_exclusion_exBy_fk")
   @@map("sorteo_lista_exclusion")
 }
 
 model ActivityLog {
   id         String       @id @default(uuid()) @db.Uuid
-  bancaId    String?      @db.Uuid
   userId     String?      @db.Uuid
   action     ActivityType
   targetType String?
   targetId   String?
   details    Json?
   createdAt  DateTime     @default(now())
+  bancaId    String?      @db.Uuid
   banca      Banca?       @relation(fields: [bancaId], references: [id])
   user       User?        @relation(fields: [userId], references: [id])
 
   @@index([createdAt])
   @@index([bancaId])
   @@index([targetType])
-  @@index([targetType, targetId, createdAt(sort: Desc)], map: "idx_activity_log_target_date")
+  @@index([bancaId, targetType, createdAt(sort: Desc)], map: "idx_activity_log_target_date")
   @@index([userId], map: "idx_activity_log_user_id")
 }
 
 model RestrictionRule {
   id                 String             @id @default(uuid()) @db.Uuid
-  bancaId            String?            @db.Uuid
   ventanaId          String?            @db.Uuid
   userId             String?            @db.Uuid
   number             String?
@@ -414,6 +440,7 @@ model RestrictionRule {
   baseAmount         Float?
   salesPercentage    Float?
   appliesToVendedor  Boolean            @default(false)
+  bancaId            String?            @db.Uuid
   banca              Banca?             @relation(fields: [bancaId], references: [id])
   loteria            Loteria?           @relation(fields: [loteriaId], references: [id])
   multiplier         LoteriaMultiplier? @relation(fields: [multiplierId], references: [id])
@@ -423,11 +450,15 @@ model RestrictionRule {
   @@index([loteriaId])
   @@index([multiplierId])
   @@index([bancaId])
+  @@index([number, isActive, loteriaId], map: "idx_restriction_number_active", where: raw("((\"isActive\" = true) AND (number IS NOT NULL))"))
+  @@index([isAutoDate, isActive], map: "idx_restriction_rule_auto_date_active", where: raw("((\"isAutoDate\" = true) AND (\"isActive\" = true))"))
+  @@index([salesPercentage], map: "idx_restriction_rules_sales_percentage", where: raw("(\"salesPercentage\" IS NOT NULL)"))
+  @@index([userId], map: "idx_restrictionrule_userId_fk")
+  @@index([ventanaId], map: "idx_restrictionrule_ventanaId_fk")
 }
 
 model LoteriaMultiplier {
   id                    String                 @id @default(uuid()) @db.Uuid
-  bancaId               String?                @db.Uuid
   loteriaId             String                 @db.Uuid
   name                  String
   valueX                Float
@@ -437,6 +468,7 @@ model LoteriaMultiplier {
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
   kind                  MultiplierKind         @default(NUMERO)
+  bancaId               String?                @db.Uuid
   jugadasAtSale         Jugada[]               @relation("JugadaMultiplierAtSale")
   banca                 Banca?                 @relation(fields: [bancaId], references: [id])
   loteria               Loteria                @relation(fields: [loteriaId], references: [id])
@@ -451,7 +483,6 @@ model LoteriaMultiplier {
 
 model MultiplierOverride {
   id              String        @id @default(uuid()) @db.Uuid
-  bancaId         String?       @db.Uuid
   scope           OverrideScope
   userId          String?       @db.Uuid
   ventanaId       String?       @db.Uuid
@@ -464,6 +495,7 @@ model MultiplierOverride {
   deletedReason   String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+  bancaId         String?       @db.Uuid
   banca           Banca?        @relation(fields: [bancaId], references: [id])
   loteria         Loteria       @relation(fields: [loteriaId], references: [id])
   user            User?         @relation(fields: [userId], references: [id])
@@ -472,12 +504,14 @@ model MultiplierOverride {
   @@unique([scope, userId, ventanaId, loteriaId, multiplierType], map: "uniq_override_scope_target")
   @@index([scope, userId, ventanaId, loteriaId, multiplierType], map: "idx_override_lookup")
   @@index([bancaId])
+  @@index([loteriaId], map: "idx_multiplieroverride_loteriaId_fk")
+  @@index([userId], map: "idx_multiplieroverride_userId_fk")
+  @@index([ventanaId], map: "idx_multiplieroverride_ventanaId_fk")
 }
 
 model RefreshToken {
   id            String    @id @default(uuid()) @db.Uuid
   userId        String    @db.Uuid
-  bancaId       String?   @db.Uuid
   token         String    @unique
   revoked       Boolean   @default(false)
   expiresAt     DateTime
@@ -490,12 +524,13 @@ model RefreshToken {
   lastUsedAt    DateTime? @default(now())
   revokedAt     DateTime?
   revokedReason String?   @db.VarChar(50)
-  
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bancaId       String?   @db.Uuid
   banca         Banca?    @relation(fields: [bancaId], references: [id], onDelete: Cascade)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId], map: "idx_refresh_token_user_id")
   @@index([bancaId, revoked, expiresAt], map: "idx_refreshtoken_pool_count")
+  @@index([userId, deviceId], map: "idx_refresh_token_user_device", where: raw("(\"deviceId\" IS NOT NULL)"))
 }
 
 model UserBanca {
@@ -511,12 +546,12 @@ model UserBanca {
   @@unique([userId, bancaId], map: "UserBanca_userId_bancaId_unique")
   @@index([userId])
   @@index([bancaId])
+  @@index([userId, isDefault], map: "UserBanca_isDefault_idx", where: raw("(\"isDefault\" = true)"))
   @@map("UserBanca")
 }
 
 model SavedReport {
   id        String           @id @default(uuid()) @db.Uuid
-  bancaId   String?          @db.Uuid
   name      String
   userId    String           @db.Uuid
   filters   Json
@@ -524,8 +559,9 @@ model SavedReport {
   isActive  Boolean          @default(true)
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
-  banca     Banca?           @relation(fields: [bancaId], references: [id])
+  bancaId   String?          @db.Uuid
   schedules ReportSchedule[]
+  banca     Banca?           @relation(fields: [bancaId], references: [id])
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, isActive])
@@ -534,7 +570,6 @@ model SavedReport {
 
 model ExportJob {
   id             String       @id @default(uuid()) @db.Uuid
-  bancaId        String?      @db.Uuid
   userId         String       @db.Uuid
   format         ExportFormat @default(CSV)
   filters        Json
@@ -547,6 +582,7 @@ model ExportJob {
   updatedAt      DateTime     @updatedAt
   completedAt    DateTime?
   idempotencyKey String?      @unique
+  bancaId        String?      @db.Uuid
   banca          Banca?       @relation(fields: [bancaId], references: [id])
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -556,7 +592,6 @@ model ExportJob {
 
 model Alert {
   id            String    @id @default(uuid()) @db.Uuid
-  bancaId       String?   @db.Uuid
   name          String
   userId        String    @db.Uuid
   dimension     String
@@ -568,6 +603,7 @@ model Alert {
   updatedAt     DateTime  @updatedAt
   notifyEmail   String?
   notifyWebhook String?
+  bancaId       String?   @db.Uuid
   banca         Banca?    @relation(fields: [bancaId], references: [id])
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -577,7 +613,6 @@ model Alert {
 
 model ApiKey {
   id         String    @id @default(uuid()) @db.Uuid
-  bancaId    String?   @db.Uuid
   name       String
   key        String    @unique
   userId     String?   @db.Uuid
@@ -587,6 +622,7 @@ model ApiKey {
   lastUsedAt DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+  bancaId    String?   @db.Uuid
   banca      Banca?    @relation(fields: [bancaId], references: [id])
   user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -597,7 +633,6 @@ model ApiKey {
 
 model Webhook {
   id          String            @id @default(uuid()) @db.Uuid
-  bancaId     String?           @db.Uuid
   name        String
   url         String
   events      String[]
@@ -607,6 +642,7 @@ model Webhook {
   updatedAt   DateTime          @updatedAt
   lastFiredAt DateTime?
   failCount   Int               @default(0)
+  bancaId     String?           @db.Uuid
   banca       Banca?            @relation(fields: [bancaId], references: [id])
   deliveries  WebhookDelivery[]
 
@@ -641,11 +677,11 @@ model ReportSchedule {
   report     SavedReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@index([isActive, nextRunAt])
+  @@index([reportId], map: "idx_reportschedule_reportId_fk")
 }
 
 model Goal {
   id          String   @id @default(uuid()) @db.Uuid
-  bancaId     String?  @db.Uuid
   name        String
   dimension   String
   targetId    String?
@@ -656,6 +692,7 @@ model Goal {
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  bancaId     String?  @db.Uuid
   banca       Banca?   @relation(fields: [bancaId], references: [id])
 
   @@index([dimension, targetId, isActive])
@@ -664,35 +701,36 @@ model Goal {
 }
 
 model AccountStatement {
-  id                 String    @id @default(uuid()) @db.Uuid
-  date               DateTime  @db.Date
-  month              String    @db.VarChar(7)
-  ventanaId          String?   @db.Uuid
-  vendedorId         String?   @db.Uuid
-  totalSales         Float     @default(0)
-  totalPayouts       Float     @default(0)
-  listeroCommission  Float     @default(0)
-  vendedorCommission Float     @default(0)
-  balance            Float     @default(0)
-  totalPaid          Float     @default(0)
-  remainingBalance   Float     @default(0)
-  isSettled          Boolean   @default(false)
-  canEdit            Boolean   @default(true)
-  ticketCount        Int       @default(0)
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-  totalCollected     Float     @default(0)
+  id                 String           @id @default(uuid()) @db.Uuid
+  date               DateTime         @db.Date
+  month              String           @db.VarChar(7)
+  ventanaId          String?          @db.Uuid
+  vendedorId         String?          @db.Uuid
+  totalSales         Float            @default(0)
+  totalPayouts       Float            @default(0)
+  listeroCommission  Float            @default(0)
+  vendedorCommission Float            @default(0)
+  balance            Float            @default(0)
+  totalPaid          Float            @default(0)
+  remainingBalance   Float            @default(0)
+  isSettled          Boolean          @default(false)
+  canEdit            Boolean          @default(true)
+  ticketCount        Int              @default(0)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  totalCollected     Float            @default(0)
   settledAt          DateTime?
-  settledBy          String?   @db.Uuid
-  bancaId            String?   @db.Uuid
-  accumulatedBalance Float     @default(0)
-  banca              Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
+  settledBy          String?          @db.Uuid
+  accumulatedBalance Float            @default(0)
+  bancaId            String?          @db.Uuid
   payments           AccountPayment[]
+  banca              Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
   settledByUser      User?            @relation("AccountStatementSettledBy", fields: [settledBy], references: [id])
-  vendedor           User?     @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
-  ventana            Ventana?  @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
+  vendedor           User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
+  ventana            Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
 
   @@unique([date, vendedorId], map: "account_statements_date_vendedor_unique")
+  @@unique([date, ventanaId], map: "account_statements_date_ventana_unique", where: raw("((\"ventanaId\" IS NOT NULL) AND (\"vendedorId\" IS NULL))"))
   @@index([month])
   @@index([date])
   @@index([bancaId])
@@ -701,36 +739,44 @@ model AccountStatement {
   @@index([month, isSettled, date])
   @@index([vendedorId, date])
   @@index([vendedorId, date, remainingBalance], map: "idx_account_statement_vendedor_covering_v3")
+  @@index([vendedorId], where: raw("(\"vendedorId\" IS NOT NULL)"))
+  @@index([ventanaId], where: raw("(\"ventanaId\" IS NOT NULL)"))
+  @@index([date, remainingBalance], map: "idx_account_statement_banca_sum_v3", where: raw("((\"vendedorId\" IS NULL) AND (\"ventanaId\" IS NULL))"))
+  @@index([month, isSettled], map: "idx_account_statements_month_settled", where: raw("(\"isSettled\" = true)"))
+  @@index([settledBy], map: "idx_accountstatement_settledBy_fk")
+  @@index([bancaId, date(sort: Desc)], map: "idx_as_banca_date", where: raw("((\"ventanaId\" IS NULL) AND (\"vendedorId\" IS NULL))"))
+  @@index([vendedorId, date(sort: Desc)], map: "idx_as_vendedor_date", where: raw("(\"vendedorId\" IS NOT NULL)"))
+  @@index([ventanaId, date(sort: Desc)], map: "idx_as_ventana_date", where: raw("((\"ventanaId\" IS NOT NULL) AND (\"vendedorId\" IS NULL))"))
 }
 
 model AccountPayment {
-  id                 String    @id @default(uuid()) @db.Uuid
-  accountStatementId String    @db.Uuid
-  date               DateTime  @db.Date
-  month              String    @db.VarChar(7)
-  ventanaId          String?   @db.Uuid
-  vendedorId         String?   @db.Uuid
+  id                 String           @id @default(uuid()) @db.Uuid
+  accountStatementId String           @db.Uuid
+  date               DateTime         @db.Date
+  month              String           @db.VarChar(7)
+  ventanaId          String?          @db.Uuid
+  vendedorId         String?          @db.Uuid
   amount             Float
-  type               String    @db.VarChar(20)
-  method             String    @db.VarChar(20)
+  type               String           @db.VarChar(20)
+  method             String           @db.VarChar(20)
   notes              String?
-  isFinal            Boolean   @default(false)
-  isReversed         Boolean   @default(false)
+  isFinal            Boolean          @default(false)
+  isReversed         Boolean          @default(false)
   reversedAt         DateTime?
-  reversedBy         String?   @db.Uuid
-  paidById           String    @db.Uuid
-  paidByName         String    @db.VarChar(255)
-  idempotencyKey     String?   @unique
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-  bancaId            String?   @db.Uuid
-  time               String?   @db.VarChar(5)
-  accountStatement AccountStatement @relation(fields: [accountStatementId], references: [id], onDelete: Restrict)
-  banca            Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
-  paidBy             User      @relation("AccountPaymentPaidBy", fields: [paidById], references: [id])
-  reversedByUser     User?     @relation("AccountPaymentReversedBy", fields: [reversedBy], references: [id])
-  vendedor           User?     @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
-  ventana            Ventana?  @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
+  reversedBy         String?          @db.Uuid
+  paidById           String           @db.Uuid
+  paidByName         String           @db.VarChar(255)
+  idempotencyKey     String?          @unique
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  time               String?          @db.VarChar(5)
+  bancaId            String?          @db.Uuid
+  accountStatement   AccountStatement @relation(fields: [accountStatementId], references: [id])
+  banca              Banca?           @relation(fields: [bancaId], references: [id], onDelete: Cascade)
+  paidBy             User             @relation("AccountPaymentPaidBy", fields: [paidById], references: [id])
+  reversedByUser     User?            @relation("AccountPaymentReversedBy", fields: [reversedBy], references: [id])
+  vendedor           User?            @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
+  ventana            Ventana?         @relation(fields: [ventanaId], references: [id], onDelete: Cascade)
 
   @@index([accountStatementId])
   @@index([date])
@@ -739,11 +785,15 @@ model AccountPayment {
   @@index([isReversed])
   @@index([paidById], map: "idx_AccountPayment_paidById")
   @@index([reversedBy], map: "idx_AccountPayment_reversedBy")
+  @@index([vendedorId], where: raw("(\"vendedorId\" IS NOT NULL)"))
+  @@index([ventanaId], where: raw("(\"ventanaId\" IS NOT NULL)"))
+  @@index([date, vendedorId], map: "idx_account_payment_date_vendedor", where: raw("((\"isReversed\" = false) AND (\"vendedorId\" IS NOT NULL))"))
+  @@index([date, ventanaId], map: "idx_account_payment_date_ventana", where: raw("(\"isReversed\" = false)"))
+  @@index([accountStatementId, isReversed, type], map: "idx_account_payment_statement_reversed_type", where: raw("(\"isReversed\" = false)"))
 }
 
 model SorteosAutoConfig {
   id                  String    @id @default(uuid()) @db.Uuid
-  bancaId             String?   @db.Uuid
   autoOpenEnabled     Boolean   @default(false)
   autoCreateEnabled   Boolean   @default(false)
   openCronSchedule    String?
@@ -759,15 +809,16 @@ model SorteosAutoConfig {
   closeCronSchedule   String?
   lastCloseExecution  DateTime?
   lastCloseCount      Int?
+  bancaId             String?   @db.Uuid
   banca               Banca?    @relation(fields: [bancaId], references: [id])
   updatedByUser       User?     @relation("SorteosAutoConfigUpdatedBy", fields: [updatedBy], references: [id])
 
   @@index([bancaId])
+  @@index([updatedBy], map: "idx_sorteosautoconfig_updatedBy_fk")
 }
 
 model AccountStatementSettlementConfig {
   id                String    @id @default(uuid()) @db.Uuid
-  bancaId           String?   @db.Uuid
   enabled           Boolean   @default(false)
   settlementAgeDays Int       @default(7)
   cronSchedule      String?   @db.VarChar(50)
@@ -780,11 +831,13 @@ model AccountStatementSettlementConfig {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   updatedBy         String?   @db.Uuid
+  bancaId           String?   @db.Uuid
   banca             Banca?    @relation(fields: [bancaId], references: [id])
   updatedByUser     User?     @relation("AccountStatementSettlementConfigUpdatedBy", fields: [updatedBy], references: [id])
 
   @@index([enabled])
   @@index([bancaId])
+  @@index([updatedBy], map: "idx_accountstatementsettlementconfig_updBy_fk")
 }
 
 model MonthlyClosingBalance {
@@ -793,7 +846,6 @@ model MonthlyClosingBalance {
   dimension       String   @db.VarChar(20)
   vendedorId      String?  @db.Uuid
   ventanaId       String?  @db.Uuid
-  bancaId         String?  @db.Uuid
   closingBalance  Decimal  @db.Decimal(15, 2)
   totalSales      Decimal  @db.Decimal(15, 2)
   totalPayouts    Decimal  @db.Decimal(15, 2)
@@ -804,6 +856,7 @@ model MonthlyClosingBalance {
   closingDate     DateTime @default(now())
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  bancaId         String?  @db.Uuid
   banca           Banca?   @relation("MonthlyClosingBalanceBanca", fields: [bancaId], references: [id])
   vendedor        User?    @relation("MonthlyClosingBalanceVendedor", fields: [vendedorId], references: [id])
   ventana         Ventana? @relation("MonthlyClosingBalanceVentana", fields: [ventanaId], references: [id])
@@ -817,6 +870,29 @@ model MonthlyClosingBalance {
   @@index([ventanaId], map: "idx_MonthlyClosingBalance_ventanaId")
 }
 
+model ResumenCierreDiario {
+  id            String   @id @default(uuid()) @db.Uuid
+  bancaId       String?  @db.Uuid
+  businessDate  DateTime @db.Date
+  vendedorId    String   @db.Uuid
+  ventanaId     String   @db.Uuid
+  loteriaId     String   @db.Uuid
+  sorteoId      String   @db.Uuid
+  tipo          BetType
+  banda         Float
+  totalVendida  Float
+  ganado        Float
+  comisionTotal Float
+  ticketsCount  Int
+  jugadasCount  Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([businessDate, bancaId, vendedorId, ventanaId, loteriaId, sorteoId, tipo, banda], name: "cierre_diario_unique")
+  @@index([businessDate])
+  @@index([bancaId])
+}
+
 enum OverrideScope {
   USER
   VENTANA
@@ -824,9 +900,9 @@ enum OverrideScope {
 
 enum Role {
   ADMIN
-  BANCA
   VENTANA
   VENDEDOR
+  BANCA
 }
 
 enum TicketStatus {
@@ -920,27 +996,4 @@ enum JobStatus {
   COMPLETED
   FAILED
   CANCELLED
-}
-
-model ResumenCierreDiario {
-  id              String   @id @default(uuid()) @db.Uuid
-  bancaId         String?  @db.Uuid
-  businessDate    DateTime @db.Date
-  vendedorId      String   @db.Uuid
-  ventanaId       String   @db.Uuid
-  loteriaId       String   @db.Uuid
-  sorteoId        String   @db.Uuid
-  tipo            BetType
-  banda           Float
-  totalVendida    Float
-  ganado          Float
-  comisionTotal   Float
-  ticketsCount    Int
-  jugadasCount    Int
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@unique([businessDate, bancaId, vendedorId, ventanaId, loteriaId, sorteoId, tipo, banda], name: "cierre_diario_unique")
-  @@index([businessDate])
-  @@index([bancaId])
 }
