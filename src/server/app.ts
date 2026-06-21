@@ -1,3 +1,4 @@
+/// <reference path="../types/express-compression.d.ts" />
 // src/server/app.ts
 import express from 'express'
 import 'express-async-errors'
