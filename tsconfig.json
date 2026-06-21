@@ -14,7 +14,7 @@
     "declaration": true,
     "noImplicitAny": true,
 
-    "typeRoots": ["./src/types", "./node_modules/@types"],
+    "typeRoots": ["./node_modules/@types"],
     "paths": {
       "@prisma/client": ["./src/generated/prisma/client"]
     }
