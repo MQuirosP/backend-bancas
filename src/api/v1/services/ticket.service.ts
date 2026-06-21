@@ -348,6 +348,8 @@ export const TicketService = {
         });
         (response as any).warnings = warnings;
       }
+
+      return response;
     } catch (err: any) {
       logger.error({
         layer: "service",
