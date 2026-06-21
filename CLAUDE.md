@@ -25,7 +25,7 @@ Node.js 20 + Express + TypeScript + Prisma + PostgreSQL (Supabase).
 ## Stack principal
 
 | Capa | Tecnología |
-|---|---|
+| --- | --- |
 | Runtime | Node.js 20.x |
 | Framework | Express 4.21.2 |
 | Lenguaje | TypeScript 5.9.3 |
@@ -43,7 +43,7 @@ Node.js 20 + Express + TypeScript + Prisma + PostgreSQL (Supabase).
 
 ## Estructura del proyecto
 
-```
+```text
 src/
   api/v1/           # Controladores, validators, rutas por recurso
   core/             # prismaClient, logger, auth, AppError
@@ -68,23 +68,27 @@ prisma/
 ## Entidades del dominio
 
 **Organización:**
+
 - `Banca` → empresa de loterías (raíz del multi-tenant)
 - `Ventana` → sucursal/punto de venta (pertenece a Banca)
 - `User` → roles: `ADMIN`, `BANCA`, `VENTANA`, `VENDEDOR`
 
 **Juego:**
+
 - `Loteria` → tipo de juego (NICA, MULTI X NICA, etc.)
 - `Sorteo` → instancia de un sorteo (`SCHEDULED → OPEN → EVALUATED → CLOSED`)
 - `Ticket` → boleto vendido (tiene múltiples `Jugada`)
 - `Jugada` → apuesta individual dentro de un ticket (número + monto + multiplicador)
 
 **Financiero:**
+
 - `AccountStatement` → estado de cuenta diario por vendedor/ventana/banca
 - `AccountPayment` → movimiento de pago/cobro contra un statement
 - `MonthlyClosingBalance` → cierre mensual (snapshot)
 - `TicketPayment` → historial de pagos sobre tickets ganadores
 
 **Comisiones y reglas:**
+
 - `LoteriaMultiplier` → multiplicadores base por número/reventado
 - `MultiplierOverride` → override de multiplicador a nivel USER o VENTANA
 - `RestrictionRule` → reglas de límite de ventas (monto fijo o dinámico)
@@ -95,14 +99,17 @@ prisma/
 ## Convenciones de código
 
 ### Capas
-```
+
+```text
 Controller → Service → Repository → Prisma
 ```
+
 - Los controladores NO tienen lógica de negocio
 - Los repositories son la única capa que toca Prisma directamente
 - Las transactions se inician en el repository via `withTransactionRetry()`
 
 ### Errores
+
 ```typescript
 // Error operacional (llega al cliente con statusCode)
 throw new AppError('Mensaje para el cliente', 404);
@@ -113,6 +120,7 @@ throw new AppError('No autorizado', 403, { meta: 'contexto extra' });
 ```
 
 ### Logging
+
 ```typescript
 logger.info({
   layer: 'service',        // controller | service | repository | middleware | script
@@ -125,6 +133,7 @@ logger.info({
 ```
 
 ### Validación de request
+
 ```typescript
 // En el router:
 router.post('/', protect, validateBody(createTicketSchema), controller.create);
@@ -134,6 +143,7 @@ router.post('/', protect, validateBody(createTicketSchema), controller.create);
 ```
 
 ### Responses
+
 ```typescript
 // Éxito
 res.status(200).json({ status: 'success', data: result });
@@ -145,12 +155,14 @@ res.status(200).json({ status: 'success', data: result });
 ## Autenticación y autorización
 
 **JWT:**
+
 - Access token: 60m (configurable via `JWT_ACCESS_EXPIRES_IN`)
 - Refresh token: 7d, multi-device, almacenado en `RefreshToken` con deviceId/userAgent/IP
 - Payload del access token: `{ sub: userId, role, ventanaId?, bancaId? }`
 - Redis cache para lookups de `ventanaId` (TTL 5min)
 
 **Guards (middleware):**
+
 ```typescript
 protect                              // Requiere JWT válido
 restrictTo('ADMIN', 'VENTANA')       // Whitelist de roles
@@ -159,6 +171,7 @@ restrictToAdminOrVentanaSelf         // ADMIN o VENTANA gestionando su propia ve
 ```
 
 **RBAC en queries — CRÍTICO:**
+
 ```typescript
 // Siempre usar applyRbacFilters() antes de ejecutar queries con filtros del cliente
 // VENDEDOR → fuerza filtro por userId
@@ -169,6 +182,7 @@ restrictToAdminOrVentanaSelf         // ADMIN o VENTANA gestionando su propia ve
 ```
 
 **Contexto de banca (ADMIN multi-banca):**
+
 - Header `X-Active-Banca-Id` para que un ADMIN opere sobre una banca específica
 - Endpoint `POST /api/v1/auth/set-active-banca` para cambiar contexto
 - El bancaId activo se incluye en el JWT o se resuelve por middleware
@@ -180,6 +194,7 @@ restrictToAdminOrVentanaSelf         // ADMIN o VENTANA gestionando su propia ve
 **Zona horaria:** Costa Rica = UTC−6 (sin cambio de horario)
 
 **Fuente de verdad: `src/utils/crDateService.ts`**
+
 ```typescript
 dateUTCToCRString(date)           // Date UTC → 'YYYY-MM-DD' en CR
 postgresDateToCRString(pgDate)    // DATE de Postgres → string CR
@@ -189,6 +204,7 @@ CR_TIMEZONE_OFFSET_MS = 6 * 3600 * 1000
 ```
 
 **businessDate (`src/utils/businessDate.ts`):**
+
 ```typescript
 getBusinessDateCRInfo({ scheduledAt, nowUtc, cutoffHour })
 // Devuelve: { businessDate, businessDateISO, prefixYYMMDD }
@@ -198,6 +214,7 @@ getBusinessDateCRInfo({ scheduledAt, nowUtc, cutoffHour })
 ```
 
 **Rangos de fecha (`src/utils/dateRange.ts`):**
+
 ```typescript
 resolveDateRange({ date: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all' })
 resolveDateRange({ fromDate: '2026-01-01', toDate: '2026-01-31' })
@@ -206,6 +223,7 @@ resolveDateRange({ fromDate: '2026-01-01', toDate: '2026-01-31' })
 ```
 
 **Reglas:**
+
 - La DB almacena timestamps como UTC
 - `businessDate` es columna `DATE` (día de calendario en CR)
 - NUNCA hacer aritmética de fechas sin usar las utilidades de CR
@@ -216,6 +234,7 @@ resolveDateRange({ fromDate: '2026-01-01', toDate: '2026-01-31' })
 ## Transacciones y raw SQL
 
 **Patrón estándar:**
+
 ```typescript
 // withTransactionRetry en src/repositories/helpers/
 // Isolation: Serializable + backoff exponencial (250-600ms, max 3 reintentos)
@@ -226,6 +245,7 @@ await withTransactionRetry(async (tx) => {
 ```
 
 **Raw SQL (Prisma.$executeRaw / $queryRaw):**
+
 ```typescript
 // Para listas parametrizadas SIEMPRE usar Prisma.join — NUNCA UNNEST en WHERE
 import { Prisma } from '@prisma/client';
@@ -238,6 +258,7 @@ await tx.$executeRaw`DELETE FROM "Table" WHERE id IN (${idList})`;
 ```
 
 **Conexiones:**
+
 - `DATABASE_URL` (puerto 6543, pgbouncer) → requests web
 - `DIRECT_URL` (puerto 5432, session pooler) → migraciones, cron jobs, scripts
 
@@ -246,9 +267,11 @@ await tx.$executeRaw`DELETE FROM "Table" WHERE id IN (${idList})`;
 ## Comisiones
 
 **Arquitectura jerárquica:**
-```
+
+```text
 User → Ventana → Banca (fallback en cascada)
 ```
+
 - Las políticas se almacenan como JSON en el modelo correspondiente
 - `CommissionService` resuelve cuál política aplica al contexto
 - `CommissionResolver` calcula los montos a partir de la política
@@ -256,6 +279,7 @@ User → Ventana → Banca (fallback en cascada)
   - Permite cambiar políticas sin afectar histórico
 
 **Tipos:**
+
 - Comisión de listero: `commissionAmount` en `Jugada`
 - Comisión de ventana: `listeroCommissionAmount` en `Jugada`
 - Total del ticket: `totalCommission` en `Ticket`
@@ -265,12 +289,14 @@ User → Ventana → Banca (fallback en cascada)
 ## AccountStatements
 
 **Estructura:**
+
 - Un `AccountStatement` por (vendedor | ventana | banca) × día calendario
 - Campos clave: `balance` (ventas−premios del día), `totalPaid`, `totalCollected`,
   `remainingBalance` (saldo acumulado real), `accumulatedBalance`
 
 **Fórmula de saldo acumulativo:**
-```
+
+```text
 remainingBalance(día N) = remainingBalance(día N-1) + balance(N) + totalPaid(N) - totalCollected(N)
 ```
 
@@ -282,16 +308,19 @@ se inyecta como un movimiento ficticio en el día 1 del mes dentro del map
 `movementsByDate`. Nunca se persiste en DB.
 
 IDs del movimiento sintético según el servicio:
+
 - `sorteo.service.ts` → `previous-month-balance-{vendedorId}`
 - `accounts.service.ts` → `previous-month-balance-{dimension}-{entityId}`
 
 Qué hace:
+
 - **SE MUESTRA** en el UI como "Saldo del mes anterior"
 - **SE INCLUYE** en el balance acumulado del día 1 (es el punto de partida del mes)
 - **SE EXCLUYE** de `totalPaid` y `totalCollected` (diarios y mensuales)
 - **SE EXCLUYE** de `totalSales`, `totalPrizes`, etc.
 
 Patrón de exclusión obligatorio al sumar pagos/cobros:
+
 ```typescript
 // Mínimo (sorteo.service.ts):
 .filter(m => m.type === "payment" && !m.isReversed && !m.id?.startsWith('previous-month-balance-'))
@@ -317,6 +346,7 @@ Ejecutar con `npx tsx scripts/CARPETA/nombre.ts`.
 Cada carpeta tiene su propio `INSTRUCCIONES.md` con uso detallado.
 
 **Reglas de los scripts:**
+
 - Scripts destructivos siempre tienen `--dry-run` (excepto los que lo indican)
 - Los que tienen IDs hardcodeados lo dicen explícitamente
 - Siempre revisar el INSTRUCCIONES.md antes de ejecutar
@@ -326,7 +356,7 @@ Cada carpeta tiene su propio `INSTRUCCIONES.md` con uso detallado.
 ## Cron jobs
 
 | Job | Descripción |
-|---|---|
+| --- | --- |
 | `sorteosAuto.job.ts` | Auto abrir/crear/cerrar sorteos según `SorteosAutoConfig` |
 | `accountStatementSettlement.job.ts` | Auto liquidar statements según `AccountStatementSettlementConfig` |
 | `monthlyClosing.job.ts` | Cierre mensual (snapshot `MonthlyClosingBalance`) |
@@ -358,6 +388,7 @@ Schema de validación completo en `src/config/env.schema.ts`.
 ## Soft deletes
 
 Todos los modelos principales tienen:
+
 ```typescript
 deletedAt       DateTime?
 deletedBy       String?   // userId que hizo el delete
@@ -366,6 +397,7 @@ deletedByCascade Boolean?          // fue borrado en cascada
 deletedByCascadeFrom String?       // nombre del modelo padre
 deletedByCascadeId   String?       // id del registro padre
 ```
+
 Los queries siempre filtran `deletedAt: null` por defecto.
 
 ---
