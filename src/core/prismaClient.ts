@@ -8,8 +8,25 @@ declare global {
 }
 
 if (!global.__prismaPool) {
+  let connectionLimit = 25; // default fallback
+  if (process.env.DATABASE_URL) {
+    try {
+      const parsedUrl = new URL(process.env.DATABASE_URL);
+      const limitParam = parsedUrl.searchParams.get("connection_limit");
+      if (limitParam) {
+        const parsedLimit = parseInt(limitParam, 10);
+        if (!isNaN(parsedLimit) && parsedLimit > 0) {
+          connectionLimit = parsedLimit;
+        }
+      }
+    } catch (e) {
+      // fallback
+    }
+  }
+
   global.__prismaPool = new Pool({
     connectionString: process.env.DATABASE_URL,
+    max: connectionLimit,
   });
 }
 

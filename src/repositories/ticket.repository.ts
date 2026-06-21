@@ -1493,6 +1493,7 @@ export const TicketRepository = {
       businessDateInfo,
       ticketNumber,
       warnings,
+      sorteoScheduledAt,
     } = await withTransactionRetry(
       async (tx) => {
         const warnings: TicketWarning[] = [];
@@ -2246,6 +2247,7 @@ export const TicketRepository = {
           seqForLog,
           ticketNumber: nextNumber,
           warnings,
+          sorteoScheduledAt: sorteo.scheduledAt,
         };
       },
       {
@@ -2331,6 +2333,15 @@ export const TicketRepository = {
           try {
             const pipeline = redis.pipeline();
             
+            // Calcular TTL dinámico e inteligente para el sorteo
+            let ttlSeconds = 43200; // 12 horas por defecto
+            if (sorteoScheduledAt) {
+              const msToDraw = new Date(sorteoScheduledAt).getTime() - Date.now();
+              const twoHoursMs = 2 * 60 * 60 * 1000;
+              const calculatedTtl = Math.ceil((msToDraw + twoHoursMs) / 1000);
+              ttlSeconds = Math.max(7200, Math.min(calculatedTtl, 86400));
+            }
+
             // Obtener la bancaId real para el incremento
             let targetBancaId = options?.preFetched?.ventana?.bancaId;
             if (!targetBancaId && ticket.ventana?.bancaId) {
@@ -2361,7 +2372,7 @@ export const TicketRepository = {
                   // 1. Clave general
                   const genKey = `sorteo:${sorteoId}:scope:${sc.id}:acumulados`;
                   pipeline.hincrbyfloat(genKey, num, amount);
-                  pipeline.expire(genKey, 43200);
+                  pipeline.expire(genKey, ttlSeconds);
 
                   // 2. Clave por multiplicador
                   const resolvedJugada = jugadasWithCommissions.find(
@@ -2372,7 +2383,7 @@ export const TicketRepository = {
                   if (multId) {
                     const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
                     pipeline.hincrbyfloat(multKey, num, amount);
-                    pipeline.expire(multKey, 43200);
+                    pipeline.expire(multKey, ttlSeconds);
                   }
                 }
               }

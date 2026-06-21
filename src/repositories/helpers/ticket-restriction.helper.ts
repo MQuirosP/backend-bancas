@@ -1479,8 +1479,24 @@ export async function rehydrateRedisAccumulated(sorteoId: string, tx?: Prisma.Tr
   const startTime = Date.now();
 
   try {
-    // 1. Obtener todos los acumulados consolidados desde la base de datos
     const client = tx || prisma;
+
+    // Obtener la fecha del sorteo para calcular un TTL inteligente (evitar acumulación en RAM de Redis)
+    const sorteo = await client.sorteo.findUnique({
+      where: { id: sorteoId },
+      select: { scheduledAt: true },
+    });
+
+    let ttlSeconds = 43200; // 12 horas por defecto
+    if (sorteo?.scheduledAt) {
+      const msToDraw = new Date(sorteo.scheduledAt).getTime() - Date.now();
+      const twoHoursMs = 2 * 60 * 60 * 1000;
+      const calculatedTtl = Math.ceil((msToDraw + twoHoursMs) / 1000);
+      // Mínimo de 2 horas (7,200s), máximo de 24 horas (86,400s)
+      ttlSeconds = Math.max(7200, Math.min(calculatedTtl, 86400));
+    }
+
+    // 1. Obtener todos los acumulados consolidados desde la base de datos
     const result = await client.$queryRaw<
       Array<{
         number: string;
@@ -1518,14 +1534,14 @@ export async function rehydrateRedisAccumulated(sorteoId: string, tx?: Prisma.Tr
     // 2. Agrupar en memoria por clave de Redis
     const redisData = new Map<string, Record<string, number>>();
 
-    function addValue(key: string, num: string, amount: number) {
+    const addValue = (key: string, num: string, amount: number) => {
       let record = redisData.get(key);
       if (!record) {
         record = {};
         redisData.set(key, record);
       }
       record[num] = (record[num] || 0) + amount;
-    }
+    };
 
     for (const row of result) {
       const amount = Number(row.total);
@@ -1575,13 +1591,13 @@ export async function rehydrateRedisAccumulated(sorteoId: string, tx?: Prisma.Tr
       
       // HSET masivo de pares clave-valor
       pipeline.hset(key, stringRecord);
-      // TTL de 12 horas (43,200 segundos)
-      pipeline.expire(key, 43200);
+      // TTL dinámico e inteligente
+      pipeline.expire(key, ttlSeconds);
     }
 
     // Guardar llave de control que marca el sorteo como hidratado
     const hydratedKey = `sorteo:${sorteoId}:hydrated`;
-    pipeline.set(hydratedKey, "true", "EX", 43200);
+    pipeline.set(hydratedKey, "true", "EX", ttlSeconds);
 
     await pipeline.exec();
 
