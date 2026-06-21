@@ -426,6 +426,7 @@ export const TicketService = {
     // Enriquecer respuesta con configuraciones de impresión
     const enriched = {
       ...ticket,
+      enableTicketReprints: process.env.ENABLE_TICKET_REPRINTS === 'true',
       sorteo: sorteoWithFormattedName,
       vendedor: ticket.vendedor ? {
         ...ticket.vendedor,

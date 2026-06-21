@@ -42,6 +42,7 @@ export const TicketPrintService = {
 
     return {
       ...ticket,
+      enableTicketReprints: process.env.ENABLE_TICKET_REPRINTS === 'true',
       sorteo: sorteoWithFormattedName,
       loteria: sorteo.loteria
         ? { id: sorteo.loteria.id, name: sorteo.loteria.name }
