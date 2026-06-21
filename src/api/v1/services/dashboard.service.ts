@@ -1947,7 +1947,8 @@ export const DashboardService = {
         WITH tickets_in_range AS (
           SELECT t.id, t."sorteoId"
           FROM "Ticket" t
-          WHERE ${baseFilters}
+          INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
+          WHERE ${baseFilters} AND s.status = 'OPEN'
         ),
         jugadas_stats AS (
           SELECT
@@ -1991,7 +1992,8 @@ export const DashboardService = {
         WITH tickets_in_range AS (
           SELECT t.id, t."sorteoId"
           FROM "Ticket" t
-          WHERE ${baseFilters}
+          INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
+          WHERE ${baseFilters} AND s.status = 'OPEN'
         ),
         jugadas_in_range AS (
           SELECT
@@ -2030,7 +2032,8 @@ export const DashboardService = {
         WITH tickets_in_range AS (
           SELECT t.id, t."loteriaId", t."sorteoId"
           FROM "Ticket" t
-          WHERE ${baseFilters}
+          INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
+          WHERE ${baseFilters} AND s.status = 'OPEN'
         ),
         jugadas_stats AS (
           SELECT
