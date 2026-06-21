@@ -5,6 +5,23 @@ Node.js 20 + Express + TypeScript + Prisma + PostgreSQL (Supabase).
 
 ---
 
+## Comandos útiles
+
+- **Entorno de desarrollo:** `npm run dev`
+- **Generar cliente Prisma:** `npx prisma generate`
+- **Migraciones de base de datos:**
+  - Ver estado: `npx prisma migrate status`
+  - Crear/ejecutar migración de desarrollo: `npx prisma migrate dev`
+  - Resetear base de datos: `npx prisma migrate reset`
+- **Pruebas (Tests):**
+  - Ejecutar todas las pruebas: `npm run test`
+- **Compilación & TypeScript:**
+  - Compilar producción: `npm run build`
+  - Validar tipos: `npx tsc --noEmit`
+- **Ejecutar scripts personalizados:** `npx tsx scripts/CARPETA/nombre.ts` (requiere `DATABASE_URL` o `DIRECT_URL` en el entorno)
+
+---
+
 ## Stack principal
 
 | Capa | Tecnología |
@@ -183,7 +200,8 @@ getBusinessDateCRInfo({ scheduledAt, nowUtc, cutoffHour })
 ```typescript
 resolveDateRange({ date: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all' })
 resolveDateRange({ fromDate: '2026-01-01', toDate: '2026-01-31' })
-// Devuelve instantes UTC para usar directamente en queries Prisma
+// Devuelve instantes UTC para usar directamente en queries Prisma.
+// Para 'all', fromDate y toDate son undefined (no filtra por fecha).
 ```
 
 **Reglas:**
@@ -363,3 +381,6 @@ Los queries siempre filtran `deletedAt: null` por defecto.
 8. **Multiplicadores pueden tener override** — siempre resolver via `MultiplierOverride` antes de aplicar base
 9. **`isActive` ≠ `status`** — un sorteo puede tener `isActive=false` y `status=SCHEDULED` (estado inconsistente histórico, hay script para corregirlo)
 10. **Pagos parciales en tickets** — `TicketPayment` soporta pagos parciales; el campo `remainingAmount` en `Ticket` rastrea cuánto queda
+11. **Índices de producción documentados** — El catálogo de índices en producción se encuentra en `docs/informes DB/CATALOGO_INDICES_PROD.md`. La tabla `Jugada` corre riesgo de sobreindexación, por lo que cualquier adición de índice debe evaluarse con este documento.
+12. **Búsqueda con "all" en filtros de fecha** — Cuando se utiliza el parámetro `date=all`, se debe omitir el filtrado por fecha en la consulta de base de datos para evitar errores de tipo *unhandled rejection* en Prisma.
+13. **Documentación Bilingüe Sincronizada** — El README principal está estructurado bilingüemente en dos archivos separados: `README.md` (Inglés, por defecto) y `README.es.md` (Español). Cualquier modificación técnica debe replicarse y mantenerse sincronizada en ambos archivos.

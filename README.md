@@ -1,115 +1,145 @@
 # 🏦 Banca Management Backend (Multi-Tenant Edition)
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
-[![Express](https://img.shields.io/badge/Express.js-4.18-green.svg)](https://expressjs.com/)
-[![Prisma](https://img.shields.io/badge/Prisma-ORM-1B222D.svg)](https://www.prisma.io/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15.0-336791.svg)](https://www.postgresql.org/)
-[![Redis](https://img.shields.io/badge/Redis-Cache-DC382D.svg)](https://redis.io/)
-
-> **Motor transaccional de alto rendimiento para la administración integral de loterías y bancas.**
-
-Este repositorio contiene el backend core del sistema. Construido con arquitectura Multi-Tenant, permite alojar múltiples bancas de manera aislada sobre una misma infraestructura, procesando miles de transacciones concurrentes con latencias mínimas y alta disponibilidad.
+🌎 **English | [Español](README.es.md)**
 
 ---
 
-## 🚀 Características Principales
+> **High-performance transactional and analytical core engine for managing lotteries, branches (windows), and sales terminals.**
 
-*   **🏢 Arquitectura Multi-Tenant Aislada:** Un solo clúster de base de datos sirve a múltiples clientes (Bancas) asegurando el particionamiento de datos mediante políticas de acceso a nivel de aplicación (RBAC y filtros `bancaId`).
-*   **⚡ Motor Transaccional Anti-Fraude:** Soporta altas cargas de concurrencia usando control de transacciones ACID y bloqueos optimistas para evitar *overselling* y condiciones de carrera en la venta de tickets.
-*   **🛡️ Sistema de Resiliencia (Circuit Breakers):** Middleware maestro (`ResilienceService`) que protege el pool de conexiones a la base de datos implementando reintentos exponenciales (backoff) y control de concurrencia.
-*   **📊 Analítica en Tiempo Real (Rollups):** Generación de reportes instantáneos mediante agregación matemática incremental (`CierreRollupService`), eliminando la necesidad de costosas vistas materializadas (Materialized Views).
-*   **💰 Motor de Comisiones Jerárquico:** Resolución dinámica de comisiones, pagos y límites de riesgo evaluando reglas en cascada a nivel Usuario > Ventana > Banca.
+This repository contains the core backend of the lottery management system. Architected with strict **Multi-Tenant logical isolation**, it allows hosting multiple organizations (Bancas) securely sharing a single logical database cluster. It is optimized to process concurrent ticket sales with minimal query latencies and high availability.
 
 ---
 
-## 🛠️ Stack Tecnológico
+## 📌 Table of Contents
 
-| Componente | Tecnología | Propósito |
+1. [🚀 Key Features](#-key-features)
+2. [🛠️ Technology Stack](#%EF%B8%8F-technology-stack)
+3. [🏗️ Architecture & Code Layout](#%EF%B8%8F-architecture--code-layout)
+4. [🔒 Security and Access Control (RBAC)](#-security-and-access-control-rbac)
+5. [📈 Database & Cache Optimizations](#-database--cache-optimizations)
+6. [⏰ Timezone & Drawing Logic (GMT-6)](#-timezone--drawing-logic-gmt-6)
+7. [💻 Installation & Local Deployment](#-installation--local-deployment)
+8. [📄 License & Authors](#-license--authors)
+
+---
+
+## 🚀 Key Features
+
+*   **🏢 Isolated Multi-Tenancy:** Data privacy and relation integrity are guaranteed at the application level via custom filters and mandatory query scopes linked to `bancaId`.
+*   **⚡ Serializable ACID Transactions:** Robust concurrency control and race condition prevention (preventing ticket overselling) handled via backoff retry transaction loops (`withTransactionRetry`).
+*   **🛡️ Core Resilience (Circuit Breakers):** Centralized middleware wrapper (`ResilienceService`) protecting the database pool against spikes and degrading secondary tasks if resources are low.
+*   **🏎️ Hybrid L1/L2 Cache:** Mitigates the "Thundering Herd" effect by combining local memory caching (L1) and Redis (L2) with in-flight request coalescing (`_filterOptionsInFlight`).
+*   **📊 Incremental Financial Rollups:** Daily settlements aggregated directly using raw SQL queries, removing the storage costs and update lag of Postgres Materialized Views.
+*   **💵 Hierarchical Commissions:** Cascade commission resolution evaluated dynamically: Seller ➔ Window ➔ Banca, persisting immutable commission snapshots per play.
+
+---
+
+## 🛠️ Technology Stack
+
+| Component | Technology | Purpose |
 | :--- | :--- | :--- |
-| **Runtime** | Node.js + TypeScript | Tipado estático estricto y ejecución asíncrona no bloqueante. |
-| **API Framework** | Express.js | Enrutamiento HTTP eficiente y middlewares personalizados. |
-| **Persistencia** | PostgreSQL + Prisma | Integridad relacional, migraciones declarativas y seguridad de tipos. |
-| **Caché** | Redis (L2) + RAM (L1) | Sistema de caché híbrida para la mitigación del efecto "Thundering Herd". |
-| **Validación** | Zod | Validación rigurosa de esquemas y sanitización de payloads HTTP. |
-| **Observabilidad**| Pino Logger | Logging estructurado JSON de alta velocidad para trazabilidad y auditoría. |
+| **Runtime** | Node.js (v20.x) + TypeScript | Non-blocking asynchronous execution and strict compile-time typing. |
+| **Framework** | Express.js (v4.21.2) | Fast HTTP request routing and custom middleware pipelines. |
+| **Database** | PostgreSQL (Supabase) + Prisma ORM | Relational data integrity, migrations, and schema safety. |
+| **Connection Pool** | `@prisma/adapter-pg` + `pg-pool` | Connection warm-up and raw PostgreSQL client adapter. |
+| **Cache** | Redis (ioredis) + RAM cache | Hybrid cache-aside strategy (L1 local / L2 distributed). |
+| **Validation** | Zod | Rigorous API payload schema parsing and sanitization. |
+| **Logging** | Pino Logger | Ultra-fast structured JSON logging for auditing and forensics. |
 
 ---
 
-## 🏗️ Estructura del Código
+## 🏗️ Architecture & Code Layout
 
-El proyecto sigue una **Arquitectura de Capas Lógicas**, asegurando la separación de responsabilidades:
+The project follows a strict layered architecture pattern:
+`Controller ➔ Service ➔ Repository ➔ Prisma/PostgreSQL`
 
 ```text
 src/
 ├── api/v1/
-│   ├── controllers/   # Manejo de peticiones HTTP, respuestas y mapeo de DTOs.
-│   ├── routes/        # Definición de endpoints y aserción de middlewares.
-│   ├── services/      # Lógica de negocio core y orquestación de operaciones.
-│   └── validators/    # Esquemas Zod para la capa de presentación.
-├── core/              # Configuraciones maestras (Prisma, Redis, Sentry, Logger).
-├── middlewares/       # Seguridad (RBAC, Rate Limiting), Resiliencia y Headers.
-├── repositories/      # Acceso a base de datos abstracto (consultas raw y ORM).
-└── utils/             # Funciones puras, matemáticas de precisión y lógica temporal.
+│   ├── controllers/   # Processes HTTP requests, maps DTOs, and returns response codes.
+│   ├── routes/        # Maps endpoints and wires middleware filters.
+│   ├── services/      # Core business logic, transaction handling, and financial operations.
+│   └── validators/    # Zod schemas for input validation.
+├── core/              # Global shared clients (Prisma, Redis, Logger, Circuit Breakers).
+├── middlewares/       # Security (RBAC, Rate Limiting), Error Handler, and Tenant Context.
+├── repositories/      # DB layer abstraction (running raw SQL and Prisma queries).
+└── utils/             # Helper utilities (Costa Rica timezones, formats, RBAC queries).
 ```
 
 ---
 
-## 🔒 Seguridad y Control de Acceso (RBAC)
+## 🔒 Security and Access Control (RBAC)
 
-El acceso y los privilegios operativos operan bajo un estricto modelo jerárquico de **4 niveles de autoridad**, diseñado para entornos Multi-Tenant:
+Access levels follow a strict hierarchical role-based access control (RBAC) model injected automatically via query decorators:
 
-1.  **ADMIN:** Superadministrador de la plataforma (Root). Control transversal de todas las Bancas, auditoría global y parametrización base del sistema.
-2.  **BANCA:** Administrador Principal del inquilino (Tenant). Control exclusivo sobre todas sus Ventanas, reportes financieros consolidados y reglas de negocio propias.
-3.  **VENTANA:** Administrador de Sucursal. Gestiona a sus Vendedores asignados, aplica límites de riesgo locales y rinde cuenta de los flujos de su grupo.
-4.  **VENDEDOR:** Nivel estrictamente transaccional. Terminal de venta final, limitada a la emisión de tickets y liquidación de su propio turno.
-
-> **Criptografía y Auditoría:** Autenticación protegida mediante JWT asimétrico (Access & Refresh) con rotación. Toda acción financiera o alteración de riesgo deja una huella inmutable en el `ActivityLog`, garantizando trazabilidad absoluta.
+1.  **ADMIN:** Global platform supervisor. Unrestricted access to all Bancas, platform-wide metrics, and core rules.
+2.  **BANCA (Tenant):** Organization owner. Full access to their assigned Windows, Sellers, commission settings, and balance history.
+3.  **VENTANA (Branch):** Local branch supervisor. Manages assigned sellers, local drawing limits, and branch settlements.
+4.  **VENDEDOR (Terminal):** Transaction-only level. Restricted to printing tickets, short-grace cancellations, and checking personal shift balances.
 
 ---
 
-## ⏰ Manejo de Zonas Horarias (CRÍTICO)
+## 📈 Database & Cache Optimizations
 
-Todas las transacciones financieras y programaciones de sorteos operan estrictamente atadas a la zona horaria comercial **(GMT-6, Costa Rica)**.  
-El sistema convierte de manera transparente las programaciones relativas en instantes UTC ISO-8601 antes de la persistencia.
-> **Atención Desarrolladores:** Los cierres matemáticos (`businessDate`) dividen la jornada respetando la medianoche de la zona local, no del servidor Cloud subyacente. Consultar guía interna de estandarización temporal.
+### Cache-Aside Strategy and Request Coalescing
+For expensive aggregation operations (like dynamically building the drawing search dropdowns), the backend uses:
+1.  **In-Flight Request Coalescing:** If 10 sellers query the exact same filters simultaneously, only 1 database query is executed. The other 9 share the same pending promise in a local Map (`_filterOptionsInFlight`).
+2.  **Cache Tagging:** Redis cache keys are grouped and programmatically evicted when write events (like selling a ticket) occur for the corresponding tenant.
+
+### Production Indexing Catalog
+The database indexes are heavily optimized to prevent read bottlenecks:
+*   **Partial Indexes:** B-Tree trees are filtered to include only active rows. For example, `idx_ticket_banca_sorteo_winner_perf` only indexes rows where `isActive = true` and `isWinner = true`, saving RAM.
+*   **Covering Indexes (`INCLUDE`):** Critical tables (like `Jugada`) cover `amount` and `payout` on their leaf nodes, allowing the optimizer to fetch data via **Index Only Scan** without reading the table pages from disk (Heap).
 
 ---
 
-## 📖 Instrucciones de Despliegue Local
+## ⏰ Timezone & Drawing Logic (GMT-6)
 
-### Requisitos Previos
-* Node.js v18+
-* PostgreSQL 15+
-* Redis 6+
+The backend runs on **Costa Rica (UTC-6)** timezone as its single source of truth for all business operations:
+*   **Storage:** Database timestamps are persisted as UTC ISO-8601 strings.
+*   **Business Date:** Aggregations and closures split the day at local midnight (CR), not UTC midnight.
+*   **Drawing Cutoff:** Sellers are prevented from issuing tickets when the drawing cutoff time is reached (`scheduledAt` - seller grace minutes).
 
-### Configuración Inicial
-Crea un archivo `.env` en la raíz (usa `.env.example` como plantilla):
-```env
-PORT=4000
-NODE_ENV=development
-DATABASE_URL="postgresql://user:password@localhost:5432/bancas?schema=public"
-JWT_ACCESS_SECRET="tu-secreto-seguro"
-REDIS_URL="redis://localhost:6379"
-```
+---
 
-### Ejecución
+## 💻 Installation & Local Deployment
+
+### Prerequisites
+*   Node.js v20.x
+*   PostgreSQL 15+
+*   Redis 6+
+
+### Environment Variables (.env)
+Create a `.env` file in the root directory (use `.env.example` as a template):
+
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| `DATABASE_URL` | DB connection string for web requests (pooler port 6543) | `postgresql://...:6543/postgres` |
+| `DIRECT_URL` | DB connection string for migrations and scripts (direct port 5432) | `postgresql://...:5432/postgres` |
+| `REDIS_URL` | Connection URL for Redis | `redis://localhost:6379` |
+| `JWT_ACCESS_SECRET` | Secret key for JWT signatures | `your_secure_secret` |
+| `BUSINESS_CUTOFF_HOUR_CR` | Default business day cutoff time (CR local) | `23:59` |
+
+### Installation Steps
+
 ```bash
-# 1. Instalar dependencias
+# 1. Install dependencies
 npm install
 
-# 2. Construir base de datos y esquemas ORM
+# 2. Generate Prisma Client
 npx prisma generate
+
+# 3. Apply migrations
 npx prisma migrate dev
 
-# 3. Iniciar el servidor local con Hot-Reload
+# 4. Start local development server with hot-reload
 npm run dev
 ```
 
 ---
 
-## 📄 Licencia
+## 📄 License & Authors
 
-Sistema desarrollado como infraestructura Backend privada.  
-Todos los derechos reservados.
+Private software developed for restricted commercial usage. All rights reserved.
 
-**Autor Principal:** [Mario Quirós P.](https://github.com/MQuirosP)
+*   **Lead Architect and Developer:** [Mario Quirós P.](https://github.com/MQuirosP)
