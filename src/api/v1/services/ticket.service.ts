@@ -1787,13 +1787,13 @@ export const TicketService = {
             const toStr = dateTo.toISOString().split('T')[0];
             sqlConditions.push(Prisma.sql`t."businessDate" <= CAST(${toStr} AS DATE)`);
           }
-          if (params.loteriaId) {
+          if (params.loteriaId && params.loteriaId !== 'all') {
             sqlConditions.push(Prisma.sql`t."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
           }
-          if (params.sorteoId) {
+          if (params.sorteoId && params.sorteoId !== 'all') {
             sqlConditions.push(Prisma.sql`t."sorteoId" = CAST(${params.sorteoId} AS uuid)`);
           }
-          if (params.status) {
+          if (params.status && params.status !== 'all') {
             if (params.status === 'WINNERS_PENDING') {
               sqlConditions.push(Prisma.sql`t."isWinner" = true`);
               sqlConditions.push(Prisma.sql`t.status::text = 'EVALUATED'`);
@@ -1801,7 +1801,7 @@ export const TicketService = {
               sqlConditions.push(Prisma.sql`t.status::text = ${params.status}`);
             }
           }
-          if (params.multiplierId) {
+          if (params.multiplierId && params.multiplierId !== 'all') {
             sqlConditions.push(Prisma.sql`EXISTS (
               SELECT 1 FROM "Jugada" jf
               WHERE jf."ticketId" = t.id
@@ -1814,7 +1814,7 @@ export const TicketService = {
           const whereSQL = Prisma.join(sqlConditions, ' AND ');
 
           // CTEs opcionales según rol
-          const multiplierFilter = params.multiplierId
+          const multiplierFilter = (params.multiplierId && params.multiplierId !== 'all')
             ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)`
             : Prisma.empty;
 
@@ -2026,7 +2026,7 @@ export const TicketService = {
 
     // Registrar promesa activa en vuelo para deduplicar
     _filterOptionsInFlight.set(cacheKey, promise);
-    promise.finally(() => _filterOptionsInFlight.delete(cacheKey));
+    promise.finally(() => _filterOptionsInFlight.delete(cacheKey)).catch(() => {});
     return promise;
   },
 
@@ -2183,16 +2183,16 @@ export const TicketService = {
         const toStr = dateTo.toISOString().split('T')[0];
         sqlConditions.push(Prisma.sql`t."businessDate" <= CAST(${toStr} AS DATE)`);
       }
-      if (params.loteriaId) {
+      if (params.loteriaId && params.loteriaId !== 'all') {
         sqlConditions.push(Prisma.sql`t."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
       }
-      if (params.sorteoId) {
+      if (params.sorteoId && params.sorteoId !== 'all') {
         sqlConditions.push(Prisma.sql`t."sorteoId" = CAST(${params.sorteoId} AS uuid)`);
       }
-      if (params.status) {
+      if (params.status && params.status !== 'all') {
         sqlConditions.push(Prisma.sql`t.status::text = ${params.status}`);
       }
-      if (params.multiplierId) {
+      if (params.multiplierId && params.multiplierId !== 'all') {
         sqlConditions.push(Prisma.sql`EXISTS (
           SELECT 1 FROM "Jugada" jf
           WHERE jf."ticketId" = t.id
@@ -2205,7 +2205,7 @@ export const TicketService = {
       const whereSQL = Prisma.join(sqlConditions, ' AND ');
 
       // CTEs opcionales según rol
-      const multiplierFilter = params.multiplierId
+      const multiplierFilter = (params.multiplierId && params.multiplierId !== 'all')
         ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)`
         : Prisma.empty;
       const vendedorCte = (context.role === Role.ADMIN || context.role === Role.VENTANA)
@@ -2430,7 +2430,7 @@ export const TicketService = {
     );
 
     _filterOptionsInFlight.set(cacheKey, promise);
-    promise.finally(() => _filterOptionsInFlight.delete(cacheKey));
+    promise.finally(() => _filterOptionsInFlight.delete(cacheKey)).catch(() => {});
     return promise;
   },
 
