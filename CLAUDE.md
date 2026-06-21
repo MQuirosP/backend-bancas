@@ -70,7 +70,7 @@ prisma/
 **Organización:**
 - `Banca` → empresa de loterías (raíz del multi-tenant)
 - `Ventana` → sucursal/punto de venta (pertenece a Banca)
-- `User` → roles: `ADMIN`, `VENTANA`, `VENDEDOR`
+- `User` → roles: `ADMIN`, `BANCA`, `VENTANA`, `VENDEDOR`
 
 **Juego:**
 - `Loteria` → tipo de juego (NICA, MULTI X NICA, etc.)
@@ -163,6 +163,7 @@ restrictToAdminOrVentanaSelf         // ADMIN o VENTANA gestionando su propia ve
 // Siempre usar applyRbacFilters() antes de ejecutar queries con filtros del cliente
 // VENDEDOR → fuerza filtro por userId
 // VENTANA  → fuerza filtro por ventanaId
+// BANCA    → fuerza filtro por bancaId
 // ADMIN    → aplica filtros del cliente tal cual (pero en contexto de su bancaId)
 // Nunca confiar en filtros enviados por el cliente sin pasar por RBAC
 ```
