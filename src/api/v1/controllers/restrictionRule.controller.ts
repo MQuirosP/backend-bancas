@@ -143,7 +143,7 @@ export const RestrictionRuleController = {
    */
   async myRestrictions(req: AuthenticatedRequest, res: Response) {
     const me = req.user!;
-    const { vendedorId } = req.query as any;
+    const { vendedorId, sorteoId } = req.query as any;
 
     // Log para debugging
     req.logger?.info({
@@ -256,11 +256,11 @@ export const RestrictionRuleController = {
       });
     }
 
-    //  MODIFICADO: Usar effectiveVendorId, effectiveBancaId, effectiveVentanaId
     const result = await RestrictionRuleService.forVendor(
       effectiveVendorId,
       effectiveBancaId,
-      effectiveVentanaId
+      effectiveVentanaId,
+      sorteoId
     );
 
     req.logger?.info({

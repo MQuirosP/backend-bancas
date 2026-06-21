@@ -842,7 +842,7 @@ export const RestrictionRuleService = {
    *               (pueden estar vinculadas a banca, ventana o ser globales).
    * - **vendorSpecific**: reglas cuyo `userId` coincide con el vendedor.
    */
-  async forVendor(vendorId: string, bancaId: string, ventanaId: string | null) {
+  async forVendor(vendorId: string, bancaId: string, ventanaId: string | null, sorteoId?: string) {
     // 1️⃣ Obtener las reglas desde el repositorio
     const general = await RestrictionRuleRepository.findGeneralRules(bancaId, ventanaId);
     const vendorSpecific = await RestrictionRuleRepository.list({
@@ -862,6 +862,80 @@ export const RestrictionRuleService = {
     const filteredVendorSpecific = vendorSpecific.data.filter(
       (r) => r.salesCutoffMinutes === null || r.salesCutoffMinutes === effectiveCutoff.minutes
     );
+
+    // Pre-calcular balances por regla si viene sorteoId
+    const numberBalancesByRule: Record<string, Record<string, { remaining: number; limit: number; accumulated: number }>> = {};
+
+    if (sorteoId) {
+      try {
+        const sorteo = await prisma.sorteo.findUnique({
+          where: { id: sorteoId },
+          select: { id: true, loteriaId: true, scheduledAt: true, digits: true }
+        });
+
+        if (sorteo) {
+          const { calculateAccumulatedByNumbersAndScope, resolveNumbersToValidate } = require("../../../repositories/helpers/ticket-restriction.helper");
+          const { calculateDynamicLimit } = require("../../../repositories/ticket.repository");
+
+          const now = new Date();
+          const allRules = [...filteredGeneral, ...filteredVendorSpecific];
+
+          for (const rule of allRules) {
+            if (rule.maxTotal == null && rule.baseAmount == null && rule.salesPercentage == null) {
+              continue;
+            }
+
+            const ruleNumbers = resolveNumbersToValidate(rule, now);
+            if (ruleNumbers && ruleNumbers.length > 0) {
+              const scopeType = rule.appliesToVendedor || rule.userId ? 'USER' : rule.ventanaId ? 'VENTANA' : 'BANCA';
+              const scopeId = scopeType === 'USER' ? vendorId : scopeType === 'VENTANA' ? (rule.ventanaId || ventanaId || "") : (rule.bancaId || bancaId);
+
+              const accumulatedMap = await calculateAccumulatedByNumbersAndScope(prisma, {
+                numbers: ruleNumbers,
+                scopeType,
+                scopeId,
+                sorteoId
+              });
+
+              let dynamicLimit = Infinity;
+              if (rule.salesPercentage != null || rule.baseAmount != null) {
+                dynamicLimit = await calculateDynamicLimit(prisma as any, {
+                  baseAmount: rule.baseAmount,
+                  salesPercentage: rule.salesPercentage,
+                  appliesToVendedor: rule.appliesToVendedor,
+                  ruleUserId: rule.userId,
+                  bancaId: rule.bancaId,
+                  ventanaId: rule.ventanaId,
+                }, {
+                  userId: vendorId,
+                  ventanaId: ventanaId || "",
+                  bancaId,
+                  sorteoId,
+                  at: now
+                });
+              }
+
+              const staticLimit = rule.maxTotal ?? Infinity;
+              const limit = Math.min(staticLimit, dynamicLimit);
+
+              const balances: Record<string, { remaining: number; limit: number; accumulated: number }> = {};
+              for (const num of ruleNumbers) {
+                const accumulated = accumulatedMap.get(num) ?? 0;
+                const remaining = limit === Infinity ? Infinity : Math.max(0, limit - accumulated);
+                balances[num] = {
+                  remaining: remaining === Infinity ? 99999999 : remaining,
+                  limit: limit === Infinity ? 99999999 : limit,
+                  accumulated
+                };
+              }
+              numberBalancesByRule[rule.id] = balances;
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error("Error pre-calculating balances for active restrictions:", err.message);
+      }
+    }
 
     // 2️⃣ Función de limpieza
     const cleanRule = (rule: any) => {
@@ -888,7 +962,10 @@ export const RestrictionRuleService = {
         user: rule.user ? {
           ...rule.user,
           name: ""
-        } : null
+        } : null,
+
+        // Incluir saldos calculados
+        numberBalances: numberBalancesByRule[rule.id] || null
       };
     };
 

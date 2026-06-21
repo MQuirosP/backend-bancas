@@ -91,7 +91,7 @@ export function invalidateRestrictionRulesCache(): void {
  * @param context Contexto del ticket (sorteoId, userId, ventanaId, etc.)
  * @returns Límite dinámico calculado (siempre >= 0)
  */
-async function calculateDynamicLimit(
+export async function calculateDynamicLimit(
   tx: Prisma.TransactionClient,
   rule: {
     baseAmount?: number | null;
