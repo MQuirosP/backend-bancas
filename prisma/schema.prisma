@@ -398,6 +398,7 @@ model SorteoListaExclusion {
   @@index([bancaId])
   @@index([multiplierId])
   @@index([excludedBy], map: "idx_sorteo_lista_exclusion_exBy_fk")
+  @@index([sorteoId, ventanaId, vendedorId], map: "idx_sorteo_exclusion_lookup", where: raw("(\"multiplier_id\" IS NULL)"))
   @@map("sorteo_lista_exclusion")
 }
 
