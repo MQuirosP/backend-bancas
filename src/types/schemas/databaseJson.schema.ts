@@ -4,7 +4,7 @@ import { z } from "zod";
  * Esquema de validación estricta para políticas de comisión
  */
 export const CommissionPolicySchema = z.object({
-  version: z.literal(1).default(1),
+  version: z.number().default(1),
   defaultPercent: z.number().min(0).max(100).default(0),
   rules: z.array(
     z.object({
@@ -12,15 +12,15 @@ export const CommissionPolicySchema = z.object({
       percent: z.number().min(0).max(100),
       overrides: z.array(
         z.object({
-          number: z.string().regex(/^\d+$/).max(3),
+          number: z.union([z.string(), z.number()]).transform(val => String(val)),
           percent: z.number().min(0).max(100),
-        })
+        }).passthrough()
       ).optional(),
-    })
+    }).passthrough()
   ).default([]),
-  effectiveFrom: z.string().datetime().or(z.date()).optional().nullable(),
-  effectiveTo: z.string().datetime().or(z.date()).optional().nullable(),
-});
+  effectiveFrom: z.preprocess((val) => (val ? new Date(val as string) : val), z.date()).optional().nullable(),
+  effectiveTo: z.preprocess((val) => (val ? new Date(val as string) : val), z.date()).optional().nullable(),
+}).passthrough();
 
 /**
  * Esquema de validación para las reglas de lotería (rulesJson en Loteria)
