@@ -1689,11 +1689,12 @@ export const TicketService = {
           }
           const joinsSQL = sqlJoins.length > 0 ? Prisma.join(sqlJoins, ' ') : Prisma.empty;
 
-          const sqlConditions: Prisma.Sql[] = [
-            Prisma.sql`t."deletedAt" IS NULL`,
-            Prisma.sql`t."isActive" = true`,
-          ];
-          if (params.status !== 'CANCELLED') {
+          const sqlConditions: Prisma.Sql[] = [];
+          if (params.status === 'CANCELLED') {
+            sqlConditions.push(Prisma.sql`t."status" = 'CANCELLED'::"TicketStatus"`);
+          } else {
+            sqlConditions.push(Prisma.sql`t."deletedAt" IS NULL`);
+            sqlConditions.push(Prisma.sql`t."isActive" = true`);
             sqlConditions.push(Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`);
           }
           if (effectiveFilters.bancaId) {
@@ -2084,11 +2085,12 @@ export const TicketService = {
       const joinsSQL = sqlJoins.length > 0 ? Prisma.join(sqlJoins, ' ') : Prisma.empty;
 
       // Construir condiciones WHERE
-      const sqlConditions: Prisma.Sql[] = [
-        Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t."isActive" = true`,
-      ];
-      if (params.status !== 'CANCELLED') {
+      const sqlConditions: Prisma.Sql[] = [];
+      if (params.status === 'CANCELLED') {
+        sqlConditions.push(Prisma.sql`t."status" = 'CANCELLED'::"TicketStatus"`);
+      } else {
+        sqlConditions.push(Prisma.sql`t."deletedAt" IS NULL`);
+        sqlConditions.push(Prisma.sql`t."isActive" = true`);
         sqlConditions.push(Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`);
       }
       if (params.sorteoStatus) {
