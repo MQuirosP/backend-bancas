@@ -1692,8 +1692,10 @@ export const TicketService = {
           const sqlConditions: Prisma.Sql[] = [
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
-            Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`,
           ];
+          if (params.status !== 'CANCELLED') {
+            sqlConditions.push(Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`);
+          }
           if (effectiveFilters.bancaId) {
             sqlConditions.push(Prisma.sql`v."bancaId" = CAST(${effectiveFilters.bancaId} AS uuid)`);
           }
@@ -2085,8 +2087,10 @@ export const TicketService = {
       const sqlConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`,
       ];
+      if (params.status !== 'CANCELLED') {
+        sqlConditions.push(Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`);
+      }
       if (params.sorteoStatus) {
         sqlConditions.push(Prisma.sql`s.status::text = ${params.sorteoStatus}`);
       }
