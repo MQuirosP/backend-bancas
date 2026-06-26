@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presentación de Capacidad e Infraestructura — Bancas</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Plus+Jakarta+Sans:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0F172A;
+      --bg-secondary: #1E293B;
+      --accent-primary: #38BDF8;
+      --accent-secondary: #818CF8;
+      --text-main: #F8FAFC;
+      --text-muted: #94A3B8;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --shadow-premium: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-main);
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* Presentation Container */
+    .presentation {
+      position: relative;
+      height: 100vh;
+      width: 100vw;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 2.5rem;
+      background: radial-gradient(circle at 80% 20%, rgba(56, 189, 248, 0.08) 0%, transparent 50%),
+                  radial-gradient(circle at 10% 80%, rgba(129, 140, 248, 0.08) 0%, transparent 50%);
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .project-tag {
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--accent-primary);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .project-tag::before {
+      content: '';
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: var(--accent-primary);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--accent-primary);
+    }
+
+    .date-tag {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    /* Slides Wrap */
+    .slides-container {
+      position: relative;
+      flex-grow: 1;
+      margin: 2rem 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .slide {
+      position: absolute;
+      width: 100%;
+      max-width: 1100px;
+      opacity: 0;
+      transform: translateY(20px) scale(0.98);
+      pointer-events: none;
+      transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .slide.active {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    /* Slide Typography */
+    h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 3.5rem;
+      font-weight: 800;
+      line-height: 1.15;
+      background: linear-gradient(135deg, #FFFFFF 30%, #93C5FD 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    h2 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: #FFFFFF;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      max-width: 600px;
+      line-height: 1.6;
+    }
+
+    /* Grid Layouts */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      align-items: center;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 1.8rem;
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow-premium);
+      transition: all 0.3s ease;
+    }
+
+    .card:hover {
+      border-color: rgba(56, 189, 248, 0.3);
+      transform: translateY(-4px);
+    }
+
+    .card h3 {
+      font-size: 1.1rem;
+      color: var(--accent-primary);
+      margin-bottom: 0.8rem;
+      font-weight: 600;
+    }
+
+    .card p {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* Stat Number */
+    .stat-number {
+      font-family: 'Outfit', sans-serif;
+      font-size: 3.2rem;
+      font-weight: 800;
+      color: #FFFFFF;
+      line-height: 1;
+      margin-bottom: 0.4rem;
+      background: linear-gradient(135deg, #FFFFFF 60%, var(--accent-primary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* Custom Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+    }
+
+    th {
+      text-align: left;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      color: var(--accent-primary);
+      padding: 0.8rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    td {
+      font-size: 0.9rem;
+      padding: 0.8rem 1rem;
+      color: #E2E8F0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .badge-slow {
+      background: rgba(239, 68, 68, 0.15);
+      color: #F87171;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .badge-fast {
+      background: rgba(34, 197, 94, 0.15);
+      color: #4ADE80;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    /* Footer & Controls */
+    footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .progress-bar-wrap {
+      width: 60%;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 14.2%;
+      background: linear-gradient(90deg, var(--accent-secondary), var(--accent-primary));
+      transition: width 0.3s ease;
+    }
+
+    .controls {
+      display: flex;
+      gap: 1rem;
+    }
+
+    .btn-control {
+      background: var(--bg-secondary);
+      border: 1px solid var(--card-border);
+      color: #FFFFFF;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      outline: none;
+    }
+
+    .btn-control:hover {
+      border-color: var(--accent-primary);
+      background: rgba(56, 189, 248, 0.1);
+      transform: scale(1.05);
+    }
+
+    .btn-control:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+      transform: none;
+      border-color: var(--card-border);
+    }
+
+    /* Title Slide Specifics */
+    .title-slide-content {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .badge-outline {
+      border: 1px solid var(--accent-primary);
+      color: var(--accent-primary);
+      padding: 0.3rem 0.8rem;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      align-self: flex-start;
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.15);
+    }
+
+    /* Flow diagram styles */
+    .flow-diagram {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 0;
+    }
+    .flow-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 130px;
+      text-align: center;
+    }
+    .flow-icon {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: rgba(129, 140, 248, 0.15);
+      border: 1px solid var(--accent-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 0.5rem;
+      color: #FFFFFF;
+      font-weight: bold;
+    }
+    .flow-arrow {
+      flex-grow: 1;
+      height: 1px;
+      border-top: 1px dashed var(--text-muted);
+      position: relative;
+      margin: 0 0.5rem;
+      top: -10px;
+    }
+    .flow-arrow::after {
+      content: '▶';
+      position: absolute;
+      right: 0;
+      top: -6px;
+      font-size: 0.6rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="presentation">
+    <!-- Header -->
+    <header>
+      <div class="project-tag">Proyecto Bancas</div>
+      <div class="date-tag">Reporte de Capacidad e Infraestructura — Junio 2026</div>
+    </header>
+
+    <!-- Slides Container -->
+    <div class="slides-container">
+      
+      <!-- Slide 1: Cover -->
+      <div class="slide active">
+        <div class="title-slide-content">
+          <div class="badge-outline">Informe de Arquitectura</div>
+          <h1>Capacidad y Rendimiento de la Plataforma</h1>
+          <p class="subtitle">Análisis técnico de transacciones, métricas en producción y capacidad de soporte para vendedores concurrentes.</p>
+        </div>
+      </div>
+
+      <!-- Slide 2: Infrastructure Overview -->
+      <div class="slide">
+        <h2>Arquitectura de Producción Actual</h2>
+        <p class="subtitle">Tránsito directo y optimizado sin sobrecarga de carga de páginas estáticas.</p>
+        <div class="card" style="margin-top: 1rem;">
+          <div class="flow-diagram">
+            <div class="flow-node">
+              <div class="flow-icon" style="background: rgba(56, 189, 248, 0.15); border-color: var(--accent-primary);">APK</div>
+              <strong>App Kotlin Nativa</strong>
+              <small style="color: var(--text-muted); font-size: 0.75rem;">OkHttp Keep-Alive</small>
+            </div>
+            <div class="flow-arrow"></div>
+            <div class="flow-node">
+              <div class="flow-icon">Render</div>
+              <strong>Web Service</strong>
+              <small style="color: var(--text-muted); font-size: 0.75rem;">Standard 2GB (Auto x2)</small>
+            </div>
+            <div class="flow-arrow"></div>
+            <div class="flow-node">
+              <div class="flow-icon" style="background: rgba(168, 85, 247, 0.15); border-color: #A855F7;">Redis</div>
+              <strong>Upstash Cache</strong>
+              <small style="color: var(--text-muted); font-size: 0.75rem;">L1 Memoria + L2 Cloud</small>
+            </div>
+            <div class="flow-arrow"></div>
+            <div class="flow-node">
+              <div class="flow-icon" style="background: rgba(16, 185, 129, 0.15); border-color: #10B981;">DB</div>
+              <strong>Supavisor Pooler</strong>
+              <small style="color: var(--text-muted); font-size: 0.75rem;">Supabase Small (2GB)</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 3: Real Database Metrics -->
+      <div class="slide">
+        <h2>Datos Reales de la Base de Datos</h2>
+        <p class="subtitle">Estadísticas reales al día 89 en producción que demuestran el volumen actual del negocio.</p>
+        <div class="grid-3" style="margin-top: 1rem;">
+          <div class="card">
+            <div class="stat-number">867,355</div>
+            <div class="stat-label">Jugadas Registradas</div>
+            <p style="margin-top: 0.5rem; font-size: 0.85rem;">Tasa de crecimiento promedio:<br><strong>~9,746 jugadas diarias</strong></p>
+          </div>
+          <div class="card">
+            <div class="stat-number">110,355</div>
+            <div class="stat-label">Tickets Generados</div>
+            <p style="margin-top: 0.5rem; font-size: 0.85rem;">Tasa de crecimiento promedio:<br><strong>~1,240 tickets diarios</strong></p>
+          </div>
+          <div class="card">
+            <div class="stat-number">7.86</div>
+            <div class="stat-label">Jugadas por Ticket</div>
+            <p style="margin-top: 0.5rem; font-size: 0.85rem;">Indica que cada ticket contiene en promedio ~8 apuestas independientes.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 4: Real Cache Metrics -->
+      <div class="slide">
+        <h2>Rendimiento Real de Redis</h2>
+        <p class="subtitle">Métricas obtenidas del servidor Upstash que demuestran la efectividad de la capa de caché.</p>
+        <div class="grid-2" style="margin-top: 1rem;">
+          <div class="card">
+            <h3>KPIs de Redis</h3>
+            <div style="display: flex; flex-direction: column; gap: 0.8rem; margin-top: 0.5rem;">
+              <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 0.4rem;">
+                <span style="color: var(--text-muted);">Comandos procesados:</span>
+                <strong>1,853,286</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 0.4rem;">
+                <span style="color: var(--text-muted);">Aciertos en caché (Hits):</span>
+                <strong>781,398</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 0.4rem;">
+                <span style="color: var(--text-muted);">Llaves en memoria:</span>
+                <strong>3,720</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="color: var(--text-muted);">Desalojos por memoria (Evictions):</span>
+                <strong style="color: #4ADE80;">0</strong>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 0.5rem;">
+            <div class="stat-number" style="font-size: 4.5rem; background: linear-gradient(135deg, #4ADE80 0%, #22C55E 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">44.03%</div>
+            <div class="stat-label">Tasa de Acierto (Hit Rate)</div>
+            <p style="text-align: center; font-size: 0.85rem; max-width: 300px; margin-top: 0.5rem;">Casi la mitad de las validaciones de topes y cutoff se resuelven en microsegundos sin tocar la base de datos.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 5: Real Response Times -->
+      <div class="slide">
+        <h2>Tiempos de Respuesta en Producción</h2>
+        <p class="subtitle">Análisis del rendimiento promedio y el percentil P99 medido en la última ráfaga de actividad.</p>
+        <div class="card" style="margin-top: 0.5rem;">
+          <table>
+            <thead>
+              <tr>
+                <th>Ruta del Endpoint</th>
+                <th>Acción</th>
+                <th>Muestras</th>
+                <th>Promedio</th>
+                <th>P99 (Latencia Máxima)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>POST</strong> /api/v1/tickets</td>
+                <td>Venta de números (Transaccional)</td>
+                <td>32</td>
+                <td>642 ms</td>
+                <td><span class="badge-slow">871 ms</span></td>
+              </tr>
+              <tr>
+                <td><strong>GET</strong> /api/v1/tickets/validation/balances</td>
+                <td>Validar saldo de vendedor</td>
+                <td>125</td>
+                <td>167 ms</td>
+                <td><span class="badge-fast">287 ms</span></td>
+              </tr>
+              <tr>
+                <td><strong>GET</strong> /api/v1/sorteos/evaluated-summary</td>
+                <td>Resumen de sorteos jugados</td>
+                <td>12</td>
+                <td>357 ms</td>
+                <td><span class="badge-slow">549 ms</span></td>
+              </tr>
+              <tr>
+                <td><strong>GET</strong> /api/v1/restrictions/me</td>
+                <td>Reglas de venta asignadas</td>
+                <td>14</td>
+                <td>254 ms</td>
+                <td><span class="badge-fast">475 ms</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 1rem; text-align: center;">Tiempos promedio generales en la plataforma: **Promedio: 137 ms** | **P99 General: 749 ms**</p>
+        </div>
+      </div>
+
+      <!-- Slide 6: Concurrency limits -->
+      <div class="slide">
+        <h2>Capacidad Concurrente Máxima</h2>
+        <p class="subtitle">Límites máximos estimados basados en la infraestructura física contratada.</p>
+        <div class="grid-2" style="margin-top: 1rem;">
+          <div class="card">
+            <h3>Límite de Ventas (RPS)</h3>
+            <div class="stat-number" style="font-size: 3.8rem;">78 <span style="font-size: 1.5rem; color: var(--text-muted);">/ seg</span></div>
+            <p>Con las 2 instancias de Render activas por auto-escalado y el pool de conexiones de Supavisor (50 conexiones), se procesan hasta <strong>4,680 tickets por minuto</strong> en el momento del cierre.</p>
+          </div>
+          <div class="card">
+            <h3>Límite de Vendedores Activos</h3>
+            <div class="stat-number" style="font-size: 3.8rem;">2,000+</div>
+            <p>Durante la operación normal diaria. Para cierres frenéticos simultáneos (últimos 5 minutos), el sistema soporta cómodamente hasta <strong>400 vendedores</strong> enviando peticiones cada 5 segundos.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Slide 7: Architectural Advantages -->
+      <div class="slide">
+        <h2>Garantías de Estabilidad</h2>
+        <p class="subtitle">Mecanismos implementados para mantener la app en línea en caso de fallos.</p>
+        <div class="grid-3" style="margin-top: 1rem;">
+          <div class="card">
+            <h3>Idempotencia</h3>
+            <p>Locks atómicos vía scripts Lua en Redis que previenen que cobros o ventas duplicadas por doble-clic se registren dos veces.</p>
+          </div>
+          <div class="card">
+            <h3>Circuit Breaker</h3>
+            <p>Si la cuota de Upstash se satura o se cae, el sistema bypassa Redis automáticamente durante 10 segundos para no bloquear la app.</p>
+          </div>
+          <div class="card">
+            <h3>Coalescing</h3>
+            <p>Si 100 vendedores consultan resultados del sorteo al mismo tiempo, el servidor ejecuta una única consulta y comparte la respuesta.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Footer Controls -->
+    <footer>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" id="progress-bar"></div>
+      </div>
+      <div class="controls">
+        <button class="btn-control" id="btn-prev" disabled>◀</button>
+        <button class="btn-control" id="btn-next">▶</button>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    const slides = document.querySelectorAll('.slide');
+    const prevBtn = document.getElementById('btn-prev');
+    const nextBtn = document.getElementById('btn-next');
+    const progressBar = document.getElementById('progress-bar');
+    let currentSlide = 0;
+
+    function updateSlide(index) {
+      slides[currentSlide].classList.remove('active');
+      currentSlide = index;
+      slides[currentSlide].classList.add('active');
+
+      // Update buttons
+      prevBtn.disabled = currentSlide === 0;
+      nextBtn.disabled = currentSlide === slides.length - 1;
+
+      // Update progress bar
+      const progress = ((currentSlide + 1) / slides.length) * 100;
+      progressBar.style.width = `${progress}%`;
+    }
+
+    prevBtn.addEventListener('click', () => {
+      if (currentSlide > 0) {
+        updateSlide(currentSlide - 1);
+      }
+    });
+
+    nextBtn.addEventListener('click', () => {
+      if (currentSlide < slides.length - 1) {
+        updateSlide(currentSlide + 1);
+      }
+    });
+
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ') {
+        if (currentSlide < slides.length - 1) {
+          updateSlide(currentSlide + 1);
+        }
+      } else if (e.key === 'ArrowLeft') {
+        if (currentSlide > 0) {
+          updateSlide(currentSlide - 1);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
