@@ -141,6 +141,28 @@ export const CommissionController = {
 
     await CacheService.invalidateTag(`banca:${id}`);
 
+    // OPTIMIZACIÓN: Al no usar tags per-user en sesión, borramos explícitamente las sesiones de todos los usuarios vinculados a esta banca
+    try {
+      const usersInBanca = await prisma.user.findMany({
+        where: {
+          OR: [
+            { bancaId: id },
+            { ventana: { bancaId: id } }
+          ]
+        },
+        select: { id: true }
+      });
+      for (const u of usersInBanca) {
+        await CacheService.del(`auth:session:${u.id}`).catch(() => {});
+      }
+    } catch (cacheErr: any) {
+      req.logger?.warn({
+        layer: "controller",
+        action: "BANCA_COMMISSION_CACHE_INVALIDATE_WARN",
+        payload: { bancaId: id, error: cacheErr.message }
+      });
+    }
+
     req.logger?.info({
       layer: "controller",
       action: "UPDATE_BANCA_COMMISSION_POLICY",
@@ -209,6 +231,23 @@ export const CommissionController = {
     });
 
     await CacheService.invalidateTag(`ventana:${id}`);
+
+    // OPTIMIZACIÓN: Al no usar tags per-user en sesión, borramos explícitamente las sesiones de todos los usuarios vinculados a esta ventana
+    try {
+      const usersInVentana = await prisma.user.findMany({
+        where: { ventanaId: id },
+        select: { id: true }
+      });
+      for (const u of usersInVentana) {
+        await CacheService.del(`auth:session:${u.id}`).catch(() => {});
+      }
+    } catch (cacheErr: any) {
+      req.logger?.warn({
+        layer: "controller",
+        action: "VENTANA_COMMISSION_CACHE_INVALIDATE_WARN",
+        payload: { ventanaId: id, error: cacheErr.message }
+      });
+    }
 
     req.logger?.info({
       layer: "controller",
@@ -279,6 +318,7 @@ export const CommissionController = {
     });
 
     await CacheService.invalidateTag(`user:${id}`);
+    await CacheService.del(`auth:session:${id}`).catch(() => {});
 
     req.logger?.info({
       layer: "controller",

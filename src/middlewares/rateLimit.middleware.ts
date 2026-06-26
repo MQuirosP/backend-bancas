@@ -14,14 +14,15 @@ const createLimiter = (options: {
   prefix: string;
   message: string;
   keyGenerator?: (req: any) => string;
+  useLocalOnly?: boolean; // OPTIMIZACIÓN: Permite forzar almacenamiento en memoria local
 }) => {
-  const store = isRedisAvailable()
+  const store = (options.useLocalOnly !== true && isRedisAvailable())
     ? new RedisStore({
         // @ts-ignore - ioredis es compatible
         sendCommand: (...args: string[]) => getRedisClient()?.call(...args),
         prefix: `rl:${options.prefix}:`,
       })
-    : undefined;
+    : undefined; // express-rate-limit usa MemoryStore nativo (RAM) si store es undefined
 
   return rateLimit({
     windowMs: options.windowMs,
@@ -55,13 +56,14 @@ const createLimiter = (options: {
 };
 
 /**
- * 1. Límite Global: 100 peticiones / minuto por IP
+ * 1. Límite Global: 100 peticiones / minuto por IP (OPTIMIZADO: Solo memoria local para no impactar Redis)
  */
 const baseGlobalLimiter = createLimiter({
   windowMs: 60 * 1000,
   max: 100,
   prefix: 'global',
-  message: 'Demasiadas peticiones. Por favor, intenta de nuevo en un minuto.'
+  message: 'Demasiadas peticiones. Por favor, intenta de nuevo en un minuto.',
+  useLocalOnly: true,
 });
 
 export const globalRateLimiter = (req: Request, res: Response, next: NextFunction) => {

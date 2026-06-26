@@ -728,6 +728,7 @@ export const UserService = {
     });
 
     // Invalidar caché (fuera de TX, un fallo aquí no revierte la DB)
+    await CacheService.del(`auth:session:${id}`).catch(() => {});
     await CacheService.invalidateTag(`user:${id}`).catch((err) =>
       logger.warn({ layer: 'service', action: 'CACHE_INVALIDATE_FAIL', userId: id, meta: { error: err.message } })
     );

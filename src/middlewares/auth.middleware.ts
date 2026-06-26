@@ -83,11 +83,9 @@ async function getCachedUser(userId: string): Promise<UserSession | null> {
   };
 
   // 3. Persistir en caché (300s en Redis, 60s en Memoria mediante el flag true)
-  const cacheTags = [`user:${userId}`];
-  if (session.bancaId) {
-    cacheTags.push(`banca:${session.bancaId}`);
-  }
-  await CacheService.set(cacheKey, session, 300, cacheTags, true);
+  // OPTIMIZACIÓN: Se remueven los tags para evitar comandos SADD y EXPIRE adicionales.
+  // La invalidación se realiza directamente por clave usando CacheService.del.
+  await CacheService.set(cacheKey, session, 300, [], true);
 
   return session;
 }

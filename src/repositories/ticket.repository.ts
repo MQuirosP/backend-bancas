@@ -2362,6 +2362,8 @@ export const TicketRepository = {
                 { id: userId, type: 'USER' }
               ];
 
+              const keysToExpire = new Set<string>();
+
               for (const j of jugadas) {
                 const amount = j.amount;
                 const num = j.number;
@@ -2372,7 +2374,7 @@ export const TicketRepository = {
                   // 1. Clave general
                   const genKey = `sorteo:${sorteoId}:scope:${sc.id}:acumulados`;
                   pipeline.hincrbyfloat(genKey, num, amount);
-                  pipeline.expire(genKey, ttlSeconds);
+                  keysToExpire.add(genKey);
 
                   // 2. Clave por multiplicador
                   const resolvedJugada = jugadasWithCommissions.find(
@@ -2383,9 +2385,14 @@ export const TicketRepository = {
                   if (multId) {
                     const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
                     pipeline.hincrbyfloat(multKey, num, amount);
-                    pipeline.expire(multKey, ttlSeconds);
+                    keysToExpire.add(multKey);
                   }
                 }
+              }
+
+              // Aplicar expiración una sola vez por clave única
+              for (const key of keysToExpire) {
+                pipeline.expire(key, ttlSeconds);
               }
 
               await pipeline.exec();
@@ -2815,6 +2822,8 @@ export const TicketRepository = {
               { id: vendedorId, type: 'USER' }
             ];
 
+            const keysToExpire = new Set<string>();
+
             for (const j of ticket.jugadas) {
               const amount = j.amount;
               const num = j.number;
@@ -2825,16 +2834,21 @@ export const TicketRepository = {
                 // 1. Restar de la clave general
                 const genKey = `sorteo:${sorteoId}:scope:${sc.id}:acumulados`;
                 pipeline.hincrbyfloat(genKey, num, -amount);
-                pipeline.expire(genKey, 43200);
+                keysToExpire.add(genKey);
 
                 // 2. Restar de la clave por multiplicador si corresponde
                 const multId = j.type === 'REVENTADO' ? 'REVENTADO' : j.multiplierId;
                 if (multId) {
                   const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
                   pipeline.hincrbyfloat(multKey, num, -amount);
-                  pipeline.expire(multKey, 43200);
+                  keysToExpire.add(multKey);
                 }
               }
+            }
+
+            // Aplicar expiración una sola vez por clave única
+            for (const key of keysToExpire) {
+              pipeline.expire(key, 43200);
             }
 
             await pipeline.exec();
