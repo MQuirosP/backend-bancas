@@ -448,6 +448,13 @@ const SorteoRepository = {
 
     // 3) Transacción: actualizar sorteo, pagar jugadas y marcar tickets
     await prisma.$transaction(async (tx) => {
+      // 3.0) Bloqueo pesimista nativo para asegurar aislamiento estricto (ACID)
+      await tx.$executeRaw`
+        SELECT id FROM "Sorteo"
+        WHERE id = CAST(${id} AS uuid)
+        FOR UPDATE
+      `;
+
       // 3.1) Actualizar sorteo con snapshot del multiplicador extra y relación
       await tx.sorteo.update({
         where: { id },

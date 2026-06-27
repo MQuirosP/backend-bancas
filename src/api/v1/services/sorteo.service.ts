@@ -23,6 +23,7 @@ import { getMonthlyRemainingBalance } from "./accounts/accounts.service";
 import { CacheService } from "../../../core/cache.service";
 import crypto from 'crypto';
 import { ConcurrencyManager } from "../../../utils/concurrency";
+import { SorteoEvaluationCoordinator } from "./sorteoEvaluation.coordinator";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
@@ -568,118 +569,38 @@ const SorteoService = {
   },
 
   async evaluate(id: string, body: EvaluateSorteoDTO, userId: string, bancaId?: string, role?: Role) {
-    const {
-      winningNumber,
-      extraMultiplierId = null,
-      extraOutcomeCode: extraOutcomeCodeInput = null,
-    } = body;
-
-    if (!winningNumber?.length)
-      throw new AppError("winningNumber es requerido", 400);
-
-    // 1) Cargar sorteo y validar estado/propiedad
+    // 1) Cargar sorteo y validar propiedad
     const existing = await this.validateSorteoOwnership(id, bancaId, role);
-    
-    if (bancaId && !existing.bancaId && role !== Role.ADMIN) {
-      throw new AppError("No tiene permisos para evaluar un sorteo global", 403);
-    }
-    if (!EVALUABLE_STATES.has(existing.status)) {
-      throw new AppError("Solo se puede evaluar desde OPEN", 409);
-    }
 
-    // 2) Validar longitud del número ganador según configuración del sorteo
-    const requiredDigits = existing.digits ?? 2;
-    if (winningNumber.length !== requiredDigits) {
-      throw new AppError(
-        `El número ganador debe tener ${requiredDigits} dígitos (recibido: ${winningNumber.length})`,
-        400
-      );
-    }
+    // 2) Ejecutar la validación SOLID a través del coordinador
+    const { extraOutcomeCode } = await SorteoEvaluationCoordinator.validate(
+      id,
+      body,
+      existing,
+      bancaId,
+      role
+    );
 
-    // 3) Resolver multiplicador extra (si viene) y etiqueta neutra
-    // Si no viene extraMultiplierId, significa que no salió multiplicador → extraX = 0
-    let extraX: number = 0;
-    let extraOutcomeCode: string | null = null;
-
-    if (extraMultiplierId) {
-      const mul = await prisma.loteriaMultiplier.findUnique({
-        where: { id: extraMultiplierId },
-        select: {
-          id: true,
-          valueX: true,
-          isActive: true,
-          loteriaId: true,
-          kind: true,
-          name: true,
-          appliesToSorteoId: true,
-        },
-      });
-
-      if (!mul || !mul.isActive)
-        throw new AppError("extraMultiplierId inválido o inactivo", 400);
-      if (mul.loteriaId !== existing.loteriaId) {
-        throw new AppError(
-          "extraMultiplierId no pertenece a la lotería del sorteo",
-          400
-        );
-      }
-      if (mul.kind !== "REVENTADO") {
-        throw new AppError("extraMultiplierId no es de tipo REVENTADO", 400);
-      }
-      if (mul.appliesToSorteoId && mul.appliesToSorteoId !== id) {
-        throw new AppError("extraMultiplierId no aplica a este sorteo", 400);
-      }
-
-      extraX = mul.valueX;
-      extraOutcomeCode = (extraOutcomeCodeInput ?? mul.name ?? null) || null;
-    }
-
-
-    // 3. Ejecutar evaluación síncrona (Marcado de tickets y ganadores)
+    // 3) Ejecutar la evaluación transaccional (ACID) en base de datos
     const evaluated = await SorteoRepository.evaluate(id, {
-      winningNumber,
+      winningNumber: body.winningNumber.trim(),
       extraOutcomeCode,
-      extraMultiplierId,
-    });
-
-    // 4. Sincronización de Cuentas en SEGUNDO PLANO (Fire-and-Forget)
-    const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
-    
-    logger.info({
-      layer: 'service',
-      action: 'SORTEO_EVALUATE_TRIGGERING_SYNC',
-      payload: { sorteoId: id, scheduledAt: existing.scheduledAt }
-    });
-
-    AccountStatementSyncService.syncSorteoStatements(id, existing.scheduledAt).then(() => {
-      logger.info({
-        layer: 'service',
-        action: 'SORTEO_EVALUATE_SYNC_QUEUED_OR_COMPLETED',
-        payload: { sorteoId: id }
-      });
-    }).catch(err => {
-      logger.error({
-        layer: 'service',
-        action: 'ACCOUNT_STATEMENT_SYNC_BACKGROUND_ERROR',
-        payload: { sorteoId: id, error: (err as Error).message }
-      });
-    });
-
-    // 5. Logs y Limpieza
-    const { clearSorteoCache } = require('../../../utils/sorteoCache');
-    clearSorteoCache();
-    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
-
-    await ActivityService.log({
-      userId,
-      bancaId: existing.bancaId,
-      action: ActivityType.SORTEO_EVALUATE,
-      targetType: "SORTEO",
-      targetId: id,
-      details: { winningNumber, extraMultiplierId, hasWinner: (evaluated as any)?.hasWinner } as Prisma.InputJsonObject,
+      extraMultiplierId: body.extraMultiplierId && body.extraMultiplierId !== 'none' && body.extraMultiplierId !== ''
+        ? body.extraMultiplierId
+        : null,
     });
 
     if (!evaluated) throw new AppError('Error al recuperar el sorteo evaluado', 500);
+
+    // 4) Disparar los efectos secundarios en segundo plano de manera desacoplada (SOLID)
+    SorteoEvaluationCoordinator.triggerPostEvaluation(
+      id,
+      body.winningNumber.trim(),
+      body.extraMultiplierId,
+      existing,
+      evaluated,
+      userId
+    );
 
     return serializeSorteo(evaluated);
   },

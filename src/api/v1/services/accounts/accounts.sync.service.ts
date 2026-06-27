@@ -698,13 +698,37 @@ export class AccountStatementSyncService {
     }
 
     const newRemaining = parseFloat(previousDayAccumulated.toFixed(2));
-    if (Math.abs(existingStmt.remainingBalance - newRemaining) > 0.01) {
+    const hasActivityToReset = 
+      existingStmt.totalSales !== 0 ||
+      existingStmt.totalPayouts !== 0 ||
+      existingStmt.listeroCommission !== 0 ||
+      existingStmt.vendedorCommission !== 0 ||
+      existingStmt.balance !== 0 ||
+      existingStmt.totalPaid !== 0 ||
+      existingStmt.totalCollected !== 0 ||
+      existingStmt.ticketCount !== 0;
+
+    const needsBalanceUpdate = Math.abs(existingStmt.remainingBalance - newRemaining) > 0.01;
+
+    if (needsBalanceUpdate || hasActivityToReset) {
       await prisma.$transaction(async (localTx) => {
         // Bloqueo explícito para garantizar consistencia en el carry-forward
         await localTx.$executeRaw`SELECT 1 FROM "AccountStatement" WHERE id = CAST(${existingStmt.id} AS uuid) FOR UPDATE`;
         await localTx.accountStatement.update({
           where: { id: existingStmt.id },
-          data: { remainingBalance: newRemaining, accumulatedBalance: newRemaining },
+          data: { 
+            remainingBalance: newRemaining, 
+            accumulatedBalance: newRemaining,
+            totalSales: 0,
+            totalPayouts: 0,
+            listeroCommission: 0,
+            vendedorCommission: 0,
+            balance: 0,
+            totalPaid: 0,
+            totalCollected: 0,
+            ticketCount: 0,
+            isSettled: true
+          },
         });
       }, { timeout: 10000 });
     }
