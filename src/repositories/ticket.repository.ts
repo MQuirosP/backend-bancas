@@ -13,6 +13,7 @@ import { nowCR, validateDate, formatDateCRWithTZ } from "../utils/datetime";
 import { v4 as uuidv4 } from "uuid";
 import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel, ScopeCache, calculateAccumulatedByNumbersAndScope, calculateAccumulatedForMultipleScopes, acquireLock, releaseLock } from "./helpers/ticket-restriction.helper";
 import { getRedisClient, isRedisAvailable, markRedisError } from "../core/redisClient";
+import { CacheService } from "../core/cache.service";
 
 
 interface CachedRules {
@@ -2998,10 +2999,16 @@ export const TicketRepository = {
 
     return await withConnectionRetry(async () => {
       // 1. Obtener contexto del vendedor (ventanaId, bancaId real)
-      const user = await prisma.user.findUnique({
-        where: { id: vendedorId },
-        select: { id: true, ventanaId: true, role: true, ventana: { select: { bancaId: true } } },
-      });
+      // OPTIMIZACIÓN: Cache 300s — el contexto de ventana/banca de un vendedor cambia muy raramente
+      const user = await CacheService.wrap(
+        `user:ctx:${vendedorId}`,
+        () => prisma.user.findUnique({
+          where: { id: vendedorId },
+          select: { id: true, ventanaId: true, role: true, ventana: { select: { bancaId: true } } },
+        }),
+        300,
+        [`user:${vendedorId}`]
+      );
 
       if (!user || !user.ventanaId) return {};
 
@@ -3009,27 +3016,43 @@ export const TicketRepository = {
       if (!effectiveBancaId) return {};
 
       // 2. Obtener sorteo y su lotería
-      const sorteo = await prisma.sorteo.findUnique({
-        where: { id: sorteoId },
-        select: { id: true, loteriaId: true, scheduledAt: true, digits: true },
-      });
+      // OPTIMIZACIÓN: Cache 1h — los metadatos de un sorteo (digits, loteriaId) no cambian
+      const sorteo = await CacheService.wrap(
+        `sorteo:meta:${sorteoId}`,
+        () => prisma.sorteo.findUnique({
+          where: { id: sorteoId },
+          select: { id: true, loteriaId: true, scheduledAt: true, digits: true },
+        }),
+        3600
+      );
 
       if (!sorteo) return {};
 
       // 3. Obtener reglas de restricción aplicables
+      // OPTIMIZACIÓN: Reutiliza el L1 cache en memoria (RULES_CACHE_TTL_MS = 60s) ya existente
       const now = new Date();
-      const candidateRules = await prisma.restrictionRule.findMany({
-        where: {
-          isActive: true,
-          OR: [
-            { userId: vendedorId },
-            { ventanaId: user.ventanaId, userId: null },
-            { bancaId: effectiveBancaId, ventanaId: null, userId: null },
-            { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] },
-          ],
-        },
-        include: { loteria: true, multiplier: true },
+      const rulesCacheKey = buildRulesCacheKey({
+        userId: vendedorId,
+        ventanaId: user.ventanaId,
+        bancaId: effectiveBancaId,
       });
+      const cachedRules = getCachedRestrictionRules(rulesCacheKey);
+      const candidateRules = cachedRules ?? await (async () => {
+        const fresh = await prisma.restrictionRule.findMany({
+          where: {
+            isActive: true,
+            OR: [
+              { userId: vendedorId },
+              { ventanaId: user.ventanaId, userId: null },
+              { bancaId: effectiveBancaId, ventanaId: null, userId: null },
+              { AND: [{ userId: null }, { ventanaId: null }, { bancaId: null }] },
+            ],
+          },
+          include: { loteria: true, multiplier: true },
+        });
+        setCachedRestrictionRules(rulesCacheKey, fresh);
+        return fresh;
+      })();
 
       const crNowHour = getCRLocalComponents(now).hour;
       const applicableRules = candidateRules.filter((r) => {
