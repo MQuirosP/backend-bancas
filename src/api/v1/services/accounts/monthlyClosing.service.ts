@@ -30,144 +30,36 @@ export async function calculateRealMonthBalance(
     bancaId?: string | null
 ): Promise<MonthBalanceResult> {
     try {
-        const [year, month] = closingMonth.split("-").map(Number);
-        const lastDayNum = new Date(year, month, 0).getDate();
-        
-        // Fechas en zona horaria de Costa Rica (UTC-6)
-        const firstDay = new Date(Date.UTC(year, month - 1, 1, 6, 0, 0, 0)); // 00:00 CR
-        const lastDay = new Date(Date.UTC(year, month - 1, lastDayNum + 1, 5, 59, 59, 999)); // 23:59:59.999 CR
-        
-        const firstDayCRStr = `${year}-${String(month).padStart(2, '0')}-01`;
-        const lastDayCRStr = `${year}-${String(month).padStart(2, '0')}-${String(lastDayNum).padStart(2, '0')}`;
-
-        // Construir condiciones WHERE para tickets
-        const ticketConditions: Prisma.Sql[] = [
-            Prisma.sql`t."deletedAt" IS NULL`,
-            Prisma.sql`t."isActive" = true`,
-            Prisma.sql`t."status" != 'CANCELLED'`,
-            Prisma.sql`EXISTS (SELECT 1 FROM "Sorteo" s WHERE s.id = t."sorteoId" AND s.status = 'EVALUATED')`,
-            Prisma.sql`t."businessDate" BETWEEN ${firstDayCRStr}::date AND ${lastDayCRStr}::date`,
-        ];
-
-        // Aplicar filtros por dimensión
-        if (dimension === "vendedor" && vendedorId) {
-            ticketConditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
-        }
-        if (dimension === "vendedor" && ventanaId) {
-            ticketConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
-        }
-        if (dimension === "ventana" && ventanaId) {
-            ticketConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
-        }
-        if (dimension === "banca" && bancaId) {
-            ticketConditions.push(Prisma.sql`t."bancaId" = CAST(${bancaId} AS uuid)`);
-        }
-
-        const ticketWhereClause = Prisma.sql`WHERE ${Prisma.join(ticketConditions, " AND ")}`;
-
-        // Filtro de exclusión de listas (solo si hay exclusiones activas)
-        const exclusionFilter = await isExclusionListEmpty()
-            ? Prisma.empty
-            : Prisma.sql`AND NOT EXISTS (
-                SELECT 1 FROM "sorteo_lista_exclusion" sle
-                WHERE sle."sorteo_id" = t."sorteoId"
-                AND sle."ventana_id" = t."ventanaId"
-                AND (sle."vendedor_id" IS NULL OR sle."vendedor_id" = t."vendedorId")
-                AND sle."multiplier_id" IS NULL
-            )`;
-
-        // 1. Ventas (desde jugadas)
-        const salesResult = await prisma.$queryRaw<Array<{ total_sales: number; ticket_count: bigint }>>(
-            Prisma.sql`
-                SELECT
-                    COALESCE(SUM(j.amount), 0) as total_sales,
-                    COUNT(DISTINCT t.id)::bigint as ticket_count
-                FROM "Ticket" t
-                INNER JOIN "Jugada" j ON j."ticketId" = t.id
-                ${ticketWhereClause}
-                AND j."deletedAt" IS NULL
-                ${exclusionFilter}
-            `
-        );
-
-        const totalSales = Number(salesResult[0]?.total_sales || 0);
-        const ticketCount = Number(salesResult[0]?.ticket_count || 0);
-
-        // 2. Premios (desde tickets, no jugadas)
-        const payoutsResult = await prisma.$queryRaw<Array<{ total_payouts: number }>>(
-            Prisma.sql`
-                SELECT COALESCE(SUM(t."totalPayout"), 0) as total_payouts
-                FROM "Ticket" t
-                ${ticketWhereClause}
-            `
-        );
-
-        const totalPayouts = Number(payoutsResult[0]?.total_payouts || 0);
-
-        // 3. Comisiones
-        // Para vendedor: solo comisiones originadas en USER
-        // Para ventana: solo comisiones originadas en VENTANA
-        // Para banca: TODAS las comisiones (USER y VENTANA) impactan la banca
-        const commissionResult = await prisma.$queryRaw<Array<{ total_commission: number }>>(
-            dimension === "banca"
-            ? Prisma.sql`
-                SELECT
-                  COALESCE(SUM(j."commissionAmount"), 0) as total_commission
-                FROM "Ticket" t
-                INNER JOIN "Jugada" j ON j."ticketId" = t.id
-                ${ticketWhereClause}
-                AND j."deletedAt" IS NULL
-                ${exclusionFilter}
-            `
-            : Prisma.sql`
-                SELECT
-                  COALESCE(SUM(CASE WHEN j."commissionOrigin" = ${dimension === "vendedor" ? Prisma.sql`'USER'` : Prisma.sql`'VENTANA'`} THEN j."commissionAmount" ELSE 0 END), 0) as total_commission
-                FROM "Ticket" t
-                INNER JOIN "Jugada" j ON j."ticketId" = t.id
-                ${ticketWhereClause}
-                AND j."deletedAt" IS NULL
-                ${exclusionFilter}
-            `
-        );
-
-        const totalCommission = Number(commissionResult[0]?.total_commission || 0);
-
-        // 4. Pagos y cobros
-        const paymentsWhere: Prisma.AccountPaymentWhereInput = {
-            date: {
-                gte: firstDay,
-                lte: lastDay,
-            },
-            isReversed: false,
+        const whereClause: any = {
+            month: closingMonth,
+            ...(dimension === "vendedor" && vendedorId ? { vendedorId } : {}),
+            ...(dimension === "ventana" && ventanaId ? { ventanaId, vendedorId: null } : {}),
+            ...(dimension === "banca" && bancaId ? { bancaId, ventanaId: null, vendedorId: null } : {}),
         };
 
-        if (dimension === "vendedor" && vendedorId) {
-            paymentsWhere.vendedorId = vendedorId;
-        }
-        if (dimension === "vendedor" && ventanaId) {
-            paymentsWhere.ventanaId = ventanaId;
-        }
-        if (dimension === "ventana" && ventanaId) {
-            paymentsWhere.ventanaId = ventanaId;
-            paymentsWhere.vendedorId = null;
-        }
-        if (dimension === "banca" && bancaId) {
-            // Incluir TODOS los pagos/cobros asociados a la banca, sin restringir por vendedor/ventana
-            paymentsWhere.bancaId = bancaId;
-        }
-
-        const payments = await prisma.accountPayment.findMany({
-            where: paymentsWhere,
-            select: {
-                type: true,
-                amount: true,
-            },
+        const aggregation = await prisma.accountStatement.aggregate({
+            where: whereClause,
+            _sum: {
+                totalSales: true,
+                totalPayouts: true,
+                vendedorCommission: true,
+                listeroCommission: true,
+                totalPaid: true,
+                totalCollected: true,
+                ticketCount: true
+            }
         });
 
-        const totalPaid = payments.filter((p) => p.type === "payment").reduce((sum, p) => sum + p.amount, 0);
-        const totalCollected = payments.filter((p) => p.type === "collection").reduce((sum, p) => sum + p.amount, 0);
+        const totalSales = Number(aggregation._sum.totalSales || 0);
+        const totalPayouts = Number(aggregation._sum.totalPayouts || 0);
+        const totalCommission = dimension === "vendedor"
+            ? Number(aggregation._sum.vendedorCommission || 0)
+            : Number(aggregation._sum.listeroCommission || 0);
+        const totalPaid = Number(aggregation._sum.totalPaid || 0);
+        const totalCollected = Number(aggregation._sum.totalCollected || 0);
+        const ticketCount = Number(aggregation._sum.ticketCount || 0);
 
-        // 5. Calcular saldo final
+        // Calcular saldo final según comportamiento e historial original
         const balance = totalSales - totalPayouts - totalCommission;
         const remainingBalance = balance - totalCollected + totalPaid;
 
