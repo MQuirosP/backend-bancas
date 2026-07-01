@@ -153,19 +153,7 @@ export async function getAggregatedTicketsData(params: {
             b.id,
             t."ventanaId",
             t."vendedorId"`;
-
     const query = Prisma.sql`
-        WITH jugada_aggregates AS (
-            SELECT 
-                j."ticketId",
-                COALESCE(SUM(j.amount), 0) as total_amount,
-                COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j.payout ELSE 0 END), 0) as total_payouts,
-                COALESCE(SUM(j."listeroCommissionAmount"), 0) as total_listero_commission,
-                COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as total_vendedor_commission
-            FROM "Jugada" j
-            WHERE j."deletedAt" IS NULL
-            GROUP BY j."ticketId"
-        )
         SELECT
             t."businessDate" as business_date,
             b.id as banca_id,
@@ -183,7 +171,15 @@ export async function getAggregatedTicketsData(params: {
             COALESCE(SUM(ja.total_listero_commission), 0) as commission_listero,
             COALESCE(SUM(ja.total_vendedor_commission), 0) as commission_vendedor
         FROM "Ticket" t
-        LEFT JOIN jugada_aggregates ja ON ja."ticketId" = t.id
+        LEFT JOIN LATERAL (
+            SELECT 
+                COALESCE(SUM(j.amount), 0) as total_amount,
+                COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j.payout ELSE 0 END), 0) as total_payouts,
+                COALESCE(SUM(j."listeroCommissionAmount"), 0) as total_listero_commission,
+                COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) as total_vendedor_commission
+            FROM "Jugada" j
+            WHERE j."ticketId" = t.id AND j."deletedAt" IS NULL
+        ) ja ON true
         INNER JOIN "Ventana" v ON v.id = t."ventanaId"
         INNER JOIN "Banca" b ON b.id = v."bancaId"
         LEFT JOIN "User" u ON u.id = t."vendedorId"
