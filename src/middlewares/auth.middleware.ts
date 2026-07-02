@@ -109,7 +109,7 @@ export const protect = async (
 
   let decoded: any;
   try {
-    decoded = jwt.verify(token, config.jwtAccessSecret);
+    decoded = jwt.verify(token, config.jwtAccessSecret, { clockTolerance: 90 });
   } catch {
     throw new AppError("Invalid token", 401);
   }

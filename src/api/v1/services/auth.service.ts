@@ -420,7 +420,7 @@ export const AuthService = {
   async refresh(refreshToken: string, context?: RequestContext): Promise<TokenPair> {
     let decoded: { tid: string };
     try {
-      decoded = jwt.verify(refreshToken, REFRESH_SECRET) as { tid: string };
+      decoded = jwt.verify(refreshToken, REFRESH_SECRET, { clockTolerance: 90 }) as { tid: string };
     } catch {
       throw new AppError('Invalid refresh token', 401);
     }
