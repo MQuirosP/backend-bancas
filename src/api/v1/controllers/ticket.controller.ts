@@ -1209,7 +1209,12 @@ export const TicketController = {
     }
 
     try {
-      const result = await TicketService.getBalances(sorteoId, vendedorId || req.user!.id, bancaId);
+      const result = await TicketService.getBalances(
+        sorteoId,
+        vendedorId || req.user!.id,
+        bancaId,
+        req.user!.role
+      );
       return success(res, result);
     } catch (err: any) {
       req.logger?.error({

@@ -2571,11 +2571,12 @@ export const TicketService = {
   /**
    * Obtiene los saldos disponibles para todos los números de un sorteo
    */
-  async getBalances(sorteoId: string, vendedorId: string, bancaId?: string) {
+  async getBalances(sorteoId: string, vendedorId: string, bancaId?: string, actorRole?: Role) {
     return TicketRepository.getSorteoBalances({
       sorteoId,
       vendedorId,
       bancaId,
+      actorRole,
     });
   },
 };

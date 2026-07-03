@@ -1727,8 +1727,16 @@ export const TicketRepository = {
 
         const now = new Date();
         const crNowHour = getCRLocalComponents(now).hour;
+        const isImpersonatedByVentanaOrAdmin =
+          options?.createdByRole === Role.VENTANA ||
+          options?.createdByRole === Role.ADMIN;
+
         const applicable: RestrictionRuleWithRelations[] = candidateRules
           .filter((r) => {
+            // Si es impersonación por listero/admin, ignorar reglas específicas del vendedor
+            if (isImpersonatedByVentanaOrAdmin && r.userId !== null) {
+              return false;
+            }
             if (
               r.appliesToDate &&
               !isSameLocalDay(new Date(r.appliesToDate), now)
@@ -2994,8 +3002,9 @@ export const TicketRepository = {
     sorteoId: string;
     vendedorId: string;
     bancaId?: string;
+    actorRole?: Role;
   }): Promise<Record<string, { remaining: number; limit: number; accumulated: number }>> {
-    const { sorteoId, vendedorId, bancaId } = params;
+    const { sorteoId, vendedorId, bancaId, actorRole } = params;
 
     return await withConnectionRetry(async () => {
       // 1. Obtener contexto del vendedor (ventanaId, bancaId real)
@@ -3054,8 +3063,14 @@ export const TicketRepository = {
         return fresh;
       })();
 
+      const isImpersonatedByVentanaOrAdmin =
+        actorRole === Role.VENTANA ||
+        actorRole === Role.ADMIN;
+
       const crNowHour = getCRLocalComponents(now).hour;
       const applicableRules = candidateRules.filter((r) => {
+        // Si es impersonación por listero/admin, ignorar reglas específicas del vendedor
+        if (isImpersonatedByVentanaOrAdmin && r.userId !== null) return false;
         if (r.multiplierId) return false;
         if (r.loteriaId && r.loteriaId !== sorteo.loteriaId) return false;
         if (r.appliesToDate && !isSameLocalDay(new Date(r.appliesToDate), now)) return false;
