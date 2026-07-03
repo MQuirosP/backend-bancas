@@ -6,6 +6,7 @@ import { Role } from "../generated/prisma/client";
 import { getCRLocalComponents } from "../utils/businessDate";
 import { SalesService } from "../api/v1/services/sales.service";
 import { restrictionCacheV2 } from "../utils/restrictionCacheV2";
+import { invalidateRestrictionRulesCache } from "./ticket.repository";
 
 export type EffectiveRestriction = {
   source: "USER" | "VENTANA" | "BANCA" | "GLOBAL" | null;
@@ -144,12 +145,15 @@ export const RestrictionRuleRepository = {
       { context: 'RestrictionRuleRepository.create' }
     );
 
-    //  OPTIMIZACIÓN: Invalidar caché cuando se crea una restricción
+    //  OPTIMIZACIÓN: Invalidar AMBOS cachés cuando se crea una restricción
+    // 1. Caché V2 (Redis/en-memoria centralizado)
     await restrictionCacheV2.invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
       userId: rule.userId || undefined,
     });
+    // 2. Caché local de validación de balances (ticket.repository)
+    invalidateRestrictionRulesCache();
 
     return rule;
   },
@@ -188,12 +192,15 @@ export const RestrictionRuleRepository = {
       { context: 'RestrictionRuleRepository.update' }
     );
 
-    //  OPTIMIZACIÓN: Invalidar caché cuando se actualiza una restricción
+    //  OPTIMIZACIÓN: Invalidar AMBOS cachés cuando se actualiza una restricción
+    // 1. Caché V2 (Redis/en-memoria centralizado)
     await restrictionCacheV2.invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
       userId: rule.userId || undefined,
     });
+    // 2. Caché local de validación de balances (ticket.repository)
+    invalidateRestrictionRulesCache();
 
     return rule;
   },
@@ -210,12 +217,15 @@ export const RestrictionRuleRepository = {
       { context: 'RestrictionRuleRepository.softDelete' }
     );
 
-    //  OPTIMIZACIÓN: Invalidar caché cuando se elimina (inactiva) una restricción
+    //  OPTIMIZACIÓN: Invalidar AMBOS cachés cuando se elimina (inactiva) una restricción
+    // 1. Caché V2 (Redis/en-memoria centralizado)
     await restrictionCacheV2.invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
       userId: rule.userId || undefined,
     });
+    // 2. Caché local de validación de balances (ticket.repository)
+    invalidateRestrictionRulesCache();
 
     return rule;
   },
@@ -230,12 +240,15 @@ export const RestrictionRuleRepository = {
       { context: 'RestrictionRuleRepository.restore' }
     );
 
-    //  OPTIMIZACIÓN: Invalidar caché cuando se restaura una restricción
+    //  OPTIMIZACIÓN: Invalidar AMBOS cachés cuando se restaura una restricción
+    // 1. Caché V2 (Redis/en-memoria centralizado)
     await restrictionCacheV2.invalidateRestrictionCaches({
       bancaId: rule.bancaId || undefined,
       ventanaId: rule.ventanaId || undefined,
       userId: rule.userId || undefined,
     });
+    // 2. Caché local de validación de balances (ticket.repository)
+    invalidateRestrictionRulesCache();
 
     return rule;
   },

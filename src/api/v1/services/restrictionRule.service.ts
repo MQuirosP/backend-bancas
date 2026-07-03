@@ -490,16 +490,26 @@ export const RestrictionRuleService = {
       return results;
     });
 
-    // Invalidar caché
-    const first = updatedRules[0];
-    if (first) {
-      const { invalidateRestrictionCaches } = require("../../../utils/restrictionCache");
-      await invalidateRestrictionCaches({
-        bancaId: first.bancaId || undefined,
-        ventanaId: first.ventanaId || undefined,
-        userId: first.userId || undefined,
-      });
+    // CRÍTICO: Invalidar caché para CADA regla actualizada (no solo la primera)
+    // Importar aquí para evitar circular dependency
+    const { invalidateRestrictionCaches } = require("../../../utils/restrictionCache");
+    const { invalidateRestrictionRulesCache } = require("../../../repositories/ticket.repository");
+    
+    const invalidatedContexts = new Set<string>();
+    for (const rule of updatedRules) {
+      const contextKey = `${rule.bancaId}|${rule.ventanaId}|${rule.userId}`;
+      if (!invalidatedContexts.has(contextKey)) {
+        invalidatedContexts.add(contextKey);
+        // Invalidar caché V2
+        await invalidateRestrictionCaches({
+          bancaId: rule.bancaId || undefined,
+          ventanaId: rule.ventanaId || undefined,
+          userId: rule.userId || undefined,
+        });
+      }
     }
+    // Invalidar el caché local de validación de balances (ticket.repository)
+    invalidateRestrictionRulesCache();
 
     await ActivityService.log({
       userId: actorId,
@@ -543,16 +553,26 @@ export const RestrictionRuleService = {
       return results;
     });
 
-    // Invalidar caché
-    const first = deletedRules[0];
-    if (first) {
-      const { invalidateRestrictionCaches } = require("../../../utils/restrictionCache");
-      await invalidateRestrictionCaches({
-        bancaId: first.bancaId || undefined,
-        ventanaId: first.ventanaId || undefined,
-        userId: first.userId || undefined,
-      });
+    // CRÍTICO: Invalidar caché para CADA regla eliminada (no solo la primera)
+    // Importar aquí para evitar circular dependency
+    const { invalidateRestrictionCaches } = require("../../../utils/restrictionCache");
+    const { invalidateRestrictionRulesCache } = require("../../../repositories/ticket.repository");
+    
+    const invalidatedContexts = new Set<string>();
+    for (const rule of deletedRules) {
+      const contextKey = `${rule.bancaId}|${rule.ventanaId}|${rule.userId}`;
+      if (!invalidatedContexts.has(contextKey)) {
+        invalidatedContexts.add(contextKey);
+        // Invalidar caché V2
+        await invalidateRestrictionCaches({
+          bancaId: rule.bancaId || undefined,
+          ventanaId: rule.ventanaId || undefined,
+          userId: rule.userId || undefined,
+        });
+      }
     }
+    // Invalidar el caché local de validación de balances (ticket.repository)
+    invalidateRestrictionRulesCache();
 
     await ActivityService.log({
       userId: actorId,
