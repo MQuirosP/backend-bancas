@@ -249,6 +249,12 @@ model Ticket {
   @@index([sorteoId, status, isActive], map: "idx_ticket_sorteo_status", where: raw("(\"deletedAt\" IS NULL)"))
   @@index([isWinner, status, createdAt], map: "idx_ticket_winner_status_date", where: raw("((\"isActive\" = true) AND (\"deletedAt\" IS NULL))"))
   @@index([ventanaId, vendedorId, businessDate, status], map: "idx_tickets_ventana_vendedor_date", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
+  @@index([paidById], where: raw("(\"paidById\" IS NOT NULL)"))
+  @@index([status, isWinner])
+  @@index([businessDate, ventanaId], map: "idx_ticket_businessdate_ventana")
+  @@index([createdBy], map: "idx_ticket_createdBy_fk")
+  @@index([bancaId, ventanaId, businessDate, status], map: "idx_ticket_dashboard_lookup", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
+  @@index([sorteoId, businessDate, isActive], map: "idx_ticket_sorteo_businessdate_active")
 }
 
 /// Contador global diario de tickets basado en businessDate (CR)
@@ -322,6 +328,10 @@ model Jugada {
   @@index([number, ticketId, amount, type], map: "idx_jugada_number_amount_active", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
   @@index([ticketId, deletedAt, commissionOrigin], map: "idx_jugada_ticket_deleted_commission", where: raw("(\"deletedAt\" IS NULL)"))
   @@index([ticketId, isWinner, deletedAt, payout], map: "idx_jugada_ticket_winner", where: raw("((\"deletedAt\" IS NULL) AND (\"isWinner\" = true))"))
+  @@index([bancaId])
+  @@index([ticketId])
+  @@index([excludedBy], map: "idx_Jugada_excludedBy", where: raw("(\"excludedBy\" IS NOT NULL)"))
+  @@index([ticketId, isActive, number, amount, type], map: "idx_jugada_ticket_active_number_covering", where: raw("(\"deletedAt\" IS NULL)"))
 }
 
 model Sorteo {
@@ -361,6 +371,7 @@ model Sorteo {
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_sorteo_name_trgm", type: Gin)
   @@index([id], map: "idx_sorteo_status_open", where: raw("(status = 'OPEN'::\"SorteoStatus\")"))
   @@index([status, scheduledAt, loteriaId], map: "idx_sorteo_status_scheduled", where: raw("(\"deletedAt\" IS NULL)"))
+  @@index([id, status], map: "idx_sorteo_id_status")
 }
 
 model SorteoListaExclusion {
@@ -390,6 +401,8 @@ model SorteoListaExclusion {
   @@index([multiplierId])
   @@index([excludedBy], map: "idx_sorteo_lista_exclusion_exBy_fk")
   @@index([sorteoId, ventanaId, vendedorId], map: "idx_sorteo_exclusion_lookup", where: raw("(multiplier_id IS NULL)"))
+  @@index([sorteoId, ventanaId, vendedorId, multiplierId], map: "idx_sle_multiplier_lookup", where: raw("(multiplier_id IS NOT NULL)"))
+  @@index([sorteoId, ventanaId, vendedorId], map: "idx_sle_ticket_lookup", where: raw("(multiplier_id IS NULL)"))
   @@map("sorteo_lista_exclusion")
 }
 

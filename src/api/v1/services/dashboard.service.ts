@@ -628,7 +628,7 @@ export const DashboardService = {
     >(
       Prisma.sql`
         WITH ${buildExclusionCTEsPreamble(skipExclusion)}
-        tickets_in_range AS MATERIALIZED (
+        tickets_in_range AS NOT MATERIALIZED (
           SELECT
             t.id,
             t."ventanaId",
@@ -710,7 +710,7 @@ export const DashboardService = {
     >(
       Prisma.sql`
         WITH ${buildExclusionCTEsPreamble(skipExclusion)}
-        tickets_in_range AS MATERIALIZED (
+        tickets_in_range AS NOT MATERIALIZED (
           SELECT
             t.id,
             t."ventanaId",
@@ -1524,7 +1524,7 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS MATERIALIZED (
+        WITH tickets_in_range AS NOT MATERIALIZED (
           SELECT
             t.id,
             t."totalAmount",
@@ -1633,6 +1633,24 @@ export const DashboardService = {
     // 🟡 CHECKPOINT: Antes de Promise.all
     monitor.checkpoint('BEFORE_PARALLEL_QUERIES');
 
+    // ⚡ OPTIMIZACIÓN: Para rangos > 7 días, la exposición de riesgo solo es accionable
+    // para los sorteos OPEN del día actual. Limitar calculateExposure a hoy evita
+    // el scan de 30 días de tickets históricos (query más lenta: ~8.6 s media).
+    const rangeMs = filters.toDate.getTime() - filters.fromDate.getTime();
+    const LARGE_RANGE_MS = 7 * 24 * 60 * 60 * 1000;
+    const isLargeRange = rangeMs > LARGE_RANGE_MS;
+    let exposureTrimmed = false;
+    let exposureFilters: DashboardFilters = filters;
+    if (isLargeRange) {
+      const todayRange = resolveDateRange('today');
+      exposureFilters = {
+        ...filters,
+        fromDate: todayRange.fromAt,
+        toDate: todayRange.toAt,
+      };
+      exposureTrimmed = true;
+    }
+
     // FASE 1: Datos críticos (los que el usuario ve primero)
     //  SEMI-OPTIMIZADO: Comentamos CxC y CxP por desuso y riesgos de performance en Prisma (intermitencia)
     const measuredPhase1 = await Promise.all([
@@ -1660,7 +1678,8 @@ export const DashboardService = {
         queryCount += 1;
         return r;
       })),
-      measureAsync('calculateExposure', () => this.calculateExposure(filters).then((r) => {
+      // ⚡ Pasar exposureFilters (puede ser rango trimmed a hoy si range > 7 días)
+      measureAsync('calculateExposure', () => this.calculateExposure(exposureFilters).then((r) => {
         queryCount += 3;
         return r;
       })),
@@ -1720,6 +1739,8 @@ export const DashboardService = {
           toAt: filters.toDate.toISOString(),
           tz: 'America/Costa_Rica',
         },
+        // ⚡ Si el rango era > 7 días, la exposición es solo del día actual
+        exposureTrimmedToToday: exposureTrimmed,
         scope: filters.scope || 'all',
         generatedAt: new Date().toISOString(),
         queryExecutionTime: Date.now() - startTime,
@@ -2101,9 +2122,17 @@ export const DashboardService = {
       }>
     >(
       Prisma.sql`
-        WITH tickets_in_range AS (
+        -- ⚡ bySorteoResult: solo sorteos OPEN para riesgo activo.
+        -- El JOIN interno a Sorteo filtra OPEN antes del scan de Ticket/Jugada.
+        WITH open_sorteos AS (
+          SELECT s.id, s.name, s."scheduledAt", s.status, s."loteriaId"
+          FROM "Sorteo" s
+          WHERE s.status = 'OPEN'
+        ),
+        tickets_in_range AS (
           SELECT t.id, t."loteriaId", t."sorteoId"
           FROM "Ticket" t
+          INNER JOIN open_sorteos os ON os.id = t."sorteoId"
           WHERE ${baseFilters}
         ),
         jugadas_stats AS (
@@ -2150,25 +2179,22 @@ export const DashboardService = {
           GROUP BY "sorteoId"
         )
         SELECT
-          s.id as sorteo_id,
-          s.name as sorteo_name,
+          os.id as sorteo_id,
+          os.name as sorteo_name,
           l.name as loteria_name,
-          s."scheduledAt" as draw_time,
-          s.status,
+          os."scheduledAt" as draw_time,
+          os.status,
           ss.total_sales as sales,
-          CASE
-            WHEN s.status = 'EVALUATED' THEN ss.total_actual_payout
-            ELSE ss.max_potential_payout
-          END as potential_payout,
+          ss.max_potential_payout as potential_payout,
           ss.critical_number,
           t.top_numbers_json::text
         FROM sorteo_summary ss
         JOIN top_numbers_per_sorteo t ON t."sorteoId" = ss."sorteoId"
-        JOIN "Sorteo" s ON s.id = ss."sorteoId"
-        JOIN "Loteria" l ON l.id = s."loteriaId"
-        WHERE 1=1
-        ${filters.status ? Prisma.sql`AND s.status = ${filters.status}` : Prisma.empty}
-        ORDER BY (CASE WHEN ss.total_sales > 0 THEN (CASE WHEN s.status = 'EVALUATED' THEN ss.total_actual_payout ELSE ss.max_potential_payout END) / ss.total_sales ELSE 0 END) DESC
+        JOIN open_sorteos os ON os.id = ss."sorteoId"
+        JOIN "Loteria" l ON l.id = os."loteriaId"
+        WHERE ss.total_sales > 0
+        ${filters.status ? Prisma.sql`AND os.status = ${filters.status}` : Prisma.empty}
+        ORDER BY (CASE WHEN ss.total_sales > 0 THEN ss.max_potential_payout / ss.total_sales ELSE 0 END) DESC
       `
     );
 

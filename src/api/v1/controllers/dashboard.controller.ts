@@ -32,9 +32,29 @@ async function applyDashboardRbac(req: AuthenticatedRequest, query: any) {
     if (req.bancaContext?.bancaId) {
       bancaId = req.bancaContext.bancaId;
     }
+    // Validar que la ventana pertenezca a la banca del ADMIN
+    if (ventanaId && bancaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: ventanaId },
+        select: { bancaId: true }
+      });
+      if (!ventana || ventana.bancaId !== bancaId) {
+        throw new AppError("La ventana no pertenece a la banca activa", 403);
+      }
+    }
   } else if (req.user!.role === Role.BANCA) {
     // BANCA siempre filtra por su propia banca
     bancaId = req.bancaContext?.bancaId || req.user!.bancaId || undefined;
+    // Validar que la ventana pertenezca a su banca
+    if (ventanaId && bancaId) {
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: ventanaId },
+        select: { bancaId: true }
+      });
+      if (!ventana || ventana.bancaId !== bancaId) {
+        throw new AppError("La ventana no pertenece a su banca", 403);
+      }
+    }
   }
   
   return { ventanaId, vendedorId, bancaId };
