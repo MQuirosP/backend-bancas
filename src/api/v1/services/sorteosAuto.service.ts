@@ -378,7 +378,7 @@ export const SorteosAutoService = {
     let totalSkipped = 0;
 
     const today = tz.startOfDay(new Date());
-    const minDaysAhead = 1; // MÃ­nimo de dÃ­as futuros: 1 dÃ­a (el cron corre diario)
+    const minDaysAhead = Math.max(0, daysAhead - 1); // Mínimo de días futuros con base en daysAhead
     
     for (const loteria of loterias) {
       try {
