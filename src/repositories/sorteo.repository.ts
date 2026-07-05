@@ -265,52 +265,30 @@ const SorteoRepository = {
    * @returns { sorteo, ticketsAffected: number }
    */
   async closeWithCascade(id: string) {
-    const current = await prisma.sorteo.findUnique({ where: { id } });
-    if (!current) throw new AppError("Sorteo no encontrado", 404);
-    if (
-      current.status !== SorteoStatus.OPEN &&
-      current.status !== SorteoStatus.EVALUATED
-    ) {
-      throw new AppError(
-        `Solo se pueden cerrar sorteos en estado OPEN o EVALUATED (actual: ${current.status})`,
-        400
-      );
+    const resultRaw = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT fn_close_sorteo($1::uuid)`,
+      id
+    );
+
+    const result = resultRaw[0]?.fn_close_sorteo;
+    if (!result) {
+      throw new AppError("Error al cerrar el sorteo", 500);
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      // 1️⃣ Cerrar sorteo
-      const closed = await tx.sorteo.update({
-        where: { id },
-        data: { status: SorteoStatus.CLOSED },
-        include: {
-          loteria: {
-            select: {
-              id: true,
-              name: true,
-              rulesJson: true,
-            },
-          },
-          extraMultiplier: {
-            select: { id: true, name: true, valueX: true },
+    const closedSorteo = await prisma.sorteo.findUniqueOrThrow({
+      where: { id },
+      include: {
+        loteria: {
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
           },
         },
-      });
-
-      // 2️⃣ Marcar tickets como cerrados (cascada)
-      const ticketsAffected = await tx.ticket.updateMany({
-        where: {
-          sorteoId: id,
-          deletedAt: null, // Solo tickets activos
+        extraMultiplier: {
+          select: { id: true, name: true, valueX: true },
         },
-        data: {
-          isSorteoClosed: true,
-        },
-      });
-
-      return {
-        sorteo: closed,
-        ticketsAffected: ticketsAffected.count,
-      };
+      },
     });
 
     logger.info({
@@ -322,100 +300,50 @@ const SorteoRepository = {
       },
     });
 
-    return result;
+    return {
+      sorteo: closedSorteo,
+      ticketsAffected: result.ticketsAffected as number,
+    };
   },
 
   async revertEvaluation(id: string) {
-    const sorteo = await prisma.$transaction(async (tx) => {
-      const current = await tx.sorteo.findUnique({
-        where: { id },
-        select: { id: true, status: true },
-      });
-      if (!current) throw new AppError("Sorteo no encontrado", 404);
-      if (current.status !== SorteoStatus.EVALUATED) {
-        throw new AppError("Solo se puede revertir un sorteo evaluado", 409);
-      }
+    const resultRaw = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT fn_revert_sorteo($1::uuid)`,
+      id
+    );
 
-      // 2️⃣ Eliminar pagos de tickets del sorteo (Optimizado usando JOIN)
-      const paymentsDeleted = await tx.$executeRaw`
-        DELETE FROM "TicketPayment" tp
-        USING "Ticket" t
-        WHERE tp."ticketId" = t.id 
-        AND t."sorteoId" = CAST(${id} AS uuid)
-      `;
+    const result = resultRaw[0]?.fn_revert_sorteo;
+    if (!result) {
+      throw new AppError("Error al revertir la evaluación del sorteo", 500);
+    }
 
-      // 3️⃣ Resetear jugadas (ganadoras y multiplicadores reventado)
-      await tx.$executeRaw`
-        UPDATE "Jugada" j
-        SET "isWinner" = false,
-            "payout" = 0,
-            "finalMultiplierX" = CASE WHEN j."type" = 'REVENTADO' THEN 0 ELSE j."finalMultiplierX" END,
-            "multiplierId" = CASE WHEN j."type" = 'REVENTADO' THEN NULL ELSE j."multiplierId" END
-        FROM "Ticket" t
-        WHERE j."ticketId" = t.id 
-        AND t."sorteoId" = CAST(${id} AS uuid)
-        AND j."deletedAt" IS NULL
-      `;
+    logger.info({
+      layer: "repository",
+      action: "SORTEO_REVERT_EVALUATION_DB",
+      payload: {
+        sorteoId: id,
+        paymentsDeleted: result.paymentsDeleted,
+      },
+    });
 
-      // 4️⃣ Resetear tickets (status ACTIVE, isWinner false, montos a 0)
-      await tx.$executeRaw`
-        UPDATE "Ticket"
-        SET "status" = 'ACTIVE',
-            "isWinner" = false,
-            "totalPayout" = 0,
-            "totalPaid" = 0,
-            "remainingAmount" = 0,
-            "lastPaymentAt" = NULL,
-            "paidById" = NULL,
-            "paymentMethod" = NULL,
-            "paymentNotes" = NULL,
-            "paymentHistory" = NULL
-        WHERE "sorteoId" = CAST(${id} AS uuid) 
-        AND "status" IN ('EVALUATED', 'PAID')
-        AND "deletedAt" IS NULL
-      `;
-
-      const updated = await tx.sorteo.update({
-        where: { id },
-        data: {
-          status: SorteoStatus.OPEN,
-          winningNumber: null,
-          extraOutcomeCode: null,
-          extraMultiplierX: null,
-          hasWinner: false,
-          extraMultiplier: { disconnect: true },
-        },
-        include: {
-          loteria: {
-            select: {
-              id: true,
-              name: true,
-              rulesJson: true,
-            },
-          },
-          extraMultiplier: {
-            select: { id: true, name: true, valueX: true },
+    return prisma.sorteo.findUniqueOrThrow({
+      where: { id },
+      include: {
+        loteria: {
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
           },
         },
-      });
-
-      logger.info({
-        layer: "repository",
-        action: "SORTEO_REVERT_EVALUATION_DB",
-        payload: {
-          sorteoId: id,
-          paymentsDeleted,
+        extraMultiplier: {
+          select: { id: true, name: true, valueX: true },
         },
-      });
-
-      return updated;
-    }, { timeout: 180000 }); // 3 minutos para sorteos con muchos tickets/jugadas
-
-    return sorteo;
+      },
+    });
   },
 
-  // ️ evaluate ahora paga jugadas y asigna multiplierId a REVENTADO ganadores
-  // Dentro de SorteoRepository
+  // ⚡ evaluate ahora ejecuta el procedimiento almacenado nativo que maneja toda la lógica contable en una sola transacción
   async evaluate(
     id: string,
     body: {
@@ -430,161 +358,33 @@ const SorteoRepository = {
       extraMultiplierId = null,
     } = body
 
-    // 1) Validaciones base
-    const existing = await prisma.sorteo.findUnique({
-      where: { id },
-      select: { id: true, loteriaId: true, status: true },
-    })
-    if (!existing) throw new AppError('Sorteo no encontrado', 404)
-    if (existing.status === SorteoStatus.EVALUATED || existing.status === SorteoStatus.CLOSED) {
-      throw new AppError('Sorteo ya evaluado/cerrado', 400)
+    const resultRaw = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT fn_evaluate_sorteo($1::uuid, $2, $3::uuid, $4, $5::uuid)`,
+      id,
+      winningNumber,
+      extraMultiplierId,
+      extraOutcomeCode,
+      null // p_user_id explícitamente null en este contexto
+    );
+
+    const result = resultRaw[0]?.fn_evaluate_sorteo;
+    if (!result) {
+      throw new AppError("Error al evaluar el sorteo en base de datos", 500);
     }
 
-    // 2) Validar y obtener X del multiplicador extra (si viene)
-    let extraX: number = 0
-    if (extraMultiplierId) {
-      extraX = await resolveExtraMultiplierX(extraMultiplierId, existing.loteriaId, prisma)
-    }
+    logger.info({
+      layer: 'repository',
+      action: 'SORTEO_EVALUATE_DB',
+      payload: {
+        sorteoId: id,
+        winningNumber,
+        extraMultiplierId,
+        winners: result.winnersCount,
+        hasWinner: result.hasWinner,
+      },
+    });
 
-    // 3) Transacción: actualizar sorteo, pagar jugadas y marcar tickets
-    await prisma.$transaction(async (tx) => {
-      // 3.0) Bloqueo pesimista nativo para asegurar aislamiento estricto (ACID)
-      await tx.$executeRaw`
-        SELECT id FROM "Sorteo"
-        WHERE id = CAST(${id} AS uuid)
-        FOR UPDATE
-      `;
-
-      // 3.1) Actualizar sorteo con snapshot del multiplicador extra y relación
-      await tx.sorteo.update({
-        where: { id },
-        data: {
-          status: SorteoStatus.EVALUATED,
-          winningNumber,
-          extraOutcomeCode,
-          ...(extraMultiplierId
-            ? { extraMultiplier: { connect: { id: extraMultiplierId } } }
-            : { extraMultiplier: { disconnect: true } }),
-          extraMultiplierX: extraX,
-        },
-      })
-
-      // Primero: NUMERO winners
-      await tx.$executeRaw`
-        UPDATE "Jugada" j
-        SET "isWinner" = true,
-            "payout" = j."amount" * j."finalMultiplierX"
-        FROM "Ticket" t
-        WHERE j."ticketId" = t.id 
-        AND t."sorteoId" = CAST(${id} AS uuid)
-        AND t."status" != 'CANCELLED'
-        AND t."isActive" = true
-        AND t."deletedAt" IS NULL
-        AND j."type" = 'NUMERO'
-        AND j."number" = ${winningNumber}
-        AND j."isActive" = true
-        AND j."deletedAt" IS NULL
-      `;
-
-      // Segundo: REVENTADO winners (si aplica)
-      if (extraX != null && extraX > 0) {
-        if (!extraMultiplierId) {
-          throw new AppError(
-            'Falta extraMultiplierId para asignar a jugadas REVENTADO ganadoras',
-            400
-          );
-        }
-        await tx.$executeRaw`
-          UPDATE "Jugada" j
-          SET "isWinner" = true,
-              "finalMultiplierX" = ${extraX},
-              "payout" = j."amount" * ${extraX},
-              "multiplierId" = CAST(${extraMultiplierId} AS uuid)
-          FROM "Ticket" t
-          WHERE j."ticketId" = t.id 
-          AND t."sorteoId" = CAST(${id} AS uuid)
-          AND t."status" != 'CANCELLED'
-          AND t."isActive" = true
-          AND t."deletedAt" IS NULL
-          AND j."type" = 'REVENTADO'
-          AND j."reventadoNumber" = ${winningNumber}
-          AND j."isActive" = true
-          AND j."deletedAt" IS NULL
-        `;
-      }
-
-      // 3.4) Marcar todos los tickets como EVALUATED e isWinner=false (base)
-      await tx.ticket.updateMany({
-        where: { 
-          sorteoId: id,
-          status: { notIn: ['CANCELLED', 'EXCLUDED'] },
-          deletedAt: null
-        },
-        data: { status: 'EVALUATED', isWinner: false },
-      });
-
-      // 3.5) Marcar tickets ganadores y calcular totalPayout en una sola operación
-      await tx.$executeRaw`
-        WITH Payouts AS (
-          SELECT "ticketId", SUM("payout") as total
-          FROM "Jugada"
-          WHERE "ticketId" IN (
-            SELECT id FROM "Ticket" 
-            WHERE "sorteoId" = CAST(${id} AS uuid)
-            AND "deletedAt" IS NULL
-          )
-          AND "isWinner" = true
-          AND "deletedAt" IS NULL
-          GROUP BY "ticketId"
-        )
-        UPDATE "Ticket" t
-        SET "isWinner" = true,
-            "totalPayout" = p.total,
-            "remainingAmount" = p.total,
-            "totalPaid" = 0
-        FROM Payouts p
-        WHERE t.id = p."ticketId"
-        AND t."deletedAt" IS NULL
-      `;
-
-      // 3.6) Actualizar sorteo con hasWinner
-      await tx.$executeRaw`
-        UPDATE "Sorteo"
-        SET "hasWinner" = EXISTS (
-          SELECT 1 FROM "Ticket" 
-          WHERE "sorteoId" = CAST(${id} AS uuid) 
-          AND "isWinner" = true
-          AND "deletedAt" IS NULL
-        )
-        WHERE id = CAST(${id} AS uuid)
-      `;
-
-      // 3.7) Obtener datos para el log
-      const winnersCount = await tx.ticket.count({
-        where: { sorteoId: id, isWinner: true }
-      });
-      const sorteoFinal = await tx.sorteo.findUnique({
-        where: { id },
-        select: { hasWinner: true }
-      });
-
-      // Log útil
-      logger.info({
-        layer: 'repository',
-        action: 'SORTEO_EVALUATE_DB',
-        payload: {
-          sorteoId: id,
-          winningNumber,
-          extraMultiplierId,
-          extraMultiplierX: extraX,
-          winners: winnersCount,
-          hasWinner: sorteoFinal?.hasWinner || false,
-        },
-      });
-    }, { timeout: 180000 });
-
-    // 4) Devolver sorteo ya evaluado con relaciones
-    return prisma.sorteo.findUnique({
+    return prisma.sorteo.findUniqueOrThrow({
       where: { id },
       include: {
         loteria: { select: { id: true, name: true } },

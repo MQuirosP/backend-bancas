@@ -2674,22 +2674,72 @@ export const TicketRepository = {
       ];
     }
 
-    // RESTAURACIÓN: Usar include en lugar de select para asegurar compatibilidad total con la APK
+    // OPTIMIZACIÓN: Usar select específico en lugar de include para evitar cargar campos pesados (como rulesJson de Loteria y contraseñas de User) a memoria, manteniendo compatibilidad de la APK.
     const [data, total] = await withConnectionRetry(
       () => Promise.all([
         prisma.ticket.findMany({
           where,
           skip,
           take: pageSize,
-          include: {
+          select: {
+            id: true,
+            ticketNumber: true,
+            loteriaId: true,
+            ventanaId: true,
+            vendedorId: true,
+            totalAmount: true,
+            status: true,
+            deletedAt: true,
+            deletedBy: true,
+            deletedReason: true,
+            createdAt: true,
+            updatedAt: true,
+            isActive: true,
+            isWinner: true,
+            sorteoId: true,
+            totalPayout: true,
+            totalPaid: true,
+            remainingAmount: true,
+            lastPaymentAt: true,
+            paidById: true,
+            paymentMethod: true,
+            paymentNotes: true,
+            paymentHistory: true,
+            clienteNombre: true,
+            businessDate: true,
+            totalCommission: true,
+            createdBy: true,
+            createdByRole: true,
+            isSorteoClosed: true,
+            idempotencyKey: true,
+            bancaId: true,
+            printCount: true,
+            loteria: {
+              select: { id: true, name: true }
+            },
+            sorteo: {
+              select: { id: true, name: true, scheduledAt: true, status: true }
+            },
+            ventana: {
+              select: { id: true, name: true }
+            },
+            vendedor: {
+              select: { id: true, name: true, code: true }
+            },
             jugadas: {
               where: { deletedAt: null },
+              select: {
+                id: true,
+                number: true,
+                amount: true,
+                type: true,
+                isWinner: true,
+                payout: true,
+                reventadoNumber: true,
+                finalMultiplierX: true
+              },
               orderBy: { id: "asc" },
-            },
-            loteria: true,
-            sorteo: true,
-            ventana: true,
-            vendedor: true,
+            }
           },
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         }),
