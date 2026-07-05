@@ -5,6 +5,23 @@
 
 ---
 
+## v1.2.2 - Draw Auto-Generation Date Fix
+
+ **Fecha:** 2026-07-05
+ **Rama:** `master`
+
+### 🛠️ Bug Fixes (CRÍTICOS)
+
+- **Desfase en la Autogeneración Diaria de Sorteos**
+  - Se corrigió un problema en el servicio `SorteosAutoService` donde el cálculo de la variable `minDaysAhead` (antes fija en `1`) provocaba que la autogeneración a la 1:00 AM creara los sorteos del día siguiente en lugar de los del propio día.
+  - Ahora `minDaysAhead` se define dinámicamente como `Math.max(0, daysAhead - 1)`. En la ejecución diaria (`daysAhead = 1`), esto evalúa a `0`, lo que asegura que el sistema genere los sorteos para el mismo día cuando el último sorteo de la base de datos es del pasado (ayer), evitando desfases por adelanto en el calendario.
+
+### 📁 Archivos modificados
+
+- `src/api/v1/services/sorteosAuto.service.ts` — Lógica dinámica para `minDaysAhead`
+
+---
+
 ## v1.2.1 - Date Filter Fix, DB Index Analysis & Bilingual Docs
 
  **Fecha:** 2026-06-21
