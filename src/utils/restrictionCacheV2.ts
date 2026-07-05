@@ -190,8 +190,6 @@ class RestrictionCacheV2 {
    * Evict old entries when memory limit is exceeded
    */
   private async evictOldEntries(): Promise<void> {
-    // This is a simplified eviction strategy
-    // In a real implementation, you'd use LRU or similar
     logger.warn({
       layer: 'cache',
       action: 'MEMORY_LIMIT_EXCEEDED_EVICTING',
@@ -201,7 +199,22 @@ class RestrictionCacheV2 {
       },
     });
 
-    // Reset memory tracking (simplified)
+    // Purgar de forma efectiva para liberar Heap
+    this.dependencyGraph.clear();
+    this.warmingQueue.clear();
+
+    try {
+      await CacheService.delPattern('cutoff:v2:*');
+      await CacheService.delPattern('restrictions:v2:*');
+    } catch (err: any) {
+      logger.error({
+        layer: 'cache',
+        action: 'EVICT_ERROR_V2',
+        payload: { error: err.message }
+      });
+    }
+
+    // Reset memory tracking
     this.memoryUsage = 0;
   }
 
@@ -425,6 +438,23 @@ class RestrictionCacheV2 {
   }
 
   /**
+   * Purgar dependencias obsoletas del grafo
+   */
+  private async pruneDependencyGraph(): Promise<void> {
+    const keys = Array.from(this.dependencyGraph.keys());
+    for (const key of keys) {
+      try {
+        const entry = await CacheService.get(key);
+        if (!entry) {
+          this.dependencyGraph.delete(key);
+        }
+      } catch {
+        // Ignorar error de obtención
+      }
+    }
+  }
+
+  /**
    * Start background warming process
    * ✅ PÚBLICO: Debe llamarse explícitamente desde server.ts
    */
@@ -454,6 +484,8 @@ class RestrictionCacheV2 {
         this.warmingQueue.clear();
         await this.warmCache(keys);
       }
+      // Purgar dependencias obsoletas para evitar fugas en Heap
+      await this.pruneDependencyGraph().catch(() => {});
     }, 30000); // Warm every 30 seconds
 
     logger.info({

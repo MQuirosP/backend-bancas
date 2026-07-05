@@ -178,20 +178,11 @@ export async function processMonthlyClosingForVendedores(closingMonth: string): 
     let errors = 0;
 
     try {
-        const vendedores = await prisma.user.findMany({
+        const totalVendedores = await prisma.user.count({
             where: {
                 role: "VENDEDOR",
                 isActive: true,
                 deletedAt: null,
-            },
-            select: {
-                id: true,
-                ventanaId: true,
-                ventana: {
-                    select: {
-                        bancaId: true,
-                    },
-                },
             },
         });
 
@@ -200,42 +191,75 @@ export async function processMonthlyClosingForVendedores(closingMonth: string): 
             action: "MONTHLY_CLOSING_START_VENDEDORES",
             payload: {
                 closingMonth,
-                totalVendedores: vendedores.length,
+                totalVendedores,
+                batchSize: 100,
             },
         });
 
-        for (const vendedor of vendedores) {
-            try {
-                const balance = await calculateRealMonthBalance(
-                    closingMonth,
-                    "vendedor",
-                    vendedor.ventanaId || undefined,
-                    vendedor.id,
-                    vendedor.ventana?.bancaId || undefined
-                );
+        let skip = 0;
+        let hasMore = true;
+        const BATCH_SIZE = 100;
 
-                await saveMonthlyClosingBalance(
-                    closingMonth,
-                    "vendedor",
-                    balance,
-                    vendedor.ventanaId || undefined,
-                    vendedor.id,
-                    vendedor.ventana?.bancaId || undefined
-                );
-
-                success++;
-            } catch (error: any) {
-                errors++;
-                logger.error({
-                    layer: "service",
-                    action: "MONTHLY_CLOSING_VENDEDOR_ERROR",
-                    payload: {
-                        closingMonth,
-                        vendedorId: vendedor.id,
-                        error: error.message,
+        while (hasMore) {
+            const vendedores = await prisma.user.findMany({
+                where: {
+                    role: "VENDEDOR",
+                    isActive: true,
+                    deletedAt: null,
+                },
+                select: {
+                    id: true,
+                    ventanaId: true,
+                    ventana: {
+                        select: {
+                            bancaId: true,
+                        },
                     },
-                });
+                },
+                take: BATCH_SIZE,
+                skip,
+                orderBy: {
+                    id: "asc", // Orden consistente para paginación segura
+                },
+            });
+
+            hasMore = vendedores.length === BATCH_SIZE;
+
+            for (const vendedor of vendedores) {
+                try {
+                    const balance = await calculateRealMonthBalance(
+                        closingMonth,
+                        "vendedor",
+                        vendedor.ventanaId || undefined,
+                        vendedor.id,
+                        vendedor.ventana?.bancaId || undefined
+                    );
+
+                    await saveMonthlyClosingBalance(
+                        closingMonth,
+                        "vendedor",
+                        balance,
+                        vendedor.ventanaId || undefined,
+                        vendedor.id,
+                        vendedor.ventana?.bancaId || undefined
+                    );
+
+                    success++;
+                } catch (error: any) {
+                    errors++;
+                    logger.error({
+                        layer: "service",
+                        action: "MONTHLY_CLOSING_VENDEDOR_ERROR",
+                        payload: {
+                            closingMonth,
+                            vendedorId: vendedor.id,
+                            error: error.message,
+                        },
+                    });
+                }
             }
+
+            skip += BATCH_SIZE;
         }
 
         logger.info({

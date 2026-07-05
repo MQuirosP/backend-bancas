@@ -3,8 +3,20 @@ import logger from '../core/logger';
 import prisma from '../core/prismaClient';
 
 const L1_CACHE = new Map<string, { data: any; expiresAt: number }>();
+const MAX_L1_SIZE = 1000;
 const L1_TTL_MS = 30 * 1000; // 30 seconds
 const L2_TTL_SECONDS = 300; // 5 minutes
+
+// Limpieza periódica preventiva de entradas expiradas (cada 5 minutos)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of L1_CACHE.entries()) {
+    if (now > entry.expiresAt) {
+      L1_CACHE.delete(key);
+    }
+  }
+}, 300_000).unref();
+
 
 export const exclusionCacheService = {
   /**
@@ -28,6 +40,9 @@ export const exclusionCacheService = {
         if (cached) {
           const data = JSON.parse(cached);
           // Set to L1
+          if (L1_CACHE.size >= MAX_L1_SIZE) {
+            L1_CACHE.clear();
+          }
           L1_CACHE.set(cacheKey, { data, expiresAt: now + L1_TTL_MS });
           return data;
         }
@@ -47,6 +62,9 @@ export const exclusionCacheService = {
     });
 
     // 4. Update Caches
+    if (L1_CACHE.size >= MAX_L1_SIZE) {
+      L1_CACHE.clear();
+    }
     L1_CACHE.set(cacheKey, { data: exclusions, expiresAt: now + L1_TTL_MS });
     if (redis) {
       try {

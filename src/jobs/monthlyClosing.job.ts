@@ -457,6 +457,23 @@ export function startMonthlyClosingJob(): void {
     const actualDelay = Math.min(delayMs, maxDelay);
     
     monthlyClosingTimer = setTimeout(() => {
+        // Verificar si la fecha actual en Costa Rica corresponde al Día 1
+        const nowCR = crDateService.dateUTCToCRString(new Date());
+        const isDayOne = nowCR.endsWith('-01');
+
+        if (!isDayOne) {
+            logger.info({
+                layer: 'job',
+                action: 'MONTHLY_CLOSING_JOB_PREMATURE_FIRE',
+                payload: {
+                    nowCR,
+                    message: 'Timer fired prematurely (32-bit limit). Rescheduling without execution.'
+                }
+            });
+            scheduleNextMonthlyClosing();
+            return;
+        }
+
         // Execute immediately
         executeMonthlyClosing().catch((error) => {
             logger.error({
@@ -491,6 +508,23 @@ function scheduleNextMonthlyClosing(): void {
     });
 
     monthlyClosingTimer = setTimeout(() => {
+        // Verificar si la fecha actual en Costa Rica corresponde al Día 1
+        const nowCR = crDateService.dateUTCToCRString(new Date());
+        const isDayOne = nowCR.endsWith('-01');
+
+        if (!isDayOne) {
+            logger.info({
+                layer: 'job',
+                action: 'MONTHLY_CLOSING_JOB_PREMATURE_FIRE',
+                payload: {
+                    nowCR,
+                    message: 'Timer fired prematurely (32-bit limit). Rescheduling without execution.'
+                }
+            });
+            scheduleNextMonthlyClosing();
+            return;
+        }
+
         executeMonthlyClosing()
             .then(() => {
                 // Reschedule for next month after successful execution
