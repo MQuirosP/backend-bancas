@@ -129,3 +129,6 @@ src/generated/
 redis-cli.exe
 *.exe
 
+# Clinic.js output
+.clinic/
+*.clinic-doctor
