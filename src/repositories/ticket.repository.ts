@@ -305,6 +305,7 @@ function calculatePriorityScore(rule: RestrictionRuleWithRelations): number {
 // ────────────────────────────────────────────────────────────────────────────────
 
 async function resolveBaseMultiplierX(
+  tx: Prisma.TransactionClient,
   args: {
     bancaId: string;
     loteriaId: string;
@@ -320,7 +321,7 @@ async function resolveBaseMultiplierX(
     async () => {
       // 0) Override por usuario (directo en X) - HIGHEST PRIORITY
       const [userOverride, ventanaOverride, bls, lmBase, lmNumero, lot] = await Promise.all([
-        prisma.multiplierOverride.findFirst({
+        tx.multiplierOverride.findFirst({
           where: {
             scope: "USER",
             userId,
@@ -331,7 +332,7 @@ async function resolveBaseMultiplierX(
           select: { baseMultiplierX: true },
         }),
         // 0.5) Override por ventana - SECOND PRIORITY
-        prisma.multiplierOverride.findFirst({
+        tx.multiplierOverride.findFirst({
           where: {
             scope: "VENTANA",
             ventanaId,
@@ -342,23 +343,23 @@ async function resolveBaseMultiplierX(
           select: { baseMultiplierX: true },
         }),
         // 1) Config por banca/lotería
-        prisma.bancaLoteriaSetting.findUnique({
+        tx.bancaLoteriaSetting.findUnique({
           where: { bancaId_loteriaId: { bancaId, loteriaId } },
           select: { baseMultiplierX: true },
         }),
         // 2) Multiplicador de la Lotería (tabla loteriaMultiplier) - Base
-        prisma.loteriaMultiplier.findFirst({
+        tx.loteriaMultiplier.findFirst({
           where: { loteriaId, isActive: true, name: "Base" },
           select: { valueX: true },
         }),
         // 2) Multiplicador de la Lotería (tabla loteriaMultiplier) - NUMERO
-        prisma.loteriaMultiplier.findFirst({
+        tx.loteriaMultiplier.findFirst({
           where: { loteriaId, isActive: true, kind: "NUMERO" },
           orderBy: { createdAt: "asc" },
           select: { valueX: true, name: true },
         }),
         // 3) Fallback: rulesJson en Lotería
-        prisma.loteria.findUnique({
+        tx.loteria.findUnique({
           where: { id: loteriaId },
           select: { rulesJson: true },
         }),
@@ -607,6 +608,7 @@ export const TicketRepository = {
         const bancaId = ventana.bancaId;
 
         const { valueX: effectiveBaseX, source } = await resolveBaseMultiplierX(
+          tx,
           {
             bancaId,
             loteriaId,
@@ -1570,7 +1572,7 @@ export const TicketRepository = {
                 select: { id: true, commissionPolicyJson: true },
               }),
             preFetchedBancaId
-              ? resolveBaseMultiplierX({
+              ? resolveBaseMultiplierX(tx, {
                 bancaId: preFetchedBancaId,
                 loteriaId,
                 userId,
@@ -1679,7 +1681,7 @@ export const TicketRepository = {
         //    Si no (porque no había preFetch de ventana), lo calculamos ahora con bancaId real.
         const { valueX: effectiveBaseX, source } = preResolvedMultiplier
           ? preResolvedMultiplier
-          : await resolveBaseMultiplierX({
+          : await resolveBaseMultiplierX(tx, {
             bancaId,
             loteriaId,
             userId,

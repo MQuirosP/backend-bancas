@@ -295,8 +295,10 @@ export class CacheService {
                 // 3. Si no hay caché, ejecutar fetcher
                 const result = await fetcher();
 
-                // 4. Guardar en caché asíncronamente
-                this.set(key, result, ttlSeconds, tags).catch(() => {});
+                // 4. Guardar en caché y asegurar persistencia en Redis L2
+                await this.set(key, result, ttlSeconds, tags).catch((err) => {
+                    logger.warn({ layer: 'cache', action: 'WRAP_SET_ERROR', payload: { key, error: err.message } });
+                });
 
                 return result;
             } finally {
