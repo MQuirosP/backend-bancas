@@ -790,30 +790,22 @@ export const VentasService = {
 
           const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
             WITH filtered_tickets AS NOT MATERIALIZED (
-              SELECT t.id, t."ventanaId", t."totalAmount", t."isWinner", t.status
+              SELECT t.id, t."ventanaId", t."totalAmount", t."isWinner", t.status, t."totalPayout", t."totalCommission"
               FROM "Ticket" t
               WHERE ${ticketWhere}
-            ),
-            jugada_stats AS (
-              SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
-              FROM "Jugada" j
-              JOIN filtered_tickets ft ON ft.id = j."ticketId"
-              WHERE j."deletedAt" IS NULL
-              GROUP BY j."ticketId"
             )
             SELECT
                 v.id as key,
                 v.name as name,
                 SUM(ft."totalAmount") as "ventasTotal",
                 COUNT(ft.id) as "ticketsCount",
-                SUM(COALESCE(js.payout, 0)) as "payoutTotal",
-                SUM(ft."totalAmount") - SUM(COALESCE(js.payout, 0)) as neto,
-                SUM(COALESCE(js.commission, 0)) as "commissionTotal",
+                SUM(COALESCE(ft."totalPayout", 0)) as "payoutTotal",
+                SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)) as neto,
+                SUM(COALESCE(ft."totalCommission", 0)) as "commissionTotal",
                 COUNT(CASE WHEN ft."isWinner" THEN 1 END) as "totalWinningTickets",
                 COUNT(CASE WHEN ft.status = 'PAID' THEN 1 END) as "totalPaidTickets"
             FROM "Ventana" v
             INNER JOIN filtered_tickets ft ON ft."ventanaId" = v.id
-            LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
             WHERE 1=1
               ${searchFilter}
             GROUP BY v.id, v.name
@@ -853,23 +845,9 @@ export const VentasService = {
 
           const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
             WITH filtered_tickets AS NOT MATERIALIZED (
-              SELECT t.id, t."vendedorId", t."ventanaId", t."totalAmount", t."isWinner", t.status, t."createdAt", t."businessDate"
+              SELECT t.id, t."vendedorId", t."ventanaId", t."totalAmount", t."isWinner", t.status, t."createdAt", t."businessDate", t."totalPayout", t."totalPaid", t."totalCommission"
               FROM "Ticket" t
               WHERE ${ticketWhere}
-            ),
-            jugada_stats AS (
-              SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
-              FROM "Jugada" j
-              JOIN filtered_tickets ft ON ft.id = j."ticketId"
-              WHERE j."deletedAt" IS NULL
-              GROUP BY j."ticketId"
-            ),
-            payment_stats AS (
-              SELECT tp."ticketId", SUM(tp."amountPaid") as paid
-              FROM "TicketPayment" tp
-              JOIN filtered_tickets ft ON ft.id = tp."ticketId"
-              WHERE tp."isReversed" = false
-              GROUP BY tp."ticketId"
             )
             SELECT
                 u.id as key,
@@ -879,22 +857,20 @@ export const VentasService = {
                 v.name as "ventanaName",
                 SUM(ft."totalAmount") as "ventasTotal",
                 COUNT(ft.id) as "ticketsCount",
-                SUM(COALESCE(js.payout, 0)) as "payoutTotal",
-                SUM(ft."totalAmount") - SUM(COALESCE(js.payout, 0)) - SUM(COALESCE(js.commission, 0)) as neto,
-                SUM(COALESCE(js.commission, 0)) as "commissionTotal",
+                SUM(COALESCE(ft."totalPayout", 0)) as "payoutTotal",
+                SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)) - SUM(COALESCE(ft."totalCommission", 0)) as neto,
+                SUM(COALESCE(ft."totalCommission", 0)) as "commissionTotal",
                 COUNT(CASE WHEN ft."isWinner" THEN 1 END) as "totalWinningTickets",
                 COUNT(CASE WHEN ft.status = 'PAID' THEN 1 END) as "totalPaidTickets",
                 COUNT(CASE WHEN ft."isWinner" AND ft.status != 'PAID' THEN 1 END) as "unpaidTicketsCount",
-                SUM(COALESCE(ps.paid, 0)) as "totalPaid",
-                SUM(CASE WHEN ft."isWinner" THEN GREATEST(0, COALESCE(js.payout, 0) - COALESCE(ps.paid, 0)) ELSE 0 END) as "pendingPayment",
+                SUM(COALESCE(ft."totalPaid", 0)) as "totalPaid",
+                SUM(CASE WHEN ft."isWinner" THEN GREATEST(0, COALESCE(ft."totalPayout", 0) - COALESCE(ft."totalPaid", 0)) ELSE 0 END) as "pendingPayment",
                 MAX(ft."createdAt") as "lastTicketAt",
                 MIN(ft."createdAt") as "firstTicketAt",
                 COUNT(DISTINCT ft."businessDate") as "activityDays"
             FROM "User" u
             INNER JOIN filtered_tickets ft ON ft."vendedorId" = u.id
             INNER JOIN "Ventana" v ON v.id = ft."ventanaId"
-            LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
-            LEFT JOIN payment_stats ps ON ps."ticketId" = ft.id
             WHERE 1=1
               ${searchFilter}
             GROUP BY u.id, u.name, u.code, u."isActive", v.name
@@ -942,30 +918,22 @@ export const VentasService = {
 
           const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
             WITH filtered_tickets AS NOT MATERIALIZED (
-              SELECT t.id, t."loteriaId", t."ventanaId", t."totalAmount", t."isWinner", t.status
+              SELECT t.id, t."loteriaId", t."ventanaId", t."totalAmount", t."isWinner", t.status, t."totalPayout", t."totalCommission"
               FROM "Ticket" t
               WHERE ${ticketWhere}
-            ),
-            jugada_stats AS (
-              SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
-              FROM "Jugada" j
-              JOIN filtered_tickets ft ON ft.id = j."ticketId"
-              WHERE j."deletedAt" IS NULL
-              GROUP BY j."ticketId"
             )
             SELECT
                 l.id as key,
                 l.name as name,
                 SUM(ft."totalAmount") as "ventasTotal",
                 COUNT(ft.id) as "ticketsCount",
-                SUM(COALESCE(js.payout, 0)) as "payoutTotal",
-                SUM(ft."totalAmount") - SUM(COALESCE(js.payout, 0)) as neto,
-                SUM(COALESCE(js.commission, 0)) as "commissionTotal",
+                SUM(COALESCE(ft."totalPayout", 0)) as "payoutTotal",
+                SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)) as neto,
+                SUM(COALESCE(ft."totalCommission", 0)) as "commissionTotal",
                 COUNT(CASE WHEN ft."isWinner" THEN 1 END) as "totalWinningTickets",
                 COUNT(CASE WHEN ft.status = 'PAID' THEN 1 END) as "totalPaidTickets"
             FROM "Loteria" l
             INNER JOIN filtered_tickets ft ON ft."loteriaId" = l.id
-            LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
             WHERE 1=1
               ${searchFilter}
             GROUP BY l.id, l.name
@@ -1003,30 +971,22 @@ export const VentasService = {
 
           const rawResult = await prisma.$queryRaw<any[]>(Prisma.sql`
             WITH filtered_tickets AS NOT MATERIALIZED (
-              SELECT t.id, t."sorteoId", t."ventanaId", t."totalAmount", t."isWinner", t.status
+              SELECT t.id, t."sorteoId", t."ventanaId", t."totalAmount", t."isWinner", t.status, t."totalPayout", t."totalCommission"
               FROM "Ticket" t
               WHERE ${ticketWhere}
-            ),
-            jugada_stats AS (
-              SELECT j."ticketId", SUM(j.payout) as payout, SUM(j."commissionAmount") as commission
-              FROM "Jugada" j
-              JOIN filtered_tickets ft ON ft.id = j."ticketId"
-              WHERE j."deletedAt" IS NULL
-              GROUP BY j."ticketId"
             )
             SELECT
                 s.id as key,
                 s.name as name,
                 SUM(ft."totalAmount") as "ventasTotal",
                 COUNT(ft.id) as "ticketsCount",
-                SUM(COALESCE(js.payout, 0)) as "payoutTotal",
-                SUM(ft."totalAmount") - SUM(COALESCE(js.payout, 0)) as neto,
-                SUM(COALESCE(js.commission, 0)) as "commissionTotal",
+                SUM(COALESCE(ft."totalPayout", 0)) as "payoutTotal",
+                SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)) as neto,
+                SUM(COALESCE(ft."totalCommission", 0)) as "commissionTotal",
                 COUNT(CASE WHEN ft."isWinner" THEN 1 END) as "totalWinningTickets",
                 COUNT(CASE WHEN ft.status = 'PAID' THEN 1 END) as "totalPaidTickets"
             FROM "Sorteo" s
             INNER JOIN filtered_tickets ft ON ft."sorteoId" = s.id
-            LEFT JOIN jugada_stats js ON js."ticketId" = ft.id
             WHERE 1=1
               ${searchFilter}
             GROUP BY s.id, s.name
