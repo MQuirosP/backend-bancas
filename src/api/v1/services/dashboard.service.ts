@@ -650,26 +650,26 @@ export const DashboardService = {
         `
       );
 
-      // Obtener de forma rápida los ganadores mediante agrupación indexada sobre Ticket
-      const winnerCounts = await prisma.ticket.groupBy({
-        by: ['ventanaId'],
-        where: {
-          bancaId: filters.bancaId || undefined,
-          ventanaId: filters.ventanaId || undefined,
-          businessDate: { gte: filters.fromDate, lte: filters.toDate },
-          isWinner: true,
-          deletedAt: null,
-          isActive: true,
-        },
-        _count: {
-          id: true
-        }
-      });
+      // ⚡ OPTIMIZACIÓN: Contar ganadores con SQL crudo para forzar uso del índice parcial idx_ticket_winner_status_date
+      const winnerCountRows = await prisma.$queryRaw<Array<{ ventana_id: string; count: number }>>(
+        Prisma.sql`
+          SELECT "ventanaId" AS ventana_id, COUNT(*)::int AS count
+          FROM "Ticket"
+          WHERE "isWinner" = true
+            AND "deletedAt" IS NULL
+            AND "isActive" = true
+            AND "businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+            ${filters.bancaId ? Prisma.sql`AND "bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+            ${filters.vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+          GROUP BY "ventanaId"
+        `
+      );
 
       const winnersMap = new Map<string, number>();
-      for (const w of winnerCounts) {
-        if (w.ventanaId) {
-          winnersMap.set(w.ventanaId, w._count.id);
+      for (const w of winnerCountRows) {
+        if (w.ventana_id) {
+          winnersMap.set(w.ventana_id, Number(w.count) || 0);
         }
       }
 
@@ -1671,17 +1671,21 @@ export const DashboardService = {
         `
       );
 
-      const winningCount = await prisma.ticket.count({
-        where: {
-          bancaId: filters.bancaId || undefined,
-          ventanaId: filters.ventanaId || undefined,
-          vendedorId: filters.vendedorId || undefined,
-          businessDate: { gte: filters.fromDate, lte: filters.toDate },
-          isWinner: true,
-          deletedAt: null,
-          isActive: true,
-        }
-      });
+      // ⚡ OPTIMIZACIÓN: Contar ganadores con SQL crudo para forzar uso del índice parcial idx_ticket_winner_status_date
+      const winningCountRows = await prisma.$queryRaw<Array<{ count: number }>>(
+        Prisma.sql`
+          SELECT COUNT(*)::int AS count
+          FROM "Ticket"
+          WHERE "isWinner" = true
+            AND "deletedAt" IS NULL
+            AND "isActive" = true
+            AND "businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+            ${filters.bancaId ? Prisma.sql`AND "bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+            ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+            ${filters.vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+        `
+      );
+      const winningCount = Number(winningCountRows[0]?.count) || 0;
 
       const row = statementSummaryRows[0] || {
         total_sales: 0,
@@ -2785,20 +2789,21 @@ export const DashboardService = {
         `
       );
 
-      const winningTicketsCount = await prisma.ticket.count({
-        where: {
-          bancaId: previousFilters.bancaId || undefined,
-          ventanaId: previousFilters.ventanaId || undefined,
-          vendedorId: previousFilters.vendedorId || undefined,
-          businessDate: {
-            gte: previousFromDate,
-            lte: previousToDate,
-          },
-          isWinner: true,
-          deletedAt: null,
-          isActive: true,
-        }
-      });
+      // ⚡ OPTIMIZACIÓN: Contar ganadores con SQL crudo para forzar uso del índice parcial idx_ticket_winner_status_date
+      const winningTicketsCountRows = await prisma.$queryRaw<Array<{ count: number }>>(
+        Prisma.sql`
+          SELECT COUNT(*)::int AS count
+          FROM "Ticket"
+          WHERE "isWinner" = true
+            AND "deletedAt" IS NULL
+            AND "isActive" = true
+            AND "businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+            ${previousFilters.bancaId ? Prisma.sql`AND "bancaId" = CAST(${previousFilters.bancaId} AS uuid)` : Prisma.empty}
+            ${previousFilters.ventanaId ? Prisma.sql`AND "ventanaId" = CAST(${previousFilters.ventanaId} AS uuid)` : Prisma.empty}
+            ${previousFilters.vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${previousFilters.vendedorId} AS uuid)` : Prisma.empty}
+        `
+      );
+      const winningTicketsCount = Number(winningTicketsCountRows[0]?.count) || 0;
 
       if (stats && stats[0]) {
         row = {
