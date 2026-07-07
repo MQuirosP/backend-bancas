@@ -641,6 +641,7 @@ export const UserService = {
     
     if (hasCriticalChanges) {
       await CacheService.invalidateTag(`user:${id}`);
+      await CacheService.invalidateTag(`user-bancas:${id}`);
       await CacheService.del(`auth:session:${id}`); // Fuerza invalidación directa de L1 y L2 para la sesión
     }
 

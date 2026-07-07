@@ -5,6 +5,7 @@ import { AppError } from "../core/errors";
 import { Prisma } from "../generated/prisma/client";
 import { CreateBancaInput, UpdateBancaInput } from "../api/v1/dto/banca.dto";
 import { invalidateRestrictionCaches } from "../utils/restrictionCache";
+import { CacheService } from '../core/cache.service';
 
 // Mapeadores DTO -> Prisma
 const toPrismaCreate = (d: CreateBancaInput): Prisma.BancaCreateInput => ({
@@ -140,6 +141,9 @@ const BancaRepository = {
       data: toPrismaUpdate(data),
     });
     
+    // Invalida caché de metadatos de la banca
+    await CacheService.invalidateTag(`banca:${id}`).catch(() => {});
+
     logger.info({
       layer: "repository",
       action: "BANCA_UPDATE_DB",
@@ -158,6 +162,9 @@ const BancaRepository = {
         isActive: false,
       },
     });
+
+    // Invalida caché de metadatos de la banca
+    await CacheService.invalidateTag(`banca:${id}`).catch(() => {});
 
     logger.warn({
       layer: "repository",
@@ -240,6 +247,9 @@ const BancaRepository = {
         isActive: true,
       },
     });
+
+    // Invalida caché de metadatos de la banca
+    await CacheService.invalidateTag(`banca:${id}`).catch(() => {});
 
     logger.info({
       layer: "repository",

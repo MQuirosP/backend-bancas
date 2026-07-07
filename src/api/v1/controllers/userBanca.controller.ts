@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../../../core/prismaClient';
 import { AppError } from '../../../core/errors';
+import { CacheService } from '../../../core/cache.service';
 
 export const UserBancaController = {
   async list(req: Request, res: Response) {
@@ -40,6 +41,9 @@ export const UserBancaController = {
       });
     });
 
+    // Invalida la relación asignada de UserBanca en caché
+    await CacheService.invalidateTag(`user-bancas:${userId}`).catch(() => {});
+
     res.status(201).json(result);
   },
 
@@ -70,6 +74,9 @@ export const UserBancaController = {
       });
     });
 
+    // Invalida la relación asignada de UserBanca en caché
+    await CacheService.invalidateTag(`user-bancas:${userId}`).catch(() => {});
+
     res.json({ message: 'Banca predeterminada actualizada exitosamente' });
   },
 
@@ -90,6 +97,9 @@ export const UserBancaController = {
     await prisma.userBanca.delete({
       where: { userId_bancaId: { userId, bancaId } }
     });
+
+    // Invalida la relación asignada de UserBanca en caché
+    await CacheService.invalidateTag(`user-bancas:${userId}`).catch(() => {});
 
     res.json({ message: 'Banca removida exitosamente' });
   }

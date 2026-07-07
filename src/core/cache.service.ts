@@ -312,12 +312,15 @@ export class CacheService {
             } while (cursor !== '0');
 
             if (allKeys.length > 0) {
+                const prefix = (redis as any).options?.keyPrefix || '';
+                const cleanKeys = allKeys.map(k => prefix && k.startsWith(prefix) ? k.slice(prefix.length) : k);
+
                 const BATCH_SIZE = 100;
-                for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
-                    const batch = allKeys.slice(i, i + BATCH_SIZE);
+                for (let i = 0; i < cleanKeys.length; i += BATCH_SIZE) {
+                    const batch = cleanKeys.slice(i, i + BATCH_SIZE);
                     await redis.del(...batch);
                 }
-                return allKeys;
+                return cleanKeys;
             }
             return [];
         } catch (error) {

@@ -4,6 +4,7 @@ import logger from '../core/logger';
 import { AppError } from '../core/errors';
 import { AuthenticatedRequest, BancaContext } from '../core/types';
 import { Role } from '../generated/prisma/client';
+import { CacheService } from '../core/cache.service';
 
 /**
  * Middleware para establecer el contexto de banca activa (filtro de vista)
@@ -36,13 +37,8 @@ export async function bancaContextMiddleware(
       const headerUpper = req.headers['X-Active-Banca-Id'] as string | undefined;
       const requestedBancaId = (headerLower || headerUpper || undefined)?.trim();
 
-      // Obtener todas las bancas asignadas al usuario en UserBanca
-      const userBancas = await prisma.userBanca.findMany({
-        where: { userId: user.id },
-        select: { bancaId: true },
-      });
-
-      const assignedBancaIds = userBancas.map(ub => ub.bancaId);
+      // Obtener todas las bancas asignadas al usuario en UserBanca - usando Cache-Aside
+      const assignedBancaIds = await getCachedUserBancaIds(user.id);
 
       if (assignedBancaIds.length === 0) {
         // Fallback: si no tiene bancas en UserBanca, intentar usar la de su perfil (si existe)
@@ -141,14 +137,8 @@ export async function bancaContextMiddleware(
     let hasAccess = false;
 
     if (requestedBancaId) {
-      // Solo validar que la banca existe y está activa (no validar asignación)
-      const banca = await prisma.banca.findUnique({
-        where: { id: requestedBancaId },
-        select: {
-          id: true,
-          isActive: true,
-        },
-      });
+      // Solo validar que la banca existe y está activa (no validar asignación) - usando Cache-Aside
+      const banca = await getCachedBancaMeta(requestedBancaId);
 
       if (banca && banca.isActive) {
         activeBancaId = requestedBancaId;
@@ -177,6 +167,83 @@ export async function bancaContextMiddleware(
   }
 }
 
+interface BancaMeta {
+  id: string;
+  isActive: boolean;
+}
+
+/**
+ * Obtener metadatos de la banca usando Cache-Aside (Redis)
+ * con fallback directo a PostgreSQL vía Prisma ante cualquier fallo de Redis.
+ */
+async function getCachedBancaMeta(bancaId: string): Promise<BancaMeta | null> {
+  const cacheKey = `banca:meta:${bancaId}`;
+  try {
+    return await CacheService.wrap<BancaMeta | null>(
+      cacheKey,
+      async () => {
+        return await prisma.banca.findUnique({
+          where: { id: bancaId },
+          select: {
+            id: true,
+            isActive: true,
+          },
+        });
+      },
+      3600, // 1 hora (3600 segundos)
+      [`banca:${bancaId}`] // Tag de invalidación
+    );
+  } catch (error: any) {
+    logger.warn({
+      layer: 'middleware',
+      action: 'REDIS_BANCA_META_FALLBACK',
+      payload: { bancaId, error: error.message, fallback: 'Consultando DB directamente' },
+    });
+    // Fallback de resiliencia
+    return await prisma.banca.findUnique({
+      where: { id: bancaId },
+      select: {
+        id: true,
+        isActive: true,
+      },
+    });
+  }
+}
+
+/**
+ * Obtener listado de bancas asignadas a un usuario usando Cache-Aside (Redis)
+ * con fallback directo a PostgreSQL vía Prisma.
+ */
+async function getCachedUserBancaIds(userId: string): Promise<string[]> {
+  const cacheKey = `user:bancas:${userId}`;
+  try {
+    return await CacheService.wrap<string[]>(
+      cacheKey,
+      async () => {
+        const userBancas = await prisma.userBanca.findMany({
+          where: { userId },
+          select: { bancaId: true },
+        });
+        return userBancas.map(ub => ub.bancaId);
+      },
+      3600, // 1 hora (3600 segundos)
+      [`user-bancas:${userId}`] // Tag de invalidación
+    );
+  } catch (error: any) {
+    logger.warn({
+      layer: 'middleware',
+      action: 'REDIS_USER_BANCAS_FALLBACK',
+      payload: { userId, error: error.message, fallback: 'Consultando DB directamente' },
+    });
+    // Fallback de resiliencia
+    const userBancas = await prisma.userBanca.findMany({
+      where: { userId },
+      select: { bancaId: true },
+    });
+    return userBancas.map(ub => ub.bancaId);
+  }
+}
+
 /**
  * Helper para obtener la banca activa del contexto
  */
@@ -186,18 +253,12 @@ export function getActiveBancaId(req: AuthenticatedRequest): string | null {
 
 /**
  * Helper para validar que una banca existe y está activa
- * (Ya no valida asignación, solo existencia y estado)
+ * (Ya no valida asignación, solo existencia y estado - usando Cache-Aside)
  */
 export async function validateBancaExists(
   bancaId: string
 ): Promise<boolean> {
-  const banca = await prisma.banca.findUnique({
-    where: { id: bancaId },
-    select: {
-      id: true,
-      isActive: true,
-    },
-  });
+  const banca = await getCachedBancaMeta(bancaId);
   return !!banca && banca.isActive;
 }
 
