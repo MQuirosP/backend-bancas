@@ -305,7 +305,6 @@ function calculatePriorityScore(rule: RestrictionRuleWithRelations): number {
 // ────────────────────────────────────────────────────────────────────────────────
 
 async function resolveBaseMultiplierX(
-  tx: Prisma.TransactionClient,
   args: {
     bancaId: string;
     loteriaId: string;
@@ -608,7 +607,6 @@ export const TicketRepository = {
         const bancaId = ventana.bancaId;
 
         const { valueX: effectiveBaseX, source } = await resolveBaseMultiplierX(
-          tx,
           {
             bancaId,
             loteriaId,
@@ -1571,9 +1569,8 @@ export const TicketRepository = {
                 where: { id: userId },
                 select: { id: true, commissionPolicyJson: true },
               }),
-            // ── NUEVO: lanzar resolveBaseMultiplierX en paralelo si bancaId ya está disponible
             preFetchedBancaId
-              ? resolveBaseMultiplierX(tx, {
+              ? resolveBaseMultiplierX({
                 bancaId: preFetchedBancaId,
                 loteriaId,
                 userId,
@@ -1682,7 +1679,7 @@ export const TicketRepository = {
         //    Si no (porque no había preFetch de ventana), lo calculamos ahora con bancaId real.
         const { valueX: effectiveBaseX, source } = preResolvedMultiplier
           ? preResolvedMultiplier
-          : await resolveBaseMultiplierX(tx, {
+          : await resolveBaseMultiplierX({
             bancaId,
             loteriaId,
             userId,
