@@ -9,6 +9,7 @@ import { computeOccurrences } from '../../../utils/schedule';
 import { formatIsoLocal } from '../../../utils/datetime';
 import SorteoRepository from '../../../repositories/sorteo.repository';
 import { resolveDigits } from '../../../utils/loteriaRules';
+import { CacheService } from "../../../core/cache.service";
 
 export const LoteriaService = {
   async create(
@@ -211,6 +212,9 @@ export const LoteriaService = {
         layer: "service",
       });
 
+      // Invalida caché de multiplicadores resueltos vinculados a la lotería
+      await CacheService.invalidateTag(`loteria:${id}`).catch(() => {});
+
       return result.updated;
     }
 
@@ -249,6 +253,9 @@ export const LoteriaService = {
       requestId,
       layer: "service",
     });
+
+    // Invalida caché de multiplicadores resueltos vinculados a la lotería
+    await CacheService.invalidateTag(`loteria:${id}`).catch(() => {});
 
     return updated;
   },

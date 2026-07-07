@@ -6,7 +6,8 @@ import { ResilienceService } from './resilience.service';
 // OPTIMIZACIÓN L1: Caché en memoria para mitigar latencia de red y DB
 interface L1Entry { data: any; expiresAt: number; }
 const l1Cache = new Map<string, L1Entry>();
-const MAX_L1_SIZE = 2000; // Límite de seguridad para evitar fugas de memoria
+const MAX_L1_SIZE = 500; // Límite de seguridad para evitar fugas de memoria
+const inFlightPromises = new Map<string, Promise<any>>();
 
 // TTLs para L1: restricciones de vendedor 30s, cutoffs 60s
 export const L1_TTL_RESTRICTIONS_MS = 30_000;  // 30 segundos — bloqueos de números rápidos
@@ -279,18 +280,33 @@ export class CacheService {
         ttlSeconds: number = config.redis.ttlCutoff,
         tags: string[] = []
     ): Promise<T> {
-        // 1. Intentar obtener de caché (protegido por runRedis internamente en get)
-        const cached = await this.get<T>(key);
-        if (cached !== null) return cached;
+        // 1. Coalescing: Si hay una promesa en vuelo para esta misma clave, reutilizarla
+        const existingPromise = inFlightPromises.get(key);
+        if (existingPromise) {
+            return existingPromise as Promise<T>;
+        }
 
-        // 2. Si no hay caché, el fetcher se ejecuta fuera del breaker de Redis
-        // para no contaminar métricas si falla la lógica de negocio.
-        const result = await fetcher();
+        const promise = (async () => {
+            try {
+                // 2. Intentar obtener de caché (protegido por runRedis internamente en get)
+                const cached = await this.get<T>(key);
+                if (cached !== null) return cached;
 
-        // 3. Guardar en caché asíncronamente (protegido por runRedis internamente en set)
-        this.set(key, result, ttlSeconds, tags).catch(() => {});
+                // 3. Si no hay caché, ejecutar fetcher
+                const result = await fetcher();
 
-        return result;
+                // 4. Guardar en caché asíncronamente
+                this.set(key, result, ttlSeconds, tags).catch(() => {});
+
+                return result;
+            } finally {
+                // Limpiar de promesas en vuelo al terminar
+                inFlightPromises.delete(key);
+            }
+        })();
+
+        inFlightPromises.set(key, promise);
+        return promise;
     }
 
     /**

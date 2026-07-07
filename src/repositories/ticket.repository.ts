@@ -314,102 +314,113 @@ async function resolveBaseMultiplierX(
   }
 ): Promise<{ valueX: number; source: string }> {
   const { bancaId, loteriaId, userId, ventanaId } = args;
+  const cacheKey = `multiplier:resolve:${bancaId}:${loteriaId}:${userId}:${ventanaId}`;
 
-  //  OPTIMIZACIÓN: Ejecutar TODAS las consultas en paralelo
-  // Reducción de tiempo: 150-300ms → 50-80ms
-  const [userOverride, ventanaOverride, bls, lmBase, lmNumero, lot] = await Promise.all([
-    // 0) Override por usuario (directo en X) - HIGHEST PRIORITY
-    tx.multiplierOverride.findFirst({
-      where: {
-        scope: "USER",
-        userId,
-        loteriaId,
-        multiplierType: "NUMERO",
-        isActive: true,
-      },
-      select: { baseMultiplierX: true },
-    }),
-    // 0.5) Override por ventana - SECOND PRIORITY
-    tx.multiplierOverride.findFirst({
-      where: {
-        scope: "VENTANA",
-        ventanaId,
-        loteriaId,
-        multiplierType: "NUMERO",
-        isActive: true,
-      },
-      select: { baseMultiplierX: true },
-    }),
-    // 1) Config por banca/lotería
-    tx.bancaLoteriaSetting.findUnique({
-      where: { bancaId_loteriaId: { bancaId, loteriaId } },
-      select: { baseMultiplierX: true },
-    }),
-    // 2) Multiplicador de la Lotería (tabla loteriaMultiplier) - Base
-    tx.loteriaMultiplier.findFirst({
-      where: { loteriaId, isActive: true, name: "Base" },
-      select: { valueX: true },
-    }),
-    // 2) Multiplicador de la Lotería (tabla loteriaMultiplier) - NUMERO
-    tx.loteriaMultiplier.findFirst({
-      where: { loteriaId, isActive: true, kind: "NUMERO" },
-      orderBy: { createdAt: "asc" },
-      select: { valueX: true, name: true },
-    }),
-    // 3) Fallback: rulesJson en Lotería
-    tx.loteria.findUnique({
-      where: { id: loteriaId },
-      select: { rulesJson: true },
-    }),
-  ]);
+  return await CacheService.wrap<{ valueX: number; source: string }>(
+    cacheKey,
+    async () => {
+      // 0) Override por usuario (directo en X) - HIGHEST PRIORITY
+      const [userOverride, ventanaOverride, bls, lmBase, lmNumero, lot] = await Promise.all([
+        prisma.multiplierOverride.findFirst({
+          where: {
+            scope: "USER",
+            userId,
+            loteriaId,
+            multiplierType: "NUMERO",
+            isActive: true,
+          },
+          select: { baseMultiplierX: true },
+        }),
+        // 0.5) Override por ventana - SECOND PRIORITY
+        prisma.multiplierOverride.findFirst({
+          where: {
+            scope: "VENTANA",
+            ventanaId,
+            loteriaId,
+            multiplierType: "NUMERO",
+            isActive: true,
+          },
+          select: { baseMultiplierX: true },
+        }),
+        // 1) Config por banca/lotería
+        prisma.bancaLoteriaSetting.findUnique({
+          where: { bancaId_loteriaId: { bancaId, loteriaId } },
+          select: { baseMultiplierX: true },
+        }),
+        // 2) Multiplicador de la Lotería (tabla loteriaMultiplier) - Base
+        prisma.loteriaMultiplier.findFirst({
+          where: { loteriaId, isActive: true, name: "Base" },
+          select: { valueX: true },
+        }),
+        // 2) Multiplicador de la Lotería (tabla loteriaMultiplier) - NUMERO
+        prisma.loteriaMultiplier.findFirst({
+          where: { loteriaId, isActive: true, kind: "NUMERO" },
+          orderBy: { createdAt: "asc" },
+          select: { valueX: true, name: true },
+        }),
+        // 3) Fallback: rulesJson en Lotería
+        prisma.loteria.findUnique({
+          where: { id: loteriaId },
+          select: { rulesJson: true },
+        }),
+      ]);
 
-  // Evaluar resultados en orden de prioridad
-  if (typeof userOverride?.baseMultiplierX === "number") {
-    return {
-      valueX: userOverride.baseMultiplierX,
-      source: "multiplierOverride[scope=USER]",
-    };
-  }
+      // Evaluar resultados en orden de prioridad
+      if (typeof userOverride?.baseMultiplierX === "number") {
+        return {
+          valueX: userOverride.baseMultiplierX,
+          source: "multiplierOverride[scope=USER]",
+        };
+      }
 
-  if (typeof ventanaOverride?.baseMultiplierX === "number") {
-    return {
-      valueX: ventanaOverride.baseMultiplierX,
-      source: "multiplierOverride[scope=VENTANA]",
-    };
-  }
+      if (typeof ventanaOverride?.baseMultiplierX === "number") {
+        return {
+          valueX: ventanaOverride.baseMultiplierX,
+          source: "multiplierOverride[scope=VENTANA]",
+        };
+      }
 
-  if (typeof bls?.baseMultiplierX === "number") {
-    return {
-      valueX: bls.baseMultiplierX,
-      source: "bancaLoteriaSetting.baseMultiplierX",
-    };
-  }
+      if (typeof bls?.baseMultiplierX === "number") {
+        return {
+          valueX: bls.baseMultiplierX,
+          source: "bancaLoteriaSetting.baseMultiplierX",
+        };
+      }
 
-  if (typeof lmBase?.valueX === "number" && lmBase.valueX > 0) {
-    return { valueX: lmBase.valueX, source: "loteriaMultiplier[name=Base]" };
-  }
+      if (typeof lmBase?.valueX === "number" && lmBase.valueX > 0) {
+        return { valueX: lmBase.valueX, source: "loteriaMultiplier[name=Base]" };
+      }
 
-  if (typeof lmNumero?.valueX === "number" && lmNumero.valueX > 0) {
-    return {
-      valueX: lmNumero.valueX,
-      source: `loteriaMultiplier[kind=NUMERO,name=${lmNumero.name ?? ""}]`,
-    };
-  }
+      if (typeof lmNumero?.valueX === "number" && lmNumero.valueX > 0) {
+        return {
+          valueX: lmNumero.valueX,
+          source: `loteriaMultiplier[kind=NUMERO,name=${lmNumero.name ?? ""}]`,
+        };
+      }
 
-  const rulesX = (lot?.rulesJson as any)?.baseMultiplierX;
-  if (typeof rulesX === "number" && rulesX > 0) {
-    return { valueX: rulesX, source: "loteria.rulesJson.baseMultiplierX" };
-  }
+      const rulesX = (lot?.rulesJson as any)?.baseMultiplierX;
+      if (typeof rulesX === "number" && rulesX > 0) {
+        return { valueX: rulesX, source: "loteria.rulesJson.baseMultiplierX" };
+      }
 
-  // 4) Fallback global por env
-  const def = Number(process.env.MULTIPLIER_BASE_DEFAULT_X ?? 0);
-  if (def > 0) {
-    return { valueX: def, source: "env.MULTIPLIER_BASE_DEFAULT_X" };
-  }
+      // 4) Fallback global por env
+      const def = Number(process.env.MULTIPLIER_BASE_DEFAULT_X ?? 0);
+      if (def > 0) {
+        return { valueX: def, source: "env.MULTIPLIER_BASE_DEFAULT_X" };
+      }
 
-  throw new AppError(
-    `Missing baseMultiplierX for bancaId=${bancaId} & loteriaId=${loteriaId}`,
-    400
+      throw new AppError(
+        `Missing baseMultiplierX for bancaId=${bancaId} & loteriaId=${loteriaId}`,
+        400
+      );
+    },
+    86400, // 24 horas (86400 segundos)
+    [
+      `user-override:${userId}`,
+      `ventana-override:${ventanaId}`,
+      `banca-setting:${bancaId}`,
+      `loteria:${loteriaId}`
+    ]
   );
 }
 

@@ -3,6 +3,7 @@ import { AppError } from "../../../core/errors";
 import { ActivityType } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
 import ActivityService from "../../../core/activity.service";
+import { CacheService } from "../../../core/cache.service";
 import {
   CreateMultiplierInput,
   UpdateMultiplierInput,
@@ -44,6 +45,9 @@ const MultiplierService = {
       targetId: created.id,
       details: { op: "create", data },
     });
+
+    // Invalida caché de multiplicadores resueltos vinculados a la lotería
+    await CacheService.invalidateTag(`loteria:${created.loteriaId}`).catch(() => {});
 
     return created;
   },
@@ -98,6 +102,9 @@ const MultiplierService = {
       details: { op: "update", before: existing, after: data },
     });
 
+    // Invalida caché de multiplicadores resueltos vinculados a la lotería
+    await CacheService.invalidateTag(`loteria:${updated.loteriaId}`).catch(() => {});
+
     return updated;
   },
 
@@ -127,6 +134,9 @@ const MultiplierService = {
       details: { op: "toggle", isActive: enable },
     });
 
+    // Invalida caché de multiplicadores resueltos vinculados a la lotería
+    await CacheService.invalidateTag(`loteria:${updated.loteriaId}`).catch(() => {});
+
     return updated;
   },
 
@@ -145,6 +155,9 @@ const MultiplierService = {
       data: { isActive: true },
       include: { loteria: { select: { id: true, name: true } } },
     });
+
+    // Invalida caché de multiplicadores resueltos vinculados a la lotería
+    await CacheService.invalidateTag(`loteria:${restored.loteriaId}`).catch(() => {});
 
     await ActivityService.log({
       userId,

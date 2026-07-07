@@ -1,7 +1,7 @@
-// src/repositories/multiplierOverride.repository.ts
 import { OverrideScope, Prisma } from "../generated/prisma/client";
 import prisma from "../core/prismaClient";
 import { AppError } from "../core/errors";
+import { CacheService } from "../core/cache.service";
 
 export interface CreateMultiplierOverrideData {
   scope: OverrideScope;
@@ -44,7 +44,7 @@ export const MultiplierOverrideRepository = {
     const ventanaId = scope === OverrideScope.VENTANA ? scopeId : null;
 
     try {
-      return await prisma.multiplierOverride.create({
+      const override = await prisma.multiplierOverride.create({
         data: {
           scope,
           userId,
@@ -60,6 +60,12 @@ export const MultiplierOverrideRepository = {
           loteria: true,
         },
       });
+
+      // Invalida caché de multiplicadores resueltos
+      const tag = scope === "USER" ? `user-override:${userId}` : `ventana-override:${ventanaId}`;
+      await CacheService.invalidateTag(tag).catch(() => {});
+
+      return override;
     } catch (error: any) {
       // Handle unique constraint violation (P2002)
       if (error.code === "P2002") {
@@ -83,7 +89,7 @@ export const MultiplierOverrideRepository = {
     }
 
     try {
-      return await prisma.multiplierOverride.update({
+      const override = await prisma.multiplierOverride.update({
         where: { id },
         data,
         include: {
@@ -92,6 +98,12 @@ export const MultiplierOverrideRepository = {
           loteria: true,
         },
       });
+
+      // Invalida caché de multiplicadores resueltos
+      const tag = override.scope === "USER" ? `user-override:${override.userId}` : `ventana-override:${override.ventanaId}`;
+      await CacheService.invalidateTag(tag).catch(() => {});
+
+      return override;
     } catch (error: any) {
       if (error.code === "P2025") {
         throw new AppError("Multiplier override not found", 404);
@@ -105,7 +117,7 @@ export const MultiplierOverrideRepository = {
    */
   async softDelete(id: string, deletedBy?: string, deletedReason?: string) {
     try {
-      return await prisma.multiplierOverride.update({
+      const override = await prisma.multiplierOverride.update({
         where: { id },
         data: {
           isActive: false,
@@ -119,6 +131,12 @@ export const MultiplierOverrideRepository = {
           loteria: true,
         },
       });
+
+      // Invalida caché de multiplicadores resueltos
+      const tag = override.scope === "USER" ? `user-override:${override.userId}` : `ventana-override:${override.ventanaId}`;
+      await CacheService.invalidateTag(tag).catch(() => {});
+
+      return override;
     } catch (error: any) {
       if (error.code === "P2025") {
         throw new AppError("Multiplier override not found", 404);
@@ -132,7 +150,7 @@ export const MultiplierOverrideRepository = {
    */
   async restore(id: string) {
     try {
-      return await prisma.multiplierOverride.update({
+      const override = await prisma.multiplierOverride.update({
         where: { id },
         data: {
           isActive: true,
@@ -146,6 +164,12 @@ export const MultiplierOverrideRepository = {
           loteria: true,
         },
       });
+
+      // Invalida caché de multiplicadores resueltos
+      const tag = override.scope === "USER" ? `user-override:${override.userId}` : `ventana-override:${override.ventanaId}`;
+      await CacheService.invalidateTag(tag).catch(() => {});
+
+      return override;
     } catch (error: any) {
       if (error.code === "P2025") {
         throw new AppError("Multiplier override not found", 404);
