@@ -570,41 +570,20 @@ export const VentasService = {
         });
 
         if (ventanaUser?.ventanaId) {
-          // 1. Calcular commissionVendedorTotal: Suma de comisiones de todos los vendedores
-          // Las comisiones de vendedores están guardadas en jugadas.commissionAmount cuando commissionOrigin='USER'
-          // Nota: commissionOrigin='USER' ya garantiza que el ticket tiene vendedorId, así que no necesitamos filtrar explícitamente
-          const vendedorCommissionsAgg = await prisma.jugada.aggregate({
+          // 1 y 2. Calcular comisiones agregando directamente sobre la tabla Ticket (evita joins con Jugada)
+          const commissionsTicketAgg = await prisma.ticket.aggregate({
             where: {
-              ticket: {
-                ...where,
-                ventanaId: ventanaUser.ventanaId,
-                //  No incluimos filtro vendedorId porque commissionOrigin='USER' ya garantiza que existe
-              },
-              commissionOrigin: 'USER', // Comisiones de vendedores (esto ya garantiza que el ticket tiene vendedorId)
+              ...where,
+              ventanaId: ventanaUser.ventanaId,
             },
             _sum: {
-              commissionAmount: true,
+              totalCommission: true,
+              totalListeroCommission: true,
             },
           });
-          //  Verificar que _sum existe antes de acceder
-          commissionVendedorTotal = parseFloat((vendedorCommissionsAgg._sum?.commissionAmount ?? 0).toFixed(2));
 
-          // 2. Calcular commissionListeroTotal: Comisión propia del listero (ventana)
-          //  CAMBIO: Usar snapshot de comisión del listero guardado en BD, NO recalcular
-          // Las comisiones están guardadas en jugada.listeroCommissionAmount (snapshot del momento de creación)
-          const listeroCommissionsAgg = await prisma.jugada.aggregate({
-            where: {
-              ticket: {
-                ...where,
-                ventanaId: ventanaUser.ventanaId,
-              },
-            },
-            _sum: {
-              listeroCommissionAmount: true,
-            },
-          });
-          //  Verificar que _sum existe antes de acceder
-          commissionListeroTotal = parseFloat((listeroCommissionsAgg._sum?.listeroCommissionAmount ?? 0).toFixed(2));
+          commissionVendedorTotal = parseFloat((commissionsTicketAgg._sum?.totalCommission ?? 0).toFixed(2));
+          commissionListeroTotal = parseFloat((commissionsTicketAgg._sum?.totalListeroCommission ?? 0).toFixed(2));
 
           // 3. Calcular balanceDueToBanca: ventasTotal - payoutTotal - commissionListeroTotal
           //  NUEVO: Lo que se debe pagar a la banca

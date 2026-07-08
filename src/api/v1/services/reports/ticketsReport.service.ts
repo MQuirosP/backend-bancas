@@ -1587,17 +1587,14 @@ export const TicketsReportService = {
   // COMISIONES — por ticket → businessDate
   // ======================================================
   const comisionesQuery = Prisma.sql`
-    SELECT SUM(j."listeroCommissionAmount") as total_comisiones
-    FROM "Jugada" j
-    INNER JOIN "Ticket" t ON j."ticketId" = t.id
+    SELECT SUM(t."totalListeroCommission") as total_comisiones
+    FROM "Ticket" t
     INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
     WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
                                 AND ${dateRange.toString}::date
       AND t."status"::text IN ('EVALUATED', 'PAID', 'PAGADO')
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
-      AND j."isActive" = true
-      AND j."deletedAt" IS NULL
       AND s.status = 'EVALUATED'
       AND s."deletedAt" IS NULL
       ${profitEntityFilter}
