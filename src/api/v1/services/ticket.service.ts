@@ -1772,7 +1772,7 @@ export const TicketService = {
           };
 
           const [rawAgg] = await prisma.$queryRaw<RawAggResult[]>`
-            WITH filtered_tickets AS MATERIALIZED (
+            WITH filtered_tickets AS NOT MATERIALIZED (
               SELECT t.id, t."loteriaId", t."sorteoId", t."vendedorId", t."ventanaId"
               FROM "Ticket" t
               ${joinsSQL}
@@ -1785,7 +1785,7 @@ export const TicketService = {
               SELECT "sorteoId"::text AS id, COUNT(*)::int AS cnt FROM filtered_tickets GROUP BY "sorteoId"
             ),
             multiplier_counts AS (
-              SELECT j."multiplierId"::text AS id, COUNT(DISTINCT j."ticketId")::int AS cnt
+              SELECT j."multiplierId"::text AS id, COUNT(*)::int AS cnt
               FROM "Jugada" j
               INNER JOIN filtered_tickets ft ON j."ticketId" = ft.id
               WHERE j."deletedAt" IS NULL AND j."isActive" = true

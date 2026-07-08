@@ -108,6 +108,19 @@ export class SorteoEvaluationCoordinator {
           action: "SORTEO_EVALUATE_SYNC_QUEUED_OR_COMPLETED",
           payload: { sorteoId: id },
         });
+
+        // 1.1 Agregar ventas por número para el reporte histórico
+        return import("./dailyNumberSales.service")
+          .then(({ DailyNumberSalesService }) => {
+            return DailyNumberSalesService.aggregateSorteoSales(id);
+          })
+          .catch((err) => {
+            logger.error({
+              layer: "coordinator",
+              action: "DAILY_NUMBER_SALES_AGGREGATION_BACKGROUND_ERROR",
+              payload: { sorteoId: id, error: err.message },
+            });
+          });
       })
       .catch((err) => {
         logger.error({

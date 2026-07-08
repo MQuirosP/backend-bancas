@@ -37,6 +37,7 @@ model Banca {
   alerts                     Alert[]
   apiKeys                    ApiKey[]
   loteriaSettings            BancaLoteriaSetting[]
+  DailyNumberSales           DailyNumberSales[]
   exportJobs                 ExportJob[]
   goals                      Goal[]
   jugadas                    Jugada[]
@@ -76,6 +77,7 @@ model Ventana {
   settings               Json?
   accountPayments        AccountPayment[]
   accountStatements      AccountStatement[]
+  DailyNumberSales       DailyNumberSales[]
   monthlyClosingBalances MonthlyClosingBalance[] @relation("MonthlyClosingBalanceVentana")
   multiplierOverrides    MultiplierOverride[]
   restrictionRules       RestrictionRule[]
@@ -119,6 +121,7 @@ model User {
   activities                              ActivityLog[]
   alerts                                  Alert[]
   apiKeys                                 ApiKey[]
+  DailyNumberSales                        DailyNumberSales[]
   exportJobs                              ExportJob[]
   jugadasExcluded                         Jugada[]                           @relation("JugadaExcludedBy")
   monthlyClosingBalances                  MonthlyClosingBalance[]            @relation("MonthlyClosingBalanceVendedor")
@@ -160,6 +163,7 @@ model Loteria {
   isActive            Boolean               @default(true)
   bancaId             String?               @db.Uuid
   loteriaSettings     BancaLoteriaSetting[]
+  DailyNumberSales    DailyNumberSales[]
   banca               Banca?                @relation(fields: [bancaId], references: [id])
   multipliers         LoteriaMultiplier[]
   multiplierOverrides MultiplierOverride[]
@@ -256,6 +260,7 @@ model Ticket {
   @@index([createdBy], map: "idx_ticket_createdBy_fk")
   @@index([bancaId, ventanaId, businessDate, status], map: "idx_ticket_dashboard_lookup", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
   @@index([sorteoId, businessDate, isActive], map: "idx_ticket_sorteo_businessdate_active")
+  @@index([businessDate, ventanaId, vendedorId], map: "idx_ticket_winners_perf", where: raw("((\"isWinner\" = true) AND (\"isActive\" = true) AND (\"deletedAt\" IS NULL))"))
 }
 
 /// Contador global diario de tickets basado en businessDate (CR)
@@ -357,6 +362,7 @@ model Sorteo {
   deletedByCascade     Boolean                @default(false)
   digits               Int                    @default(2)
   bancaId              String?                @db.Uuid
+  DailyNumberSales     DailyNumberSales[]
   banca                Banca?                 @relation(fields: [bancaId], references: [id])
   extraMultiplier      LoteriaMultiplier?     @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
   loteria              Loteria                @relation(fields: [loteriaId], references: [id])
@@ -897,6 +903,31 @@ model ResumenCierreDiario {
   @@unique([businessDate, bancaId, vendedorId, ventanaId, loteriaId, sorteoId, tipo, banda], name: "cierre_diario_unique")
   @@index([businessDate])
   @@index([bancaId])
+}
+
+model DailyNumberSales {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  businessDate DateTime @db.Date
+  bancaId      String   @db.Uuid
+  ventanaId    String   @db.Uuid
+  vendedorId   String   @db.Uuid
+  loteriaId    String   @db.Uuid
+  sorteoId     String   @db.Uuid
+  number       String   @db.VarChar(10)
+  type         BetType  @default(NUMERO)
+  totalAmount  Float
+  ticketsCount Int
+  jugadasCount Int
+  Banca        Banca    @relation(fields: [bancaId], references: [id])
+  Loteria      Loteria  @relation(fields: [loteriaId], references: [id])
+  Sorteo       Sorteo   @relation(fields: [sorteoId], references: [id])
+  User         User     @relation(fields: [vendedorId], references: [id])
+  Ventana      Ventana  @relation(fields: [ventanaId], references: [id])
+
+  @@unique([businessDate, sorteoId, vendedorId, number, type], map: "idx_daily_number_sales_unique")
+  @@index([businessDate, bancaId], map: "idx_daily_number_sales_banca")
+  @@index([businessDate, vendedorId], map: "idx_daily_number_sales_vendedor")
+  @@index([businessDate, ventanaId], map: "idx_daily_number_sales_ventana")
 }
 
 enum OverrideScope {

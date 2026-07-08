@@ -7,7 +7,7 @@ import prisma from '../../../../core/prismaClient';
 import { AppError } from '../../../../core/errors';
 import logger from '../../../../core/logger';
 import { resolveDateRange, normalizePagination, calculatePercentage, calculatePreviousPeriod, calculateChangePercent } from '../../utils/reports.utils';
-import { DateToken, PaymentStatus, PaginationMeta, ReportMeta } from '../../types/reports.types';
+import { DateToken, PaymentStatus, PaginationMeta, ReportMeta, DateRange } from '../../types/reports.types';
 import { formatIsoLocal } from '../../../../utils/datetime';
 
 // Helper para formatear solo fecha YYYY-MM-DD
@@ -32,6 +32,87 @@ function resolveBreakdowns(filters: { loteriaId?: string; ventanaId?: string; ve
     includeVentana: !hasVentana && !hasVendedor,
     includeVendedor: !hasVendedor && hasVentana,
   };
+}
+
+async function getHybridBreakdown(
+  evaluatedSorteoIds: string[],
+  nonEvaluatedSorteoIds: string[],
+  groupByField: 'sorteoId' | 'loteriaId' | 'ventanaId' | 'vendedorId',
+  entityTable: 'Sorteo' | 'Loteria' | 'Ventana' | 'User',
+  dailySalesFilters: Prisma.Sql,
+  numbersEntityFilters: Prisma.Sql,
+  dateRange: DateRange
+): Promise<any[]> {
+  const promises: Promise<any[]>[] = [];
+
+  // A. Query de DailyNumberSales para sorteos evaluados
+  if (evaluatedSorteoIds.length > 0) {
+    const q = Prisma.sql`
+      SELECT
+        db."${Prisma.raw(groupByField)}" as id,
+        e.name as name,
+        SUM(db."totalAmount")::double precision as total_amount,
+        SUM(db."ticketsCount")::integer as tickets_count
+      FROM "DailyNumberSales" db
+      INNER JOIN "${Prisma.raw(entityTable)}" e ON db."${Prisma.raw(groupByField)}" = e.id
+      WHERE db."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+        ${dailySalesFilters}
+      GROUP BY db."${Prisma.raw(groupByField)}", e.name
+    `;
+    promises.push(prisma.$queryRaw<any[]>(q));
+  } else {
+    promises.push(Promise.resolve([]));
+  }
+
+  // B. Query de Jugada/Ticket para sorteos abiertos
+  if (nonEvaluatedSorteoIds.length > 0) {
+    const q = Prisma.sql`
+      SELECT
+        t."${Prisma.raw(groupByField)}" as id,
+        e.name as name,
+        SUM(j.amount)::double precision as total_amount,
+        COUNT(j."ticketId")::integer as tickets_count
+      FROM "Jugada" j
+      INNER JOIN "Ticket" t ON j."ticketId" = t.id
+      INNER JOIN "${Prisma.raw(entityTable)}" e ON t."${Prisma.raw(groupByField)}" = e.id
+      WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+        AND t."sorteoId" IN (${Prisma.join(nonEvaluatedSorteoIds.map(id => Prisma.sql`CAST(${id} AS uuid)`))})
+        AND t."deletedAt" IS NULL
+        AND t."isActive" = true
+        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+        AND j."deletedAt" IS NULL
+        ${numbersEntityFilters}
+      GROUP BY t."${Prisma.raw(groupByField)}", e.name
+    `;
+    promises.push(prisma.$queryRaw<any[]>(q));
+  } else {
+    promises.push(Promise.resolve([]));
+  }
+
+  const [evalRaw, nonEvalRaw] = await Promise.all(promises);
+
+  const mergedMap = new Map<string, { id: string; name: string; total_amount: number; tickets_count: number }>();
+  const addRows = (rows: any[]) => {
+    for (const r of rows) {
+      const id = r.id;
+      const name = r.name || '';
+      const total = parseFloat(r.total_amount?.toString() || '0');
+      const tickets = parseInt(r.tickets_count?.toString() || '0');
+
+      const existing = mergedMap.get(id);
+      if (existing) {
+        existing.total_amount += total;
+        existing.tickets_count += tickets;
+      } else {
+        mergedMap.set(id, { id, name, total_amount: total, tickets_count: tickets });
+      }
+    }
+  };
+
+  addRows(evalRaw);
+  addRows(nonEvalRaw);
+
+  return Array.from(mergedMap.values()).sort((a, b) => b.total_amount - a.total_amount);
 }
 
 interface WinnersPaymentsFilters {
@@ -542,7 +623,55 @@ export const TicketsReportService = {
       filters.toDate
     );
 
-    // Filtros comunes de entidad para reutilizar
+    // 1. Obtener la lista de sorteos dentro del rango y sus estados
+    const sorteos = await prisma.sorteo.findMany({
+      where: {
+        scheduledAt: {
+          gte: dateRange.from,
+          lte: dateRange.to,
+        },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (sorteos.length === 0) {
+      return {
+        data: {
+          currentPeriod: {
+            from: dateRange.fromString,
+            to: dateRange.toString,
+            numbers: [],
+          },
+          summary: {
+            totalNumbersPlayed: 0,
+            totalAmount: 0,
+            totalTickets: 0,
+            topNumber: null,
+            topNumberAmount: 0,
+          },
+        },
+        meta: {
+          dateRange: {
+            from: dateRange.fromString,
+            to: dateRange.toString,
+          },
+          comparisonEnabled: filters.includeComparison || false,
+        },
+      };
+    }
+
+    const evaluatedSorteoIds = sorteos
+      .filter((s) => s.status === "EVALUATED")
+      .map((s) => s.id);
+    const nonEvaluatedSorteoIds = sorteos
+      .filter((s) => s.status !== "EVALUATED")
+      .map((s) => s.id);
+
+    // Filtros de entidad para queries de Jugada/Ticket
     const numbersEntityFilters = Prisma.sql`
       ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
       ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
@@ -551,56 +680,144 @@ export const TicketsReportService = {
       ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
     `;
 
-    // Query optimizada para números más jugados
-    const numbersQuery = Prisma.sql`
-      SELECT
-        j.number,
-        SUM(j.amount) as total_amount,
-        COUNT(DISTINCT j."ticketId") as tickets_count,
-        COUNT(*) as jugadas_count,
-        AVG(j.amount) as avg_amount
-      FROM "Jugada" j
-      INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-        AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-        AND t."isActive" = true
-        AND t."deletedAt" IS NULL
-        AND j."deletedAt" IS NULL
-        ${numbersEntityFilters}
-      GROUP BY j.number
-      ORDER BY total_amount DESC
-      LIMIT ${filters.top || 20}
+    // Filtros de entidad para queries de DailyNumberSales
+    const dailySalesFilters = Prisma.sql`
+      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND db."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND db."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND db."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND db."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+      ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND db.type = ${filters.betType}::"BetType"` : Prisma.empty}
     `;
 
-    const numbers = await prisma.$queryRaw<Array<{
+    // Consultar Numbers en paralelo para sorteos evaluados y abiertos
+    const numbersPromises: Promise<any[]>[] = [];
+
+    if (evaluatedSorteoIds.length > 0) {
+      const q = Prisma.sql`
+        SELECT
+          db.number,
+          SUM(db."totalAmount")::double precision as total_amount,
+          SUM(db."ticketsCount")::integer as tickets_count,
+          SUM(db."jugadasCount")::integer as jugadas_count
+        FROM "DailyNumberSales" db
+        WHERE db."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+          ${dailySalesFilters}
+        GROUP BY db.number
+      `;
+      numbersPromises.push(prisma.$queryRaw<any[]>(q));
+    } else {
+      numbersPromises.push(Promise.resolve([]));
+    }
+
+    if (nonEvaluatedSorteoIds.length > 0) {
+      const q = Prisma.sql`
+        SELECT
+          j.number,
+          SUM(j.amount)::double precision as total_amount,
+          COUNT(j."ticketId")::integer as tickets_count,
+          COUNT(*)::integer as jugadas_count
+        FROM "Jugada" j
+        INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        WHERE t."sorteoId" IN (${Prisma.join(nonEvaluatedSorteoIds.map(id => Prisma.sql`CAST(${id} AS uuid)`))})
+          AND t."deletedAt" IS NULL
+          AND t."isActive" = true
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND j."deletedAt" IS NULL
+          ${numbersEntityFilters}
+        GROUP BY j.number
+      `;
+      numbersPromises.push(prisma.$queryRaw<any[]>(q));
+    } else {
+      numbersPromises.push(Promise.resolve([]));
+    }
+
+    const [evaluatedNumbersRaw, nonEvaluatedNumbersRaw] = await Promise.all(numbersPromises);
+
+    const numbersMap = new Map<string, {
       number: string;
       total_amount: number;
       tickets_count: number;
       jugadas_count: number;
       avg_amount: number;
-    }>>(numbersQuery);
+    }>();
 
-    // Calcular resumen
-    const summaryQuery = Prisma.sql`
-      SELECT
-        COUNT(DISTINCT j.number) as total_numbers_played,
-        SUM(j.amount) as total_amount,
-        COUNT(DISTINCT j."ticketId") as total_tickets
-      FROM "Jugada" j
-      INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-        AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-        AND t."isActive" = true
-        AND t."deletedAt" IS NULL
-        AND j."deletedAt" IS NULL
-        ${numbersEntityFilters}
-    `;
+    const addNumbers = (rows: any[]) => {
+      for (const r of rows) {
+        const num = r.number;
+        const total = parseFloat(r.total_amount?.toString() || '0');
+        const tickets = parseInt(r.tickets_count?.toString() || '0');
+        const jugadas = parseInt(r.jugadas_count?.toString() || '0');
 
-    const [summary] = await prisma.$queryRaw<Array<{
-      total_numbers_played: number;
-      total_amount: number;
-      total_tickets: number;
-    }>>(summaryQuery);
+        const existing = numbersMap.get(num);
+        if (existing) {
+          existing.total_amount += total;
+          existing.tickets_count += tickets;
+          existing.jugadas_count += jugadas;
+        } else {
+          numbersMap.set(num, {
+            number: num,
+            total_amount: total,
+            tickets_count: tickets,
+            jugadas_count: jugadas,
+            avg_amount: 0,
+          });
+        }
+      }
+    };
+
+    addNumbers(evaluatedNumbersRaw);
+    addNumbers(nonEvaluatedNumbersRaw);
+
+    const mergedNumbers = Array.from(numbersMap.values()).map(n => {
+      n.avg_amount = n.jugadas_count > 0 ? n.total_amount / n.jugadas_count : 0;
+      return n;
+    });
+
+    // Ordenar y limitar según top
+    mergedNumbers.sort((a, b) => b.total_amount - a.total_amount);
+    const topLimit = filters.top || 20;
+    const finalNumbersRaw = mergedNumbers.slice(0, topLimit);
+
+    // Calcular resumen de forma rápida desde Ticket (si betType es 'all') o sumando de mergedNumbers
+    let summaryTotalAmount = 0;
+    let summaryTotalTickets = 0;
+
+    if (filters.betType && filters.betType !== 'all') {
+      for (const n of mergedNumbers) {
+        summaryTotalAmount += n.total_amount;
+        summaryTotalTickets += n.tickets_count;
+      }
+    } else {
+      // 1. Obtener ventas totales y tiquetes totales directamente desde Ticket (Ultra-rápido)
+      const ticketStatsQuery = Prisma.sql`
+        SELECT
+          COALESCE(SUM(t."totalAmount"), 0)::FLOAT as total_amount,
+          COUNT(t.id)::INT as total_tickets
+        FROM "Ticket" t
+        WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+          AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND t."isActive" = true
+          AND t."deletedAt" IS NULL
+          ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+          ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+          ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+      `;
+
+      const [ticketStats] = await prisma.$queryRaw<Array<{
+        total_amount: number;
+        total_tickets: number;
+      }>>(ticketStatsQuery);
+
+      summaryTotalAmount = ticketStats?.total_amount || 0;
+      summaryTotalTickets = ticketStats?.total_tickets || 0;
+    }
+
+    const summary = {
+      total_numbers_played: mergedNumbers.length,
+      total_amount: summaryTotalAmount,
+      total_tickets: summaryTotalTickets,
+    };
 
     const DEFAULT_MULTIPLIER = 30;
 
@@ -640,7 +857,7 @@ export const TicketsReportService = {
         },
       ]));
 
-      numbersWithExposure = numbers.map(n => {
+      numbersWithExposure = finalNumbersRaw.map(n => {
         const expData = exposureMap.get(n.number);
         const exposure = expData?.exposure || 0;
         totalExposure += exposure;
@@ -728,7 +945,7 @@ export const TicketsReportService = {
       }));
     }
 
-    // Crear mapa de datos de ganadores para enriquecer numbersData
+    // Enriquecer finalNumbersRaw con ganadores/exposición
     const winnerDataMap = new Map<string, { timesWon: number; lastWonDate: string | null }>();
     hotNumbers.forEach(h => {
       winnerDataMap.set(h.number, { timesWon: h.timesWon, lastWonDate: h.lastWonDate });
@@ -736,12 +953,12 @@ export const TicketsReportService = {
 
     const exposureMap = new Map(numbersWithExposure.map(n => [n.number, n.exposure]));
 
-    const numbersData = numbers.map((n, index) => ({
+    const numbersData = finalNumbersRaw.map((n, index) => ({
       number: n.number,
-      totalAmount: parseFloat(n.total_amount.toString()),
-      ticketsCount: parseInt(n.tickets_count.toString()),
-      jugadasCount: parseInt(n.jugadas_count.toString()),
-      avgAmount: parseFloat(n.avg_amount.toString()),
+      totalAmount: n.total_amount,
+      ticketsCount: n.tickets_count,
+      jugadasCount: n.jugadas_count,
+      avgAmount: n.avg_amount,
       rank: index + 1,
       // Campos adicionales si se solicitan
       ...(filters.includeExposure && {
@@ -758,129 +975,88 @@ export const TicketsReportService = {
     let previousPeriod: any = null;
     if (filters.includeComparison) {
       const previousRange = calculatePreviousPeriod(dateRange);
-      // Implementar comparación con período anterior si es necesario
-      // Por ahora, dejamos null
+      // Opcional, por ahora dejamos null
     }
 
     // ======================================================
-    // DESGLOSES (breakdowns) según filtros aplicados
+    // DESGLOSES (breakdowns) híbridos según filtros
     // ======================================================
-    const numbersBaseFilter = Prisma.sql`
-      t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-      AND t."status"::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-      AND t."isActive" = true
-      AND t."deletedAt" IS NULL
-      AND j."deletedAt" IS NULL
-      ${numbersEntityFilters}
-    `;
-
     const nbk = resolveBreakdowns(filters);
 
     let numBySorteo: any[] | undefined;
     if (nbk.includeSorteo) {
-      const q = Prisma.sql`
-        SELECT
-          t."sorteoId" as "sorteoId",
-          s.name as sorteo_name,
-          SUM(j.amount) as total_amount,
-          COUNT(DISTINCT j."ticketId") as tickets_count
-        FROM "Jugada" j
-        INNER JOIN "Ticket" t ON j."ticketId" = t.id
-        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-        WHERE ${numbersBaseFilter}
-        GROUP BY t."sorteoId", s.name
-        ORDER BY total_amount DESC
-      `;
-      const raw = await prisma.$queryRaw<any[]>(q);
-      if (raw.length > 0) {
-        numBySorteo = raw.map(r => {
-          // Find the top number for this sorteo
-          return {
-            sorteoId: r.sorteoId,
-            sorteoName: r.sorteo_name,
-            totalAmount: Number(r.total_amount ?? 0),
-            ticketsCount: Number(r.tickets_count ?? 0),
-          };
-        });
-      }
+      const sorted = await getHybridBreakdown(
+        evaluatedSorteoIds,
+        nonEvaluatedSorteoIds,
+        'sorteoId',
+        'Sorteo',
+        dailySalesFilters,
+        numbersEntityFilters,
+        dateRange
+      );
+      numBySorteo = sorted.map(r => ({
+        sorteoId: r.id,
+        sorteoName: r.name,
+        totalAmount: r.total_amount,
+        ticketsCount: r.tickets_count,
+      }));
     }
 
     let numByLoteria: any[] | undefined;
     if (nbk.includeLoteria) {
-      const q = Prisma.sql`
-        SELECT
-          t."loteriaId" as "loteriaId",
-          l.name as loteria_name,
-          SUM(j.amount) as total_amount,
-          COUNT(DISTINCT j."ticketId") as tickets_count
-        FROM "Jugada" j
-        INNER JOIN "Ticket" t ON j."ticketId" = t.id
-        INNER JOIN "Loteria" l ON t."loteriaId" = l.id
-        WHERE ${numbersBaseFilter}
-        GROUP BY t."loteriaId", l.name
-        ORDER BY total_amount DESC
-      `;
-      const raw = await prisma.$queryRaw<any[]>(q);
-      if (raw.length > 0) {
-        numByLoteria = raw.map(r => ({
-          loteriaId: r.loteriaId,
-          loteriaName: r.loteria_name,
-          totalAmount: Number(r.total_amount ?? 0),
-          ticketsCount: Number(r.tickets_count ?? 0),
-        }));
-      }
+      const sorted = await getHybridBreakdown(
+        evaluatedSorteoIds,
+        nonEvaluatedSorteoIds,
+        'loteriaId',
+        'Loteria',
+        dailySalesFilters,
+        numbersEntityFilters,
+        dateRange
+      );
+      numByLoteria = sorted.map(r => ({
+        loteriaId: r.id,
+        loteriaName: r.name,
+        totalAmount: r.total_amount,
+        ticketsCount: r.tickets_count,
+      }));
     }
 
     let numByVentana: any[] | undefined;
     if (nbk.includeVentana) {
-      const q = Prisma.sql`
-        SELECT
-          t."ventanaId" as "ventanaId",
-          v.name as ventana_name,
-          SUM(j.amount) as total_amount,
-          COUNT(DISTINCT j."ticketId") as tickets_count
-        FROM "Jugada" j
-        INNER JOIN "Ticket" t ON j."ticketId" = t.id
-        INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-        WHERE ${numbersBaseFilter}
-        GROUP BY t."ventanaId", v.name
-        ORDER BY total_amount DESC
-      `;
-      const raw = await prisma.$queryRaw<any[]>(q);
-      if (raw.length > 0) {
-        numByVentana = raw.map(r => ({
-          ventanaId: r.ventanaId,
-          ventanaName: r.ventana_name,
-          totalAmount: Number(r.total_amount ?? 0),
-          ticketsCount: Number(r.tickets_count ?? 0),
-        }));
-      }
+      const sorted = await getHybridBreakdown(
+        evaluatedSorteoIds,
+        nonEvaluatedSorteoIds,
+        'ventanaId',
+        'Ventana',
+        dailySalesFilters,
+        numbersEntityFilters,
+        dateRange
+      );
+      numByVentana = sorted.map(r => ({
+        ventanaId: r.id,
+        ventanaName: r.name,
+        totalAmount: r.total_amount,
+        ticketsCount: r.tickets_count,
+      }));
     }
 
     let numByVendedor: any[] | undefined;
     if (nbk.includeVendedor) {
-      const q = Prisma.sql`
-        SELECT
-          t."vendedorId" as "vendedorId",
-          u.name as vendedor_name,
-          SUM(j.amount) as total_amount,
-          COUNT(DISTINCT j."ticketId") as tickets_count
-        FROM "Jugada" j
-        INNER JOIN "Ticket" t ON j."ticketId" = t.id
-        INNER JOIN "User" u ON t."vendedorId" = u.id
-        WHERE ${numbersBaseFilter}
-        GROUP BY t."vendedorId", u.name
-        ORDER BY total_amount DESC
-      `;
-      const raw = await prisma.$queryRaw<any[]>(q);
-      if (raw.length > 0) {
-        numByVendedor = raw.map(r => ({
-          vendedorId: r.vendedorId,
-          vendedorName: r.vendedor_name,
-          totalAmount: Number(r.total_amount ?? 0),
-          ticketsCount: Number(r.tickets_count ?? 0),
-        }));
-      }
+      const sorted = await getHybridBreakdown(
+        evaluatedSorteoIds,
+        nonEvaluatedSorteoIds,
+        'vendedorId',
+        'User',
+        dailySalesFilters,
+        numbersEntityFilters,
+        dateRange
+      );
+      numByVendedor = sorted.map(r => ({
+        vendedorId: r.id,
+        vendedorName: r.name,
+        totalAmount: r.total_amount,
+        ticketsCount: r.tickets_count,
+      }));
     }
 
     return {
@@ -893,9 +1069,9 @@ export const TicketsReportService = {
         ...(previousPeriod && { previousPeriod }),
         ...(filters.includeWinners && { hotNumbers, coldNumbers }),
         summary: {
-          totalNumbersPlayed: parseInt(summary?.total_numbers_played?.toString() || '0'),
-          totalAmount: parseFloat(summary?.total_amount?.toString() || '0'),
-          totalTickets: parseInt(summary?.total_tickets?.toString() || '0'),
+          totalNumbersPlayed: summary.total_numbers_played,
+          totalAmount: summary.total_amount,
+          totalTickets: summary.total_tickets,
           topNumber: topNumber?.number || null,
           topNumberAmount: topNumber?.totalAmount || 0,
           ...(filters.includeExposure && {
@@ -980,14 +1156,20 @@ export const TicketsReportService = {
     const totalCancelledAmount = summaryTickets.reduce((sum, t) => sum + (t.totalAmount || 0), 0);
     const averageCancelledAmount = total > 0 ? totalCancelledAmount / total : 0;
 
-    // Calcular tasa de cancelación (necesitaríamos total de tickets para esto)
-    const totalTicketsInPeriod = await prisma.ticket.count({
-      where: {
-        businessDate: {
-          gte: new Date(dateRange.fromString),
-          lte: new Date(dateRange.toString),
-        },
+    // Calcular tasa de cancelación
+    const totalWhere: Prisma.TicketWhereInput = {
+      businessDate: {
+        gte: new Date(dateRange.fromString),
+        lte: new Date(dateRange.toString),
       },
+      ...(filters.ventanaId && filters.ventanaId.trim() !== '' && { ventanaId: filters.ventanaId }),
+      ...(filters.vendedorId && filters.vendedorId.trim() !== '' && { vendedorId: filters.vendedorId }),
+      ...(filters.loteriaId && filters.loteriaId.trim() !== '' && { loteriaId: filters.loteriaId }),
+      ...(filters.bancaId && filters.bancaId.trim() !== '' && { bancaId: filters.bancaId }),
+    };
+
+    const totalTicketsInPeriod = await prisma.ticket.count({
+      where: totalWhere,
     });
     const cancelledRate = totalTicketsInPeriod > 0
       ? calculatePercentage(total, totalTicketsInPeriod)
@@ -1565,14 +1747,11 @@ export const TicketsReportService = {
       COUNT(*) as tickets_count,
       COUNT(CASE WHEN t."isWinner" = true THEN 1 END) as tickets_ganadores
     FROM "Ticket" t
-    INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
     WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
                                 AND ${dateRange.toString}::date
       AND t."status"::text IN ('EVALUATED', 'PAID', 'PAGADO')
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
-      AND s.status = 'EVALUATED'
-      AND s."deletedAt" IS NULL
       ${profitEntityFilter}
   `;
 
@@ -1589,14 +1768,11 @@ export const TicketsReportService = {
   const comisionesQuery = Prisma.sql`
     SELECT SUM(t."totalListeroCommission") as total_comisiones
     FROM "Ticket" t
-    INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
     WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date
                                 AND ${dateRange.toString}::date
       AND t."status"::text IN ('EVALUATED', 'PAID', 'PAGADO')
       AND t."isActive" = true
       AND t."deletedAt" IS NULL
-      AND s.status = 'EVALUATED'
-      AND s."deletedAt" IS NULL
       ${profitEntityFilter}
   `;
 
