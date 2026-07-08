@@ -708,20 +708,20 @@ export const VentasService = {
       // Nota: Usar NULLS LAST para que los valores nulos no aparezcan primero en DESC
       const metricMap: Record<string, string> = {
         ventasTotal: 'SUM(ft."totalAmount")',
-        payoutTotal: 'SUM(COALESCE(js.payout, 0))',
-        neto: '(SUM(ft."totalAmount") - SUM(COALESCE(js.payout, 0)))',
+        payoutTotal: 'SUM(COALESCE(ft."totalPayout", 0))',
+        neto: '(SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)))',
         ticketsCount: 'COUNT(ft.id)',
         // Rentabilidad (% de ganancia sobre lo vendido)
         // Evitar división por cero
         margin: `CASE 
           WHEN SUM(ft."totalAmount") > 0 
-          THEN ((SUM(ft."totalAmount") - SUM(COALESCE(js.payout, 0))) / SUM(ft."totalAmount")) * 100 
+          THEN ((SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0))) / SUM(ft."totalAmount")) * 100 
           ELSE 0 
         END`,
         // Payout rate (% de premios sobre lo vendido)
         payoutRate: `CASE 
           WHEN SUM(ft."totalAmount") > 0 
-          THEN (SUM(COALESCE(js.payout, 0)) / SUM(ft."totalAmount")) * 100 
+          THEN (SUM(COALESCE(ft."totalPayout", 0)) / SUM(ft."totalAmount")) * 100 
           ELSE 100 
         END`,
       };
