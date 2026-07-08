@@ -1284,6 +1284,7 @@ export const TicketRepository = {
         });
 
         const totalCommission = jugadasWithCommissions.reduce((sum, j) => sum + (j.commissionAmount || 0), 0);
+        const totalListeroCommission = jugadasWithCommissions.reduce((sum, j) => sum + (j.listeroCommissionAmount || 0), 0);
 
         const createdTicket = await tx.ticket.create({
           data: {
@@ -1296,6 +1297,7 @@ export const TicketRepository = {
             vendedorId: userId,
             totalAmount: totalAmountTx,
             totalCommission,
+            totalListeroCommission,
             status: TicketStatus.ACTIVE,
             isActive: true,
             clienteNombre: normalizedClienteNombre,
@@ -2191,6 +2193,10 @@ export const TicketRepository = {
           (sum, j) => sum + (j.commissionAmount || 0),
           0
         );
+        const totalListeroCommission = jugadasWithCommissions.reduce(
+          (sum, j) => sum + (j.listeroCommissionAmount || 0),
+          0
+        );
 
         const normalizedClienteNombre =
           clienteNombre?.trim() || 'CLIENTE CONTADO';
@@ -2207,6 +2213,7 @@ export const TicketRepository = {
             vendedorId: userId,
             totalAmount: totalAmountTx,
             totalCommission,
+            totalListeroCommission,
             status: TicketStatus.ACTIVE,
             isActive: true,
             clienteNombre: normalizedClienteNombre,
@@ -2293,6 +2300,7 @@ export const TicketRepository = {
       vendedorId: userId,
       totalAmount: jugadas.reduce((sum: number, j: any) => sum + j.amount, 0),
       totalCommission: jugadasWithCommissions.reduce((sum: number, j: any) => sum + (j.commissionAmount || 0), 0),
+      totalListeroCommission: jugadasWithCommissions.reduce((sum: number, j: any) => sum + (j.listeroCommissionAmount || 0), 0),
       status: 'ACTIVE',
       isActive: true,
       clienteNombre: clienteNombre?.trim() || 'CLIENTE CONTADO',

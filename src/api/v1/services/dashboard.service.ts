@@ -784,55 +784,27 @@ export const DashboardService = {
     if (isHistorical) {
       byLoteriaResult = await prisma.$queryRaw<any[]>(
         Prisma.sql`
-          WITH ticket_stats AS (
-            SELECT
-              t."loteriaId",
-              COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
-              COALESCE(SUM(t."totalPayout"), 0) AS total_payouts,
-              COUNT(t.id) AS total_tickets,
-              COUNT(CASE WHEN t."isWinner" = true THEN 1 END) AS winning_tickets,
-              COALESCE(SUM(t."totalCommission"), 0) AS commission_user
-            FROM "Ticket" t
-            WHERE t."deletedAt" IS NULL
-              AND t."isActive" = true
-              AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-              AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-              ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-              ${filters.bancaId ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
-              ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
-            GROUP BY t."loteriaId"
-          ),
-          jugada_stats AS (
-            SELECT
-              t."loteriaId",
-              COALESCE(SUM(j."listeroCommissionAmount"), 0) AS commission_ventana
-            FROM "Ticket" t
-            JOIN "Jugada" j ON j."ticketId" = t.id
-            WHERE t."deletedAt" IS NULL
-              AND t."isActive" = true
-              AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-              AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-              ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-              ${filters.bancaId ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
-              ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
-              AND j."deletedAt" IS NULL
-              AND j."isExcluded" = false
-            GROUP BY t."loteriaId"
-          )
           SELECT
             l.id AS loteria_id,
             l.name AS loteria_name,
             l."isActive" AS is_active,
-            COALESCE(ts.total_sales, 0) AS total_sales,
-            COALESCE(ts.total_payouts, 0) AS total_payouts,
-            COALESCE(ts.total_tickets, 0) AS total_tickets,
-            COALESCE(ts.winning_tickets, 0) AS winning_tickets,
-            COALESCE(ts.commission_user, 0) AS commission_user,
-            COALESCE(js.commission_ventana, 0) AS commission_ventana
+            COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
+            COALESCE(SUM(t."totalPayout"), 0) AS total_payouts,
+            COUNT(t.id) AS total_tickets,
+            COUNT(CASE WHEN t."isWinner" = true THEN 1 END) AS winning_tickets,
+            COALESCE(SUM(t."totalCommission"), 0) AS commission_user,
+            COALESCE(SUM(t."totalListeroCommission"), 0) AS commission_ventana
           FROM "Loteria" l
-          LEFT JOIN ticket_stats ts ON ts."loteriaId" = l.id
-          LEFT JOIN jugada_stats js ON js."loteriaId" = l.id
+          LEFT JOIN "Ticket" t ON t."loteriaId" = l.id
+            AND t."deletedAt" IS NULL
+            AND t."isActive" = true
+            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+            AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+            ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+            ${filters.bancaId ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+            ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
           WHERE l."isActive" = true
+          GROUP BY l.id, l.name, l."isActive"
           ORDER BY total_sales DESC
         `
       );

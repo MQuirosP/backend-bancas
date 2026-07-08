@@ -194,47 +194,48 @@ model BancaLoteriaSetting {
 
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model Ticket {
-  id              String          @id @default(uuid()) @db.Uuid
-  ticketNumber    String          @unique @default(dbgenerated("generate_ticket_number()")) @db.VarChar(24)
-  loteriaId       String          @db.Uuid
-  ventanaId       String          @db.Uuid
-  vendedorId      String          @db.Uuid
-  totalAmount     Float
-  status          TicketStatus    @default(ACTIVE)
-  deletedAt       DateTime?
-  deletedBy       String?
-  deletedReason   String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  isActive        Boolean         @default(true)
-  isWinner        Boolean         @default(false)
-  sorteoId        String          @db.Uuid
-  totalPayout     Float?          @default(0)
-  totalPaid       Float?          @default(0)
-  remainingAmount Float?          @default(0)
-  lastPaymentAt   DateTime?
-  paidById        String?         @db.Uuid
-  paymentMethod   String?
-  paymentNotes    String?
-  paymentHistory  Json?
-  clienteNombre   String?         @default("CLIENTE CONTADO") @db.VarChar(100)
-  businessDate    DateTime?       @db.Date
-  totalCommission Float?          @default(0)
-  createdBy       String?         @db.Uuid
-  createdByRole   Role?
-  isSorteoClosed  Boolean         @default(false)
-  idempotencyKey  String?         @unique(where: raw("(\"idempotencyKey\" IS NOT NULL)"))
-  bancaId         String?         @db.Uuid
-  printCount      Int?            @default(0)
-  jugadas         Jugada[]
-  banca           Banca?          @relation(fields: [bancaId], references: [id])
-  createdByUser   User?           @relation("TicketCreatedBy", fields: [createdBy], references: [id])
-  loteria         Loteria         @relation(fields: [loteriaId], references: [id])
-  paidBy          User?           @relation("TicketPaidBy", fields: [paidById], references: [id])
-  sorteo          Sorteo          @relation(fields: [sorteoId], references: [id])
-  vendedor        User            @relation("TicketVendedor", fields: [vendedorId], references: [id])
-  ventana         Ventana         @relation(fields: [ventanaId], references: [id])
-  TicketPayment   TicketPayment[]
+  id                     String          @id @default(uuid()) @db.Uuid
+  ticketNumber           String          @unique @default(dbgenerated("generate_ticket_number()")) @db.VarChar(24)
+  loteriaId              String          @db.Uuid
+  ventanaId              String          @db.Uuid
+  vendedorId             String          @db.Uuid
+  totalAmount            Float
+  status                 TicketStatus    @default(ACTIVE)
+  deletedAt              DateTime?
+  deletedBy              String?
+  deletedReason          String?
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+  isActive               Boolean         @default(true)
+  isWinner               Boolean         @default(false)
+  sorteoId               String          @db.Uuid
+  totalPayout            Float?          @default(0)
+  totalPaid              Float?          @default(0)
+  remainingAmount        Float?          @default(0)
+  lastPaymentAt          DateTime?
+  paidById               String?         @db.Uuid
+  paymentMethod          String?
+  paymentNotes           String?
+  paymentHistory         Json?
+  clienteNombre          String?         @default("CLIENTE CONTADO") @db.VarChar(100)
+  businessDate           DateTime?       @db.Date
+  totalCommission        Float?          @default(0)
+  createdBy              String?         @db.Uuid
+  createdByRole          Role?
+  isSorteoClosed         Boolean         @default(false)
+  idempotencyKey         String?         @unique(where: raw("(\"idempotencyKey\" IS NOT NULL)"))
+  bancaId                String?         @db.Uuid
+  printCount             Int?            @default(0)
+  totalListeroCommission Float           @default(0)
+  jugadas                Jugada[]
+  banca                  Banca?          @relation(fields: [bancaId], references: [id])
+  createdByUser          User?           @relation("TicketCreatedBy", fields: [createdBy], references: [id])
+  loteria                Loteria         @relation(fields: [loteriaId], references: [id])
+  paidBy                 User?           @relation("TicketPaidBy", fields: [paidById], references: [id])
+  sorteo                 Sorteo          @relation(fields: [sorteoId], references: [id])
+  vendedor               User            @relation("TicketVendedor", fields: [vendedorId], references: [id])
+  ventana                Ventana         @relation(fields: [ventanaId], references: [id])
+  TicketPayment          TicketPayment[]
 
   @@index([bancaId])
   @@index([vendedorId, sorteoId, deletedAt, isActive])
@@ -402,7 +403,6 @@ model SorteoListaExclusion {
   @@index([excludedBy], map: "idx_sorteo_lista_exclusion_exBy_fk")
   @@index([sorteoId, ventanaId, vendedorId], map: "idx_sorteo_exclusion_lookup", where: raw("(multiplier_id IS NULL)"))
   @@index([sorteoId, ventanaId, vendedorId, multiplierId], map: "idx_sle_multiplier_lookup", where: raw("(multiplier_id IS NOT NULL)"))
-  @@index([sorteoId, ventanaId, vendedorId], map: "idx_sle_ticket_lookup", where: raw("(multiplier_id IS NULL)"))
   @@map("sorteo_lista_exclusion")
 }
 
@@ -736,6 +736,7 @@ model AccountStatement {
 
   @@unique([date, vendedorId], map: "account_statements_date_vendedor_unique")
   @@unique([date, ventanaId], map: "account_statements_date_ventana_unique", where: raw("((\"ventanaId\" IS NOT NULL) AND (\"vendedorId\" IS NULL))"))
+  @@unique([date, bancaId], map: "account_statements_date_banca_unique", where: raw("((\"ventanaId\" IS NULL) AND (\"vendedorId\" IS NULL))"))
   @@index([month])
   @@index([date])
   @@index([bancaId])
