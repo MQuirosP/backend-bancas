@@ -1683,12 +1683,6 @@ export const TicketService = {
           }
 
           // Fase 1: 1 único raw SQL con CTEs — todas las agregaciones en 1 roundtrip/conexión
-          const sqlJoins: Prisma.Sql[] = [];
-          if (effectiveFilters.bancaId) {
-            sqlJoins.push(Prisma.sql`INNER JOIN "Ventana" v ON t."ventanaId" = v.id`);
-          }
-          const joinsSQL = sqlJoins.length > 0 ? Prisma.join(sqlJoins, ' ') : Prisma.empty;
-
           const sqlConditions: Prisma.Sql[] = [];
           if (params.status === 'CANCELLED') {
             sqlConditions.push(Prisma.sql`t."status" = 'CANCELLED'::"TicketStatus"`);
@@ -1698,7 +1692,7 @@ export const TicketService = {
             sqlConditions.push(Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`);
           }
           if (effectiveFilters.bancaId) {
-            sqlConditions.push(Prisma.sql`v."bancaId" = CAST(${effectiveFilters.bancaId} AS uuid)`);
+            sqlConditions.push(Prisma.sql`t."bancaId" = CAST(${effectiveFilters.bancaId} AS uuid)`);
           }
           if (effectiveFilters.vendedorId) {
             sqlConditions.push(Prisma.sql`t."vendedorId" = CAST(${effectiveFilters.vendedorId} AS uuid)`);
@@ -1772,10 +1766,9 @@ export const TicketService = {
           };
 
           const [rawAgg] = await prisma.$queryRaw<RawAggResult[]>`
-            WITH filtered_tickets AS NOT MATERIALIZED (
+            WITH filtered_tickets AS MATERIALIZED (
               SELECT t.id, t."loteriaId", t."sorteoId", t."vendedorId", t."ventanaId"
               FROM "Ticket" t
-              ${joinsSQL}
               WHERE ${whereSQL}
             ),
             loteria_counts AS (
@@ -1786,10 +1779,12 @@ export const TicketService = {
             ),
             multiplier_counts AS (
               SELECT j."multiplierId"::text AS id, COUNT(*)::int AS cnt
-              FROM "Jugada" j
-              INNER JOIN filtered_tickets ft ON j."ticketId" = ft.id
-              WHERE j."deletedAt" IS NULL AND j."isActive" = true
-                AND j.type::text = 'NUMERO' AND j."multiplierId" IS NOT NULL
+              FROM filtered_tickets ft
+              INNER JOIN "Jugada" j ON j."ticketId" = ft.id
+                AND j."deletedAt" IS NULL
+                AND j."isActive" = true
+                AND j.type::text = 'NUMERO'
+                AND j."multiplierId" IS NOT NULL
                 ${multiplierFilter}
               GROUP BY j."multiplierId"
             )
