@@ -22,6 +22,7 @@ import {
   WinnersListQuerySchema,
   WinnersListParamsSchema,
   NumbersAnalysisDetailQuerySchema,
+  TicketsSummaryQuerySchema,
 } from '../validators/reports.validator';
 
 const router = Router();
@@ -31,6 +32,13 @@ router.use(protect);
 router.use(bancaContextMiddleware);
 
 // Reportes de Tickets
+router.get(
+  '/tickets/summary',
+  requireAdminOrBanca,
+  validateQuery(TicketsSummaryQuerySchema),
+  ReportsController.getTicketsSummary
+);
+
 router.get(
   '/tickets/winners-payments',
   requireAdminOrBanca,

@@ -178,3 +178,8 @@ export const NumbersAnalysisDetailQuerySchema = DateRangeSchemaBase.merge(Entity
   loteriaId: z.string().uuid('loteriaId inválido (UUID)'), // Sigue siendo requerido para el detalle
   betType: z.enum(['NUMERO', 'REVENTADO', 'all']).default('all').optional(),
 }).refine(dateRangeRefine, dateRangeRefineOptions).strict();
+
+// Endpoint de Resumen Operativo de Tickets
+export const TicketsSummaryQuerySchema = DateRangeSchemaBase.merge(EntityFiltersSchema).extend({
+  loteriaId: OptionalUUIDOrAll,
+}).refine(dateRangeRefine, dateRangeRefineOptions).strict();

@@ -1766,7 +1766,7 @@ export const TicketService = {
           };
 
           const [rawAgg] = await prisma.$queryRaw<RawAggResult[]>`
-            WITH filtered_tickets AS MATERIALIZED (
+            WITH filtered_tickets AS (
               SELECT t.id, t."loteriaId", t."sorteoId", t."vendedorId", t."ventanaId"
               FROM "Ticket" t
               WHERE ${whereSQL}
@@ -2157,7 +2157,7 @@ export const TicketService = {
       };
 
       const [rawAgg] = await prisma.$queryRaw<RawAggResult[]>`
-        WITH filtered_tickets AS MATERIALIZED (
+        WITH filtered_tickets AS (
           SELECT t.id, t."loteriaId", t."sorteoId", t."vendedorId", t."ventanaId"
           FROM "Ticket" t
           ${joinsSQL}

@@ -51,6 +51,35 @@ export const ReportsController = {
   },
 
   /**
+   * GET /api/v1/reports/tickets/summary
+   * Resumen Operativo Agregado
+   */
+  async getTicketsSummary(req: AuthenticatedRequest, res: Response) {
+    const query = req.query as any;
+
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: getActiveBancaId(req),
+    };
+
+    const effectiveFilters = await applyRbacFilters(context, query);
+
+    const result = await TicketsReportService.getTicketsSummary({
+      date: query.date || 'today',
+      fromDate: query.fromDate,
+      toDate: query.toDate,
+      ventanaId: effectiveFilters.ventanaId || undefined,
+      vendedorId: effectiveFilters.vendedorId,
+      bancaId: effectiveFilters.bancaId,
+      loteriaId: query.loteriaId,
+    });
+
+    return success(res, result);
+  },
+
+  /**
    * GET /api/v1/reports/tickets/numbers-analysis
    * Análisis de números más jugados
    */

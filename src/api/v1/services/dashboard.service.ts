@@ -608,10 +608,6 @@ export const DashboardService = {
    */
   async calculateGanancia(filters: DashboardFilters, role?: Role): Promise<GananciaResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-    const todayCRStr = crDateService.dateUTCToCRString(new Date());
-    const isHistorical = toDateStr < todayCRStr;
-    const skipExclusion = await isExclusionListEmpty();
-    const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
 
     let byVentanaResult: Array<{
       ventana_id: string;
@@ -625,24 +621,23 @@ export const DashboardService = {
       commission_ventana: number;
     }> = [];
 
-    if (isHistorical) {
-      // ⚡ OPTIMIZACIÓN FASE I: Consultar desde AccountStatement
-      const statements = await prisma.$queryRaw<any[]>(
-        Prisma.sql`
-          SELECT
-            v.id AS ventana_id,
-            v.name AS ventana_name,
-            v."isActive" AS is_active,
-            COALESCE(SUM(a."totalSales"), 0) AS total_sales,
-            COALESCE(SUM(a."totalPayouts"), 0) AS total_payouts,
-            COALESCE(SUM(a."ticketCount"), 0) AS total_tickets,
-            COALESCE(SUM(a."vendedorCommission"), 0) AS commission_user,
-            COALESCE(SUM(a."listeroCommission"), 0) AS commission_ventana
-          FROM "Ventana" v
-          LEFT JOIN "AccountStatement" a ON a."ventanaId" = v.id 
-            AND a.date BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-            AND a."vendedorId" IS NULL
-          WHERE v."isActive" = true
+    // Siempre consultar desde AccountStatement (fase I optimización)
+    const statements = await prisma.$queryRaw<any[]>(
+      Prisma.sql`
+        SELECT
+          v.id AS ventana_id,
+          v.name AS ventana_name,
+          v."isActive" AS is_active,
+          COALESCE(SUM(a."totalSales"), 0) AS total_sales,
+          COALESCE(SUM(a."totalPayouts"), 0) AS total_payouts,
+          COALESCE(SUM(a."ticketCount"), 0) AS total_tickets,
+          COALESCE(SUM(a."vendedorCommission"), 0) AS commission_user,
+          COALESCE(SUM(a."listeroCommission"), 0) AS commission_ventana
+        FROM "Ventana" v
+        LEFT JOIN "AccountStatement" a ON a."ventanaId" = v.id 
+          AND a.date BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          AND a."vendedorId" IS NULL
+        WHERE v."isActive" = true
             ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
             ${filters.ventanaId ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
           GROUP BY v.id, v.name, v."isActive"
@@ -684,105 +679,8 @@ export const DashboardService = {
         commission_user: Number(st.commission_user) || 0,
         commission_ventana: Number(st.commission_ventana) || 0
       }));
-    } else {
-      // Consulta en tiempo real (involucra el día de hoy)
-      byVentanaResult = await prisma.$queryRaw<
-        Array<{
-          ventana_id: string;
-          ventana_name: string;
-          is_active: boolean;
-          total_sales: number;
-          total_payouts: number;
-          total_tickets: number;
-          winning_tickets: number;
-          commission_user: number;
-          commission_ventana: number;
-        }>
-      >(
-        Prisma.sql`
-          WITH ${buildExclusionCTEsPreamble(skipExclusion)}
-          tickets_in_range AS NOT MATERIALIZED (
-            SELECT
-              t.id,
-              t."ventanaId",
-              t."loteriaId",
-              t."sorteoId",
-              t."vendedorId",
-              t."isWinner"
-            FROM "Ticket" t
-            WHERE ${baseFilters}
-          ),
-          ventanas_filtradas AS (
-            SELECT v.id, v.name, v."isActive"
-            FROM "Ventana" v
-            WHERE v."isActive" = true
-              ${filters.ventanaId ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-              ${filters.bancaId ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
-          ),
-          ticket_jugada_sums AS (
-            SELECT
-              j."ticketId",
-              SUM(j.amount)                                                                                  AS total_sales,
-              SUM(j.payout)                                                                                  AS total_payouts,
-              SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END)             AS commission_user,
-              SUM(j."listeroCommissionAmount")                                                               AS commission_ventana
-            FROM tickets_in_range t
-            JOIN "Jugada" j ON j."ticketId" = t.id
-            WHERE j."deletedAt" IS NULL
-            AND j."isExcluded" = false
-            AND NOT EXISTS (
-              SELECT 1 FROM jugada_exclusions je
-              WHERE je.sorteo_id = t."sorteoId"
-              AND je."ventanaId" = t."ventanaId"
-              AND (je.vendedor_id IS NULL OR je.vendedor_id = t."vendedorId")
-              AND je.multiplier_id = j."multiplierId"
-            )
-            GROUP BY j."ticketId"
-          ),
-          ventana_stats AS (
-            SELECT
-              t."ventanaId",
-              COUNT(*)                                    AS total_tickets,
-              COUNT(*) FILTER (WHERE t."isWinner" = true) AS winning_tickets,
-              COALESCE(SUM(tjs.total_sales),        0)   AS total_sales,
-              COALESCE(SUM(tjs.total_payouts),      0)   AS total_payouts,
-              COALESCE(SUM(tjs.commission_user),    0)   AS commission_user,
-              COALESCE(SUM(tjs.commission_ventana), 0)   AS commission_ventana
-            FROM tickets_in_range t
-            LEFT JOIN ticket_jugada_sums tjs ON tjs."ticketId" = t.id
-            GROUP BY t."ventanaId"
-          )
-          SELECT
-            v.id AS ventana_id,
-            v.name AS ventana_name,
-            v."isActive" AS is_active,
-            COALESCE(vs.total_sales,        0) AS total_sales,
-            COALESCE(vs.total_payouts,      0) AS total_payouts,
-            COALESCE(vs.total_tickets,      0) AS total_tickets,
-            COALESCE(vs.winning_tickets,    0) AS winning_tickets,
-            COALESCE(vs.commission_user,    0) AS commission_user,
-            COALESCE(vs.commission_ventana, 0) AS commission_ventana
-          FROM ventanas_filtradas v
-          LEFT JOIN ventana_stats vs ON vs."ventanaId" = v.id
-          ORDER BY total_sales DESC
-        `
-      );
-    }
 
-    let byLoteriaResult: Array<{
-      loteria_id: string;
-      loteria_name: string;
-      is_active: boolean;
-      total_sales: number;
-      total_payouts: number;
-      total_tickets: number;
-      winning_tickets: number;
-      commission_user: number;
-      commission_ventana: number;
-    }> = [];
-
-    if (isHistorical) {
-      byLoteriaResult = await prisma.$queryRaw<any[]>(
+    let byLoteriaResult = await prisma.$queryRaw<any[]>(
         Prisma.sql`
           SELECT
             l.id AS loteria_id,
@@ -808,71 +706,6 @@ export const DashboardService = {
           ORDER BY total_sales DESC
         `
       );
-    } else {
-      byLoteriaResult = await prisma.$queryRaw<any[]>(
-        Prisma.sql`
-          WITH ${buildExclusionCTEsPreamble(skipExclusion)}
-          tickets_in_range AS NOT MATERIALIZED (
-            SELECT
-              t.id,
-              t."ventanaId",
-              t."loteriaId",
-              t."sorteoId",
-              t."vendedorId",
-              t."isWinner"
-            FROM "Ticket" t
-            WHERE ${baseFilters}
-          ),
-          ticket_jugada_sums AS (
-            SELECT
-              j."ticketId",
-              SUM(j.amount)                                                                      AS total_sales,
-              SUM(j.payout)                                                                      AS total_payouts,
-              SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END) AS commission_user,
-              SUM(j."listeroCommissionAmount")                                                   AS commission_ventana
-            FROM tickets_in_range t
-            JOIN "Jugada" j ON j."ticketId" = t.id
-            WHERE j."deletedAt" IS NULL
-            AND j."isExcluded" = false
-            AND NOT EXISTS (
-              SELECT 1 FROM jugada_exclusions je
-              WHERE je.sorteo_id = t."sorteoId"
-              AND je."ventanaId" = t."ventanaId"
-              AND (je.vendedor_id IS NULL OR je.vendedor_id = t."vendedorId")
-              AND je.multiplier_id = j."multiplierId"
-            )
-            GROUP BY j."ticketId"
-          ),
-          loteria_stats AS (
-            SELECT
-              t."loteriaId",
-              COUNT(*)                                    AS total_tickets,
-              COUNT(*) FILTER (WHERE t."isWinner" = true) AS winning_tickets,
-              COALESCE(SUM(tjs.total_sales),        0)   AS total_sales,
-              COALESCE(SUM(tjs.total_payouts),      0)   AS total_payouts,
-              COALESCE(SUM(tjs.commission_user),    0)   AS commission_user,
-              COALESCE(SUM(tjs.commission_ventana), 0)   AS commission_ventana
-            FROM tickets_in_range t
-            LEFT JOIN ticket_jugada_sums tjs ON tjs."ticketId" = t.id
-            GROUP BY t."loteriaId"
-          )
-          SELECT
-            l.id AS loteria_id,
-            l.name AS loteria_name,
-            l."isActive" AS is_active,
-            COALESCE(ls.total_sales,        0) AS total_sales,
-            COALESCE(ls.total_payouts,      0) AS total_payouts,
-            COALESCE(ls.total_tickets,      0) AS total_tickets,
-            COALESCE(ls.winning_tickets,    0) AS winning_tickets,
-            COALESCE(ls.commission_user,    0) AS commission_user,
-            COALESCE(ls.commission_ventana, 0) AS commission_ventana
-          FROM "Loteria" l
-          LEFT JOIN loteria_stats ls ON ls."loteriaId" = l.id
-          WHERE l."isActive" = true
-          ORDER BY total_sales DESC
-        `
-      );
-    }
 
     //  NUEVO: Obtener pagos y cobros del periodo para calcular periodBalance
     const rangeStart = parseDateStart(fromDateStr);
@@ -1035,25 +868,14 @@ export const DashboardService = {
 
     // SQL consolidada para evitar picos de memoria y múltiples round-trips
     const ventanaData = await prisma.$queryRaw<any[]>(Prisma.sql`
-      WITH tickets_in_range AS (
-        SELECT t.id, t."ventanaId", t."sorteoId", t."vendedorId"
-        FROM "Ticket" t WHERE ${baseFilters}
-      ),
-      jugada_agg AS (
-        SELECT t."ventanaId",
-               COALESCE(SUM(j.amount), 0) AS total_sales,
-               COALESCE(SUM(j.payout), 0) AS total_payouts,
-               COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-               COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
-               COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
-        FROM tickets_in_range t
-        JOIN "Jugada" j ON j."ticketId" = t.id
-        WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
-        ${jugadaExclusionFilter}
-        GROUP BY t."ventanaId"
-      ),
-      statements_agg AS (
-        SELECT "ventanaId", COALESCE(SUM("totalPaid"), 0) AS total_paid
+      WITH account_agg AS (
+        SELECT "ventanaId",
+               COALESCE(SUM("totalSales"), 0) AS total_sales,
+               COALESCE(SUM("totalPayouts"), 0) AS total_payouts,
+               COALESCE(SUM("vendedorCommission"), 0) AS commission_user,
+               COALESCE(SUM("listeroCommission"), 0) AS commission_ventana_raw,
+               COALESCE(SUM("listeroCommission"), 0) AS listero_commission_snapshot,
+               COALESCE(SUM("totalPaid"), 0) AS total_paid
         FROM "AccountStatement"
         WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NULL
         GROUP BY "ventanaId"
@@ -1072,17 +894,16 @@ export const DashboardService = {
         GROUP BY t."ventanaId"
       )
       SELECT v.id AS ventana_id, v.name AS ventana_name, v."isActive" AS is_active,
-             COALESCE(ja.total_sales, 0) AS total_sales,
-             COALESCE(ja.total_payouts, 0) AS total_payouts,
-             COALESCE(ja.commission_user, 0) AS commission_user,
-             COALESCE(ja.commission_ventana_raw, 0) AS commission_ventana_raw,
-             COALESCE(ja.listero_commission_snapshot, 0) AS listero_commission_snapshot,
-             COALESCE(sa.total_paid, 0) AS total_paid,
+             COALESCE(aa.total_sales, 0) AS total_sales,
+             COALESCE(aa.total_payouts, 0) AS total_payouts,
+             COALESCE(aa.commission_user, 0) AS commission_user,
+             COALESCE(aa.commission_ventana_raw, 0) AS commission_ventana_raw,
+             COALESCE(aa.listero_commission_snapshot, 0) AS listero_commission_snapshot,
+             COALESCE(aa.total_paid, 0) AS total_paid,
              COALESCE(ca.total_collected, 0) AS total_collected,
              COALESCE(tpa.total_paid_to_customer, 0) AS total_paid_to_customer
       FROM "Ventana" v
-      LEFT JOIN jugada_agg ja ON ja."ventanaId" = v.id
-      LEFT JOIN statements_agg sa ON sa."ventanaId" = v.id
+      LEFT JOIN account_agg aa ON aa."ventanaId" = v.id
       LEFT JOIN collections_agg ca ON ca."ventanaId" = v.id
       LEFT JOIN ticket_payments_agg tpa ON tpa."ventanaId" = v.id
       WHERE v."isActive" = true
@@ -1171,25 +992,14 @@ export const DashboardService = {
         )`;
 
     const vendedorData = await prisma.$queryRaw<any[]>(Prisma.sql`
-      WITH tickets_in_range AS (
-        SELECT t.id, t."vendedorId", t."ventanaId", t."sorteoId"
-        FROM "Ticket" t WHERE ${baseFilters} AND t."vendedorId" IS NOT NULL
-      ),
-      jugada_agg AS (
-        SELECT t."vendedorId",
-               COALESCE(SUM(j.amount), 0) AS total_sales,
-               COALESCE(SUM(j.payout), 0) AS total_payouts,
-               COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-               COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
-               COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
-        FROM tickets_in_range t
-        JOIN "Jugada" j ON j."ticketId" = t.id
-        WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
-        ${jugadaExclusionFilter}
-        GROUP BY t."vendedorId"
-      ),
-      statements_agg AS (
-        SELECT "vendedorId", COALESCE(SUM("totalPaid"), 0) AS total_paid
+      WITH account_agg AS (
+        SELECT "vendedorId",
+               COALESCE(SUM("totalSales"), 0) AS total_sales,
+               COALESCE(SUM("totalPayouts"), 0) AS total_payouts,
+               COALESCE(SUM("vendedorCommission"), 0) AS commission_user,
+               COALESCE(SUM("listeroCommission"), 0) AS commission_ventana_raw,
+               COALESCE(SUM("listeroCommission"), 0) AS listero_commission_snapshot,
+               COALESCE(SUM("totalPaid"), 0) AS total_paid
         FROM "AccountStatement"
         WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NOT NULL
         GROUP BY "vendedorId"
@@ -1209,18 +1019,17 @@ export const DashboardService = {
       )
       SELECT u.id AS vendedor_id, u.name AS vendedor_name, u.code AS vendedor_code, 
              u."ventanaId" AS ventana_id, v.name AS ventana_name, u."isActive" AS is_active,
-             COALESCE(ja.total_sales, 0) AS total_sales,
-             COALESCE(ja.total_payouts, 0) AS total_payouts,
-             COALESCE(ja.commission_user, 0) AS commission_user,
-             COALESCE(ja.commission_ventana_raw, 0) AS commission_ventana_raw,
-             COALESCE(ja.listero_commission_snapshot, 0) AS listero_commission_snapshot,
-             COALESCE(sa.total_paid, 0) AS total_paid,
+             COALESCE(aa.total_sales, 0) AS total_sales,
+             COALESCE(aa.total_payouts, 0) AS total_payouts,
+             COALESCE(aa.commission_user, 0) AS commission_user,
+             COALESCE(aa.commission_ventana_raw, 0) AS commission_ventana_raw,
+             COALESCE(aa.listero_commission_snapshot, 0) AS listero_commission_snapshot,
+             COALESCE(aa.total_paid, 0) AS total_paid,
              COALESCE(ca.total_collected, 0) AS total_collected,
              COALESCE(tpa.total_paid_to_customer, 0) AS total_paid_to_customer
       FROM "User" u
       LEFT JOIN "Ventana" v ON v.id = u."ventanaId"
-      LEFT JOIN jugada_agg ja ON ja."vendedorId" = u.id
-      LEFT JOIN statements_agg sa ON sa."vendedorId" = u.id
+      LEFT JOIN account_agg aa ON aa."vendedorId" = u.id
       LEFT JOIN collections_agg ca ON ca."vendedorId" = u.id
       LEFT JOIN ticket_payments_agg tpa ON tpa."vendedorId" = u.id
       WHERE u."isActive" = true AND u.role = 'VENDEDOR'
@@ -1317,25 +1126,14 @@ export const DashboardService = {
 
     // SQL consolidada para evitar picos de memoria y múltiples round-trips
     const ventanaData = await prisma.$queryRaw<any[]>(Prisma.sql`
-      WITH tickets_in_range AS MATERIALIZED (
-        SELECT t.id, t."ventanaId", t."sorteoId", t."vendedorId"
-        FROM "Ticket" t WHERE ${baseFilters}
-      ),
-      jugada_agg AS (
-        SELECT t."ventanaId",
-               COALESCE(SUM(j.amount), 0) AS total_sales,
-               COALESCE(SUM(j.payout), 0) AS total_payouts,
-               COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-               COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
-               COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
-        FROM tickets_in_range t
-        JOIN "Jugada" j ON j."ticketId" = t.id
-        WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
-        ${jugadaExclusionFilter}
-        GROUP BY t."ventanaId"
-      ),
-      statements_agg AS (
-        SELECT "ventanaId", COALESCE(SUM("totalPaid"), 0) AS total_paid
+      WITH account_agg AS (
+        SELECT "ventanaId",
+               COALESCE(SUM("totalSales"), 0) AS total_sales,
+               COALESCE(SUM("totalPayouts"), 0) AS total_payouts,
+               COALESCE(SUM("vendedorCommission"), 0) AS commission_user,
+               COALESCE(SUM("listeroCommission"), 0) AS commission_ventana_raw,
+               COALESCE(SUM("listeroCommission"), 0) AS listero_commission_snapshot,
+               COALESCE(SUM("totalPaid"), 0) AS total_paid
         FROM "AccountStatement"
         WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NULL
         GROUP BY "ventanaId"
@@ -1354,17 +1152,16 @@ export const DashboardService = {
         GROUP BY t."ventanaId"
       )
       SELECT v.id AS ventana_id, v.name AS ventana_name, v."isActive" AS is_active,
-             COALESCE(ja.total_sales, 0) AS total_sales,
-             COALESCE(ja.total_payouts, 0) AS total_payouts,
-             COALESCE(ja.commission_user, 0) AS commission_user,
-             COALESCE(ja.commission_ventana_raw, 0) AS commission_ventana_raw,
-             COALESCE(ja.listero_commission_snapshot, 0) AS listero_commission_snapshot,
-             COALESCE(sa.total_paid, 0) AS total_paid,
+             COALESCE(aa.total_sales, 0) AS total_sales,
+             COALESCE(aa.total_payouts, 0) AS total_payouts,
+             COALESCE(aa.commission_user, 0) AS commission_user,
+             COALESCE(aa.commission_ventana_raw, 0) AS commission_ventana_raw,
+             COALESCE(aa.listero_commission_snapshot, 0) AS listero_commission_snapshot,
+             COALESCE(aa.total_paid, 0) AS total_paid,
              COALESCE(ca.total_collected, 0) AS total_collected,
              COALESCE(tpa.total_paid_to_customer, 0) AS total_paid_to_customer
       FROM "Ventana" v
-      LEFT JOIN jugada_agg ja ON ja."ventanaId" = v.id
-      LEFT JOIN statements_agg sa ON sa."ventanaId" = v.id
+      LEFT JOIN account_agg aa ON aa."ventanaId" = v.id
       LEFT JOIN collections_agg ca ON ca."ventanaId" = v.id
       LEFT JOIN ticket_payments_agg tpa ON tpa."ventanaId" = v.id
       WHERE v."isActive" = true
@@ -1454,25 +1251,14 @@ export const DashboardService = {
         )`;
 
     const vendedorData = await prisma.$queryRaw<any[]>(Prisma.sql`
-      WITH tickets_in_range AS MATERIALIZED (
-        SELECT t.id, t."vendedorId", t."ventanaId", t."sorteoId"
-        FROM "Ticket" t WHERE ${baseFilters} AND t."vendedorId" IS NOT NULL
-      ),
-      jugada_agg AS (
-        SELECT t."vendedorId",
-               COALESCE(SUM(j.amount), 0) AS total_sales,
-               COALESCE(SUM(j.payout), 0) AS total_payouts,
-               COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-               COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana_raw,
-               COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission_snapshot
-        FROM tickets_in_range t
-        JOIN "Jugada" j ON j."ticketId" = t.id
-        WHERE j."deletedAt" IS NULL AND j."isExcluded" = false
-        ${jugadaExclusionFilter}
-        GROUP BY t."vendedorId"
-      ),
-      statements_agg AS (
-        SELECT "vendedorId", COALESCE(SUM("totalPaid"), 0) AS total_paid
+      WITH account_agg AS (
+        SELECT "vendedorId",
+               COALESCE(SUM("totalSales"), 0) AS total_sales,
+               COALESCE(SUM("totalPayouts"), 0) AS total_payouts,
+               COALESCE(SUM("vendedorCommission"), 0) AS commission_user,
+               COALESCE(SUM("listeroCommission"), 0) AS commission_ventana_raw,
+               COALESCE(SUM("listeroCommission"), 0) AS listero_commission_snapshot,
+               COALESCE(SUM("totalPaid"), 0) AS total_paid
         FROM "AccountStatement"
         WHERE "date" BETWEEN ${rangeStart} AND ${rangeEnd} AND "vendedorId" IS NOT NULL
         GROUP BY "vendedorId"
@@ -1492,18 +1278,17 @@ export const DashboardService = {
       )
       SELECT u.id AS vendedor_id, u.name AS vendedor_name, u.code AS vendedor_code, 
              u."ventanaId" AS ventana_id, v.name AS ventana_name, u."isActive" AS is_active,
-             COALESCE(ja.total_sales, 0) AS total_sales,
-             COALESCE(ja.total_payouts, 0) AS total_payouts,
-             COALESCE(ja.commission_user, 0) AS commission_user,
-             COALESCE(ja.commission_ventana_raw, 0) AS commission_ventana_raw,
-             COALESCE(ja.listero_commission_snapshot, 0) AS listero_commission_snapshot,
-             COALESCE(sa.total_paid, 0) AS total_paid,
+             COALESCE(aa.total_sales, 0) AS total_sales,
+             COALESCE(aa.total_payouts, 0) AS total_payouts,
+             COALESCE(aa.commission_user, 0) AS commission_user,
+             COALESCE(aa.commission_ventana_raw, 0) AS commission_ventana_raw,
+             COALESCE(aa.listero_commission_snapshot, 0) AS listero_commission_snapshot,
+             COALESCE(aa.total_paid, 0) AS total_paid,
              COALESCE(ca.total_collected, 0) AS total_collected,
              COALESCE(tpa.total_paid_to_customer, 0) AS total_paid_to_customer
       FROM "User" u
       LEFT JOIN "Ventana" v ON v.id = u."ventanaId"
-      LEFT JOIN jugada_agg ja ON ja."vendedorId" = u.id
-      LEFT JOIN statements_agg sa ON sa."vendedorId" = u.id
+      LEFT JOIN account_agg aa ON aa."vendedorId" = u.id
       LEFT JOIN collections_agg ca ON ca."vendedorId" = u.id
       LEFT JOIN ticket_payments_agg tpa ON tpa."vendedorId" = u.id
       WHERE u."isActive" = true AND u.role = 'VENDEDOR'
@@ -1624,133 +1409,56 @@ export const DashboardService = {
       commission_ventana: number;
     };
 
-    if (isHistorical) {
-      // ⚡ OPTIMIZACIÓN FASE I: Consultar desde AccountStatement
-      const statementSummaryRows = await prisma.$queryRaw<any[]>(
-        Prisma.sql`
-          SELECT
-            COALESCE(SUM(a."totalSales"), 0) as total_sales,
-            COALESCE(SUM(a."totalPayouts"), 0) as total_payouts,
-            COALESCE(SUM(a."ticketCount"), 0) as total_tickets,
-            COALESCE(SUM(a."vendedorCommission"), 0) as commission_user,
-            COALESCE(SUM(a."listeroCommission"), 0) as commission_ventana
-          FROM "AccountStatement" a
-          WHERE a.date BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-            ${filters.bancaId ? Prisma.sql`AND a."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
-            ${filters.ventanaId ? Prisma.sql`AND a."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-            ${filters.vendedorId ? Prisma.sql`AND a."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-            ${(!filters.ventanaId && !filters.vendedorId) ? Prisma.sql`AND a."vendedorId" IS NULL` : Prisma.empty}
-        `
-      );
+    // ⚡ OPTIMIZACIÓN FASE I: Consultar desde AccountStatement
+    const statementSummaryRows = await prisma.$queryRaw<any[]>(
+      Prisma.sql`
+        SELECT
+          COALESCE(SUM(a."totalSales"), 0) as total_sales,
+          COALESCE(SUM(a."totalPayouts"), 0) as total_payouts,
+          COALESCE(SUM(a."ticketCount"), 0) as total_tickets,
+          COALESCE(SUM(a."vendedorCommission"), 0) as commission_user,
+          COALESCE(SUM(a."listeroCommission"), 0) as commission_ventana
+        FROM "AccountStatement" a
+        WHERE a.date BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          ${filters.bancaId ? Prisma.sql`AND a."bancaId" = ${filters.bancaId}::uuid` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND a."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+          ${filters.vendedorId ? Prisma.sql`AND a."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+          ${(!filters.ventanaId && !filters.vendedorId) ? Prisma.sql`AND a."vendedorId" IS NULL` : Prisma.empty}
+      `
+    );
 
-      // ⚡ OPTIMIZACIÓN: Contar ganadores con SQL crudo para forzar uso del índice parcial idx_ticket_winner_status_date
-      const winningCountRows = await prisma.$queryRaw<Array<{ count: number }>>(
-        Prisma.sql`
-          SELECT COUNT(*)::int AS count
-          FROM "Ticket"
-          WHERE "isWinner" = true
-            AND "deletedAt" IS NULL
-            AND "isActive" = true
-            AND "businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-            ${filters.bancaId ? Prisma.sql`AND "bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
-            ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-            ${filters.vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
-        `
-      );
-      const winningCount = Number(winningCountRows[0]?.count) || 0;
+    // ⚡ OPTIMIZACIÓN: Contar ganadores con SQL crudo para forzar uso del índice parcial idx_ticket_winner_status_date
+    const winningCountRows = await prisma.$queryRaw<Array<{ count: number }>>(
+      Prisma.sql`
+        SELECT COUNT(*)::int AS count
+        FROM "Ticket"
+        WHERE "isWinner" = true
+          AND "deletedAt" IS NULL
+          AND "isActive" = true
+          AND "businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          ${filters.bancaId ? Prisma.sql`AND "bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND "ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+          ${filters.vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+      `
+    );
+    const winningCount = Number(winningCountRows[0]?.count) || 0;
 
-      const row = statementSummaryRows[0] || {
-        total_sales: 0,
-        total_payouts: 0,
-        total_tickets: 0,
-        commission_user: 0,
-        commission_ventana: 0,
-      };
+    const row = statementSummaryRows[0] || {
+      total_sales: 0,
+      total_payouts: 0,
+      total_tickets: 0,
+      commission_user: 0,
+      commission_ventana: 0,
+    };
 
-      summary = {
-        total_sales: Number(row.total_sales) || 0,
-        total_payouts: Number(row.total_payouts) || 0,
-        total_tickets: Number(row.total_tickets) || 0,
-        winning_tickets: winningCount,
-        commission_user: Number(row.commission_user) || 0,
-        commission_ventana: Number(row.commission_ventana) || 0,
-      };
-    } else {
-      // Consulta en tiempo real (involucra el día de hoy)
-      const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
-      const summaryRows = await prisma.$queryRaw<
-        Array<{
-          total_sales: number;
-          total_payouts: number;
-          total_tickets: number;
-          winning_tickets: number;
-          commission_user: number;
-          commission_ventana: number;
-        }>
-      >(
-        Prisma.sql`
-          WITH tickets_in_range AS NOT MATERIALIZED (
-            SELECT
-              t.id,
-              t."totalAmount",
-              t."totalPayout",
-              t."isWinner"
-            FROM "Ticket" t
-            WHERE ${baseFilters}
-          ),
-          ticket_summary AS (
-            SELECT
-              COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
-              COALESCE(SUM(t."totalPayout"), 0) AS total_payouts,
-              COUNT(DISTINCT t.id) AS total_tickets,
-              COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) AS winning_tickets
-            FROM tickets_in_range t
-          ),
-          commission_summary AS (
-            SELECT
-              COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-              COALESCE(SUM(
-                CASE
-                  WHEN j."listeroCommissionAmount" > 0 THEN j."listeroCommissionAmount"
-                  WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount"
-                  ELSE 0
-                END
-              ), 0) AS commission_ventana
-            FROM "Jugada" j
-            JOIN tickets_in_range t ON t.id = j."ticketId"
-            WHERE j."deletedAt" IS NULL
-              AND j."isExcluded" = false
-          )
-          SELECT
-            ts.total_sales,
-            ts.total_payouts,
-            ts.total_tickets,
-            ts.winning_tickets,
-            COALESCE(cs.commission_user, 0) AS commission_user,
-            COALESCE(cs.commission_ventana, 0) AS commission_ventana
-          FROM ticket_summary ts
-          LEFT JOIN commission_summary cs ON TRUE
-        `
-      );
-
-      const rawSummary = summaryRows[0] || {
-        total_sales: 0,
-        total_payouts: 0,
-        total_tickets: 0,
-        winning_tickets: 0,
-        commission_user: 0,
-        commission_ventana: 0,
-      };
-
-      summary = {
-        total_sales: Number(rawSummary.total_sales) || 0,
-        total_payouts: Number(rawSummary.total_payouts) || 0,
-        total_tickets: Number(rawSummary.total_tickets) || 0,
-        winning_tickets: Number(rawSummary.winning_tickets) || 0,
-        commission_user: Number(rawSummary.commission_user) || 0,
-        commission_ventana: Number(rawSummary.commission_ventana) || 0,
-      };
-    }
+    summary = {
+      total_sales: Number(row.total_sales) || 0,
+      total_payouts: Number(row.total_payouts) || 0,
+      total_tickets: Number(row.total_tickets) || 0,
+      winning_tickets: winningCount,
+      commission_user: Number(row.commission_user) || 0,
+      commission_ventana: Number(row.commission_ventana) || 0,
+    };
 
     const totalSales = summary.total_sales;
     const totalPayouts = Number(summary.total_payouts) || 0;
@@ -2743,113 +2451,48 @@ export const DashboardService = {
       commission_ventana: 0,
     };
 
-    if (isPrevHistorical) {
-      const stats = await prisma.$queryRaw<any[]>(
-        Prisma.sql`
-          SELECT
-            COALESCE(SUM(a."totalSales"), 0) as total_sales,
-            COALESCE(SUM(a."totalPayouts"), 0) as total_payouts,
-            COALESCE(SUM(a."ticketCount"), 0) as total_tickets,
-            COALESCE(SUM(a."vendedorCommission"), 0) as commission_user,
-            COALESCE(SUM(a."listeroCommission"), 0) as commission_ventana
-          FROM "AccountStatement" a
-          WHERE a.date BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-            ${previousFilters.bancaId ? Prisma.sql`AND a."bancaId" = ${previousFilters.bancaId}::uuid` : Prisma.empty}
-            ${previousFilters.ventanaId ? Prisma.sql`AND a."ventanaId" = ${previousFilters.ventanaId}::uuid` : Prisma.empty}
-            ${previousFilters.vendedorId ? Prisma.sql`AND a."vendedorId" = ${previousFilters.vendedorId}::uuid` : Prisma.empty}
-            ${(!previousFilters.ventanaId && !previousFilters.vendedorId) ? Prisma.sql`AND a."vendedorId" IS NULL` : Prisma.empty}
-        `
-      );
+    const stats = await prisma.$queryRaw<any[]>(
+      Prisma.sql`
+        SELECT
+          COALESCE(SUM(a."totalSales"), 0) as total_sales,
+          COALESCE(SUM(a."totalPayouts"), 0) as total_payouts,
+          COALESCE(SUM(a."ticketCount"), 0) as total_tickets,
+          COALESCE(SUM(a."vendedorCommission"), 0) as commission_user,
+          COALESCE(SUM(a."listeroCommission"), 0) as commission_ventana
+        FROM "AccountStatement" a
+        WHERE a.date BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          ${previousFilters.bancaId ? Prisma.sql`AND a."bancaId" = ${previousFilters.bancaId}::uuid` : Prisma.empty}
+          ${previousFilters.ventanaId ? Prisma.sql`AND a."ventanaId" = ${previousFilters.ventanaId}::uuid` : Prisma.empty}
+          ${previousFilters.vendedorId ? Prisma.sql`AND a."vendedorId" = ${previousFilters.vendedorId}::uuid` : Prisma.empty}
+          ${(!previousFilters.ventanaId && !previousFilters.vendedorId) ? Prisma.sql`AND a."vendedorId" IS NULL` : Prisma.empty}
+      `
+    );
 
-      // ⚡ OPTIMIZACIÓN: Contar ganadores con SQL crudo para forzar uso del índice parcial idx_ticket_winner_status_date
-      const winningTicketsCountRows = await prisma.$queryRaw<Array<{ count: number }>>(
-        Prisma.sql`
-          SELECT COUNT(*)::int AS count
-          FROM "Ticket"
-          WHERE "isWinner" = true
-            AND "deletedAt" IS NULL
-            AND "isActive" = true
-            AND "businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-            ${previousFilters.bancaId ? Prisma.sql`AND "bancaId" = CAST(${previousFilters.bancaId} AS uuid)` : Prisma.empty}
-            ${previousFilters.ventanaId ? Prisma.sql`AND "ventanaId" = CAST(${previousFilters.ventanaId} AS uuid)` : Prisma.empty}
-            ${previousFilters.vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${previousFilters.vendedorId} AS uuid)` : Prisma.empty}
-        `
-      );
-      const winningTicketsCount = Number(winningTicketsCountRows[0]?.count) || 0;
+    // ⚡ OPTIMIZACIÓN: Contar ganadores con SQL crudo para forzar uso del índice parcial idx_ticket_winner_status_date
+    const winningTicketsCountRows = await prisma.$queryRaw<Array<{ count: number }>>(
+      Prisma.sql`
+        SELECT COUNT(*)::int AS count
+        FROM "Ticket"
+        WHERE "isWinner" = true
+          AND "deletedAt" IS NULL
+          AND "isActive" = true
+          AND "businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          ${previousFilters.bancaId ? Prisma.sql`AND "bancaId" = CAST(${previousFilters.bancaId} AS uuid)` : Prisma.empty}
+          ${previousFilters.ventanaId ? Prisma.sql`AND "ventanaId" = CAST(${previousFilters.ventanaId} AS uuid)` : Prisma.empty}
+          ${previousFilters.vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${previousFilters.vendedorId} AS uuid)` : Prisma.empty}
+      `
+    );
+    const winningTicketsCount = Number(winningTicketsCountRows[0]?.count) || 0;
 
-      if (stats && stats[0]) {
-        row = {
-          total_sales: Number(stats[0].total_sales) || 0,
-          total_payouts: Number(stats[0].total_payouts) || 0,
-          total_tickets: Number(stats[0].total_tickets) || 0,
-          winning_tickets: winningTicketsCount,
-          commission_user: Number(stats[0].commission_user) || 0,
-          commission_ventana: Number(stats[0].commission_ventana) || 0,
-        };
-      }
-    } else {
-      const skipExclusion = await isExclusionListEmpty();
-      const baseFilters = buildTicketBaseFilters("t", previousFilters, fromDateStr, toDateStr, skipExclusion);
-
-      const previousRows = await prisma.$queryRaw<
-        Array<{
-          total_sales: number;
-          total_payouts: number;
-          total_tickets: number;
-          winning_tickets: number;
-          commission_user: number;
-          commission_ventana: number;
-        }>
-      >(
-        Prisma.sql`
-          WITH tickets_in_range AS (
-            SELECT
-              t.id,
-              t."totalAmount",
-              t."totalPayout",
-              t."isWinner"
-            FROM "Ticket" t
-            WHERE ${baseFilters}
-          ),
-          ticket_summary AS (
-            SELECT
-              COALESCE(SUM(t."totalAmount"), 0) AS total_sales,
-              COALESCE(SUM(t."totalPayout"), 0) AS total_payouts,
-              COUNT(DISTINCT t.id) AS total_tickets,
-              COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) AS winning_tickets
-            FROM tickets_in_range t
-          ),
-          commission_summary AS (
-            SELECT
-              COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS commission_user,
-              COALESCE(SUM(CASE WHEN j."commissionOrigin" IN ('VENTANA', 'BANCA') THEN j."commissionAmount" ELSE 0 END), 0) AS commission_ventana
-            FROM "Jugada" j
-            JOIN tickets_in_range t ON t.id = j."ticketId"
-            WHERE j."deletedAt" IS NULL
-              AND j."isExcluded" = false
-          )
-          SELECT
-            ts.total_sales,
-            ts.total_payouts,
-            ts.total_tickets,
-            ts.winning_tickets,
-            COALESCE(cs.commission_user, 0) AS commission_user,
-            COALESCE(cs.commission_ventana, 0) AS commission_ventana
-          FROM ticket_summary ts
-          LEFT JOIN commission_summary cs ON TRUE
-        `
-      );
-
-      if (previousRows && previousRows[0]) {
-        row = {
-          total_sales: Number(previousRows[0].total_sales) || 0,
-          total_payouts: Number(previousRows[0].total_payouts) || 0,
-          total_tickets: Number(previousRows[0].total_tickets) || 0,
-          winning_tickets: Number(previousRows[0].winning_tickets) || 0,
-          commission_user: Number(previousRows[0].commission_user) || 0,
-          commission_ventana: Number(previousRows[0].commission_ventana) || 0,
-        };
-      }
+    if (stats && stats[0]) {
+      row = {
+        total_sales: Number(stats[0].total_sales) || 0,
+        total_payouts: Number(stats[0].total_payouts) || 0,
+        total_tickets: Number(stats[0].total_tickets) || 0,
+        winning_tickets: winningTicketsCount,
+        commission_user: Number(stats[0].commission_user) || 0,
+        commission_ventana: Number(stats[0].commission_ventana) || 0,
+      };
     }
 
     const sales = Number(row.total_sales) || 0;
