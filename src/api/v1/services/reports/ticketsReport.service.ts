@@ -663,6 +663,7 @@ export const TicketsReportService = {
           l.id as "loteriaId",
           l.name as "loteriaName",
           COALESCE(SUM(t."totalAmount"), 0)::float as "totalVentas",
+          COALESCE(SUM(t."totalPayout"), 0)::float as "premios",
           COALESCE(SUM(t."totalAmount") - SUM(t."totalPayout"), 0)::float as "margen"
         FROM filtered_tickets t
         INNER JOIN "Loteria" l ON t."loteriaId" = l.id
@@ -675,6 +676,7 @@ export const TicketsReportService = {
           s.id as "sorteoId",
           s.name as "sorteoName",
           COALESCE(SUM(t."totalAmount"), 0)::float as "totalVentas",
+          COALESCE(SUM(t."totalPayout"), 0)::float as "premios",
           COALESCE(SUM(t."totalAmount") - SUM(t."totalPayout"), 0)::float as "margen"
         FROM filtered_tickets t
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
