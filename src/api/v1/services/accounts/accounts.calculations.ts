@@ -3047,7 +3047,7 @@ export async function getStatementDirect(
                         : dimension === "ventana" && !ventanaId
                             ? { ventanaId: { not: null }, vendedorId: null, bancaId: null } //  CRÍTICO: Solo statements consolidados de ventanas (NO bancas)
                             : dimension === "vendedor" && vendedorId
-                                ? { vendedorId }
+                                ? { vendedorId, ...(bancaId ? { bancaId } : {}) } //  RBAC: Filtrar por bancaId activa para que una banca no vea datos de otra banca
                                 : {}),
         },
         select: {
@@ -4254,6 +4254,9 @@ export async function getSettledStatements(
         // Filtros según dimension
         if (dimension === "vendedor" && vendedorId) {
             where.vendedorId = vendedorId;
+            //  RBAC: Si hay bancaId activa, filtrar también por ella.
+            // Evita que una banca (ej: CEN) vea statements del vendedor que ahora pertenecen a otra banca (ej: JJ).
+            if (bancaId) where.bancaId = bancaId;
         } else if (dimension === "ventana" && ventanaId) {
             where.ventanaId = ventanaId;
             where.vendedorId = null; // Statements consolidados de ventana
