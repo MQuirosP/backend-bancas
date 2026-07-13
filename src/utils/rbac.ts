@@ -236,7 +236,8 @@ async function applyAdminStrategy(
       );
       
       if (ventana && ventana.bancaId !== effectiveBancaId) {
-        delete effective.bancaId;
+        // CRÍTICO: No borrar effective.bancaId.
+        // delete effective.bancaId;
       }
     }
     if (requestFilters.vendedorId) {
@@ -249,7 +250,9 @@ async function applyAdminStrategy(
       );
       
       if (vendedor && vendedor.ventana?.bancaId !== effectiveBancaId) {
-        delete effective.bancaId;
+        // CRÍTICO: No borrar effective.bancaId. Mantenerlo garantiza que 
+        // las consultas históricas solo devuelvan datos que pertenecen a esta banca.
+        // delete effective.bancaId;
       }
     }
   }
@@ -273,41 +276,19 @@ async function applyBancaStrategy(
 
   effective.bancaId = bancaId;
 
-  // Si solicita un ventanaId específico, validar que pertenezca a su banca
   if (requestFilters.ventanaId) {
-    const ventana = await withConnectionRetry(
-      () => prisma.ventana.findUnique({
-        where: { id: requestFilters.ventanaId! },
-        select: { bancaId: true }
-      }),
-      { context: 'rbac.applyRbacFilters.bancaVentanaValidate' }
-    );
-
-    if (!ventana || ventana.bancaId !== bancaId) {
-      throw new AppError('Cannot access that ventana', 403, {
-        code: 'RBAC_007',
-        details: [{ field: 'ventanaId', reason: 'Ventana does not belong to your banca' }]
-      });
-    }
+    // Eliminamos la validación estricta de pertenencia actual (throw Error) porque 
+    // impide ver el histórico de entidades que fueron movidas a otra banca.
+    // Como effective.bancaId ya está forzado a la banca del usuario, las 
+    // consultas SQL naturalmente solo devolverán datos históricos que le pertenecen a esta banca.
     effective.ventanaId = requestFilters.ventanaId;
   }
 
-  // Si solicita un vendedorId específico, validar que pertenezca a una ventana de su banca
   if (requestFilters.vendedorId) {
-    const vendedor = await withConnectionRetry(
-      () => prisma.user.findUnique({
-        where: { id: requestFilters.vendedorId! },
-        select: { ventana: { select: { bancaId: true } } }
-      }),
-      { context: 'rbac.applyRbacFilters.bancaVendedorValidate' }
-    );
-
-    if (!vendedor || vendedor.ventana?.bancaId !== bancaId) {
-      throw new AppError('Cannot access that vendedor', 403, {
-        code: 'RBAC_008',
-        details: [{ field: 'vendedorId', reason: 'Vendedor does not belong to your banca' }]
-      });
-    }
+    // Eliminamos la validación estricta de pertenencia actual (throw Error) porque 
+    // impide ver el histórico de vendedores que fueron movidos a otra banca.
+    // Como effective.bancaId ya está forzado a la banca del usuario, las 
+    // consultas SQL naturalmente solo devolverán datos históricos que le pertenecen a esta banca.
     effective.vendedorId = requestFilters.vendedorId;
   }
   return effective;
