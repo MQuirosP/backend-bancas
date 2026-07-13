@@ -1953,6 +1953,31 @@ gs."hour24" ASC
       //  CRÍTICO: Obtener accumulatedBalance desde AccountStatement para cada día
       // Esto asegura que el acumulado sea consistente independiente del período consultado
       // (el acumulado a una fecha X siempre será el mismo sin importar los filtros)
+
+      //  FIX: Si no hay eventos pero hay saldo acumulado inicial (arrastre de días anteriores),
+      //  inyectar un día vacío para "hoy" con ese acumulado visible para el vendedor.
+      if (daysArray.length === 0 && vendedorId && initialAccumulatedForRange !== 0) {
+        const todayDateStr = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}-${String(fromAtComponents.day).padStart(2, '0')}`;
+        daysArray.push({
+          date: todayDateStr,
+          sorteos: [],
+          dayTotals: {
+            totalSales: 0,
+            totalCommission: 0,
+            commissionByNumber: 0,
+            commissionByReventado: 0,
+            totalPrizes: 0,
+            totalTickets: 0,
+            totalPaid: 0,
+            totalCollected: 0,
+            totalBalance: 0,
+            totalRemainingBalance: 0,
+            totalSubtotal: 0,
+            accumulated: initialAccumulatedForRange,
+          },
+        });
+      }
+
       const datesToQuery = daysArray.map(d => {
         const [year, month, day] = d.date.split('-').map(Number);
         return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
@@ -1976,9 +2001,25 @@ gs."hour24" ASC
         accumulatedByDate.set(dateStr, stmt.accumulatedBalance);
       }
 
-      // Asignar accumulated a cada día desde AccountStatement
+      // Asignar accumulated a cada día desde AccountStatement.
+      //  FIX: Para hoy (día activo), si AccountStatement aún no tiene el acumulado
+      //  actualizado (valor 0 o ausente), mantener el valor ya calculado dinámicamente
+      //  desde el event flow (initialAccumulatedForRange + subtotales del día).
+      const todayStr = crDateService.dateUTCToCRString(new Date());
       for (const day of daysArray) {
-        day.dayTotals.accumulated = accumulatedByDate.get(day.date) ?? 0;
+        const fromDb = accumulatedByDate.get(day.date);
+        if (fromDb !== undefined && fromDb !== 0) {
+          // Hay valor guardado en DB y no es 0 → usar el de DB (fuente de verdad)
+          day.dayTotals.accumulated = fromDb;
+        } else if (day.date === todayStr) {
+          // Es hoy y DB no tiene acumulado válido → mantener el calculado dinámicamente
+          // (ya asignado en el bloque de día vacío o calculado en el event flow)
+          // No sobrescribir con 0
+        } else if (fromDb !== undefined) {
+          // Día pasado con 0 en DB → usar el de DB (puede ser legítimamente 0)
+          day.dayTotals.accumulated = fromDb;
+        }
+        // Si fromDb === undefined (no hay statement para ese día), mantener el valor existente
       }
 
       // Ocultar días anteriores al reset únicamente para el vendedor si ignoreReset no está activo
