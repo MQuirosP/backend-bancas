@@ -124,8 +124,7 @@ export async function getAggregatedTicketsData(params: {
         if (bancaId) {
             whereConditions.push(Prisma.sql`EXISTS (
                 SELECT 1 FROM "Ventana" v 
-                JOIN "User" u ON u."ventanaId" = v.id
-                WHERE u.id = t."vendedorId"
+                WHERE v.id = t."ventanaId" 
                 AND v."bancaId" = CAST(${bancaId} AS uuid)
             )`);
         }

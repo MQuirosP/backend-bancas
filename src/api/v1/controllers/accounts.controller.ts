@@ -698,6 +698,54 @@ export const AccountsController = {
   },
 
   /**
+   * GET /api/v1/accounts/historical-entities
+   * Obtiene la lista de entidades (vendedores, ventanas) que tienen 
+   * AccountStatement en la banca actual, sin importar a qué banca pertenecen hoy.
+   */
+  async getHistoricalEntities(req: AuthenticatedRequest, res: Response) {
+    if (!req.user) throw new AppError("Unauthorized", 401);
+    
+    // Obtener el bancaId del contexto usando el middleware o la sesión
+    const bancaId = await getActiveBancaId(req);
+
+    if (!bancaId) {
+      return success(res, { vendedores: [], ventanas: [] });
+    }
+
+    // 1. Obtener los vendedores con historial en esta banca
+    const statementVendedores = await prisma.accountStatement.findMany({
+      where: { bancaId, vendedorId: { not: null } },
+      select: {
+        vendedor: {
+          select: { id: true, name: true, username: true, code: true }
+        }
+      },
+      distinct: ['vendedorId']
+    });
+
+    const vendedores = statementVendedores
+      .map(s => s.vendedor)
+      .filter(v => v !== null);
+
+    // 2. Obtener las ventanas con historial en esta banca
+    const statementVentanas = await prisma.accountStatement.findMany({
+      where: { bancaId, ventanaId: { not: null } },
+      select: {
+        ventana: {
+          select: { id: true, name: true, code: true }
+        }
+      },
+      distinct: ['ventanaId']
+    });
+
+    const ventanas = statementVentanas
+      .map(s => s.ventana)
+      .filter(v => v !== null);
+
+    return success(res, { vendedores, ventanas });
+  },
+
+  /**
    * POST /api/v1/accounts/reverse-payment
    * Revierte un pago/cobro
    * CRÍTICO: ADMIN puede revertir cualquier pago. VENTANA solo puede revertir pagos de sus propios vendedores.

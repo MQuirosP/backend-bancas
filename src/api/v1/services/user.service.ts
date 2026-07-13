@@ -4,7 +4,7 @@ import { AppError } from '../../../core/errors';
 import { CreateUserDTO, UpdateUserDTO } from '../dto/user.dto';
 import { hashPassword, comparePassword } from '../../../utils/crypto';
 import UserRepository from '../../../repositories/user.repository';
-import { Role, ActivityType } from '../../../generated/prisma/client';
+import { Prisma, Role, ActivityType } from '../../../generated/prisma/client';
 import { normalizePhone } from "../../../utils/phoneNormalizer";
 import ActivityService from '../../../core/activity.service';
 import { parseCommissionPolicy, CommissionRule } from '../../../services/commission.resolver';
@@ -511,19 +511,31 @@ export const UserService = {
       }
     }
 
-    // NUEVO: Si cambia la ventana (ya sea por role o por ventanaId explícito), actualizar automáticamente el bancaId
+    // NUEVO: Si cambia la ventana, verificamos si también cambia de banca
+    let bancaChanged = false;
     if (toUpdate.ventanaId && toUpdate.ventanaId !== current.ventanaId) {
-      const ventana = await prisma.ventana.findUnique({
+      const targetVentana = await prisma.ventana.findUnique({
         where: { id: toUpdate.ventanaId },
         select: { bancaId: true }
       });
-      if (ventana) {
-        toUpdate.bancaId = ventana.bancaId;
+      
+      if (targetVentana) {
+        toUpdate.bancaId = targetVentana.bancaId;
+        if (current.bancaId !== targetVentana.bancaId) {
+          bancaChanged = true;
+          // Limpiar política de comisiones SOLAMENTE al cambiar de banca 
+          // (para no arrastrar UUIDs de loterias/multiplicadores de la banca anterior)
+          toUpdate.commissionPolicyJson = Prisma.DbNull;
+        }
       }
     }
 
     if (dto.bancaId !== undefined) {
       toUpdate.bancaId = dto.bancaId;
+      if (current.bancaId !== dto.bancaId) {
+        bancaChanged = true;
+        toUpdate.commissionPolicyJson = Prisma.DbNull;
+      }
       
       // Si el rol resultante es BANCA, sincronizar con la tabla UserBanca
       const finalRole = toUpdate.role ?? current.role;
@@ -633,6 +645,14 @@ export const UserService = {
       });
     } else {
       updated = await UserRepository.update(id, toUpdate);
+      
+      // Si la banca cambió y no se desactivó (ya está cubierto arriba), cerrar sesiones
+      if (bancaChanged) {
+        await prisma.refreshToken.updateMany({
+          where: { userId: id, revoked: false },
+          data: { revoked: true, revokedAt: new Date(), revokedReason: 'user_moved_banca' },
+        });
+      }
     }
 
     // Invalidar caché de sesión (L1/L2) si cambian datos críticos

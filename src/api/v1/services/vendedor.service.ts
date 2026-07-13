@@ -110,13 +110,19 @@ export const VendedorService = {
       passwordHash = await bcrypt.hash(data.password, 10);
     }
 
+    // Comprobar si cambió de ventana para resetear comisiones obligatoriamente (heredar la nueva estructura)
+    let shouldResetCommissions = data.resetCommissionPolicy;
+    if (data.ventanaId && data.ventanaId !== existing.ventanaId) {
+      shouldResetCommissions = true;
+    }
+
     const user = await VendedorRepository.update(id, {
       ventanaId: data.ventanaId,
       name: data.name,
       email: data.email ? data.email.toLowerCase() : undefined,
       passwordHash,
       isActive: data.isActive,
-      resetCommissionPolicy: data.resetCommissionPolicy,
+      resetCommissionPolicy: shouldResetCommissions,
     });
 
     // Logout all active sessions if the user was moved to a different ventana or was deactivated

@@ -221,7 +221,7 @@ export const CommissionController = {
     // Actualizar (Zod ya validó y generó UUIDs)
     const updated = await prisma.ventana.update({
       where: { id },
-      data: { commissionPolicyJson },
+      data: { commissionPolicyJson: commissionPolicyJson === null ? Prisma.DbNull : commissionPolicyJson },
       select: {
         id: true,
         name: true,
@@ -307,7 +307,7 @@ export const CommissionController = {
     // Actualizar (Zod ya validó y generó UUIDs)
     const updated = await prisma.user.update({
       where: { id },
-      data: { commissionPolicyJson },
+      data: { commissionPolicyJson: commissionPolicyJson === null ? Prisma.DbNull : commissionPolicyJson },
       select: {
         id: true,
         name: true,

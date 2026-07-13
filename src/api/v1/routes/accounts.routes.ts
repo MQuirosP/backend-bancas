@@ -45,6 +45,9 @@ router.get("/statement", validateGetStatementQuery, AccountsController.getStatem
 //  NUEVO: Endpoint para lazy loading de bySorteo
 router.get("/statement/:date/bySorteo", AccountsController.getBySorteo);
 
+//  NUEVO: Obtener entidades históricas (vendedores/ventanas) con movimientos en esta banca
+router.get("/historical-entities", AccountsController.getHistoricalEntities);
+
 // 2) Registrar pago o cobro
 // POST /accounts/payment
 router.post("/payment", validateCreatePaymentBody, AccountsController.createPayment);

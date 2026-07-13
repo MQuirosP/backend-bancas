@@ -584,13 +584,7 @@ export const AccountsService = {
         };
 
         // Filtro por bancaId si se especifica en los filtros
-        //  FIX: Cuando se consulta un vendedor específico por ID, NO aplicar el filtro bancaId.
-        // Razón: AccountStatement tiene unique constraint (date, vendedorId), por lo que un vendedor
-        // solo puede tener UN statement por fecha. Si el vendedor fue trasladado de banca, sus
-        // statements históricos conservan el bancaId de la banca original, y aplicar el filtro
-        // bancaId de la banca activa excluiría esos registros históricos, mostrando saldo en 0.
-        const isSpecificVendedor = dimension === "vendedor" && !!vendedorId;
-        if (bancaId && !isSpecificVendedor) {
+        if (bancaId) {
             where.bancaId = bancaId;
         }
 
