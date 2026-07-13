@@ -1755,11 +1755,11 @@ gs."hour24" ASC
               vendedorId,
               date: previousDay,
             },
-            select: { accumulatedBalance: true },
+            select: { accumulatedBalance: true, remainingBalance: true },
           });
 
           if (previousDayStatement) {
-            initialAccumulatedForRange = Number(previousDayStatement.accumulatedBalance) || 0;
+            initialAccumulatedForRange = Number(previousDayStatement.remainingBalance) || Number(previousDayStatement.accumulatedBalance) || 0;
           } else {
             //  Fallback: si no hay statement del día anterior, calcular desde inicio del mes
             //  Obtener todos los statements desde el día 1 hasta el día anterior
@@ -1773,11 +1773,11 @@ gs."hour24" ASC
                 },
               },
               orderBy: { date: 'desc' },
-              select: { accumulatedBalance: true },
+              select: { accumulatedBalance: true, remainingBalance: true },
             });
 
             if (lastStatementBeforeRange) {
-              initialAccumulatedForRange = Number(lastStatementBeforeRange.accumulatedBalance) || 0;
+              initialAccumulatedForRange = Number(lastStatementBeforeRange.remainingBalance) || Number(lastStatementBeforeRange.accumulatedBalance) || 0;
             } else {
               //  Si no hay statements previos en el mes, usar saldo del mes anterior
               initialAccumulatedForRange = Number(rangePreviousMonthBalance) || 0;
@@ -1991,6 +1991,7 @@ gs."hour24" ASC
         select: {
           date: true,
           accumulatedBalance: true,
+          remainingBalance: true,
         },
       });
 
@@ -1998,7 +1999,8 @@ gs."hour24" ASC
       const accumulatedByDate = new Map<string, number>();
       for (const stmt of statementsForAccumulated) {
         const dateStr = stmt.date.toISOString().split('T')[0];
-        accumulatedByDate.set(dateStr, stmt.accumulatedBalance);
+        const valToUse = Number(stmt.remainingBalance) || Number(stmt.accumulatedBalance) || 0;
+        accumulatedByDate.set(dateStr, valToUse);
       }
 
       // Asignar accumulated a cada día desde AccountStatement.

@@ -273,23 +273,23 @@ export async function getPreviousMonthFinalBalance(
             const lastStatement = await prisma.accountStatement.findFirst({
                 where,
                 orderBy: { date: "desc" },
-                select: { accumulatedBalance: true },
+                select: { accumulatedBalance: true, remainingBalance: true },
             });
 
             if (lastStatement) {
-                return Number(lastStatement.accumulatedBalance || 0);
+                return Number(lastStatement.remainingBalance) || Number(lastStatement.accumulatedBalance) || 0;
             }
         } else {
-            // Para consolidados, sumar los accumulatedBalance del último día de cada entidad
+            // Para consolidados, sumar los remainingBalance o accumulatedBalance del último día de cada entidad
             const statements = await prisma.accountStatement.findMany({
                 where,
                 orderBy: { date: "desc" },
                 distinct: dimension === "vendedor" ? ["vendedorId"] : dimension === "ventana" ? ["ventanaId"] : ["bancaId"],
-                select: { accumulatedBalance: true },
+                select: { accumulatedBalance: true, remainingBalance: true },
             });
 
             if (statements.length > 0) {
-                const total = statements.reduce((sum, s) => sum + Number(s.accumulatedBalance || 0), 0);
+                const total = statements.reduce((sum, s) => sum + (Number(s.remainingBalance) || Number(s.accumulatedBalance) || 0), 0);
                 return total;
             }
         }
