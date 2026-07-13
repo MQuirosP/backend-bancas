@@ -24,6 +24,7 @@ export const UpdateVendedorSchema = z.object({
   email: z.email("Formato de correo inválido").trim().toLowerCase().optional(),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres").optional(),
   isActive: z.boolean().optional(),
+  resetCommissionPolicy: z.boolean().optional(),
 }).strict();
 
 export const ListVendedoresQuerySchema = z.object({

@@ -5,6 +5,8 @@ import VendedorRepository from "../../../repositories/vendedor.repository";
 import { ActivityType, Role } from "../../../generated/prisma/client";
 import { CreateVendedorInput, UpdateVendedorInput } from "../dto/vendedor.dto";
 import bcrypt from "bcryptjs";
+import { AuthService } from "./auth.service";
+import logger from "../../../core/logger";
 
 type CurrentUser = { id: string; role: Role; ventanaId?: string | null };
 
@@ -114,7 +116,22 @@ export const VendedorService = {
       email: data.email ? data.email.toLowerCase() : undefined,
       passwordHash,
       isActive: data.isActive,
+      resetCommissionPolicy: data.resetCommissionPolicy,
     });
+
+    // Logout all active sessions if the user was moved to a different ventana or was deactivated
+    if (
+      (data.ventanaId && data.ventanaId !== existing.ventanaId) ||
+      (data.isActive === false && existing.isActive === true)
+    ) {
+      await AuthService.logoutAll(id).catch(err => {
+        logger.warn({
+          layer: "service",
+          action: "VENDEDOR_LOGOUT_ALL_FAILED",
+          payload: { userId: id, error: err.message }
+        });
+      });
+    }
 
     await ActivityService.log({
       userId: current.id,

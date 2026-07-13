@@ -9,4 +9,5 @@ export type CreateVendedorInput = {
 
 export type UpdateVendedorInput = Partial<CreateVendedorInput> & {
   isActive?: boolean;
+  resetCommissionPolicy?: boolean;
 };

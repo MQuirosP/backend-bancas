@@ -569,6 +569,8 @@ export const AuthService = {
       },
     });
 
+    await CacheService.del(`auth:session:${userId}`).catch(() => {});
+
     logger.info({
       layer: 'service',
       action: 'LOGOUT_ALL',

@@ -18,6 +18,7 @@ type VendedorUpdateParams = {
   email?: string | null;
   passwordHash?: string;
   isActive?: boolean;
+  resetCommissionPolicy?: boolean;
 };
 
 type ListFilters = {
@@ -94,6 +95,10 @@ const VendedorRepository = {
         // Desconectar de ventana (si ventanaId es null)
         updateData.ventana = { disconnect: true };
       }
+    }
+
+    if (data.resetCommissionPolicy === true) {
+      updateData.commissionPolicyJson = Prisma.DbNull;
     }
 
     const user = await prisma.user.update({
