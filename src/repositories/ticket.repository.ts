@@ -2334,11 +2334,6 @@ export const TicketRepository = {
       })),
     };
 
-    if (false) {
-      // Código muerto para mantener compatibilidad con el resto del archivo si es necesario
-      await (prisma as any).ticket.findUnique({ where: { id: '' } });
-    }
-
     logger.info({
       layer: 'repository',
       action: 'TICKET_CREATE_OPTIMIZED_SUCCESS',

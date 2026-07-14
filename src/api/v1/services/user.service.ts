@@ -7,7 +7,8 @@ import UserRepository from '../../../repositories/user.repository';
 import { Prisma, Role, ActivityType } from '../../../generated/prisma/client';
 import { normalizePhone } from "../../../utils/phoneNormalizer";
 import ActivityService from '../../../core/activity.service';
-import { parseCommissionPolicy, CommissionRule } from '../../../services/commission.resolver';
+import { commissionResolver } from '../../../services/commission/CommissionResolver';
+import { CommissionRule } from '../../../services/commission/types/CommissionTypes';
 import { CacheService } from '../../../core/cache.service';
 import { logger } from '../../../core/logger';
 
@@ -854,7 +855,7 @@ export const UserService = {
     }
 
     // Parsear política usando la función existente
-    const policy = parseCommissionPolicy(policyJson, policySource);
+    const policy = commissionResolver.parsePolicy(policyJson, policySource);
 
     // Si la política no es válida o no tiene reglas, retornar vacío
     if (!policy || !policy.rules || policy.rules.length === 0) {
@@ -980,7 +981,7 @@ export const UserService = {
     );
 
     // 4. Parsear la política del usuario
-    const userPolicy = parseCommissionPolicy(user.commissionPolicyJson, 'USER');
+    const userPolicy = commissionResolver.parsePolicy(user.commissionPolicyJson, 'USER');
 
     // 4.1 Verificar vigencia temporal (Igual que en el endpoint individual)
     const now = new Date();

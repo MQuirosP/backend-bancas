@@ -2,13 +2,12 @@
  * Servicio de reportes de loterías
  */
 
-import { Prisma, SorteoStatus, Role } from '../../../../generated/prisma/client';
+import { Prisma, SorteoStatus, Role, BetType } from '../../../../generated/prisma/client';
 import prisma from '../../../../core/prismaClient';
 import { resolveDateRange, calculatePreviousPeriod, calculateChangePercent, calculatePercentage } from '../../utils/reports.utils';
 import { DateToken, ReportMeta } from '../../types/reports.types';
 import { formatIsoLocal } from '../../../../utils/datetime';
-import { resolveCommission } from '../../../../services/commission.resolver';
-import { resolveCommissionFromPolicy } from '../../../../services/commission/commission.resolver';
+import { commissionResolver } from '../../../../services/commission/CommissionResolver';
 
 /**
  * Calcula comisiones de listero (ventana) desde las políticas de comisión
@@ -130,19 +129,20 @@ async function computeListeroCommissionByLoteria(
     if (userPolicyJson) {
       try {
         // Intentar calcular desde la política de USER del usuario VENTANA
-        const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+        const policy = commissionResolver.parsePolicy(userPolicyJson, "USER");
+        const resolution = commissionResolver.resolveFromPolicy(policy, {
           userId: ventanaUserId,
           loteriaId: ticket.loteriaId,
-          betType: jugada.type as "NUMERO" | "REVENTADO",
-          finalMultiplierX: jugada.finalMultiplierX ?? null,
+          betType: jugada.type as BetType,
+          finalMultiplierX: jugada.finalMultiplierX ?? undefined,
         });
         ventanaAmount = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
       } catch (err) {
         // Si falla, usar políticas de VENTANA/BANCA
-        const fallback = resolveCommission(
+        const fallback = commissionResolver.resolveVendedorCommission(
           {
             loteriaId: ticket.loteriaId,
-            betType: jugada.type as "NUMERO" | "REVENTADO",
+            betType: jugada.type as BetType,
             finalMultiplierX: jugada.finalMultiplierX || 0,
             amount: jugada.amount,
           },
@@ -154,10 +154,10 @@ async function computeListeroCommissionByLoteria(
       }
     } else {
       // Si no hay política de USER, usar políticas de VENTANA/BANCA
-      const fallback = resolveCommission(
+      const fallback = commissionResolver.resolveVendedorCommission(
         {
           loteriaId: ticket.loteriaId,
-          betType: jugada.type as "NUMERO" | "REVENTADO",
+          betType: jugada.type as BetType,
           finalMultiplierX: jugada.finalMultiplierX || 0,
           amount: jugada.amount,
         },

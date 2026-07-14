@@ -229,93 +229,72 @@ export async function getDailySummariesFromMaterializedView(
         endDateObj.setUTCDate(endDateObj.getUTCDate() + 1); // Día siguiente
         const endDateNextDayCR = `${endDateObj.getUTCFullYear()}-${String(endDateObj.getUTCMonth() + 1).padStart(2, '0')}-${String(endDateObj.getUTCDate()).padStart(2, '0')}`;
 
-        // Construir condiciones WHERE con Prisma.Sql para evitar interpolación insegura
         const conditions: Prisma.Sql[] = [
-            Prisma.sql`date >= ${startDateCR}::date`,
-            Prisma.sql`date < ${endDateNextDayCR}::date`, // ️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
+            Prisma.sql`t."deletedAt" IS NULL`,
+            Prisma.sql`t."isActive" = true`,
+            Prisma.sql`t."status" IN ('EVALUATED', 'PAID', 'PAGADO')`,
+            Prisma.sql`s.status = 'EVALUATED'`,
+            Prisma.sql`j."deletedAt" IS NULL`,
+            Prisma.sql`t."businessDate" >= ${startDateCR}::date`,
+            Prisma.sql`t."businessDate" < ${endDateNextDayCR}::date`, // ️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
         ];
 
-        // Aplicar filtro de bancaId directamente sobre la vista materializada para máximo rendimiento
+        // Aplicar filtro de bancaId
         if (bancaId) {
-            conditions.push(Prisma.sql`"bancaId" = ${bancaId}::uuid`);
+            conditions.push(Prisma.sql`v."bancaId" = CAST(${bancaId} AS uuid)`);
         }
 
         if (dimension === "banca") {
             if (ventanaId) {
-                conditions.push(Prisma.sql`"ventanaId" = ${ventanaId}::uuid`);
+                conditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
             }
             if (vendedorId) {
-                conditions.push(Prisma.sql`"vendedorId" = ${vendedorId}::uuid`);
+                conditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
             }
-            // Para dimension='banca', no filtramos por vendedorId IS NULL porque puede haber vendedores
         } else if (dimension === "ventana" && ventanaId) {
-            conditions.push(Prisma.sql`"ventanaId" = ${ventanaId}::uuid`);
-            conditions.push(Prisma.sql`"vendedorId" IS NULL`);
-        } else if (dimension === "ventana") {
-            conditions.push(Prisma.sql`"ventanaId" IS NOT NULL`);
-            conditions.push(Prisma.sql`"vendedorId" IS NULL`);
+            conditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
         } else if (dimension === "vendedor" && vendedorId) {
-            conditions.push(Prisma.sql`"vendedorId" = ${vendedorId}::uuid`);
-            conditions.push(Prisma.sql`"ventanaId" IS NULL`);
-        } else if (dimension === "vendedor") {
-            conditions.push(Prisma.sql`"vendedorId" IS NOT NULL`);
-            conditions.push(Prisma.sql`"ventanaId" IS NULL`);
+            conditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
+        }
+
+        // Exclusión de listas bloqueadas
+        const exclusionExists = await isExclusionListEmpty();
+        if (!exclusionExists) {
+            conditions.push(Prisma.sql`NOT EXISTS (
+                SELECT 1 FROM "sorteo_lista_exclusion" sle
+                WHERE sle.sorteo_id = t."sorteoId"
+                  AND sle.ventana_id = t."ventanaId"
+                  AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+                  AND sle.multiplier_id IS NULL
+            )`);
         }
 
         const whereClause = Prisma.join(conditions, ' AND ');
-        // sort es un enum TypeScript 'asc'|'desc' — los únicos dos valores posibles
         const orderClause = Prisma.raw(sort === "desc" ? "DESC" : "ASC");
 
-        // Query la vista materializada
-        // ️ REFUERZO: Si es dimensión banca, debemos AGREGAR (SUM) todas las ventanas de esa banca
-        const summaries = dimension === "banca"
-          ? await prisma.$queryRaw<Array<{
-              date: Date;
-              ticket_count: bigint;
-              total_sales: number;
-              total_payouts: number;
-              vendedor_commission: number;
-              listero_commission: number;
-              balance: number;
-            }>>(Prisma.sql`
-              SELECT
-                date,
-                SUM(ticket_count) as ticket_count,
-                SUM(total_sales) as total_sales,
-                SUM(total_payouts) as total_payouts,
-                SUM(vendedor_commission) as vendedor_commission,
-                SUM(listero_commission) as listero_commission,
-                SUM(balance) as balance
-              FROM mv_daily_account_summary
-              WHERE ${whereClause}
-              GROUP BY date
-              ORDER BY date ${orderClause}
-            `)
-          : await prisma.$queryRaw<Array<{
-              date: Date;
-              ventanaId: string | null;
-              vendedorId: string | null;
-              ticket_count: bigint;
-              total_sales: number;
-              total_payouts: number;
-              vendedor_commission: number;
-              listero_commission: number;
-              balance: number;
-            }>>(Prisma.sql`
-              SELECT
-                date,
-                "ventanaId",
-                "vendedorId",
-                ticket_count,
-                total_sales,
-                total_payouts,
-                vendedor_commission,
-                listero_commission,
-                balance
-              FROM mv_daily_account_summary
-              WHERE ${whereClause}
-              ORDER BY date ${orderClause}
-            `);
+        const summaries = await prisma.$queryRaw<Array<{
+            date: Date;
+            ticket_count: bigint;
+            total_sales: number;
+            total_payouts: number;
+            vendedor_commission: number;
+            listero_commission: number;
+        }>>(Prisma.sql`
+            SELECT
+                t."businessDate" AS date,
+                COUNT(DISTINCT t.id) AS ticket_count,
+                COALESCE(SUM(j.amount), 0) AS total_sales,
+                COALESCE(SUM(CASE WHEN j."isWinner" = true THEN j.payout ELSE 0 END), 0) AS total_payouts,
+                COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS vendedor_commission,
+                COALESCE(SUM(j."listeroCommissionAmount"), 0) AS listero_commission
+            FROM "Ticket" t
+            JOIN "Sorteo" s ON s.id = t."sorteoId"
+            JOIN "Ventana" v ON v.id = t."ventanaId"
+            JOIN "Jugada" j ON j."ticketId" = t.id
+            WHERE ${whereClause}
+            GROUP BY t."businessDate"
+            ORDER BY t."businessDate" ${orderClause}
+        `);
 
         // Convertir a Map por dateKey
         const resultMap = new Map<string, {
@@ -332,22 +311,28 @@ export async function getDailySummariesFromMaterializedView(
 
         for (const summary of summaries) {
             // ️ CRÍTICO: summary.date viene de la BD como DATE (sin hora), representando un día calendario en CR
-            // Usar servicio centralizado para obtener la fecha CR correcta
-            // summary.date viene de PostgreSQL DATE, usar postgresDateToCRString
             const dateKey = crDateService.postgresDateToCRString(summary.date);
             
-            //  FIX: Manejar caso donde ventanaId/vendedorId no existen en el resumen de banca
-            const summaryAny = summary as any;
+            const sales = Number(summary.total_sales);
+            const payouts = Number(summary.total_payouts);
+            const vendComm = Number(summary.vendedor_commission);
+            const listComm = Number(summary.listero_commission);
+            
+            // Si es dimensión vendedor o estamos filtrando por vendedor, se usa la comisión del vendedor para el balance
+            // De lo contrario, se usa la comisión del listero
+            const commissionToDeduct = (dimension === 'vendedor' || !!vendedorId) ? vendComm : listComm;
+            const balance = sales - payouts - commissionToDeduct;
+
             resultMap.set(dateKey, {
                 date: summary.date,
-                ventanaId: summaryAny.ventanaId || null,
-                vendedorId: summaryAny.vendedorId || null,
+                ventanaId: dimension === 'ventana' && ventanaId ? ventanaId : null,
+                vendedorId: dimension === 'vendedor' && vendedorId ? vendedorId : null,
                 ticket_count: Number(summary.ticket_count),
-                total_sales: summary.total_sales,
-                total_payouts: summary.total_payouts,
-                vendedor_commission: summary.vendedor_commission,
-                listero_commission: summary.listero_commission,
-                balance: summary.balance,
+                total_sales: sales,
+                total_payouts: payouts,
+                vendedor_commission: vendComm,
+                listero_commission: listComm,
+                balance: balance,
             });
         }
 

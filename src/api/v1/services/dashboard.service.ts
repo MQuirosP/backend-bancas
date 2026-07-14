@@ -1,14 +1,14 @@
-import { Prisma, Role } from "../../../generated/prisma/client";
+import { Prisma, Role, BetType } from "../../../generated/prisma/client";
 import { getCRLocalComponents } from '../../../utils/businessDate';
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import logger from "../../../core/logger";
-import { resolveCommission } from "../../../services/commission.resolver";
-import { resolveCommissionFromPolicy } from "../../../services/commission/commission.resolver";
+import { commissionResolver } from "../../../services/commission/CommissionResolver";
 import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts/accounts.balances";
 import { getMonthlyRemainingBalance, getMonthlyRemainingBalancesBatch } from "./accounts/accounts.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { crDateService } from "../../../utils/crDateService";
+import { tz } from "../../../utils/timezone";
 import { PerformanceMonitor, measureAsync } from "../../../utils/performanceMonitor";
 import { isExclusionListEmpty } from "../../../core/exclusionListCache";
 
@@ -386,11 +386,19 @@ function buildExclusionCTEsPreamble(skipExclusion: boolean = false): Prisma.Sql 
   `;
 }
 
-function parseDateStart(dateStr: string): Date {
+function parseDateStartCR(dateStr: string): Date {
+  return tz.startOfDay(dateStr);
+}
+
+function parseDateEndCR(dateStr: string): Date {
+  return tz.endOfDay(dateStr);
+}
+
+function parseDateStartDbDate(dateStr: string): Date {
   return new Date(`${dateStr}T00:00:00.000Z`);
 }
 
-function parseDateEnd(dateStr: string): Date {
+function parseDateEndDbDate(dateStr: string): Date {
   return new Date(`${dateStr}T23:59:59.999Z`);
 }
 
@@ -399,8 +407,11 @@ function buildTicketWhereInput(
   fromDateStr: string,
   toDateStr: string
 ): Prisma.TicketWhereInput {
-  const rangeStart = parseDateStart(fromDateStr);
-  const rangeEnd = parseDateEnd(toDateStr);
+  const rangeStartCR = parseDateStartCR(fromDateStr);
+  const rangeEndCR = parseDateEndCR(toDateStr);
+  
+  const rangeStartDbDate = parseDateStartDbDate(fromDateStr);
+  const rangeEndDbDate = parseDateEndDbDate(toDateStr);
 
   const baseWhere: Prisma.TicketWhereInput = {
     deletedAt: null,
@@ -415,15 +426,15 @@ function buildTicketWhereInput(
         OR: [
           {
             businessDate: {
-              gte: rangeStart,
-              lte: rangeEnd,
+              gte: rangeStartDbDate,
+              lte: rangeEndDbDate,
             },
           },
           {
             businessDate: null,
             createdAt: {
-              gte: rangeStart,
-              lte: rangeEnd,
+              gte: rangeStartCR,
+              lte: rangeEndCR,
             },
           },
         ],
@@ -546,18 +557,19 @@ async function computeVentanaCommissionFromPolicies(filters: DashboardFilters) {
 
     if (userPolicyJson) {
       try {
-        const resolution = resolveCommissionFromPolicy(userPolicyJson, {
+        const policy = commissionResolver.parsePolicy(userPolicyJson, "USER");
+        const resolution = commissionResolver.resolveFromPolicy(policy, {
           userId: ventanaUserId,
           loteriaId: ticket.loteriaId,
-          betType: jugada.type as "NUMERO" | "REVENTADO",
-          finalMultiplierX: jugada.finalMultiplierX ?? null,
+          betType: jugada.type as BetType,
+          finalMultiplierX: jugada.finalMultiplierX ?? undefined,
         });
         ventanaAmount = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
       } catch (err) {
-        const fallback = resolveCommission(
+        const fallback = commissionResolver.resolveVendedorCommission(
           {
             loteriaId: ticket.loteriaId,
-            betType: jugada.type as "NUMERO" | "REVENTADO",
+            betType: jugada.type as BetType,
             finalMultiplierX: jugada.finalMultiplierX || 0,
             amount: jugada.amount,
           },
@@ -568,10 +580,10 @@ async function computeVentanaCommissionFromPolicies(filters: DashboardFilters) {
         ventanaAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
       }
     } else {
-      const fallback = resolveCommission(
+      const fallback = commissionResolver.resolveVendedorCommission(
         {
           loteriaId: ticket.loteriaId,
-          betType: jugada.type as "NUMERO" | "REVENTADO",
+          betType: jugada.type as BetType,
           finalMultiplierX: jugada.finalMultiplierX || 0,
           amount: jugada.amount,
         },
@@ -708,8 +720,8 @@ export const DashboardService = {
       );
 
     //  NUEVO: Obtener pagos y cobros del periodo para calcular periodBalance
-    const rangeStart = parseDateStart(fromDateStr);
-    const rangeEnd = parseDateEnd(toDateStr);
+    const rangeStart = parseDateStartDbDate(fromDateStr);
+    const rangeEnd = parseDateEndDbDate(toDateStr);
 
     const paymentsWhere: Prisma.AccountPaymentWhereInput = {
       date: {
@@ -856,8 +868,8 @@ export const DashboardService = {
     }
 
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-    const rangeStart = parseDateStart(fromDateStr);
-    const rangeEnd = parseDateEnd(toDateStr);
+    const rangeStart = parseDateStartDbDate(fromDateStr);
+    const rangeEnd = parseDateEndDbDate(toDateStr);
     const skipExclusion = await isExclusionListEmpty();
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
     const jugadaExclusionFilter = skipExclusion ? Prisma.empty : Prisma.sql`AND NOT EXISTS (
@@ -981,8 +993,8 @@ export const DashboardService = {
    */
   async calculateCxCByVendedor(filters: DashboardFilters, role?: Role): Promise<CxCResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-    const rangeStart = parseDateStart(fromDateStr);
-    const rangeEnd = parseDateEnd(toDateStr);
+    const rangeStart = parseDateStartDbDate(fromDateStr);
+    const rangeEnd = parseDateEndDbDate(toDateStr);
     const skipExclusion = await isExclusionListEmpty();
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
     const jugadaExclusionFilter = skipExclusion ? Prisma.empty : Prisma.sql`AND NOT EXISTS (
@@ -1114,8 +1126,8 @@ export const DashboardService = {
     }
 
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-    const rangeStart = parseDateStart(fromDateStr);
-    const rangeEnd = parseDateEnd(toDateStr);
+    const rangeStart = parseDateStartDbDate(fromDateStr);
+    const rangeEnd = parseDateEndDbDate(toDateStr);
     const skipExclusion = await isExclusionListEmpty();
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
     const jugadaExclusionFilter = skipExclusion ? Prisma.empty : Prisma.sql`AND NOT EXISTS (
@@ -1240,8 +1252,8 @@ export const DashboardService = {
 
   async calculateCxPByVendedor(filters: DashboardFilters, role?: Role): Promise<CxPResult> {
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-    const rangeStart = parseDateStart(fromDateStr);
-    const rangeEnd = parseDateEnd(toDateStr);
+    const rangeStart = parseDateStartDbDate(fromDateStr);
+    const rangeEnd = parseDateEndDbDate(toDateStr);
     const skipExclusion = await isExclusionListEmpty();
     const baseFilters = buildTicketBaseFilters("t", filters, fromDateStr, toDateStr, skipExclusion);
     const jugadaExclusionFilter = skipExclusion ? Prisma.empty : Prisma.sql`AND NOT EXISTS (

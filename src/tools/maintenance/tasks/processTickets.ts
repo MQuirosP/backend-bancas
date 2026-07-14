@@ -1,5 +1,6 @@
 import prisma from "../../../core/prismaClient";
-import { resolveCommission } from "../../../services/commission.resolver";
+import { commissionResolver } from "../../../services/commission/CommissionResolver";
+import { BetType } from "../../../generated/prisma/client";
 import { flagAsBoolean } from "../utils/argParser";
 import { success, info } from "../utils/logger";
 import { TicketRangeOptions } from "../types";
@@ -138,10 +139,10 @@ export async function processTickets(options: ProcessOptions) {
         let commissionRuleId = jugada.commissionRuleId ?? null;
 
         if (options.recalcCommissions) {
-          const snapshot = resolveCommission(
+          const snapshot = commissionResolver.resolveVendedorCommission(
             {
               loteriaId: ticket.loteriaId,
-              betType: jugada.type as "NUMERO" | "REVENTADO",
+              betType: jugada.type as BetType,
               finalMultiplierX: multiplier || 0,
               amount: jugada.amount,
             },

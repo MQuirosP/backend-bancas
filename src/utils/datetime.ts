@@ -126,58 +126,10 @@ export function extendRangeWithBuffer(min: Date, max: Date, bufferMs = 60_000) {
 }
 
 /**
- * Parser robusto para ISO strings sin zona horaria (interpreta como TZ del negocio).
+ * @deprecated Usar tz.parse() de utils/timezone.ts en su lugar.
  */
 export function parseCostaRicaDateTime(input: string | Date): Date {
-  if (input instanceof Date) return new Date(input.getTime());
-  const raw = input.trim();
-  if (!raw) throw new Error(`Invalid date: ${input}`);
-
-  // Si viene con 'Z' o offset explícito, parsear directamente
-  if (/[zZ]$/.test(raw) || /[+-]\d\d:\d\d$/.test(raw)) {
-    const parsed = new Date(raw);
-    if (isNaN(parsed.getTime())) throw new Error(`Invalid date: ${input}`);
-    return parsed;
-  }
-
-  const [datePart, timePartRaw] = raw.split(/[T\s]/);
-  if (!datePart) throw new Error(`Invalid date: ${input}`);
-
-  const [yearStr, monthStr, dayStr] = datePart.split('-');
-  const year = parseInt(yearStr ?? '0', 10);
-  const month = parseInt(monthStr ?? '0', 10);
-  const day = parseInt(dayStr ?? '0', 10);
-
-  const timePart = timePartRaw ?? '00:00:00';
-  const [mainTime, msPartRaw] = timePart.split('.');
-  const [hourStr, minuteStr, secondStr] = mainTime.split(':');
-
-  const hours = parseInt(hourStr ?? '0', 10);
-  const minutes = parseInt(minuteStr ?? '0', 10);
-  const seconds = parseInt(secondStr ?? '0', 10);
-  const msPart = msPartRaw ? (msPartRaw + '000').slice(0, 3) : '000';
-  const milliseconds = parseInt(msPart, 10);
-
-  if (
-    !Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) ||
-    !Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)
-  ) {
-    throw new Error(`Invalid date: ${input}`);
-  }
-
-  // Construir el instante UTC para esa fecha/hora en TZ del negocio
-  // Truco: construir como si fuera UTC, luego ajustar con el offset real
-  const approxUtc = new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds, milliseconds));
-  // Calcular el offset para ese momento
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz.name,
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  });
-  const tzParts = formatter.formatToParts(approxUtc);
-  const tzH = parseInt(tzParts.find(p => p.type === 'hour')?.value ?? '0');
-  const tzMin = parseInt(tzParts.find(p => p.type === 'minute')?.value ?? '0');
-  const offsetMs = (tzH * 60 + tzMin - hours * 60 - minutes) * 60000;
-  return new Date(approxUtc.getTime() - offsetMs);
+  return tz.parse(input);
 }
 
 // ─── Aliases deprecated ───────────────────────────────────────────────────────

@@ -1,6 +1,5 @@
 import { Prisma } from "../../../../generated/prisma/client";
 import { commissionSnapshotService } from "../../../../services/commission/CommissionSnapshotService";
-import { resolveCommission } from "../../../../services/commission.resolver"; // Mantener para fallback
 
 /**
  * Helper: Calcula si un estado de cuenta está saldado

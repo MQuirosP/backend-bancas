@@ -16,7 +16,7 @@
  *   tz.name                           → "America/Costa_Rica"
  */
 
-const BUSINESS_TZ = process.env.BUSINESS_TIMEZONE ?? 'America/Costa_Rica';
+const BUSINESS_TZ = process.env.TZ ?? 'America/Costa_Rica';
 
 /**
  * Calcula el offset en ms entre la TZ del negocio y UTC en un instante dado.
@@ -44,10 +44,57 @@ function getOffsetMs(utcInstant: Date): number {
 }
 
 /**
+ * Parser robusto para ISO strings sin zona horaria (interpreta como TZ del negocio).
+ */
+function parse(input: string | Date): Date {
+  if (input instanceof Date) return new Date(input.getTime());
+  const raw = input.trim();
+  if (!raw) throw new Error(`Invalid date: ${input}`);
+
+  // Si viene con 'Z' o offset explícito, parsear directamente
+  if (/[zZ]$/.test(raw) || /[+-]\d\d:\d\d$/.test(raw)) {
+    const parsed = new Date(raw);
+    if (isNaN(parsed.getTime())) throw new Error(`Invalid date: ${input}`);
+    return parsed;
+  }
+
+  const [datePart, timePartRaw] = raw.split(/[T\s]/);
+  if (!datePart) throw new Error(`Invalid date: ${input}`);
+
+  const [yearStr, monthStr, dayStr] = datePart.split('-');
+  const year = parseInt(yearStr ?? '0', 10);
+  const month = parseInt(monthStr ?? '0', 10);
+  const day = parseInt(dayStr ?? '0', 10);
+
+  const timePart = timePartRaw ?? '00:00:00';
+  const [mainTime, msPartRaw] = timePart.split('.');
+  const [hourStr, minuteStr, secondStr] = mainTime.split(':');
+
+  const hours = parseInt(hourStr ?? '0', 10);
+  const minutes = parseInt(minuteStr ?? '0', 10);
+  const seconds = parseInt(secondStr ?? '0', 10);
+  const msPart = msPartRaw ? (msPartRaw + '000').slice(0, 3) : '000';
+  const milliseconds = parseInt(msPart, 10);
+
+  if (
+    !Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day) ||
+    !Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)
+  ) {
+    throw new Error(`Invalid date: ${input}`);
+  }
+
+  // Construir el instante UTC para esa fecha/hora en TZ del negocio
+  const approxUtc = new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds, milliseconds));
+  const offsetMs = getOffsetMs(approxUtc);
+  return new Date(approxUtc.getTime() - offsetMs);
+}
+
+/**
  * Convierte un instante UTC a string YYYY-MM-DD en la TZ del negocio.
  */
-function toDateStr(utcDate: Date = new Date()): string {
-  return utcDate.toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ });
+function toDateStr(utcDate: Date | string = new Date()): string {
+  const date = typeof utcDate === 'string' ? parse(utcDate) : utcDate;
+  return date.toLocaleDateString('en-CA', { timeZone: BUSINESS_TZ });
   // en-CA produce formato YYYY-MM-DD de forma nativa
 }
 
@@ -55,8 +102,9 @@ function toDateStr(utcDate: Date = new Date()): string {
  * Inicio del día calendario en TZ negocio, expresado como instante UTC.
  * Ej: "2026-05-16" en CR → 2026-05-16T06:00:00.000Z
  */
-function startOfDay(utcDate: Date = new Date()): Date {
-  const dateStr = toDateStr(utcDate);
+function startOfDay(input: Date | string = new Date()): Date {
+  const date = typeof input === 'string' ? parse(input) : input;
+  const dateStr = toDateStr(date);
   const [y, m, d] = dateStr.split('-').map(Number);
   const approxMidnight = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
   const offsetMs = getOffsetMs(approxMidnight);
@@ -67,8 +115,8 @@ function startOfDay(utcDate: Date = new Date()): Date {
 /**
  * Fin del día calendario en TZ negocio (23:59:59.999), expresado como instante UTC.
  */
-function endOfDay(utcDate: Date = new Date()): Date {
-  const next = addDays(startOfDay(utcDate), 1);
+function endOfDay(input: Date | string = new Date()): Date {
+  const next = addDays(startOfDay(input), 1);
   return new Date(next.getTime() - 1);
 }
 
@@ -119,6 +167,8 @@ export const tz = {
   name: BUSINESS_TZ,
   /** Literal SQL: 'America/Costa_Rica' */
   toSqlLiteral,
+  /** Parser robusto que asume la TZ del negocio */
+  parse,
   /** YYYY-MM-DD en TZ del negocio */
   toDateStr,
   /** Inicio del día (00:00:00 TZ negocio) como UTC */

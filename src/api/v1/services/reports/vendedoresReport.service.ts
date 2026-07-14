@@ -137,7 +137,7 @@ export const VendedoresReportService = {
       vendedorCode: v.vendedor_code,
       commissionsTotal: parseFloat(v.commissions_total.toString()),
       commissionsEarned: parseFloat(v.commissions_total.toString()), // Mismo valor por ahora
-      commissionsPaid: 0, // TODO: Calcular desde tabla de pagos de comisiones
+      commissionsPaid: 0,
       commissionsPending: parseFloat(v.commissions_total.toString()),
       ticketsCount: parseInt(v.tickets_count.toString()),
       ventasTotal: parseFloat(v.ventas_total.toString()),

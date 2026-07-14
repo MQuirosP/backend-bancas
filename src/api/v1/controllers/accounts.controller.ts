@@ -910,11 +910,11 @@ export const AccountsController = {
 
     const result = await AccountsService.deleteStatement(id);
 
-    // Log de auditoría
-    // TODO: Cambiar a ACCOUNT_STATEMENT_DELETE cuando se regenere el cliente de Prisma
+    // PENDIENTE (Deuda Técnica): El enum en schema.prisma no posee la acción DELETE. 
+    // Se debe agregar ACCOUNT_STATEMENT_DELETE en el schema, correr prisma generate y actualizar esta línea.
     await ActivityService.log({
       userId: user.id,
-      action: ActivityType.ACCOUNT_STATEMENT_VIEW, // Temporal: usar ACCOUNT_STATEMENT_DELETE después de regenerar Prisma
+      action: ActivityType.ACCOUNT_STATEMENT_VIEW, 
       targetType: "ACCOUNT_STATEMENT",
       targetId: id,
       details: {

@@ -60,8 +60,8 @@ export function resolveDateRange(
       if (!fromDate || !toDate) {
         throw new Error('fromDate y toDate son requeridos cuando date=range');
       }
-      start = startOfLocalDay(`${fromDate}T00:00:00-06:00`);
-      end = endOfLocalDay(`${toDate}T00:00:00-06:00`);
+      start = startOfLocalDay(fromDate);
+      end = endOfLocalDay(toDate);
       break;
 
     default:

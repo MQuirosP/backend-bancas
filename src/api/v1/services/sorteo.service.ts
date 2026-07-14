@@ -15,7 +15,8 @@ import { resolveDateRange } from "../../../utils/dateRange";
 import logger from "../../../core/logger";
 import { getExcludedTicketIds } from "./sorteo-listas.helpers";
 import { resolveDigits } from "../../../utils/loteriaRules";
-import { parseCommissionPolicy, CommissionPolicy, CommissionRule } from "../../../services/commission.resolver";
+import { commissionResolver } from "../../../services/commission/CommissionResolver";
+import { CommissionPolicy, CommissionRule } from "../../../services/commission/types/CommissionTypes";
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { crDateService } from "../../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts/accounts.balances";
@@ -747,7 +748,7 @@ const SorteoService = {
       return null;
     }
 
-    return parseCommissionPolicy(policyJson, 'USER');
+    return commissionResolver.parsePolicy(policyJson, 'USER');
   },
 
   /**
