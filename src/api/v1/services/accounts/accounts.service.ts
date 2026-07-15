@@ -1,4 +1,4 @@
-import { AccountsFilters, DayStatement, StatementResponse, StatementTotals, ACCOUNT_PREVIOUS_MONTH_METHOD, ACCOUNT_CARRY_OVER_NOTES } from "./accounts.types";
+import { AccountsFilters, DayStatement, StatementResponse, StatementTotals } from "./accounts.types";
 import { getMonthDateRange, toCRDateString, getStatementDateRange } from "./accounts.dates.utils";
 import { resolveDateRange } from "../../../../utils/dateRange";
 import { getMovementsForDay, getSorteoBreakdownBatch } from "./accounts.queries";
@@ -1086,6 +1086,19 @@ export const AccountsService = {
         const [year, month, day] = date.split('-').map(Number);
         const targetDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 
+        let balanceResetAtDayStr: string | null = null;
+        if (filters.dimension === "vendedor" && filters.vendedorId) {
+            const user = await tx.user.findUnique({
+                where: { id: filters.vendedorId },
+                select: { settings: true }
+            });
+            if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+                const { crDateService } = await import('../../../utils/crDateService');
+                const balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+                balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
+            }
+        }
+
         //  NUEVO: Calcular fecha del día anterior
         const previousDayDate = new Date(targetDate);
         previousDayDate.setUTCDate(previousDayDate.getUTCDate() - 1);
@@ -1677,45 +1690,14 @@ export const AccountsService = {
         }
 
         // Intercalar sorteos y movimientos
-        //  CRÍTICO: Para el primer día del mes, agregar movimiento especial "Saldo del mes anterior"
         const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
 
-        //  NUEVO: Agregar movimiento visual del saldo del mes anterior para el primer día
-        if (isFirstDay && previousMonthBalance !== 0) {
-            // Crear ID único basado en los filtros
-            let movementId = 'previous-month-balance';
-            if (filters.dimension === 'banca' && filters.bancaId) {
-                movementId += `-banca-${filters.bancaId}`;
-            } else if (filters.dimension === 'ventana' && filters.ventanaId) {
-                movementId += `-ventana-${filters.ventanaId}`;
-            } else if (filters.dimension === 'vendedor' && filters.vendedorId) {
-                movementId += `-vendedor-${filters.vendedorId}`;
-            } else {
-                movementId += `-${filters.dimension}-all`;
-            }
-
-            // Verificar que no exista ya
-            const alreadyExists = movements.some((m: any) => m.id === movementId);
-            if (!alreadyExists) {
-                // Crear movimiento especial al INICIO del día (00:00 CR = 06:00 UTC)
-                const openingBalanceMovement = {
-                    id: movementId,
-                    type: 'opening_balance' as const,
-                    amount: previousMonthBalance,
-                    method: ACCOUNT_PREVIOUS_MONTH_METHOD,
-                    notes: ACCOUNT_CARRY_OVER_NOTES,
-                    isReversed: false,
-                    createdAt: new Date(Date.UTC(year, month - 1, day, 6, 0, 0, 0)).toISOString(),
-                    date: date,
-                    time: '00:00', // Hora CR para que sea el primero
-                    // Campos adicionales para que intercalateSorteosAndMovements lo procese correctamente
-                    isOpeningBalance: true,
-                };
-                movements.unshift(openingBalanceMovement);
-            }
+        let initialAccumulated = 0;
+        if (balanceResetAtDayStr && date === balanceResetAtDayStr) {
+            initialAccumulated = 0; // Si es el día del reset de deuda, se anula el saldo anterior arrastrado
+        } else {
+            initialAccumulated = isFirstDay ? previousMonthBalance : lastDayAccumulated;
         }
-
-        const initialAccumulated = isFirstDay ? 0 : lastDayAccumulated; // Ahora inicia en 0 porque el saldo viene en el movimiento
 
         //  LOGGING: Verificar que initialAccumulated tenga el valor correcto
         logger.info({
