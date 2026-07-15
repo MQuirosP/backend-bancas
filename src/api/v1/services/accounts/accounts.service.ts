@@ -1093,7 +1093,6 @@ export const AccountsService = {
                 select: { settings: true }
             });
             if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
-                const { crDateService } = await import('../../../utils/crDateService');
                 const balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
                 balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
             }
