@@ -156,6 +156,9 @@ export async function calculatePreviousMonthBalanceFromSource(
 
         if (filters.vendedorId) {
             paymentsWhere.vendedorId = filters.vendedorId;
+            if (filters.bancaId) {
+                paymentsWhere.bancaId = filters.bancaId;
+            }
         } else if (filters.ventanaId) {
             paymentsWhere.ventanaId = filters.ventanaId;
             if (filters.bancaId) {
@@ -244,6 +247,7 @@ export async function getPreviousMonthFinalBalance(
         if (dimension === "vendedor") {
             if (vendedorId) {
                 where.vendedorId = vendedorId;
+                if (bancaId) where.bancaId = bancaId;
             } else {
                 isConsolidated = true;
                 if (ventanaId) where.ventanaId = ventanaId;
@@ -253,6 +257,7 @@ export async function getPreviousMonthFinalBalance(
             where.vendedorId = null;
             if (ventanaId) {
                 where.ventanaId = ventanaId;
+                if (bancaId) where.bancaId = bancaId;
             } else {
                 isConsolidated = true;
                 if (bancaId) where.bancaId = bancaId;
