@@ -261,9 +261,7 @@ export async function getMonthlyRemainingBalance(
 
     if (dimension === "vendedor" && vendedorId) {
         where.vendedorId = vendedorId;
-        //  FIX: Para vendedor específico, NO filtrar por bancaId.
-        // El constraint único (date, vendedorId) garantiza unicidad. Filtrar por bancaId
-        // rompería la consulta cuando el vendedor fue trasladado a otra banca.
+        if (bancaId) where.bancaId = bancaId;
     } else if (dimension === "ventana" && ventanaId) {
         where.ventanaId = ventanaId;
         where.vendedorId = null; // Statement consolidado de ventana
@@ -828,8 +826,8 @@ export const AccountsService = {
                 const prevStmt = await prisma.accountStatement.findFirst({
                     where: {
                         date: dayBefore,
-                        ...(dimension === "vendedor" && vendedorId ? { vendedorId } : {}),
-                        ...(dimension === "ventana" && ventanaId ? { ventanaId, vendedorId: null } : {}),
+                        ...(dimension === "vendedor" && vendedorId ? { vendedorId, ...(bancaId ? { bancaId } : {}) } : {}),
+                        ...(dimension === "ventana" && ventanaId ? { ventanaId, vendedorId: null, ...(bancaId ? { bancaId } : {}) } : {}),
                         ...(dimension === "banca" && bancaId ? { bancaId, ventanaId: null, vendedorId: null } : {}),
                     },
                     select: { remainingBalance: true }

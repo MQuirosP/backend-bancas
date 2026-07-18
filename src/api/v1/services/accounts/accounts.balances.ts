@@ -307,7 +307,7 @@ export async function getPreviousMonthFinalBalance(
         if (cachedBalance !== null) return Number(cachedBalance) || 0;
 
         // PASO 4: Calcular desde fuente
-        const balance = await calculatePreviousMonthBalanceFromSource(effectiveMonth, dimension, { ventanaId, vendedorId, bancaId });
+        const balance = await calculatePreviousMonthBalanceFromSource(effectiveMonth, dimension, { ventanaId, vendedorId, bancaId, ignoreReset });
         
         await setCachedPreviousMonthBalance(cacheKey, balance, 300).catch(() => {});
         

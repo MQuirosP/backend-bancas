@@ -703,18 +703,22 @@ export const VentasService = {
       // Parámetros de ordenamiento y límites
       const limit = Number(top) || 10;
 
-      // Mapeo de métricas para el ORDER BY — conjunto cerrado y estático
+      // Mapeo dinámico de métricas para el ORDER BY dependiendo de la dimensión
       // Nota: Usar NULLS LAST para que los valores nulos no aparezcan primero en DESC
+      const netoSql = dimension === 'vendedor' 
+        ? '(SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)) - SUM(COALESCE(ft."totalCommission", 0)))'
+        : '(SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)))';
+
       const metricMap: Record<string, string> = {
         ventasTotal: 'SUM(ft."totalAmount")',
         payoutTotal: 'SUM(COALESCE(ft."totalPayout", 0))',
-        neto: '(SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)))',
+        neto: netoSql,
         ticketsCount: 'COUNT(ft.id)',
         // Rentabilidad (% de ganancia sobre lo vendido)
         // Evitar división por cero
         margin: `CASE 
           WHEN SUM(ft."totalAmount") > 0 
-          THEN ((SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0))) / SUM(ft."totalAmount")) * 100 
+          THEN (${netoSql} / SUM(ft."totalAmount")) * 100 
           ELSE 0 
         END`,
         // Payout rate (% de premios sobre lo vendido)
