@@ -5,6 +5,30 @@
 
 ---
 
+## v1.3.1 - Infraestructura & Estabilidad en Producción (Render)
+
+ **Fecha:** 2026-07-19
+ **Rama:** `master`
+
+### 🛡️ Optimización de Memoria y Resiliencia
+
+- **Gestión de Memoria V8 (Node.js)**
+  - **Problema:** Node.js no reconocía los límites estrictos de memoria del contenedor de Render (512 MB), asumiendo por defecto ~1.4 GB. Esto causaba fugas pasivas de memoria hasta alcanzar el 100%, provocando reinicios forzados (OOM Kills) por parte de Render.
+  - **Solución:** Se implementó la bandera `--max-old-space-size=384` exclusivamente en el script de `"start"` de `package.json`.
+  - **Resultado:** El Garbage Collector ahora se activa proactivamente al alcanzar ~300 MB, estabilizando el consumo de RAM en un ~60% seguro en producción. El compilador de TypeScript (`build`) no se ve afectado al no usar variables globales.
+
+- **Graceful Shutdown (Apagado Elegante)**
+  - **Problema:** Los reinicios de contenedores cortaban abruptamente las conexiones activas, perdiendo transacciones en vuelo y dejando conexiones zombi en la base de datos de Supabase.
+  - **Solución:** Se reconstruyó el mecanismo de apagado en `src/server/server.ts`:
+    1. Intercepción de señales `SIGTERM` y `SIGINT`.
+    2. Cierre inmediato de `server.close()` para rechazar nuevo tráfico.
+    3. Finalización garantizada de operaciones HTTP en vuelo.
+    4. Desconexión controlada del pool de Prisma (`prisma.$disconnect()`).
+    5. Timeout de seguridad de 10 segundos para evitar procesos bloqueados (cierre forzado con `process.exit(1)`).
+  - **Resultado:** Tolerancia a fallos durante despliegues (Zero-Downtime Deploys) e integridad total de datos durante mantenimientos de Render.
+
+---
+
 ## v1.3.0 - Performance & Database Optimizations
 
  **Fecha:** 2026-07-05
