@@ -1381,57 +1381,70 @@ export const TicketService = {
         multiplierValue: number | null;
       }> = [];
 
-      //  OPTIMIZED: Procesar todos los multiplicadores en paralelo para evitar 503 Timeout
-      // Usamos Promise.all para que todas las generaciones ocurran concurrentemente
-      const batchPromises = multipliers.map(async (multiplier) => {
-        const result = await TicketService.numbersSummary(
-          {
-            ...params,
-            multiplierId: multiplier.id,
-          },
-          role,
-          userId
-        );
+      // FIX: Procesar multiplicadores en bloques (chunks) para lograr un balance entre
+      // concurrencia (evitar Timeout 503) y no saturar la CPU/Pool de DB (evitar CPU 100%).
+      const CONCURRENCY_LIMIT = 2; // Procesar de a 2 multiplicadores a la vez
+      const allPagesResults: any[][] = [];
 
-        // Generar PDF por multiplicador
-        const pdfBuffer = await generateNumbersSummaryPDF({
-          meta: {
-            ...result.meta,
-            multiplierName: multiplier.name,
-          },
-          numbers: result.data,
-        });
-
-        const doc = await PDFDocument.load(pdfBuffer);
-        const pageCount = doc.getPageCount();
-
-        // Convertir todas las páginas a PNG usando Worker
-        const pngPages = await convertPdfToPng(new Uint8Array(pdfBuffer), {
-          pagesToProcess: Array.from({ length: pageCount }, (_, i) => i + 1),
-        });
-
-        if (!pngPages || pngPages.length === 0) {
-          throw new AppError(`No se pudo generar PNG para el multiplicador ${multiplier.name}`, 422);
-        }
-
-        return pngPages
-          .filter(p => p && p.content)
-          .map((p, idx) => {
-            const buffer = Buffer.from(p.content);
-            if (!buffer) return null;
-            return {
-              page: idx,
-              filename: `lista-${multiplier.name || multiplier.valueX || 'mult'}-${idx + 1}.png`,
-              image: buffer.toString('base64'),
+      // 1. Dividir el array de multiplicadores en bloques
+      for (let i = 0; i < multipliers.length; i += CONCURRENCY_LIMIT) {
+        const chunk = multipliers.slice(i, i + CONCURRENCY_LIMIT);
+        
+        // 2. Procesar el bloque actual de manera concurrente con Promise.all
+        const chunkPromises = chunk.map(async (multiplier) => {
+          const result = await TicketService.numbersSummary(
+            {
+              ...params,
               multiplierId: multiplier.id,
-              multiplierName: multiplier.name,
-              multiplierValue: multiplier.valueX,
-            };
-          })
-          .filter(Boolean) as any[];
-      });
+            },
+            role,
+            userId
+          );
 
-      const allPagesResults = await Promise.all(batchPromises);
+          // Generar PDF por multiplicador
+          const pdfBuffer = await generateNumbersSummaryPDF({
+            meta: {
+              ...result.meta,
+              multiplierName: multiplier.name,
+            },
+            numbers: result.data,
+          });
+
+          const doc = await PDFDocument.load(pdfBuffer);
+          const pageCount = doc.getPageCount();
+
+          // Convertir todas las páginas a PNG usando Worker
+          const pngPages = await convertPdfToPng(new Uint8Array(pdfBuffer), {
+            pagesToProcess: Array.from({ length: pageCount }, (_, i) => i + 1),
+          });
+
+          if (!pngPages || pngPages.length === 0) {
+            throw new AppError(`No se pudo generar PNG para el multiplicador ${multiplier.name}`, 422);
+          }
+
+          return pngPages
+            .filter(p => p && p.content)
+            .map((p, idx) => {
+              const buffer = Buffer.from(p.content);
+              if (!buffer) return null;
+              return {
+                page: idx,
+                filename: `lista-${multiplier.name || multiplier.valueX || 'mult'}-${idx + 1}.png`,
+                image: buffer.toString('base64'),
+                multiplierId: multiplier.id,
+                multiplierName: multiplier.name,
+                multiplierValue: multiplier.valueX,
+              };
+            })
+            .filter(Boolean) as any[];
+        });
+
+        // 3. Esperar a que todos los multiplicadores del chunk terminen
+        const chunkResults = await Promise.all(chunkPromises);
+        
+        // 4. Concatenar (push) los resultados procesados del bloque
+        allPagesResults.push(...chunkResults);
+      }
       
       // Aplanar resultados
       allPagesResults.forEach(multiplierPages => {
