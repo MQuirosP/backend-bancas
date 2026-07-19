@@ -171,143 +171,57 @@ server.listen(config.port, async () => {
 const gracefulShutdown = async (signal: string) => {
   logger.info({ layer: 'server', action: 'SHUTDOWN_INITIATED', payload: { signal } })
 
-  // ✅ CRÍTICO: Marcar que el servidor está cerrando para rechazar nuevas operaciones
+  // 3. Mecanismo de seguridad: 10 segundos máximo
+  setTimeout(() => {
+    logger.error({
+      layer: 'server',
+      action: 'SHUTDOWN_TIMEOUT_EXCEEDED',
+      payload: { message: 'Force closing after 10s timeout' }
+    })
+    process.exit(1)
+  }, 10000).unref()
+
+  // ✅ Marcar que el servidor está cerrando para rechazar nuevas operaciones
   activeOperationsService.markShuttingDown()
 
-  // ✅ OPTIMIZACIÓN: Esperar a que terminen las operaciones activas (máximo 30 segundos)
-  const allCompleted = await activeOperationsService.waitForCompletion(30000)
-  if (!allCompleted) {
-    logger.warn({
-      layer: 'server',
-      action: 'SHUTDOWN_FORCED',
-      payload: {
-        message: 'Some operations did not complete within timeout, forcing shutdown',
-        remainingOperations: activeOperationsService.getActiveCount()
-      }
-    })
-  }
-
   // Detener jobs de automatización
-  try {
-    stopSorteosAutoJobs()
-    logger.info({ layer: 'server', action: 'SORTEOS_AUTO_JOBS_STOPPED' })
-  } catch (error: any) {
-    logger.warn({
-      layer: 'server',
-      action: 'SORTEOS_AUTO_JOBS_STOP_ERROR',
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
+  try { stopSorteosAutoJobs(); } catch (e) {}
+  try { stopAccountStatementSettlementJob(); } catch (e) {}
+  try { stopMonthlyClosingJob(); } catch (e) {}
+  try { stopSorteoCacheCleanup(); } catch (e) {}
+  try { stopCommissionCacheCleanup(); } catch (e) {}
+  try { restrictionCacheV2.stopWarmingProcess(); } catch (e) {}
+  try { closeRedisClient(); } catch (e) {}
 
-  // Detener job de asentamiento automático
   try {
-    stopAccountStatementSettlementJob()
-    logger.info({ layer: 'server', action: 'ACCOUNT_STATEMENT_SETTLEMENT_JOB_STOPPED' })
-  } catch (error: any) {
-    logger.warn({
-      layer: 'server',
-      action: 'ACCOUNT_STATEMENT_SETTLEMENT_JOB_STOP_ERROR',
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
-
-  // Detener job de cierre mensual automático
-  try {
-    stopMonthlyClosingJob()
-    logger.info({ layer: 'server', action: 'MONTHLY_CLOSING_JOB_STOPPED' })
-  } catch (error: any) {
-    logger.warn({
-      layer: 'server',
-      action: 'MONTHLY_CLOSING_JOB_STOP_ERROR',
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
-
-  // Detener cleanup de sorteo cache
-  try {
-    stopSorteoCacheCleanup()
-    logger.info({ layer: 'server', action: 'SORTEO_CACHE_CLEANUP_STOPPED' })
-  } catch (error: any) {
-    logger.warn({
-      layer: 'server',
-      action: 'SORTEO_CACHE_CLEANUP_STOP_ERROR',
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
-
-  // Detener cleanup de commission cache
-  try {
-    stopCommissionCacheCleanup()
-    logger.info({ layer: 'server', action: 'COMMISSION_CACHE_CLEANUP_STOPPED' })
-  } catch (error: any) {
-    logger.warn({
-      layer: 'server',
-      action: 'COMMISSION_CACHE_CLEANUP_STOP_ERROR',
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
-
-  // Detener warming process de restriction cache V2
-  try {
-    restrictionCacheV2.stopWarmingProcess()
-    logger.info({ layer: 'server', action: 'RESTRICTION_CACHE_V2_WARMING_STOPPED' })
-  } catch (error: any) {
-    logger.warn({
-      layer: 'server',
-      action: 'RESTRICTION_CACHE_V2_WARMING_STOP_ERROR',
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
-
-  //  OPTIMIZACIÓN: Cerrar conexión Redis
-  try {
-    await closeRedisClient()
-  } catch (error: any) {
-    logger.warn({
-      layer: 'server',
-      action: 'REDIS_CLOSE_ERROR',
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
-
-  server.close(async (err) => {
-    if (err) {
-      logger.error({
-        layer: 'server',
-        action: 'SERVER_CLOSE_ERROR',
-        meta: { error: (err as Error).message },
+    // 2. Paso 1: server.close() para dejar de aceptar nuevo tráfico HTTP de inmediato
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => {
+        if (err) return reject(err)
+        resolve()
       })
-      process.exit(1)
-    }
+    })
+    logger.info({ layer: 'server', action: 'SERVER_CLOSED' })
 
-    try {
-      // Desconectar prismaDirect si fue inicializado (lazy load)
-      if ((global as any).__prismaDirect) {
-        await getPrismaDirect().$disconnect()
-        logger.info({ layer: 'server', action: 'PRISMA_DIRECT_DISCONNECTED' })
-      }
-    } catch (e) {
-      logger.warn({
-        layer: 'server',
-        action: 'PRISMA_DIRECT_DISCONNECT_ERROR',
-        meta: { error: (e as Error).message },
-      })
+    // 2. Paso 2: prisma.$disconnect() para cerrar el pool hacia Supabase
+    if ((global as any).__prismaDirect) {
+      await getPrismaDirect().$disconnect()
     }
+    await prisma.$disconnect()
+    logger.info({ layer: 'server', action: 'PRISMA_DISCONNECTED' })
 
-    try {
-      await prisma.$disconnect()
-      logger.info({ layer: 'server', action: 'PRISMA_DISCONNECTED' })
-      process.exit(0)
-    } catch (e) {
-      logger.error({
-        layer: 'server',
-        action: 'PRISMA_DISCONNECT_ERROR',
-        meta: { error: (e as Error).message },
-      })
-      process.exit(1)
-    }
-  })
+    // 2. Paso 3: process.exit(0) para salir limpiamente
+    process.exit(0)
+  } catch (error: any) {
+    logger.error({
+      layer: 'server',
+      action: 'SHUTDOWN_ERROR',
+      meta: { error: error.message },
+    })
+    process.exit(1)
+  }
 }
 
+// 1. Agrega listeners para atrapar las señales de apagado del sistema operativo: SIGTERM y SIGINT.
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
 process.on('SIGINT', () => gracefulShutdown('SIGINT'))
