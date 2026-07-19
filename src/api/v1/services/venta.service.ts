@@ -1183,67 +1183,63 @@ export const VentasService = {
       const where = buildWhereClause(filters);
 
       // Obtener IDs únicos de las entidades relacionadas
-      const [ventanaIds, vendedorIds, loteriaIds, sorteoIds] = await Promise.all([
-        prisma.ticket
-          .findMany({
-            where,
-            select: { ventanaId: true },
-            distinct: ["ventanaId"],
-          })
-          .then((r) => r.map((t) => t.ventanaId)),
+      const ventanaIds = await prisma.ticket
+        .findMany({
+          where,
+          select: { ventanaId: true },
+          distinct: ["ventanaId"],
+        })
+        .then((r) => r.map((t) => t.ventanaId));
 
-        prisma.ticket
-          .findMany({
-            where,
-            select: { vendedorId: true },
-            distinct: ["vendedorId"],
-          })
-          .then((r) => r.map((t) => t.vendedorId)),
+      const vendedorIds = await prisma.ticket
+        .findMany({
+          where,
+          select: { vendedorId: true },
+          distinct: ["vendedorId"],
+        })
+        .then((r) => r.map((t) => t.vendedorId));
 
-        prisma.ticket
-          .findMany({
-            where,
-            select: { loteriaId: true },
-            distinct: ["loteriaId"],
-          })
-          .then((r) => r.map((t) => t.loteriaId)),
+      const loteriaIds = await prisma.ticket
+        .findMany({
+          where,
+          select: { loteriaId: true },
+          distinct: ["loteriaId"],
+        })
+        .then((r) => r.map((t) => t.loteriaId));
 
-        prisma.ticket
-          .findMany({
-            where,
-            select: { sorteoId: true },
-            distinct: ["sorteoId"],
-          })
-          .then((r) => r.map((t) => t.sorteoId)),
-      ]);
+      const sorteoIds = await prisma.ticket
+        .findMany({
+          where,
+          select: { sorteoId: true },
+          distinct: ["sorteoId"],
+        })
+        .then((r) => r.map((t) => t.sorteoId));
 
-      // Obtener detalles de cada entidad en paralelo
-      const [ventanas, vendedores, loterias, sorteos] = await Promise.all([
-        prisma.ventana.findMany({
-          where: { id: { in: ventanaIds }, isActive: true },
-          select: { id: true, name: true, code: true },
-          orderBy: { name: "asc" },
-        }),
+      // Obtener detalles de cada entidad secuencialmente
+      const ventanas = await prisma.ventana.findMany({
+        where: { id: { in: ventanaIds }, isActive: true },
+        select: { id: true, name: true, code: true },
+        orderBy: { name: "asc" },
+      });
 
-        prisma.user.findMany({
-          where: { id: { in: vendedorIds }, isActive: true },
-          select: { id: true, name: true, username: true },
-          orderBy: { name: "asc" },
-        }),
+      const vendedores = await prisma.user.findMany({
+        where: { id: { in: vendedorIds }, isActive: true },
+        select: { id: true, name: true, username: true },
+        orderBy: { name: "asc" },
+      });
 
-        prisma.loteria.findMany({
-          where: { id: { in: loteriaIds }, isActive: true },
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        }),
+      const loterias = await prisma.loteria.findMany({
+        where: { id: { in: loteriaIds }, isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      });
 
-        prisma.sorteo.findMany({
-          where: { id: { in: sorteoIds }, status: 'EVALUATED' },
-          select: { id: true, name: true, scheduledAt: true },
-          orderBy: { scheduledAt: "desc" },
-          take: 50, // Limitar sorteos a los últimos 50
-        }),
-      ]);
+      const sorteos = await prisma.sorteo.findMany({
+        where: { id: { in: sorteoIds }, status: 'EVALUATED' },
+        select: { id: true, name: true, scheduledAt: true },
+        orderBy: { scheduledAt: "desc" },
+        take: 50, // Limitar sorteos a los últimos 50
+      });
 
       logger.info({
         layer: "service",

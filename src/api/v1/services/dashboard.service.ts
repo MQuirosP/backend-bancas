@@ -1548,55 +1548,54 @@ export const DashboardService = {
 
     // FASE 1: Datos críticos (los que el usuario ve primero)
     //  SEMI-OPTIMIZADO: Comentamos CxC y CxP por desuso y riesgos de performance en Prisma (intermitencia)
-    const measuredPhase1 = await Promise.all([
-      measureAsync('calculateGanancia', () => this.calculateGanancia(filters, role).then((r) => {
-        queryCount += 2;
-        return r;
-      })),
-      /* measureAsync('calculateCxC', () => this.calculateCxC(filters).then((r) => {
-        queryCount += 1;
-        return r;
-      })),
-      measureAsync('calculateCxP', () => this.calculateCxP(filters).then((r) => {
-        queryCount += 1;
-        return r;
-      })), */
-      measureAsync('getSummary', () => this.getSummary(filters, role).then((r) => {
-        queryCount += 1;
-        return r;
-      })),
-    ]);
+    //  REFATOR: Ejecución secuencial para proteger el pool de conexiones (límite 15)
+    const mGanancia = await measureAsync('calculateGanancia', () => this.calculateGanancia(filters, role).then((r) => {
+      queryCount += 2;
+      return r;
+    }));
+    /* const mCxC = await measureAsync('calculateCxC', () => this.calculateCxC(filters).then((r) => {
+      queryCount += 1;
+      return r;
+    }));
+    const mCxP = await measureAsync('calculateCxP', () => this.calculateCxP(filters).then((r) => {
+      queryCount += 1;
+      return r;
+    })); */
+    const mSummary = await measureAsync('getSummary', () => this.getSummary(filters, role).then((r) => {
+      queryCount += 1;
+      return r;
+    }));
+    const measuredPhase1 = [mGanancia, mSummary];
 
     // FASE 2: Datos complementarios (gráficas, comparativas)
-    const measuredPhase2 = await Promise.all([
-      measureAsync('getTimeSeries', () => this.getTimeSeries({ ...filters, interval: filters.interval || 'day' }).then((r) => {
-        queryCount += 1;
-        return r;
-      })),
-      // ⚡ Pasar exposureFilters (puede ser rango trimmed a hoy si range > 7 días)
-      measureAsync('calculateExposure', () => this.calculateExposure(exposureFilters).then((r) => {
-        queryCount += 3;
-        return r;
-      })),
-      measureAsync('calculatePreviousPeriod', () => this.calculatePreviousPeriod(filters, role).then((r) => {
-        queryCount += 1;
-        return r;
-      })),
-    ]);
+    const mTimeSeries = await measureAsync('getTimeSeries', () => this.getTimeSeries({ ...filters, interval: filters.interval || 'day' }).then((r) => {
+      queryCount += 1;
+      return r;
+    }));
+    // ⚡ Pasar exposureFilters (puede ser rango trimmed a hoy si range > 7 días)
+    const mExposure = await measureAsync('calculateExposure', () => this.calculateExposure(exposureFilters).then((r) => {
+      queryCount += 3;
+      return r;
+    }));
+    const mPreviousPeriod = await measureAsync('calculatePreviousPeriod', () => this.calculatePreviousPeriod(filters, role).then((r) => {
+      queryCount += 1;
+      return r;
+    }));
+    const measuredPhase2 = [mTimeSeries, mExposure, mPreviousPeriod];
 
     const measured = [...measuredPhase1, ...measuredPhase2];
 
-    // Extraer resultados (mapeo manual para seguridad tras comentar CxC/CxP)
-    const ganancia = measuredPhase1[0].result;
-    const summary = measuredPhase1[1].result;
+    // Extraer resultados directamente (tipado correcto en TS)
+    const ganancia = mGanancia.result;
+    const summary = mSummary.result;
     
     // Valores dummy para CxC/CxP (comentados por performance)
     const cxc = { totalAmount: 0, byVentana: [] };
     const cxp = { totalAmount: 0, byVentana: [] };
 
-    const timeSeries = measuredPhase2[0].result;
-    const exposure = measuredPhase2[1].result;
-    const previousPeriod = measuredPhase2[2].result;
+    const timeSeries = mTimeSeries.result;
+    const exposure = mExposure.result;
+    const previousPeriod = mPreviousPeriod.result;
 
     // 🟡 CHECKPOINT: Después de queries, antes de alerts
     monitor.checkpoint('AFTER_PARALLEL_QUERIES');
@@ -1607,7 +1606,7 @@ export const DashboardService = {
       action: 'DASHBOARD_OPERATIONS_BREAKDOWN',
       meta: {
         operations: measured.map(({ durationMs, memoryDeltaMB }, idx) => ({
-          name: ['ganancia', 'cxc', 'cxp', 'summary', 'timeSeries', 'exposure', 'previousPeriod'][idx],
+          name: ['ganancia', 'summary', 'timeSeries', 'exposure', 'previousPeriod'][idx],
           durationMs,
           memoryDeltaMB: parseFloat(memoryDeltaMB.toFixed(2)),
         })),
