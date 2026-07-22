@@ -79,9 +79,9 @@ export const ListTicketsQuerySchema = z
     // Filtros estándar
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID", "PAGADO"]).optional(),
     isActive: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"),
-    sorteoId: z.uuid().optional(),
-    loteriaId: z.uuid().optional(),
-    multiplierId: z.uuid().optional(),
+    sorteoId: z.union([z.uuid(), z.literal("all")]).optional(),
+    loteriaId: z.union([z.uuid(), z.literal("all")]).optional(),
+    multiplierId: z.union([z.uuid(), z.literal("all")]).optional(),
     ventanaId: z.uuid("ventanaId inválido").optional(),
     vendedorId: z.uuid("vendedorId inválido").optional(),
     search: z.string().trim().min(1).max(100).optional(),
@@ -153,9 +153,9 @@ export const NumbersSummaryQuerySchema = z
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
-    loteriaId: z.uuid().optional(),
-    sorteoId: z.uuid().optional(),
-    multiplierId: z.uuid().optional(), //  NUEVO: Filtrar por multiplicador específico
+    loteriaId: z.union([z.uuid(), z.literal("all")]).optional(),
+    sorteoId: z.union([z.uuid(), z.literal("all")]).optional(),
+    multiplierId: z.union([z.uuid(), z.literal("all")]).optional(), //  NUEVO: Filtrar por multiplicador específico
     status: z.enum(["ACTIVE", "EVALUATED", "PAID", "CANCELLED"]).optional(), //  NUEVO: Filtrar por estado de ticket
     sorteoStatus: z.enum(["SCHEDULED", "OPEN", "EVALUATED", "CLOSED"]).optional(), // Filtrar por estado del sorteo asociado
     scheduledTime: z.string().regex(/^\d{2}:\d{2}$/, "Formato de hora inválido (HH:mm)").optional(), // NUEVO
