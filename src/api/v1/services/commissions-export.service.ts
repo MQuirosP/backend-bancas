@@ -16,6 +16,7 @@ import { resolveDateRange } from '../../../utils/dateRange';
 import { Prisma } from '../../../generated/prisma/client';
 import logger from '../../../core/logger';
 import { isExclusionListEmpty } from '../../../core/exclusionListCache';
+import { tz } from '../../../utils/timezone';
 
 /**
  * Servicio orquestador para exportación de comisiones
@@ -48,12 +49,8 @@ export class CommissionsExportService {
 
       // 2. Resolver rango de fechas
       const dateRange = resolveDateRange(date, fromDate, toDate);
-      const COSTA_RICA_OFFSET_HOURS = -6;
-      const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
-      const fromDateCr = new Date(dateRange.fromAt.getTime() + offsetMs);
-      const toDateCr = new Date(dateRange.toAt.getTime() + offsetMs);
-      const fromDateStr = fromDateCr.toISOString().split('T')[0];
-      const toDateStr = toDateCr.toISOString().split('T')[0];
+      const fromDateStr = tz.toDateStr(dateRange.fromAt);
+      const toDateStr = tz.toDateStr(dateRange.toAt);
 
       // 3. Obtener breakdown detallado (si está habilitado)
       let breakdown: CommissionBreakdownItem[] | undefined = undefined;
@@ -321,7 +318,7 @@ export class CommissionsExportService {
       const commissionPercent = row.total_sales > 0 ? (commission / row.total_sales) * 100 : 0;
 
       return {
-        date: row.business_date.toISOString().split('T')[0],
+        date: tz.fromPrismaDate(row.business_date),
         ventanaName: row.ventana_name || undefined,
         vendedorName: row.vendedor_name || undefined,
         loteriaName: row.loteria_name,

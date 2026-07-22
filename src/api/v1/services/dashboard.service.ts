@@ -185,38 +185,25 @@ interface DashboardSummary {
   winRate: number; //  PORCENTAJE: Tasa de ganancia con máximo 2 decimales (toFixed(2))
 }
 
-const COSTA_RICA_OFFSET_HOURS = -6;
+const COSTA_RICA_OFFSET_HOURS = -6; // mantenido para compatibilidad, ya no se usa en matemáticas
 
 function toCostaRicaDateString(date: Date): string {
-  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
-  const local = new Date(date.getTime() + offsetMs);
-  return local.toISOString().split("T")[0];
+  return tz.toDateStr(date);
 }
 
 /**
- * Formatea un Date a ISO 8601 con offset de Costa Rica (-06:00)
+ * Formata un Date a ISO 8601 con offset de Costa Rica (-06:00)
  * El Date viene de PostgreSQL que ya aplicó AT TIME ZONE 'America/Costa_Rica'.
- * PostgreSQL devuelve un timestamp sin timezone que representa CR time,
- * pero Prisma lo interpreta como UTC. Necesitamos ajustarlo para formatearlo correctamente.
- * 
- * Ejemplo: "2025-01-14T00:00:00-06:00"
+ * Prisma interpreta ese timestamp como UTC, pero sus componentes UTC
+ * ya representan la hora local CR correctamente.
  */
 function formatCostaRicaISO(date: Date): string {
-  // Cuando PostgreSQL devuelve un timestamp con AT TIME ZONE 'America/Costa_Rica',
-  // devuelve un timestamp sin timezone que representa CR time.
-  // Prisma lo interpreta como UTC, así que necesitamos ajustarlo.
-  // Si PostgreSQL devolvió "2025-01-14 00:00:00" (CR), Prisma lo convierte a
-  // un Date que representa "2025-01-14 00:00:00 UTC" (incorrecto, debería ser 06:00 UTC).
-  // Para corregirlo, restamos el offset para obtener la hora local de CR.
-  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
-  const crDate = new Date(date.getTime() - offsetMs);
-
-  const year = crDate.getUTCFullYear();
-  const month = String(crDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(crDate.getUTCDate()).padStart(2, '0');
-  const hours = String(crDate.getUTCHours()).padStart(2, '0');
-  const minutes = String(crDate.getUTCMinutes()).padStart(2, '0');
-  const seconds = String(crDate.getUTCSeconds()).padStart(2, '0');
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const hours = String(date.getUTCHours()).padStart(2, '0');
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(date.getUTCSeconds()).padStart(2, '0');
 
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}-06:00`;
 }
@@ -225,13 +212,7 @@ function formatCostaRicaISO(date: Date): string {
  * Formatea un Date a YYYY-MM-DD en zona horaria de Costa Rica
  */
 function formatCostaRicaDate(date: Date): string {
-  // Similar a formatCostaRicaISO, pero solo la fecha
-  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
-  const crDate = new Date(date.getTime() - offsetMs);
-  const year = crDate.getUTCFullYear();
-  const month = String(crDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(crDate.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return tz.fromPrismaDate(date);
 }
 
 /**
@@ -242,33 +223,31 @@ function formatCostaRicaDate(date: Date): string {
  * month → "ene", "feb", etc.
  */
 function formatTimeSeriesLabel(date: Date, granularity: 'hour' | 'day' | 'week' | 'month'): string {
-  const offsetMs = COSTA_RICA_OFFSET_HOURS * 60 * 60 * 1000;
-  const crDate = new Date(date.getTime() - offsetMs);
-
+  // Date viene de Postgres con AT TIME ZONE. Prisma lo interpreta como UTC,
+  // pero sus componentes UTC ya representan la hora local CR.
   const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
   switch (granularity) {
     case 'hour': {
-      const hours = crDate.getUTCHours();
-      const minutes = crDate.getUTCMinutes();
+      const hours = date.getUTCHours();
+      const minutes = date.getUTCMinutes();
       const displayHours = hours % 12 || 12;
       const ampm = hours >= 12 ? 'PM' : 'AM';
       return `${displayHours}:${String(minutes).padStart(2, '0')} ${ampm}`;
     }
     case 'day': {
-      const day = crDate.getUTCDate();
-      const month = months[crDate.getUTCMonth()];
+      const day = date.getUTCDate();
+      const month = months[date.getUTCMonth()];
       return `${day} ${month}`;
     }
     case 'week': {
-      // Calcular semana del año
-      const startOfYear = new Date(Date.UTC(crDate.getUTCFullYear(), 0, 1));
-      const daysSinceStart = Math.floor((crDate.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+      const startOfYear = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+      const daysSinceStart = Math.floor((date.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
       const weekNumber = Math.ceil((daysSinceStart + startOfYear.getUTCDay() + 1) / 7);
       return `Sem ${weekNumber}`;
     }
     case 'month': {
-      return months[crDate.getUTCMonth()];
+      return months[date.getUTCMonth()];
     }
     default:
       return formatCostaRicaDate(date);

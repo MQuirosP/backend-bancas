@@ -9,6 +9,7 @@ import { resolveDateRange } from "../../../utils/dateRange";
 import { validateVentanaUser } from "../../../utils/rbac";
 import prisma from "../../../core/prismaClient";
 import { crDateService } from "../../../utils/crDateService";
+import { tz } from "../../../utils/timezone";
 
 // Nota: Usa el mismo patrón que Venta/Sales módulo
 // date: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'range'
@@ -563,7 +564,7 @@ export const DashboardController = {
       exposure: fullDashboard.exposure
     };
 
-    const timestamp = new Date().toISOString().split('T')[0];
+    const timestamp = tz.toDateStr();
     const filename = `dashboard-${timestamp}.${format}`;
 
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

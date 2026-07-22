@@ -3,7 +3,7 @@
  */
 
 import { DateToken, DateRange } from '../types/reports.types';
-import { startOfLocalDay, addLocalDays, endOfLocalDay, nowCR } from '../../../utils/datetime';
+import { tz } from '../../../utils/timezone';
 import { getCRLocalComponents } from '../../../utils/businessDate';
 
 /**
@@ -14,54 +14,58 @@ export function resolveDateRange(
   fromDate?: string,
   toDate?: string
 ): DateRange {
-  const now = nowCR();
+  const now = new Date();
   let start: Date;
   let end: Date;
 
   switch (date) {
     case 'today':
-      start = startOfLocalDay(now);
-      end = endOfLocalDay(now);
+      start = tz.startOfDay(now);
+      end = tz.endOfDay(now);
       break;
 
     case 'yesterday': {
-      const yesterday = addLocalDays(now, -1);
-      start = startOfLocalDay(yesterday);
-      end = endOfLocalDay(yesterday);
+      const yesterday = tz.addDays(now, -1);
+      start = tz.startOfDay(yesterday);
+      end = tz.endOfDay(yesterday);
       break;
     }
 
     case 'week': {
-      const startOfToday = startOfLocalDay(now);
-      // startOfLocalDay ya nos da un Date en UTC que representa las 00:00 CR
-      // shiftToCostaRica en datetime.ts es el que maneja el offset.
-      // Pero para obtener el día de la semana en CR, necesitamos ver el Date "movido"
-      // datetime.ts usa shiftToCostaRica internamente en startOfLocalDay
-      
-      const dayOfWeek = getCostaRicaDayOfWeek(now);
-      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      start = startOfLocalDay(addLocalDays(now, -daysToMonday));
-      end = endOfLocalDay(now);
+      // Semana: lunes → domingo completo (ISO, decisión 2026-07-22)
+      const todayStr = tz.toDateStr(now);
+      const [y, m, d] = todayStr.split('-').map(Number);
+      const ref = new Date(Date.UTC(y, m - 1, d, 12));
+      const dow = tz.dayOfWeek(ref); // 0=Dom, 1=Lun ... 6=Sáb
+      const daysToMonday = dow === 0 ? 6 : dow - 1;
+      const monday = tz.addDays(ref, -daysToMonday);
+      const sunday = tz.addDays(monday, 6);
+      start = tz.startOfDay(monday);
+      end = tz.endOfDay(sunday);
       break;
     }
 
     case 'month': {
-      start = startOfLocalMonth(now);
-      end = endOfLocalDay(now);
+      // Mes: inicio-de-mes → hoy (no futuro en cero, decisión 2026-07-22)
+      const todayStr = tz.toDateStr(now);
+      const [y, m] = todayStr.split('-').map(Number);
+      const firstDayStr = `${y}-${String(m).padStart(2, '0')}-01`;
+      start = tz.startOfDay(tz.parse(firstDayStr));
+      end = tz.endOfDay(now);
       break;
     }
 
     case 'year':
-      start = startOfLocalDay(addLocalDays(now, -364));
-      end = endOfLocalDay(now);
+      start = tz.startOfDay(tz.addDays(now, -364));
+      end = tz.endOfDay(now);
       break;
 
     case 'range':
       if (!fromDate || !toDate) {
         throw new Error('fromDate y toDate son requeridos cuando date=range');
       }
-      start = startOfLocalDay(fromDate);
-      end = endOfLocalDay(toDate);
+      start = tz.startOfDay(tz.parse(fromDate));
+      end = tz.endOfDay(tz.parse(toDate));
       break;
 
     default:
@@ -77,28 +81,6 @@ export function resolveDateRange(
 }
 
 /**
- * Helpers internos para manejar la lógica de CR sin duplicar desplazamientos
- */
-
-function getCostaRicaDayOfWeek(date: Date): number {
-  // Obtenemos el día de la semana interpretando el Date en CR
-  const CR_OFFSET = -6;
-  const crDate = new Date(date.getTime() + CR_OFFSET * 60 * 60 * 1000);
-  return crDate.getUTCDay();
-}
-
-function startOfLocalMonth(date: Date): Date {
-  const CR_OFFSET = -6;
-  const crDate = new Date(date.getTime() + CR_OFFSET * 60 * 60 * 1000);
-  const year = crDate.getUTCFullYear();
-  const month = crDate.getUTCMonth();
-  
-  // Crear el primer día del mes en UTC y "des-desplazarlo" para obtener el Date real que representa las 00:00 CR
-  const startOfMonthCR = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
-  return new Date(startOfMonthCR.getTime() - CR_OFFSET * 60 * 60 * 1000);
-}
-
-/**
  * Calcula el período anterior de igual duración
  */
 export function calculatePreviousPeriod(range: DateRange): DateRange {
@@ -107,10 +89,10 @@ export function calculatePreviousPeriod(range: DateRange): DateRange {
   const previousStart = new Date(previousEnd.getTime() - durationMs);
 
   return {
-    from: startOfLocalDay(previousStart),
-    to: endOfLocalDay(previousEnd),
-    fromString: formatDateOnly(startOfLocalDay(previousStart)),
-    toString: formatDateOnly(endOfLocalDay(previousEnd)),
+    from: tz.startOfDay(previousStart),
+    to: tz.endOfDay(previousEnd),
+    fromString: formatDateOnly(tz.startOfDay(previousStart)),
+    toString: formatDateOnly(tz.endOfDay(previousEnd)),
   };
 }
 

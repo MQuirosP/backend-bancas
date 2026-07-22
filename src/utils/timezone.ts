@@ -155,6 +155,25 @@ function dayOfWeek(utcDate: Date): number {
 }
 
 /**
+ * Convierte un Date devuelto por Prisma desde una columna DATE o desde
+ * un query con AT TIME ZONE 'America/Costa_Rica' a string YYYY-MM-DD.
+ *
+ * Prisma interpreta las columnas DATE como medianoche UTC (00:00:00.000Z),
+ * y los timestamps con AT TIME ZONE como si fueran UTC cuando son locales.
+ * En ambos casos, los componentes UTC del Date ya representan la fecha local correcta.
+ *
+ * @example
+ * // Prisma devuelve: 2026-07-22T00:00:00.000Z (columna DATE "2026-07-22")
+ * tz.fromPrismaDate(date) → "2026-07-22" ✅
+ */
+function fromPrismaDate(date: Date): string {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * Literal para usar en queries SQL crudas.
  * Ejemplo: `AT TIME ZONE ${tz.toSqlLiteral()}`
  */
@@ -169,8 +188,13 @@ export const tz = {
   toSqlLiteral,
   /** Parser robusto que asume la TZ del negocio */
   parse,
-  /** YYYY-MM-DD en TZ del negocio */
+  /** YYYY-MM-DD en TZ del negocio (para Date normales, no Prisma) */
   toDateStr,
+  /**
+   * YYYY-MM-DD para columnas DATE de Prisma o timestamps con AT TIME ZONE.
+   * Lee los componentes UTC directamente (Prisma los devuelve como medianoche UTC).
+   */
+  fromPrismaDate,
   /** Inicio del día (00:00:00 TZ negocio) como UTC */
   startOfDay,
   /** Fin del día (23:59:59.999 TZ negocio) como UTC */

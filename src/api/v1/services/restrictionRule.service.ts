@@ -10,6 +10,7 @@ import { RestrictionRuleRepository } from "../../../repositories/restrictionRule
 import prisma from "../../../core/prismaClient";
 import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import { getCRLocalComponents } from "../../../utils/businessDate";
+import { tz } from "../../../utils/timezone";
 
 /**
  * Normaliza y valida el campo number
@@ -737,7 +738,7 @@ export const RestrictionRuleService = {
             rule.maxTotal ?? 'null',
             rule.isActive,
             rule.isAutoDate,
-            rule.appliesToDate ? new Date(rule.appliesToDate).toISOString().split('T')[0] : 'null',
+            rule.appliesToDate ? tz.fromPrismaDate(new Date(rule.appliesToDate)) : 'null',
             rule.appliesToHour ?? 'null',
             rule.salesCutoffMinutes ?? 'null'
         ].join('|');

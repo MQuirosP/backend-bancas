@@ -69,9 +69,8 @@ function getMonthRange(serverNow: Date): { fromDateStr: string; toDateStr: strin
   const todayStr = getTodayStr(serverNow);
   const [y, m] = todayStr.split('-').map(Number);
   const firstDay = `${y}-${String(m).padStart(2, '0')}-01`;
-  const lastDayDate = new Date(y, m, 0); // último día del mes
-  const lastDay = `${y}-${String(m).padStart(2, '0')}-${String(lastDayDate.getDate()).padStart(2, '0')}`;
-  return { fromDateStr: firstDay, toDateStr: lastDay };
+  // Mes: inicio-de-mes → hoy (sin días futuros en cero, decisión 2026-07-22)
+  return { fromDateStr: firstDay, toDateStr: todayStr };
 }
 
 function getYearRange(serverNow: Date): { fromDateStr: string; toDateStr: string } {

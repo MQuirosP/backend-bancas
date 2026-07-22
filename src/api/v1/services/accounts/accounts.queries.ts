@@ -5,6 +5,7 @@ import { AccountPaymentRepository } from "../../../../repositories/accountPaymen
 import { buildTicketDateFilter } from "./accounts.dates.utils";
 import { crDateService } from "../../../../utils/crDateService";
 import { isExclusionListEmpty } from "../../../../core/exclusionListCache";
+import { tz } from "../../../../utils/timezone";
 
 
 
@@ -401,7 +402,7 @@ export async function getSorteoBreakdownBatch(
 
     // ── 1. Construir array de fechas para el IN clause ──────────────────────────
     // businessDate es tipo DATE en Postgres. Usamos la fecha UTC como YYYY-MM-DD string.
-    const dateStrings = dates.map(d => d.toISOString().split('T')[0]);
+    const dateStrings = dates.map(d => tz.fromPrismaDate(d));
 
     // ── 2. Construir condiciones WHERE dinámicas ──────────────────────────────────
     const whereClauses: Prisma.Sql[] = [
@@ -532,7 +533,7 @@ export async function getSorteoBreakdownBatch(
 
     for (const row of rows) {
         // La fecha de businessDate viene como DATE de Postgres → tomamos YYYY-MM-DD
-        const dateKey = row.business_date.toISOString().split('T')[0];
+        const dateKey = tz.fromPrismaDate(row.business_date);
         const entityId = row.entity_id;
         const mapKey = `${dateKey}_${entityId}`;
 
@@ -859,7 +860,7 @@ export async function getMovementsForDay(
         .map((p: any) => ({
             id: p.id,
             accountStatementId: p.accountStatementId,
-            date: p.date.toISOString().split("T")[0],
+            date: tz.fromPrismaDate(p.date),
             time: p.time || null,
             amount: p.amount,
             type: p.type as "payment" | "collection",

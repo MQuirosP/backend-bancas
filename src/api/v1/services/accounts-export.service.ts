@@ -13,6 +13,7 @@ import { getPreviousMonthFinalBalance } from './accounts/accounts.balances';
 import prisma from '../../../core/prismaClient';
 import logger from '../../../core/logger';
 import { resolveDateRange } from '../../../utils/dateRange';
+import { tz } from '../../../utils/timezone';
 
 /**
  * Servicio orquestador para exportación de estados de cuenta
@@ -813,7 +814,7 @@ export class AccountsExportService {
    */
   private static formatDate(date: Date | string): string {
     if (typeof date === 'string') return date;
-    return date.toISOString().split('T')[0];
+    return tz.fromPrismaDate(date);
   }
 
   private static transformSorteoItem(

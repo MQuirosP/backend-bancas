@@ -4,6 +4,7 @@ import logger from "../core/logger";
 import { getCRLocalComponents } from "../utils/businessDate";
 import { crDateService } from "../utils/crDateService";
 import { ACCOUNT_CARRY_OVER_NOTES, ACCOUNT_PREVIOUS_MONTH_METHOD } from "../api/v1/services/accounts/accounts.types";
+import { tz } from "../utils/timezone";
 
 export const AccountPaymentRepository = {
   /**
@@ -681,7 +682,7 @@ export const AccountPaymentRepository = {
       movements.push({
         id: payment.id,
         accountStatementId: payment.accountStatementId,
-        date: payment.date.toISOString().split("T")[0],
+        date: tz.fromPrismaDate(payment.date),
         time: payment.time || null, //  NUEVO: Hora del movimiento si está disponible
         amount: payment.amount,
         type: payment.type,
