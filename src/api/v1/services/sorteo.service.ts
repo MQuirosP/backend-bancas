@@ -1367,6 +1367,7 @@ gs."hour24" ASC
       loteriaId?: string;
       status?: string;
       isActive?: string;
+      summaryOnly?: boolean;
       ventanaId?: string;
       bancaId?: string;
       sorteoId?: string;
@@ -1423,8 +1424,8 @@ gs."hour24" ASC
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = ${ticketIsActive}`,
         Prisma.sql`s.status = 'EVALUATED'`,
-        Prisma.sql`s."scheduledAt" >= ${dateRange.fromAt} AT TIME ZONE 'UTC'`,
-        Prisma.sql`s."scheduledAt" <= ${dateRange.toAt} AT TIME ZONE 'UTC'`
+        Prisma.sql`s."scheduledAt" >= CAST(${dateRange.fromAt} AS timestamp)`,
+        Prisma.sql`s."scheduledAt" <= CAST(${dateRange.toAt} AS timestamp)`
       ];
 
       // Aplicar filtros RBAC dinámicos (Vendedor, Ventana, Banca)
@@ -1444,76 +1445,25 @@ gs."hour24" ASC
       const fromAtComponents = getCRLocalComponents(dateRange.fromAt);
       const rangeEffectiveMonth = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}`;
 
-      //  FASE 1 - Ejecutar la query consolidada de métricas y las de soporte (movimientos/balance anterior)
-      const [consolidatedMetrics, movementsByDate, rangePreviousMonthBalance] = await Promise.all([
+      // Tareas de ejecución paralela para métricas principales
+      const promises: Promise<any>[] = [
         prisma.$queryRaw<any[]>(Prisma.sql`
-          WITH base_tickets AS (
-            SELECT 
-              t.id, t."sorteoId", t."totalAmount", t."totalCommission", t."totalPayout", t."isWinner", t.status,
-              s."scheduledAt", s."loteriaId", s.name as "sorteoName", s."extraMultiplierId", s."extraMultiplierX", s."winningNumber",
-              l.name as "loteriaName"
-            FROM "Ticket" t
-            JOIN "Sorteo" s ON t."sorteoId" = s.id
-            JOIN "Loteria" l ON s."loteriaId" = l.id
-            LEFT JOIN "Ventana" v ON t."ventanaId" = v.id
-            WHERE ${whereClause}
-          ),
-          sorteo_metrics AS (
-            SELECT 
-              "sorteoId", "scheduledAt", "loteriaId", "sorteoName", "extraMultiplierId", "extraMultiplierX", "winningNumber", "loteriaName",
-              SUM("totalAmount") as "totalSales",
-              SUM("totalCommission") as "totalCommission",
-              SUM(CASE WHEN "isWinner" THEN "totalPayout" ELSE 0 END) as "totalPrizes",
-              COUNT(id) as "ticketCount",
-              COUNT(CASE WHEN "isWinner" THEN 1 END) as "winningTicketsCount",
-              COUNT(CASE WHEN status IN ('PAID', 'PAGADO') THEN 1 END) as "paidTicketsCount"
-            FROM base_tickets
-            GROUP BY "sorteoId", "scheduledAt", "loteriaId", "sorteoName", "extraMultiplierId", "extraMultiplierX", "winningNumber", "loteriaName"
-          ),
-          multiplier_summary AS (
-            SELECT 
-              bt."sorteoId",
-              j."multiplierId",
-              m.name as "multiplierName",
-              m."valueX" as "multiplierValue",
-              SUM(j.amount) as "mSales",
-              SUM(j."commissionAmount") as "mCommission",
-              SUM(CASE WHEN j.type = 'NUMERO' THEN j."commissionAmount" ELSE 0 END) as "mCommNum",
-              SUM(CASE WHEN j.type = 'REVENTADO' THEN j."commissionAmount" ELSE 0 END) as "mCommRev",
-              SUM(CASE WHEN j."isWinner" THEN j.payout ELSE 0 END) as "mPrizes",
-              COUNT(DISTINCT bt.id) as "mTickets",
-              COUNT(CASE WHEN j."isWinner" THEN 1 END) as "mWinningTickets",
-              COUNT(CASE WHEN bt.status IN ('PAID', 'PAGADO') THEN 1 END) as "mPaidTickets"
-            FROM base_tickets bt
-            JOIN "Jugada" j ON bt.id = j."ticketId"
-            LEFT JOIN "LoteriaMultiplier" m ON j."multiplierId" = m.id
-            WHERE j."deletedAt" IS NULL
-            GROUP BY bt."sorteoId", j."multiplierId", m.name, m."valueX"
-          ),
-          multiplier_json AS (
-            SELECT 
-              "sorteoId",
-              JSON_AGG(JSON_BUILD_OBJECT(
-                'multiplierId', "multiplierId",
-                'multiplierName', COALESCE("multiplierName", 'x1'),
-                'multiplierValue', COALESCE("multiplierValue", 1),
-                'totalSales', "mSales",
-                'totalCommission', "mCommission",
-                'commissionByNumber', "mCommNum",
-                'commissionByReventado', "mCommRev",
-                'totalPrizes', "mPrizes",
-                'ticketCount', "mTickets",
-                'winningTicketsCount', "mWinningTickets",
-                'paidTicketsCount', "mPaidTickets",
-                'unpaidTicketsCount', "mWinningTickets" - "mPaidTickets"
-              ) ORDER BY "multiplierValue" ASC) as by_multiplier
-            FROM multiplier_summary
-            GROUP BY "sorteoId"
-          )
-          SELECT sm.*, mj.by_multiplier
-          FROM sorteo_metrics sm
-          LEFT JOIN multiplier_json mj ON sm."sorteoId" = mj."sorteoId"
-          ORDER BY sm."scheduledAt" ASC, sm."loteriaId" ASC, sm."sorteoId" ASC
+          SELECT 
+            s.id as "sorteoId", s."scheduledAt", s."loteriaId", s.name as "sorteoName", s."extraMultiplierId", s."extraMultiplierX", s."winningNumber",
+            l.name as "loteriaName",
+            SUM(t."totalAmount") as "totalSales",
+            SUM(t."totalCommission") as "totalCommission",
+            SUM(CASE WHEN t."isWinner" THEN t."totalPayout" ELSE 0 END) as "totalPrizes",
+            COUNT(t.id) as "ticketCount",
+            COUNT(CASE WHEN t."isWinner" THEN 1 END) as "winningTicketsCount",
+            COUNT(CASE WHEN t.status IN ('PAID', 'PAGADO') THEN 1 END) as "paidTicketsCount"
+          FROM "Ticket" t
+          JOIN "Sorteo" s ON t."sorteoId" = s.id
+          JOIN "Loteria" l ON s."loteriaId" = l.id
+          LEFT JOIN "Ventana" v ON t."ventanaId" = v.id
+          WHERE ${whereClause}
+          GROUP BY s.id, s."scheduledAt", s."loteriaId", s.name, s."extraMultiplierId", s."extraMultiplierX", s."winningNumber", l.name
+          ORDER BY s."scheduledAt" ASC, s."loteriaId" ASC, s.id ASC
         `),
         AccountPaymentRepository.findMovementsByDateRange(
           dateRange.fromAt,
@@ -1528,11 +1478,83 @@ gs."hour24" ASC
           undefined,
           vendedorId,
           undefined
-        ),
-      ]);
+        )
+      ];
+
+      // Si no es solo resumen, agregar tareas de detalle (multiplicadores)
+      if (!params.summaryOnly) {
+        promises.push(
+          prisma.$queryRaw<any[]>(Prisma.sql`
+            SELECT 
+              t."sorteoId", j."multiplierId",
+              SUM(j.amount) as "mSales", SUM(j."commissionAmount") as "mCommission",
+              SUM(CASE WHEN j.type = 'NUMERO' THEN j."commissionAmount" ELSE 0 END) as "mCommNum",
+              SUM(CASE WHEN j.type = 'REVENTADO' THEN j."commissionAmount" ELSE 0 END) as "mCommRev",
+              SUM(CASE WHEN j."isWinner" THEN j.payout ELSE 0 END) as "mPrizes",
+              COUNT(DISTINCT t.id) as "mTickets", COUNT(CASE WHEN j."isWinner" THEN 1 END) as "mWinningTickets",
+              COUNT(CASE WHEN t.status IN ('PAID', 'PAGADO') THEN 1 END) as "mPaidTickets"
+            FROM "Ticket" t
+            JOIN "Jugada" j ON j."ticketId" = t.id
+            JOIN "Sorteo" s ON s.id = t."sorteoId"
+            WHERE t."deletedAt" IS NULL
+              AND j."deletedAt" IS NULL
+              AND t."isActive" = ${ticketIsActive}
+              AND s.status = 'EVALUATED'
+              AND s."scheduledAt" >= CAST(${dateRange.fromAt} AS timestamp)
+              AND s."scheduledAt" <= CAST(${dateRange.toAt} AS timestamp)
+              ${vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
+              ${params.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${params.ventanaId} AS uuid)` : Prisma.empty}
+              ${params.bancaId ? Prisma.sql`AND t."bancaId" = CAST(${params.bancaId} AS uuid)` : Prisma.empty}
+              ${params.loteriaId ? Prisma.sql`AND s."loteriaId" = CAST(${params.loteriaId} AS uuid)` : Prisma.empty}
+            GROUP BY t."sorteoId", j."multiplierId"
+          `)
+        );
+        promises.push(
+          prisma.loteriaMultiplier.findMany({
+            where: { isActive: true },
+            select: { id: true, name: true, valueX: true, loteriaId: true }
+          })
+        );
+      }
+
+      const results = await Promise.all(promises);
+      const sorteoMetrics = results[0];
+      const movementsByDate = results[1];
+      const rangePreviousMonthBalance = results[2];
+      const multiplierMetricsRaw = params.summaryOnly ? [] : results[3];
+      const loteriaMultipliers = params.summaryOnly ? [] : results[4];
+
+      const consolidatedMetrics = sorteoMetrics.map((sm: any) => {
+        let by_multiplier: any[] = [];
+        
+        if (!params.summaryOnly) {
+          // Obtener los multiplicadores base de esta loteria
+          const baseMultipliers = loteriaMultipliers.filter((m: any) => m.loteriaId === sm.loteriaId);
+          
+          by_multiplier = baseMultipliers.map((bm: any) => {
+            const mm = multiplierMetricsRaw.find((m: any) => m.sorteoId === sm.sorteoId && m.multiplierId === bm.id);
+            return {
+              multiplierId: bm.id,
+              multiplierName: bm.name,
+              multiplierValue: Number(bm.valueX),
+              totalSales: Number(mm?.mSales || 0),
+              totalCommission: Number(mm?.mCommission || 0),
+              commissionByNumber: Number(mm?.mCommNum || 0),
+              commissionByReventado: Number(mm?.mCommRev || 0),
+              totalPrizes: Number(mm?.mPrizes || 0),
+              ticketCount: Number(mm?.mTickets || 0),
+              winningTicketsCount: Number(mm?.mWinningTickets || 0),
+              paidTicketsCount: Number(mm?.mPaidTickets || 0),
+              unpaidTicketsCount: Number(mm?.mWinningTickets || 0) - Number(mm?.mPaidTickets || 0)
+            };
+          }).sort((a: any, b: any) => a.multiplierValue - b.multiplierValue);
+        }
+        
+        return { ...sm, by_multiplier };
+      });
 
       //  PASO 2: Construir datos de sorteos SIN calcular accumulated aún
-      const sorteoData = consolidatedMetrics.map((row) => {
+      const sorteoData = consolidatedMetrics.map((row: any) => {
         // Calcular isReventado
         const isReventado =
           (row.extraMultiplierId !== null &&
@@ -1715,11 +1737,9 @@ gs."hour24" ASC
         return timeA - timeB;
       });
 
-      //  PASO 4.5: Obtener el acumulado inicial para el primer día del rango consultado
-      //  CRÍTICO: Esto asegura que el accumulated de cada evento sea ABSOLUTO (desde inicio del mes),
-      //  no relativo al período consultado. Así el acumulado es consistente sin importar el filtro.
       let initialAccumulatedForRange = 0;
 
+      // Calcular siempre recursivamente, el frontend ya no nos pasa initialAccumulated
       if (allEvents.length > 0) {
         const firstEventDate = allEvents[0].date;
         const [firstYear, firstMonth, firstDay] = firstEventDate.split('-').map(Number);
@@ -1740,28 +1760,61 @@ gs."hour24" ASC
           });
 
           if (previousDayStatement) {
+            //  Si hay statement del día anterior, empezamos desde su acumulado
+            // Y no hay gap (porque el día anterior ya tiene su cierre, no hay boletos perdidos)
             initialAccumulatedForRange = Number(previousDayStatement.remainingBalance) || Number(previousDayStatement.accumulatedBalance) || 0;
+            // No sumar gap de tickets.
           } else {
-            //  Fallback: si no hay statement del día anterior, calcular desde inicio del mes
-            //  Obtener todos los statements desde el día 1 hasta el día anterior
-            const monthStart = new Date(Date.UTC(firstYear, firstMonth - 1, 1, 0, 0, 0, 0));
+            //  Si NO hay statement del día anterior, hay que buscar el último statement válido
+            // que exista ANTES del rango consultado, para saber de dónde partir matemáticamente.
             const lastStatementBeforeRange = await prisma.accountStatement.findFirst({
               where: {
                 vendedorId,
-                date: {
-                  gte: monthStart,
-                  lt: previousDay,
-                },
+                date: { lt: previousDay },
               },
               orderBy: { date: 'desc' },
-              select: { accumulatedBalance: true, remainingBalance: true },
+              select: { date: true, accumulatedBalance: true, remainingBalance: true },
             });
 
+            let baseBalance = 0;
+            let gapStart = new Date(Date.UTC(firstYear, firstMonth - 1, 1, 0, 0, 0, 0)); // Fallback: inicio de mes
+
             if (lastStatementBeforeRange) {
-              initialAccumulatedForRange = Number(lastStatementBeforeRange.remainingBalance) || Number(lastStatementBeforeRange.accumulatedBalance) || 0;
+              baseBalance = Number(lastStatementBeforeRange.remainingBalance) || Number(lastStatementBeforeRange.accumulatedBalance) || 0;
+              // El gap empieza el día DESPUÉS de este último statement válido
+              const lsDate = lastStatementBeforeRange.date;
+              gapStart = new Date(Date.UTC(lsDate.getUTCFullYear(), lsDate.getUTCMonth(), lsDate.getUTCDate() + 1, 0, 0, 0, 0));
             } else {
-              //  Si no hay statements previos en el mes, usar saldo del mes anterior
-              initialAccumulatedForRange = Number(rangePreviousMonthBalance) || 0;
+              baseBalance = Number(rangePreviousMonthBalance) || 0;
+            }
+
+            // Si hay un gap de días sin statement, calcular los movimientos faltantes matemáticamente
+            if (gapStart <= previousDay) {
+              const gapTicketsSum = await prisma.$queryRaw<any[]>(Prisma.sql`
+                SELECT SUM(t."totalAmount") - SUM(t."totalCommission") - SUM(CASE WHEN t."isWinner" THEN t."totalPayout" ELSE 0 END) as "gapBalance"
+                FROM "Ticket" t
+                JOIN "Sorteo" s ON t."sorteoId" = s.id
+                WHERE t."deletedAt" IS NULL
+                  AND t."vendedorId" = CAST(${vendedorId} AS uuid)
+                  AND s.status = 'EVALUATED'
+                  AND s."scheduledAt" >= CAST(${gapStart.toISOString().split('T')[0]} AS timestamp)
+                  AND s."scheduledAt" < CAST(${new Date(previousDay.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]} AS timestamp)
+              `);
+
+              const gapPaymentsSum = await prisma.$queryRaw<any[]>(Prisma.sql`
+                SELECT SUM(CASE WHEN m.type = 'payment' THEN m.amount ELSE -m.amount END) as "gapMovements"
+                FROM "AccountPayment" m
+                WHERE m."vendedorId" = CAST(${vendedorId} AS uuid)
+                  AND m.date >= CAST(${gapStart.toISOString().split('T')[0]} AS date)
+                  AND m.date <= CAST(${previousDay.toISOString().split('T')[0]} AS date)
+                  AND m.status = 'COMPLETED'
+              `);
+
+              const gapBalance = Number(gapTicketsSum[0]?.gapBalance) || 0;
+              const gapMovements = Number(gapPaymentsSum[0]?.gapMovements) || 0;
+              initialAccumulatedForRange = baseBalance + gapBalance + gapMovements;
+            } else {
+              initialAccumulatedForRange = baseBalance;
             }
           }
         }
@@ -1899,6 +1952,11 @@ gs."hour24" ASC
           const totalBalance = totalSales - totalPrizes - totalCommission;
           const totalRemainingBalance = totalBalance - totalCollected + totalPaid;
 
+          // El acumulado real del día (antes de AccountStatement) es el del último evento de ese día.
+          // Como eventsDelDia ya está ordenado cronológicamente, el último evento tiene el closing balance.
+          const lastEvent = eventsDelDia.length > 0 ? eventsDelDia[eventsDelDia.length - 1] : null;
+          const dynamicAccumulated = lastEvent ? lastEvent.accumulated : 0;
+
           const dayTotals = {
             totalSales,
             totalCommission,
@@ -1911,7 +1969,7 @@ gs."hour24" ASC
             totalBalance,
             totalRemainingBalance,
             totalSubtotal: totalRemainingBalance,
-            accumulated: 0, // Se calculará después basado en totalRemainingBalance histórico
+            accumulated: dynamicAccumulated, // Se inicializa con el calculado (fallback si falta en AccountStatement)
           };
 
           //  ACTUALIZADO: Formatear todos los eventos (sorteos + movimientos)
@@ -1922,7 +1980,7 @@ gs."hour24" ASC
 
           return {
             date,
-            sorteos: eventsFormatted, // Incluye sorteos Y movimientos
+            sorteos: params.summaryOnly ? [] : eventsFormatted, // Vacío si es solo resumen
             dayTotals,
           };
         })
@@ -1979,7 +2037,7 @@ gs."hour24" ASC
       // Crear mapa de fecha -> accumulatedBalance
       const accumulatedByDate = new Map<string, number>();
       for (const stmt of statementsForAccumulated) {
-        const dateStr = stmt.date.toISOString().split('T')[0];
+        const dateStr = crDateService.postgresDateToCRString(stmt.date);
         const valToUse = Number(stmt.remainingBalance) || Number(stmt.accumulatedBalance) || 0;
         accumulatedByDate.set(dateStr, valToUse);
       }
@@ -1994,15 +2052,9 @@ gs."hour24" ASC
         if (fromDb !== undefined && fromDb !== 0) {
           // Hay valor guardado en DB y no es 0 → usar el de DB (fuente de verdad)
           day.dayTotals.accumulated = fromDb;
-        } else if (day.date === todayStr) {
-          // Es hoy y DB no tiene acumulado válido → mantener el calculado dinámicamente
-          // (ya asignado en el bloque de día vacío o calculado en el event flow)
-          // No sobrescribir con 0
-        } else if (fromDb !== undefined) {
-          // Día pasado con 0 en DB → usar el de DB (puede ser legítimamente 0)
-          day.dayTotals.accumulated = fromDb;
         }
-        // Si fromDb === undefined (no hay statement para ese día), mantener el valor existente
+        // Si fromDb === 0 o undefined, mantenemos el dynamicAccumulated que fue 
+        // calculado dinámicamente de forma matemática sumando todos los eventos.
       }
 
       // Ocultar días anteriores al reset únicamente para el vendedor si ignoreReset no está activo
@@ -2062,8 +2114,8 @@ gs."hour24" ASC
         }
 
         // Reusar comisiones por tipo desde sorteoData (ya calculados en Paso 2)
-        const monthlyCommissionByNumber = sorteoData.reduce((sum, s) => sum + s.commissionByNumber, 0);
-        const monthlyCommissionByReventado = sorteoData.reduce((sum, s) => sum + s.commissionByReventado, 0);
+        const monthlyCommissionByNumber = sorteoData.reduce((sum: number, s: any) => sum + s.commissionByNumber, 0);
+        const monthlyCommissionByReventado = sorteoData.reduce((sum: number, s: any) => sum + s.commissionByReventado, 0);
 
         const monthlyTotalBalance = totals.totalSales - totals.totalPrizes - totals.totalCommission;
         const monthlyTotalRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;
@@ -2122,20 +2174,30 @@ gs."hour24" ASC
             },
             _sum: { totalPayout: true },
           }),
-          //  C3.2: groupBy en vez de findMany (2 filas vs ~1500+ filas)
-          prisma.jugada.groupBy({
-            by: ["type"],
-            where: {
-              ticket: {
-                sorteoId: { in: monthlySorteoIds },
-                vendedorId,
-                deletedAt: null,
-                isActive: true,
-              },
-              deletedAt: null,
-            },
-            _sum: { commissionAmount: true },
-          }),
+          //  C3.2: Uso de CTE cruda para el groupBy de jugadas (Solución a cuello de botella Q-1)
+          // Esto evita que Prisma genere un IN($1...$225) sobre sorteoId que causa Seq Scans masivos
+          // en la tabla Jugada.
+          
+          prisma.$queryRaw<Array<{ commission_amount: number; type: string }>>(Prisma.sql`
+            WITH sorteos_cte AS (
+              SELECT id FROM "Sorteo"
+              WHERE status = 'EVALUATED'
+                AND "scheduledAt" >= ${monthlyStartDate}::timestamp
+                AND "scheduledAt" <= ${monthlyEndDate}::timestamp
+            )
+            SELECT SUM(j."commissionAmount") as commission_amount, j.type
+            FROM "Jugada" j
+            JOIN "Ticket" t ON t.id = j."ticketId"
+            JOIN sorteos_cte s ON s.id = t."sorteoId"
+            WHERE j."deletedAt" IS NULL
+              ${vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
+              AND t."deletedAt" IS NULL
+              AND t."isActive" = true
+            GROUP BY j.type
+          `).then(res => res.map(row => ({
+            type: row.type,
+            _sum: { commissionAmount: Number(row.commission_amount) || 0 }
+          }))),
         ]);
 
         const monthlyTotalSales = monthlyFinancialData.reduce((sum, f) => sum + (f._sum.totalAmount || 0), 0);

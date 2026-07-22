@@ -14,13 +14,15 @@ import { commissionResolver } from '../../../../services/commission/CommissionRe
  * Similar a computeVentanaCommissionFromPolicies pero agrupado por lotería
  */
 async function computeListeroCommissionByLoteria(
-  fromDateStr: string,
-  toDateStr: string,
+  fromBusinessDate: Date,
+  toBusinessDate: Date,
   loteriaId?: string,
   bancaId?: string
 ): Promise<Map<string, number>> {
-  // Obtener jugadas en el rango con businessDate del ticket
-  const jugadas = await prisma.jugada.findMany({
+  // Obtener jugadas en el rango con businessDate del ticket.
+  // CORRECCIÓN: el filtro de fecha se delega a la base de datos (WHERE en Prisma)
+  // para evitar traer millones de filas y filtrarlas en memoria.
+  const jugadasInRange = await prisma.jugada.findMany({
     where: {
       deletedAt: null,
       isActive: true,
@@ -28,6 +30,10 @@ async function computeListeroCommissionByLoteria(
         deletedAt: null,
         isActive: true,
         status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] },
+        businessDate: {
+          gte: fromBusinessDate,
+          lte: toBusinessDate,
+        },
         ...(loteriaId ? { loteriaId } : {}),
         ...(bancaId ? { bancaId } : {}),
       },
@@ -42,8 +48,6 @@ async function computeListeroCommissionByLoteria(
           id: true,
           ventanaId: true,
           loteriaId: true,
-          businessDate: true,
-          createdAt: true,
           ventana: {
             select: {
               commissionPolicyJson: true,
@@ -57,18 +61,6 @@ async function computeListeroCommissionByLoteria(
         },
       },
     },
-  });
-
-  // Filtrar por businessDate
-  const jugadasInRange = jugadas.filter(j => {
-    const ticket = j.ticket;
-    if (!ticket) return false;
-    
-    const ticketBusinessDate = ticket.businessDate
-      ? new Date(ticket.businessDate).toISOString().split('T')[0]
-      : new Date(ticket.createdAt).toISOString().split('T')[0];
-    
-    return ticketBusinessDate >= fromDateStr && ticketBusinessDate <= toDateStr;
   });
 
   if (jugadasInRange.length === 0) {
@@ -281,9 +273,13 @@ export const LoteriasReportService = {
     }>>(loteriasQuery);
 
     // Calcular comisiones de listero desde las políticas de comisión
+    // Convertir los strings CR (YYYY-MM-DD) a Date objects seguros usando Date.UTC
+    // para evitar cualquier desfase de zona horaria al comparar con businessDate (@db.Date)
+    const [fy, fm, fd] = dateRange.fromString.split('-').map(Number);
+    const [ty, tm, td] = dateRange.toString.split('-').map(Number);
     const commissionByLoteria = await computeListeroCommissionByLoteria(
-      fromDateStr,
-      toDateStr,
+      new Date(Date.UTC(fy, fm - 1, fd)),
+      new Date(Date.UTC(ty, tm - 1, td)),
       filters.loteriaId,
       filters.bancaId
     );
@@ -355,6 +351,11 @@ export const LoteriasReportService = {
 
     // Si se especifica loteriaId, agregar detalle por sorteos
     if (filters.loteriaId && loteriasData.length > 0) {
+      // CORRECCIÓN: el filtro de fecha se mueve al WHERE de Prisma para evitar
+      // filtrado en memoria con toISOString() que viola el estándar de TZ Costa Rica.
+      const [fy2, fm2, fd2] = dateRange.fromString.split('-').map(Number);
+      const [ty2, tm2, td2] = dateRange.toString.split('-').map(Number);
+
       const sorteos = await prisma.sorteo.findMany({
         where: {
           loteriaId: filters.loteriaId,
@@ -369,42 +370,37 @@ export const LoteriasReportService = {
             where: {
               status: { in: ['ACTIVE', 'EVALUATED', 'PAID'] },
               deletedAt: null,
+              businessDate: {
+                gte: new Date(Date.UTC(fy2, fm2 - 1, fd2)),
+                lte: new Date(Date.UTC(ty2, tm2 - 1, td2)),
+              },
             },
             select: {
               id: true,
               totalAmount: true,
               totalPayout: true,
-              businessDate: true,
-              createdAt: true,
             },
           },
         },
       });
 
       const sorteosData = sorteos.map(s => {
-        // Filtrar tickets por businessDate dentro del rango solicitado
-        const ticketsInRange = s.tickets.filter(t => {
-          const ticketBusinessDate = t.businessDate 
-            ? new Date(t.businessDate).toISOString().split('T')[0]
-            : new Date(t.createdAt).toISOString().split('T')[0];
-          return ticketBusinessDate >= fromDateStr && ticketBusinessDate <= toDateStr;
-        });
-        
-        const ventasTotal = ticketsInRange.reduce((sum, t) => sum + t.totalAmount, 0);
-        const payoutTotal = ticketsInRange.reduce((sum, t) => sum + (t.totalPayout || 0), 0);
+        const ventasTotal = s.tickets.reduce((sum, t) => sum + t.totalAmount, 0);
+        const payoutTotal = s.tickets.reduce((sum, t) => sum + (t.totalPayout || 0), 0);
         return {
           sorteoId: s.id,
           sorteoName: s.name,
           scheduledAt: formatIsoLocal(s.scheduledAt),
           status: s.status,
           ventasTotal,
-          ticketsCount: ticketsInRange.length,
+          ticketsCount: s.tickets.length,
           payoutTotal,
         };
       });
 
       loteriasData[0].sorteos = sorteosData;
     }
+
 
     return {
       data: {

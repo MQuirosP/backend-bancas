@@ -14,13 +14,15 @@ import { commissionResolver } from '../../../../services/commission/CommissionRe
  * Similar a computeVentanaCommissionFromPolicies pero agrupado por ventana
  */
 async function computeListeroCommissionByVentana(
-  fromDateStr: string,
-  toDateStr: string,
+  fromBusinessDate: Date,
+  toBusinessDate: Date,
   ventanaId?: string,
   bancaId?: string
 ): Promise<Map<string, number>> {
-  // Obtener jugadas en el rango con businessDate del ticket (solo sorteos evaluados)
-  const jugadas = await prisma.jugada.findMany({
+  // Obtener jugadas en el rango con businessDate del ticket (solo sorteos evaluados).
+  // CORRECCIÓN: el filtro de fecha se delega a la base de datos (WHERE en Prisma)
+  // para evitar traer millones de filas y filtrarlas en memoria.
+  const jugadasInRange = await prisma.jugada.findMany({
     where: {
       deletedAt: null,
       isActive: true,
@@ -28,6 +30,10 @@ async function computeListeroCommissionByVentana(
         deletedAt: null,
         isActive: true,
         status: { in: ['EVALUATED', 'PAID', 'PAGADO'] },
+        businessDate: {
+          gte: fromBusinessDate,
+          lte: toBusinessDate,
+        },
         sorteo: {
           status: 'EVALUATED',
           deletedAt: null,
@@ -46,8 +52,6 @@ async function computeListeroCommissionByVentana(
           id: true,
           ventanaId: true,
           loteriaId: true,
-          businessDate: true,
-          createdAt: true,
           ventana: {
             select: {
               commissionPolicyJson: true,
@@ -61,18 +65,6 @@ async function computeListeroCommissionByVentana(
         },
       },
     },
-  });
-
-  // Filtrar por businessDate
-  const jugadasInRange = jugadas.filter(j => {
-    const ticket = j.ticket;
-    if (!ticket) return false;
-    
-    const ticketBusinessDate = ticket.businessDate
-      ? new Date(ticket.businessDate).toISOString().split('T')[0]
-      : new Date(ticket.createdAt).toISOString().split('T')[0];
-    
-    return ticketBusinessDate >= fromDateStr && ticketBusinessDate <= toDateStr;
   });
 
   if (jugadasInRange.length === 0) {
@@ -306,9 +298,13 @@ export const VentanasReportService = {
     }>>(ventanasQuery);
 
     // Calcular comisiones de listero desde las políticas de comisión
+    // Convertir los strings CR (YYYY-MM-DD) a Date objects seguros usando Date.UTC
+    // para evitar cualquier desfase de zona horaria al comparar con businessDate (@db.Date)
+    const [fy, fm, fd] = fromDateStr.split('-').map(Number);
+    const [ty, tm, td] = toDateStr.split('-').map(Number);
     const commissionByVentana = await computeListeroCommissionByVentana(
-      fromDateStr,
-      toDateStr,
+      new Date(Date.UTC(fy, fm - 1, fd)),
+      new Date(Date.UTC(ty, tm - 1, td)),
       filters.ventanaId,
       filters.bancaId
     );

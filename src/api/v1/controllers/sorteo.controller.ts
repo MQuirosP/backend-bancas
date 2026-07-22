@@ -212,7 +212,7 @@ export const SorteoController = {
   },
 
   async evaluatedSummary(req: AuthenticatedRequest, res: Response) {
-    const { date, fromDate, toDate, scope, loteriaId, status, isActive, ignoreReset } = req.query as any;
+    const { date, fromDate, toDate, scope, loteriaId, status, isActive, ignoreReset, summaryOnly, initialAccumulated } = req.query as any;
 
     // Validar scope (solo 'mine' permitido)
     if (scope && scope !== 'mine') {
@@ -237,6 +237,7 @@ export const SorteoController = {
         loteriaId,
         status,
         isActive,
+        summaryOnly,
         userRole: req.user!.role,
         ignoreReset: canIgnoreReset && ignoreReset === 'true',
       },
