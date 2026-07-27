@@ -1419,22 +1419,20 @@ gs."hour24" ASC
       // Filtro de isActive: si no se proporciona, se asume true (solo tickets activos)
       const ticketIsActive = params.isActive !== 'false' && params.isActive !== '0';
 
-      //  C3.4 OPTIMIZACIÓN: FASE 1 - Construcción dinámica de condiciones para optimización de índices
-      const ticketConditions: Prisma.Sql[] = [
-        Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t."isActive" = ${ticketIsActive}`,
+      //  C3.4 OPTIMIZACIÓN: FASE 1 - Construcción dinámica de condiciones para optimización de índices sobre ResumenCierreDiario
+      const rcdConditions: Prisma.Sql[] = [
         Prisma.sql`s.status = 'EVALUATED'`,
-        Prisma.sql`s."scheduledAt" >= CAST(${dateRange.fromAt} AS timestamp)`,
-        Prisma.sql`s."scheduledAt" <= CAST(${dateRange.toAt} AS timestamp)`
+        Prisma.sql`rcd."businessDate" >= CAST(${dateRange.fromAt} AS date)`,
+        Prisma.sql`rcd."businessDate" <= CAST(${dateRange.toAt} AS date)`
       ];
 
       // Aplicar filtros RBAC dinámicos (Vendedor, Ventana, Banca)
-      if (vendedorId) ticketConditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
-      if (params.ventanaId) ticketConditions.push(Prisma.sql`t."ventanaId" = CAST(${params.ventanaId} AS uuid)`);
-      if (params.bancaId) ticketConditions.push(Prisma.sql`t."bancaId" = CAST(${params.bancaId} AS uuid)`);
-      if (params.loteriaId) ticketConditions.push(Prisma.sql`s."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
+      if (vendedorId) rcdConditions.push(Prisma.sql`rcd."vendedorId" = CAST(${vendedorId} AS uuid)`);
+      if (params.ventanaId) rcdConditions.push(Prisma.sql`rcd."ventanaId" = CAST(${params.ventanaId} AS uuid)`);
+      if (params.bancaId) rcdConditions.push(Prisma.sql`rcd."bancaId" = CAST(${params.bancaId} AS uuid)`);
+      if (params.loteriaId) rcdConditions.push(Prisma.sql`s."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
 
-      const whereClause = Prisma.join(ticketConditions, ' AND ');
+      const rcdWhereClause = Prisma.join(rcdConditions, ' AND ');
 
       //  C3.4 OPTIMIZACIÓN: Resolver rango mensual una sola vez (se usa en monthlyAccumulated)
       const monthlyRange = resolveDateRange("month");
@@ -1446,22 +1444,19 @@ gs."hour24" ASC
       const rangeEffectiveMonth = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}`;
 
       // Tareas de ejecución paralela para métricas principales
-      const promises: Promise<any>[] = [
+      const [sorteoMetricsRaw, movementsByDate, rangePreviousMonthBalance] = await Promise.all([
         prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT 
             s.id as "sorteoId", s."scheduledAt", s."loteriaId", s.name as "sorteoName", s."extraMultiplierId", s."extraMultiplierX", s."winningNumber",
             l.name as "loteriaName",
-            SUM(t."totalAmount") as "totalSales",
-            SUM(t."totalCommission") as "totalCommission",
-            SUM(CASE WHEN t."isWinner" THEN t."totalPayout" ELSE 0 END) as "totalPrizes",
-            COUNT(t.id) as "ticketCount",
-            COUNT(CASE WHEN t."isWinner" THEN 1 END) as "winningTicketsCount",
-            COUNT(CASE WHEN t.status IN ('PAID', 'PAGADO') THEN 1 END) as "paidTicketsCount"
-          FROM "Ticket" t
-          JOIN "Sorteo" s ON t."sorteoId" = s.id
+            SUM(rcd."totalVendida") as "totalSales",
+            SUM(rcd."comisionTotal") as "totalCommission",
+            SUM(rcd."ganado") as "totalPrizes",
+            SUM(rcd."ticketsCount")::integer as "ticketCount"
+          FROM "ResumenCierreDiario" rcd
+          JOIN "Sorteo" s ON rcd."sorteoId" = s.id
           JOIN "Loteria" l ON s."loteriaId" = l.id
-          LEFT JOIN "Ventana" v ON t."ventanaId" = v.id
-          WHERE ${whereClause}
+          WHERE ${rcdWhereClause}
           GROUP BY s.id, s."scheduledAt", s."loteriaId", s.name, s."extraMultiplierId", s."extraMultiplierX", s."winningNumber", l.name
           ORDER BY s."scheduledAt" ASC, s."loteriaId" ASC, s.id ASC
         `),
@@ -1479,60 +1474,93 @@ gs."hour24" ASC
           vendedorId,
           undefined
         )
-      ];
+      ]);
 
-      // Si no es solo resumen, agregar tareas de detalle (multiplicadores)
-      if (!params.summaryOnly) {
-        promises.push(
-          prisma.$queryRaw<any[]>(Prisma.sql`
+      const sorteoIds = sorteoMetricsRaw.map((sm) => sm.sorteoId);
+
+      let ticketMetrics: any[] = [];
+      let multiplierMetricsRaw: any[] = [];
+      let loteriaMultipliers: any[] = [];
+
+      if (sorteoIds.length > 0) {
+        const ticketMetricsPromise = prisma.$queryRaw<any[]>(Prisma.sql`
+          SELECT 
+            "sorteoId",
+            COUNT(CASE WHEN "isWinner" THEN 1 END) as "winningTicketsCount",
+            COUNT(CASE WHEN status IN ('PAID', 'PAGADO') THEN 1 END) as "paidTicketsCount",
+            SUM("totalCommission") as "vendedorCommissionSum"
+          FROM "Ticket"
+          WHERE "sorteoId" IN (${Prisma.join(sorteoIds)})
+            AND "isActive" = ${ticketIsActive}
+            AND "deletedAt" IS NULL
+            ${vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
+            ${params.ventanaId ? Prisma.sql`AND "ventanaId" = CAST(${params.ventanaId} AS uuid)` : Prisma.empty}
+            ${params.bancaId ? Prisma.sql`AND "bancaId" = CAST(${params.bancaId} AS uuid)` : Prisma.empty}
+          GROUP BY "sorteoId"
+        `);
+
+        const promises: Promise<any>[] = [ticketMetricsPromise];
+
+        if (!params.summaryOnly) {
+          const multiplierMetricsPromise = prisma.$queryRaw<any[]>(Prisma.sql`
             SELECT 
               t."sorteoId", j."multiplierId",
-              SUM(j.amount) as "mSales", SUM(j."commissionAmount") as "mCommission",
+              SUM(j.amount) as "mSales", 
+              SUM(j."commissionAmount") as "mCommission",
               SUM(CASE WHEN j.type = 'NUMERO' THEN j."commissionAmount" ELSE 0 END) as "mCommNum",
               SUM(CASE WHEN j.type = 'REVENTADO' THEN j."commissionAmount" ELSE 0 END) as "mCommRev",
               SUM(CASE WHEN j."isWinner" THEN j.payout ELSE 0 END) as "mPrizes",
-              COUNT(DISTINCT t.id) as "mTickets", COUNT(CASE WHEN j."isWinner" THEN 1 END) as "mWinningTickets",
+              COUNT(DISTINCT t.id) as "mTickets", 
+              COUNT(CASE WHEN j."isWinner" THEN 1 END) as "mWinningTickets",
               COUNT(CASE WHEN t.status IN ('PAID', 'PAGADO') THEN 1 END) as "mPaidTickets"
             FROM "Ticket" t
             JOIN "Jugada" j ON j."ticketId" = t.id
-            JOIN "Sorteo" s ON s.id = t."sorteoId"
-            WHERE t."deletedAt" IS NULL
-              AND j."deletedAt" IS NULL
+            WHERE t."sorteoId" IN (${Prisma.join(sorteoIds)})
               AND t."isActive" = ${ticketIsActive}
-              AND s.status = 'EVALUATED'
-              AND s."scheduledAt" >= CAST(${dateRange.fromAt} AS timestamp)
-              AND s."scheduledAt" <= CAST(${dateRange.toAt} AS timestamp)
+              AND t."deletedAt" IS NULL
+              AND j."deletedAt" IS NULL
+              AND j."isActive" = true
               ${vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
               ${params.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${params.ventanaId} AS uuid)` : Prisma.empty}
               ${params.bancaId ? Prisma.sql`AND t."bancaId" = CAST(${params.bancaId} AS uuid)` : Prisma.empty}
-              ${params.loteriaId ? Prisma.sql`AND s."loteriaId" = CAST(${params.loteriaId} AS uuid)` : Prisma.empty}
             GROUP BY t."sorteoId", j."multiplierId"
-          `)
-        );
-        promises.push(
-          prisma.loteriaMultiplier.findMany({
+          `);
+
+          const loteriaMultipliersPromise = prisma.loteriaMultiplier.findMany({
             where: { isActive: true },
-            select: { id: true, name: true, valueX: true, loteriaId: true }
-          })
-        );
+            select: { id: true, name: true, valueX: true, loteriaId: true, kind: true }
+          });
+
+          promises.push(multiplierMetricsPromise, loteriaMultipliersPromise);
+        }
+
+        const detailsResults = await Promise.all(promises);
+        ticketMetrics = detailsResults[0];
+        if (!params.summaryOnly) {
+          multiplierMetricsRaw = detailsResults[1];
+          loteriaMultipliers = detailsResults[2];
+        }
       }
 
-      const results = await Promise.all(promises);
-      const sorteoMetrics = results[0];
-      const movementsByDate = results[1];
-      const rangePreviousMonthBalance = results[2];
-      const multiplierMetricsRaw = params.summaryOnly ? [] : results[3];
-      const loteriaMultipliers = params.summaryOnly ? [] : results[4];
+      const sorteoMetrics = sorteoMetricsRaw.map((sm: any) => {
+        const tm = ticketMetrics.find((t) => t.sorteoId === sm.sorteoId);
+        return {
+          ...sm,
+          totalCommission: Number(tm?.vendedorCommissionSum || 0),
+          winningTicketsCount: Number(tm?.winningTicketsCount || 0),
+          paidTicketsCount: Number(tm?.paidTicketsCount || 0)
+        };
+      });
 
       const consolidatedMetrics = sorteoMetrics.map((sm: any) => {
         let by_multiplier: any[] = [];
         
         if (!params.summaryOnly) {
-          // Obtener los multiplicadores base de esta loteria
           const baseMultipliers = loteriaMultipliers.filter((m: any) => m.loteriaId === sm.loteriaId);
           
           by_multiplier = baseMultipliers.map((bm: any) => {
             const mm = multiplierMetricsRaw.find((m: any) => m.sorteoId === sm.sorteoId && m.multiplierId === bm.id);
+
             return {
               multiplierId: bm.id,
               multiplierName: bm.name,
