@@ -1419,27 +1419,12 @@ gs."hour24" ASC
       // Filtro de isActive: si no se proporciona, se asume true (solo tickets activos)
       const ticketIsActive = params.isActive !== 'false' && params.isActive !== '0';
 
-      //  C3.4 OPTIMIZACIÓN: FASE 1 - Construcción dinámica de condiciones para optimización de índices sobre ResumenCierreDiario
-      const rcdConditions: Prisma.Sql[] = [
-        Prisma.sql`s.status = 'EVALUATED'`,
-        Prisma.sql`rcd."businessDate" >= CAST(${dateRange.fromAt} AS date)`,
-        Prisma.sql`rcd."businessDate" <= CAST(${dateRange.toAt} AS date)`
-      ];
-
-      // Aplicar filtros RBAC dinámicos (Vendedor, Ventana, Banca)
-      if (vendedorId) rcdConditions.push(Prisma.sql`rcd."vendedorId" = CAST(${vendedorId} AS uuid)`);
-      if (params.ventanaId) rcdConditions.push(Prisma.sql`rcd."ventanaId" = CAST(${params.ventanaId} AS uuid)`);
-      if (params.bancaId) rcdConditions.push(Prisma.sql`rcd."bancaId" = CAST(${params.bancaId} AS uuid)`);
-      if (params.loteriaId) rcdConditions.push(Prisma.sql`s."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
-
-      const rcdWhereClause = Prisma.join(rcdConditions, ' AND ');
 
       //  C3.4 OPTIMIZACIÓN: Resolver rango mensual una sola vez (se usa en monthlyAccumulated)
       const monthlyRange = resolveDateRange("month");
       const monthlyStartDate = monthlyRange.fromAt;
       const monthlyEndDate = monthlyRange.toAt;
 
-      // Determinar mes efectivo para previousMonthBalance
       const fromAtComponents = getCRLocalComponents(dateRange.fromAt);
       const rangeEffectiveMonth = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}`;
 
@@ -1456,7 +1441,13 @@ gs."hour24" ASC
           FROM "ResumenCierreDiario" rcd
           JOIN "Sorteo" s ON rcd."sorteoId" = s.id
           JOIN "Loteria" l ON s."loteriaId" = l.id
-          WHERE ${rcdWhereClause}
+          WHERE s.status = 'EVALUATED'
+            AND s."scheduledAt" >= CAST(${dateRange.fromAt} AS timestamp)
+            AND s."scheduledAt" <= CAST(${dateRange.toAt} AS timestamp)
+            ${vendedorId ? Prisma.sql`AND rcd."vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
+            ${params.ventanaId ? Prisma.sql`AND rcd."ventanaId" = CAST(${params.ventanaId} AS uuid)` : Prisma.empty}
+            ${params.bancaId ? Prisma.sql`AND rcd."bancaId" = CAST(${params.bancaId} AS uuid)` : Prisma.empty}
+            ${params.loteriaId ? Prisma.sql`AND s."loteriaId" = CAST(${params.loteriaId} AS uuid)` : Prisma.empty}
           GROUP BY s.id, s."scheduledAt", s."loteriaId", s.name, s."extraMultiplierId", s."extraMultiplierX", s."winningNumber", l.name
           ORDER BY s."scheduledAt" ASC, s."loteriaId" ASC, s.id ASC
         `),
