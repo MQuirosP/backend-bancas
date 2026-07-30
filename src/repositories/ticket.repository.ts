@@ -2501,9 +2501,9 @@ export const TicketRepository = {
     const where: Prisma.TicketWhereInput = {
       ...(filters.status ? { status: filters.status } : {}),
       ...(typeof filters.isActive === "boolean" ? { isActive: filters.isActive } : {}),
-      ...(filters.sorteoId ? { sorteoId: filters.sorteoId } : {}),
-      ...(filters.loteriaId ? { loteriaId: filters.loteriaId } : {}),
-      ...(filters.multiplierId
+      ...(filters.sorteoId && filters.sorteoId !== "all" ? { sorteoId: filters.sorteoId } : {}),
+      ...(filters.loteriaId && filters.loteriaId !== "all" ? { loteriaId: filters.loteriaId } : {}),
+      ...(filters.multiplierId && filters.multiplierId !== "all"
         ? {
           jugadas: {
             some: {
@@ -2512,9 +2512,9 @@ export const TicketRepository = {
           },
         }
         : {}),
-      ...(filters.userId ? { vendedorId: filters.userId } : {}),
-      ...(filters.ventanaId ? { ventanaId: filters.ventanaId } : {}),
-      ...(filters.bancaId ? { bancaId: filters.bancaId } : {}),
+      ...(filters.userId && filters.userId !== "all" ? { vendedorId: filters.userId } : {}),
+      ...(filters.ventanaId && filters.ventanaId !== "all" ? { ventanaId: filters.ventanaId } : {}),
+      ...(filters.bancaId && filters.bancaId !== "all" ? { bancaId: filters.bancaId } : {}),
       ...(filters.winnersOnly === true ? { isWinner: true } : {}),
       ...(filters.businessDateFrom || filters.businessDateTo
         ? {

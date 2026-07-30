@@ -2,6 +2,14 @@
 import { z } from "zod";
 import { validateQuery } from "../../../middlewares/validate.middleware";
 
+// Helper para validar UUIDs opcionales que pueden venir como "all", vacío o null desde el frontend
+const OptionalUUIDOrAll = z.preprocess((val) => {
+  if (val === 'all' || val === '' || val === null) {
+    return undefined;
+  }
+  return val;
+}, z.string().uuid().optional());
+
 const numeroSchema = z.string().regex(/^\d{1,3}$/, "Número debe ser 0..999 (1-3 dígitos)");
 
 const JugadaNumeroSchema = z.object({
@@ -79,11 +87,11 @@ export const ListTicketsQuerySchema = z
     // Filtros estándar
     status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID", "PAGADO"]).optional(),
     isActive: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"),
-    sorteoId: z.union([z.uuid(), z.literal("all")]).optional(),
-    loteriaId: z.union([z.uuid(), z.literal("all")]).optional(),
-    multiplierId: z.union([z.uuid(), z.literal("all")]).optional(),
-    ventanaId: z.uuid("ventanaId inválido").optional(),
-    vendedorId: z.uuid("vendedorId inválido").optional(),
+    sorteoId: OptionalUUIDOrAll,
+    loteriaId: OptionalUUIDOrAll,
+    multiplierId: OptionalUUIDOrAll,
+    ventanaId: OptionalUUIDOrAll,
+    vendedorId: OptionalUUIDOrAll,
     search: z.string().trim().min(1).max(100).optional(),
     scope: z.enum(["mine", "all"]).optional().default("mine"),
     winnersOnly: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"),
@@ -147,15 +155,15 @@ export const NumbersSummaryQuerySchema = z
   .object({
     scope: z.enum(["mine", "all"]).optional().default("mine"), // 'mine' para vendedor, 'all' para admin
     dimension: z.enum(["listero", "vendedor", "ventana"]).optional(), // Filtro por dimensión (ventana/listero = ventana, vendedor = vendedor)
-    ventanaId: z.uuid().optional(), // Filtro por ventana (cuando dimension='listero'/'ventana' o scope='all')
-    vendedorId: z.uuid().optional(), // Filtro por vendedor (cuando dimension='vendedor' o scope='all')
-    bancaId: z.uuid().optional(), //  Agregado: Permitir bancaId opcional
+    ventanaId: OptionalUUIDOrAll, // Filtro por ventana (cuando dimension='listero'/'ventana' o scope='all')
+    vendedorId: OptionalUUIDOrAll, // Filtro por vendedor (cuando dimension='vendedor' o scope='all')
+    bancaId: OptionalUUIDOrAll, //  Agregado: Permitir bancaId opcional
     date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
-    loteriaId: z.union([z.uuid(), z.literal("all")]).optional(),
-    sorteoId: z.union([z.uuid(), z.literal("all")]).optional(),
-    multiplierId: z.union([z.uuid(), z.literal("all")]).optional(), //  NUEVO: Filtrar por multiplicador específico
+    loteriaId: OptionalUUIDOrAll,
+    sorteoId: OptionalUUIDOrAll,
+    multiplierId: OptionalUUIDOrAll, //  NUEVO: Filtrar por multiplicador específico
     status: z.enum(["ACTIVE", "EVALUATED", "PAID", "CANCELLED"]).optional(), //  NUEVO: Filtrar por estado de ticket
     sorteoStatus: z.enum(["SCHEDULED", "OPEN", "EVALUATED", "CLOSED"]).optional(), // Filtrar por estado del sorteo asociado
     scheduledTime: z.string().regex(/^\d{2}:\d{2}$/, "Formato de hora inválido (HH:mm)").optional(), // NUEVO
