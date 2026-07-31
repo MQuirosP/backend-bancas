@@ -432,7 +432,7 @@ export const AuthService = {
       { context: 'authRefresh.findToken', maxRetries: 2 }
     );
 
-    if (!tokenRecord || tokenRecord.revoked || tokenRecord.expiresAt < new Date()) {
+    if (!tokenRecord || (tokenRecord.revoked && tokenRecord.revokedReason !== 'rotation') || tokenRecord.expiresAt < new Date()) {
       throw new AppError('Invalid refresh token', 401);
     }
 
@@ -441,6 +441,58 @@ export const AuthService = {
       { context: 'authRefresh.findUser', maxRetries: 2 }
     );
     if (!user) throw new AppError('User not found', 404);
+
+    // Si el token fue revocado por rotación recientemente (Grace Period de 30s para concurrencia / multi-tabs)
+    if (tokenRecord.revoked && tokenRecord.revokedReason === 'rotation') {
+      const timeSinceRevoked = Date.now() - (tokenRecord.revokedAt?.getTime() ?? 0);
+      
+      if (timeSinceRevoked < 30000) { // 30 segundos de gracia
+        // Buscar el token más reciente que se acaba de crear para este usuario
+        const latestToken = await prisma.refreshToken.findFirst({
+          where: {
+            userId: user.id,
+            revoked: false,
+            createdAt: { gte: tokenRecord.revokedAt! }
+          },
+          orderBy: { createdAt: 'desc' }
+        });
+
+        if (latestToken) {
+          let bancaId: string | null = null;
+          if (user.ventanaId) {
+            const ventana = await prisma.ventana.findUnique({
+              where: { id: user.ventanaId },
+              select: { bancaId: true },
+            });
+            bancaId = ventana?.bancaId ?? null;
+          } else {
+            bancaId = user.bancaId;
+          }
+
+          // Re-emitir los mismos tokens ya rotados! (Idempotency)
+          const accessToken = jwt.sign(
+            {
+              sub: user.id,
+              role: user.role,
+              ventanaId: user.ventanaId ?? null,
+              bancaId,
+              sid: latestToken.token,
+            },
+            ACCESS_SECRET,
+            { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
+          );
+
+          const signedRefresh = jwt.sign({ tid: latestToken.token }, REFRESH_SECRET, {
+            expiresIn: config.jwtRefreshExpires as jwt.SignOptions['expiresIn'],
+          });
+
+          return { accessToken, refreshToken: signedRefresh };
+        }
+      }
+      
+      // Si pasó el tiempo de gracia o no hay token nuevo, es un reuso malicioso/viejo
+      throw new AppError('Invalid refresh token (rotation reused)', 401);
+    }
 
     // Verificar si el usuario sigue activo
     if (!user.isActive || user.deletedAt) {

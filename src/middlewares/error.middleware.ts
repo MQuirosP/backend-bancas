@@ -17,9 +17,9 @@ export const errorHandler = (err: any, req: Request, res: Response, _next: NextF
 
   // App-specific operational errors
   if (err instanceof AppError) {
-    // Errores esperados (403 Forbidden, 404 Not Found) no generan warnings
+    // Errores esperados (401 Unauthorized, 403 Forbidden, 404 Not Found) no generan warnings
     // Solo se registran como info para auditoría, pero no como warnings
-    const isExpectedError = err.statusCode === 403 || err.statusCode === 404;
+    const isExpectedError = err.statusCode === 401 || err.statusCode === 403 || err.statusCode === 404;
     
     if (isExpectedError) {
       // Errores esperados: loguear como info (opcional, para auditoría)
