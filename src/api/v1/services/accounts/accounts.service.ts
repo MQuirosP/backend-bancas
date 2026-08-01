@@ -1,4 +1,4 @@
-import { AccountsFilters, DayStatement, StatementResponse, StatementTotals } from "./accounts.types";
+import { AccountsFilters, DayStatement, StatementResponse, StatementTotals, ACCOUNT_PREVIOUS_MONTH_METHOD, ACCOUNT_CARRY_OVER_NOTES } from "./accounts.types";
 import { getMonthDateRange, toCRDateString, getStatementDateRange } from "./accounts.dates.utils";
 import { resolveDateRange } from "../../../../utils/dateRange";
 import { getMovementsForDay, getSorteoBreakdownBatch } from "./accounts.queries";
@@ -1689,11 +1689,46 @@ export const AccountsService = {
         // Intercalar sorteos y movimientos
         const { intercalateSorteosAndMovements } = await import('./accounts.intercalate');
 
+        //  NUEVO: Agregar movimiento visual del saldo del mes anterior para el primer día
+        if (isFirstDay && previousMonthBalance !== 0) {
+            // Crear ID único basado en los filtros
+            let movementId = 'previous-month-balance';
+            if (filters.dimension === 'banca' && filters.bancaId) {
+                movementId += `-banca-${filters.bancaId}`;
+            } else if (filters.dimension === 'ventana' && filters.ventanaId) {
+                movementId += `-ventana-${filters.ventanaId}`;
+            } else if (filters.dimension === 'vendedor' && filters.vendedorId) {
+                movementId += `-vendedor-${filters.vendedorId}`;
+            } else {
+                movementId += `-${filters.dimension}-all`;
+            }
+
+            // Verificar que no exista ya
+            const alreadyExists = movements.some((m: any) => m.id === movementId);
+            if (!alreadyExists) {
+                // Crear movimiento especial al INICIO del día (00:00 CR = 06:00 UTC)
+                const openingBalanceMovement = {
+                    id: movementId,
+                    type: 'opening_balance' as const,
+                    amount: previousMonthBalance,
+                    method: ACCOUNT_PREVIOUS_MONTH_METHOD,
+                    notes: ACCOUNT_CARRY_OVER_NOTES,
+                    isReversed: false,
+                    createdAt: new Date(Date.UTC(year, month - 1, day, 6, 0, 0, 0)).toISOString(),
+                    date: date,
+                    time: '00:00', // Hora CR para que sea el primero
+                    // Campos adicionales para que intercalateSorteosAndMovements lo procese correctamente
+                    isOpeningBalance: true,
+                };
+                movements.unshift(openingBalanceMovement);
+            }
+        }
+
         let initialAccumulated = 0;
         if (balanceResetAtDayStr && date === balanceResetAtDayStr) {
             initialAccumulated = 0; // Si es el día del reset de deuda, se anula el saldo anterior arrastrado
         } else {
-            initialAccumulated = isFirstDay ? previousMonthBalance : lastDayAccumulated;
+            initialAccumulated = isFirstDay ? 0 : lastDayAccumulated;
         }
 
         //  LOGGING: Verificar que initialAccumulated tenga el valor correcto
