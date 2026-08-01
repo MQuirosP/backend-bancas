@@ -254,10 +254,8 @@ model Ticket {
   @@index([sorteoId, status, isActive], map: "idx_ticket_sorteo_status", where: raw("(\"deletedAt\" IS NULL)"))
   @@index([isWinner, status, createdAt], map: "idx_ticket_winner_status_date", where: raw("((\"isActive\" = true) AND (\"deletedAt\" IS NULL))"))
   @@index([ventanaId, vendedorId, businessDate, status], map: "idx_tickets_ventana_vendedor_date", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
-  @@index([paidById], where: raw("(\"paidById\" IS NOT NULL)"))
   @@index([status, isWinner])
   @@index([businessDate, ventanaId], map: "idx_ticket_businessdate_ventana")
-  @@index([createdBy], map: "idx_ticket_createdBy_fk")
   @@index([bancaId, ventanaId, businessDate, status], map: "idx_ticket_dashboard_lookup", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
   @@index([sorteoId, businessDate, isActive], map: "idx_ticket_sorteo_businessdate_active")
   @@index([businessDate, ventanaId, vendedorId], map: "idx_ticket_winners_perf", where: raw("((\"isWinner\" = true) AND (\"isActive\" = true) AND (\"deletedAt\" IS NULL))"))
@@ -327,17 +325,13 @@ model Jugada {
   multiplier              LoteriaMultiplier? @relation("JugadaMultiplierAtSale", fields: [multiplierId], references: [id])
   ticket                  Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
-  @@index([reventadoNumber])
-  @@index([multiplierId, isExcluded])
   @@index([ticketId, multiplierId], map: "idx_jugada_exclusiones_lookup", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
   @@index([ticketId, number, type, isActive, isExcluded, amount, payout, listeroCommissionAmount, finalMultiplierX], map: "idx_jugada_maestro_final", where: raw("(\"deletedAt\" IS NULL)"))
   @@index([number, ticketId, amount, type], map: "idx_jugada_number_amount_active", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
-  @@index([ticketId, deletedAt, commissionOrigin], map: "idx_jugada_ticket_deleted_commission", where: raw("(\"deletedAt\" IS NULL)"))
   @@index([ticketId, isWinner, deletedAt, payout], map: "idx_jugada_ticket_winner", where: raw("((\"deletedAt\" IS NULL) AND (\"isWinner\" = true))"))
-  @@index([bancaId])
   @@index([ticketId])
-  @@index([excludedBy], map: "idx_Jugada_excludedBy", where: raw("(\"excludedBy\" IS NOT NULL)"))
-  @@index([ticketId, isActive, number, amount, type], map: "idx_jugada_ticket_active_number_covering", where: raw("(\"deletedAt\" IS NULL)"))
+  @@index([bancaId, ticketId, multiplierId], map: "idx_jugada_bancaid_multiplier_counts", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (type = 'NUMERO'::\"BetType\") AND (\"multiplierId\" IS NOT NULL))"))
+  @@index([ticketId, type, commissionAmount], map: "idx_jugada_ticket_commission_covering_full")
 }
 
 model Sorteo {
@@ -379,6 +373,7 @@ model Sorteo {
   @@index([id], map: "idx_sorteo_status_open", where: raw("(status = 'OPEN'::\"SorteoStatus\")"))
   @@index([status, scheduledAt, loteriaId], map: "idx_sorteo_status_scheduled", where: raw("(\"deletedAt\" IS NULL)"))
   @@index([id, status], map: "idx_sorteo_id_status")
+  @@index([scheduledAt], map: "idx_sorteo_scheduled_at")
 }
 
 model SorteoListaExclusion {
@@ -542,6 +537,7 @@ model RefreshToken {
   @@index([userId], map: "idx_refresh_token_user_id")
   @@index([bancaId, revoked, expiresAt], map: "idx_refreshtoken_pool_count")
   @@index([userId, deviceId], map: "idx_refresh_token_user_device", where: raw("(\"deviceId\" IS NOT NULL)"))
+  @@index([expiresAt], map: "idx_refresh_token_expires_at")
 }
 
 model UserBanca {
@@ -802,6 +798,7 @@ model AccountPayment {
   @@index([date, vendedorId], map: "idx_account_payment_date_vendedor", where: raw("((\"isReversed\" = false) AND (\"vendedorId\" IS NOT NULL))"))
   @@index([date, ventanaId], map: "idx_account_payment_date_ventana", where: raw("(\"isReversed\" = false)"))
   @@index([accountStatementId, isReversed, type], map: "idx_account_payment_statement_reversed_type", where: raw("(\"isReversed\" = false)"))
+  @@index([vendedorId], map: "AccountPayment_vendedorId_idx1")
 }
 
 model SorteosAutoConfig {
@@ -903,6 +900,8 @@ model ResumenCierreDiario {
   @@unique([businessDate, bancaId, vendedorId, ventanaId, loteriaId, sorteoId, tipo, banda], name: "cierre_diario_unique")
   @@index([businessDate])
   @@index([bancaId])
+  @@index([sorteoId])
+  @@index([vendedorId])
 }
 
 model DailyNumberSales {
@@ -928,6 +927,7 @@ model DailyNumberSales {
   @@index([businessDate, bancaId], map: "idx_daily_number_sales_banca")
   @@index([businessDate, vendedorId], map: "idx_daily_number_sales_vendedor")
   @@index([businessDate, ventanaId], map: "idx_daily_number_sales_ventana")
+  @@index([sorteoId], map: "idx_dailynumbersales_sorteoid")
 }
 
 enum OverrideScope {
