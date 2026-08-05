@@ -19,7 +19,7 @@ import {
 } from "../validators/sorteo-listas.validator";
 import { protect } from "../../../middlewares/auth.middleware";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
-import { requireAdmin, requireAdminOrBanca, requireAdminBancaOrVentana } from "../../../middlewares/roleGuards.middleware";
+import { requireAdmin, requireAdminOrBanca, requireAdminVentanaOrVendedor } from "../../../middlewares/roleGuards.middleware";
 import { SorteosAutoController } from "../controllers/sorteosAuto.controller";
 import { validateBody } from "../../../middlewares/validate.middleware";
 import { UpdateSorteosAutoConfigSchema } from "../validators/sorteosAuto.validator";
@@ -102,8 +102,8 @@ router.patch(
 );
 router.delete("/:id", requireAdminOrBanca, validateIdParam, SorteoController.delete);
 
-// Rutas de exclusión de listas (ADMIN only, pero VENTANA puede ver el resumen)
-router.get("/:id/listas", requireAdminBancaOrVentana, validateListaIdParam, SorteoListasController.getListas);
+// Rutas de exclusión de listas (ADMIN only, pero VENTANA y VENDEDOR pueden ver el resumen)
+router.get("/:id/listas", requireAdminVentanaOrVendedor, validateListaIdParam, SorteoListasController.getListas);
 router.post("/:id/listas/exclude", requireAdminOrBanca, validateListaIdParam, validateExcludeLista, SorteoListasController.excludeLista);
 router.post("/:id/listas/include", requireAdminOrBanca, validateListaIdParam, validateIncludeLista, SorteoListasController.includeLista);
 
