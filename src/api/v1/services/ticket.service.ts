@@ -1533,7 +1533,7 @@ export const TicketService = {
         multiplierName: multiplier?.name || "",
       };
 
-      if (params.dimension === "listero") {
+      if (params.dimension === "listero" && !params.vendedorId) {
         delete metadataInfo.vendedorName;
         delete metadataInfo.vendedorCode;
       }
