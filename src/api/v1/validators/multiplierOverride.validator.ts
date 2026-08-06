@@ -1,19 +1,19 @@
+import { BetType, OverrideScope } from "../../../generated/prisma/client";
 import { z } from "zod";
 
 // Enum for scope validation
-const overrideScopeEnum = z.enum(["USER", "VENTANA"]);
 
 // Extensible multiplier types - allows both predefined and custom types
 const multiplierTypeEnum = z.union([
-  z.enum(["NUMERO", "REVENTADO"]),
+  z.enum(BetType),
   z.string().min(1),
 ]);
 
 export const createMultiplierOverrideValidator = z
   .object({
-    scope: overrideScopeEnum,
-    scopeId: z.string().uuid("scopeId must be a valid UUID"),
-    loteriaId: z.string().uuid("loteriaId must be a valid UUID"),
+    scope: z.enum(OverrideScope),
+    scopeId: z.uuid("scopeId must be a valid UUID"),
+    loteriaId: z.uuid("loteriaId must be a valid UUID"),
     multiplierType: multiplierTypeEnum,
     baseMultiplierX: z.number().positive("baseMultiplierX must be positive").max(9999),
   })
@@ -30,9 +30,9 @@ export const updateMultiplierOverrideValidator = z
   });
 
 export const listMultiplierOverrideQueryValidator = z.object({
-  scope: overrideScopeEnum.optional(),
-  scopeId: z.string().uuid("scopeId must be a valid UUID").optional(),
-  loteriaId: z.string().uuid("loteriaId must be a valid UUID").optional(),
+  scope: z.enum(OverrideScope).optional(),
+  scopeId: z.uuid("scopeId must be a valid UUID").optional(),
+  loteriaId: z.uuid("loteriaId must be a valid UUID").optional(),
   multiplierType: z.string().min(1).optional(),
   isActive: z
     .union([z.boolean(), z.string().transform((val) => val === "true")])
@@ -42,5 +42,5 @@ export const listMultiplierOverrideQueryValidator = z.object({
 });
 
 export const idParamValidator = z.object({
-  id: z.string().uuid("id must be a valid UUID"),
+  id: z.uuid("id must be a valid UUID"),
 });

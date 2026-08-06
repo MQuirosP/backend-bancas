@@ -43,7 +43,7 @@ Este repositorio contiene el backend core del sistema de bancas. Diseñado bajo 
 | **Persistencia**| PostgreSQL (Supabase) + Prisma ORM | Almacenamiento seguro, llaves foráneas y migraciones declarativas. |
 | **Conectividad**| `@prisma/adapter-pg` + `pg-pool` | Manejo y calentamiento dinámico del pool de conexiones. |
 | **Caché** | Redis (ioredis) + Caché en RAM | Caché de segundo nivel distribuido y primer nivel local. |
-| **Validación** | Zod | Validación estricta y tipado dinámico en la entrada de datos. |
+| **Validación** | Zod + Enums | Validación estricta, eliminación de *magic strings* y tipado fuerte (Enums) desde la API hasta la DB. |
 | **Logging** | Pino Logger | Bitácora estructurada JSON ultrarrápida para auditoría forense. |
 
 ---

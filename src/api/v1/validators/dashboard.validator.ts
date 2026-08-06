@@ -1,6 +1,12 @@
+import { TimeGranularity } from '../../../types/enums/timeGranularity.enum';
+import { SortOrder } from '../../../types/enums/sortOrder.enum';
+import { DateFilterOption } from '../../../types/enums/dateFilter.enum';
 // src/api/v1/validators/dashboard.validator.ts
 import { z } from "zod";
 import { validateQuery } from "../../../middlewares/validate.middleware";
+import { ReportDimension, QueryScope } from "../../../types/enums/report.enum";
+import { ExportFormat } from "../../../types/enums/export.enum";
+import { BetType } from "../../../generated/prisma/client";
 
 // Helper para validar UUIDs opcionales que pueden venir como "all", vacío o null desde el frontend
 const OptionalUUIDOrAll = z.preprocess((val) => {
@@ -8,7 +14,7 @@ const OptionalUUIDOrAll = z.preprocess((val) => {
     return undefined;
   }
   return val;
-}, z.string().uuid().optional());
+}, z.uuid().optional());
 
 /**
  * Schema para Dashboard principal y subrutas
@@ -17,44 +23,44 @@ const OptionalUUIDOrAll = z.preprocess((val) => {
 export const DashboardQuerySchema = z
   .object({
     // Filtros de fecha (CR timezone, YYYY-MM-DD format)
-    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
+    date: z.enum(DateFilterOption).optional().default(DateFilterOption.TODAY),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     // Scope (ventana específica)
     ventanaId: OptionalUUIDOrAll,
-    scope: z.enum(["mine", "all"]).optional(),
+    scope: z.enum(QueryScope).optional(),
 
     // Filtros adicionales
     loteriaId: OptionalUUIDOrAll,
-    betType: z.enum(["NUMERO", "REVENTADO"]).optional(),
+    betType: z.enum(BetType).optional(),
 
     // Time series
-    interval: z.enum(["day", "hour"]).optional(),
-    granularity: z.enum(["day", "hour"]).optional(), // Alias para interval (frontend compatibility)
+    interval: z.enum(TimeGranularity).optional(),
+    granularity: z.enum(TimeGranularity).optional(), // Alias para interval (frontend compatibility)
 
     // Exposure
     top: z.string().regex(/^\d+$/).transform(Number).optional(),
 
     // Vendedores
-    dimension: z.enum(["ventana", "loteria", "vendedor"]).optional(),
+    dimension: z.enum(ReportDimension).optional(),
     orderBy: z.enum(["sales", "commissions", "tickets", "winners", "avgTicket"]).optional(),
-    order: z.enum(["asc", "desc"]).optional(),
+    order: z.enum(SortOrder).optional(),
     page: z.string().regex(/^\d+$/).transform(Number).optional(),
     pageSize: z.string().regex(/^\d+$/).transform(Number).optional(),
 
     // CxC
-    aging: z.enum(["true", "false"]).transform(v => v === "true").optional(),
+    aging: z.coerce.boolean().optional(),
 
     // Export
-    format: z.enum(["csv", "xlsx", "pdf"]).optional(),
+    format: z.enum(ExportFormat).optional(),
     sections: z.string().optional(), // Secciones a incluir en export (kpis,ventanas,loterias,vendedores)
 
     // Comparación
-    compare: z.enum(["true", "false"]).transform(v => v === "true").optional(),
+    compare: z.coerce.boolean().optional(),
 
     // Cache
-    refresh: z.enum(["true", "false"]).transform(v => v === "true").optional(),
+    refresh: z.coerce.boolean().optional(),
 
     // Para evitar caché del navegador (ignorado)
     _: z.string().optional(),
@@ -71,7 +77,7 @@ export const DashboardQuerySchema = z
     }
 
     // Si date=range, fromDate y toDate son requeridos
-    if (val.date === "range") {
+    if (val.date === DateFilterOption.RANGE) {
       if (!val.fromDate) {
         ctx.addIssue({
           code: "custom",
@@ -86,7 +92,7 @@ export const DashboardQuerySchema = z
           message: "toDate es requerido cuando date='range'",
         });
       }
-      
+
       //  Validar fromDate ≤ toDate
       if (val.fromDate && val.toDate && val.fromDate > val.toDate) {
         ctx.addIssue({
@@ -105,7 +111,7 @@ export const validateDashboardQuery = validateQuery(DashboardQuerySchema);
  * Schema para saldos acumulados en lote
  */
 export const AccumulatedBalancesSchema = z.object({
-  dimension: z.enum(["ventana", "vendedor"]),
+  dimension: z.enum(ReportDimension),
   entityIds: z.array(z.string()), // Relajamos de uuid() a string() para diagnosticar
 });
 
@@ -117,10 +123,10 @@ export const validateAccumulatedBalances = (req: any, res: any, next: any) => {
   } catch (error: any) {
     console.error("Validation error for accumulated-balances:", error.errors);
     console.error("Request body was:", req.body);
-    res.status(400).json({ 
-      error: "Validation failed", 
+    res.status(400).json({
+      error: "Validation failed",
       details: error.errors,
-      received: req.body 
+      received: req.body
     });
   }
 };

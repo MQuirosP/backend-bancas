@@ -1,3 +1,5 @@
+import { SortOrder } from '../../../types/enums/sortOrder.enum';
+import { DateFilterOption } from '../../../types/enums/dateFilter.enum';
 import { z } from "zod";
 
 /**
@@ -51,19 +53,19 @@ export const ListPaymentsQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(20),
 
   // Filtros
-  ticketId: z.string().uuid().optional(),
-  ventanaId: z.string().uuid().optional(),
-  vendedorId: z.string().uuid().optional(),
+  ticketId: z.uuid().optional(),
+  ventanaId: z.uuid().optional(),
+  vendedorId: z.uuid().optional(),
   status: z.enum(['pending', 'completed', 'reversed', 'partial']).optional(),
 
   // Filtros de fecha (STANDARDIZADO - mismo patrón que Venta/Dashboard/Tickets)
-  date: z.enum(['today', 'yesterday', 'week', 'month', 'year', 'range']).optional().default('today'),
+  date: z.enum(DateFilterOption).optional().default(DateFilterOption.TODAY),
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
   // Ordenamiento
   sortBy: z.enum(['createdAt', 'amountPaid', 'updatedAt']).optional().default('createdAt'),
-  sortOrder: z.enum(['asc', 'desc']).optional().default('desc'),
+  sortOrder: z.enum(SortOrder).optional().default(SortOrder.DESC),
   _: z.string().optional(), // Para evitar caché del navegador (ignorado)
 }).strict();
 

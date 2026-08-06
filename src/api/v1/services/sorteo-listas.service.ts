@@ -1,5 +1,6 @@
-import { SorteoStatus, Prisma } from "../../../generated/prisma/client";
+import { SorteoStatus, Prisma, BetType, TicketStatus } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
+import { ReportDimension } from '../../../types/enums/report.enum';
 import { AppError } from "../../../core/errors";
 import {
     ExcludeListaDTO,
@@ -90,8 +91,8 @@ export const SorteoListasService = {
                 m.id as "multiplierId", m.name as "multiplierName", m."valueX" as "multiplierValue",
                 COALESCE(SUM(j.amount), 0)::FLOAT as "totalSales",
                 COALESCE(SUM(j."listeroCommissionAmount"), 0)::FLOAT as "totalCommission",
-                COALESCE(SUM(CASE WHEN j."type" = 'NUMERO' THEN j."listeroCommissionAmount" ELSE 0 END), 0)::FLOAT as "commissionByNumber",
-                COALESCE(SUM(CASE WHEN j."type" = 'REVENTADO' THEN j."listeroCommissionAmount" ELSE 0 END), 0)::FLOAT as "commissionByReventado",
+                COALESCE(SUM(CASE WHEN j."type"::text = ${BetType.NUMERO} THEN j."listeroCommissionAmount" ELSE 0 END), 0)::FLOAT as "commissionByNumber",
+                COALESCE(SUM(CASE WHEN j."type"::text = ${BetType.REVENTADO} THEN j."listeroCommissionAmount" ELSE 0 END), 0)::FLOAT as "commissionByReventado",
                 COUNT(DISTINCT j."ticketId")::INT as "ticketCount",
                 BOOL_OR(j."isExcluded") as "isExcluded",
                 MAX(j."excludedAt") as "excludedAt",
@@ -106,13 +107,13 @@ export const SorteoListasService = {
             -- Relación para encontrar el multiplicador base (importante para REVENTADO)
             LEFT JOIN "LoteriaMultiplier" m ON (
                 CASE 
-                    WHEN j."type" = 'NUMERO' THEN j."multiplierId"
-                    WHEN j."type" = 'REVENTADO' THEN (
+                    WHEN j."type"::text = ${BetType.NUMERO} THEN j."multiplierId"
+                    WHEN j."type"::text = ${BetType.REVENTADO} THEN (
                         SELECT j2."multiplierId" 
                         FROM "Jugada" j2 
                         WHERE j2."ticketId" = j."ticketId" 
                           AND j2."number" = j."number" 
-                          AND j2."type" = 'NUMERO'
+                          AND j2."type"::text = ${BetType.NUMERO}
                           AND j2."deletedAt" IS NULL
                         ORDER BY j2."finalMultiplierX" ASC
                         LIMIT 1
@@ -226,18 +227,18 @@ export const SorteoListasService = {
                     }
 
                     // Determinar exclusionScope
-                    let collapsedScope: 'ventana' | 'vendedor' | null = null;
+                    let collapsedScope: ReportDimension | null = null;
                     let collapsedRecordId: string | null = null;
                     const ventanaMatches = ventanaLevelExclusions.get(ventanaId) || [];
                     const ventanaMatch = ventanaMatches.find(e => e.multiplierId === null);
                     if (ventanaMatch) {
-                        collapsedScope = 'ventana';
+                        collapsedScope = ReportDimension.VENTANA;
                         collapsedRecordId = ventanaMatch.id;
                     } else if (first.vendedorId) {
                         const vendedorMatches = vendedorLevelExclusions.get(first.vendedorId) || [];
                         const vendedorMatch = vendedorMatches.find(e => e.ventanaId === ventanaId && e.multiplierId === null);
                         if (vendedorMatch) {
-                            collapsedScope = 'vendedor';
+                            collapsedScope = ReportDimension.VENDEDOR;
                             collapsedRecordId = vendedorMatch.id;
                         }
                     }
@@ -659,10 +660,10 @@ export const SorteoListasService = {
             ticketResult = await prisma.ticket.updateMany({
                 where: {
                     ...ticketWhere,
-                    status: { not: 'EXCLUDED' },
+                    status: { not: TicketStatus.EXCLUDED },
                 },
                 data: {
-                    status: 'EXCLUDED',
+                    status: TicketStatus.EXCLUDED,
                     isActive: false,
                 },
             });
@@ -712,7 +713,7 @@ export const SorteoListasService = {
                 // Crear mapa de número base -> multiplierId para jugadas NUMERO
                 const numeroBaseMultiplierMap = new Map<string, string>();
                 for (const jugada of ticket.jugadas) {
-                    if (jugada.type === 'NUMERO' && jugada.number && jugada.multiplierId === data.multiplierId) {
+                    if (jugada.type === BetType.NUMERO && jugada.number && jugada.multiplierId === data.multiplierId) {
                         numeroBaseMultiplierMap.set(jugada.number, jugada.multiplierId!);
                         jugadaIdsToExclude.add(jugada.id);
                     }
@@ -720,7 +721,7 @@ export const SorteoListasService = {
 
                 // Buscar jugadas REVENTADO que deben excluirse
                 for (const jugada of ticket.jugadas) {
-                    if (jugada.type === 'REVENTADO') {
+                    if (jugada.type === BetType.REVENTADO) {
                         // Caso 1: REVENTADO con multiplierId directo
                         if (jugada.multiplierId === data.multiplierId) {
                             jugadaIdsToExclude.add(jugada.id);
@@ -782,7 +783,7 @@ export const SorteoListasService = {
                                 id: { in: ticketIdsToExclude },
                             },
                             data: {
-                                status: 'EXCLUDED',
+                                status: TicketStatus.EXCLUDED,
                                 isActive: false,
                             },
                         });
@@ -989,7 +990,7 @@ export const SorteoListasService = {
                 // Crear mapa de número base -> multiplierId para jugadas NUMERO
                 const numeroBaseMultiplierMap = new Map<string, string>();
                 for (const jugada of ticket.jugadas) {
-                    if (jugada.type === 'NUMERO' && jugada.number && jugada.multiplierId === data.multiplierId) {
+                    if (jugada.type === BetType.NUMERO && jugada.number && jugada.multiplierId === data.multiplierId) {
                         numeroBaseMultiplierMap.set(jugada.number, jugada.multiplierId!);
                         jugadaIdsToInclude.add(jugada.id);
                     }
@@ -997,7 +998,7 @@ export const SorteoListasService = {
 
                 // Buscar jugadas REVENTADO que deben incluirse
                 for (const jugada of ticket.jugadas) {
-                    if (jugada.type === 'REVENTADO') {
+                    if (jugada.type === BetType.REVENTADO) {
                         // Caso 1: REVENTADO con multiplierId directo
                         if (jugada.multiplierId === data.multiplierId) {
                             jugadaIdsToInclude.add(jugada.id);

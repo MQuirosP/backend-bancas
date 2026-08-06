@@ -4,8 +4,8 @@ import { ActivityType } from '../../../generated/prisma/client';
 export const listActivityLogsQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().optional().default(10),
-  userId: z.string().uuid().optional(),
-  action: z.nativeEnum(ActivityType).optional(),
+  userId: z.uuid().optional(),
+  action: z.enum(ActivityType).optional(),
   targetType: z.string().optional(),
   targetId: z.string().optional(),
   startDate: z.string().datetime().optional(), // ISO 8601 format

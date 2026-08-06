@@ -701,7 +701,7 @@ export const SorteosAutoService = {
               sorteoId: sorteo.id,
               name: sorteo.name,
               scheduledAt: sorteo.scheduledAt.toISOString(),
-              previousStatus: 'SCHEDULED',
+              previousStatus: SorteoStatus.SCHEDULED,
               method: 'direct_update',
             },
           });
@@ -717,7 +717,7 @@ export const SorteosAutoService = {
               sorteoId: sorteo.id,
               name: sorteo.name,
               scheduledAt: sorteo.scheduledAt.toISOString(),
-              previousStatus: 'OPEN',
+              previousStatus: SorteoStatus.OPEN,
               method: 'service',
             },
           });

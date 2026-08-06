@@ -2,7 +2,7 @@
  * Servicio de reportes de ventanas (listeros)
  */
 
-import { Prisma, Role, BetType } from '../../../../generated/prisma/client';
+import { Prisma, Role, BetType, TicketStatus, SorteoStatus } from '../../../../generated/prisma/client';
 import prisma from '../../../../core/prismaClient';
 import { resolveDateRange, normalizePagination, calculatePreviousPeriod, calculateChangePercent } from '../../utils/reports.utils';
 import { DateToken, SortByVentanas, ReportMeta } from '../../types/reports.types';
@@ -29,13 +29,13 @@ async function computeListeroCommissionByVentana(
       ticket: {
         deletedAt: null,
         isActive: true,
-        status: { in: ['EVALUATED', 'PAID', 'PAGADO'] },
+        status: { in: [TicketStatus.EVALUATED, TicketStatus.PAID, TicketStatus.PAGADO] },
         businessDate: {
           gte: fromBusinessDate,
           lte: toBusinessDate,
         },
         sorteo: {
-          status: 'EVALUATED',
+          status: SorteoStatus.EVALUATED,
           deletedAt: null,
         },
         ...(ventanaId ? { ventanaId } : {}),
@@ -242,8 +242,8 @@ export const VentanasReportService = {
         INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
         WHERE t."deletedAt" IS NULL
           AND t."isActive" = true
-          AND t.status IN ('EVALUATED', 'PAID', 'PAGADO')
-          AND s.status = 'EVALUATED'
+          AND t.status::text IN (${TicketStatus.EVALUATED}, ${TicketStatus.PAID}, ${TicketStatus.PAGADO})
+          AND s.status::text = ${SorteoStatus.EVALUATED}
           AND s."deletedAt" IS NULL
           AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}

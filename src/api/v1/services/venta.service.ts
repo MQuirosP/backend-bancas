@@ -2,7 +2,8 @@
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { PaginatedResult, buildMeta, getSkipTake } from "../../../utils/pagination";
-import { Prisma, Role, BetType } from "../../../generated/prisma/client";
+import { Prisma, Role, BetType, TicketStatus, SorteoStatus } from "../../../generated/prisma/client";
+import { ReportDimension, QueryScope } from "../../../types/enums/report.enum";
 import logger from "../../../core/logger";
 import { formatIsoLocal } from "../../../utils/datetime";
 import { tz } from '../../../utils/timezone';
@@ -399,8 +400,8 @@ export const VentasService = {
             businessDate: { gte: filters.dateFrom, ...(filters.dateTo ? { lte: filters.dateTo } : {}) },
             deletedAt: null,
             isActive: true,
-            status: { not: 'CANCELLED' },
-            sorteo: { status: 'EVALUATED', deletedAt: null },
+            status: { not: TicketStatus.CANCELLED },
+            sorteo: { status: SorteoStatus.EVALUATED, deletedAt: null },
           };
           const winnerWhere = { ...ticketWhere, isWinner: true };
 
@@ -413,13 +414,13 @@ export const VentasService = {
               where: {
                 ...winnerWhere,
                 OR: [
-                  { status: 'PAID' },
+                  { status: TicketStatus.PAID },
                   { remainingAmount: 0, totalPaid: { gt: 0 } },
                 ],
               },
             }),
             prisma.ticket.count({
-              where: { ...winnerWhere, remainingAmount: { gt: 0 }, status: { not: 'PAID' } },
+              where: { ...winnerWhere, remainingAmount: { gt: 0 }, status: { not: TicketStatus.PAID } },
             }),
           ]);
 
@@ -443,7 +444,7 @@ export const VentasService = {
             unpaidTicketsCount: unpaidCount,
           };
 
-          if (options?.role === 'VENTANA' && options?.scope === 'mine') {
+          if (options?.role === Role.VENTANA && options?.scope === QueryScope.MINE) {
             result.commissionVendedorTotal = commissionVendedorTotal;
             result.commissionListeroTotal = commissionListeroTotal;
             result.gananciaNeta = balanceDueToBanca;
@@ -507,7 +508,7 @@ export const VentasService = {
           where: {
             ...winnerWhere,
             OR: [
-              { status: 'PAID' }, // Status PAID significa pago completo
+              { status: TicketStatus.PAID }, // Status PAID significa pago completo
               {
                 remainingAmount: 0,
                 totalPaid: { gt: 0 }
@@ -520,7 +521,7 @@ export const VentasService = {
           where: {
             ...winnerWhere,
             remainingAmount: { gt: 0 },
-            status: { not: 'PAID' }
+            status: { not: TicketStatus.PAID }
           },
         }),
       ]);
@@ -536,11 +537,11 @@ export const VentasService = {
       // Calcular pendingPayment solo para VENDEDOR con scope='mine'
       // pendingPayment = suma de remainingAmount de tickets con isWinner=true y status='EVALUATED'
       let pendingPayment: number | undefined = undefined;
-      if (options?.role === 'VENDEDOR' && options?.scope === 'mine' && options?.userId) {
+      if (options?.role === Role.VENDEDOR && options?.scope === QueryScope.MINE && options?.userId) {
         const evaluatedWinnerWhere = {
           ...where,
           isWinner: true,
-          status: 'EVALUATED' as const,
+          status: TicketStatus.EVALUATED,
           vendedorId: options.userId, // Asegurar que es del vendedor
         };
 
@@ -561,7 +562,7 @@ export const VentasService = {
       let balanceDueToBanca: number | undefined = undefined;
       let myGain: number | undefined = undefined;
 
-      if (options?.role === 'VENTANA' && options?.scope === 'mine' && options?.userId) {
+      if (options?.role === Role.VENTANA && options?.scope === QueryScope.MINE && options?.userId) {
         // Obtener ventanaId del usuario VENTANA
         const ventanaUser = await prisma.user.findUnique({
           where: { id: options.userId },
@@ -610,7 +611,7 @@ export const VentasService = {
           paidTicketsCount: paidCount,
           unpaidTicketsCount: unpaidCount,
           pendingPayment,
-          isVendedorMine: options?.role === 'VENDEDOR' && options?.scope === 'mine',
+          isVendedorMine: options?.role === Role.VENDEDOR && options?.scope === QueryScope.MINE,
         },
       });
 
@@ -631,12 +632,12 @@ export const VentasService = {
       };
 
       // Agregar campos adicionales solo para VENDEDOR con scope='mine'
-      if (options?.role === 'VENDEDOR' && options?.scope === 'mine') {
+      if (options?.role === Role.VENDEDOR && options?.scope === QueryScope.MINE) {
         result.pendingPayment = pendingPayment;
       }
 
       //  NUEVO: Agregar campos adicionales solo para VENTANA con scope='mine'
-      if (options?.role === 'VENTANA' && options?.scope === 'mine') {
+      if (options?.role === Role.VENTANA && options?.scope === QueryScope.MINE) {
         result.commissionVendedorTotal = commissionVendedorTotal ?? 0;
         result.commissionListeroTotal = commissionListeroTotal ?? 0;
         result.gananciaNeta = gananciaNeta ?? parseFloat((ventasTotal - payoutTotal).toFixed(2));
@@ -760,7 +761,7 @@ export const VentasService = {
           const ticketConds: Prisma.Sql[] = [
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
-            Prisma.sql`t.status != 'CANCELLED'`,
+            Prisma.sql`t.status != ${TicketStatus.CANCELLED}::"TicketStatus"`,
           ];
           if (filters.bancaId) ticketConds.push(Prisma.sql`t."bancaId" = ${filters.bancaId}::uuid`);
           if (filters.ventanaId) ticketConds.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
@@ -785,7 +786,7 @@ export const VentasService = {
                 SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)) as neto,
                 SUM(COALESCE(ft."totalCommission", 0)) as "commissionTotal",
                 COUNT(CASE WHEN ft."isWinner" THEN 1 END) as "totalWinningTickets",
-                COUNT(CASE WHEN ft.status = 'PAID' THEN 1 END) as "totalPaidTickets"
+                COUNT(CASE WHEN ft.status::text = ${TicketStatus.PAID} THEN 1 END) as "totalPaidTickets"
             FROM "Ventana" v
             INNER JOIN filtered_tickets ft ON ft."ventanaId" = v.id
             WHERE 1=1
@@ -812,7 +813,7 @@ export const VentasService = {
           const ticketConds: Prisma.Sql[] = [
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
-            Prisma.sql`t.status != 'CANCELLED'`,
+            Prisma.sql`t.status != ${TicketStatus.CANCELLED}::"TicketStatus"`,
           ];
           if (filters.bancaId) ticketConds.push(Prisma.sql`t."bancaId" = ${filters.bancaId}::uuid`);
           if (filters.ventanaId) ticketConds.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
@@ -843,8 +844,8 @@ export const VentasService = {
                 SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)) - SUM(COALESCE(ft."totalCommission", 0)) as neto,
                 SUM(COALESCE(ft."totalCommission", 0)) as "commissionTotal",
                 COUNT(CASE WHEN ft."isWinner" THEN 1 END) as "totalWinningTickets",
-                COUNT(CASE WHEN ft.status = 'PAID' THEN 1 END) as "totalPaidTickets",
-                COUNT(CASE WHEN ft."isWinner" AND ft.status != 'PAID' THEN 1 END) as "unpaidTicketsCount",
+                COUNT(CASE WHEN ft.status::text = ${TicketStatus.PAID} THEN 1 END) as "totalPaidTickets",
+                COUNT(CASE WHEN ft."isWinner" AND ft.status::text != ${TicketStatus.PAID} THEN 1 END) as "unpaidTicketsCount",
                 SUM(COALESCE(ft."totalPaid", 0)) as "totalPaid",
                 SUM(CASE WHEN ft."isWinner" THEN GREATEST(0, COALESCE(ft."totalPayout", 0) - COALESCE(ft."totalPaid", 0)) ELSE 0 END) as "pendingPayment",
                 MAX(ft."createdAt") as "lastTicketAt",
@@ -887,7 +888,7 @@ export const VentasService = {
           const ticketConds: Prisma.Sql[] = [
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
-            Prisma.sql`t.status != 'CANCELLED'`,
+            Prisma.sql`t.status != ${TicketStatus.CANCELLED}::"TicketStatus"`,
           ];
           if (filters.bancaId) ticketConds.push(Prisma.sql`t."bancaId" = ${filters.bancaId}::uuid`);
           if (filters.ventanaId) ticketConds.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
@@ -913,7 +914,7 @@ export const VentasService = {
                 SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)) as neto,
                 SUM(COALESCE(ft."totalCommission", 0)) as "commissionTotal",
                 COUNT(CASE WHEN ft."isWinner" THEN 1 END) as "totalWinningTickets",
-                COUNT(CASE WHEN ft.status = 'PAID' THEN 1 END) as "totalPaidTickets"
+                COUNT(CASE WHEN ft.status::text = ${TicketStatus.PAID} THEN 1 END) as "totalPaidTickets"
             FROM "Loteria" l
             INNER JOIN filtered_tickets ft ON ft."loteriaId" = l.id
             WHERE 1=1
@@ -940,7 +941,7 @@ export const VentasService = {
           const ticketConds: Prisma.Sql[] = [
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
-            Prisma.sql`t.status != 'CANCELLED'`,
+            Prisma.sql`t.status != ${TicketStatus.CANCELLED}::"TicketStatus"`,
           ];
           if (filters.bancaId) ticketConds.push(Prisma.sql`t."bancaId" = ${filters.bancaId}::uuid`);
           if (filters.ventanaId) ticketConds.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
@@ -966,7 +967,7 @@ export const VentasService = {
                 SUM(ft."totalAmount") - SUM(COALESCE(ft."totalPayout", 0)) as neto,
                 SUM(COALESCE(ft."totalCommission", 0)) as "commissionTotal",
                 COUNT(CASE WHEN ft."isWinner" THEN 1 END) as "totalWinningTickets",
-                COUNT(CASE WHEN ft.status = 'PAID' THEN 1 END) as "totalPaidTickets"
+                COUNT(CASE WHEN ft.status::text = ${TicketStatus.PAID} THEN 1 END) as "totalPaidTickets"
             FROM "Sorteo" s
             INNER JOIN filtered_tickets ft ON ft."sorteoId" = s.id
             WHERE 1=1
@@ -993,8 +994,8 @@ export const VentasService = {
           const ticketConds: Prisma.Sql[] = [
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
-            Prisma.sql`s.status = 'EVALUATED'`,
-            Prisma.sql`t.status != 'CANCELLED'`,
+            Prisma.sql`s.status::text = ${SorteoStatus.EVALUATED}`,
+            Prisma.sql`t.status != ${TicketStatus.CANCELLED}::"TicketStatus"`,
           ];
           if (filters.bancaId) ticketConds.push(Prisma.sql`t."bancaId" = ${filters.bancaId}::uuid`);
           if (filters.ventanaId) ticketConds.push(Prisma.sql`t."ventanaId" = ${filters.ventanaId}::uuid`);
@@ -1021,7 +1022,7 @@ export const VentasService = {
                 SUM(j.amount) - SUM(COALESCE(j.payout, 0)) as neto,
                 SUM(COALESCE(j."commissionAmount", 0)) as "commissionTotal",
                 COUNT(DISTINCT CASE WHEN ft."isWinner" THEN ft.id END) as "totalWinningTickets",
-                COUNT(DISTINCT CASE WHEN ft.status = 'PAID' THEN ft.id END) as "totalPaidTickets"
+                COUNT(DISTINCT CASE WHEN ft.status::text = ${TicketStatus.PAID} THEN ft.id END) as "totalPaidTickets"
             FROM "Jugada" j
             INNER JOIN filtered_tickets ft ON ft.id = j."ticketId"
             WHERE j."deletedAt" IS NULL AND j."isActive" = true
@@ -1083,11 +1084,11 @@ export const VentasService = {
       const whereSqlParts: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" != 'CANCELLED'`,
+        Prisma.sql`t."status" != ${TicketStatus.CANCELLED}::"TicketStatus"`,
         Prisma.sql`EXISTS (
           SELECT 1 FROM "Sorteo" s
           WHERE s.id = t."sorteoId"
-          AND s.status = 'EVALUATED'
+          AND s.status::text = ${SorteoStatus.EVALUATED}
         )`
       ];
 

@@ -51,5 +51,5 @@ export const loginSchema = z.object({
 
 // Schema para establecer banca activa
 export const setActiveBancaSchema = z.object({
-  bancaId: z.string().uuid('bancaId debe ser un UUID válido'),
+  bancaId: z.uuid('bancaId debe ser un UUID válido'),
 });

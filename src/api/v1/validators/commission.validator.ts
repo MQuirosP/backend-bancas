@@ -31,9 +31,9 @@ const MultiplierRangeSchema = z
 const CommissionRuleSchema = z
   .object({
     id: z.string().min(1).optional(), // Opcional, se genera si falta
-    loteriaId: z.string().uuid().nullable(),
-    betType: z.nativeEnum(BetType).nullable(),
-    multiplierId: z.string().uuid().nullable().optional(), // Nuevo: para distinguir multiplicadores con mismo valor
+    loteriaId: z.uuid().nullable(),
+    betType: z.enum(BetType).nullable(),
+    multiplierId: z.uuid().nullable().optional(), // Nuevo: para distinguir multiplicadores con mismo valor
     multiplierRange: MultiplierRangeSchema,
     percent: z.number().min(0).max(100).refine(
       (val) => /^\d+(\.\d{1,2})?$/.test(val.toString()),
@@ -63,7 +63,7 @@ function validateNoDuplicateRules(rules: Array<{
     const loteriaIdKey = rule.loteriaId ?? "global";
     const betTypeKey = rule.betType ?? "all";
     const multiplierKey = rule.multiplierId ?? `val-${rule.multiplierRange.min}`;
-    
+
     // La llave es la combinación única de estos 3 factores
     const key = `${loteriaIdKey}:${betTypeKey}:${multiplierKey}`;
 
@@ -72,7 +72,7 @@ function validateNoDuplicateRules(rules: Array<{
     }
     keys.add(key);
   }
-  
+
   return true; // No hay duplicados
 }
 
@@ -157,7 +157,7 @@ export const UpdateUserCommissionPolicyBodySchema = z
  */
 export const IdParamSchema = z
   .object({
-    id: z.string().uuid(),
+    id: z.uuid(),
   })
   .strict();
 

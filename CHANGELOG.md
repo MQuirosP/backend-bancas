@@ -5,6 +5,22 @@
 
 ---
 
+## v1.3.2 - Refactorización de Tipos y Eliminación de Magic Strings
+
+ **Fecha:** 2026-08-06
+ **Rama:** `master`
+
+### 🧹 Refactorización Masiva y Estricta (Tipado Fuerte)
+
+- **Eliminación de *Magic Strings*:** Se reemplazaron sistemáticamente todos los strings quemados en la capa de negocio, validadores (Zod), y controladores por enumeraciones estandarizadas (Enums).
+- **Consolidación de Enums (Prisma & TS):** 
+  - Integración completa de Enums nativos como `TicketStatus`, `SorteoStatus`, `Role`, `ReportDimension`, y `QueryScope`.
+  - Creación del nuevo Enum `DateFilterOption` para centralizar y asegurar las opciones de filtrado de fechas (`today`, `range`, `week`, etc.).
+- **Validadores de Zod Reforzados:** Migración de múltiples instancias de `z.enum(["magic", "strings"])` a `z.enum(TuEnum)` o `z.nativeEnum()` asegurando congruencia entre la API y la base de datos.
+- **Resolución de Colisiones de Tipos:** Se solucionaron dependencias cruzadas y colisiones de literales garantizando un proceso de compilación TypeScript (`typecheck`) 100% verde y libre de advertencias.
+
+---
+
 ## v1.3.1 - Infraestructura & Estabilidad en Producción (Render)
 
  **Fecha:** 2026-07-19

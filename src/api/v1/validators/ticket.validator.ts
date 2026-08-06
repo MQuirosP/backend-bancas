@@ -1,6 +1,8 @@
+import { DateFilterOption } from '../../../types/enums/dateFilter.enum';
 // src/modules/tickets/validators/ticket.validator.ts
 import { z } from "zod";
-import { validateQuery } from "../../../middlewares/validate.middleware";
+import { TicketStatus, SorteoStatus } from "../../../generated/prisma/client";
+import { ReportDimension, QueryScope } from "../../../types/enums/report.enum"; import { validateQuery } from "../../../middlewares/validate.middleware";
 
 // Helper para validar UUIDs opcionales que pueden venir como "all", vacío o null desde el frontend
 const OptionalUUIDOrAll = z.preprocess((val) => {
@@ -8,7 +10,7 @@ const OptionalUUIDOrAll = z.preprocess((val) => {
     return undefined;
   }
   return val;
-}, z.string().uuid().optional());
+}, z.uuid().optional());
 
 const numeroSchema = z.string().regex(/^\d{1,3}$/, "Número debe ser 0..999 (1-3 dígitos)");
 
@@ -37,7 +39,7 @@ export const CreateTicketSchema = z
     clienteNombre: z.string().trim().min(1).max(100, "clienteNombre debe tener máximo 100 caracteres").nullable().optional(),
     jugadas: z.array(z.union([JugadaNumeroSchema, JugadaReventadoSchema])).min(1),
     vendedorId: z.uuid("vendedorId inválido").optional().nullable(),
-    requestId: z.string().uuid().optional(),
+    requestId: z.uuid().optional(),
     idempotencyKey: z.string().min(8).max(100).optional(),
   })
 
@@ -85,16 +87,16 @@ export const ListTicketsQuerySchema = z
     pageSize: z.coerce.number().int().min(1).max(100).optional(),
 
     // Filtros estándar
-    status: z.enum(["ACTIVE", "EVALUATED", "CANCELLED", "RESTORED", "PAID", "PAGADO"]).optional(),
-    isActive: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"),
+    status: z.enum(TicketStatus).optional(),
+    isActive: z.coerce.boolean().optional(),
     sorteoId: OptionalUUIDOrAll,
     loteriaId: OptionalUUIDOrAll,
     multiplierId: OptionalUUIDOrAll,
     ventanaId: OptionalUUIDOrAll,
     vendedorId: OptionalUUIDOrAll,
     search: z.string().trim().min(1).max(100).optional(),
-    scope: z.enum(["mine", "all"]).optional().default("mine"),
-    winnersOnly: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"),
+    scope: z.enum(QueryScope).optional().default(QueryScope.MINE),
+    winnersOnly: z.coerce.boolean().optional(),
 
     //  NUEVO: Búsqueda por número de jugada (1-3 dígitos, búsqueda exacta)
     number: z.string().regex(/^\d{1,3}$/, "El número debe ser de 1-3 dígitos (0-999)").optional(),
@@ -107,7 +109,7 @@ export const ListTicketsQuerySchema = z
 
     // Filtros de fecha (STANDARDIZADO - mismo patrón que Venta/Dashboard)
     // Fechas: date (today|yesterday|week|month|year|range) + fromDate/toDate (YYYY-MM-DD) cuando date=range
-    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
+    date: z.enum(DateFilterOption).optional().default(DateFilterOption.TODAY),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
@@ -153,36 +155,36 @@ export const FinalizePaymentSchema = z.object({
  */
 export const NumbersSummaryQuerySchema = z
   .object({
-    scope: z.enum(["mine", "all"]).optional().default("mine"), // 'mine' para vendedor, 'all' para admin
-    dimension: z.enum(["listero", "vendedor", "ventana"]).optional(), // Filtro por dimensión (ventana/listero = ventana, vendedor = vendedor)
+    scope: z.enum(QueryScope).optional().default(QueryScope.MINE), // 'mine' para vendedor, 'all' para admin
+    dimension: z.enum(ReportDimension).optional(), // Filtro por dimensión (ventana/listero = ventana, vendedor = vendedor)
     ventanaId: OptionalUUIDOrAll, // Filtro por ventana (cuando dimension='listero'/'ventana' o scope='all')
     vendedorId: OptionalUUIDOrAll, // Filtro por vendedor (cuando dimension='vendedor' o scope='all')
     bancaId: OptionalUUIDOrAll, //  Agregado: Permitir bancaId opcional
-    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
+    date: z.enum(DateFilterOption).optional().default(DateFilterOption.TODAY),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
     loteriaId: OptionalUUIDOrAll,
     sorteoId: OptionalUUIDOrAll,
     multiplierId: OptionalUUIDOrAll, //  NUEVO: Filtrar por multiplicador específico
-    status: z.enum(["ACTIVE", "EVALUATED", "PAID", "CANCELLED"]).optional(), //  NUEVO: Filtrar por estado de ticket
-    sorteoStatus: z.enum(["SCHEDULED", "OPEN", "EVALUATED", "CLOSED"]).optional(), // Filtrar por estado del sorteo asociado
+    status: z.enum(TicketStatus).optional(), //  NUEVO: Filtrar por estado de ticket
+    sorteoStatus: z.enum(SorteoStatus).optional(), // Filtrar por estado del sorteo asociado
     scheduledTime: z.string().regex(/^\d{2}:\d{2}$/, "Formato de hora inválido (HH:mm)").optional(), // NUEVO
     //  NUEVO: Paginación para MONAZOS (1000 números)
     page: z.coerce.number().int().min(0).max(9).optional(), // 0-9 para 10 centenas (0=000-099, 1=100-199, ..., 9=900-999)
     pageSize: z.coerce.number().int().min(1).max(1000).optional().default(100), // Tamaño de página (default: 100)
-    isExcluded: z.enum(["true", "false"]).optional().transform(v => v === undefined ? undefined : v === "true"), // ✅ NUEVO: Permitir filtro de exclusiones en la consulta del JSON
+    isExcluded: z.coerce.boolean().optional(), // ✅ NUEVO: Permitir filtro de exclusiones en la consulta del JSON
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .transform((val) => {
     // Normalizar 'ventana' a 'listero' para consistencia interna
-    if (val.dimension === "ventana") {
-      return { ...val, dimension: "listero" as const };
+    if (val.dimension === ReportDimension.VENTANA) {
+      return { ...val, dimension: ReportDimension.LISTERO };
     }
     return val;
   })
   .superRefine((val, ctx) => {
     // Si date es 'range', fromDate y toDate son requeridos
-    if (val.date === "range") {
+    if (val.date === DateFilterOption.RANGE) {
       if (!val.fromDate) {
         ctx.addIssue({
           code: "custom",
@@ -206,7 +208,7 @@ export const NumbersSummaryQuerySchema = z
       }
     }
     // Validar que dimension y filtros específicos sean consistentes
-    if (val.dimension === "listero" && val.vendedorId) {
+    if (val.dimension === ReportDimension.LISTERO && val.vendedorId) {
       ctx.addIssue({
         code: "custom",
         path: ["vendedorId"],
@@ -216,7 +218,7 @@ export const NumbersSummaryQuerySchema = z
     //  CORREGIDO: Permitir ventanaId cuando dimension='vendedor'
     // Es válido filtrar por vendedor Y ventana (vendedor pertenece a ventana)
     // Solo rechazar si se pasa vendedorId sin ventanaId cuando dimension='vendedor'
-    if (val.dimension === "vendedor" && val.vendedorId && !val.ventanaId) {
+    if (val.dimension === ReportDimension.VENDEDOR && val.vendedorId && !val.ventanaId) {
       ctx.addIssue({
         code: "custom",
         path: ["ventanaId"],

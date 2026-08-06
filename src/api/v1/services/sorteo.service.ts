@@ -1,5 +1,5 @@
 // src/modules/sorteos/services/sorteo.service.ts
-import { ActivityType, Prisma, Role, SorteoStatus, TicketStatus } from "../../../generated/prisma/client";
+import { ActivityType, Prisma, Role, SorteoStatus, TicketStatus, BetType } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import ActivityService from "../../../core/activity.service";
@@ -721,7 +721,7 @@ const SorteoService = {
     const multipliers = await prisma.loteriaMultiplier.findMany({
       where: {
         loteriaId,
-        kind: 'NUMERO',
+        kind: BetType.NUMERO,
         isActive: true,
       },
       select: {
@@ -789,7 +789,7 @@ const SorteoService = {
         }
 
         // Verificar tipo de apuesta (NUMERO, REVENTADO, o null para ambos)
-        if (rule.betType !== null && rule.betType !== 'NUMERO') {
+        if (rule.betType !== null && rule.betType !== BetType.NUMERO) {
           return false;
         }
 
@@ -1441,7 +1441,7 @@ gs."hour24" ASC
           FROM "ResumenCierreDiario" rcd
           JOIN "Sorteo" s ON rcd."sorteoId" = s.id
           JOIN "Loteria" l ON s."loteriaId" = l.id
-          WHERE s.status = 'EVALUATED'
+          WHERE s.status::text = ${SorteoStatus.EVALUATED}
             AND s."scheduledAt" >= CAST(${dateRange.fromAt} AS timestamp)
             AND s."scheduledAt" <= CAST(${dateRange.toAt} AS timestamp)
             ${vendedorId ? Prisma.sql`AND rcd."vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
@@ -1478,7 +1478,7 @@ gs."hour24" ASC
           SELECT 
             "sorteoId",
             COUNT(CASE WHEN "isWinner" THEN 1 END) as "winningTicketsCount",
-            COUNT(CASE WHEN status IN ('PAID', 'PAGADO') THEN 1 END) as "paidTicketsCount",
+            COUNT(CASE WHEN status::text IN (${TicketStatus.PAID}, ${TicketStatus.PAGADO}) THEN 1 END) as "paidTicketsCount",
             SUM("totalCommission") as "vendedorCommissionSum"
           FROM "Ticket"
           WHERE "sorteoId" IN (${Prisma.join(sorteoIds)})
@@ -1498,12 +1498,12 @@ gs."hour24" ASC
               t."sorteoId", j."multiplierId",
               SUM(j.amount) as "mSales", 
               SUM(j."commissionAmount") as "mCommission",
-              SUM(CASE WHEN j.type = 'NUMERO' THEN j."commissionAmount" ELSE 0 END) as "mCommNum",
-              SUM(CASE WHEN j.type = 'REVENTADO' THEN j."commissionAmount" ELSE 0 END) as "mCommRev",
+              SUM(CASE WHEN j.type::text = ${BetType.NUMERO} THEN j."commissionAmount" ELSE 0 END) as "mCommNum",
+              SUM(CASE WHEN j.type::text = ${BetType.REVENTADO} THEN j."commissionAmount" ELSE 0 END) as "mCommRev",
               SUM(CASE WHEN j."isWinner" THEN j.payout ELSE 0 END) as "mPrizes",
               COUNT(DISTINCT t.id) as "mTickets", 
               COUNT(CASE WHEN j."isWinner" THEN 1 END) as "mWinningTickets",
-              COUNT(CASE WHEN t.status IN ('PAID', 'PAGADO') THEN 1 END) as "mPaidTickets"
+              COUNT(CASE WHEN t.status::text IN (${TicketStatus.PAID}, ${TicketStatus.PAGADO}) THEN 1 END) as "mPaidTickets"
             FROM "Ticket" t
             JOIN "Jugada" j ON j."ticketId" = t.id
             WHERE t."sorteoId" IN (${Prisma.join(sorteoIds)})
@@ -1839,7 +1839,7 @@ gs."hour24" ASC
                 JOIN "Sorteo" s ON t."sorteoId" = s.id
                 WHERE t."deletedAt" IS NULL
                   AND t."vendedorId" = CAST(${vendedorId} AS uuid)
-                  AND s.status = 'EVALUATED'
+                  AND s.status::text = ${SorteoStatus.EVALUATED}
                   AND s."scheduledAt" >= CAST(${gapStart.toISOString().split('T')[0]} AS timestamp)
                   AND s."scheduledAt" < CAST(${new Date(previousDay.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]} AS timestamp)
               `);
@@ -2224,7 +2224,7 @@ gs."hour24" ASC
           prisma.$queryRaw<Array<{ commission_amount: number; type: string }>>(Prisma.sql`
             WITH sorteos_cte AS (
               SELECT id FROM "Sorteo"
-              WHERE status = 'EVALUATED'
+              WHERE status::text = ${SorteoStatus.EVALUATED}
                 AND "scheduledAt" >= ${monthlyStartDate}::timestamp
                 AND "scheduledAt" <= ${monthlyEndDate}::timestamp
             )

@@ -3,6 +3,7 @@ import {
   Prisma,
   Role,
   TicketStatus,
+  BetType,
 } from "../../../generated/prisma/client";
 import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import TicketRepository from "../../../repositories/ticket.repository";
@@ -85,12 +86,12 @@ function buildTicketFilterClause(
 
   const sqlConditions: Prisma.Sql[] = [];
 
-  if (params.status === "CANCELLED") {
-    sqlConditions.push(Prisma.sql`t."status" = 'CANCELLED'::"TicketStatus"`);
+  if (params.status === TicketStatus.CANCELLED) {
+    sqlConditions.push(Prisma.sql`t."status" = ${TicketStatus.CANCELLED}::"TicketStatus"`);
   } else {
     sqlConditions.push(Prisma.sql`t."deletedAt" IS NULL`);
     sqlConditions.push(Prisma.sql`t."isActive" = true`);
-    sqlConditions.push(Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`);
+    sqlConditions.push(Prisma.sql`t."status" <> ${TicketStatus.CANCELLED}::"TicketStatus"`);
   }
 
   if (params.sorteoStatus) {
@@ -143,7 +144,7 @@ function buildTicketFilterClause(
   if (params.status && params.status !== "all") {
     if (params.status === "WINNERS_PENDING") {
       sqlConditions.push(Prisma.sql`t."isWinner" = true`);
-      sqlConditions.push(Prisma.sql`t.status::text = 'EVALUATED'`);
+      sqlConditions.push(Prisma.sql`t.status::text = ${TicketStatus.EVALUATED}`);
     } else {
       sqlConditions.push(Prisma.sql`t.status::text = ${params.status}`);
     }
@@ -155,7 +156,7 @@ function buildTicketFilterClause(
         AND jf."multiplierId" = CAST(${params.multiplierId} AS uuid)
         AND jf."deletedAt" IS NULL
         AND jf."isActive" = true
-        AND jf.type::text = 'NUMERO'
+        AND jf.type::text = ${BetType.NUMERO}
     )`);
   }
 
@@ -1387,7 +1388,7 @@ export const TicketService = {
       if (params.status)
         sqlWhere.push(Prisma.sql`t."status" = ${params.status}`);
       else if (!isExcludedRequest)
-        sqlWhere.push(Prisma.sql`t."status" NOT IN ('CANCELLED', 'EXCLUDED')`);
+        sqlWhere.push(Prisma.sql`t."status" NOT IN (${TicketStatus.CANCELLED}::"TicketStatus", ${TicketStatus.EXCLUDED}::"TicketStatus")`);
 
       if (dateRange) {
         // Formatear a string 'YYYY-MM-DD' para evitar problemas con la zona horaria al castear en la base de datos
@@ -1452,7 +1453,7 @@ export const TicketService = {
             SELECT 1 FROM "Jugada" j2 
             WHERE j2."ticketId" = t.id 
               AND j2."multiplierId" = CAST(${params.multiplierId} AS uuid)
-              AND j2.type = 'NUMERO'
+              AND j2.type::text = ${BetType.NUMERO}
               ${isExcludedRequest ? Prisma.sql`AND j2."isExcluded" = true` : Prisma.sql`AND j2."isActive" = true`}
               AND j2."deletedAt" IS NULL
           )`
@@ -1463,15 +1464,15 @@ export const TicketService = {
         prisma.$queryRaw<any[]>`
           SELECT 
             j.number,
-            SUM(CASE WHEN j.type = 'NUMERO' ${params.multiplierId ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)` : Prisma.empty} THEN j.amount ELSE 0 END)::FLOAT as "amountByNumber",
-            SUM(CASE WHEN j.type = 'REVENTADO' THEN j.amount ELSE 0 END)::FLOAT as "amountByReventado",
+            SUM(CASE WHEN j.type::text = ${BetType.NUMERO} ${params.multiplierId ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)` : Prisma.empty} THEN j.amount ELSE 0 END)::FLOAT as "amountByNumber",
+            SUM(CASE WHEN j.type::text = ${BetType.REVENTADO} THEN j.amount ELSE 0 END)::FLOAT as "amountByReventado",
             COUNT(DISTINCT t.id)::INT as "ticketCount",
-            COUNT(DISTINCT CASE WHEN j.type = 'NUMERO' THEN t.id END)::INT as "ticketsByNumber",
-            COUNT(DISTINCT CASE WHEN j.type = 'REVENTADO' THEN t.id END)::INT as "ticketsByReventado",
-            SUM(CASE WHEN j.type = 'NUMERO' ${params.multiplierId ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)` : Prisma.empty} 
+            COUNT(DISTINCT CASE WHEN j.type::text = ${BetType.NUMERO} THEN t.id END)::INT as "ticketsByNumber",
+            COUNT(DISTINCT CASE WHEN j.type::text = ${BetType.REVENTADO} THEN t.id END)::INT as "ticketsByReventado",
+            SUM(CASE WHEN j.type::text = ${BetType.NUMERO} ${params.multiplierId ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)` : Prisma.empty} 
               THEN ${params.dimension === "listero" || params.ventanaId ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
               ELSE 0 END)::FLOAT as "commissionByNumber",
-            SUM(CASE WHEN j.type = 'REVENTADO' 
+            SUM(CASE WHEN j.type::text = ${BetType.REVENTADO} 
               THEN ${params.dimension === "listero" || params.ventanaId ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
               ELSE 0 END)::FLOAT as "commissionByReventado"
           FROM "Ticket" t
@@ -1494,7 +1495,7 @@ export const TicketService = {
                   isActive: true,
                   status: params.status
                     ? (params.status as any)
-                    : { notIn: ["CANCELLED", "EXCLUDED"] },
+                    : { notIn: [TicketStatus.CANCELLED, TicketStatus.EXCLUDED] },
                 }),
             ...(dateRange
               ? {
@@ -2557,13 +2558,13 @@ export const TicketService = {
           const sqlConditions: Prisma.Sql[] = [];
           if (params.status === "CANCELLED") {
             sqlConditions.push(
-              Prisma.sql`t."status" = 'CANCELLED'::"TicketStatus"`,
+              Prisma.sql`t."status" = ${TicketStatus.CANCELLED}::"TicketStatus"`,
             );
           } else {
             sqlConditions.push(Prisma.sql`t."deletedAt" IS NULL`);
             sqlConditions.push(Prisma.sql`t."isActive" = true`);
             sqlConditions.push(
-              Prisma.sql`t."status" <> 'CANCELLED'::"TicketStatus"`,
+              Prisma.sql`t."status" <> ${TicketStatus.CANCELLED}::"TicketStatus"`,
             );
           }
           if (params.sorteoStatus) {
@@ -2618,7 +2619,7 @@ export const TicketService = {
             AND jf."multiplierId" = CAST(${params.multiplierId} AS uuid)
             AND jf."deletedAt" IS NULL
             AND jf."isActive" = true
-            AND jf.type::text = 'NUMERO'
+            AND jf.type::text = ${BetType.NUMERO}
         )`);
           }
           const whereSQL = Prisma.join(sqlConditions, " AND ");
@@ -2673,7 +2674,7 @@ export const TicketService = {
           FROM "Jugada" j
           INNER JOIN filtered_tickets ft ON j."ticketId" = ft.id
           WHERE j."deletedAt" IS NULL AND j."isActive" = true
-            AND j.type::text = 'NUMERO' AND j."multiplierId" IS NOT NULL
+            AND j.type::text = ${BetType.NUMERO} AND j."multiplierId" IS NOT NULL
             ${multiplierFilter}
           GROUP BY j."multiplierId"
         )

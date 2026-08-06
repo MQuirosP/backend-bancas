@@ -1,6 +1,10 @@
+import { SortOrder } from '../../../types/enums/sortOrder.enum';
+import { DateFilterOption } from '../../../types/enums/dateFilter.enum';
 // src/api/v1/validators/accounts.validator.ts
 import { z } from "zod";
 import { validateQuery, validateBody } from "../../../middlewares/validate.middleware";
+import { ReportDimension, QueryScope } from "../../../types/enums/report.enum";
+import { ExportFormat } from "../../../types/enums/export.enum";
 
 /**
  * Schema para query parameters de GET /accounts/statement
@@ -9,15 +13,15 @@ export const GetStatementQuerySchema = z
   .object({
     month: z.string().regex(/^\d{4}-\d{2}$/, "El mes debe ser en formato YYYY-MM").optional(), //  Opcional si se usa date
     //  NUEVO: Filtros de período
-    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional(),
+    date: z.enum(DateFilterOption).optional(),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
-    scope: z.enum(["mine", "ventana", "all"]),
-    dimension: z.enum(["banca", "ventana", "vendedor"]), //  NUEVO: Agregado 'banca'
-    bancaId: z.string().uuid().optional(), //  NUEVO: Filtro opcional por banca
-    ventanaId: z.string().uuid().optional(),
-    vendedorId: z.string().uuid().optional(),
-    sort: z.enum(["asc", "desc"]).optional().default("desc"),
+    scope: z.enum(QueryScope),
+    dimension: z.enum(ReportDimension), //  NUEVO: Agregado 'banca'
+    bancaId: z.uuid().optional(), //  NUEVO: Filtro opcional por banca
+    ventanaId: z.uuid().optional(),
+    vendedorId: z.uuid().optional(),
+    sort: z.enum(SortOrder).optional().default(SortOrder.DESC),
     ignoreReset: z.string().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
@@ -33,7 +37,7 @@ export const GetStatementQuerySchema = z
     }
 
     // Si date es 'range', fromDate y toDate son requeridos
-    if (val.date === "range") {
+    if (val.date === DateFilterOption.RANGE) {
       if (!val.fromDate) {
         ctx.addIssue({
           code: "custom",
@@ -69,9 +73,9 @@ export const CreatePaymentBodySchema = z
   .object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD"),
     time: z.string().regex(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/, "La hora debe ser en formato HH:MM (24 horas)").optional().nullable(), //  NUEVO: Hora opcional del movimiento
-    ventanaId: z.string().uuid().optional().nullable(),
-    vendedorId: z.string().uuid().optional().nullable(),
-    bancaId: z.string().uuid().optional(), //  Agregado: Permitir bancaId opcional
+    ventanaId: z.uuid().optional().nullable(),
+    vendedorId: z.uuid().optional().nullable(),
+    bancaId: z.uuid().optional(), //  Agregado: Permitir bancaId opcional
     amount: z.number().positive("El monto debe ser positivo"),
     type: z.enum(["payment", "collection"]),
     method: z.enum(["cash", "transfer", "check", "other"]),
@@ -80,9 +84,9 @@ export const CreatePaymentBodySchema = z
     idempotencyKey: z.string().min(8, "idempotencyKey debe tener al menos 8 caracteres").max(100, "idempotencyKey máximo 100 caracteres").optional().nullable(),
   })
   .strict()
-  //  ACTUALIZADO: Permitir que ambos campos estén presentes simultáneamente
-  // Cuando hay vendedorId, también se persistirá ventanaId para mantener integridad histórica
-  // El constraint _one_relation_check ha sido eliminado para permitir esta flexibilidad
+//  ACTUALIZADO: Permitir que ambos campos estén presentes simultáneamente
+// Cuando hay vendedorId, también se persistirá ventanaId para mantener integridad histórica
+// El constraint _one_relation_check ha sido eliminado para permitir esta flexibilidad
 
 /**
  * Schema para query parameters de GET /accounts/payment-history
@@ -90,8 +94,8 @@ export const CreatePaymentBodySchema = z
 export const GetPaymentHistoryQuerySchema = z
   .object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD"),
-    ventanaId: z.string().uuid().optional(),
-    vendedorId: z.string().uuid().optional(),
+    ventanaId: z.uuid().optional(),
+    vendedorId: z.uuid().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict();
@@ -101,7 +105,7 @@ export const GetPaymentHistoryQuerySchema = z
  */
 export const ReversePaymentBodySchema = z
   .object({
-    paymentId: z.string().uuid("El ID del pago debe ser un UUID válido"),
+    paymentId: z.uuid("El ID del pago debe ser un UUID válido"),
     reason: z.string().min(5, "La razón debe tener al menos 5 caracteres").optional(),
   })
   .strict();
@@ -136,11 +140,11 @@ export const GetCurrentBalanceQuerySchema = z
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
-  .refine((data) => data.scope === "mine", {
+  .refine((data) => data.scope === QueryScope.MINE, {
     message: "Los parámetros scope y dimension son requeridos",
     path: ["scope"],
   })
-  .refine((data) => data.dimension === "ventana", {
+  .refine((data) => data.dimension === ReportDimension.VENTANA, {
     message: "Los parámetros scope y dimension son requeridos",
     path: ["dimension"],
   });
@@ -157,27 +161,27 @@ export const validateGetCurrentBalanceQuery = validateQuery(GetCurrentBalanceQue
 export const AccountStatementExportQuerySchema = z
   .object({
     // Formato de exportación (obligatorio)
-    format: z.enum(["csv", "excel", "pdf"]),
+    format: z.enum(ExportFormat),
 
     // Filtros de fecha (CR timezone, YYYY-MM-DD format)
     month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
-    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional(),
+    date: z.enum(DateFilterOption).optional(),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     // Scope y dimension
-    scope: z.enum(["mine", "ventana", "all"]),
-    dimension: z.enum(["banca", "ventana", "vendedor"]), //  NUEVO: Agregado 'banca'
+    scope: z.enum(QueryScope),
+    dimension: z.enum(ReportDimension), //  NUEVO: Agregado 'banca'
 
     // Filtros opcionales (según rol)
-    bancaId: z.string().uuid().optional(), //  NUEVO: Filtro opcional por banca
-    ventanaId: z.string().uuid().optional(),
-    vendedorId: z.string().uuid().optional(),
+    bancaId: z.uuid().optional(), //  NUEVO: Filtro opcional por banca
+    ventanaId: z.uuid().optional(),
+    vendedorId: z.uuid().optional(),
 
     // Opciones de exportación
     includeBreakdown: z.coerce.boolean().optional().default(true),
     includeMovements: z.coerce.boolean().optional().default(true),
-    sort: z.enum(["asc", "desc"]).optional().default("desc"),
+    sort: z.enum(SortOrder).optional().default(SortOrder.DESC),
     ignoreReset: z.string().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
@@ -202,7 +206,7 @@ export const AccountStatementExportQuerySchema = z
     }
 
     // Si date es 'range', fromDate y toDate son requeridos
-    if (val.date === "range") {
+    if (val.date === DateFilterOption.RANGE) {
       if (!val.fromDate) {
         ctx.addIssue({
           code: "custom",

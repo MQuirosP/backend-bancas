@@ -4,8 +4,8 @@ import { ActivityType } from '../../../generated/prisma/client';
 export const listActivityLogsQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(20),
-  userId: z.string().uuid().optional(),
-  action: z.nativeEnum(ActivityType).optional(),
+  userId: z.uuid().optional(),
+  action: z.enum(ActivityType).optional(),
   targetType: z.string().min(1).optional(),
   targetId: z.string().optional(),
   startDate: z.string().datetime().optional(),
@@ -14,11 +14,11 @@ export const listActivityLogsQuerySchema = z.object({
 });
 
 export const getActivityLogByIdParamSchema = z.object({
-  id: z.string().uuid('ID de registro inválido'),
+  id: z.uuid('ID de registro inválido'),
 });
 
 export const getByUserParamSchema = z.object({
-  userId: z.string().uuid('ID de usuario inválido'),
+  userId: z.uuid('ID de usuario inválido'),
 });
 
 export const getByTargetParamSchema = z.object({
@@ -27,7 +27,7 @@ export const getByTargetParamSchema = z.object({
 });
 
 export const getByActionParamSchema = z.object({
-  action: z.nativeEnum(ActivityType),
+  action: z.enum(ActivityType),
 });
 
 export const cleanupLogsBodySchema = z.object({

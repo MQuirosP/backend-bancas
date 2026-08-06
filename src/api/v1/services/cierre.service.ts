@@ -1,4 +1,4 @@
-import { Prisma } from '../../../generated/prisma/client';
+import { Prisma, BetType, TicketStatus, SorteoStatus } from '../../../generated/prisma/client';
 import prisma from '../../../core/prismaClient';
 import { CacheService } from '../../../core/cache.service';
 import crypto from 'crypto';
@@ -1143,7 +1143,7 @@ export class CierreService {
         loteriaGroup.sorteos.set(sorteoKey, {
           sorteo: {
             id: `summary-${row.turno}-${tipo}`,
-            turno: `${row.turno} ${tipo === 'NUMERO' ? 'Numero' : 'Reventado'}`,
+            turno: `${row.turno} ${tipo === BetType.NUMERO ? 'Numero' : 'Reventado'}`,
           },
           bands: new Map(),
           subtotal: this.createEmptyMetrics(),
@@ -1173,10 +1173,10 @@ export class CierreService {
       bandRef.netoDespuesComision += metrics.netoDespuesComision;
       bandRef.ticketsCount += metrics.ticketsCount;
       bandRef.refuerzos = (bandRef.refuerzos || 0) + (metrics.refuerzos || 0);
-      if (tipo === 'NUMERO') {
+      if (tipo === BetType.NUMERO) {
         if (!bandRef.numero) bandRef.numero = this.createEmptyMetrics();
         this.accumulateMetrics(bandRef.numero, metrics);
-      } else if (tipo === 'REVENTADO') {
+      } else if (tipo === BetType.REVENTADO) {
         if (!bandRef.reventado) bandRef.reventado = this.createEmptyMetrics();
         this.accumulateMetrics(bandRef.reventado, metrics);
       }
@@ -1341,7 +1341,7 @@ export class CierreService {
         loteriaGroup.sorteos.set(sorteoKey, {
           sorteo: {
             id: sorteoId,
-            turno: `${row.turno} ${tipo === 'NUMERO' ? 'Numero' : 'Reventado'}`,
+            turno: `${row.turno} ${tipo === BetType.NUMERO ? 'Numero' : 'Reventado'}`,
             scheduledAt: row.scheduledAt?.toISOString(),
           },
           bands: new Map(),
@@ -1378,10 +1378,10 @@ export class CierreService {
       bandRef.refuerzos = (bandRef.refuerzos || 0) + (metrics.refuerzos || 0);
 
       // Acumular desglose por tipo
-      if (row.tipo === 'NUMERO') {
+      if (row.tipo === BetType.NUMERO) {
         if (!bandRef.numero) bandRef.numero = this.createEmptyMetrics();
         this.accumulateMetrics(bandRef.numero, metrics);
-      } else if (row.tipo === 'REVENTADO') {
+      } else if (row.tipo === BetType.REVENTADO) {
         if (!bandRef.reventado) bandRef.reventado = this.createEmptyMetrics();
         this.accumulateMetrics(bandRef.reventado, metrics);
       }
@@ -1541,9 +1541,9 @@ export class CierreService {
       const metrics = this.rowToMetrics(row);
 
       // Asignar métricas según el tipo
-      if (row.tipo === 'NUMERO') {
+      if (row.tipo === BetType.NUMERO) {
         turnoAgrupado.NUMERO = metrics;
-      } else if (row.tipo === 'REVENTADO') {
+      } else if (row.tipo === BetType.REVENTADO) {
         turnoAgrupado.REVENTADO = metrics;
       }
 

@@ -1,4 +1,7 @@
+import { DateFilterOption } from '../../../types/enums/dateFilter.enum';
 import { z } from "zod";
+import { SorteoStatus } from "../../../generated/prisma/client";
+import { QueryScope } from "../../../types/enums/report.enum";
 import { Request, Response, NextFunction } from "express";
 import { validateBody, validateParams, validateQuery, zodDateCR } from "../../../middlewares/validate.middleware";
 
@@ -40,11 +43,11 @@ export const ListSorteosQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
   loteriaId: z.uuid().optional(),
-  status: z.enum(["SCHEDULED", "OPEN", "EVALUATED", "CLOSED"]).optional(),
+  status: z.enum(SorteoStatus).optional(),
   search: z.string().trim().min(1).max(100).optional(),
   isActive: z.preprocess((val) => val === undefined ? undefined : (val === 'true' || val === '1' || val === true), z.boolean().optional()),
   // Filtros de fecha (patrón: date=today|yesterday|week|month|year|range)
-  date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional(),
+  date: z.enum(DateFilterOption).optional(),
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
   groupBy: z.enum(["hour", "loteria-hour"]).optional(),
@@ -70,10 +73,10 @@ export const validateListSorteosQuery = (req: Request, res: Response, next: Next
 
 //  Query schema para evaluated-summary
 export const EvaluatedSummaryQuerySchema = z.object({
-  date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
+  date: z.enum(DateFilterOption).optional().default(DateFilterOption.TODAY),
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
-  scope: z.enum(["mine"]).optional().default("mine"), // Solo 'mine' para vendedor
+  scope: z.enum([QueryScope.MINE as "mine"]).optional().default(QueryScope.MINE as "mine"), // Solo 'mine' para vendedor
   loteriaId: z.uuid().optional(),
   // status puede ser una lista separada por comas: "EVALUATED,OPEN" o un solo valor
   // Por defecto filtra por EVALUATED y OPEN

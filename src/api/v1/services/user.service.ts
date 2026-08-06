@@ -4,7 +4,7 @@ import { AppError } from '../../../core/errors';
 import { CreateUserDTO, UpdateUserDTO } from '../dto/user.dto';
 import { hashPassword, comparePassword } from '../../../utils/crypto';
 import UserRepository from '../../../repositories/user.repository';
-import { Prisma, Role, ActivityType } from '../../../generated/prisma/client';
+import { Prisma, Role, ActivityType, BetType } from '../../../generated/prisma/client';
 import { normalizePhone } from "../../../utils/phoneNormalizer";
 import ActivityService from '../../../core/activity.service';
 import { commissionResolver } from '../../../services/commission/CommissionResolver';
@@ -776,7 +776,7 @@ export const UserService = {
   async getAllowedMultipliers(
     userId: string,
     loteriaId: string,
-    betType: 'NUMERO' | 'REVENTADO' = 'NUMERO'
+    betType: BetType = BetType.NUMERO
   ) {
     // Obtener usuario, lotería, multiplicadores y ventana en paralelo
     const [user, loteria, activeMultipliers] = await withConnectionRetry(
@@ -943,7 +943,7 @@ export const UserService = {
 
   async getAllowedMultipliersBatch(
     userId: string,
-    betType?: 'NUMERO' | 'REVENTADO',
+    betType?: BetType,
     isActive: boolean = true
   ) {
     // 1. Obtener usuario

@@ -1,6 +1,9 @@
+import { DateFilterOption } from '../../../types/enums/dateFilter.enum';
 // src/api/v1/validators/commissions.validator.ts
 import { z } from "zod";
 import { validateQuery } from "../../../middlewares/validate.middleware";
+import { ReportDimension, QueryScope } from "../../../types/enums/report.enum";
+import { ExportFormat } from "../../../types/enums/export.enum";
 
 // Helper para validar UUIDs opcionales que pueden venir como "all", vacío o null desde el frontend
 const OptionalUUIDOrAll = z.preprocess((val) => {
@@ -8,7 +11,7 @@ const OptionalUUIDOrAll = z.preprocess((val) => {
     return undefined;
   }
   return val;
-}, z.string().uuid().optional());
+}, z.uuid().optional());
 
 /**
  * Schema para GET /api/v1/commissions
@@ -17,13 +20,13 @@ const OptionalUUIDOrAll = z.preprocess((val) => {
 export const CommissionsListQuerySchema = z
   .object({
     // Filtros de fecha (CR timezone, YYYY-MM-DD format)
-    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
+    date: z.enum(DateFilterOption).optional().default(DateFilterOption.TODAY),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     // Scope y dimension
-    scope: z.enum(["mine", "all"]),
-    dimension: z.enum(["ventana", "vendedor", "loteria"]),
+    scope: z.enum(QueryScope),
+    dimension: z.enum(ReportDimension),
 
     // Filtros opcionales (solo para ADMIN)
     ventanaId: OptionalUUIDOrAll,
@@ -43,7 +46,7 @@ export const CommissionsListQuerySchema = z
     }
 
     // Si date=range, fromDate y toDate son requeridos
-    if (val.date === "range") {
+    if (val.date === DateFilterOption.RANGE) {
       if (!val.fromDate) {
         ctx.addIssue({
           code: "custom",
@@ -58,7 +61,7 @@ export const CommissionsListQuerySchema = z
           message: "toDate es requerido cuando date='range'",
         });
       }
-      
+
       //  Validar fromDate ≤ toDate
       if (val.fromDate && val.toDate && val.fromDate > val.toDate) {
         ctx.addIssue({
@@ -80,8 +83,8 @@ export const CommissionsDetailQuerySchema = z
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 
     // Scope y dimension
-    scope: z.enum(["mine", "all"]),
-    dimension: z.enum(["ventana", "vendedor", "loteria"]),
+    scope: z.enum(QueryScope),
+    dimension: z.enum(ReportDimension),
 
     // Filtros opcionales (solo para ADMIN)
     ventanaId: OptionalUUIDOrAll,
@@ -100,12 +103,12 @@ export const CommissionsTicketsQuerySchema = z
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 
     // Filtros requeridos
-    loteriaId: z.string().uuid(),
-    multiplierId: z.union([z.string().uuid(), z.literal("unknown")]),
+    loteriaId: z.uuid(),
+    multiplierId: z.union([z.uuid(), z.literal("unknown")]),
 
     // Scope y dimension
-    scope: z.enum(["mine", "all"]),
-    dimension: z.enum(["ventana", "vendedor", "loteria"]),
+    scope: z.enum(QueryScope),
+    dimension: z.enum(ReportDimension),
 
     // Filtros opcionales (solo para ADMIN)
     ventanaId: OptionalUUIDOrAll,
@@ -125,16 +128,16 @@ export const CommissionsTicketsQuerySchema = z
 export const CommissionsExportQuerySchema = z
   .object({
     // Formato de exportación (obligatorio)
-    format: z.enum(["csv", "excel", "pdf"]),
+    format: z.enum(ExportFormat),
 
     // Filtros de fecha (CR timezone, YYYY-MM-DD format)
-    date: z.enum(["today", "yesterday", "week", "month", "year", "range"]).optional().default("today"),
+    date: z.enum(DateFilterOption).optional().default(DateFilterOption.TODAY),
     fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     // Scope y dimension
-    scope: z.enum(["mine", "all"]),
-    dimension: z.enum(["ventana", "vendedor", "loteria"]),
+    scope: z.enum(QueryScope),
+    dimension: z.enum(ReportDimension),
 
     // Filtros opcionales (solo para ADMIN)
     ventanaId: OptionalUUIDOrAll,
@@ -159,7 +162,7 @@ export const CommissionsExportQuerySchema = z
     }
 
     // Si date=range, fromDate y toDate son requeridos
-    if (val.date === "range") {
+    if (val.date === DateFilterOption.RANGE) {
       if (!val.fromDate) {
         ctx.addIssue({
           code: "custom",
@@ -174,7 +177,7 @@ export const CommissionsExportQuerySchema = z
           message: "toDate es requerido cuando date='range'",
         });
       }
-      
+
       //  Validar fromDate ≤ toDate
       if (val.fromDate && val.toDate && val.fromDate > val.toDate) {
         ctx.addIssue({
@@ -200,8 +203,8 @@ export const CommissionsBreakdownParamsSchema = z.object({
 });
 
 export const CommissionsBreakdownQuerySchema = z.object({
-  scope: z.enum(["mine", "all"]),
-  dimension: z.enum(["ventana", "vendedor", "loteria"]),
+  scope: z.enum(QueryScope),
+  dimension: z.enum(ReportDimension),
   ventanaId: OptionalUUIDOrAll,
   vendedorId: OptionalUUIDOrAll,
   _: z.string().optional(),

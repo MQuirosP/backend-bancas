@@ -1,6 +1,7 @@
+import { BetType } from "../../../generated/prisma/client";
 import { z } from "zod";
 
-export const MultiplierKindSchema = z.enum(["NUMERO", "REVENTADO"]);
+export const MultiplierKindSchema = z.enum(BetType);
 
 export const MultiplierIdParamSchema = z.object({
   id: z.uuid("id inválido (UUID)"),

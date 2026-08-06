@@ -11,7 +11,7 @@ const OptionalUUIDOrAll = z.preprocess((val) => {
     return undefined;
   }
   return val;
-}, z.string().uuid('ventanaId debe ser UUID válido').optional());
+}, z.uuid('ventanaId debe ser UUID válido').optional());
 
 // Schema base para parámetros comunes
 const BaseCierreQuerySchema = z.object({

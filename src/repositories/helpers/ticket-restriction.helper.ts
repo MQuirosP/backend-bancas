@@ -1,5 +1,6 @@
+import { ReportDimension } from '../../types/enums/report.enum';
 // src/repositories/helpers/ticket-restriction.helper.ts
-import { Prisma } from "../../generated/prisma/client";
+import { Prisma, TicketStatus, BetType, SorteoStatus } from '../../generated/prisma/client';
 import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
 import { getCRLocalComponents } from "../../utils/businessDate";
@@ -92,10 +93,10 @@ export async function calculateAccumulatedByNumbersAndScope(
   tx: Prisma.TransactionClient,
   params: {
     numbers: string[];          // Array de números (ej: ["15", "20"])
-    scopeType: 'USER' | 'VENTANA' | 'BANCA';
+    scopeType: ReportDimension;
     scopeId: string;            // userId, ventanaId, o bancaId
     sorteoId: string;           // ️ CRÍTICO: Acumulado es por sorteo
-    multiplierFilter?: { id: string; kind: 'NUMERO' | 'REVENTADO' } | null;
+    multiplierFilter?: { id: string; kind: BetType } | null;
     cache?: ScopeCache;
   }
 ): Promise<Map<string, number>> {
@@ -107,7 +108,7 @@ export async function calculateAccumulatedByNumbersAndScope(
   }
 
   // 1. Intentar obtener de caché si existe
-  const multiplierId = multiplierFilter ? (multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : multiplierFilter.id) : 'NONE';
+  const multiplierId = multiplierFilter ? (multiplierFilter.kind === BetType.REVENTADO ? 'REVENTADO' : multiplierFilter.id) : 'NONE';
   const cacheKey = `${scopeType}:${scopeId}:${sorteoId}:${multiplierId}`;
   
   if (cache) {
@@ -142,7 +143,7 @@ export async function calculateAccumulatedByNumbersAndScope(
         // Construir clave
         let redisKey = `sorteo:${sorteoId}:scope:${scopeId}:acumulados`;
         if (multiplierFilter) {
-          const multId = multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : multiplierFilter.id;
+          const multId = multiplierFilter.kind === BetType.REVENTADO ? 'REVENTADO' : multiplierFilter.id;
           redisKey = `sorteo:${sorteoId}:scope:${scopeId}:multiplier:${multId}:acumulados`;
         }
 
@@ -199,11 +200,11 @@ export async function calculateAccumulatedByNumbersAndScope(
     // Construir WHERE según alcance usando SQL directo para mejor rendimiento y seguridad
     let scopeCondition: Prisma.Sql;
 
-    if (scopeType === 'USER') {
+    if (scopeType === ReportDimension.VENDEDOR) {
       scopeCondition = Prisma.sql`t."vendedorId" = ${scopeId}::uuid`;
-    } else if (scopeType === 'VENTANA') {
+    } else if (scopeType === ReportDimension.VENTANA) {
       scopeCondition = Prisma.sql`t."ventanaId" = ${scopeId}::uuid`;
-    } else if (scopeType === 'BANCA') {
+    } else if (scopeType === ReportDimension.BANCA) {
       scopeCondition = Prisma.sql`v."bancaId" = ${scopeId}::uuid`;
     } else {
       throw new Error(`Invalid scopeType: ${scopeType}`);
@@ -212,7 +213,7 @@ export async function calculateAccumulatedByNumbersAndScope(
     //  Construir condición de multiplicador
     let multiplierCondition = Prisma.sql``;
     if (multiplierFilter) {
-      if (multiplierFilter.kind === 'REVENTADO') {
+      if (multiplierFilter.kind === BetType.REVENTADO) {
         // Para REVENTADO, filtramos por tipo de jugada (jugadas reventadas no tienen multiplierId)
         multiplierCondition = Prisma.sql`AND j."type" = 'REVENTADO'`;
       } else {
@@ -258,7 +259,7 @@ export async function calculateAccumulatedByNumbersAndScope(
           COALESCE(SUM(j.amount), 0)::numeric as total
         FROM "Ticket" t
         INNER JOIN "Jugada" j ON j."ticketId" = t.id
-        ${scopeType === 'BANCA'
+        ${scopeType === ReportDimension.BANCA
           ? Prisma.sql`INNER JOIN "Ventana" v ON v.id = t."ventanaId"`
           : Prisma.sql``
         }
@@ -339,9 +340,9 @@ export async function calculateAccumulatedForMultipleScopes(
     numbers: string[];
     sorteoId: string;
     scopes: Array<{
-      scopeType: 'USER' | 'VENTANA' | 'BANCA';
+      scopeType: ReportDimension;
       scopeId: string;
-      multiplierFilter?: { id: string; kind: 'NUMERO' | 'REVENTADO' } | null;
+      multiplierFilter?: { id: string; kind: BetType } | null;
     }>;
     cache?: ScopeCache;
   }
@@ -356,7 +357,7 @@ export async function calculateAccumulatedForMultipleScopes(
   const scopesToQuery: typeof scopes = [];
   for (const sc of scopes) {
     const multiplierId = sc.multiplierFilter
-      ? (sc.multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : sc.multiplierFilter.id)
+      ? (sc.multiplierFilter.kind === BetType.REVENTADO ? 'REVENTADO' : sc.multiplierFilter.id)
       : 'NONE';
     const cacheKey = `${sc.scopeType}:${sc.scopeId}:${sorteoId}:${multiplierId}`;
     
@@ -404,7 +405,7 @@ export async function calculateAccumulatedForMultipleScopes(
         for (const sc of scopesToQuery) {
           let redisKey = `sorteo:${sorteoId}:scope:${sc.scopeId}:acumulados`;
           if (sc.multiplierFilter) {
-            const multId = sc.multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : sc.multiplierFilter.id;
+            const multId = sc.multiplierFilter.kind === BetType.REVENTADO ? 'REVENTADO' : sc.multiplierFilter.id;
             redisKey = `sorteo:${sorteoId}:scope:${sc.scopeId}:multiplier:${multId}:acumulados`;
           }
           pipeline.hmget(redisKey, ...numbers);
@@ -425,7 +426,7 @@ export async function calculateAccumulatedForMultipleScopes(
             if (err) throw err;
 
             const multiplierId = sc.multiplierFilter
-              ? (sc.multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : sc.multiplierFilter.id)
+              ? (sc.multiplierFilter.kind === BetType.REVENTADO ? 'REVENTADO' : sc.multiplierFilter.id)
               : 'NONE';
             const cacheKey = `${sc.scopeType}:${sc.scopeId}:${sorteoId}:${multiplierId}`;
 
@@ -479,11 +480,11 @@ export async function calculateAccumulatedForMultipleScopes(
   const scopeConditions: Prisma.Sql[] = [];
   for (const sc of scopesToQuery) {
     let scopeCond: Prisma.Sql;
-    if (sc.scopeType === 'USER') {
+    if (sc.scopeType === ReportDimension.VENDEDOR) {
       scopeCond = Prisma.sql`t."vendedorId" = ${sc.scopeId}::uuid`;
-    } else if (sc.scopeType === 'VENTANA') {
+    } else if (sc.scopeType === ReportDimension.VENTANA) {
       scopeCond = Prisma.sql`t."ventanaId" = ${sc.scopeId}::uuid`;
-    } else if (sc.scopeType === 'BANCA') {
+    } else if (sc.scopeType === ReportDimension.BANCA) {
       scopeCond = Prisma.sql`v."bancaId" = ${sc.scopeId}::uuid`;
     } else {
       continue;
@@ -491,7 +492,7 @@ export async function calculateAccumulatedForMultipleScopes(
 
     let multCond = Prisma.sql``;
     if (sc.multiplierFilter) {
-      if (sc.multiplierFilter.kind === 'REVENTADO') {
+      if (sc.multiplierFilter.kind === BetType.REVENTADO) {
         multCond = Prisma.sql`AND j."type" = 'REVENTADO'`;
       } else {
         multCond = Prisma.sql`AND j."multiplierId" = ${sc.multiplierFilter.id}::uuid`;
@@ -564,7 +565,7 @@ export async function calculateAccumulatedForMultipleScopes(
     // 5. Agrupar/mapear los resultados en memoria para cada scope solicitado
     for (const sc of scopesToQuery) {
       const multiplierId = sc.multiplierFilter
-        ? (sc.multiplierFilter.kind === 'REVENTADO' ? 'REVENTADO' : sc.multiplierFilter.id)
+        ? (sc.multiplierFilter.kind === BetType.REVENTADO ? 'REVENTADO' : sc.multiplierFilter.id)
         : 'NONE';
       const cacheKey = `${sc.scopeType}:${sc.scopeId}:${sorteoId}:${multiplierId}`;
 
@@ -579,11 +580,11 @@ export async function calculateAccumulatedForMultipleScopes(
       for (const row of result) {
         // Verificar si la fila pertenece al scope actual
         let scopeMatches = false;
-        if (sc.scopeType === 'USER') {
+        if (sc.scopeType === ReportDimension.VENDEDOR) {
           scopeMatches = row.vendedorId === sc.scopeId;
-        } else if (sc.scopeType === 'VENTANA') {
+        } else if (sc.scopeType === ReportDimension.VENTANA) {
           scopeMatches = row.ventanaId === sc.scopeId;
-        } else if (sc.scopeType === 'BANCA') {
+        } else if (sc.scopeType === ReportDimension.BANCA) {
           scopeMatches = row.bancaId === sc.scopeId;
         }
 
@@ -594,10 +595,10 @@ export async function calculateAccumulatedForMultipleScopes(
         if (!sc.multiplierFilter) {
           // multiplierFilter null/NONE -> sumamos todo (tanto NUMERO como REVENTADO)
           multiplierMatches = true;
-        } else if (sc.multiplierFilter.kind === 'REVENTADO') {
-          multiplierMatches = row.jugadaType === 'REVENTADO';
+        } else if (sc.multiplierFilter.kind === BetType.REVENTADO) {
+          multiplierMatches = row.jugadaType === BetType.REVENTADO;
         } else {
-          multiplierMatches = row.jugadaType === 'NUMERO' && row.multiplierId === sc.multiplierFilter.id;
+          multiplierMatches = row.jugadaType === BetType.NUMERO && row.multiplierId === sc.multiplierFilter.id;
         }
 
         if (!multiplierMatches) continue;
@@ -653,12 +654,12 @@ export async function calculateAccumulatedByNumberAndScope(
   tx: Prisma.TransactionClient,
   params: {
     number: string;              // Número específico (ej: "15")
-    scopeType: 'USER' | 'VENTANA' | 'BANCA';
+    scopeType: ReportDimension;
     scopeId: string;            // userId, ventanaId, o bancaId
     sorteoId: string;           // ️ CRÍTICO: Acumulado es por sorteo
     multiplierFilter?: {        //  NUEVO: Filtro por multiplicador
       id: string;
-      kind: 'NUMERO' | 'REVENTADO';
+      kind: BetType;
     } | null;
     cache?: ScopeCache;
   }
@@ -778,7 +779,7 @@ export async function validateMaxTotalForNumbers(
     dynamicLimit?: number | null; // Límite dinámico calculado (opcional)
     multiplierFilter?: {          //  NUEVO: Filtro por multiplicador
       id: string;
-      kind: 'NUMERO' | 'REVENTADO';
+      kind: BetType;
     } | null;
     cache?: ScopeCache;
   }
@@ -792,10 +793,10 @@ export async function validateMaxTotalForNumbers(
 
   // Determinar alcance
   const isPerVendedor = !!rule.appliesToVendedor;
-  const scopeType = isPerVendedor ? 'USER'
-    : rule.userId ? 'USER'
-      : rule.ventanaId ? 'VENTANA'
-        : rule.bancaId ? 'BANCA'
+  const scopeType = isPerVendedor ? ReportDimension.VENDEDOR
+    : rule.userId ? ReportDimension.VENDEDOR
+      : rule.ventanaId ? ReportDimension.VENTANA
+        : rule.bancaId ? ReportDimension.BANCA
           : null;
 
   if (!scopeType) {
@@ -957,7 +958,7 @@ export async function validateMaxTotalForNumber(
     dynamicLimit?: number | null; // Límite dinámico calculado (opcional)
     multiplierFilter?: {          //  NUEVO: Filtro por multiplicador
       id: string;
-      kind: 'NUMERO' | 'REVENTADO';
+      kind: BetType;
     } | null;
     cache?: ScopeCache;
   }
@@ -1090,7 +1091,7 @@ async function executeValidationTask(
     numbers: Array<{ 
       number: string; 
       amountForNumber: number; 
-      type: "NUMERO" | "REVENTADO"; 
+      type: BetType; 
       multiplierId?: string | null 
     }>;
     cache?: ScopeCache;
@@ -1128,8 +1129,8 @@ async function executeValidationTask(
           const jugadasDelNumero = context.numbers.filter(n => {
             if (n.number !== num) return false;
             if (rule.multiplierId) {
-              if (rule.multiplier?.kind === 'REVENTADO') {
-                return n.type === 'REVENTADO';
+              if (rule.multiplier?.kind === BetType.REVENTADO) {
+                return n.type === BetType.REVENTADO;
               }
               return n.multiplierId === rule.multiplierId;
             }
@@ -1187,8 +1188,8 @@ async function executeValidationTask(
           const matchingJugadas = context.numbers.filter(n => {
             if (n.number !== num) return false;
             if (rule.multiplierId) {
-              if (rule.multiplier?.kind === 'REVENTADO') {
-                return n.type === 'REVENTADO';
+              if (rule.multiplier?.kind === BetType.REVENTADO) {
+                return n.type === BetType.REVENTADO;
               }
               return n.multiplierId === rule.multiplierId;
             }
@@ -1229,8 +1230,8 @@ async function executeValidationTask(
           const jugadasDelNumero = context.numbers.filter(n => {
             if (n.number !== num) return false;
             if (rule.multiplierId) {
-              if (rule.multiplier?.kind === 'REVENTADO') {
-                return n.type === 'REVENTADO';
+              if (rule.multiplier?.kind === BetType.REVENTADO) {
+                return n.type === BetType.REVENTADO;
               }
               return n.multiplierId === rule.multiplierId;
             }
@@ -1290,8 +1291,8 @@ async function executeValidationTask(
             if (n.number !== num) return false;
             // Si la regla es específica de multiplicador, filtrar por él
             if (rule.multiplierId) {
-              if (rule.multiplier?.kind === 'REVENTADO') {
-                return n.type === 'REVENTADO';
+              if (rule.multiplier?.kind === BetType.REVENTADO) {
+                return n.type === BetType.REVENTADO;
               }
               return n.multiplierId === rule.multiplierId;
             }
@@ -1354,7 +1355,7 @@ export async function validateRulesInParallel(
     numbers: Array<{ 
       number: string; 
       amountForNumber: number; 
-      type: "NUMERO" | "REVENTADO"; 
+      type: BetType; 
       multiplierId?: string | null 
     }>; // Números y montos granulares del ticket
     sorteoId: string;
@@ -1547,9 +1548,9 @@ export async function rehydrateRedisAccumulated(sorteoId: string, tx?: Prisma.Tr
       const amount = Number(row.total);
       const num = row.number;
       const scopes = [
-        { id: row.vendedorId, type: 'USER' },
-        { id: row.ventanaId, type: 'VENTANA' },
-        { id: row.bancaId, type: 'BANCA' }
+        { id: row.vendedorId, type: ReportDimension.VENDEDOR },
+        { id: row.ventanaId, type: ReportDimension.VENTANA },
+        { id: row.bancaId, type: ReportDimension.BANCA }
       ];
 
       for (const sc of scopes) {
@@ -1560,7 +1561,7 @@ export async function rehydrateRedisAccumulated(sorteoId: string, tx?: Prisma.Tr
         addValue(genKey, num, amount);
 
         // B. Llave por multiplicador
-        const multId = row.jugadaType === 'REVENTADO' ? 'REVENTADO' : row.multiplierId;
+        const multId = row.jugadaType === BetType.REVENTADO ? 'REVENTADO' : row.multiplierId;
         if (multId) {
           const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
           addValue(multKey, num, amount);

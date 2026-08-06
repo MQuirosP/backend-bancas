@@ -141,7 +141,7 @@ export const CreateRestrictionRuleSchema = z
     }
 
     // 5. Validaciones Generales de consistencia
-    
+
     // EXCLUSIVIDAD DE ÁMBITO: No puede tener más de uno
     const scopesCount = [data.bancaId, data.ventanaId, data.userId].filter(Boolean).length;
     if (scopesCount > 1) {
@@ -316,20 +316,20 @@ export const BulkUpdateRestrictionRuleSchema = z.object({
 
 // LIST (query)   acepta hasAmount / hasCutoff / hasAutoDate y usa isActive
 export const ListRestrictionRuleQuerySchema = z.object({
-  bancaId: z.string().uuid().optional(),
-  ventanaId: z.string().uuid().optional(),
-  userId: z.string().uuid().optional(),
+  bancaId: z.uuid().optional(),
+  ventanaId: z.uuid().optional(),
+  userId: z.uuid().optional(),
   number: z.string().trim().min(1).optional(),
-  id: z.string().uuid().optional(), // Búsqueda de grupo por ID de integrante
+  id: z.uuid().optional(), // Búsqueda de grupo por ID de integrante
   groupKey: z.string().optional(),  // Búsqueda directa por llave de grupo
   search: z.string().trim().optional(), // Parametro para el search bar
 
   // Parseo explícito de booleanos desde string (evita problemas con z.coerce.boolean)
-  isActive: z.enum(["true", "false"]).transform(v => v === "true").optional(),
-  hasCutoff: z.enum(["true", "false"]).transform(v => v === "true").optional(),
-  hasAmount: z.enum(["true", "false"]).transform(v => v === "true").optional(),
-  hasAutoDate: z.enum(["true", "false"]).transform(v => v === "true").optional(),
-  hasLotteryMultiplier: z.enum(["true", "false"]).transform(v => v === "true").optional(),
+  isActive: z.coerce.boolean().optional(),
+  hasCutoff: z.coerce.boolean().optional(),
+  hasAmount: z.coerce.boolean().optional(),
+  hasAutoDate: z.coerce.boolean().optional(),
+  hasLotteryMultiplier: z.coerce.boolean().optional(),
 
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),

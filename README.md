@@ -43,7 +43,7 @@ This repository contains the core backend of the lottery management system. Arch
 | **Database** | PostgreSQL (Supabase) + Prisma ORM | Relational data integrity, migrations, and schema safety. |
 | **Connection Pool** | `@prisma/adapter-pg` + `pg-pool` | Connection warm-up and raw PostgreSQL client adapter. |
 | **Cache** | Redis (ioredis) + RAM cache | Hybrid cache-aside strategy (L1 local / L2 distributed). |
-| **Validation** | Zod | Rigorous API payload schema parsing and sanitization. |
+| **Validation** | Zod + Enums | Strict API payload schema parsing, eliminating *magic strings* with strong TS Enum typing. |
 | **Logging** | Pino Logger | Ultra-fast structured JSON logging for auditing and forensics. |
 
 ---

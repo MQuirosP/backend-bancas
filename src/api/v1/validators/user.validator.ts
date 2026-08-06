@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { Role, BetType } from '../../../generated/prisma/client'
 
 // Helpers reutilizables
 const emptyToUndef = (v: unknown) =>
@@ -75,10 +76,10 @@ export const createUserSchema = z
     phone: phoneOptional,
     username: z.string().trim().min(3).max(32),
     password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
-    role: z.enum(['ADMIN', 'BANCA', 'VENTANA', 'VENDEDOR']).optional(),
+    role: z.enum(Role).optional(),
     ventanaId: z.uuid('ventanaId inválido').nullable().optional(),
     bancaId: z.uuid('bancaId inválido').nullable().optional(),
-    bancaIds: z.array(z.string().uuid()).optional(),
+    bancaIds: z.array(z.uuid()).optional(),
     isActive: z.boolean().optional(),
     maxSessionsPerVendedor: z.coerce.number().int().min(1, 'El mínimo es 1 sesión').max(20, 'El máximo es 20 sesiones').nullable().optional(),
   })
@@ -91,7 +92,7 @@ export const updateUserSchema = z
     phone: phoneOptional,
     username: z.string().trim().min(3).max(32).nullable().optional(),
     password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').nullable().optional(),
-    role: z.enum(['ADMIN', 'BANCA', 'VENTANA', 'VENDEDOR']).nullable().optional(),
+    role: z.enum(Role).nullable().optional(),
     ventanaId: z
       .uuid('ventanaId inválido')
       .nullable()
@@ -132,7 +133,7 @@ export const listUsersQuerySchema = z
   .object({
     page: z.coerce.number().int().min(1).optional(),
     pageSize: z.coerce.number().int().min(1).max(100).optional(),
-    role: z.enum(['ADMIN', 'BANCA', 'VENTANA', 'VENDEDOR']).optional(),
+    role: z.enum(Role).optional(),
     search: z
       .string()
       .trim()
@@ -140,8 +141,8 @@ export const listUsersQuerySchema = z
       .transform((v) => (v && v.length > 0 ? v : undefined)),
     isActive: queryBoolean,
     scope: z.string().optional(),
-    ventanaId: z.string().uuid().optional(),
-    bancaId: z.string().uuid().optional(),
+    ventanaId: z.uuid().optional(),
+    bancaId: z.uuid().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
   })
   .strict()
@@ -180,15 +181,15 @@ export const ChangePasswordSchema = z
  */
 export const getAllowedMultipliersQuerySchema = z
   .object({
-    loteriaId: z.string().uuid('loteriaId debe ser un UUID válido'),
-    betType: z.enum(['NUMERO', 'REVENTADO']).optional().default('NUMERO'),
+    loteriaId: z.uuid('loteriaId debe ser un UUID válido'),
+    betType: z.enum(BetType).optional().default(BetType.NUMERO),
     _: z.string().optional(),
   })
   .strict()
 
 export const getAllowedMultipliersParamsSchema = z
   .object({
-    userId: z.string().uuid('userId debe ser un UUID válido'),
+    userId: z.uuid('userId debe ser un UUID válido'),
   })
   .strict()
 
@@ -197,7 +198,7 @@ export const getAllowedMultipliersParamsSchema = z
  */
 export const getAllowedMultipliersBatchQuerySchema = z
   .object({
-    betType: z.enum(['NUMERO', 'REVENTADO']).optional(),
+    betType: z.enum(BetType).optional(),
     isActive: queryBoolean.default(true),
     _: z.string().optional(),
   })
@@ -205,6 +206,6 @@ export const getAllowedMultipliersBatchQuerySchema = z
 
 export const getAllowedMultipliersBatchParamsSchema = z
   .object({
-    id: z.string().uuid('id debe ser un UUID válido'),
+    id: z.uuid('id debe ser un UUID válido'),
   })
   .strict()

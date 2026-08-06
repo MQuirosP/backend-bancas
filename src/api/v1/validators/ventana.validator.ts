@@ -37,7 +37,7 @@ const VentanaSettingsSchema = z
 
 export const VentanaIdParamSchema = z
   .object({
-    id: z.string().uuid("id inválido (UUID)"),
+    id: z.uuid("id inválido (UUID)"),
   })
   .strict();
 
@@ -122,7 +122,7 @@ export const ListVentanasQuerySchema = z
     scope: z.string().optional(),
     _: z.string().optional(), // Para evitar caché del navegador (ignorado)
     // si más adelante agregas bancaId como filtro:
-    // bancaId: z.string().uuid().optional(),
+    // bancaId: z.uuid().optional(),
   })
   .strict();
 

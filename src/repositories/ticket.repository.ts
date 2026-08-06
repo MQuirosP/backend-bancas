@@ -1,5 +1,6 @@
+import { ReportDimension } from '../types/enums/report.enum';
 import prisma from "../core/prismaClient";
-import { Prisma, TicketStatus, Role } from "../generated/prisma/client";
+import { Prisma, TicketStatus, Role, BetType, SorteoStatus, OverrideScope } from '../generated/prisma/client';
 import { withConnectionRetry } from "../core/withConnectionRetry";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
@@ -249,7 +250,7 @@ type CreateTicketInput = {
   totalAmount?: number; // ignorado; el backend calcula el total
   clienteNombre?: string | null; // nombre del cliente (opcional)
   jugadas: Array<{
-    type: "NUMERO" | "REVENTADO";
+    type: BetType;
     number: string;
     reventadoNumber?: string | null; // requerido si type=REVENTADO (igual a number)
     amount: number;
@@ -262,7 +263,7 @@ type TicketWarning = {
   code: "LOTTERY_MULTIPLIER_RESTRICTED";
   restrictedButAllowed: boolean;
   ruleId: string;
-  scope: "USER" | "VENTANA" | "BANCA";
+  scope: ReportDimension;
   loteriaId: string;
   loteriaName?: string | null;
   multiplierId: string;
@@ -323,10 +324,10 @@ async function resolveBaseMultiplierX(
       const [userOverride, ventanaOverride, bls, lmBase, lmNumero, lot] = await Promise.all([
         tx.multiplierOverride.findFirst({
           where: {
-            scope: "USER",
+            scope: OverrideScope.USER,
             userId,
             loteriaId,
-            multiplierType: "NUMERO",
+            multiplierType: BetType.NUMERO,
             isActive: true,
           },
           select: { baseMultiplierX: true },
@@ -334,10 +335,10 @@ async function resolveBaseMultiplierX(
         // 0.5) Override por ventana - SECOND PRIORITY
         tx.multiplierOverride.findFirst({
           where: {
-            scope: "VENTANA",
+            scope: OverrideScope.VENTANA,
             ventanaId,
             loteriaId,
-            multiplierType: "NUMERO",
+            multiplierType: BetType.NUMERO,
             isActive: true,
           },
           select: { baseMultiplierX: true },
@@ -354,7 +355,7 @@ async function resolveBaseMultiplierX(
         }),
         // 2) Multiplicador de la Lotería (tabla loteriaMultiplier) - NUMERO
         tx.loteriaMultiplier.findFirst({
-          where: { loteriaId, isActive: true, kind: "NUMERO" },
+          where: { loteriaId, isActive: true, kind: BetType.NUMERO },
           orderBy: { createdAt: "asc" },
           select: { valueX: true, name: true },
         }),
@@ -730,7 +731,7 @@ export const TicketRepository = {
 
         // b) REVENTADO habilitado
         if (!reventadoEnabled) {
-          const hasReventado = jugadas.some((j) => j.type === "REVENTADO");
+          const hasReventado = jugadas.some((j) => j.type === BetType.REVENTADO);
           if (hasReventado) {
             throw new AppError(
               "REVENTADO no está habilitado para esta lotería",
@@ -743,7 +744,7 @@ export const TicketRepository = {
         // c) matching de número en REVENTADO (si la regla lo exige)
         if (requiresMatchingNumber) {
           for (const j of jugadas) {
-            if (j.type === "REVENTADO") {
+            if (j.type === BetType.REVENTADO) {
               if (!j.reventadoNumber || j.reventadoNumber !== j.number) {
                 throw new AppError(
                   "REVENTADO debe coincidir con el mismo número (number === reventadoNumber)",
@@ -792,7 +793,7 @@ export const TicketRepository = {
         // f) límite de cantidad de números por ticket (solo NUMERO, únicos)
         if (typeof maxNumbersPerTicket === "number") {
           const uniqueNumeros = new Set(
-            jugadas.filter((j) => j.type === "NUMERO").map((j) => j.number)
+            jugadas.filter((j) => j.type === BetType.NUMERO).map((j) => j.number)
           );
           if (uniqueNumeros.size > maxNumbersPerTicket) {
             throw new AppError(
@@ -807,7 +808,7 @@ export const TicketRepository = {
         const numeroMultiplierIds = Array.from(
           new Set(
             jugadas
-              .filter((j) => j.type === "NUMERO" && j.multiplierId)
+              .filter((j) => j.type === BetType.NUMERO && j.multiplierId)
               .map((j) => j.multiplierId!) // validated later
           )
         );
@@ -818,7 +819,7 @@ export const TicketRepository = {
             id: string;
             valueX: number;
             isActive: boolean;
-            kind: "NUMERO" | "REVENTADO";
+            kind: BetType;
             loteriaId: string;
             name?: string | null;
           }
@@ -845,14 +846,14 @@ export const TicketRepository = {
               name: m.name,
               valueX: m.valueX,
               isActive: m.isActive,
-              kind: m.kind as "NUMERO" | "REVENTADO",
+              kind: m.kind as BetType,
               loteriaId: m.loteriaId,
             });
           }
         }
 
         const preparedJugadas = jugadas.map((j) => {
-          if (j.type === "REVENTADO") {
+          if (j.type === BetType.REVENTADO) {
             if (!j.reventadoNumber || j.reventadoNumber !== j.number) {
               throw new AppError(
                 "REVENTADO must reference the same number (reventadoNumber === number)",
@@ -861,7 +862,7 @@ export const TicketRepository = {
               );
             }
             return {
-              type: "REVENTADO" as const,
+              type: BetType.REVENTADO,
               number: j.number,
               reventadoNumber: j.reventadoNumber,
               amount: j.amount,
@@ -886,7 +887,7 @@ export const TicketRepository = {
               "INVALID_MULTIPLIER"
             );
           }
-          if (multiplier.kind !== "NUMERO") {
+          if (multiplier.kind !== BetType.NUMERO) {
             throw new AppError(
               `Multiplicador incompatible con jugada NUMERO`,
               400,
@@ -938,12 +939,12 @@ export const TicketRepository = {
             const isBlockingRule = matchingRule.maxAmount == null && matchingRule.maxTotal == null;
 
             if (isBlockingRule) {
-              const ruleScope: "USER" | "VENTANA" | "BANCA" =
+              const ruleScope: ReportDimension =
                 matchingRule.userId
-                  ? "USER"
+                  ? ReportDimension.VENDEDOR
                   : matchingRule.ventanaId
-                    ? "VENTANA"
-                    : "BANCA";
+                    ? ReportDimension.VENTANA
+                    : ReportDimension.BANCA;
 
               const loteriaNameForWarning =
                 matchingRule.loteria?.name ?? loteriaName;
@@ -1032,7 +1033,7 @@ export const TicketRepository = {
           }
 
           return {
-            type: "NUMERO" as const,
+            type: BetType.NUMERO,
             number: j.number,
             reventadoNumber: null,
             amount: j.amount,
@@ -1066,7 +1067,7 @@ export const TicketRepository = {
             applicableRules: applicable.map((r, idx) => ({
               index: idx,
               ruleId: r.id,
-              scope: r.userId ? 'USER' : r.ventanaId ? 'VENTANA' : r.bancaId ? 'BANCA' : 'GLOBAL',
+              scope: r.userId ? ReportDimension.VENDEDOR : r.ventanaId ? ReportDimension.VENTANA : r.bancaId ? ReportDimension.BANCA : 'GLOBAL',
               priority: calculatePriorityScore(r),
               hasMaxAmount: r.maxAmount != null,
               hasMaxTotal: r.maxTotal != null,
@@ -1092,12 +1093,12 @@ export const TicketRepository = {
         const ticketNumbers: Array<{
           number: string;
           amountForNumber: number;
-          type: "NUMERO" | "REVENTADO";
+          type: BetType;
           multiplierId?: string | null
         }> = preparedJugadas.map(j => ({
-          number: j.type === 'NUMERO' ? j.number : j.reventadoNumber!,
+          number: j.type === BetType.NUMERO ? j.number : j.reventadoNumber!,
           amountForNumber: Number(j.amount),
-          type: j.type as "NUMERO" | "REVENTADO",
+          type: j.type as BetType,
           multiplierId: j.multiplierId
         })).filter(n => n.amountForNumber > 0);
 
@@ -1174,7 +1175,7 @@ export const TicketRepository = {
             applicableRules: applicable.map((r, idx) => ({
               index: idx,
               ruleId: r.id,
-              scope: r.userId ? 'USER' : r.ventanaId ? 'VENTANA' : r.bancaId ? 'BANCA' : 'GLOBAL',
+              scope: r.userId ? ReportDimension.VENDEDOR : r.ventanaId ? ReportDimension.VENTANA : r.bancaId ? ReportDimension.BANCA : 'GLOBAL',
               priority: calculatePriorityScore(r),
               hasMaxAmount: r.maxAmount != null,
               hasMaxTotal: r.maxTotal != null,
@@ -1241,7 +1242,7 @@ export const TicketRepository = {
               const resolution = commissionResolver.resolveFromPolicy(parsedPolicy, {
                 userId: ventanaUserId,
                 loteriaId,
-                betType: j.type as "NUMERO" | "REVENTADO",
+                betType: j.type as BetType,
                 finalMultiplierX: j.finalMultiplierX ?? null,
               }, true);
               listeroRes = {
@@ -1416,7 +1417,7 @@ export const TicketRepository = {
         dynamicTimeout,
         hasCommissionContext: !!commissionContext,
         multiplierIds: jugadas
-          .filter((j) => j.type === 'NUMERO' && j.multiplierId)
+          .filter((j) => j.type === BetType.NUMERO && j.multiplierId)
           .map((j) => j.multiplierId),
       },
     });
@@ -1469,7 +1470,7 @@ export const TicketRepository = {
       const numeroMultiplierIds = Array.from(
         new Set(
           jugadas
-            .filter((j) => j.type === 'NUMERO' && j.multiplierId)
+            .filter((j) => j.type === BetType.NUMERO && j.multiplierId)
             .map((j) => j.multiplierId!)
         )
       );
@@ -1786,7 +1787,7 @@ export const TicketRepository = {
             id: string;
             valueX: number;
             isActive: boolean;
-            kind: 'NUMERO' | 'REVENTADO';
+            kind: BetType;
             loteriaId: string;
             name?: string | null;
           }
@@ -1801,7 +1802,7 @@ export const TicketRepository = {
             name: m.name,
             valueX: m.valueX,
             isActive: m.isActive,
-            kind: m.kind as 'NUMERO' | 'REVENTADO',
+            kind: m.kind as BetType,
             loteriaId: m.loteriaId,
           });
         }
@@ -1831,10 +1832,10 @@ export const TicketRepository = {
         const ticketNumbers: Array<{
           number: string;
           amountForNumber: number;
-          type: 'NUMERO' | 'REVENTADO';
+          type: BetType;
           multiplierId?: string | null;
         }> = preparedJugadas.map((j) => ({
-          number: j.type === 'NUMERO' ? j.number : j.reventadoNumber!,
+          number: j.type === BetType.NUMERO ? j.number : j.reventadoNumber!,
           amountForNumber: Number(j.amount),
           type: j.type,
           multiplierId: j.multiplierId || null,
@@ -1853,15 +1854,15 @@ export const TicketRepository = {
             (rule.salesPercentage != null && rule.salesPercentage > 0);
           if (rule.maxTotal != null || hasDynamicLimitConfig) {
             const scopeType = rule.userId
-              ? 'USER'
+              ? ReportDimension.VENDEDOR
               : rule.ventanaId
-                ? 'VENTANA'
+                ? ReportDimension.VENTANA
                 : rule.bancaId
-                  ? 'BANCA'
+                  ? ReportDimension.BANCA
                   : null;
             const scopeId = rule.userId || rule.ventanaId || rule.bancaId;
             const multiplierId = rule.multiplierId
-              ? rule.multiplier?.kind === 'REVENTADO'
+              ? rule.multiplier?.kind === BetType.REVENTADO
                 ? 'REVENTADO'
                 : rule.multiplierId
               : 'NONE';
@@ -1872,9 +1873,9 @@ export const TicketRepository = {
         }
 
         const scopesArray: Array<{
-          scopeType: 'USER' | 'VENTANA' | 'BANCA';
+          scopeType: ReportDimension;
           scopeId: string;
-          multiplierFilter: { id: string; kind: 'NUMERO' | 'REVENTADO' } | null;
+          multiplierFilter: { id: string; kind: BetType } | null;
         }> = [];
 
         for (const scopeKey of scopesToPreload) {
@@ -1882,9 +1883,9 @@ export const TicketRepository = {
           const multiplierFilter =
             multiplierKey === 'NONE'
               ? null
-              : multiplierKey === 'REVENTADO'
-                ? { id: 'REVENTADO', kind: 'REVENTADO' as any }
-                : { id: multiplierKey, kind: 'NUMERO' as any };
+              : multiplierKey === BetType.REVENTADO
+                ? { id: 'REVENTADO', kind: BetType.REVENTADO as any }
+                : { id: multiplierKey, kind: BetType.NUMERO as any };
 
           scopesArray.push({
             scopeType: scopeType as any,
@@ -1981,11 +1982,11 @@ export const TicketRepository = {
               index: idx,
               ruleId: r.id,
               scope: r.userId
-                ? 'USER'
+                ? ReportDimension.VENDEDOR
                 : r.ventanaId
-                  ? 'VENTANA'
+                  ? ReportDimension.VENTANA
                   : r.bancaId
-                    ? 'BANCA'
+                    ? ReportDimension.BANCA
                     : 'GLOBAL',
               priority: calculatePriorityScore(r),
               hasMaxAmount: r.maxAmount != null,
@@ -2025,14 +2026,14 @@ export const TicketRepository = {
         // 11) Comisiones
         const commissionsDetails: any[] = [];
         let jugadasWithCommissions: Array<{
-          type: 'NUMERO' | 'REVENTADO';
+          type: BetType;
           number: string;
           reventadoNumber: string | null;
           amount: number;
           finalMultiplierX: number;
           commissionPercent: number;
           commissionAmount: number;
-          commissionOrigin: 'USER' | 'VENTANA' | 'BANCA' | null;
+          commissionOrigin: "USER" | "VENTANA" | "BANCA" | null;
           commissionRuleId: string | null;
           listeroCommissionAmount: number;
           multiplierId: string | null;
@@ -2048,7 +2049,7 @@ export const TicketRepository = {
 
           const numeroMultiplierMap = new Map<string, string | null>();
           for (const pj of preparedJugadas) {
-            if (pj.type === 'NUMERO') {
+            if (pj.type === BetType.NUMERO) {
               numeroMultiplierMap.set(pj.number, pj.multiplierId);
             }
           }
@@ -2105,9 +2106,9 @@ export const TicketRepository = {
 
             return {
               ...j,
-              reventadoNumber: j.type === 'REVENTADO' ? j.number : null,
+              reventadoNumber: j.type === BetType.REVENTADO ? j.number : null,
               multiplierId:
-                j.type === 'NUMERO'
+                j.type === BetType.NUMERO
                   ? (numeroMultiplierMap.get(j.number) ?? null)
                   : null,
               listeroCommissionAmount,
@@ -2379,9 +2380,9 @@ export const TicketRepository = {
 
             if (targetBancaId) {
               const scopes = [
-                { id: targetBancaId, type: 'BANCA' },
-                { id: ventanaId, type: 'VENTANA' },
-                { id: userId, type: 'USER' }
+                { id: targetBancaId, type: ReportDimension.BANCA },
+                { id: ventanaId, type: ReportDimension.VENTANA },
+                { id: userId, type: ReportDimension.VENDEDOR }
               ];
 
               const keysToExpire = new Set<string>();
@@ -2402,7 +2403,7 @@ export const TicketRepository = {
                   const resolvedJugada = jugadasWithCommissions.find(
                     (jw: any) => jw.number === num && jw.type === j.type
                   );
-                  const multId = j.type === 'REVENTADO' ? 'REVENTADO' : (resolvedJugada?.multiplierId || j.multiplierId);
+                  const multId = j.type === BetType.REVENTADO ? 'REVENTADO' : (resolvedJugada?.multiplierId || j.multiplierId);
                   
                   if (multId) {
                     const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
@@ -2889,9 +2890,9 @@ export const TicketRepository = {
 
           if (targetBancaId) {
             const scopes = [
-              { id: targetBancaId, type: 'BANCA' },
-              { id: ventanaId, type: 'VENTANA' },
-              { id: vendedorId, type: 'USER' }
+              { id: targetBancaId, type: ReportDimension.BANCA },
+              { id: ventanaId, type: ReportDimension.VENTANA },
+              { id: vendedorId, type: ReportDimension.VENDEDOR }
             ];
 
             const keysToExpire = new Set<string>();
@@ -2909,7 +2910,7 @@ export const TicketRepository = {
                 keysToExpire.add(genKey);
 
                 // 2. Restar de la clave por multiplicador si corresponde
-                const multId = j.type === 'REVENTADO' ? 'REVENTADO' : j.multiplierId;
+                const multId = j.type === BetType.REVENTADO ? 'REVENTADO' : j.multiplierId;
                 if (multId) {
                   const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
                   pipeline.hincrbyfloat(multKey, num, -amount);
@@ -3150,19 +3151,19 @@ export const TicketRepository = {
       const [bancaAccumulated, ventanaAccumulated, userAccumulated] = await Promise.all([
         calculateAccumulatedByNumbersAndScope(prisma as any, {
           numbers,
-          scopeType: 'BANCA',
+          scopeType: ReportDimension.BANCA,
           scopeId: effectiveBancaId,
           sorteoId,
         }),
         calculateAccumulatedByNumbersAndScope(prisma as any, {
           numbers,
-          scopeType: 'VENTANA',
+          scopeType: ReportDimension.VENTANA,
           scopeId: user.ventanaId,
           sorteoId,
         }),
         calculateAccumulatedByNumbersAndScope(prisma as any, {
           numbers,
-          scopeType: 'USER',
+          scopeType: ReportDimension.VENDEDOR,
           scopeId: vendedorId,
           sorteoId,
         }),
@@ -3204,8 +3205,8 @@ export const TicketRepository = {
             if (ruleNumbers.length > 0 && !ruleNumbers.includes(num)) continue;
           }
 
-          const scopeType = (rule.appliesToVendedor || rule.userId) ? 'USER' : rule.ventanaId ? 'VENTANA' : 'BANCA';
-          const accumulated = scopeType === 'USER' ? (userAccumulated.get(num) ?? 0) : scopeType === 'VENTANA' ? (ventanaAccumulated.get(num) ?? 0) : (bancaAccumulated.get(num) ?? 0);
+          const scopeType = (rule.appliesToVendedor || rule.userId) ? ReportDimension.VENDEDOR : rule.ventanaId ? ReportDimension.VENTANA : ReportDimension.BANCA;
+          const accumulated = scopeType === ReportDimension.VENDEDOR ? (userAccumulated.get(num) ?? 0) : scopeType === ReportDimension.VENTANA ? (ventanaAccumulated.get(num) ?? 0) : (bancaAccumulated.get(num) ?? 0);
 
           const staticLimit = rule.maxTotal ?? Infinity;
           const dynamicLimit = dynamicLimits.get(rule.id) ?? Infinity;
@@ -3288,7 +3289,7 @@ function validateLoteriaRulesJson(rulesJson: any, jugadas: any[]) {
 
   if (typeof maxNumbersPerTicket === 'number') {
     const uniqueNumeros = new Set(
-      jugadas.filter((j) => j.type === 'NUMERO').map((j) => j.number)
+      jugadas.filter((j) => j.type === BetType.NUMERO).map((j) => j.number)
     );
     if (uniqueNumeros.size > maxNumbersPerTicket) {
       throw new AppError(
@@ -3311,9 +3312,9 @@ function validateAndMapMultipliers(
   warningRuleIds: Set<string>
 ) {
   return jugadas.map((j) => {
-    if (j.type === 'REVENTADO') {
+    if (j.type === BetType.REVENTADO) {
       return {
-        type: 'REVENTADO' as const,
+        type: BetType.REVENTADO,
         number: j.number,
         reventadoNumber: j.reventadoNumber,
         amount: j.amount,
@@ -3337,7 +3338,7 @@ function validateAndMapMultipliers(
         400,
         'INVALID_MULTIPLIER'
       );
-    if (multiplier.kind !== 'NUMERO')
+    if (multiplier.kind !== BetType.NUMERO)
       throw new AppError(
         'Multiplicador incompatible con jugada NUMERO',
         400,
@@ -3378,11 +3379,11 @@ function validateAndMapMultipliers(
     );
 
     if (matchingRule) {
-      const ruleScope: 'USER' | 'VENTANA' | 'BANCA' = matchingRule.userId
-        ? 'USER'
+      const ruleScope: ReportDimension = matchingRule.userId
+        ? ReportDimension.VENDEDOR
         : matchingRule.ventanaId
-          ? 'VENTANA'
-          : 'BANCA';
+          ? ReportDimension.VENTANA
+          : ReportDimension.BANCA;
 
       const loteriaNameForWarning =
         matchingRule.loteria?.name ?? loteriaName;
@@ -3424,7 +3425,7 @@ function validateAndMapMultipliers(
     }
 
     return {
-      type: 'NUMERO' as const,
+      type: BetType.NUMERO,
       number: j.number,
       reventadoNumber: null,
       amount: j.amount,

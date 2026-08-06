@@ -11,11 +11,11 @@ export const UpdateSorteosAutoConfigSchema = z.object({
 }).strict();
 
 export const ExecuteAutoOpenQuerySchema = z.object({
-  dryRun: z.enum(['true', 'false']).optional().transform(val => val === 'true'),
+  dryRun: z.coerce.boolean().optional(),
 }).strict();
 
 export const ExecuteAutoCreateQuerySchema = z.object({
   daysAhead: z.coerce.number().int().min(1).max(30).optional().default(7),
-  dryRun: z.enum(['true', 'false']).optional().transform(val => val === 'true'),
+  dryRun: z.coerce.boolean().optional(),
 }).strict();
 
