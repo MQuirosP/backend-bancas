@@ -8,6 +8,7 @@ import { startSorteosAutoJobs, stopSorteosAutoJobs } from '../jobs/sorteosAuto.j
 import { startAccountStatementSettlementJob, stopAccountStatementSettlementJob } from '../jobs/accountStatementSettlement.job'
 import { startMonthlyClosingJob, stopMonthlyClosingJob } from '../jobs/monthlyClosing.job'
 import { initRedisClient, closeRedisClient } from '../core/redisClient'
+import { initCacheSubscriber } from '../core/cache.service'
 import { startSorteoCacheCleanup, stopSorteoCacheCleanup } from '../utils/sorteoCache'
 import { startCommissionCacheCleanup, stopCommissionCacheCleanup } from '../utils/commissionCache'
 import { restrictionCacheV2 } from '../utils/restrictionCacheV2'

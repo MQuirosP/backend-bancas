@@ -1,4 +1,5 @@
 import { CacheService } from '../core/cache.service';
+import { getRedisClient } from '../core/redisClient';
 import logger from '../core/logger';
 
 /**
@@ -62,7 +63,6 @@ class RestrictionCacheV2 {
   private config: CacheConfig;
   private metrics: CacheMetrics;
   private warmingQueue: Set<string> = new Set();
-  private dependencyGraph: Map<string, Set<string>> = new Map();
   private memoryUsage: number = 0;
   private warmingInterval: NodeJS.Timeout | null = null; // ← AGREGADO: Referencia al interval
 
@@ -200,7 +200,6 @@ class RestrictionCacheV2 {
     });
 
     // Purgar de forma efectiva para liberar Heap
-    this.dependencyGraph.clear();
     this.warmingQueue.clear();
 
     try {
@@ -219,13 +218,14 @@ class RestrictionCacheV2 {
   }
 
   /**
-   * Track dependencies between cache entries
+   * Track dependencies between cache entries (MIGRADO A REDIS)
    */
-  private trackDependency(parentKey: string, dependentKey: string): void {
-    if (!this.dependencyGraph.has(parentKey)) {
-      this.dependencyGraph.set(parentKey, new Set());
+  private async trackDependency(parentKey: string, dependentKey: string): Promise<void> {
+    const redis = getRedisClient();
+    if (redis) {
+      await redis.sadd(`deps:${parentKey}`, dependentKey);
+      await redis.expire(`deps:${parentKey}`, this.config.l3Ttl * 2);
     }
-    this.dependencyGraph.get(parentKey)!.add(dependentKey);
   }
 
   /**
@@ -304,7 +304,7 @@ class RestrictionCacheV2 {
 
       // Track dependencies
       for (const dep of dependencies) {
-        this.trackDependency(dep, key);
+        await this.trackDependency(dep, key);
       }
 
       this.updateMemoryUsage(size);
@@ -345,19 +345,22 @@ class RestrictionCacheV2 {
       this.metrics.deletes++;
 
       // Invalidate dependencies
-      const dependents = this.dependencyGraph.get(key);
-      if (dependents) {
+      const redis = getRedisClient();
+      let dependentsCount = 0;
+      if (redis) {
+        const dependents = await redis.smembers(`deps:${key}`);
+        dependentsCount = dependents.length;
         for (const dependent of dependents) {
           await this.delete(dependent);
           this.metrics.invalidations++;
         }
-        this.dependencyGraph.delete(key);
+        await redis.del(`deps:${key}`);
       }
 
       logger.debug({
         layer: 'cache',
         action: 'CACHE_DELETE_V2',
-        payload: { key, dependentsCount: dependents?.size || 0 },
+        payload: { key, dependentsCount },
       });
     } catch (error) {
       logger.warn({
@@ -441,17 +444,8 @@ class RestrictionCacheV2 {
    * Purgar dependencias obsoletas del grafo
    */
   private async pruneDependencyGraph(): Promise<void> {
-    const keys = Array.from(this.dependencyGraph.keys());
-    for (const key of keys) {
-      try {
-        const entry = await CacheService.get(key);
-        if (!entry) {
-          this.dependencyGraph.delete(key);
-        }
-      } catch {
-        // Ignorar error de obtención
-      }
-    }
+    // Ya no es necesario purgar manualmente la memoria, Redis expira la llave `deps:`
+    // o se borra durante la invalidación en cascada.
   }
 
   /**

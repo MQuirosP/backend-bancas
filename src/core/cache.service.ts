@@ -1,7 +1,24 @@
-import { getRedisClient, isRedisAvailable } from './redisClient';
+import { getRedisClient, isRedisAvailable, redisSubscriber } from './redisClient';
 import { config } from '../config';
 import logger from './logger';
 import { ResilienceService } from './resilience.service';
+import { EventEmitter } from 'events';
+
+export const CacheEvents = new EventEmitter();
+let isSubscribed = false;
+
+export function initCacheSubscriber() {
+    if (!redisSubscriber || isSubscribed) return;
+    isSubscribed = true;
+    
+    redisSubscriber.subscribe('cache:invalidate');
+    redisSubscriber.on('message', (channel: string, message: string) => {
+        if (channel === 'cache:invalidate') {
+            l1Cache.delete(message);
+            CacheEvents.emit('invalidate', message);
+        }
+    });
+}
 
 // OPTIMIZACIÓN L1: Caché en memoria para mitigar latencia de red y DB
 interface L1Entry { data: any; expiresAt: number; }
@@ -225,6 +242,7 @@ export class CacheService {
 
         try {
             await redis.del(key);
+            redis.publish('cache:invalidate', key);
         } catch (error) {
             logger.warn({ layer: 'cache', action: 'DEL_ERROR', payload: { key, error: (error as Error).message } });
         }
@@ -255,6 +273,10 @@ export class CacheService {
                 pipeline.del(...keys);
                 pipeline.del(tagKey);
                 await pipeline.exec();
+                
+                for (const k of keys) {
+                    redis.publish('cache:invalidate', k);
+                }
                 
                 logger.info({
                     layer: 'cache',

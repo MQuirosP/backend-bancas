@@ -8,6 +8,7 @@ import { config } from '../config';
  */
 
 let redisClient: Redis | any = null;
+export let redisSubscriber: Redis | any = null;
 let redisAvailable = false;
 
 // ── CIRCUIT BREAKER LIGERO ────────────────────────────────────────────────────
@@ -107,6 +108,10 @@ export async function initRedisClient(): Promise<void> {
             enableOfflineQueue: false, //  EVITAR MEMORY LEAK: No encolar comandos en memoria si Redis está caído
         });
 
+        // Cliente duplicado exclusivo para Pub/Sub
+        redisSubscriber = redisClient.duplicate();
+        redisSubscriber.on('error', () => { /* Manejo silencioso */ });
+
         // Event handlers
         redisClient.on('error', (err: Error) => {
             // Evitamos loguear errores de conexión repetitivos si ya sabemos que está caído
@@ -183,6 +188,10 @@ export async function closeRedisClient(): Promise<void> {
     if (redisClient) {
         try {
             await redisClient.quit();
+            if (redisSubscriber) {
+                await redisSubscriber.quit();
+                redisSubscriber = null;
+            }
             logger.info({ layer: 'redis', action: 'DISCONNECTED' });
         } catch (error) {
             logger.error({
