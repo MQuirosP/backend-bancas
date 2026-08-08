@@ -6,6 +6,7 @@ import { success } from "../../../utils/responses";
 import { Role } from "../../../generated/prisma/client";
 import { resolveDateRange, DateRangeResolution } from "../../../utils/dateRange";
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
+import { AppError } from "../../../core/errors";
 
 import { IdempotencyService } from "../../../services/idempotency.service";
 
@@ -117,6 +118,37 @@ export const TicketController = {
   async getById(req: AuthenticatedRequest, res: Response) {
     const bancaId = req.bancaContext?.bancaId || undefined;
     const result = await TicketService.getById(req.params.id, bancaId);
+
+    // Validar estrictamente contra RBAC (Protección IDOR)
+    const context: AuthContext = {
+      userId: req.user!.id,
+      role: req.user!.role,
+      ventanaId: req.user!.ventanaId,
+      bancaId: bancaId || null,
+    };
+    
+    const effectiveFilters = await applyRbacFilters(context, {});
+
+    // Si el usuario es un Vendedor o la estrategia forzó un vendedorId
+    if (effectiveFilters.vendedorId && result.vendedorId !== effectiveFilters.vendedorId) {
+      req.logger?.warn({
+        layer: "controller",
+        action: "TICKET_GET_BY_ID_FORBIDDEN_VENDEDOR",
+        payload: { ticketId: result.id, requestedBy: context.userId, ticketVendedorId: result.vendedorId }
+      });
+      throw new AppError("No autorizado para ver este ticket", 403);
+    }
+
+    // Si el usuario es una Ventana o la estrategia forzó un ventanaId
+    if (effectiveFilters.ventanaId && result.ventanaId !== effectiveFilters.ventanaId) {
+      req.logger?.warn({
+        layer: "controller",
+        action: "TICKET_GET_BY_ID_FORBIDDEN_VENTANA",
+        payload: { ticketId: result.id, requestedBy: context.userId, ticketVentanaId: result.ventanaId }
+      });
+      throw new AppError("No autorizado para ver este ticket", 403);
+    }
+
     return success(res, result);
   },
 
