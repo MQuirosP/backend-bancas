@@ -1470,10 +1470,10 @@ export const TicketService = {
             COUNT(DISTINCT CASE WHEN j.type::text = ${BetType.NUMERO} THEN t.id END)::INT as "ticketsByNumber",
             COUNT(DISTINCT CASE WHEN j.type::text = ${BetType.REVENTADO} THEN t.id END)::INT as "ticketsByReventado",
             SUM(CASE WHEN j.type::text = ${BetType.NUMERO} ${params.multiplierId ? Prisma.sql`AND j."multiplierId" = CAST(${params.multiplierId} AS uuid)` : Prisma.empty} 
-              THEN ${params.dimension === "listero" || params.ventanaId ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
+              THEN ${params.dimension === "listero" || (params.ventanaId && !params.vendedorId) ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
               ELSE 0 END)::FLOAT as "commissionByNumber",
             SUM(CASE WHEN j.type::text = ${BetType.REVENTADO} 
-              THEN ${params.dimension === "listero" || params.ventanaId ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
+              THEN ${params.dimension === "listero" || (params.ventanaId && !params.vendedorId) ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} 
               ELSE 0 END)::FLOAT as "commissionByReventado"
           FROM "Ticket" t
           ${params.sorteoStatus ? Prisma.sql`INNER JOIN "Sorteo" s ON t."sorteoId" = s.id` : Prisma.empty}
