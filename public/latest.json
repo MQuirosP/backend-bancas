@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.13",
-  "versionCode": 19,
-  "buildNumber": 19,
+  "versionName": "1.0.14",
+  "versionCode": 20,
+  "buildNumber": 20,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Optimizacion para historial.",
-  "releasedAt": "2026-07-21T19:15:00Z",
+  "changelog": "Botón vista lista en crear ticket.",
+  "releasedAt": "2026-08-08T04:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "aa01137ae9cf2fced578640f1c197a366c8f18da7b384a41dadf743b612aa9f3"
+      "sha256": "b103d69cb2fce6d028c7f1efb4ead90352c315b4c763e5e752d9c59d67cc7b2c"
     },
     "arm64-v8a": {
-      "sha256": "aa01137ae9cf2fced578640f1c197a366c8f18da7b384a41dadf743b612aa9f3"
+      "sha256": "b103d69cb2fce6d028c7f1efb4ead90352c315b4c763e5e752d9c59d67cc7b2c"
     }
   }
 }
