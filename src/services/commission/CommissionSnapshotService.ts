@@ -397,8 +397,11 @@ export class CommissionSnapshotService {
     filters: CommissionSnapshotFilters
   ): Promise<Map<string, { totalCommission: number; totalListeroCommission: number; totalSales: number }>> {
     const result = new Map<string, { totalCommission: number; totalListeroCommission: number; totalSales: number }>();
+    const startTime = performance.now();
+    let totalChunks = 0;
 
     for await (const chunk of this.getSnapshotsForPeriodStream(filters)) {
+      totalChunks++;
       for (const snap of chunk) {
         const existing = result.get(snap.ventanaId) || {
           totalCommission: 0,
@@ -414,6 +417,16 @@ export class CommissionSnapshotService {
       }
     }
 
+    logger.info({
+      layer: 'commission',
+      action: 'AGGREGATION_STREAM_COMPLETED',
+      payload: {
+        method: 'aggregateSnapshotsByVentana',
+        totalChunks,
+        totalTimeMs: Math.round(performance.now() - startTime),
+      },
+    });
+
     return result;
   }
 
@@ -424,8 +437,11 @@ export class CommissionSnapshotService {
     filters: CommissionSnapshotFilters
   ): Promise<Map<string, { totalCommission: number; totalListeroCommission: number; totalSales: number }>> {
     const result = new Map<string, { totalCommission: number; totalListeroCommission: number; totalSales: number }>();
+    const startTime = performance.now();
+    let totalChunks = 0;
 
     for await (const chunk of this.getSnapshotsForPeriodStream(filters)) {
+      totalChunks++;
       for (const snap of chunk) {
         if (!snap.vendedorId) continue;
 
@@ -442,6 +458,16 @@ export class CommissionSnapshotService {
         result.set(snap.vendedorId, existing);
       }
     }
+
+    logger.info({
+      layer: 'commission',
+      action: 'AGGREGATION_STREAM_COMPLETED',
+      payload: {
+        method: 'aggregateSnapshotsByVendedor',
+        totalChunks,
+        totalTimeMs: Math.round(performance.now() - startTime),
+      },
+    });
 
     return result;
   }

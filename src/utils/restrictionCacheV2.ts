@@ -177,9 +177,9 @@ class RestrictionCacheV2 {
     this.metrics.memoryUsage = this.memoryUsage;
 
     // GLOBAL CIRCUIT BREAKER: Solo purgar de emergencia si el heap V8 real
-    // está en peligro (> 400 MB), no por el conteo local estimado.
+    // está en peligro (> 450 MB), no por el conteo local estimado.
     const heapUsedMB = process.memoryUsage().heapUsed / 1024 / 1024;
-    const isGlobalHeapCritical = heapUsedMB > 400;
+    const isGlobalHeapCritical = heapUsedMB > 450;
 
     // Límite local suave (por cantidad de datos estimados)
     const isLocalLimitExceeded = this.memoryUsage > this.config.maxMemory * 1024 * 1024;
