@@ -132,7 +132,7 @@ const queryBoolean = z.preprocess((v) => {
 export const listUsersQuerySchema = z
   .object({
     page: z.coerce.number().int().min(1).optional(),
-    pageSize: z.coerce.number().int().min(1).max(100).optional(),
+    pageSize: z.coerce.number().int().min(1).max(1000).optional(),
     role: z.enum(Role).optional(),
     search: z
       .string()
