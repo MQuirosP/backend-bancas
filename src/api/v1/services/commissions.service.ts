@@ -130,7 +130,7 @@ export const CommissionsService = {
           conditions.push(Prisma.sql`"vendedorId" IS NOT NULL`);
         }
         if (filters.ventanaId && isUuid(filters.ventanaId)) {
-          conditions.push(Prisma.sql`"ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
+          conditions.push(Prisma.sql`"vendedorId" IN (SELECT id FROM "User" WHERE "ventanaId" = CAST(${filters.ventanaId} AS uuid))`);
         }
       } else if (filters.dimension === "ventana") {
         conditions.push(Prisma.sql`"vendedorId" IS NULL`); // Usamos filas consolidadas de ventana
@@ -154,7 +154,7 @@ export const CommissionsService = {
         SELECT
           date,
           ${!shouldGroupByDate && isVentana ? Prisma.sql`"ventanaId" as entity_id, (SELECT name FROM "Ventana" WHERE id = "AccountStatement"."ventanaId") as entity_name,` : Prisma.empty}
-          ${!shouldGroupByDate && isVendedor ? Prisma.sql`"vendedorId" as entity_id, (SELECT name FROM "User" WHERE id = "AccountStatement"."vendedorId") as entity_name, "ventanaId" as extra_id, (SELECT name FROM "Ventana" WHERE id = "AccountStatement"."ventanaId") as extra_name,` : Prisma.empty}
+          ${!shouldGroupByDate && isVendedor ? Prisma.sql`"vendedorId" as entity_id, (SELECT name FROM "User" WHERE id = "AccountStatement"."vendedorId") as entity_name, (SELECT "ventanaId" FROM "User" WHERE id = "AccountStatement"."vendedorId") as extra_id, (SELECT v.name FROM "User" u JOIN "Ventana" v ON v.id = u."ventanaId" WHERE u.id = "AccountStatement"."vendedorId") as extra_name,` : Prisma.empty}
           SUM("totalSales")::float as total_sales,
           SUM("ticketCount")::int as total_tickets,
           SUM("listeroCommission")::float as commission_listero,
