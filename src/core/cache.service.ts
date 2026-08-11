@@ -30,6 +30,17 @@ const inFlightPromises = new Map<string, Promise<any>>();
 export const L1_TTL_RESTRICTIONS_MS = 30_000;  // 30 segundos — bloqueos de números rápidos
 export const L1_TTL_CUTOFF_MS      = 60_000;   // 60 segundos — cutoffs son más estables
 
+/**
+ * Desaloja la entrada más antigua del L1 cache (política FIFO).
+ * Map preserva orden de inserción en JS/TS, por lo que el primer
+ * elemento es siempre el más viejo. Evita el cache stampede que
+ * provocaba l1Cache.clear() al borrar todas las hot-keys de golpe.
+ */
+function evictOldestL1Entry(): void {
+    const firstKey = l1Cache.keys().next().value;
+    if (firstKey !== undefined) l1Cache.delete(firstKey);
+}
+
 // Limpieza periódica de entradas expiradas (cada 5 minutos)
 setInterval(() => {
     const now = Date.now();
@@ -79,7 +90,7 @@ export class CacheService {
 
                 // BACKFILL L1: Si se solicitó L1 y hubo hit en L2, guardar en L1 con el TTL correcto
                 if (useL1) {
-                    if (l1Cache.size >= MAX_L1_SIZE) l1Cache.clear();
+                    if (l1Cache.size >= MAX_L1_SIZE) evictOldestL1Entry();
                     l1Cache.set(key, { data: parsed, expiresAt: Date.now() + l1TtlMs });
                 }
 
@@ -158,7 +169,7 @@ export class CacheService {
                     result.set(key, parsed);
                     // Backfill L1
                     if (useL1) {
-                        if (l1Cache.size >= MAX_L1_SIZE) l1Cache.clear();
+                        if (l1Cache.size >= MAX_L1_SIZE) evictOldestL1Entry();
                         l1Cache.set(key, { data: parsed, expiresAt: Date.now() + l1TtlMs });
                     }
                 } else {
@@ -201,7 +212,7 @@ export class CacheService {
     ): Promise<void> {
         // 1. OPTIMIZACIÓN L1 (Memory) con TTL explícito por tipo de dato
         if (useL1) {
-            if (l1Cache.size >= MAX_L1_SIZE) l1Cache.clear();
+            if (l1Cache.size >= MAX_L1_SIZE) evictOldestL1Entry();
             l1Cache.set(key, { data: value, expiresAt: Date.now() + l1TtlMs });
         }
 

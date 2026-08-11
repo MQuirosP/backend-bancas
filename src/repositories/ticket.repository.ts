@@ -23,6 +23,7 @@ interface CachedRules {
 }
 
 const RULES_CACHE_TTL_MS = 60_000; // 60 segundos
+const MAX_RULES_CACHE_SIZE = 500;  // Máximo de combinaciones userId:ventanaId:bancaId en memoria
 
 /**
  * Cache en memoria para RestrictionRules activas.
@@ -31,6 +32,16 @@ const RULES_CACHE_TTL_MS = 60_000; // 60 segundos
  * endpoint PATCH /restriction-rules/:id y POST/DELETE equivalentes.
  */
 const restrictionRulesCache = new Map<string, CachedRules>();
+
+// Limpieza periódica de entradas expiradas (cada 2 minutos).
+// Necesario porque la limpieza lazy (en getCachedRestrictionRules)
+// no elimina claves que se escriben pero nunca vuelven a consultarse.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of restrictionRulesCache.entries()) {
+    if (entry.expiresAt < now) restrictionRulesCache.delete(key);
+  }
+}, 120_000).unref();
 
 export function buildRulesCacheKey(params: {
   userId: string;
@@ -51,6 +62,12 @@ export function getCachedRestrictionRules(key: string): any[] | null {
 }
 
 export function setCachedRestrictionRules(key: string, rules: any[]): void {
+  // Desalojar la entrada más antigua (FIFO) antes de insertar si se alcanzó el límite.
+  // Map preserva orden de inserción, por lo que el primer elemento es siempre el más viejo.
+  if (restrictionRulesCache.size >= MAX_RULES_CACHE_SIZE) {
+    const firstKey = restrictionRulesCache.keys().next().value;
+    if (firstKey !== undefined) restrictionRulesCache.delete(firstKey);
+  }
   restrictionRulesCache.set(key, {
     rules,
     expiresAt: Date.now() + RULES_CACHE_TTL_MS,

@@ -22,6 +22,16 @@ export class ResilienceService {
     private static initialized = false;
 
     /**
+     * Desaloja la entrada más antigua del L1 cache de resiliencia (política FIFO).
+     * Reemplaza el .clear() masivo para evitar que todas las claves queden
+     * sin caché simultáneamente (cache stampede).
+     */
+    private static evictOldestL1Entry(): void {
+        const firstKey = this.l1Cache.keys().next().value;
+        if (firstKey !== undefined) this.l1Cache.delete(firstKey);
+    }
+
+    /**
      * Inicializa los breakers con las configuraciones de hardening
      */
     static init() {
@@ -84,6 +94,15 @@ export class ResilienceService {
         this.setupLogging(this.prismaBreaker, 'Prisma');
         this.setupLogging(this.redisBreaker, 'Redis');
 
+        // Limpieza periódica del L1 cache: elimina entradas expiradas cada 30s.
+        // Previene acumulación indefinida de claves que se escriben pero nunca se vuelven a leer.
+        setInterval(() => {
+            const now = Date.now();
+            for (const [key, entry] of this.l1Cache.entries()) {
+                if (entry.expiry <= now) this.l1Cache.delete(key);
+            }
+        }, 30_000).unref();
+
         this.initialized = true;
     }
 
@@ -128,7 +147,7 @@ export class ResilienceService {
         const promise = this.redisBreaker.fire(action).then(result => {
             if (result !== undefined) {
                 if (this.l1Cache.size >= this.MAX_L1_SIZE) {
-                    this.l1Cache.clear(); // Limpiar para prevenir fuga de memoria
+                    this.evictOldestL1Entry(); // Desalojo FIFO: evita cache stampede
                 }
                 this.l1Cache.set(key, {
                     value: result,

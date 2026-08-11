@@ -4,6 +4,15 @@ import logger from "../../core/logger";
 import { CommissionSnapshot } from "./types/CommissionTypes";
 
 /**
+ * Límite de seguridad: cantidad máxima de jugadas que se materializarán en el heap
+ * de Node.js en una sola llamada. Con ~200 bytes por jugada serializada y 50k registros,
+ * el costo máximo es ~10 MB, asumible en 512 MB de RAM.
+ * Si se alcanza este tope, se emite un warning para que el equipo pueda migrar
+ * ese caller a una estrategia de streaming o paginación.
+ */
+const MAX_JUGADAS_FETCH = 50_000;
+
+/**
  * Filtros para leer snapshots
  */
 export interface CommissionSnapshotFilters {
@@ -141,7 +150,23 @@ export class CommissionSnapshotService {
           },
         },
       },
+      take: MAX_JUGADAS_FETCH,
+      orderBy: { id: 'asc' },
     });
+
+    // Guard: si se alcanzó el tope, los datos podrían estar truncados.
+    // El caller debería migrar a una estrategia de streaming o paginación.
+    if (jugadas.length === MAX_JUGADAS_FETCH) {
+      logger.warn({
+        layer: 'commission',
+        action: 'JUGADAS_FETCH_LIMIT_REACHED',
+        payload: {
+          method: 'getSnapshotsForTicketWhere',
+          limit: MAX_JUGADAS_FETCH,
+          message: 'Se alcanzó el límite de jugadas por query. Los resultados pueden estar truncados. Considerar paginación o streaming.',
+        },
+      });
+    }
 
     const result = new Map<string, SnapshotWithTicket[]>();
 
@@ -258,7 +283,32 @@ export class CommissionSnapshotService {
           },
         },
       },
+      take: MAX_JUGADAS_FETCH,
+      orderBy: { id: 'asc' },
     });
+
+    // Guard: si se alcanzó el tope, los datos podrían estar truncados.
+    if (jugadas.length === MAX_JUGADAS_FETCH) {
+      logger.warn({
+        layer: 'commission',
+        action: 'JUGADAS_FETCH_LIMIT_REACHED',
+        payload: {
+          method: 'getSnapshotsForPeriod',
+          limit: MAX_JUGADAS_FETCH,
+          filters: {
+            ventanaId: filters.ventanaId,
+            vendedorId: filters.vendedorId,
+            bancaId: filters.bancaId,
+            sorteoId: filters.sorteoId,
+            loteriaId: filters.loteriaId,
+            dateFrom: filters.dateFrom?.toISOString(),
+            dateTo: filters.dateTo?.toISOString(),
+            ticketIdsCount: filters.ticketIds?.length,
+          },
+          message: 'Se alcanzó el límite de jugadas por query. Los resultados pueden estar truncados. Considerar paginación o streaming.',
+        },
+      });
+    }
 
     return jugadas.map((jugada) => {
       const snapshot: CommissionSnapshot = {
