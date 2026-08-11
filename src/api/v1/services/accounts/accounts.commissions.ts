@@ -22,23 +22,17 @@ export async function computeListeroCommissionsForWhere(
 ): Promise<Map<string, number>> {
     const result = new Map<string, number>();
 
-    //  OPTIMIZACIÓN: Query única con JOIN en lugar del patrón dos-pasos (ticket IDs → IN masiva)
-    const snapshotsByTicket = await commissionSnapshotService.getSnapshotsForTicketWhere(ticketWhere);
+    //  OPTIMIZACIÓN: Streaming con cursor para no saturar la memoria
+    const stream = commissionSnapshotService.getSnapshotsForTicketWhereStream(ticketWhere);
 
-    // Agregar por ventana usando snapshots
-    for (const [ticketId, snapshots] of snapshotsByTicket.entries()) {
-        // Obtener ventanaId del primer snapshot (todos los snapshots de un ticket tienen la misma ventanaId)
-        if (snapshots.length === 0) continue;
-        const ventanaId = snapshots[0].ventanaId;
+    for await (const chunk of stream) {
+        for (const snap of chunk) {
+            const ventanaId = snap.ventanaId;
+            const listeroComm = snap.listeroSnapshot.commissionAmount;
 
-        // Sumar comisiones del listero desde snapshots
-        const totalListeroCommission = snapshots.reduce(
-            (sum, snap) => sum + snap.listeroSnapshot.commissionAmount,
-            0
-        );
-
-        if (totalListeroCommission > 0) {
-            result.set(ventanaId, (result.get(ventanaId) || 0) + totalListeroCommission);
+            if (listeroComm > 0) {
+                result.set(ventanaId, (result.get(ventanaId) || 0) + listeroComm);
+            }
         }
     }
 

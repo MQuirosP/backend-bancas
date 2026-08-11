@@ -4,15 +4,6 @@ import logger from "../../core/logger";
 import { CommissionSnapshot } from "./types/CommissionTypes";
 
 /**
- * Límite de seguridad: cantidad máxima de jugadas que se materializarán en el heap
- * de Node.js en una sola llamada. Con ~200 bytes por jugada serializada y 50k registros,
- * el costo máximo es ~10 MB, asumible en 512 MB de RAM.
- * Si se alcanza este tope, se emite un warning para que el equipo pueda migrar
- * ese caller a una estrategia de streaming o paginación.
- */
-const MAX_JUGADAS_FETCH = 50_000;
-
-/**
  * Filtros para leer snapshots
  */
 export interface CommissionSnapshotFilters {
@@ -122,99 +113,93 @@ export class CommissionSnapshotService {
 
   /**
    * Lee snapshots de comisiones usando un TicketWhereInput directamente.
-   * Evita el patrón dos-pasos (ticket IDs → IN clause masiva) empujando
-   * el filtro al JOIN de Prisma. Retorna el mismo Map que getSnapshotsForTickets.
+   * Utiliza streaming por cursores (AsyncGenerator) para procesar millones
+   * de jugadas sin colapsar el Heap V8 (Memory Safe).
    */
-  async getSnapshotsForTicketWhere(
+  async *getSnapshotsForTicketWhereStream(
     ticketWhere: Prisma.TicketWhereInput
-  ): Promise<Map<string, SnapshotWithTicket[]>> {
-    const jugadas = await prisma.jugada.findMany({
-      where: {
-        deletedAt: null,
-        ticket: ticketWhere,
-      },
-      select: {
-        id: true,
-        ticketId: true,
-        amount: true,
-        commissionAmount: true,
-        commissionPercent: true,
-        commissionOrigin: true,
-        commissionRuleId: true,
-        listeroCommissionAmount: true,
-        ticket: {
-          select: {
-            loteriaId: true,
-            ventanaId: true,
-            vendedorId: true,
+  ): AsyncGenerator<SnapshotWithTicket[]> {
+    const CHUNK_SIZE = 10_000;
+    let lastId: string | undefined = undefined;
+    let hasMore = true;
+
+    while (hasMore) {
+      const jugadas: any[] = await prisma.jugada.findMany({
+        where: {
+          deletedAt: null,
+          ticket: ticketWhere,
+          ...(lastId !== undefined ? { id: { gt: lastId } } : {}),
+        },
+        select: {
+          id: true,
+          ticketId: true,
+          amount: true,
+          commissionAmount: true,
+          commissionPercent: true,
+          commissionOrigin: true,
+          commissionRuleId: true,
+          listeroCommissionAmount: true,
+          ticket: {
+            select: {
+              loteriaId: true,
+              ventanaId: true,
+              vendedorId: true,
+            },
           },
         },
-      },
-      take: MAX_JUGADAS_FETCH,
-      orderBy: { id: 'asc' },
-    });
-
-    // Guard: si se alcanzó el tope, los datos podrían estar truncados.
-    // El caller debería migrar a una estrategia de streaming o paginación.
-    if (jugadas.length === MAX_JUGADAS_FETCH) {
-      logger.warn({
-        layer: 'commission',
-        action: 'JUGADAS_FETCH_LIMIT_REACHED',
-        payload: {
-          method: 'getSnapshotsForTicketWhere',
-          limit: MAX_JUGADAS_FETCH,
-          message: 'Se alcanzó el límite de jugadas por query. Los resultados pueden estar truncados. Considerar paginación o streaming.',
-        },
+        take: CHUNK_SIZE,
+        orderBy: { id: 'asc' },
       });
+
+      if (jugadas.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      lastId = jugadas[jugadas.length - 1].id;
+
+      const chunk: SnapshotWithTicket[] = jugadas.map((jugada) => {
+        const snapshot: CommissionSnapshot = {
+          commissionPercent: jugada.commissionPercent ?? 0,
+          commissionAmount: jugada.commissionAmount ?? 0,
+          commissionOrigin: (jugada.commissionOrigin as "USER" | "VENTANA" | "BANCA" | null) ?? null,
+          commissionRuleId: jugada.commissionRuleId ?? null,
+        };
+
+        const listeroSnapshot: CommissionSnapshot = {
+          commissionPercent: jugada.listeroCommissionAmount && jugada.amount > 0
+            ? (jugada.listeroCommissionAmount / jugada.amount) * 100
+            : 0,
+          commissionAmount: jugada.listeroCommissionAmount ?? 0,
+          commissionOrigin: jugada.listeroCommissionAmount && jugada.listeroCommissionAmount > 0
+            ? "VENTANA"
+            : null,
+          commissionRuleId: null,
+        };
+
+        return {
+          ticketId: jugada.ticketId,
+          jugadaId: jugada.id,
+          snapshot,
+          listeroSnapshot,
+          amount: jugada.amount,
+          loteriaId: jugada.ticket.loteriaId,
+          ventanaId: jugada.ticket.ventanaId,
+          vendedorId: jugada.ticket.vendedorId,
+        };
+      });
+
+      yield chunk;
     }
-
-    const result = new Map<string, SnapshotWithTicket[]>();
-
-    for (const jugada of jugadas) {
-      const snapshot: CommissionSnapshot = {
-        commissionPercent: jugada.commissionPercent ?? 0,
-        commissionAmount: jugada.commissionAmount ?? 0,
-        commissionOrigin: (jugada.commissionOrigin as "USER" | "VENTANA" | "BANCA" | null) ?? null,
-        commissionRuleId: jugada.commissionRuleId ?? null,
-      };
-
-      const listeroSnapshot: CommissionSnapshot = {
-        commissionPercent: jugada.listeroCommissionAmount && jugada.amount > 0
-          ? (jugada.listeroCommissionAmount / jugada.amount) * 100
-          : 0,
-        commissionAmount: jugada.listeroCommissionAmount ?? 0,
-        commissionOrigin: jugada.listeroCommissionAmount && jugada.listeroCommissionAmount > 0
-          ? "VENTANA"
-          : null,
-        commissionRuleId: null,
-      };
-
-      const snapshotWithTicket: SnapshotWithTicket = {
-        ticketId: jugada.ticketId,
-        jugadaId: jugada.id,
-        snapshot,
-        listeroSnapshot,
-        amount: jugada.amount,
-        loteriaId: jugada.ticket.loteriaId,
-        ventanaId: jugada.ticket.ventanaId,
-        vendedorId: jugada.ticket.vendedorId,
-      };
-
-      const existing = result.get(jugada.ticketId) || [];
-      existing.push(snapshotWithTicket);
-      result.set(jugada.ticketId, existing);
-    }
-
-    return result;
   }
 
   /**
    * Lee snapshots de comisiones para un periodo específico
-   * Usa filtros flexibles para diferentes casos de uso
+   * Usa streaming por cursores (AsyncGenerator)
    */
-  async getSnapshotsForPeriod(
+  async *getSnapshotsForPeriodStream(
     filters: CommissionSnapshotFilters
-  ): Promise<SnapshotWithTicket[]> {
+  ): AsyncGenerator<SnapshotWithTicket[]> {
     // Construir condiciones del ticket de forma incremental
     const ticketConditions: Prisma.TicketWhereInput = {
       deletedAt: null,
@@ -264,82 +249,77 @@ export class CommissionSnapshotService {
       whereConditions.ticketId = { in: filters.ticketIds };
     }
 
-    const jugadas = await prisma.jugada.findMany({
-      where: whereConditions,
-      select: {
-        id: true,
-        ticketId: true,
-        amount: true,
-        commissionAmount: true,
-        commissionPercent: true,
-        commissionOrigin: true,
-        commissionRuleId: true,
-        listeroCommissionAmount: true,
-        ticket: {
-          select: {
-            loteriaId: true,
-            ventanaId: true,
-            vendedorId: true,
-          },
-        },
-      },
-      take: MAX_JUGADAS_FETCH,
-      orderBy: { id: 'asc' },
-    });
+    const CHUNK_SIZE = 10_000;
+    let lastId: string | undefined = undefined;
+    let hasMore = true;
 
-    // Guard: si se alcanzó el tope, los datos podrían estar truncados.
-    if (jugadas.length === MAX_JUGADAS_FETCH) {
-      logger.warn({
-        layer: 'commission',
-        action: 'JUGADAS_FETCH_LIMIT_REACHED',
-        payload: {
-          method: 'getSnapshotsForPeriod',
-          limit: MAX_JUGADAS_FETCH,
-          filters: {
-            ventanaId: filters.ventanaId,
-            vendedorId: filters.vendedorId,
-            bancaId: filters.bancaId,
-            sorteoId: filters.sorteoId,
-            loteriaId: filters.loteriaId,
-            dateFrom: filters.dateFrom?.toISOString(),
-            dateTo: filters.dateTo?.toISOString(),
-            ticketIdsCount: filters.ticketIds?.length,
-          },
-          message: 'Se alcanzó el límite de jugadas por query. Los resultados pueden estar truncados. Considerar paginación o streaming.',
+    while (hasMore) {
+      const jugadas: any[] = await prisma.jugada.findMany({
+        where: {
+          ...whereConditions,
+          ...(lastId !== undefined ? { id: { gt: lastId } } : {}),
         },
+        select: {
+          id: true,
+          ticketId: true,
+          amount: true,
+          commissionAmount: true,
+          commissionPercent: true,
+          commissionOrigin: true,
+          commissionRuleId: true,
+          listeroCommissionAmount: true,
+          ticket: {
+            select: {
+              loteriaId: true,
+              ventanaId: true,
+              vendedorId: true,
+            },
+          },
+        },
+        take: CHUNK_SIZE,
+        orderBy: { id: 'asc' },
       });
+
+      if (jugadas.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      lastId = jugadas[jugadas.length - 1].id;
+
+      const chunk: SnapshotWithTicket[] = jugadas.map((jugada) => {
+        const snapshot: CommissionSnapshot = {
+          commissionPercent: jugada.commissionPercent ?? 0,
+          commissionAmount: jugada.commissionAmount ?? 0,
+          commissionOrigin: (jugada.commissionOrigin as "USER" | "VENTANA" | "BANCA" | null) ?? null,
+          commissionRuleId: jugada.commissionRuleId ?? null,
+        };
+
+        const listeroSnapshot: CommissionSnapshot = {
+          commissionPercent: jugada.listeroCommissionAmount && jugada.amount > 0
+            ? (jugada.listeroCommissionAmount / jugada.amount) * 100
+            : 0,
+          commissionAmount: jugada.listeroCommissionAmount ?? 0,
+          commissionOrigin: jugada.listeroCommissionAmount && jugada.listeroCommissionAmount > 0
+            ? "VENTANA"
+            : null,
+          commissionRuleId: null,
+        };
+
+        return {
+          ticketId: jugada.ticketId,
+          jugadaId: jugada.id,
+          snapshot,
+          listeroSnapshot,
+          amount: jugada.amount,
+          loteriaId: jugada.ticket.loteriaId,
+          ventanaId: jugada.ticket.ventanaId,
+          vendedorId: jugada.ticket.vendedorId,
+        };
+      });
+
+      yield chunk;
     }
-
-    return jugadas.map((jugada) => {
-      const snapshot: CommissionSnapshot = {
-        commissionPercent: jugada.commissionPercent ?? 0,
-        commissionAmount: jugada.commissionAmount ?? 0,
-        commissionOrigin: (jugada.commissionOrigin as "USER" | "VENTANA" | "BANCA" | null) ?? null,
-        commissionRuleId: jugada.commissionRuleId ?? null,
-      };
-
-      const listeroSnapshot: CommissionSnapshot = {
-        commissionPercent: jugada.listeroCommissionAmount && jugada.amount > 0
-          ? (jugada.listeroCommissionAmount / jugada.amount) * 100
-          : 0,
-        commissionAmount: jugada.listeroCommissionAmount ?? 0,
-        commissionOrigin: jugada.listeroCommissionAmount && jugada.listeroCommissionAmount > 0
-          ? "VENTANA"
-          : null,
-        commissionRuleId: null,
-      };
-
-      return {
-        ticketId: jugada.ticketId,
-        jugadaId: jugada.id,
-        snapshot,
-        listeroSnapshot,
-        amount: jugada.amount,
-        loteriaId: jugada.ticket.loteriaId,
-        ventanaId: jugada.ticket.ventanaId,
-        vendedorId: jugada.ticket.vendedorId,
-      };
-    });
   }
 
   /**
@@ -411,54 +391,56 @@ export class CommissionSnapshotService {
   }
 
   /**
-   * Agrega snapshots por ventana
+   * Agrega snapshots por ventana usando streaming
    */
   async aggregateSnapshotsByVentana(
     filters: CommissionSnapshotFilters
   ): Promise<Map<string, { totalCommission: number; totalListeroCommission: number; totalSales: number }>> {
-    const snapshots = await this.getSnapshotsForPeriod(filters);
     const result = new Map<string, { totalCommission: number; totalListeroCommission: number; totalSales: number }>();
 
-    for (const snap of snapshots) {
-      const existing = result.get(snap.ventanaId) || {
-        totalCommission: 0,
-        totalListeroCommission: 0,
-        totalSales: 0,
-      };
+    for await (const chunk of this.getSnapshotsForPeriodStream(filters)) {
+      for (const snap of chunk) {
+        const existing = result.get(snap.ventanaId) || {
+          totalCommission: 0,
+          totalListeroCommission: 0,
+          totalSales: 0,
+        };
 
-      existing.totalCommission += snap.snapshot.commissionAmount;
-      existing.totalListeroCommission += snap.listeroSnapshot.commissionAmount;
-      existing.totalSales += snap.amount;
+        existing.totalCommission += snap.snapshot.commissionAmount;
+        existing.totalListeroCommission += snap.listeroSnapshot.commissionAmount;
+        existing.totalSales += snap.amount;
 
-      result.set(snap.ventanaId, existing);
+        result.set(snap.ventanaId, existing);
+      }
     }
 
     return result;
   }
 
   /**
-   * Agrega snapshots por vendedor
+   * Agrega snapshots por vendedor usando streaming
    */
   async aggregateSnapshotsByVendedor(
     filters: CommissionSnapshotFilters
   ): Promise<Map<string, { totalCommission: number; totalListeroCommission: number; totalSales: number }>> {
-    const snapshots = await this.getSnapshotsForPeriod(filters);
     const result = new Map<string, { totalCommission: number; totalListeroCommission: number; totalSales: number }>();
 
-    for (const snap of snapshots) {
-      if (!snap.vendedorId) continue;
+    for await (const chunk of this.getSnapshotsForPeriodStream(filters)) {
+      for (const snap of chunk) {
+        if (!snap.vendedorId) continue;
 
-      const existing = result.get(snap.vendedorId) || {
-        totalCommission: 0,
-        totalListeroCommission: 0,
-        totalSales: 0,
-      };
+        const existing = result.get(snap.vendedorId) || {
+          totalCommission: 0,
+          totalListeroCommission: 0,
+          totalSales: 0,
+        };
 
-      existing.totalCommission += snap.snapshot.commissionAmount;
-      existing.totalListeroCommission += snap.listeroSnapshot.commissionAmount;
-      existing.totalSales += snap.amount;
+        existing.totalCommission += snap.snapshot.commissionAmount;
+        existing.totalListeroCommission += snap.listeroSnapshot.commissionAmount;
+        existing.totalSales += snap.amount;
 
-      result.set(snap.vendedorId, existing);
+        result.set(snap.vendedorId, existing);
+      }
     }
 
     return result;

@@ -117,27 +117,23 @@ class RestrictionCacheV2 {
 
   /**
    * Estimate memory usage of data
+   * REFACTOR: Instead of JSON.stringify (which diverges from actual V8 heap by up to 500%),
+   * we use a simplified fixed metric per entry. Most rules/cutoffs are small JSON objects.
    */
   private estimateSize(data: any): number {
-    return Buffer.byteLength(JSON.stringify(data), 'utf8');
+    // Estimación rápida: ~2KB por regla/cutoff promedio.
+    // Evita el costo de serialización y la divergencia del Heap.
+    const FIXED_ENTRY_SIZE = 2048;
+    return Array.isArray(data) ? Math.max(1, data.length) * FIXED_ENTRY_SIZE : FIXED_ENTRY_SIZE;
   }
 
   /**
    * Compress data if it exceeds threshold
    */
   private compress(data: any): { compressed: boolean; data: any } {
-    const size = this.estimateSize(data);
-    if (size < this.config.compressionThreshold) {
-      return { compressed: false, data };
-    }
-
-    // Simple compression: remove unnecessary whitespace
-    const compressed = JSON.stringify(data);
-    const compressedSize = Buffer.byteLength(compressed, 'utf8');
-
-    this.metrics.compressionRatio = (this.metrics.compressionRatio + (size / compressedSize)) / 2;
-
-    return { compressed: true, data: compressed };
+    // Para simplificar y evitar overhead de CPU/memoria por serialización,
+    // deshabilitamos la "compresión" JSON stringify que generaba basura en el GC.
+    return { compressed: false, data };
   }
 
   /**
@@ -174,28 +170,38 @@ class RestrictionCacheV2 {
   }
 
   /**
-   * Update memory usage tracking
+   * Update memory usage tracking and global circuit breaker
    */
   private updateMemoryUsage(delta: number): void {
     this.memoryUsage += delta;
     this.metrics.memoryUsage = this.memoryUsage;
 
-    // Evict entries if memory limit exceeded
-    if (this.memoryUsage > this.config.maxMemory * 1024 * 1024) {
-      this.evictOldEntries();
+    // GLOBAL CIRCUIT BREAKER: Solo purgar de emergencia si el heap V8 real
+    // está en peligro (> 400 MB), no por el conteo local estimado.
+    const heapUsedMB = process.memoryUsage().heapUsed / 1024 / 1024;
+    const isGlobalHeapCritical = heapUsedMB > 400;
+
+    // Límite local suave (por cantidad de datos estimados)
+    const isLocalLimitExceeded = this.memoryUsage > this.config.maxMemory * 1024 * 1024;
+
+    if (isGlobalHeapCritical || isLocalLimitExceeded) {
+      this.evictOldEntries(isGlobalHeapCritical);
     }
   }
 
   /**
    * Evict old entries when memory limit is exceeded
    */
-  private async evictOldEntries(): Promise<void> {
+  private async evictOldEntries(emergency: boolean = false): Promise<void> {
+    const heapUsedMB = process.memoryUsage().heapUsed / 1024 / 1024;
+    
     logger.warn({
       layer: 'cache',
-      action: 'MEMORY_LIMIT_EXCEEDED_EVICTING',
+      action: emergency ? 'GLOBAL_HEAP_CRITICAL_EVICTING' : 'MEMORY_LIMIT_EXCEEDED_EVICTING',
       payload: {
-        currentUsage: this.memoryUsage,
-        maxMemory: this.config.maxMemory * 1024 * 1024,
+        localEstimatedUsage: this.memoryUsage,
+        globalHeapUsedMB: Math.round(heapUsedMB),
+        maxMemoryConfig: this.config.maxMemory * 1024 * 1024,
       },
     });
 
