@@ -1,6 +1,3 @@
-import { Prisma } from "../../../../generated/prisma/client";
-import { commissionSnapshotService } from "../../../../services/commission/CommissionSnapshotService";
-
 /**
  * Helper: Calcula si un estado de cuenta está saldado
  * CRÍTICO: Solo está saldado si hay tickets Y el saldo es cero Y hay pagos/cobros registrados
@@ -15,67 +12,4 @@ export function calculateIsSettled(
     return ticketCount > 0
         && Math.abs(remainingBalance) < 0.01
         && hasPayments;
-}
-
-export async function computeListeroCommissionsForWhere(
-    ticketWhere: Prisma.TicketWhereInput
-): Promise<Map<string, number>> {
-    const result = new Map<string, number>();
-
-    //  OPTIMIZACIÓN: Streaming con cursor para no saturar la memoria
-    const stream = commissionSnapshotService.getSnapshotsForTicketWhereStream(ticketWhere);
-
-    for await (const chunk of stream) {
-        for (const snap of chunk) {
-            const ventanaId = snap.ventanaId;
-            const listeroComm = snap.listeroSnapshot.commissionAmount;
-
-            if (listeroComm > 0) {
-                result.set(ventanaId, (result.get(ventanaId) || 0) + listeroComm);
-            }
-        }
-    }
-
-    return result;
-}
-
-/**
- * Calcula comisiones para un ticket usando snapshots guardados en BD
- *  OPTIMIZADO: Usa snapshots en lugar de recalcular desde políticas
- * 
- * Lógica:
- * - Si dimension='ventana': Usa listeroCommissionAmount del snapshot
- * - Si dimension='vendedor': Usa commissionAmount del snapshot (vendedor) y listeroCommissionAmount (listero)
- */
-export async function calculateCommissionsForTicket(
-    ticket: any,
-    dimension: "ventana" | "vendedor"
-): Promise<{ listeroCommission: number; vendedorCommission: number }> {
-    const ticketId = ticket.id;
-    
-    //  USAR SNAPSHOTS: Leer snapshots directamente de BD
-    const snapshotsByTicket = await commissionSnapshotService.getSnapshotsForTickets([ticketId]);
-    const snapshots = snapshotsByTicket.get(ticketId) || [];
-
-    let listeroCommission = 0;
-    let vendedorCommission = 0;
-
-    if (dimension === "ventana") {
-        // Si es ventana, usar listeroCommissionAmount del snapshot
-        for (const snap of snapshots) {
-            listeroCommission += snap.listeroSnapshot.commissionAmount;
-        }
-        vendedorCommission = 0; // No hay comisión de vendedor en este caso
-    } else {
-        // Si es vendedor, usar ambos snapshots
-        for (const snap of snapshots) {
-            // La comisión del vendedor está en snapshot.commissionAmount
-            vendedorCommission += snap.snapshot.commissionAmount;
-            
-            // La comisión del listero está en listeroSnapshot.commissionAmount
-            listeroCommission += snap.listeroSnapshot.commissionAmount;
-        }
-    }
-
-    return { listeroCommission, vendedorCommission };
 }
