@@ -609,6 +609,10 @@ export const AccountsService = {
             } else {
                 where.vendedorId = { not: null };
             }
+            if (ventanaId) {
+                where.vendedor = { ventanaId: ventanaId };
+            }
+            // bancaId ya se aplicó arriba en la línea 585
         }
 
         const rawStatements = await prisma.accountStatement.findMany({

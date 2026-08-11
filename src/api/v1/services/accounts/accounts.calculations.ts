@@ -4252,14 +4252,26 @@ export async function getSettledStatements(
         };
 
         // Filtros según dimension
-        if (dimension === "vendedor" && vendedorId) {
-            where.vendedorId = vendedorId;
-            //  RBAC: Si hay bancaId activa, filtrar también por ella.
-            // Evita que una banca (ej: CEN) vea statements del vendedor que ahora pertenecen a otra banca (ej: JJ).
-            if (bancaId) where.bancaId = bancaId;
-        } else if (dimension === "ventana" && ventanaId) {
-            where.ventanaId = ventanaId;
+        if (dimension === "vendedor") {
+            if (vendedorId) {
+                where.vendedorId = vendedorId;
+            } else {
+                where.vendedorId = { not: null };
+            }
+            //  RBAC: Si hay bancaId o ventanaId, filtrar también por ellos
+            if (bancaId || ventanaId) {
+                where.vendedor = {};
+                if (bancaId) where.vendedor.bancaId = bancaId;
+                if (ventanaId) where.vendedor.ventanaId = ventanaId;
+            }
+        } else if (dimension === "ventana") {
+            if (ventanaId) {
+                where.ventanaId = ventanaId;
+            } else {
+                where.ventanaId = { not: null };
+            }
             where.vendedorId = null; // Statements consolidados de ventana
+            if (bancaId) where.bancaId = bancaId;
         } else if (dimension === "banca" && bancaId) {
             //  CRÍTICO: Incluir statements con bancaId explícito O statements que pertenecen a esa banca a través de ventanaId
             // Algunos statements antiguos pueden tener bancaId=null pero ventanaId que pertenece a esa banca
