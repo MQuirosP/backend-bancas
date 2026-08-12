@@ -265,10 +265,18 @@ const SorteoRepository = {
    * @returns { sorteo, ticketsAffected: number }
    */
   async closeWithCascade(id: string) {
-    const resultRaw = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT fn_close_sorteo($1::uuid)`,
-      id
-    );
+    let resultRaw: any[];
+    try {
+      resultRaw = await prisma.$queryRawUnsafe<any[]>(
+        `SELECT fn_close_sorteo($1::uuid)`,
+        id
+      );
+    } catch (error: any) {
+      if (error?.message?.includes("ya evaluado/cerrado") || error?.message?.includes("Sorteo ya evaluado")) {
+        throw new AppError("El sorteo ya había sido evaluado o cerrado.", 409);
+      }
+      throw error;
+    }
 
     const result = resultRaw[0]?.fn_close_sorteo;
     if (!result) {
@@ -307,10 +315,24 @@ const SorteoRepository = {
   },
 
   async revertEvaluation(id: string) {
-    const resultRaw = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT fn_revert_sorteo($1::uuid)`,
-      id
-    );
+    let resultRaw: any[];
+    try {
+      resultRaw = await prisma.$queryRawUnsafe<any[]>(
+        `SELECT fn_revert_sorteo($1::uuid)`,
+        id
+      );
+    } catch (error: any) {
+      if (
+        error?.message?.includes("no está en estado EVALUATED") || 
+        error?.message?.includes("ya revertido") ||
+        error?.message?.includes("no evaluado") ||
+        error?.meta?.driverAdapterError?.originalCode === 'D0001'
+      ) {
+        const msg = error?.meta?.driverAdapterError?.originalMessage || "El sorteo no está en un estado válido para ser revertido (probablemente ya fue revertido).";
+        throw new AppError(msg, 409);
+      }
+      throw error;
+    }
 
     const result = resultRaw[0]?.fn_revert_sorteo;
     if (!result) {
@@ -358,14 +380,22 @@ const SorteoRepository = {
       extraMultiplierId = null,
     } = body
 
-    const resultRaw = await prisma.$queryRawUnsafe<any[]>(
-      `SELECT fn_evaluate_sorteo($1::uuid, $2, $3::uuid, $4, $5::uuid)`,
-      id,
-      winningNumber,
-      extraMultiplierId,
-      extraOutcomeCode,
-      null // p_user_id explícitamente null en este contexto
-    );
+    let resultRaw: any[];
+    try {
+      resultRaw = await prisma.$queryRawUnsafe<any[]>(
+        `SELECT fn_evaluate_sorteo($1::uuid, $2, $3::uuid, $4, $5::uuid)`,
+        id,
+        winningNumber,
+        extraMultiplierId,
+        extraOutcomeCode,
+        null // p_user_id explícitamente null en este contexto
+      );
+    } catch (error: any) {
+      if (error?.message?.includes("ya evaluado/cerrado") || error?.message?.includes("Sorteo ya evaluado")) {
+        throw new AppError("El sorteo ya había sido evaluado o cerrado.", 409);
+      }
+      throw error;
+    }
 
     const result = resultRaw[0]?.fn_evaluate_sorteo;
     if (!result) {
