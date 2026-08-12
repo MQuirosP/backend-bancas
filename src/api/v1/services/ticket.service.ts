@@ -678,6 +678,7 @@ export const TicketService = {
           });
         },
       );
+      CacheService.invalidateTag(`user:${ticket.vendedorId}`).catch(() => {});
     }
 
     await ActivityService.log({
@@ -735,6 +736,11 @@ export const TicketService = {
     bancaId?: string,
   ) {
     const ticket = await TicketRepository.restore(id, userId, bancaId);
+
+    if (ticket.vendedorId) {
+      CacheService.invalidateTag(`user:${ticket.vendedorId}`).catch(() => {});
+      CacheService.invalidateTag(`vendedor:${ticket.vendedorId}`).catch(() => {});
+    }
 
     await ActivityService.log({
       userId,

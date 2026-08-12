@@ -901,122 +901,82 @@ const SorteoService = {
       const p = params.page && params.page > 0 ? params.page : 1;
       const ps = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
 
-      //  Para VENDEDOR, no usar caché (cada vendedor tiene políticas diferentes)
-      //  Para ADMIN y BANCA, tampoco usar caché para garantizar tiempo real y evitar problemas al cambiar de banca en el selector del header
       const isVendedor = params.role === Role.VENDEDOR;
       const isAdminOrBanca = params.role === Role.ADMIN || params.role === Role.BANCA;
 
-      if (!isVendedor && !isAdminOrBanca) {
-        // Intentar obtener del cache solo para VENTANA
-        const { getCachedSorteoList } = require('../../../utils/sorteoCache');
-        const cached = getCachedSorteoList({
-          loteriaId: params.loteriaId,
-          page: p,
-          pageSize: ps,
-          status: params.status,
-          search: params.search?.trim() || undefined,
-          isActive: params.isActive,
-          dateFrom: params.dateFrom,
-          dateTo: params.dateTo,
-          lastId: params.lastId,
-          lastScheduledAt: params.lastScheduledAt,
-          // NUEVO: Identidad del usuario para separar cache
-          role: params.role,
-          ventanaId: params.ventanaId,
-          bancaId: params.bancaId,
-        });
+      const cacheKey = `sorteos:list:v3:${params.loteriaId || 'all'}:${params.status || 'all'}:${params.role || 'all'}:${params.bancaId || 'all'}:${params.ventanaId || 'all'}:${params.userId || 'all'}:${p}:${ps}:${params.search || ''}:${params.isActive ?? 'all'}:${params.dateFrom?.getTime() || ''}:${params.dateTo?.getTime() || ''}`;
 
-        if (cached) {
-          return cached;
-        }
-      }
+      const tags = [];
+      if (params.userId) tags.push(`user:${params.userId}`);
+      if (params.ventanaId) tags.push(`ventana:${params.ventanaId}`);
+      if (params.bancaId) tags.push(`banca:${params.bancaId}`);
 
-      const { data, total } = await SorteoRepository.list({
-        page: p,
-        pageSize: ps,
-        loteriaId: params.loteriaId,
-        status: params.status,
-        search: params.search?.trim() || undefined,
-        isActive: params.isActive,
-        dateFrom: params.dateFrom,
-        dateTo: params.dateTo,
-        lastId: params.lastId,
-        lastScheduledAt: params.lastScheduledAt,
-        //  NUEVO: Pasar parámetros de identidad para filtrar conteos de ventas
-        role: params.role,
-        userId: params.userId,
-        ventanaId: params.ventanaId,
-        bancaId: params.bancaId,
-      });
-
-      //  Aplicar filtrado por política de comisiones solo para VENDEDOR
-      let filteredData = data;
-      let filteredTotal = total;
-
-      if (isVendedor && params.userId && params.ventanaId) {
-        const filterResult = await this.filterSorteosByCommissionPolicy(
-          data.map(s => ({ id: s.id, loteriaId: s.loteriaId })),
-          params.userId,
-          params.ventanaId
-        );
-
-        // Crear Set de IDs filtrados para mantener el orden y estructura completa
-        const filteredIds = new Set(filterResult.filteredSorteos.map(s => s.id));
-        filteredData = data.filter(s => filteredIds.has(s.id));
-        filteredTotal = filterResult.filteredTotal;
-
-        logger.info({
-          layer: "service",
-          action: "SORTEO_LIST_FILTERED_BY_COMMISSION_POLICY",
-          payload: {
-            userId: params.userId,
-            role: params.role,
-            originalCount: data.length,
-            filteredCount: filteredData.length,
-            hiddenCount: data.length - filteredData.length,
-          },
-        });
-      }
-
-      const serialized = serializeSorteos(filteredData);
-      const totalPages = Math.ceil(filteredTotal / ps);
-      const result = {
-        data: serialized,
-        meta: {
-          total: filteredTotal,
-          page: p,
-          pageSize: ps,
-          totalPages,
-          hasNextPage: p < totalPages,
-          hasPrevPage: p > 1,
-          grouped: false,
-          groupBy: null,
-        },
-      };
-
-      // Guardar en cache solo si no es vendedor ni admin/banca
-      if (!isVendedor && !isAdminOrBanca) {
-        const { setCachedSorteoList } = require('../../../utils/sorteoCache');
-        setCachedSorteoList(
-          {
-            loteriaId: params.loteriaId,
+      return CacheService.wrap(
+        cacheKey,
+        async () => {
+          const { data, total } = await SorteoRepository.list({
             page: p,
             pageSize: ps,
+            loteriaId: params.loteriaId,
             status: params.status,
             search: params.search?.trim() || undefined,
             isActive: params.isActive,
             dateFrom: params.dateFrom,
             dateTo: params.dateTo,
+            lastId: params.lastId,
+            lastScheduledAt: params.lastScheduledAt,
             role: params.role,
+            userId: params.userId,
             ventanaId: params.ventanaId,
             bancaId: params.bancaId,
-          },
-          result.data,
-          result.meta
-        );
-      }
+          });
 
-      return result;
+          let filteredData = data;
+          let filteredTotal = total;
+
+          if (isVendedor && params.userId && params.ventanaId) {
+            const filterResult = await this.filterSorteosByCommissionPolicy(
+              data.map(s => ({ id: s.id, loteriaId: s.loteriaId })),
+              params.userId,
+              params.ventanaId
+            );
+
+            const filteredIds = new Set(filterResult.filteredSorteos.map(s => s.id));
+            filteredData = data.filter(s => filteredIds.has(s.id));
+            filteredTotal = filterResult.filteredTotal;
+
+            logger.info({
+              layer: "service",
+              action: "SORTEO_LIST_FILTERED_BY_COMMISSION_POLICY",
+              payload: {
+                userId: params.userId,
+                role: params.role,
+                originalCount: data.length,
+                filteredCount: filteredData.length,
+                hiddenCount: data.length - filteredData.length,
+              },
+            });
+          }
+
+          const serialized = serializeSorteos(filteredData);
+          const totalPages = Math.ceil(filteredTotal / ps);
+          return {
+            data: serialized,
+            meta: {
+              total: filteredTotal,
+              page: p,
+              pageSize: ps,
+              totalPages,
+              hasNextPage: p < totalPages,
+              hasPrevPage: p > 1,
+              grouped: false,
+              groupBy: null,
+            },
+          };
+        },
+        15, // TTL 15 segundos
+        tags
+      );
     }
 
     // Con groupBy, usar query SQL optimizada

@@ -52,6 +52,7 @@ export const LoteriaService = {
         layer: "service",
       });
 
+      await CacheService.invalidateTag('loterias').catch(() => {});
       return loteria;
     } catch (err) {
       logger.error({
@@ -66,18 +67,25 @@ export const LoteriaService = {
   },
 
   async getById(id: string) {
-    const loteria = await withConnectionRetry(
-      () => prisma.loteria.findUnique({
-        where: { id },
-      }),
-      { context: "LoteriaService.getById" }
+    return CacheService.wrap(
+      `loteria:${id}`,
+      async () => {
+        const loteria = await withConnectionRetry(
+          () => prisma.loteria.findUnique({
+            where: { id },
+          }),
+          { context: "LoteriaService.getById" }
+        );
+
+        if (!loteria) {
+          throw new AppError("Lotería not found", 404);
+        }
+
+        return loteria;
+      },
+      300,
+      ['loterias']
     );
-
-    if (!loteria) {
-      throw new AppError("Lotería not found", 404);
-    }
-
-    return loteria;
   },
 
   async list({
@@ -93,44 +101,53 @@ export const LoteriaService = {
     search?: string;
     bancaId?: string;
   }) {
-    const where: Prisma.LoteriaWhereInput = {};
+    const cacheKey = `loterias:list:${page}:${pageSize}:${isActive ?? 'all'}:${search ?? 'none'}:${bancaId ?? 'all'}`;
+    
+    return CacheService.wrap(
+      cacheKey,
+      async () => {
+        const where: Prisma.LoteriaWhereInput = {};
 
-    if (typeof isActive === "boolean") {
-      where.isActive = isActive;
-    }
+        if (typeof isActive === "boolean") {
+          where.isActive = isActive;
+        }
 
-    where.bancaId = bancaId ?? null;
+        where.bancaId = bancaId ?? null;
 
-    const s = typeof search === "string" ? search.trim() : "";
-    if (s.length > 0) {
-      // Normaliza AND a arreglo aunque Prisma permita objeto o arreglo
-      const existingAnd = where.AND
-        ? Array.isArray(where.AND)
-          ? where.AND
-          : [where.AND]
-        : [];
+        const s = typeof search === "string" ? search.trim() : "";
+        if (s.length > 0) {
+          // Normaliza AND a arreglo aunque Prisma permita objeto o arreglo
+          const existingAnd = where.AND
+            ? Array.isArray(where.AND)
+              ? where.AND
+              : [where.AND]
+            : [];
 
-      where.AND = [
-        ...existingAnd,
-        { name: { contains: s, mode: "insensitive" } },
-      ];
-    }
+          where.AND = [
+            ...existingAnd,
+            { name: { contains: s, mode: "insensitive" } },
+          ];
+        }
 
-    const result = await paginateOffset(prisma.loteria, {
-      where,
-      select: {
-        id: true,
-        name: true,
-        rulesJson: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
+        const result = await paginateOffset(prisma.loteria, {
+          where,
+          select: {
+            id: true,
+            name: true,
+            rulesJson: true,
+            isActive: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          orderBy: { createdAt: "desc" },
+          pagination: { page, pageSize },
+        });
+
+        return result;
       },
-      orderBy: { createdAt: "desc" },
-      pagination: { page, pageSize },
-    });
-
-    return result;
+      300,
+      ['loterias']
+    );
   },
 
   async update(
@@ -214,6 +231,7 @@ export const LoteriaService = {
 
       // Invalida caché de multiplicadores resueltos vinculados a la lotería
       await CacheService.invalidateTag(`loteria:${id}`).catch(() => {});
+      await CacheService.invalidateTag('loterias').catch(() => {});
 
       return result.updated;
     }
@@ -256,6 +274,7 @@ export const LoteriaService = {
 
     // Invalida caché de multiplicadores resueltos vinculados a la lotería
     await CacheService.invalidateTag(`loteria:${id}`).catch(() => {});
+    await CacheService.invalidateTag('loterias').catch(() => {});
 
     return updated;
   },
@@ -310,6 +329,8 @@ export const LoteriaService = {
       layer: "service",
     });
 
+    await CacheService.invalidateTag(`loteria:${id}`).catch(() => {});
+    await CacheService.invalidateTag('loterias').catch(() => {});
     return result.deleted;
   },
 
@@ -363,6 +384,8 @@ export const LoteriaService = {
       layer: "service",
     });
 
+    await CacheService.invalidateTag(`loteria:${id}`).catch(() => {});
+    await CacheService.invalidateTag('loterias').catch(() => {});
     return result.restored;
   },
 

@@ -1,3 +1,4 @@
+import { CacheService } from "../../../../core/cache.service";
 import TicketRepository from "../../../../repositories/ticket.repository";
 import { withConnectionRetry } from "../../../../core/withConnectionRetry";
 import prisma from "../../../../core/prismaClient";
@@ -24,6 +25,10 @@ export const TicketPersistenceService = {
         effectiveVendedorId,
         options
       );
+      
+      // Invalidar el caché de sorteos del vendedor para reflejar las nuevas ventas
+      await CacheService.invalidateTag(`user:${effectiveVendedorId}`).catch(() => {});
+      
       return { ticket, warnings };
     } catch (err: any) {
       if (
