@@ -2243,7 +2243,7 @@ gs."hour24" ASC
           prisma.$queryRaw<Array<{ commission_amount: number; type: string }>>(Prisma.sql`
             WITH sorteos_cte AS (
               SELECT id FROM "Sorteo"
-              WHERE status::text = ${SorteoStatus.EVALUATED}
+              WHERE status = ${SorteoStatus.EVALUATED}::"SorteoStatus"
                 AND "scheduledAt" >= ${monthlyStartDate}::timestamp
                 AND "scheduledAt" <= ${monthlyEndDate}::timestamp
             )
