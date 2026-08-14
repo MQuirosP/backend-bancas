@@ -95,7 +95,7 @@ export const protect = async (
   _res: Response,
   next: NextFunction
 ) => {
-  if (process.env.DISABLE_AUTH === "true") {
+  if (process.env.NODE_ENV === "development" && process.env.DISABLE_AUTH === "true") {
     req.user = { id: "DEV_USER_ID", role: Role.ADMIN };
     return next();
   }
@@ -206,6 +206,11 @@ export const restrictToAdminSelfOrVentanaVendor = async (
     // Un usuario BANCA puede gestionar a cualquier usuario de su misma banca
     const target = await getCachedUser(targetId);
     if (!target) throw new AppError("Usuario no encontrado", 404, "USER_NOT_FOUND");
+
+    // Evitar que un BANCA edite a otro BANCA (escalada de privilegios horizontales)
+    if (target.role === Role.BANCA && actor.id !== target.id) {
+      throw new AppError("No puedes modificar a otro administrador de banca", 403);
+    }
 
     const actorBancaId = (req as any).bancaContext?.bancaId || actor.bancaId;
     if (target.bancaId !== actorBancaId) {

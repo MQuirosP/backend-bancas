@@ -9,7 +9,7 @@ import { Role } from '../../../generated/prisma/client';
 
 const router = Router();
 
-router.post('/register', validateBody(registerSchema), AuthController.register);
+router.post('/register', authRateLimiter, validateBody(registerSchema), AuthController.register);
 router.post('/login', authRateLimiter, validateBody(loginSchema), AuthController.login);
 router.post('/refresh', AuthController.refresh);
 router.post('/logout', AuthController.logout);
