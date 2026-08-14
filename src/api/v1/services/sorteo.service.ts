@@ -1478,8 +1478,7 @@ gs."hour24" ASC
           `);
 
           const loteriaMultipliersPromise = prisma.loteriaMultiplier.findMany({
-            where: { isActive: true },
-            select: { id: true, name: true, valueX: true, loteriaId: true, kind: true }
+            select: { id: true, name: true, valueX: true, loteriaId: true, kind: true, isActive: true }
           });
 
           promises.push(multiplierMetricsPromise, loteriaMultipliersPromise);
@@ -1507,7 +1506,9 @@ gs."hour24" ASC
         let by_multiplier: any[] = [];
         
         if (!params.summaryOnly) {
-          const baseMultipliers = loteriaMultipliers.filter((m: any) => m.loteriaId === sm.loteriaId);
+          const baseMultipliers = loteriaMultipliers.filter((m: any) => 
+            m.loteriaId === sm.loteriaId && (m.isActive || multiplierMetricsRaw.some((mm: any) => mm.sorteoId === sm.sorteoId && mm.multiplierId === m.id))
+          );
           
           by_multiplier = baseMultipliers.map((bm: any) => {
             const mm = multiplierMetricsRaw.find((m: any) => m.sorteoId === sm.sorteoId && m.multiplierId === bm.id);
@@ -1527,6 +1528,64 @@ gs."hour24" ASC
               unpaidTicketsCount: Number(mm?.mWinningTickets || 0) - Number(mm?.mPaidTickets || 0)
             };
           }).sort((a: any, b: any) => a.multiplierValue - b.multiplierValue);
+
+          // Manejar jugadas con multiplierId = null.
+          // Causa conocida: fn_evaluate_sorteo solo asigna extraMultiplierId a jugadas REVENTADO ganadoras,
+          // los perdedores quedan con multiplierId = null. Si el sorteo tiene extraMultiplierId, fusionar
+          // esas jugadas en el bucket correcto en lugar de mostrarlas como "Desconocido / Eliminado".
+          const nullMetrics = multiplierMetricsRaw.find((m: any) => m.sorteoId === sm.sorteoId && m.multiplierId === null);
+          if (nullMetrics) {
+            const reventadoBucket = sm.extraMultiplierId
+              ? by_multiplier.find((b: any) => b.multiplierId === sm.extraMultiplierId)
+              : null;
+
+            if (reventadoBucket) {
+              // Fusionar en el bucket del multiplicador REVENTADO del sorteo
+              reventadoBucket.totalSales        += Number(nullMetrics.mSales || 0);
+              reventadoBucket.totalCommission   += Number(nullMetrics.mCommission || 0);
+              reventadoBucket.commissionByNumber   += Number(nullMetrics.mCommNum || 0);
+              reventadoBucket.commissionByReventado += Number(nullMetrics.mCommRev || 0);
+              reventadoBucket.totalPrizes       += Number(nullMetrics.mPrizes || 0);
+              reventadoBucket.ticketCount       += Number(nullMetrics.mTickets || 0);
+              reventadoBucket.winningTicketsCount += Number(nullMetrics.mWinningTickets || 0);
+              reventadoBucket.paidTicketsCount  += Number(nullMetrics.mPaidTickets || 0);
+              reventadoBucket.unpaidTicketsCount = reventadoBucket.winningTicketsCount - reventadoBucket.paidTicketsCount;
+            } else if (sm.extraMultiplierId) {
+              // El bucket REVENTADO no existe aún (multiplicador inactivo y sin jugadas ganadoras).
+              // Crearlo usando los datos del multiplicador.
+              const reventadoMul = loteriaMultipliers.find((m: any) => m.id === sm.extraMultiplierId);
+              by_multiplier.push({
+                multiplierId: sm.extraMultiplierId,
+                multiplierName: reventadoMul?.name ?? 'REVENTADO',
+                multiplierValue: Number(reventadoMul?.valueX ?? 0),
+                totalSales: Number(nullMetrics.mSales || 0),
+                totalCommission: Number(nullMetrics.mCommission || 0),
+                commissionByNumber: Number(nullMetrics.mCommNum || 0),
+                commissionByReventado: Number(nullMetrics.mCommRev || 0),
+                totalPrizes: Number(nullMetrics.mPrizes || 0),
+                ticketCount: Number(nullMetrics.mTickets || 0),
+                winningTicketsCount: Number(nullMetrics.mWinningTickets || 0),
+                paidTicketsCount: Number(nullMetrics.mPaidTickets || 0),
+                unpaidTicketsCount: Number(nullMetrics.mWinningTickets || 0) - Number(nullMetrics.mPaidTickets || 0)
+              });
+            } else {
+              // No hay extraMultiplierId: multiplicador realmente desconocido/eliminado (fallback)
+              by_multiplier.push({
+                multiplierId: null,
+                multiplierName: 'Desconocido / Eliminado',
+                multiplierValue: 0,
+                totalSales: Number(nullMetrics.mSales || 0),
+                totalCommission: Number(nullMetrics.mCommission || 0),
+                commissionByNumber: Number(nullMetrics.mCommNum || 0),
+                commissionByReventado: Number(nullMetrics.mCommRev || 0),
+                totalPrizes: Number(nullMetrics.mPrizes || 0),
+                ticketCount: Number(nullMetrics.mTickets || 0),
+                winningTicketsCount: Number(nullMetrics.mWinningTickets || 0),
+                paidTicketsCount: Number(nullMetrics.mPaidTickets || 0),
+                unpaidTicketsCount: Number(nullMetrics.mWinningTickets || 0) - Number(nullMetrics.mPaidTickets || 0)
+              });
+            }
+          }
         }
         
         return { ...sm, by_multiplier };
