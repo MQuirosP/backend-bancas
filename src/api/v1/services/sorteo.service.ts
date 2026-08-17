@@ -1307,8 +1307,8 @@ gs."hour24" ASC
       },
     };
   },
-  async findById(id: string) {
-    const sorteo = await SorteoRepository.findById(id);
+  async findById(id: string, role?: string, userId?: string, ventanaId?: string | null) {
+    const sorteo = await SorteoRepository.findById(id, role, userId, ventanaId);
     if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
     return serializeSorteo(sorteo);
   },

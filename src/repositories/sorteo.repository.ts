@@ -94,14 +94,55 @@ const SorteoRepository = {
     return s;
   },
 
-  findById(id: string) {
-    return prisma.sorteo.findUnique({
+  async findById(id: string, role?: string, userId?: string, ventanaId?: string | null) {
+    const sorteo = await prisma.sorteo.findUnique({
       where: { id },
       include: {
         loteria: true,
         extraMultiplier: { select: { id: true, name: true, valueX: true } },
       },
     });
+
+    if (!sorteo) return null;
+
+    const rbacCountsConditions: Prisma.Sql[] = [
+      Prisma.sql`t."sorteoId" = CAST(${id} AS uuid)`,
+      Prisma.sql`t."status" NOT IN ('CANCELLED', 'EXCLUDED')`,
+      Prisma.sql`t."deletedAt" IS NULL`
+    ];
+
+    if (role === "VENDEDOR" && userId) {
+      rbacCountsConditions.push(Prisma.sql`t."vendedorId" = CAST(${userId} AS uuid)`);
+    } else if (role === "VENTANA" && ventanaId) {
+      rbacCountsConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
+    }
+
+    const rbacCountsWhere = Prisma.join(rbacCountsConditions, " AND ");
+
+    const countsRaw = await prisma.$queryRaw<Array<{ hasSales: boolean; ticketCount: number; hasExclusions: boolean }>>`
+      SELECT 
+        EXISTS(
+          SELECT 1 FROM "Ticket" t
+          WHERE ${rbacCountsWhere}
+        ) as "hasSales",
+        (
+          SELECT COUNT(*)::int FROM "Ticket" t
+          WHERE ${rbacCountsWhere}
+        ) as "ticketCount",
+        EXISTS(
+          SELECT 1 FROM "sorteo_lista_exclusion" e
+          WHERE e.sorteo_id = CAST(${id} AS uuid)
+        ) as "hasExclusions"
+    `;
+
+    const counts = countsRaw[0] || { hasSales: false, ticketCount: 0, hasExclusions: false };
+
+    return {
+      ...sorteo,
+      hasSales: counts.hasSales,
+      ticketCount: counts.ticketCount,
+      hasExclusions: counts.hasExclusions,
+    };
   },
 
   async update(id: string, data: UpdateSorteoDTO) {

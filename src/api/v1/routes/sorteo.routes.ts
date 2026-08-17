@@ -111,7 +111,6 @@ router.post("/:id/listas/include", requireAdminOrBanca, validateListaIdParam, va
 // IMPORTANTE: Las rutas literales deben ir ANTES de las rutas con parámetros
 router.get("/evaluated-summary", validateEvaluatedSummaryQuery, SorteoController.evaluatedSummary);
 router.get("/", validateListSorteosQuery, SorteoController.list);
-// Usar regex para que :id solo acepte UUIDs (evita conflictos con rutas literales)
-router.get("/:id([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", validateIdParam, SorteoController.findById);
+router.get("/:id", validateIdParam, SorteoController.findById);
 
 export default router;

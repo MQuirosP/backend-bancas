@@ -195,7 +195,12 @@ export const SorteoController = {
   },
 
   async findById(req: AuthenticatedRequest, res: Response) {
-    const s = await SorteoService.findById(req.params.id);
+    const s = await SorteoService.findById(
+      req.params.id,
+      req.user?.role,
+      req.user?.id,
+      req.user?.ventanaId
+    );
     res.json({ success: true, data: s });
   },
 

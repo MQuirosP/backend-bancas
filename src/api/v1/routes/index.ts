@@ -21,7 +21,6 @@ import cierreRoutes from "./cierre.routes"
 import commissionsRoutes from "./commissions.routes"
 import accountsRoutes from "./accounts.routes"
 import salesRoutes from "./sales.routes"
-import sorteosAutoRoutes from "./sorteosAuto.routes"
 import reportsRoutes from "./reports.routes"
 import listasExcluidasRoutes from "./listas-excluidas.routes"
 import accountStatementSettlementRoutes from "./accountStatementSettlement.routes"
@@ -54,8 +53,6 @@ router.use("/cierres", cierreRoutes);
 router.use("/commissions", commissionsRoutes);
 router.use("/accounts", accountsRoutes);
 router.use("/sales", salesRoutes);
-// Las rutas de automatización ahora están dentro de sorteo.routes.ts (antes de las rutas con :id)
-router.use("/sorteos", sorteoRoutes);
 router.use("/reports", reportsRoutes);
 router.use("/listas-excluidas", listasExcluidasRoutes);
 router.use("/account-statements", accountStatementSettlementRoutes);
