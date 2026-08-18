@@ -18,12 +18,18 @@ import { warmupConnection } from '../core/connectionWarmup'
 
 const server = http.createServer(app)
 
-server.listen(config.port, async () => {
+// Configuración de sockets TCP optimizada para Reverse Proxy (Render / Cloudflare)
+server.keepAliveTimeout = 65000 // 65s (mayor a los 60s del proxy de Render para evitar race conditions)
+server.headersTimeout = 66000   // 66s (debe ser mayor que keepAliveTimeout)
+server.maxConnections = 1000    // Límite de sockets TCP concurrentes
+
+// Backlog de 511 conexiones para absorber ráfagas simultáneas sin descartar sockets
+server.listen(config.port, 511, async () => {
   logger.info({
     layer: 'server',
     action: 'SERVER_LISTEN',
     requestId: null,
-    payload: { port: config.port },
+    payload: { port: config.port, keepAliveTimeout: server.keepAliveTimeout, backlog: 511 },
   })
 
   // Esperar conexión a DB antes de iniciar jobs y caches que la requieren
@@ -197,7 +203,7 @@ const gracefulShutdown = async (signal: string) => {
   try {
     // 2. Paso 1: server.close() para dejar de aceptar nuevo tráfico HTTP de inmediato
     await new Promise<void>((resolve, reject) => {
-      server.close((err) => {
+      server.close((err?: Error) => {
         if (err) return reject(err)
         resolve()
       })
