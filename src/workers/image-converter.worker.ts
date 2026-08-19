@@ -22,11 +22,15 @@ parentPort.on('message', async (data) => {
       // Importación dinámica para cargar canvas solo en este hilo
       const { generateTicketImage } = await import('../services/ticket-image-generator.service');
       const buffer = await generateTicketImage(ticketData, options);
-      
+      const transferList: ArrayBuffer[] = [];
+      if (buffer && buffer.buffer instanceof ArrayBuffer) {
+        transferList.push(buffer.buffer);
+      }
+
       parentPort?.postMessage({ 
         success: true, 
         imageBuffer: buffer 
-      });
+      }, transferList);
       return;
     }
 
@@ -40,13 +44,21 @@ parentPort.on('message', async (data) => {
 
     const pngPages = await pdfToPng(pdfBuffer, finalOptions);
     
-    parentPort?.postMessage({ 
-      success: true, 
-      pngPages: pngPages.map(page => ({
+    const transferList: ArrayBuffer[] = [];
+    const formattedPages = pngPages.map(page => {
+      if (page.content && page.content.buffer instanceof ArrayBuffer) {
+        transferList.push(page.content.buffer);
+      }
+      return {
         ...page,
         content: page.content
-      }))
+      };
     });
+
+    parentPort?.postMessage({ 
+      success: true, 
+      pngPages: formattedPages
+    }, transferList);
   } catch (error: any) {
     parentPort?.postMessage({ 
       success: false, 

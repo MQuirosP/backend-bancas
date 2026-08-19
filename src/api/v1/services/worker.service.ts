@@ -99,10 +99,19 @@ function getOrCreateWorker(): Worker {
         payload: { code }
       });
     }
+
+    // Si el worker crasheó mientras procesaba una tarea activa (isWorkerBusy),
+    // esa tarea (workerQueue[0]) tuvo sus buffers transferidos y neutered.
+    // Debemos rechazarla y removerla de la cola para que NO se reintente con un buffer neutered.
+    if (isWorkerBusy && workerQueue.length > 0) {
+      const crashedTask = workerQueue.shift();
+      crashedTask?.reject(new Error(`Worker thread terminated unexpectedly (exit code ${code}) while processing task ${crashedTask.type}`));
+    }
+
     globalWorker = null;
     isWorkerBusy = false;
     
-    // Si quedan tareas, reiniciar worker
+    // Si quedan tareas posteriores en la cola (que aún no han sido transferidas), reiniciar worker y continuar
     if (workerQueue.length > 0) {
       getOrCreateWorker();
       processNextTask();
@@ -122,10 +131,21 @@ function processNextTask() {
   const nextTask = workerQueue[0];
   
   isWorkerBusy = true;
+  
+  // Extraer transferables si existen
+  const transferList: ArrayBuffer[] = [];
+  if (nextTask.type === 'PDF_TO_PNG' && nextTask.payload.pdfBuffer) {
+    const rawBuffer = nextTask.payload.pdfBuffer;
+    if (rawBuffer.buffer instanceof ArrayBuffer) {
+      // Transferir el ArrayBuffer subyacente (zero-copy)
+      transferList.push(rawBuffer.buffer);
+    }
+  }
+
   worker.postMessage({ 
     type: nextTask.type,
     ...nextTask.payload
-  });
+  }, transferList);
 }
 
 /**
