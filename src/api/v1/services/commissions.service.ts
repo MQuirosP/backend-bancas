@@ -564,6 +564,7 @@ export const CommissionsService = {
           LEFT JOIN "User" u ON u.id = t."vendedorId"
           LEFT JOIN "Ventana" v ON v.id = t."ventanaId"
           ${whereClause}
+          AND j."deletedAt" IS NULL
           AND j."isExcluded" IS FALSE
           GROUP BY t.id, t."ticketNumber", t."totalAmount", t."createdAt", u.name, v.name
           ORDER BY t."createdAt" DESC
@@ -576,6 +577,7 @@ export const CommissionsService = {
           FROM "Ticket" t
           INNER JOIN "Jugada" j ON j."ticketId" = t.id
           ${whereClause}
+          AND j."deletedAt" IS NULL
           AND j."isExcluded" IS FALSE
         `,
       ]);

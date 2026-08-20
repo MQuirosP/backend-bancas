@@ -1085,6 +1085,11 @@ export const TicketsReportService = {
           INNER JOIN "Ticket" t ON j."ticketId" = t.id
           WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             AND t.status::text IN (${TicketStatus.ACTIVE}, ${TicketStatus.EVALUATED}, ${TicketStatus.PAID}, ${TicketStatus.PAGADO})
+            AND t."deletedAt" IS NULL
+            AND t."isActive" = true
+            AND j."deletedAt" IS NULL
+            AND j."isActive" = true
+            AND j."isExcluded" = false
             ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
         ),
         last_wins AS (
