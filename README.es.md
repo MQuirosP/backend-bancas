@@ -29,7 +29,9 @@ Este repositorio contiene el backend core del sistema de bancas. Diseñado bajo 
 *   **⚡ Transaccionalidad ACID Robusta:** Control estricto de concurrencia y protección contra condiciones de carrera en ventas masivas mediante reintentos de transacciones serializables (`withTransactionRetry`).
 *   **🛡️ Sistema de Resiliencia Centralizado:** Middleware con Circuit Breakers (`ResilienceService`) que protege el pool de conexiones frente a sobrecargas y degrada las funciones secundarias si es necesario.
 *   **🏎️ Caché Híbrida L1/L2:** Mitigación del efecto "Thundering Herd" mediante una capa in-memory (L1) y Redis (L2) con deduplicación de promesas en vuelo (Request Coalescing).
+*   **🌐 Blindaje TCP y Sincronización con Reverse Proxy:** Sockets HTTP en Node.js optimizados (`keepAliveTimeout = 65s`, `headersTimeout = 66s`, `backlog = 511`) para eliminar colisiones de conexión 502/503 y absorber ráfagas concurrentes detrás del Load Balancer de Render.
 *   **📊 Analítica Incremental (Rollups):** Cierres diarios mediante agregaciones directas SQL sin el costo de almacenamiento ni latencia de vistas materializadas.
+
 *   **💵 Comisiones Jerárquicas:** Resolución dinámica de comisiones en cascada: Vendedor (Listero) ➔ Ventana (Sucursal) ➔ Banca, persistiendo snapshots inmutables por jugada.
 
 ---

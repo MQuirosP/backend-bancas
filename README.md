@@ -29,7 +29,9 @@ This repository contains the core backend of the lottery management system. Arch
 *   **⚡ Serializable ACID Transactions:** Robust concurrency control and race condition prevention (preventing ticket overselling) handled via backoff retry transaction loops (`withTransactionRetry`).
 *   **🛡️ Core Resilience (Circuit Breakers):** Centralized middleware wrapper (`ResilienceService`) protecting the database pool against spikes and degrading secondary tasks if resources are low.
 *   **🏎️ Hybrid L1/L2 Cache:** Mitigates the "Thundering Herd" effect by combining local memory caching (L1) and Redis (L2) with in-flight request coalescing (`_filterOptionsInFlight`).
+*   **🌐 Reverse Proxy & TCP Hardening:** Optimized Node.js HTTP server sockets (`keepAliveTimeout = 65s`, `headersTimeout = 66s`, `backlog = 511`) eliminating 502/503 race conditions and absorbing concurrent bursts behind Render Load Balancer.
 *   **📊 Incremental Financial Rollups:** Daily settlements aggregated directly using raw SQL queries, removing the storage costs and update lag of Postgres Materialized Views.
+
 *   **💵 Hierarchical Commissions:** Cascade commission resolution evaluated dynamically: Seller ➔ Window ➔ Banca, persisting immutable commission snapshots per play.
 
 ---
