@@ -1339,7 +1339,7 @@ export const TicketService = {
         ]),
         params.sorteoId
           ? getExclusionWhereCondition(params.sorteoId)
-          : Promise.resolve({}),
+          : Promise.resolve<Prisma.TicketWhereInput>({}),
       ]);
 
       // Mapear resultados de la transacción con casting para evitar errores de TS
@@ -1435,8 +1435,9 @@ export const TicketService = {
       }
 
       // Aplicar exclusiones (convertir condition a SQL Raw)
-      if (!isExcludedRequest && exclusionCondition.NOT?.OR) {
-        const exclusions = exclusionCondition.NOT.OR.map((ex: any) => {
+      const notClause = exclusionCondition.NOT;
+      if (!isExcludedRequest && notClause && typeof notClause === 'object' && !Array.isArray(notClause) && Array.isArray(notClause.OR)) {
+        const exclusions = notClause.OR.map((ex: any) => {
           let cond = Prisma.sql`t."ventanaId" = CAST(${ex.ventanaId} AS uuid)`;
           if (ex.vendedorId)
             cond = Prisma.sql`${cond} AND t."vendedorId" = CAST(${ex.vendedorId} AS uuid)`;

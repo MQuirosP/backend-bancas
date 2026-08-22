@@ -1,4 +1,5 @@
 import prisma from "../../../core/prismaClient";
+import { Prisma } from "../../../generated/prisma/client";
 import { isExclusionListEmpty } from "../../../core/exclusionListCache";
 import { exclusionCacheService } from "../../../services/exclusionCache.service";
 
@@ -11,7 +12,7 @@ export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string
     // Optimización: tabla vacía → sin exclusiones, evitar query
     if (await isExclusionListEmpty()) return new Set();
 
-    //  OPTIMIZED: Use L1/L2 Cache instead of direct DB query
+    //  OPTIMIZED: Use Redis Cache instead of direct DB query
     const exclusions = await exclusionCacheService.getExclusions(sorteoId);
 
     if (exclusions.length === 0) {
@@ -19,8 +20,8 @@ export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string
     }
 
     // Construir condiciones WHERE para tickets excluidos
-    const orConditions = exclusions.map((exclusion) => {
-        const baseCondition: any = {
+    const orConditions: Prisma.TicketWhereInput[] = exclusions.map((exclusion) => {
+        const baseCondition: Prisma.TicketWhereInput = {
             sorteoId,
             ventanaId: exclusion.ventanaId,
         };
@@ -63,11 +64,11 @@ export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string
  * Genera condición Prisma WHERE para excluir tickets de listas bloqueadas
  * Soporta exclusión por multiplierId
  */
-export async function getExclusionWhereCondition(sorteoId: string): Promise<any> {
+export async function getExclusionWhereCondition(sorteoId: string): Promise<Prisma.TicketWhereInput> {
     // Optimización: tabla vacía → sin exclusiones, evitar query
     if (await isExclusionListEmpty()) return {};
 
-    //  OPTIMIZED: Use L1/L2 Cache instead of direct DB query
+    //  OPTIMIZED: Use Redis Cache instead of direct DB query
     const exclusions = await exclusionCacheService.getExclusions(sorteoId);
 
     if (exclusions.length === 0) {
@@ -75,8 +76,8 @@ export async function getExclusionWhereCondition(sorteoId: string): Promise<any>
     }
 
     // Construir condición NOT para excluir tickets
-    const orConditions = exclusions.map((exclusion) => {
-        const condition: any = {
+    const orConditions: Prisma.TicketWhereInput[] = exclusions.map((exclusion) => {
+        const condition: Prisma.TicketWhereInput = {
             ventanaId: exclusion.ventanaId,
         };
 

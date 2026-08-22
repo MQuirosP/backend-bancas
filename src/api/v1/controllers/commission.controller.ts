@@ -6,6 +6,7 @@ import { AppError } from "../../../core/errors";
 import prisma from "../../../core/prismaClient";
 import { Prisma } from "../../../generated/prisma/client";
 import { CacheService } from "../../../core/cache.service";
+import { clearCommissionCache } from "../../../utils/commissionCache";
 
 type MultiplierEmbed = {
   id: string;
@@ -140,6 +141,8 @@ export const CommissionController = {
     });
 
     await CacheService.invalidateTag(`banca:${id}`);
+    await clearCommissionCache('BANCA', id);
+    await clearCommissionCache(); // Limpiar cascada global por cambios a nivel banca
 
     // OPTIMIZACIÓN: Al no usar tags per-user en sesión, borramos explícitamente las sesiones de todos los usuarios vinculados a esta banca
     try {
@@ -155,11 +158,11 @@ export const CommissionController = {
       for (const u of usersInBanca) {
         await CacheService.del(`auth:session:${u.id}`).catch(() => {});
       }
-    } catch (cacheErr: any) {
+    } catch (cacheErr: unknown) {
       req.logger?.warn({
         layer: "controller",
         action: "BANCA_COMMISSION_CACHE_INVALIDATE_WARN",
-        payload: { bancaId: id, error: cacheErr.message }
+        payload: { bancaId: id, error: cacheErr instanceof Error ? cacheErr.message : String(cacheErr) }
       });
     }
 
@@ -231,6 +234,7 @@ export const CommissionController = {
     });
 
     await CacheService.invalidateTag(`ventana:${id}`);
+    await clearCommissionCache('VENTANA', id);
 
     // OPTIMIZACIÓN: Al no usar tags per-user en sesión, borramos explícitamente las sesiones de todos los usuarios vinculados a esta ventana
     try {
@@ -241,11 +245,11 @@ export const CommissionController = {
       for (const u of usersInVentana) {
         await CacheService.del(`auth:session:${u.id}`).catch(() => {});
       }
-    } catch (cacheErr: any) {
+    } catch (cacheErr: unknown) {
       req.logger?.warn({
         layer: "controller",
         action: "VENTANA_COMMISSION_CACHE_INVALIDATE_WARN",
-        payload: { ventanaId: id, error: cacheErr.message }
+        payload: { ventanaId: id, error: cacheErr instanceof Error ? cacheErr.message : String(cacheErr) }
       });
     }
 
@@ -318,6 +322,7 @@ export const CommissionController = {
     });
 
     await CacheService.invalidateTag(`user:${id}`);
+    await clearCommissionCache('USER', id);
     await CacheService.del(`auth:session:${id}`).catch(() => {});
 
     req.logger?.info({

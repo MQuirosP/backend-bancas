@@ -249,10 +249,8 @@ model Ticket {
   @@index([bancaId, sorteoId], map: "idx_ticket_banca_sorteo_winner_perf", where: raw("((\"isActive\" = true) AND (\"isWinner\" = true) AND (\"deletedAt\" IS NULL))"))
   @@index([businessDate, sorteoId, isActive], map: "idx_ticket_business_date_sorteo", where: raw("(\"deletedAt\" IS NULL)"))
   @@index([businessDate, ventanaId, vendedorId], map: "idx_ticket_business_date_ventana_vendedor", where: raw("((\"deletedAt\" IS NULL) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
-  @@index([createdAt], map: "idx_ticket_created_at", where: raw("((\"deletedAt\" IS NULL) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
   @@index([bancaId, businessDate, isActive, status], map: "idx_ticket_risk_banca_date", where: raw("(\"deletedAt\" IS NULL)"))
   @@index([sorteoId, status, isActive], map: "idx_ticket_sorteo_status", where: raw("(\"deletedAt\" IS NULL)"))
-  @@index([isWinner, status, createdAt], map: "idx_ticket_winner_status_date", where: raw("((\"isActive\" = true) AND (\"deletedAt\" IS NULL))"))
   @@index([ventanaId, vendedorId, businessDate, status], map: "idx_tickets_ventana_vendedor_date", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
   @@index([status, isWinner])
   @@index([businessDate, ventanaId], map: "idx_ticket_businessdate_ventana")
@@ -326,12 +324,11 @@ model Jugada {
   ticket                  Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
   @@index([ticketId, multiplierId], map: "idx_jugada_exclusiones_lookup", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
-  @@index([ticketId, number, type, isActive, isExcluded, amount, payout, listeroCommissionAmount, finalMultiplierX], map: "idx_jugada_maestro_final", where: raw("(\"deletedAt\" IS NULL)"))
+  @@index([ticketId, number, type, isActive, isExcluded, amount, payout, commissionAmount, commissionPercent, commissionOrigin, listeroCommissionAmount, finalMultiplierX], map: "idx_jugada_maestro_final", where: raw("(\"deletedAt\" IS NULL)"))
   @@index([number, ticketId, amount, type], map: "idx_jugada_number_amount_active", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
   @@index([ticketId, isWinner, deletedAt, payout], map: "idx_jugada_ticket_winner", where: raw("((\"deletedAt\" IS NULL) AND (\"isWinner\" = true))"))
   @@index([ticketId])
   @@index([bancaId, ticketId, multiplierId], map: "idx_jugada_bancaid_multiplier_counts", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (type = 'NUMERO'::\"BetType\") AND (\"multiplierId\" IS NOT NULL))"))
-  @@index([ticketId, type, commissionAmount], map: "idx_jugada_ticket_commission_covering_full")
 }
 
 model Sorteo {

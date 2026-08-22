@@ -18,6 +18,7 @@ import {
 } from "../dto/sorteo-listas.dto";
 import logger from "../../../core/logger";
 import { invalidateExclusionListCache } from "../../../core/exclusionListCache";
+import { exclusionCacheService } from "../../../services/exclusionCache.service";
 import { formatIsoLocal } from "../../../utils/datetime";
 import { CacheService } from "../../../core/cache.service";
 
@@ -630,8 +631,9 @@ export const SorteoListasService = {
             }
         });
 
-        // Invalidar cache — la tabla ya no está vacía
+        // Invalidar cache — la tabla ya no está vacía y las exclusiones del sorteo cambiaron
         invalidateExclusionListCache();
+        await exclusionCacheService.invalidateCache(sorteoId);
         
         //  NUEVO: Invalidar cache de reportes de cierre para que reflejen el cambio
         CacheService.invalidateTag('cierre').catch(err => 
@@ -934,8 +936,9 @@ export const SorteoListasService = {
             }
         });
 
-        // Invalidar cache — la tabla puede haber quedado vacía
+        // Invalidar cache — la tabla puede haber quedado vacía y las exclusiones del sorteo cambiaron
         invalidateExclusionListCache();
+        await exclusionCacheService.invalidateCache(sorteoId);
 
         //  NUEVO: Invalidar cache de reportes de cierre para que reflejen el cambio
         CacheService.invalidateTag('cierre').catch(err => 

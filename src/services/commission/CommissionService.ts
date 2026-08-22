@@ -21,10 +21,10 @@ export class CommissionService {
     userId: string | null,
     ventanaId: string,
     bancaId: string,
-    userPolicyJson: any,
-    ventanaPolicyJson: any,
-    bancaPolicyJson: any,
-    listeroPolicyJson: any = null
+    userPolicyJson: unknown,
+    ventanaPolicyJson: unknown,
+    bancaPolicyJson: unknown,
+    listeroPolicyJson: unknown = null
   ): Promise<CommissionContext> {
     const userPolicy = userId
       ? await getCachedCommissionPolicy("USER", userId, userPolicyJson)

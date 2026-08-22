@@ -1,58 +1,70 @@
-import { getRedisClient } from '../core/redisClient';
+import { getRedisClient, isRedisAvailable } from '../core/redisClient';
 import logger from '../core/logger';
 import prisma from '../core/prismaClient';
 
-const L1_CACHE = new Map<string, { data: any; expiresAt: number }>();
-const MAX_L1_SIZE = 1000;
-const L1_TTL_MS = 30 * 1000; // 30 seconds
-const L2_TTL_SECONDS = 300; // 5 minutes
+export interface SorteoExclusionItem {
+  ventanaId: string;
+  vendedorId: string | null;
+  multiplierId: string | null;
+}
 
-// Limpieza periódica preventiva de entradas expiradas (cada 5 minutos)
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of L1_CACHE.entries()) {
-    if (now > entry.expiresAt) {
-      L1_CACHE.delete(key);
-    }
-  }
-}, 300_000).unref();
+const EXCLUSION_CACHE_TTL_SECONDS = 300; // 5 minutos
+const SENTINEL_EMPTY = '__EMPTY__';
 
+/**
+ * Genera la clave de Redis para el set de exclusiones de un sorteo
+ */
+function getExclusionSetKey(sorteoId: string): string {
+  return `exclusions:set:${sorteoId}`;
+}
 
 export const exclusionCacheService = {
   /**
-   * Obtiene las exclusiones para un sorteo, usando L1 -> L2 -> DB
+   * Obtiene las exclusiones para un sorteo usando Redis Set (Cache-Aside)
+   * Si no está en caché o Redis falla, consulta directamente la base de datos de forma resiliente.
    */
-  async getExclusions(sorteoId: string): Promise<any[]> {
-    const cacheKey = `exclusions:${sorteoId}`;
-    const now = Date.now();
+  async getExclusions(sorteoId: string): Promise<SorteoExclusionItem[]> {
+    const cacheKey = getExclusionSetKey(sorteoId);
 
-    // 1. L1 Cache (Memory)
-    const l1Entry = L1_CACHE.get(cacheKey);
-    if (l1Entry && l1Entry.expiresAt > now) {
-      return l1Entry.data;
-    }
-
-    // 2. L2 Cache (Redis)
-    const redis = getRedisClient();
-    if (redis) {
+    // 1. Intentar obtener desde Redis Set si está disponible
+    if (isRedisAvailable()) {
       try {
-        const cached = await redis.get(cacheKey);
-        if (cached) {
-          const data = JSON.parse(cached);
-          // Set to L1
-          if (L1_CACHE.size >= MAX_L1_SIZE) {
-            L1_CACHE.clear();
+        const redis = getRedisClient();
+        if (redis) {
+          const members = await redis.smembers(cacheKey);
+          if (members && members.length > 0) {
+            // Si contiene el centinela de set vacío, retornar array vacío
+            if (members.length === 1 && members[0] === SENTINEL_EMPTY) {
+              return [];
+            }
+            const data: SorteoExclusionItem[] = [];
+            for (const item of members) {
+              if (item !== SENTINEL_EMPTY) {
+                try {
+                  data.push(JSON.parse(item) as SorteoExclusionItem);
+                } catch {
+                  // Omitir miembro corrupto si existiera
+                }
+              }
+            }
+            return data;
           }
-          L1_CACHE.set(cacheKey, { data, expiresAt: now + L1_TTL_MS });
-          return data;
         }
       } catch (err) {
-        logger.warn({ layer: 'cache', action: 'REDIS_GET_ERROR', payload: { cacheKey, error: (err as Error).message } });
+        logger.warn({
+          layer: 'cache',
+          action: 'EXCLUSION_CACHE_REDIS_GET_ERROR',
+          payload: {
+            cacheKey,
+            error: err instanceof Error ? err.message : String(err),
+            fallback: 'Consultando exclusiones directamente en DB',
+          },
+        });
       }
     }
 
-    // 3. DB (Prisma)
-    const exclusions = await prisma.sorteoListaExclusion.findMany({
+    // 2. Cache miss o Redis no disponible: Consultar DB vía Prisma
+    const exclusions: SorteoExclusionItem[] = await prisma.sorteoListaExclusion.findMany({
       where: { sorteoId },
       select: {
         ventanaId: true,
@@ -61,16 +73,31 @@ export const exclusionCacheService = {
       },
     });
 
-    // 4. Update Caches
-    if (L1_CACHE.size >= MAX_L1_SIZE) {
-      L1_CACHE.clear();
-    }
-    L1_CACHE.set(cacheKey, { data: exclusions, expiresAt: now + L1_TTL_MS });
-    if (redis) {
+    // 3. Poblar Redis Set con TTL explícito
+    if (isRedisAvailable()) {
       try {
-        await redis.set(cacheKey, JSON.stringify(exclusions), 'EX', L2_TTL_SECONDS);
+        const redis = getRedisClient();
+        if (redis) {
+          const pipeline = redis.pipeline();
+          pipeline.del(cacheKey);
+          if (exclusions.length === 0) {
+            pipeline.sadd(cacheKey, SENTINEL_EMPTY);
+          } else {
+            const members = exclusions.map((e) => JSON.stringify(e));
+            pipeline.sadd(cacheKey, ...members);
+          }
+          pipeline.expire(cacheKey, EXCLUSION_CACHE_TTL_SECONDS);
+          await pipeline.exec();
+        }
       } catch (err) {
-        logger.warn({ layer: 'cache', action: 'REDIS_SET_ERROR', payload: { cacheKey, error: (err as Error).message } });
+        logger.warn({
+          layer: 'cache',
+          action: 'EXCLUSION_CACHE_REDIS_SET_ERROR',
+          payload: {
+            cacheKey,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
       }
     }
 
@@ -78,18 +105,61 @@ export const exclusionCacheService = {
   },
 
   /**
-   * Invalida el caché de exclusiones para un sorteo
+   * Valida si una exclusión puntual existe en el set de Redis para el sorteo O(1)
    */
-  async invalidateCache(sorteoId: string): Promise<void> {
-    const cacheKey = `exclusions:${sorteoId}`;
-    L1_CACHE.delete(cacheKey);
-    const redis = getRedisClient();
-    if (redis) {
+  async isExcluded(sorteoId: string, item: SorteoExclusionItem): Promise<boolean> {
+    const cacheKey = getExclusionSetKey(sorteoId);
+
+    if (isRedisAvailable()) {
       try {
-        await redis.del(cacheKey);
+        const redis = getRedisClient();
+        if (redis) {
+          const exists = await redis.sismember(cacheKey, JSON.stringify(item));
+          return exists === 1;
+        }
       } catch (err) {
-        logger.warn({ layer: 'cache', action: 'REDIS_DEL_ERROR', payload: { cacheKey, error: (err as Error).message } });
+        logger.warn({
+          layer: 'cache',
+          action: 'EXCLUSION_CACHE_SISMEMBER_ERROR',
+          payload: {
+            cacheKey,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
       }
     }
-  }
+
+    // Fallback: consultar listado completo
+    const list = await this.getExclusions(sorteoId);
+    return list.some(
+      (e) =>
+        e.ventanaId === item.ventanaId &&
+        e.vendedorId === item.vendedorId &&
+        e.multiplierId === item.multiplierId
+    );
+  },
+
+  /**
+   * Invalida el caché de exclusiones para un sorteo en Redis
+   */
+  async invalidateCache(sorteoId: string): Promise<void> {
+    const cacheKey = getExclusionSetKey(sorteoId);
+    if (isRedisAvailable()) {
+      try {
+        const redis = getRedisClient();
+        if (redis) {
+          await redis.del(cacheKey);
+        }
+      } catch (err) {
+        logger.warn({
+          layer: 'cache',
+          action: 'EXCLUSION_CACHE_REDIS_DEL_ERROR',
+          payload: {
+            cacheKey,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
+      }
+    }
+  },
 };

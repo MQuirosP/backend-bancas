@@ -1,28 +1,8 @@
 // src/utils/sorteoCache.ts
 import logger from '../core/logger';
+import { getRedisClient, isRedisAvailable } from '../core/redisClient';
 
-/**
- * Cache de listados de sorteos con límite de tamaño (LRU)
- * TTL: 30 segundos (sorteos cambian poco pero necesitamos datos relativamente frescos)
- * MAX SIZE: 500 entradas para evitar memory leaks
- */
-interface CachedSorteoList {
-  data: any[];
-  meta: any;
-  expiresAt: number;
-  lastAccessed: number; // Para LRU eviction
-}
-
-const sorteoListCache = new Map<string, CachedSorteoList>();
-
-const CACHE_TTL_MS = 30 * 1000; // 30 segundos
-const MAX_CACHE_SIZE = 500; // Máximo 500 entradas
-let cleanupInterval: NodeJS.Timeout | null = null;
-
-/**
- * Genera una clave de cache basada en los parámetros de filtro
- */
-function generateCacheKey(params: {
+export interface SorteoCacheParams {
   loteriaId?: string;
   page?: number;
   pageSize?: number;
@@ -32,15 +12,28 @@ function generateCacheKey(params: {
   dateFrom?: Date;
   dateTo?: Date;
   groupBy?: string;
-  //  NUEVO: Identidad del usuario para separar cache por ventana/rol/banca
   role?: string;
   ventanaId?: string | null;
   bancaId?: string;
-}): string {
+  userId?: string;
+}
+
+export interface CachedSorteoPayload<T = unknown> {
+  data: T[];
+  meta: unknown;
+}
+
+const SORTEO_CACHE_TTL_SECONDS = 30; // 30 segundos
+
+/**
+ * Genera una clave de cache en Redis basada en los parámetros de filtro
+ */
+export function generateSorteoCacheKey(params: SorteoCacheParams): string {
   const parts = [
     params.role || 'PUBLIC',
     params.bancaId || 'GLOBAL_BANCA',
     params.ventanaId || 'GLOBAL_VENTANA',
+    params.userId || 'GLOBAL_USER',
     params.loteriaId || 'all',
     params.page || 1,
     params.pageSize || 10,
@@ -51,248 +44,156 @@ function generateCacheKey(params: {
     params.dateTo?.toISOString() || '',
     params.groupBy || 'none',
   ];
-  return `sorteos:${parts.join(':')}`;
+  return `sorteos:list:${parts.join(':')}`;
 }
 
 /**
- * Evict LRU entries cuando el cache excede el límite
+ * Obtiene un listado de sorteos desde Redis (Cache-Aside)
+ * Retorna null si no existe, si expiró o si Redis no está disponible
  */
-function evictLRUIfNeeded(): void {
-  if (sorteoListCache.size < MAX_CACHE_SIZE) {
+export async function getCachedSorteoList<T = unknown>(
+  params: SorteoCacheParams
+): Promise<CachedSorteoPayload<T> | null> {
+  if (!isRedisAvailable()) {
+    return null;
+  }
+
+  const cacheKey = generateSorteoCacheKey(params);
+
+  try {
+    const redis = getRedisClient();
+    if (!redis) return null;
+
+    const cached = await redis.get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+
+    const parsed = JSON.parse(cached) as CachedSorteoPayload<T>;
+    return parsed;
+  } catch (error) {
+    logger.warn({
+      layer: 'cache',
+      action: 'SORTEO_CACHE_GET_FALLBACK',
+      payload: {
+        cacheKey,
+        error: error instanceof Error ? error.message : String(error),
+        fallback: 'Retornando null — el sistema consultará DB directamente',
+      },
+    });
+    return null;
+  }
+}
+
+/**
+ * Guarda un listado de sorteos en Redis con TTL explícito
+ */
+export async function setCachedSorteoList<T = unknown>(
+  params: SorteoCacheParams,
+  data: T[],
+  meta: unknown,
+  ttlSeconds: number = SORTEO_CACHE_TTL_SECONDS
+): Promise<void> {
+  if (!isRedisAvailable()) {
     return;
   }
 
-  // Encontrar la entrada menos recientemente usada
-  let oldestKey: string | null = null;
-  let oldestTime = Infinity;
+  const cacheKey = generateSorteoCacheKey(params);
 
-  for (const [key, cached] of sorteoListCache.entries()) {
-    if (cached.lastAccessed < oldestTime) {
-      oldestTime = cached.lastAccessed;
-      oldestKey = key;
-    }
-  }
+  try {
+    const redis = getRedisClient();
+    if (!redis) return;
 
-  if (oldestKey) {
-    sorteoListCache.delete(oldestKey);
-    logger.debug({
-      layer: 'cache',
-      action: 'SORTEO_CACHE_LRU_EVICT',
-      payload: {
-        evictedKey: oldestKey,
-        cacheSize: sorteoListCache.size,
-        lastAccessed: new Date(oldestTime).toISOString()
-      },
-    });
-  }
-}
-
-/**
- * Obtiene un listado de sorteos desde el cache o retorna null si no existe o expiró
- */
-export function getCachedSorteoList(params: {
-  loteriaId?: string;
-  page?: number;
-  pageSize?: number;
-  status?: string;
-  search?: string;
-  isActive?: boolean;
-  dateFrom?: Date;
-  dateTo?: Date;
-  groupBy?: string;
-  role?: string;
-  ventanaId?: string | null;
-  bancaId?: string;
-}): { data: any[]; meta: any } | null {
-  const cacheKey = generateCacheKey(params);
-  const cached = sorteoListCache.get(cacheKey);
-
-  // Si hay cache válido, retornarlo
-  if (cached && cached.expiresAt > Date.now()) {
-    // Actualizar lastAccessed para LRU
-    cached.lastAccessed = Date.now();
-    return { data: cached.data, meta: cached.meta };
-  }
-
-  // Cache expirado o no existe
-  if (cached) {
-    sorteoListCache.delete(cacheKey);
-  }
-
-  return null;
-}
-
-/**
- * Guarda un listado de sorteos en el cache
- */
-export function setCachedSorteoList(
-  params: {
-    loteriaId?: string;
-    page?: number;
-    pageSize?: number;
-    status?: string;
-    search?: string;
-    isActive?: boolean;
-    dateFrom?: Date;
-    dateTo?: Date;
-    groupBy?: string;
-    role?: string;
-    ventanaId?: string | null;
-    bancaId?: string;
-  },
-  data: any[],
-  meta: any
-): void {
-  // Evict LRU si es necesario antes de agregar nueva entrada
-  evictLRUIfNeeded();
-
-  const cacheKey = generateCacheKey(params);
-  const now = Date.now();
-
-  sorteoListCache.set(cacheKey, {
-    data,
-    meta,
-    expiresAt: now + CACHE_TTL_MS,
-    lastAccessed: now,
-  });
-
-  // Log de advertencia si nos acercamos al límite
-  if (sorteoListCache.size > MAX_CACHE_SIZE * 0.9) {
+    const payload: CachedSorteoPayload<T> = { data, meta };
+    await redis.set(cacheKey, JSON.stringify(payload), 'EX', ttlSeconds);
+  } catch (error) {
     logger.warn({
       layer: 'cache',
-      action: 'SORTEO_CACHE_NEAR_LIMIT',
+      action: 'SORTEO_CACHE_SET_ERROR',
       payload: {
-        size: sorteoListCache.size,
-        maxSize: MAX_CACHE_SIZE,
-        utilizationPercent: Math.round((sorteoListCache.size / MAX_CACHE_SIZE) * 100)
+        cacheKey,
+        error: error instanceof Error ? error.message : String(error),
       },
     });
   }
 }
 
 /**
- * Limpia el cache de sorteos
- * Útil cuando se crea/actualiza/evalúa un sorteo
+ * Limpia claves de caché de sorteos en Redis
+ * Permite limpiar por patrón (ej. sorteoId o bancaId) o todo el espacio de nombres 'sorteos:*'
  */
-export function clearSorteoCache(pattern?: string) {
-  if (pattern) {
-    // Limpiar entradas que coincidan con el patrón
-    const keysToDelete: string[] = [];
-    for (const key of sorteoListCache.keys()) {
-      if (key.includes(pattern)) {
-        keysToDelete.push(key);
+export async function clearSorteoCache(pattern?: string): Promise<void> {
+  if (!isRedisAvailable()) {
+    return;
+  }
+
+  try {
+    const redis = getRedisClient();
+    if (!redis) return;
+
+    const searchPattern = pattern ? `*sorteos*${pattern}*` : '*sorteos*';
+    const allKeys: string[] = [];
+    let cursor = '0';
+
+    do {
+      const [newCursor, keys] = await redis.scan(cursor, 'MATCH', searchPattern, 'COUNT', 100);
+      cursor = newCursor;
+      allKeys.push(...keys);
+    } while (cursor !== '0');
+
+    if (allKeys.length > 0) {
+      const prefix = (redis as any).options?.keyPrefix || '';
+      const cleanKeys = allKeys.map((k) =>
+        prefix && k.startsWith(prefix) ? k.slice(prefix.length) : k
+      );
+
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < cleanKeys.length; i += BATCH_SIZE) {
+        const batch = cleanKeys.slice(i, i + BATCH_SIZE);
+        await redis.del(...batch);
       }
+
+      logger.info({
+        layer: 'cache',
+        action: pattern ? 'SORTEO_CACHE_CLEARED_PATTERN' : 'SORTEO_CACHE_CLEARED_ALL',
+        payload: {
+          pattern: searchPattern,
+          cleared: cleanKeys.length,
+        },
+      });
     }
-    keysToDelete.forEach((key) => sorteoListCache.delete(key));
-    logger.info({
+  } catch (error) {
+    logger.warn({
       layer: 'cache',
-      action: 'SORTEO_CACHE_CLEARED_PATTERN',
-      payload: { pattern, cleared: keysToDelete.length },
-    });
-  } else {
-    // Limpiar todo el cache
-    const size = sorteoListCache.size;
-    sorteoListCache.clear();
-    logger.info({
-      layer: 'cache',
-      action: 'SORTEO_CACHE_CLEARED_ALL',
-      payload: { cleared: size },
-    });
-  }
-}
-
-/**
- * Limpia entradas expiradas del cache (cleanup periódico)
- */
-export function cleanupExpiredSorteoCache() {
-  const now = Date.now();
-  const keysToDelete: string[] = [];
-
-  for (const [key, cached] of sorteoListCache.entries()) {
-    if (cached.expiresAt <= now) {
-      keysToDelete.push(key);
-    }
-  }
-
-  keysToDelete.forEach((key) => sorteoListCache.delete(key));
-
-  if (keysToDelete.length > 0) {
-    logger.debug({
-      layer: 'cache',
-      action: 'SORTEO_CACHE_CLEANUP',
+      action: 'SORTEO_CACHE_CLEAR_ERROR',
       payload: {
-        cleaned: keysToDelete.length,
-        remaining: sorteoListCache.size,
-        maxSize: MAX_CACHE_SIZE
+        pattern,
+        error: error instanceof Error ? error.message : String(error),
       },
     });
   }
 }
 
 /**
- * Obtiene estadísticas del cache (útil para debugging)
+ * Obtiene el estado del caché de sorteos en Redis
  */
-export function getSorteoCacheStats() {
-  const now = Date.now();
-  let valid = 0;
-  let expired = 0;
-
-  for (const cached of sorteoListCache.values()) {
-    if (cached.expiresAt > now) {
-      valid++;
-    } else {
-      expired++;
-    }
-  }
-
+export function getSorteoCacheStats(): {
+  isRedisAvailable: boolean;
+  ttlSeconds: number;
+} {
   return {
-    total: sorteoListCache.size,
-    valid,
-    expired,
-    maxSize: MAX_CACHE_SIZE,
-    utilizationPercent: Math.round((sorteoListCache.size / MAX_CACHE_SIZE) * 100),
+    isRedisAvailable: isRedisAvailable(),
+    ttlSeconds: SORTEO_CACHE_TTL_SECONDS,
   };
 }
 
 /**
- * Inicia el proceso de cleanup periódico
- * Debe llamarse explícitamente (por ejemplo, en server startup)
+ * Stubs no-op para mantener retrocompatibilidad sin timers en memoria
  */
 export function startSorteoCacheCleanup(): void {
-  if (cleanupInterval) {
-    logger.warn({
-      layer: 'cache',
-      action: 'SORTEO_CACHE_CLEANUP_ALREADY_RUNNING',
-      payload: { message: 'Cleanup interval already running' },
-    });
-    return;
-  }
-
-  cleanupInterval = setInterval(cleanupExpiredSorteoCache, 5 * 60 * 1000);
-
-  logger.info({
-    layer: 'cache',
-    action: 'SORTEO_CACHE_CLEANUP_STARTED',
-    payload: {
-      intervalMinutes: 5,
-      maxCacheSize: MAX_CACHE_SIZE,
-      ttlSeconds: CACHE_TTL_MS / 1000
-    },
-  });
+  // No-op: Redis gestiona la expiración mediante TTL sin consumir CPU en el Event Loop
 }
 
-/**
- * Detiene el proceso de cleanup periódico
- * Debe llamarse en graceful shutdown
- */
 export function stopSorteoCacheCleanup(): void {
-  if (cleanupInterval) {
-    clearInterval(cleanupInterval);
-    cleanupInterval = null;
-
-    logger.info({
-      layer: 'cache',
-      action: 'SORTEO_CACHE_CLEANUP_STOPPED',
-    });
-  }
+  // No-op: No hay timers activos que detener
 }

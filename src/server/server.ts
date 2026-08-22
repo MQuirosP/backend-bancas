@@ -9,11 +9,8 @@ import { startAccountStatementSettlementJob, stopAccountStatementSettlementJob }
 import { startMonthlyClosingJob, stopMonthlyClosingJob } from '../jobs/monthlyClosing.job'
 import { initRedisClient, closeRedisClient } from '../core/redisClient'
 import { initCacheSubscriber } from '../core/cache.service'
-import { startSorteoCacheCleanup, stopSorteoCacheCleanup } from '../utils/sorteoCache'
-import { startCommissionCacheCleanup, stopCommissionCacheCleanup } from '../utils/commissionCache'
 import { restrictionCacheV2 } from '../utils/restrictionCacheV2'
 import { activeOperationsService } from '../core/activeOperations.service'
-import { isExclusionListEmpty } from '../core/exclusionListCache'
 import { warmupConnection } from '../core/connectionWarmup'
 
 const server = http.createServer(app)
@@ -101,60 +98,6 @@ server.listen(config.port, 511, async () => {
     })
   }
 
-  // Iniciar cleanup de sorteo cache
-  try {
-    startSorteoCacheCleanup()
-    logger.info({
-      layer: 'server',
-      action: 'SORTEO_CACHE_CLEANUP_STARTED',
-      requestId: null,
-      payload: { message: 'Cleanup de sorteo cache iniciado' },
-    })
-  } catch (error: any) {
-    logger.error({
-      layer: 'server',
-      action: 'SORTEO_CACHE_CLEANUP_START_ERROR',
-      requestId: null,
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
-
-  // Iniciar cleanup de commission cache
-  try {
-    startCommissionCacheCleanup()
-    logger.info({
-      layer: 'server',
-      action: 'COMMISSION_CACHE_CLEANUP_STARTED',
-      requestId: null,
-      payload: { message: 'Cleanup de commission cache iniciado' },
-    })
-  } catch (error: any) {
-    logger.error({
-      layer: 'server',
-      action: 'COMMISSION_CACHE_CLEANUP_START_ERROR',
-      requestId: null,
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
-
-  // Pre-cargar cache de lista de exclusión (evita scans en caliente)
-  try {
-    await isExclusionListEmpty()
-    logger.info({
-      layer: 'server',
-      action: 'EXCLUSION_LIST_CACHE_WARMED',
-      requestId: null,
-      payload: { message: 'Cache de lista de exclusión inicializado' },
-    })
-  } catch (error: any) {
-    logger.warn({
-      layer: 'server',
-      action: 'EXCLUSION_LIST_CACHE_WARM_ERROR',
-      requestId: null,
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
-
   // Iniciar warming process de restriction cache V2
   try {
     restrictionCacheV2.startWarmingProcess()
@@ -164,7 +107,7 @@ server.listen(config.port, 511, async () => {
       requestId: null,
       payload: { message: 'Warming process de restriction cache V2 iniciado' },
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error({
       layer: 'server',
       action: 'RESTRICTION_CACHE_V2_WARMING_START_ERROR',
@@ -195,8 +138,6 @@ const gracefulShutdown = async (signal: string) => {
   try { stopSorteosAutoJobs(); } catch (e) {}
   try { stopAccountStatementSettlementJob(); } catch (e) {}
   try { stopMonthlyClosingJob(); } catch (e) {}
-  try { stopSorteoCacheCleanup(); } catch (e) {}
-  try { stopCommissionCacheCleanup(); } catch (e) {}
   try { restrictionCacheV2.stopWarmingProcess(); } catch (e) {}
   try { closeRedisClient(); } catch (e) {}
 
