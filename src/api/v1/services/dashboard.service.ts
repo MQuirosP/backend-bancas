@@ -11,6 +11,7 @@ import { crDateService } from "../../../utils/crDateService";
 import { tz } from "../../../utils/timezone";
 import { PerformanceMonitor, measureAsync } from "../../../utils/performanceMonitor";
 import { isExclusionListEmpty } from "../../../core/exclusionListCache";
+import { CacheService } from "../../../core/cache.service";
 
 /**
  * Dashboard Service
@@ -1497,143 +1498,157 @@ export const DashboardService = {
    * @param role Rol del usuario autenticado (para determinar qué comisión restar)
    */
   async getFullDashboard(filters: DashboardFilters, role?: Role) {
-    // 🔴 INICIO: Capturar estado inicial
-    const monitor = new PerformanceMonitor('dashboard.getFullDashboard');
-    monitor.start('INIT');
+    const fromDateStr = crDateService.dateUTCToCRString(filters.fromDate);
+    const toDateStr = crDateService.dateUTCToCRString(filters.toDate);
+    const todayCRStr = crDateService.dateUTCToCRString(new Date());
+    const isToday = toDateStr >= todayCRStr;
+    const ttl = isToday ? 30 : 300; // 30s para datos de hoy, 5 min para histórico
+    const cacheKey = `dashboard:full:${filters.bancaId || 'all'}:${filters.ventanaId || 'all'}:${filters.vendedorId || 'all'}:${filters.loteriaId || 'all'}:${filters.scope || 'all'}:${filters.dimension || 'all'}:${filters.interval || 'day'}:${fromDateStr}:${toDateStr}:${role || 'all'}`;
 
-    const startTime = Date.now();
-    let queryCount = 0;
+    return CacheService.wrap(
+      cacheKey,
+      async () => {
+        // 🔴 INICIO: Capturar estado inicial
+        const monitor = new PerformanceMonitor('dashboard.getFullDashboard');
+        monitor.start('INIT');
 
-    // 🟡 CHECKPOINT: Antes de Promise.all
-    monitor.checkpoint('BEFORE_PARALLEL_QUERIES');
+        const startTime = Date.now();
+        let queryCount = 0;
 
-    // ⚡ OPTIMIZACIÓN: Para rangos > 7 días, la exposición de riesgo solo es accionable
-    // para los sorteos OPEN del día actual. Limitar calculateExposure a hoy evita
-    // el scan de 30 días de tickets históricos (query más lenta: ~8.6 s media).
-    const rangeMs = filters.toDate.getTime() - filters.fromDate.getTime();
-    const LARGE_RANGE_MS = 7 * 24 * 60 * 60 * 1000;
-    const isLargeRange = rangeMs > LARGE_RANGE_MS;
-    let exposureTrimmed = false;
-    let exposureFilters: DashboardFilters = filters;
-    if (isLargeRange) {
-      const todayRange = resolveDateRange('today');
-      exposureFilters = {
-        ...filters,
-        fromDate: todayRange.fromAt,
-        toDate: todayRange.toAt,
-      };
-      exposureTrimmed = true;
-    }
+        // 🟡 CHECKPOINT: Antes de Promise.all
+        monitor.checkpoint('BEFORE_PARALLEL_QUERIES');
 
-    // FASE 1: Datos críticos (los que el usuario ve primero)
-    //  SEMI-OPTIMIZADO: Comentamos CxC y CxP por desuso y riesgos de performance en Prisma (intermitencia)
-    //  REFATOR: Ejecución secuencial para proteger el pool de conexiones (límite 15)
-    const mGanancia = await measureAsync('calculateGanancia', () => this.calculateGanancia(filters, role).then((r) => {
-      queryCount += 2;
-      return r;
-    }));
-    /* const mCxC = await measureAsync('calculateCxC', () => this.calculateCxC(filters).then((r) => {
-      queryCount += 1;
-      return r;
-    }));
-    const mCxP = await measureAsync('calculateCxP', () => this.calculateCxP(filters).then((r) => {
-      queryCount += 1;
-      return r;
-    })); */
-    const mSummary = await measureAsync('getSummary', () => this.getSummary(filters, role).then((r) => {
-      queryCount += 1;
-      return r;
-    }));
-    const measuredPhase1 = [mGanancia, mSummary];
+        // ⚡ OPTIMIZACIÓN: Para rangos > 7 días, la exposición de riesgo solo es accionable
+        // para los sorteos OPEN del día actual. Limitar calculateExposure a hoy evita
+        // el scan de 30 días de tickets históricos (query más lenta: ~8.6 s media).
+        const rangeMs = filters.toDate.getTime() - filters.fromDate.getTime();
+        const LARGE_RANGE_MS = 7 * 24 * 60 * 60 * 1000;
+        const isLargeRange = rangeMs > LARGE_RANGE_MS;
+        let exposureTrimmed = false;
+        let exposureFilters: DashboardFilters = filters;
+        if (isLargeRange) {
+          const todayRange = resolveDateRange('today');
+          exposureFilters = {
+            ...filters,
+            fromDate: todayRange.fromAt,
+            toDate: todayRange.toAt,
+          };
+          exposureTrimmed = true;
+        }
 
-    // FASE 2: Datos complementarios (gráficas, comparativas)
-    const mTimeSeries = await measureAsync('getTimeSeries', () => this.getTimeSeries({ ...filters, interval: filters.interval || 'day' }).then((r) => {
-      queryCount += 1;
-      return r;
-    }));
-    // ⚡ Pasar exposureFilters (puede ser rango trimmed a hoy si range > 7 días)
-    const mExposure = await measureAsync('calculateExposure', () => this.calculateExposure(exposureFilters).then((r) => {
-      queryCount += 3;
-      return r;
-    }));
-    const mPreviousPeriod = await measureAsync('calculatePreviousPeriod', () => this.calculatePreviousPeriod(filters, role).then((r) => {
-      queryCount += 1;
-      return r;
-    }));
-    const measuredPhase2 = [mTimeSeries, mExposure, mPreviousPeriod];
+        // FASE 1: Datos críticos (los que el usuario ve primero)
+        //  SEMI-OPTIMIZADO: Comentamos CxC y CxP por desuso y riesgos de performance en Prisma (intermitencia)
+        //  REFATOR: Ejecución secuencial para proteger el pool de conexiones (límite 15)
+        const mGanancia = await measureAsync('calculateGanancia', () => this.calculateGanancia(filters, role).then((r) => {
+          queryCount += 2;
+          return r;
+        }));
+        /* const mCxC = await measureAsync('calculateCxC', () => this.calculateCxC(filters).then((r) => {
+          queryCount += 1;
+          return r;
+        }));
+        const mCxP = await measureAsync('calculateCxP', () => this.calculateCxP(filters).then((r) => {
+          queryCount += 1;
+          return r;
+        })); */
+        const mSummary = await measureAsync('getSummary', () => this.getSummary(filters, role).then((r) => {
+          queryCount += 1;
+          return r;
+        }));
+        const measuredPhase1 = [mGanancia, mSummary];
 
-    const measured = [...measuredPhase1, ...measuredPhase2];
+        // FASE 2: Datos complementarios (gráficas, comparativas)
+        const mTimeSeries = await measureAsync('getTimeSeries', () => this.getTimeSeries({ ...filters, interval: filters.interval || 'day' }).then((r) => {
+          queryCount += 1;
+          return r;
+        }));
+        // ⚡ Pasar exposureFilters (puede ser rango trimmed a hoy si range > 7 días)
+        const mExposure = await measureAsync('calculateExposure', () => this.calculateExposure(exposureFilters).then((r) => {
+          queryCount += 3;
+          return r;
+        }));
+        const mPreviousPeriod = await measureAsync('calculatePreviousPeriod', () => this.calculatePreviousPeriod(filters, role).then((r) => {
+          queryCount += 1;
+          return r;
+        }));
+        const measuredPhase2 = [mTimeSeries, mExposure, mPreviousPeriod];
 
-    // Extraer resultados directamente (tipado correcto en TS)
-    const ganancia = mGanancia.result;
-    const summary = mSummary.result;
-    
-    // Valores dummy para CxC/CxP (comentados por performance)
-    const cxc = { totalAmount: 0, byVentana: [] };
-    const cxp = { totalAmount: 0, byVentana: [] };
+        const measured = [...measuredPhase1, ...measuredPhase2];
 
-    const timeSeries = mTimeSeries.result;
-    const exposure = mExposure.result;
-    const previousPeriod = mPreviousPeriod.result;
+        // Extraer resultados directamente (tipado correcto en TS)
+        const ganancia = mGanancia.result;
+        const summary = mSummary.result;
+        
+        // Valores dummy para CxC/CxP (comentados por performance)
+        const cxc = { totalAmount: 0, byVentana: [] };
+        const cxp = { totalAmount: 0, byVentana: [] };
 
-    // 🟡 CHECKPOINT: Después de queries, antes de alerts
-    monitor.checkpoint('AFTER_PARALLEL_QUERIES');
+        const timeSeries = mTimeSeries.result;
+        const exposure = mExposure.result;
+        const previousPeriod = mPreviousPeriod.result;
 
-    // Log individual de tiempos y memoria por operación
-    logger.info({
-      layer: 'performance',
-      action: 'DASHBOARD_OPERATIONS_BREAKDOWN',
-      meta: {
-        operations: measured.map(({ durationMs, memoryDeltaMB }, idx) => ({
-          name: ['ganancia', 'summary', 'timeSeries', 'exposure', 'previousPeriod'][idx],
-          durationMs,
-          memoryDeltaMB: parseFloat(memoryDeltaMB.toFixed(2)),
-        })),
+        // 🟡 CHECKPOINT: Después de queries, antes de alerts
+        monitor.checkpoint('AFTER_PARALLEL_QUERIES');
+
+        // Log individual de tiempos y memoria por operación
+        logger.info({
+          layer: 'performance',
+          action: 'DASHBOARD_OPERATIONS_BREAKDOWN',
+          meta: {
+            operations: measured.map(({ durationMs, memoryDeltaMB }, idx) => ({
+              name: ['ganancia', 'summary', 'timeSeries', 'exposure', 'previousPeriod'][idx],
+              durationMs,
+              memoryDeltaMB: parseFloat(memoryDeltaMB.toFixed(2)),
+            })),
+          },
+        });
+
+        const alerts = this.generateAlerts({ ganancia, cxc, cxp, summary, exposure });
+
+        // 🟡 CHECKPOINT: Antes de construir respuesta
+        monitor.checkpoint('BEFORE_RESPONSE_BUILD');
+
+        const response = {
+          ganancia,
+          cxc,
+          cxp,
+          summary,
+          timeSeries: (timeSeries as any).timeSeries,
+          exposure,
+          previousPeriod,
+          alerts,
+          meta: {
+            range: {
+              fromAt: filters.fromDate.toISOString(),
+              toAt: filters.toDate.toISOString(),
+              tz: 'America/Costa_Rica',
+            },
+            // ⚡ Si el rango era > 7 días, la exposición es solo del día actual
+            exposureTrimmedToToday: exposureTrimmed,
+            scope: filters.scope || 'all',
+            generatedAt: new Date().toISOString(),
+            queryExecutionTime: Date.now() - startTime,
+            totalQueries: queryCount,
+          },
+        };
+
+        // 🔴 FIN: Capturar estado final y generar resumen
+        const performanceSummary = monitor.end('RESPONSE_READY');
+
+        // Agregar métricas al meta del response (útil para debugging en dev)
+        if (process.env.NODE_ENV !== 'production') {
+          (response.meta as any).performance = {
+            totalTimeMs: performanceSummary.totalTimeMs,
+            peakHeapUsedMB: parseFloat(performanceSummary.peakHeapUsedMB.toFixed(2)),
+            heapGrowthMB: parseFloat(performanceSummary.heapGrowthMB.toFixed(2)),
+          };
+        }
+
+        return response;
       },
-    });
-
-    const alerts = this.generateAlerts({ ganancia, cxc, cxp, summary, exposure });
-
-    // 🟡 CHECKPOINT: Antes de construir respuesta
-    monitor.checkpoint('BEFORE_RESPONSE_BUILD');
-
-    const response = {
-      ganancia,
-      cxc,
-      cxp,
-      summary,
-      timeSeries: (timeSeries as any).timeSeries,
-      exposure,
-      previousPeriod,
-      alerts,
-      meta: {
-        range: {
-          fromAt: filters.fromDate.toISOString(),
-          toAt: filters.toDate.toISOString(),
-          tz: 'America/Costa_Rica',
-        },
-        // ⚡ Si el rango era > 7 días, la exposición es solo del día actual
-        exposureTrimmedToToday: exposureTrimmed,
-        scope: filters.scope || 'all',
-        generatedAt: new Date().toISOString(),
-        queryExecutionTime: Date.now() - startTime,
-        totalQueries: queryCount,
-      },
-    };
-
-    // 🔴 FIN: Capturar estado final y generar resumen
-    const performanceSummary = monitor.end('RESPONSE_READY');
-
-    // Agregar métricas al meta del response (útil para debugging en dev)
-    if (process.env.NODE_ENV !== 'production') {
-      (response.meta as any).performance = {
-        totalTimeMs: performanceSummary.totalTimeMs,
-        peakHeapUsedMB: parseFloat(performanceSummary.peakHeapUsedMB.toFixed(2)),
-        heapGrowthMB: parseFloat(performanceSummary.heapGrowthMB.toFixed(2)),
-      };
-    }
-
-    return response;
+      ttl,
+      ['dashboard']
+    );
   },
 
   /**
@@ -2612,178 +2627,190 @@ export const DashboardService = {
   }) {
     const fromDateStr = crDateService.dateUTCToCRString(filters.fromDate);
     const toDateStr   = crDateService.dateUTCToCRString(filters.toDate);
-    const nowCRStr    = crDateService.dateUTCToCRString(new Date());
-    const currentMonth = nowCRStr.substring(0, 7); // YYYY-MM
+    const todayCRStr  = crDateService.dateUTCToCRString(new Date());
+    const isToday     = toDateStr >= todayCRStr;
+    const ttl         = isToday ? 30 : 300;
+    const cacheKey    = `dashboard:summary:${filters.bancaId || 'all'}:${filters.ventanaId || 'all'}:${fromDateStr}:${toDateStr}`;
 
-    const bancaFilter   = filters.bancaId
-      ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)`
-      : Prisma.empty;
-    const ventanaFilter = filters.ventanaId
-      ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)`
-      : Prisma.empty;
+    return CacheService.wrap(
+      cacheKey,
+      async () => {
+        const nowCRStr    = crDateService.dateUTCToCRString(new Date());
+        const currentMonth = nowCRStr.substring(0, 7); // YYYY-MM
 
-    type ByVentanaRow = {
-      ventana_id: string;
-      ventana_name: string;
-      is_active: boolean;
-      total_sales: string;
-      total_payouts: string;
-      listero_commission: string;
-      vendedor_commission: string;
-      ticket_count: string;
-      remaining_balance: string;
-      vendedores_remaining_balance: string;
-    };
+        const bancaFilter   = filters.bancaId
+          ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)`
+          : Prisma.empty;
+        const ventanaFilter = filters.ventanaId
+          ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)`
+          : Prisma.empty;
 
-    type MtdRow = {
-      total_sales: string;
-      total_payouts: string;
-      listero_commission: string;
-      vendedor_commission: string;
-    };
+        type ByVentanaRow = {
+          ventana_id: string;
+          ventana_name: string;
+          is_active: boolean;
+          total_sales: string;
+          total_payouts: string;
+          listero_commission: string;
+          vendedor_commission: string;
+          ticket_count: string;
+          remaining_balance: string;
+          vendedores_remaining_balance: string;
+        };
 
-    // Query A — per-ventana period aggregates + saldo acumulado mes actual
-    const [byVentanaRaw, mtdRaw] = await Promise.all([
-      prisma.$queryRaw<ByVentanaRow[]>`
-        SELECT
-          v.id                                         AS ventana_id,
-          v.name                                       AS ventana_name,
-          v."isActive"                                 AS is_active,
-          COALESCE(SUM(s."totalSales"), 0)             AS total_sales,
-          COALESCE(SUM(s."totalPayouts"), 0)           AS total_payouts,
-          COALESCE(SUM(s."listeroCommission"), 0)      AS listero_commission,
-          COALESCE(SUM(s."vendedorCommission"), 0)     AS vendedor_commission,
-          COALESCE(SUM(s."ticketCount"), 0)            AS ticket_count,
-          COALESCE(MAX(lb.remaining_balance), 0)       AS remaining_balance,
-          COALESCE(MAX(vlb.total_vendedores_balance), 0) AS vendedores_remaining_balance
-        FROM "Ventana" v
-        LEFT JOIN "AccountStatement" s
-          ON  s."ventanaId" = v.id
-          AND s."vendedorId" IS NULL
-          AND s.date BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-        LEFT JOIN LATERAL (
-          SELECT "remainingBalance" AS remaining_balance
-          FROM   "AccountStatement"
-          WHERE  "ventanaId"   = v.id
-            AND  "vendedorId"  IS NULL
-            AND  month         = ${currentMonth}
-          ORDER BY date DESC
-          LIMIT 1
-        ) lb ON true
-        LEFT JOIN LATERAL (
-          SELECT SUM(lb_vend.remaining_balance) AS total_vendedores_balance
-          FROM "User" u
-          JOIN LATERAL (
-            SELECT "remainingBalance" AS remaining_balance
-            FROM "AccountStatement" ast
-            WHERE ast."vendedorId" = u.id
-              AND ast.month = ${currentMonth}
-            ORDER BY date DESC
-            LIMIT 1
-          ) lb_vend ON true
-          WHERE u."ventanaId" = v.id
-            AND u.role = 'VENDEDOR'
-            AND u."isActive" = true
-            AND u."deletedAt" IS NULL
-        ) vlb ON true
-        WHERE v."deletedAt" IS NULL
-          ${bancaFilter}
-          ${ventanaFilter}
-        GROUP BY v.id, v.name, v."isActive"
-        ORDER BY total_sales DESC
-      `,
+        type MtdRow = {
+          total_sales: string;
+          total_payouts: string;
+          listero_commission: string;
+          vendedor_commission: string;
+        };
 
-      // Query B — month-to-date global (SUM simple)
-      prisma.$queryRaw<MtdRow[]>`
-        SELECT
-          COALESCE(SUM(s."totalSales"), 0)         AS total_sales,
-          COALESCE(SUM(s."totalPayouts"), 0)        AS total_payouts,
-          COALESCE(SUM(s."listeroCommission"), 0)   AS listero_commission,
-          COALESCE(SUM(s."vendedorCommission"), 0)  AS vendedor_commission
-        FROM "AccountStatement" s
-        JOIN "Ventana" v ON v.id = s."ventanaId"
-        WHERE v."deletedAt"  IS NULL
-          AND s."vendedorId" IS NULL
-          AND s.month        = ${currentMonth}
-          ${bancaFilter}
-          ${ventanaFilter}
-      `,
-    ]);
+        // Query A — per-ventana period aggregates + saldo acumulado mes actual
+        const [byVentanaRaw, mtdRaw] = await Promise.all([
+          prisma.$queryRaw<ByVentanaRow[]>`
+            SELECT
+              v.id                                         AS ventana_id,
+              v.name                                       AS ventana_name,
+              v."isActive"                                 AS is_active,
+              COALESCE(SUM(s."totalSales"), 0)             AS total_sales,
+              COALESCE(SUM(s."totalPayouts"), 0)           AS total_payouts,
+              COALESCE(SUM(s."listeroCommission"), 0)      AS listero_commission,
+              COALESCE(SUM(s."vendedorCommission"), 0)     AS vendedor_commission,
+              COALESCE(SUM(s."ticketCount"), 0)            AS ticket_count,
+              COALESCE(MAX(lb.remaining_balance), 0)       AS remaining_balance,
+              COALESCE(MAX(vlb.total_vendedores_balance), 0) AS vendedores_remaining_balance
+            FROM "Ventana" v
+            LEFT JOIN "AccountStatement" s
+              ON  s."ventanaId" = v.id
+              AND s."vendedorId" IS NULL
+              AND s.date BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+            LEFT JOIN LATERAL (
+              SELECT "remainingBalance" AS remaining_balance
+              FROM   "AccountStatement"
+              WHERE  "ventanaId"   = v.id
+                AND  "vendedorId"  IS NULL
+                AND  month         = ${currentMonth}
+              ORDER BY date DESC
+              LIMIT 1
+            ) lb ON true
+            LEFT JOIN LATERAL (
+              SELECT SUM(lb_vend.remaining_balance) AS total_vendedores_balance
+              FROM "User" u
+              JOIN LATERAL (
+                SELECT "remainingBalance" AS remaining_balance
+                FROM "AccountStatement" ast
+                WHERE ast."vendedorId" = u.id
+                  AND ast.month = ${currentMonth}
+                ORDER BY date DESC
+                LIMIT 1
+              ) lb_vend ON true
+              WHERE u."ventanaId" = v.id
+                AND u.role = 'VENDEDOR'
+                AND u."isActive" = true
+                AND u."deletedAt" IS NULL
+            ) vlb ON true
+            WHERE v."deletedAt" IS NULL
+              ${bancaFilter}
+              ${ventanaFilter}
+            GROUP BY v.id, v.name, v."isActive"
+            ORDER BY total_sales DESC
+          `,
 
-    // Mapear byVentana y calcular derivados
-    const byVentana = byVentanaRaw.map((r) => {
-      const totalSales        = Number(r.total_sales);
-      const totalPayouts      = Number(r.total_payouts);
-      const listeroCommission = Number(r.listero_commission);
-      const vendedorCommission= Number(r.vendedor_commission);
-      const remainingBalance  = Number(r.remaining_balance);
-      const vendedoresRemainingBalance = Number(r.vendedores_remaining_balance);
-      const net    = totalSales - totalPayouts - listeroCommission;
-      const margin = totalSales > 0 ? parseFloat(((net / totalSales) * 100).toFixed(2)) : 0;
-      return {
-        ventanaId:          r.ventana_id,
-        ventanaName:        r.ventana_name,
-        isActive:           r.is_active,
-        totalSales:         parseFloat(totalSales.toFixed(2)),
-        totalPayouts:       parseFloat(totalPayouts.toFixed(2)),
-        listeroCommission:  parseFloat(listeroCommission.toFixed(2)),
-        vendedorCommission: parseFloat(vendedorCommission.toFixed(2)),
-        net:                parseFloat(net.toFixed(2)),
-        margin,
-        ticketCount:        Number(r.ticket_count),
-        remainingBalance:   parseFloat(remainingBalance.toFixed(2)),
-        vendedoresRemainingBalance: parseFloat(vendedoresRemainingBalance.toFixed(2)),
-        cxcAmount:          parseFloat(Math.max(remainingBalance, 0).toFixed(2)),
-        cxpAmount:          parseFloat(Math.max(-remainingBalance, 0).toFixed(2)),
-      };
-    });
+          // Query B — month-to-date global (SUM simple)
+          prisma.$queryRaw<MtdRow[]>`
+            SELECT
+              COALESCE(SUM(s."totalSales"), 0)         AS total_sales,
+              COALESCE(SUM(s."totalPayouts"), 0)        AS total_payouts,
+              COALESCE(SUM(s."listeroCommission"), 0)   AS listero_commission,
+              COALESCE(SUM(s."vendedorCommission"), 0)  AS vendedor_commission
+            FROM "AccountStatement" s
+            JOIN "Ventana" v ON v.id = s."ventanaId"
+            WHERE v."deletedAt"  IS NULL
+              AND s."vendedorId" IS NULL
+              AND s.month        = ${currentMonth}
+              ${bancaFilter}
+              ${ventanaFilter}
+          `,
+        ]);
 
-    // KPIs globales — suma de byVentana (ya filtrado por RBAC)
-    const totSales   = byVentana.reduce((s, v) => s + v.totalSales, 0);
-    const totPayouts = byVentana.reduce((s, v) => s + v.totalPayouts, 0);
-    const totListero = byVentana.reduce((s, v) => s + v.listeroCommission, 0);
-    const totVend    = byVentana.reduce((s, v) => s + v.vendedorCommission, 0);
-    const totTickets = byVentana.reduce((s, v) => s + v.ticketCount, 0);
-    const totNet     = totSales - totPayouts - totListero;
-    const totMargin  = totSales > 0 ? parseFloat(((totNet / totSales) * 100).toFixed(2)) : 0;
+        // Mapear byVentana y calcular derivados
+        const byVentana = byVentanaRaw.map((r) => {
+          const totalSales        = Number(r.total_sales);
+          const totalPayouts      = Number(r.total_payouts);
+          const listeroCommission = Number(r.listero_commission);
+          const vendedorCommission= Number(r.vendedor_commission);
+          const remainingBalance  = Number(r.remaining_balance);
+          const vendedoresRemainingBalance = Number(r.vendedores_remaining_balance);
+          const net    = totalSales - totalPayouts - listeroCommission;
+          const margin = totalSales > 0 ? parseFloat(((net / totalSales) * 100).toFixed(2)) : 0;
+          return {
+            ventanaId:          r.ventana_id,
+            ventanaName:        r.ventana_name,
+            isActive:           r.is_active,
+            totalSales:         parseFloat(totalSales.toFixed(2)),
+            totalPayouts:       parseFloat(totalPayouts.toFixed(2)),
+            listeroCommission:  parseFloat(listeroCommission.toFixed(2)),
+            vendedorCommission: parseFloat(vendedorCommission.toFixed(2)),
+            net:                parseFloat(net.toFixed(2)),
+            margin,
+            ticketCount:        Number(r.ticket_count),
+            remainingBalance:   parseFloat(remainingBalance.toFixed(2)),
+            vendedoresRemainingBalance: parseFloat(vendedoresRemainingBalance.toFixed(2)),
+            cxcAmount:          parseFloat(Math.max(remainingBalance, 0).toFixed(2)),
+            cxpAmount:          parseFloat(Math.max(-remainingBalance, 0).toFixed(2)),
+          };
+        });
 
-    const kpis = {
-      totalSales:         parseFloat(totSales.toFixed(2)),
-      totalPayouts:       parseFloat(totPayouts.toFixed(2)),
-      listeroCommission:  parseFloat(totListero.toFixed(2)),
-      vendedorCommission: parseFloat(totVend.toFixed(2)),
-      totalNet:           parseFloat(totNet.toFixed(2)),
-      margin:             totMargin,
-      ticketCount:        totTickets,
-    };
+        // KPIs globales — suma de byVentana (ya filtrado por RBAC)
+        const totSales   = byVentana.reduce((s, v) => s + v.totalSales, 0);
+        const totPayouts = byVentana.reduce((s, v) => s + v.totalPayouts, 0);
+        const totListero = byVentana.reduce((s, v) => s + v.listeroCommission, 0);
+        const totVend    = byVentana.reduce((s, v) => s + v.vendedorCommission, 0);
+        const totTickets = byVentana.reduce((s, v) => s + v.ticketCount, 0);
+        const totNet     = totSales - totPayouts - totListero;
+        const totMargin  = totSales > 0 ? parseFloat(((totNet / totSales) * 100).toFixed(2)) : 0;
 
-    // monthToDate
-    const mtd = mtdRaw[0] ?? { total_sales: '0', total_payouts: '0', listero_commission: '0', vendedor_commission: '0' };
-    const mtdSales   = Number(mtd.total_sales);
-    const mtdPayouts = Number(mtd.total_payouts);
-    const mtdListero = Number(mtd.listero_commission);
-    const mtdVend    = Number(mtd.vendedor_commission);
-    const mtdNet     = mtdSales - mtdPayouts - mtdListero;
-    const monthToDate = {
-      totalSales:         parseFloat(mtdSales.toFixed(2)),
-      totalPayouts:       parseFloat(mtdPayouts.toFixed(2)),
-      listeroCommission:  parseFloat(mtdListero.toFixed(2)),
-      vendedorCommission: parseFloat(mtdVend.toFixed(2)),
-      totalNet:           parseFloat(mtdNet.toFixed(2)),
-      margin:             mtdSales > 0 ? parseFloat(((mtdNet / mtdSales) * 100).toFixed(2)) : 0,
-    };
+        const kpis = {
+          totalSales:         parseFloat(totSales.toFixed(2)),
+          totalPayouts:       parseFloat(totPayouts.toFixed(2)),
+          listeroCommission:  parseFloat(totListero.toFixed(2)),
+          vendedorCommission: parseFloat(totVend.toFixed(2)),
+          totalNet:           parseFloat(totNet.toFixed(2)),
+          margin:             totMargin,
+          ticketCount:        totTickets,
+        };
 
-    return {
-      kpis,
-      monthToDate,
-      byVentana,
-      meta: {
-        fromAt:       filters.fromDate.toISOString(),
-        toAt:         filters.toDate.toISOString(),
-        currentMonth,
-        generatedAt:  new Date().toISOString(),
+        // monthToDate
+        const mtd = mtdRaw[0] ?? { total_sales: '0', total_payouts: '0', listero_commission: '0', vendedor_commission: '0' };
+        const mtdSales   = Number(mtd.total_sales);
+        const mtdPayouts = Number(mtd.total_payouts);
+        const mtdListero = Number(mtd.listero_commission);
+        const mtdVend    = Number(mtd.vendedor_commission);
+        const mtdNet     = mtdSales - mtdPayouts - mtdListero;
+        const monthToDate = {
+          totalSales:         parseFloat(mtdSales.toFixed(2)),
+          totalPayouts:       parseFloat(mtdPayouts.toFixed(2)),
+          listeroCommission:  parseFloat(mtdListero.toFixed(2)),
+          vendedorCommission: parseFloat(mtdVend.toFixed(2)),
+          totalNet:           parseFloat(mtdNet.toFixed(2)),
+          margin:             mtdSales > 0 ? parseFloat(((mtdNet / mtdSales) * 100).toFixed(2)) : 0,
+        };
+
+        return {
+          kpis,
+          monthToDate,
+          byVentana,
+          meta: {
+            fromAt:       filters.fromDate.toISOString(),
+            toAt:         filters.toDate.toISOString(),
+            currentMonth,
+            generatedAt:  new Date().toISOString(),
+          },
+        };
       },
-    };
+      ttl,
+      ['dashboard']
+    );
   },
 
   /**
@@ -2800,104 +2827,116 @@ export const DashboardService = {
   }) {
     const fromDateStr  = crDateService.dateUTCToCRString(filters.fromDate);
     const toDateStr    = crDateService.dateUTCToCRString(filters.toDate);
-    const nowCRStr     = crDateService.dateUTCToCRString(new Date());
-    const currentMonth = nowCRStr.substring(0, 7);
+    const todayCRStr   = crDateService.dateUTCToCRString(new Date());
+    const isToday      = toDateStr >= todayCRStr;
+    const ttl          = isToday ? 30 : 300;
+    const cacheKey     = `dashboard:entities:${filters.bancaId || 'all'}:${filters.ventanaId || 'all'}:${fromDateStr}:${toDateStr}`;
 
-    const bancaFilter   = filters.bancaId
-      ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)`
-      : Prisma.empty;
-    const ventanaFilter = filters.ventanaId
-      ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)`
-      : Prisma.empty;
+    return CacheService.wrap(
+      cacheKey,
+      async () => {
+        const nowCRStr     = crDateService.dateUTCToCRString(new Date());
+        const currentMonth = nowCRStr.substring(0, 7);
 
-    type EntidadRow = {
-      vendedor_id: string;
-      vendedor_name: string;
-      vendedor_code: string | null;
-      is_active: boolean;
-      ventana_id: string;
-      ventana_name: string;
-      total_sales: string;
-      total_payouts: string;
-      listero_commission: string;
-      vendedor_commission: string;
-      ticket_count: string;
-      remaining_balance: string;
-    };
+        const bancaFilter   = filters.bancaId
+          ? Prisma.sql`AND v."bancaId" = CAST(${filters.bancaId} AS uuid)`
+          : Prisma.empty;
+        const ventanaFilter = filters.ventanaId
+          ? Prisma.sql`AND v.id = CAST(${filters.ventanaId} AS uuid)`
+          : Prisma.empty;
 
-    const rows = await prisma.$queryRaw<EntidadRow[]>`
-      SELECT
-        u.id                                          AS vendedor_id,
-        u.name                                        AS vendedor_name,
-        u.code                                        AS vendedor_code,
-        u."isActive"                                  AS is_active,
-        v.id                                          AS ventana_id,
-        v.name                                        AS ventana_name,
-        COALESCE(SUM(s."totalSales"), 0)              AS total_sales,
-        COALESCE(SUM(s."totalPayouts"), 0)            AS total_payouts,
-        COALESCE(SUM(s."listeroCommission"), 0)       AS listero_commission,
-        COALESCE(SUM(s."vendedorCommission"), 0)      AS vendedor_commission,
-        COALESCE(SUM(s."ticketCount"), 0)             AS ticket_count,
-        COALESCE(MAX(lb.remaining_balance), 0)        AS remaining_balance
-      FROM "User" u
-      JOIN "Ventana" v ON v.id = u."ventanaId"
-      LEFT JOIN "AccountStatement" s
-        ON  s."vendedorId" = u.id
-        AND s.date BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-      LEFT JOIN LATERAL (
-        SELECT "remainingBalance" AS remaining_balance
-        FROM   "AccountStatement"
-        WHERE  "vendedorId" = u.id
-          AND  month        = ${currentMonth}
-        ORDER BY date DESC
-        LIMIT 1
-      ) lb ON true
-      WHERE u."deletedAt"  IS NULL
-        AND u.role         = 'VENDEDOR'
-        AND v."deletedAt"  IS NULL
-        ${bancaFilter}
-        ${ventanaFilter}
-      GROUP BY u.id, u.name, u.code, u."isActive", v.id, v.name
-      ORDER BY total_sales DESC
-    `;
+        type EntidadRow = {
+          vendedor_id: string;
+          vendedor_name: string;
+          vendedor_code: string | null;
+          is_active: boolean;
+          ventana_id: string;
+          ventana_name: string;
+          total_sales: string;
+          total_payouts: string;
+          listero_commission: string;
+          vendedor_commission: string;
+          ticket_count: string;
+          remaining_balance: string;
+        };
 
-    const vendedores = rows.map((r) => {
-      const totalSales         = Number(r.total_sales);
-      const totalPayouts       = Number(r.total_payouts);
-      const listeroCommission  = Number(r.listero_commission);
-      const vendedorCommission = Number(r.vendedor_commission);
-      const remainingBalance   = Number(r.remaining_balance);
-      const net    = totalSales - totalPayouts - vendedorCommission;
-      const margin = totalSales > 0 ? parseFloat(((net / totalSales) * 100).toFixed(2)) : 0;
-      return {
-        vendedorId:          r.vendedor_id,
-        vendedorName:        r.vendedor_name,
-        vendedorCode:        r.vendedor_code ?? null,
-        isActive:            r.is_active,
-        ventanaId:           r.ventana_id,
-        ventanaName:         r.ventana_name,
-        totalSales:          parseFloat(totalSales.toFixed(2)),
-        totalPayouts:        parseFloat(totalPayouts.toFixed(2)),
-        listeroCommission:   parseFloat(listeroCommission.toFixed(2)),
-        vendedorCommission:  parseFloat(vendedorCommission.toFixed(2)),
-        net:                 parseFloat(net.toFixed(2)),
-        margin,
-        ticketCount:         Number(r.ticket_count),
-        remainingBalance:    parseFloat(remainingBalance.toFixed(2)),
-        cxcAmount:           parseFloat(Math.max(remainingBalance, 0).toFixed(2)),
-        cxpAmount:           parseFloat(Math.max(-remainingBalance, 0).toFixed(2)),
-      };
-    });
+        const rows = await prisma.$queryRaw<EntidadRow[]>`
+          SELECT
+            u.id                                          AS vendedor_id,
+            u.name                                        AS vendedor_name,
+            u.code                                        AS vendedor_code,
+            u."isActive"                                  AS is_active,
+            v.id                                          AS ventana_id,
+            v.name                                        AS ventana_name,
+            COALESCE(SUM(s."totalSales"), 0)              AS total_sales,
+            COALESCE(SUM(s."totalPayouts"), 0)            AS total_payouts,
+            COALESCE(SUM(s."listeroCommission"), 0)       AS listero_commission,
+            COALESCE(SUM(s."vendedorCommission"), 0)      AS vendedor_commission,
+            COALESCE(SUM(s."ticketCount"), 0)             AS ticket_count,
+            COALESCE(MAX(lb.remaining_balance), 0)        AS remaining_balance
+          FROM "User" u
+          JOIN "Ventana" v ON v.id = u."ventanaId"
+          LEFT JOIN "AccountStatement" s
+            ON  s."vendedorId" = u.id
+            AND s.date BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          LEFT JOIN LATERAL (
+            SELECT "remainingBalance" AS remaining_balance
+            FROM   "AccountStatement"
+            WHERE  "vendedorId" = u.id
+              AND  month        = ${currentMonth}
+            ORDER BY date DESC
+            LIMIT 1
+          ) lb ON true
+          WHERE u."deletedAt"  IS NULL
+            AND u.role         = 'VENDEDOR'
+            AND v."deletedAt"  IS NULL
+            ${bancaFilter}
+            ${ventanaFilter}
+          GROUP BY u.id, u.name, u.code, u."isActive", v.id, v.name
+          ORDER BY total_sales DESC
+        `;
 
-    return {
-      vendedores,
-      meta: {
-        fromAt:       filters.fromDate.toISOString(),
-        toAt:         filters.toDate.toISOString(),
-        currentMonth,
-        generatedAt:  new Date().toISOString(),
+        const vendedores = rows.map((r) => {
+          const totalSales         = Number(r.total_sales);
+          const totalPayouts       = Number(r.total_payouts);
+          const listeroCommission  = Number(r.listero_commission);
+          const vendedorCommission = Number(r.vendedor_commission);
+          const remainingBalance   = Number(r.remaining_balance);
+          const net    = totalSales - totalPayouts - vendedorCommission;
+          const margin = totalSales > 0 ? parseFloat(((net / totalSales) * 100).toFixed(2)) : 0;
+          return {
+            vendedorId:          r.vendedor_id,
+            vendedorName:        r.vendedor_name,
+            vendedorCode:        r.vendedor_code ?? null,
+            isActive:            r.is_active,
+            ventanaId:           r.ventana_id,
+            ventanaName:         r.ventana_name,
+            totalSales:          parseFloat(totalSales.toFixed(2)),
+            totalPayouts:        parseFloat(totalPayouts.toFixed(2)),
+            listeroCommission:   parseFloat(listeroCommission.toFixed(2)),
+            vendedorCommission:  parseFloat(vendedorCommission.toFixed(2)),
+            net:                 parseFloat(net.toFixed(2)),
+            margin,
+            ticketCount:         Number(r.ticket_count),
+            remainingBalance:    parseFloat(remainingBalance.toFixed(2)),
+            cxcAmount:           parseFloat(Math.max(remainingBalance, 0).toFixed(2)),
+            cxpAmount:           parseFloat(Math.max(-remainingBalance, 0).toFixed(2)),
+          };
+        });
+
+        return {
+          vendedores,
+          meta: {
+            fromAt:       filters.fromDate.toISOString(),
+            toAt:         filters.toDate.toISOString(),
+            currentMonth,
+            generatedAt:  new Date().toISOString(),
+          },
+        };
       },
-    };
+      ttl,
+      ['dashboard']
+    );
   },
 };
 

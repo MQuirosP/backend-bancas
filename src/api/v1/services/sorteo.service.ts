@@ -906,7 +906,7 @@ const SorteoService = {
 
       const cacheKey = `sorteos:list:v3:${params.loteriaId || 'all'}:${params.status || 'all'}:${params.role || 'all'}:${params.bancaId || 'all'}:${params.ventanaId || 'all'}:${params.userId || 'all'}:${p}:${ps}:${params.search || ''}:${params.isActive ?? 'all'}:${params.dateFrom?.getTime() || ''}:${params.dateTo?.getTime() || ''}`;
 
-      const tags = [];
+      const tags = ['sorteos'];
       if (params.userId) tags.push(`user:${params.userId}`);
       if (params.ventanaId) tags.push(`ventana:${params.ventanaId}`);
       if (params.bancaId) tags.push(`banca:${params.bancaId}`);

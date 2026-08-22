@@ -46,8 +46,9 @@ const MultiplierService = {
       details: { op: "create", data },
     });
 
-    // Invalida caché de multiplicadores resueltos vinculados a la lotería
+    // Invalida caché de multiplicadores resueltos vinculados a la lotería y catálogo general
     await CacheService.invalidateTag(`loteria:${created.loteriaId}`).catch(() => {});
+    await CacheService.invalidateTag('catalog:multipliers').catch(() => {});
 
     return created;
   },
@@ -102,8 +103,9 @@ const MultiplierService = {
       details: { op: "update", before: existing, after: data },
     });
 
-    // Invalida caché de multiplicadores resueltos vinculados a la lotería
+    // Invalida caché de multiplicadores resueltos vinculados a la lotería y catálogo general
     await CacheService.invalidateTag(`loteria:${updated.loteriaId}`).catch(() => {});
+    await CacheService.invalidateTag('catalog:multipliers').catch(() => {});
 
     return updated;
   },
@@ -134,8 +136,9 @@ const MultiplierService = {
       details: { op: "toggle", isActive: enable },
     });
 
-    // Invalida caché de multiplicadores resueltos vinculados a la lotería
+    // Invalida caché de multiplicadores resueltos vinculados a la lotería y catálogo general
     await CacheService.invalidateTag(`loteria:${updated.loteriaId}`).catch(() => {});
+    await CacheService.invalidateTag('catalog:multipliers').catch(() => {});
 
     return updated;
   },
@@ -156,8 +159,9 @@ const MultiplierService = {
       include: { loteria: { select: { id: true, name: true } } },
     });
 
-    // Invalida caché de multiplicadores resueltos vinculados a la lotería
+    // Invalida caché de multiplicadores resueltos vinculados a la lotería y catálogo general
     await CacheService.invalidateTag(`loteria:${restored.loteriaId}`).catch(() => {});
+    await CacheService.invalidateTag('catalog:multipliers').catch(() => {});
 
     await ActivityService.log({
       userId,
@@ -182,52 +186,61 @@ const MultiplierService = {
 
   async list(query: ListMultiplierQueryInput & { bancaId?: string }) {
     const q = query;
-
-    //  construir where con búsqueda por name y por nombre de lotería
-    const and: any[] = [];
-    if (q.q?.trim()) {
-      const s = q.q.trim();
-      and.push({
-        OR: [
-          { name: { contains: s, mode: "insensitive" } },
-          { loteria: { name: { contains: s, mode: "insensitive" } } as any },
-        ],
-      });
-    }
-
-    const where: any = {
-      ...(q.loteriaId ? { loteriaId: q.loteriaId } : {}),
-      ...(q.kind ? { kind: q.kind } : {}),
-      ...(typeof q.isActive === "boolean" ? { isActive: q.isActive } : {}),
-      ...(q.appliesToSorteoId ? { appliesToSorteoId: q.appliesToSorteoId } : {}),
-      bancaId: q.bancaId ?? null,
-      ...(and.length ? { AND: and } : {}),
-    };
-
     const page = q.page ?? 1;
     const pageSize = q.pageSize ?? 20;
-    const skip = (page - 1) * pageSize;
 
-    const [data, total] = await Promise.all([
-      prisma.loteriaMultiplier.findMany({
-        where,
-        skip,
-        take: pageSize,
-        orderBy: { updatedAt: "desc" },
-        include: { loteria: { select: { id: true, name: true } } },
-      }),
-      prisma.loteriaMultiplier.count({ where }),
-    ]);
+    const cacheKey = `catalog:multipliers:list:${page}:${pageSize}:${q.loteriaId || 'all'}:${q.kind || 'all'}:${q.isActive ?? 'all'}:${q.appliesToSorteoId || 'all'}:${q.bancaId || 'global'}:${q.q?.trim() || 'none'}`;
 
-    return {
-      data,
-      meta: {
-        page,
-        pageSize,
-        total,
-        pages: Math.ceil(total / pageSize),
+    return CacheService.wrap(
+      cacheKey,
+      async () => {
+        //  construir where con búsqueda por name y por nombre de lotería
+        const and: any[] = [];
+        if (q.q?.trim()) {
+          const s = q.q.trim();
+          and.push({
+            OR: [
+              { name: { contains: s, mode: "insensitive" } },
+              { loteria: { name: { contains: s, mode: "insensitive" } } as any },
+            ],
+          });
+        }
+
+        const where: any = {
+          ...(q.loteriaId ? { loteriaId: q.loteriaId } : {}),
+          ...(q.kind ? { kind: q.kind } : {}),
+          ...(typeof q.isActive === "boolean" ? { isActive: q.isActive } : {}),
+          ...(q.appliesToSorteoId ? { appliesToSorteoId: q.appliesToSorteoId } : {}),
+          bancaId: q.bancaId ?? null,
+          ...(and.length ? { AND: and } : {}),
+        };
+
+        const skip = (page - 1) * pageSize;
+
+        const [data, total] = await Promise.all([
+          prisma.loteriaMultiplier.findMany({
+            where,
+            skip,
+            take: pageSize,
+            orderBy: { updatedAt: "desc" },
+            include: { loteria: { select: { id: true, name: true } } },
+          }),
+          prisma.loteriaMultiplier.count({ where }),
+        ]);
+
+        return {
+          data,
+          meta: {
+            page,
+            pageSize,
+            total,
+            pages: Math.ceil(total / pageSize),
+          },
+        };
       },
-    };
+      1800, // 30 minutos
+      ['catalog:multipliers']
+    );
   },
 };
 

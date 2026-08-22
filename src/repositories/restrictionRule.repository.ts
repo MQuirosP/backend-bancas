@@ -153,7 +153,7 @@ export const RestrictionRuleRepository = {
       userId: rule.userId || undefined,
     });
     // 2. Caché local de validación de balances (ticket.repository)
-    invalidateRestrictionRulesCache();
+    await invalidateRestrictionRulesCache();
 
     return rule;
   },
@@ -200,7 +200,7 @@ export const RestrictionRuleRepository = {
       userId: rule.userId || undefined,
     });
     // 2. Caché local de validación de balances (ticket.repository)
-    invalidateRestrictionRulesCache();
+    await invalidateRestrictionRulesCache();
 
     return rule;
   },
@@ -225,7 +225,7 @@ export const RestrictionRuleRepository = {
       userId: rule.userId || undefined,
     });
     // 2. Caché local de validación de balances (ticket.repository)
-    invalidateRestrictionRulesCache();
+    await invalidateRestrictionRulesCache();
 
     return rule;
   },
@@ -248,7 +248,7 @@ export const RestrictionRuleRepository = {
       userId: rule.userId || undefined,
     });
     // 2. Caché local de validación de balances (ticket.repository)
-    invalidateRestrictionRulesCache();
+    await invalidateRestrictionRulesCache();
 
     return rule;
   },

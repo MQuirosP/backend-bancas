@@ -17,31 +17,7 @@ import { getRedisClient, isRedisAvailable, markRedisError } from "../core/redisC
 import { CacheService } from "../core/cache.service";
 
 
-interface CachedRules {
-  rules: any[];
-  expiresAt: number;
-}
-
-const RULES_CACHE_TTL_MS = 60_000; // 60 segundos
-const MAX_RULES_CACHE_SIZE = 500;  // Máximo de combinaciones userId:ventanaId:bancaId en memoria
-
-/**
- * Cache en memoria para RestrictionRules activas.
- * Clave: JSON.stringify de los scopeIds (userId, ventanaId, bancaId).
- * Se invalida llamando a invalidateRestrictionRulesCache() desde el
- * endpoint PATCH /restriction-rules/:id y POST/DELETE equivalentes.
- */
-const restrictionRulesCache = new Map<string, CachedRules>();
-
-// Limpieza periódica de entradas expiradas (cada 2 minutos).
-// Necesario porque la limpieza lazy (en getCachedRestrictionRules)
-// no elimina claves que se escriben pero nunca vuelven a consultarse.
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of restrictionRulesCache.entries()) {
-    if (entry.expiresAt < now) restrictionRulesCache.delete(key);
-  }
-}, 120_000).unref();
+const RULES_CACHE_TTL_SECONDS = 120; // 2 minutos en Redis
 
 export function buildRulesCacheKey(params: {
   userId: string;
@@ -51,32 +27,17 @@ export function buildRulesCacheKey(params: {
   return `rules:${params.userId}:${params.ventanaId}:${params.bancaId}`;
 }
 
-export function getCachedRestrictionRules(key: string): any[] | null {
-  const cached = restrictionRulesCache.get(key);
-  if (!cached) return null;
-  if (cached.expiresAt < Date.now()) {
-    restrictionRulesCache.delete(key);
-    return null;
-  }
-  return cached.rules;
+export async function getCachedRestrictionRules<T = unknown>(key: string): Promise<T[] | null> {
+  return CacheService.get<T[]>(key);
 }
 
-export function setCachedRestrictionRules(key: string, rules: any[]): void {
-  // Desalojar la entrada más antigua (FIFO) antes de insertar si se alcanzó el límite.
-  // Map preserva orden de inserción, por lo que el primer elemento es siempre el más viejo.
-  if (restrictionRulesCache.size >= MAX_RULES_CACHE_SIZE) {
-    const firstKey = restrictionRulesCache.keys().next().value;
-    if (firstKey !== undefined) restrictionRulesCache.delete(firstKey);
-  }
-  restrictionRulesCache.set(key, {
-    rules,
-    expiresAt: Date.now() + RULES_CACHE_TTL_MS,
-  });
+export async function setCachedRestrictionRules<T = unknown>(key: string, rules: T[]): Promise<void> {
+  await CacheService.set(key, rules, RULES_CACHE_TTL_SECONDS, ['rules']).catch(() => {});
 }
 
-/** Llamar desde el controller de RestrictionRule en mutaciones (create/update/delete) */
-export function invalidateRestrictionRulesCache(): void {
-  restrictionRulesCache.clear();
+/** Llamar desde el controller/repository de RestrictionRule en mutaciones (create/update/delete) */
+export async function invalidateRestrictionRulesCache(): Promise<void> {
+  await CacheService.invalidateTag('rules').catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -1711,7 +1672,7 @@ export const TicketRepository = {
         // 6) Reglas de restricción con CACHE
         //    OPTIMIZACIÓN: evita un findMany en el 99% de los tickets
         const rulesCacheKey = buildRulesCacheKey({ userId, ventanaId, bancaId });
-        let candidateRules = getCachedRestrictionRules(rulesCacheKey);
+        let candidateRules = await getCachedRestrictionRules<RestrictionRuleWithRelations>(rulesCacheKey);
 
         if (!candidateRules) {
           candidateRules = await tx.restrictionRule.findMany({
@@ -1735,7 +1696,7 @@ export const TicketRepository = {
               multiplier: true,
             },
           });
-          setCachedRestrictionRules(rulesCacheKey, candidateRules);
+          await setCachedRestrictionRules(rulesCacheKey, candidateRules);
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -3126,7 +3087,7 @@ export const TicketRepository = {
         ventanaId: user.ventanaId,
         bancaId: effectiveBancaId,
       });
-      const cachedRules = getCachedRestrictionRules(rulesCacheKey);
+      const cachedRules = await getCachedRestrictionRules<any>(rulesCacheKey);
       const candidateRules = cachedRules ?? await (async () => {
         const fresh = await prisma.restrictionRule.findMany({
           where: {
@@ -3140,7 +3101,7 @@ export const TicketRepository = {
           },
           include: { loteria: true, multiplier: true },
         });
-        setCachedRestrictionRules(rulesCacheKey, fresh);
+        await setCachedRestrictionRules(rulesCacheKey, fresh);
         return fresh;
       })();
 

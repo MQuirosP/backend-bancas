@@ -675,6 +675,10 @@ export const LoteriaService = {
         payload: { bancaId, openedCount: openedCount.count }
       });
 
+      await CacheService.invalidateTag('loterias').catch(() => {});
+      await CacheService.invalidateTag('catalog:multipliers').catch(() => {});
+      await CacheService.invalidateTag('sorteos').catch(() => {});
+
     } catch (err) {
       logger.error({
         layer: "service",

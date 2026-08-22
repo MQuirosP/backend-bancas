@@ -510,7 +510,7 @@ export const RestrictionRuleService = {
       }
     }
     // Invalidar el caché local de validación de balances (ticket.repository)
-    invalidateRestrictionRulesCache();
+    await invalidateRestrictionRulesCache();
 
     await ActivityService.log({
       userId: actorId,
@@ -573,7 +573,7 @@ export const RestrictionRuleService = {
       }
     }
     // Invalidar el caché local de validación de balances (ticket.repository)
-    invalidateRestrictionRulesCache();
+    await invalidateRestrictionRulesCache();
 
     await ActivityService.log({
       userId: actorId,

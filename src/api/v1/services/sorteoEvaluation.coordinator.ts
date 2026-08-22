@@ -134,6 +134,7 @@ export class SorteoEvaluationCoordinator {
     try {
       clearSorteoCache();
       CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
+      CacheService.invalidateTag('dashboard').catch(() => {});
     } catch (err: any) {
       logger.error({
         layer: "coordinator",
