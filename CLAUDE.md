@@ -8,7 +8,8 @@ Node.js 20 + Express + TypeScript + Prisma + PostgreSQL (Supabase).
 ## Comandos útiles
 
 - **Entorno de desarrollo:** `npm run dev`
-- **Suite de Soporte y Operaciones (Render / CLI):** `npm run ops` o `npm run cli`
+- **Suite de Soporte y Operaciones (Render / Prod):** `npm run ops` (Ejecuta JS compilado liviano)
+- **Suite de Soporte y Operaciones (Local Dev):** `npm run ops:dev` (Ejecuta TS directo sin build)
 - **Generar cliente Prisma:** `npx prisma generate`
 - **Migraciones de base de datos:**
   - Ver estado: `npx prisma migrate status`

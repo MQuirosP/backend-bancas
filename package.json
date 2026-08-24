@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node --max-old-space-size=200 dist/index.js",
     "ops": "node --max-old-space-size=100 dist/scripts/CLI/main-wizard.js",
+    "ops:dev": "npx tsx src/scripts/CLI/main-wizard.ts",
     "cli": "node --max-old-space-size=100 dist/scripts/CLI/main-wizard.js",
     "dev": "nodemon",
     "build": "tsc",
