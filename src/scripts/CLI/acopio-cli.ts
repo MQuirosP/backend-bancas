@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import prisma from '../../core/prismaClient';
-import { renderProgressBar, colors, ask, formatCRC } from './helpers';
+import { renderProgressBar, colors, ask, formatCRC, IS_RENDER, callOpsApi } from './helpers';
 import { DailyNumberSalesService } from '../../api/v1/services/dailyNumberSales.service';
 import ActivityService from '../../core/activity.service';
 import { ActivityType } from '../../generated/prisma/client';
@@ -9,7 +9,8 @@ import { ActivityType } from '../../generated/prisma/client';
  * acopio-cli.ts
  *
  * Auditoría y Re-agregación masiva de acopio de ventas por número (DailyNumberSales).
- * Audita primero si existen discrepancias entre el acopio guardado y las jugadas reales del sorteo.
+ * En Render: ejecuta acciones vía llamadas HTTP ultralivianas.
+ * En Local: ejecuta directo en Prisma.
  */
 
 export async function runAcopioSalesRebuild(options?: {
@@ -32,13 +33,27 @@ export async function runAcopioSalesRebuild(options?: {
   }
   console.log(`======================================================================\n`);
 
-  // Calcular fechas UTC
+  if (IS_RENDER) {
+    console.log(`⏳  Auditando y procesando acopio de ventas vía API en servidor interno (Render Mode)...`);
+    const res = await callOpsApi('/acopio/rebuild', {
+      fromStr: fromDateStr,
+      toStr: toDateStr,
+      bancaId: targetBancaId,
+      executeRebuild: true
+    });
+    console.log(`\n======================================================================`);
+    console.log(`🎉  ACOPIO DE VENTAS RECALCULADO EXITOSAMENTE (${res.processedCount} SORTEOS)`);
+    console.log(`📌  Registrado en ActivityLog | Rango: ${fromDateStr} a ${toDateStr}`);
+    console.log(`======================================================================\n`);
+    return;
+  }
+
+  // MODO LOCAL: Conexión Prisma directa sin cambios
   const [fromY, fromM, fromD] = fromDateStr.split('-').map(Number);
   const [toY, toM, toD] = toDateStr.split('-').map(Number);
   const startOfDayUTC = new Date(Date.UTC(fromY, fromM - 1, fromD, 6, 0, 0, 0));
   const endOfDayUTC = new Date(Date.UTC(toY, toM - 1, toD + 1, 5, 59, 59, 999));
 
-  // Buscar sorteos evaluados en el rango
   const sorteos = await prisma.sorteo.findMany({
     where: {
       scheduledAt: { gte: startOfDayUTC, lte: endOfDayUTC },
@@ -46,9 +61,7 @@ export async function runAcopioSalesRebuild(options?: {
       isActive: true,
       ...(targetBancaId ? { bancaId: targetBancaId } : {})
     },
-    include: {
-      banca: { select: { name: true } }
-    },
+    include: { banca: { select: { name: true } } },
     orderBy: { scheduledAt: 'asc' }
   });
 
@@ -66,27 +79,16 @@ export async function runAcopioSalesRebuild(options?: {
     const s = sorteos[i];
     renderProgressBar(i + 1, sorteos.length, `Auditando: ${s.name}`);
 
-    // 1. Obtener totales guardados en DailyNumberSales
     const storedRes = await prisma.$queryRaw<Array<{ totalDB: number; jugadasDB: number }>>`
-      SELECT 
-        COALESCE(SUM("totalAmount"), 0)::float AS "totalDB",
-        COALESCE(SUM("jugadasCount"), 0)::integer AS "jugadasDB"
-      FROM "DailyNumberSales"
-      WHERE "sorteoId" = ${s.id}::uuid
+      SELECT COALESCE(SUM("totalAmount"), 0)::float AS "totalDB", COALESCE(SUM("jugadasCount"), 0)::integer AS "jugadasDB"
+      FROM "DailyNumberSales" WHERE "sorteoId" = ${s.id}::uuid
     `;
 
-    // 2. Obtener totales calculados en vivo desde Jugada + Ticket
     const liveRes = await prisma.$queryRaw<Array<{ totalReal: number; jugadasReal: number }>>`
-      SELECT 
-        COALESCE(SUM(j.amount), 0)::float AS "totalReal",
-        COUNT(j.id)::integer AS "jugadasReal"
-      FROM "Jugada" j
-      JOIN "Ticket" t ON j."ticketId" = t.id
-      WHERE t."sorteoId" = ${s.id}::uuid
-        AND t."deletedAt" IS NULL
-        AND t."isActive" = true
-        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-        AND j."deletedAt" IS NULL
+      SELECT COALESCE(SUM(j.amount), 0)::float AS "totalReal", COUNT(j.id)::integer AS "jugadasReal"
+      FROM "Jugada" j JOIN "Ticket" t ON j."ticketId" = t.id
+      WHERE t."sorteoId" = ${s.id}::uuid AND t."deletedAt" IS NULL AND t."isActive" = true
+        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO') AND j."deletedAt" IS NULL
     `;
 
     const stored = storedRes[0] || { totalDB: 0, jugadasDB: 0 };
@@ -120,7 +122,6 @@ export async function runAcopioSalesRebuild(options?: {
   }
   console.log(`----------------------------------------------------------------------\n`);
 
-  // Preguntar confirmación
   const questionPrompt = totalDiscrepancies > 0
     ? `⚠️  ¿DESEA RE-CALCULAR Y CORREGIR EL ACOPIO PARA LOS ${totalDiscrepancies} SORTEOS CON DESCUADRES? (si/no): `
     : `💡  El acopio está 100% OK. ¿Desea forzar la re-agregación de todas formas? (si/no): `;
@@ -141,7 +142,6 @@ export async function runAcopioSalesRebuild(options?: {
     await DailyNumberSalesService.aggregateSorteoSales(s.id);
   }
 
-  // Registrar en ActivityLog
   await ActivityService.log({
     action: ActivityType.SYSTEM_ACTION,
     targetType: 'DAILY_NUMBER_SALES',

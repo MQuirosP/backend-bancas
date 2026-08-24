@@ -16,6 +16,32 @@ try {
   // Ignore
 }
 
+export const IS_RENDER = process.env.RENDER === 'true' || process.env.NODE_ENV === 'production';
+const OPS_SECRET = process.env.OPS_SECRET || 'ops-backend-secret-key-2026';
+const PORT = process.env.PORT || 3000;
+
+/**
+ * Petición HTTP ultraliviana enviada al servidor interno (Solo activa en Render)
+ */
+export async function callOpsApi(endpoint: string, body: any): Promise<any> {
+  const url = `http://127.0.0.1:${PORT}/api/v1/ops${endpoint}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Ops-Secret': OPS_SECRET
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const errorData: any = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(errorData.error || `HTTP ${response.status}`);
+  }
+
+  return await response.json();
+}
+
 // Códigos de Color ANSI (Compatibles con PowerShell 7, Windows Terminal, Linux SSH y Render Shell)
 export const colors = {
   reset: "\x1b[0m",

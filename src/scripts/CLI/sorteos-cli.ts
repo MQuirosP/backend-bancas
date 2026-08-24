@@ -6,13 +6,14 @@ import { SorteoEvaluationCoordinator } from '../../api/v1/services/sorteoEvaluat
 import { AccountStatementSyncService } from '../../api/v1/services/accounts/accounts.sync.service';
 import ActivityService from '../../core/activity.service';
 import { SorteoStatus, ActivityType } from '../../generated/prisma/client';
-import { ask, isBack, colors, colorizeStatus, colorizeSorteoId, colorizeWinningNumber, clearScreen } from './helpers';
+import { ask, isBack, colors, colorizeStatus, colorizeSorteoId, colorizeWinningNumber, clearScreen, IS_RENDER, callOpsApi } from './helpers';
 
 /**
  * sorteos-cli.ts
  *
  * Asistente interactivo de sorteos (Evaluar, Revertir, Cerrar, Reabrir) con pantalla limpia y resaltado ANSI.
- * Registra auditorías automáticas en ActivityLog.
+ * En Render: ejecuta acciones vía llamadas HTTP ultralivianas.
+ * En Local: ejecuta directo en Prisma.
  */
 
 export async function runSorteosWizard() {
@@ -244,30 +245,37 @@ export async function runSorteosWizard() {
         }
 
         console.log(`\n⏳  Procesando evaluación...`);
-        const { extraOutcomeCode } = await SorteoEvaluationCoordinator.validate(
-          targetSorteo.id,
-          { winningNumber, extraMultiplierId: chosenMultiplierId || null },
-          targetSorteo
-        );
+        if (IS_RENDER) {
+          const res = await callOpsApi('/sorteos/action', {
+            action: 'EVALUATE',
+            sorteoId: targetSorteo.id,
+            winningNumber,
+            extraMultiplierId: chosenMultiplierId
+          });
+          console.log(`\n🎉  ${colors.bold}${colors.brightGreen}${res.message || 'EVALUACIÓN COMPLETADA'}.${colors.reset}`);
+        } else {
+          const { extraOutcomeCode } = await SorteoEvaluationCoordinator.validate(
+            targetSorteo.id,
+            { winningNumber, extraMultiplierId: chosenMultiplierId || null },
+            targetSorteo
+          );
+          const evaluated = await SorteoRepository.evaluate(targetSorteo.id, {
+            winningNumber: winningNumber.trim(),
+            extraOutcomeCode,
+            extraMultiplierId: chosenMultiplierId || null
+          });
+          if (!evaluated) throw new Error("Error al evaluar en base de datos.");
+          await SorteoEvaluationCoordinator.triggerPostEvaluation(
+            targetSorteo.id,
+            winningNumber.trim(),
+            chosenMultiplierId || null,
+            targetSorteo,
+            evaluated,
+            "CLI_WIZARD"
+          );
+          console.log(`\n🎉  ${colors.bold}${colors.brightGreen}EVALUACIÓN COMPLETADA EXITOSAMENTE.${colors.reset} Sync encolado.`);
+        }
 
-        const evaluated = await SorteoRepository.evaluate(targetSorteo.id, {
-          winningNumber: winningNumber.trim(),
-          extraOutcomeCode,
-          extraMultiplierId: chosenMultiplierId || null
-        });
-
-        if (!evaluated) throw new Error("Error al evaluar en base de datos.");
-
-        await SorteoEvaluationCoordinator.triggerPostEvaluation(
-          targetSorteo.id,
-          winningNumber.trim(),
-          chosenMultiplierId || null,
-          targetSorteo,
-          evaluated,
-          "CLI_WIZARD"
-        );
-
-        console.log(`\n🎉  ${colors.bold}${colors.brightGreen}EVALUACIÓN COMPLETADA EXITOSAMENTE.${colors.reset} Sync encolado.`);
         currentStep = 0;
         break;
       } else if (actionOption === 2) {
@@ -281,25 +289,29 @@ export async function runSorteosWizard() {
           continue;
         }
         console.log(`\n⏳  Revertiendo sorteo y reacondicionando saldos...`);
-        await SorteoRepository.revertEvaluation(targetSorteo.id);
-        await AccountStatementSyncService.syncSorteoStatements(targetSorteo.id, targetSorteo.scheduledAt);
 
-        // Registrar en ActivityLog
-        await ActivityService.log({
-          action: ActivityType.SYSTEM_ACTION,
-          targetType: 'SORTEO',
-          targetId: targetSorteo.id,
-          bancaId: targetSorteo.bancaId || null,
-          details: {
-            source: 'CLI_MAIN_WIZARD',
-            module: 'REVERT_SORTEO',
-            sorteoName: targetSorteo.name,
-            scheduledAt: targetSorteo.scheduledAt,
-            executedBy: 'SUPER_ADMIN'
-          }
-        });
+        if (IS_RENDER) {
+          const res = await callOpsApi('/sorteos/action', { action: 'REVERT', sorteoId: targetSorteo.id });
+          console.log(`\n🎉  ${colors.bold}${colors.brightGreen}${res.message || 'REVERSIÓN COMPLETADA'}.${colors.reset}`);
+        } else {
+          await SorteoRepository.revertEvaluation(targetSorteo.id);
+          await AccountStatementSyncService.syncSorteoStatements(targetSorteo.id, targetSorteo.scheduledAt);
+          await ActivityService.log({
+            action: ActivityType.SYSTEM_ACTION,
+            targetType: 'SORTEO',
+            targetId: targetSorteo.id,
+            bancaId: targetSorteo.bancaId || null,
+            details: {
+              source: 'CLI_MAIN_WIZARD',
+              module: 'REVERT_SORTEO',
+              sorteoName: targetSorteo.name,
+              scheduledAt: targetSorteo.scheduledAt,
+              executedBy: 'SUPER_ADMIN'
+            }
+          });
+          console.log(`\n🎉  ${colors.bold}${colors.brightGreen}REVERSIÓN COMPLETADA Y REGISTRADA EN LOGS EXITOSAMENTE.${colors.reset}`);
+        }
 
-        console.log(`\n🎉  ${colors.bold}${colors.brightGreen}REVERSIÓN COMPLETADA Y REGISTRADA EN LOGS EXITOSAMENTE.${colors.reset}`);
         currentStep = 0;
         break;
       } else if (actionOption === 3) {
@@ -308,24 +320,28 @@ export async function runSorteosWizard() {
           console.log(`❌  Operación cancelada.`);
           continue;
         }
-        const { ticketsAffected } = await SorteoRepository.closeWithCascade(targetSorteo.id);
 
-        // Registrar en ActivityLog
-        await ActivityService.log({
-          action: ActivityType.SORTEO_CLOSE,
-          targetType: 'SORTEO',
-          targetId: targetSorteo.id,
-          bancaId: targetSorteo.bancaId || null,
-          details: {
-            source: 'CLI_MAIN_WIZARD',
-            module: 'CLOSE_SORTEO',
-            sorteoName: targetSorteo.name,
-            ticketsAffected,
-            executedBy: 'SUPER_ADMIN'
-          }
-        });
+        if (IS_RENDER) {
+          const res = await callOpsApi('/sorteos/action', { action: 'CLOSE', sorteoId: targetSorteo.id });
+          console.log(`\n🎉  ${colors.bold}${colors.brightGreen}${res.message || 'SORTEO CERRADO'}.${colors.reset}`);
+        } else {
+          const { ticketsAffected } = await SorteoRepository.closeWithCascade(targetSorteo.id);
+          await ActivityService.log({
+            action: ActivityType.SORTEO_CLOSE,
+            targetType: 'SORTEO',
+            targetId: targetSorteo.id,
+            bancaId: targetSorteo.bancaId || null,
+            details: {
+              source: 'CLI_MAIN_WIZARD',
+              module: 'CLOSE_SORTEO',
+              sorteoName: targetSorteo.name,
+              ticketsAffected,
+              executedBy: 'SUPER_ADMIN'
+            }
+          });
+          console.log(`\n🎉  ${colors.bold}${colors.brightGreen}SORTEO CERRADO Y REGISTRADO EN LOGS EXITOSAMENTE${colors.reset} (${ticketsAffected} tickets afectados).`);
+        }
 
-        console.log(`\n🎉  ${colors.bold}${colors.brightGreen}SORTEO CERRADO Y REGISTRADO EN LOGS EXITOSAMENTE${colors.reset} (${ticketsAffected} tickets afectados).`);
         currentStep = 0;
         break;
       } else if (actionOption === 4) {
@@ -339,23 +355,27 @@ export async function runSorteosWizard() {
           continue;
         }
         console.log(`\n⏳  Reabriendo sorteo y reactivando tickets...`);
-        await SorteoRepository.restore(targetSorteo.id);
 
-        // Registrar en ActivityLog
-        await ActivityService.log({
-          action: ActivityType.SORTEO_REOPEN,
-          targetType: 'SORTEO',
-          targetId: targetSorteo.id,
-          bancaId: targetSorteo.bancaId || null,
-          details: {
-            source: 'CLI_MAIN_WIZARD',
-            module: 'REOPEN_SORTEO',
-            sorteoName: targetSorteo.name,
-            executedBy: 'SUPER_ADMIN'
-          }
-        });
+        if (IS_RENDER) {
+          const res = await callOpsApi('/sorteos/action', { action: 'REOPEN', sorteoId: targetSorteo.id });
+          console.log(`\n🎉  ${colors.bold}${colors.brightGreen}${res.message || 'SORTEO REABIERTO'}.${colors.reset}`);
+        } else {
+          await SorteoRepository.restore(targetSorteo.id);
+          await ActivityService.log({
+            action: ActivityType.SORTEO_REOPEN,
+            targetType: 'SORTEO',
+            targetId: targetSorteo.id,
+            bancaId: targetSorteo.bancaId || null,
+            details: {
+              source: 'CLI_MAIN_WIZARD',
+              module: 'REOPEN_SORTEO',
+              sorteoName: targetSorteo.name,
+              executedBy: 'SUPER_ADMIN'
+            }
+          });
+          console.log(`\n🎉  ${colors.bold}${colors.brightGreen}SORTEO REABIERTO Y REGISTRADO EN LOGS EXITOSAMENTE.${colors.reset}`);
+        }
 
-        console.log(`\n🎉  ${colors.bold}${colors.brightGreen}SORTEO REABIERTO Y REGISTRADO EN LOGS EXITOSAMENTE.${colors.reset}`);
         currentStep = 0;
         break;
       }
