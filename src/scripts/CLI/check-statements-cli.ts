@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { formatCRC, renderProgressBar } from './helpers';
-import prisma from '../../src/core/prismaClient';
-import { AccountsService } from '../../src/api/v1/services/accounts/accounts.service';
+import prisma from '../../core/prismaClient';
+import { AccountsService } from '../../api/v1/services/accounts/accounts.service';
 
 /**
  * check-statements-cli.ts

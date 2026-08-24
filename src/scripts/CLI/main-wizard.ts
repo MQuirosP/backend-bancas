@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { ask, isBack, rl, clearScreen } from './helpers';
-import prisma from '../../src/core/prismaClient';
-import { crDateService } from '../../src/utils/crDateService';
+import prisma from '../../core/prismaClient';
+import { crDateService } from '../../utils/crDateService';
 import { runCheckStatements } from './check-statements-cli';
 import { runFixStatements } from './fix-statements-cli';
 import { runCheckCierres } from './check-cierres-cli';
@@ -15,7 +15,7 @@ import { runAcopioSalesRebuild } from './acopio-cli';
  * Punto de entrada único para ejecutar auditorías, reparaciones y operaciones sobre sorteos.
  *
  * USO:
- *   npx tsx scripts/CLI/main-wizard.ts
+ *   node --max-old-space-size=100 dist/scripts/CLI/main-wizard.js
  *   npm run ops
  */
 

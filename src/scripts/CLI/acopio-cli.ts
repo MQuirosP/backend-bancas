@@ -1,9 +1,9 @@
 import 'dotenv/config';
-import prisma from '../../src/core/prismaClient';
+import prisma from '../../core/prismaClient';
 import { renderProgressBar, colors, ask, formatCRC } from './helpers';
-import { DailyNumberSalesService } from '../../src/api/v1/services/dailyNumberSales.service';
-import ActivityService from '../../src/core/activity.service';
-import { ActivityType } from '../../src/generated/prisma/client';
+import { DailyNumberSalesService } from '../../api/v1/services/dailyNumberSales.service';
+import ActivityService from '../../core/activity.service';
+import { ActivityType } from '../../generated/prisma/client';
 
 /**
  * acopio-cli.ts

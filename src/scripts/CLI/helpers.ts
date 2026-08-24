@@ -1,5 +1,5 @@
 import readline from 'readline';
-import logger from '../../src/core/logger';
+import logger from '../../core/logger';
 
 /**
  * helpers.ts

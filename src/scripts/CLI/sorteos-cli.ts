@@ -1,16 +1,12 @@
 import 'dotenv/config';
-import prisma from '../../src/core/prismaClient';
-import { crDateService } from '../../src/utils/crDateService';
-import SorteoRepository from '../../src/repositories/sorteo.repository';
-import { SorteoEvaluationCoordinator } from '../../src/api/v1/services/sorteoEvaluation.coordinator';
-import { AccountStatementSyncService } from '../../src/api/v1/services/accounts/accounts.sync.service';
-import ActivityService from '../../src/core/activity.service';
-import { SorteoStatus, ActivityType } from '../../src/generated/prisma/client';
+import prisma from '../../core/prismaClient';
+import { crDateService } from '../../utils/crDateService';
+import SorteoRepository from '../../repositories/sorteo.repository';
+import { SorteoEvaluationCoordinator } from '../../api/v1/services/sorteoEvaluation.coordinator';
+import { AccountStatementSyncService } from '../../api/v1/services/accounts/accounts.sync.service';
+import ActivityService from '../../core/activity.service';
+import { SorteoStatus, ActivityType } from '../../generated/prisma/client';
 import { ask, isBack, colors, colorizeStatus, colorizeSorteoId, colorizeWinningNumber, clearScreen } from './helpers';
-import logger from '../../src/core/logger';
-
-// Silenciar logger interno
-logger.level = 'error';
 
 /**
  * sorteos-cli.ts

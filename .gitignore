@@ -113,7 +113,8 @@ verify-eval-fix.ts
 
 # Scratch directory for temporary scripts
 scratch/
-src/scripts/
+src/scripts/*
+!src/scripts/CLI/
 
 # Graphify output
 graphify-out/

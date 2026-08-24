@@ -1,10 +1,10 @@
 import 'dotenv/config';
 import { renderProgressBar } from './helpers';
-import prisma from '../../src/core/prismaClient';
-import { AccountStatementSyncService } from '../../src/api/v1/services/accounts/accounts.sync.service';
-import { recalculateMonthlyClosingForDimension } from '../../src/api/v1/services/accounts/monthlyClosing.service';
-import ActivityService from '../../src/core/activity.service';
-import { ActivityType } from '../../src/generated/prisma/client';
+import prisma from '../../core/prismaClient';
+import { AccountStatementSyncService } from '../../api/v1/services/accounts/accounts.sync.service';
+import { recalculateMonthlyClosingForDimension } from '../../api/v1/services/accounts/monthlyClosing.service';
+import ActivityService from '../../core/activity.service';
+import { ActivityType } from '../../generated/prisma/client';
 
 /**
  * fix-statements-cli.ts
