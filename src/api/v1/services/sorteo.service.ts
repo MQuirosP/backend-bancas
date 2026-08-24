@@ -2212,56 +2212,40 @@ gs."hour24" ASC
           totalSubtotal: realMonthlyRemainingBalance !== null ? realMonthlyRemainingBalance : (numericPreviousMonthBalance + monthlyTotalRemainingBalance),
         };
       } else {
-        //  Caso general: queries mensuales necesarias (diferente rango o filtro de lotería)
-        const monthlySorteoWhere: Prisma.SorteoWhereInput = {
-          status: SorteoStatus.EVALUATED,
-          scheduledAt: { gte: monthlyStartDate, lte: monthlyEndDate },
-          tickets: {
-            some: { vendedorId, deletedAt: null, isActive: true },
-          },
-        };
-
-        const monthlySorteos = await prisma.sorteo.findMany({
-          where: monthlySorteoWhere,
-          select: { id: true },
-        });
-        const monthlySorteoIds = monthlySorteos.map((s) => s.id);
-
-        //  C3.2 OPTIMIZACIÓN: Ejecutar queries mensuales en paralelo
-        // Y reemplazar jugadas findMany con groupBy (solo necesita commission por tipo)
-        const [monthlyFinancialData, monthlyPrizesData, monthlyJugadaCommissions] = await Promise.all([
-          prisma.ticket.groupBy({
-            by: ["sorteoId"],
-            where: {
-              sorteoId: { in: monthlySorteoIds },
-              vendedorId,
-              deletedAt: null,
-              isActive: true,
-            },
-            _sum: { totalAmount: true, totalCommission: true, totalPayout: true },
-            _count: { id: true },
-          }),
-          prisma.ticket.groupBy({
-            by: ["sorteoId"],
-            where: {
-              sorteoId: { in: monthlySorteoIds },
-              vendedorId,
-              isWinner: true,
-              deletedAt: null,
-              isActive: true,
-            },
-            _sum: { totalPayout: true },
-          }),
-          //  C3.2: Uso de CTE cruda para el groupBy de jugadas (Solución a cuello de botella Q-1)
-          // Esto evita que Prisma genere un IN($1...$225) sobre sorteoId que causa Seq Scans masivos
-          // en la tabla Jugada.
-          
+        // ⚡ OPTIMIZACIÓN: Consulta directa CTE para tickets y jugadas mensuales
+        // Elimina el findMany preliminar y los 2 groupBys con arreglos gigantes IN ($1...$270)
+        const [monthlyFinancialTotals, monthlyJugadaCommissions] = await Promise.all([
+          prisma.$queryRaw<Array<{
+            total_sales: number;
+            total_commission: number;
+            total_prizes: number;
+            total_tickets: bigint;
+          }>>(Prisma.sql`
+            WITH sorteos_cte AS (
+              SELECT id FROM "Sorteo"
+              WHERE status = ${SorteoStatus.EVALUATED}::"SorteoStatus"
+                AND "scheduledAt" >= ${monthlyStartDate}::timestamp
+                AND "scheduledAt" <= ${monthlyEndDate}::timestamp
+                AND "deletedAt" IS NULL
+            )
+            SELECT 
+              COALESCE(SUM(t."totalAmount"), 0) as total_sales,
+              COALESCE(SUM(t."totalCommission"), 0) as total_commission,
+              COALESCE(SUM(CASE WHEN t."isWinner" = true THEN t."totalPayout" ELSE 0 END), 0) as total_prizes,
+              COUNT(t.id) as total_tickets
+            FROM "Ticket" t
+            JOIN sorteos_cte s ON s.id = t."sorteoId"
+            WHERE t."deletedAt" IS NULL
+              AND t."isActive" = true
+              ${vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
+          `),
           prisma.$queryRaw<Array<{ commission_amount: number; type: string }>>(Prisma.sql`
             WITH sorteos_cte AS (
               SELECT id FROM "Sorteo"
               WHERE status = ${SorteoStatus.EVALUATED}::"SorteoStatus"
                 AND "scheduledAt" >= ${monthlyStartDate}::timestamp
                 AND "scheduledAt" <= ${monthlyEndDate}::timestamp
+                AND "deletedAt" IS NULL
             )
             SELECT SUM(j."commissionAmount") as commission_amount, j.type
             FROM "Jugada" j
@@ -2278,10 +2262,17 @@ gs."hour24" ASC
           }))),
         ]);
 
-        const monthlyTotalSales = monthlyFinancialData.reduce((sum, f) => sum + (f._sum.totalAmount || 0), 0);
-        const monthlyTotalCommission = monthlyFinancialData.reduce((sum, f) => sum + (f._sum.totalCommission || 0), 0);
-        const monthlyTotalPrizes = monthlyPrizesData.reduce((sum, p) => sum + (p._sum.totalPayout || 0), 0);
-        const monthlyTotalTickets = monthlyFinancialData.reduce((sum, f) => sum + f._count.id, 0);
+        const monthlyTotals = monthlyFinancialTotals[0] || {
+          total_sales: 0,
+          total_commission: 0,
+          total_prizes: 0,
+          total_tickets: BigInt(0),
+        };
+
+        const monthlyTotalSales = Number(monthlyTotals.total_sales) || 0;
+        const monthlyTotalCommission = Number(monthlyTotals.total_commission) || 0;
+        const monthlyTotalPrizes = Number(monthlyTotals.total_prizes) || 0;
+        const monthlyTotalTickets = Number(monthlyTotals.total_tickets) || 0;
 
         let monthlyTotalPaid = 0;
         let monthlyTotalCollected = 0;
