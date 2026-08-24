@@ -671,6 +671,12 @@ const SorteoService = {
       throw new AppError("Solo se puede revertir un sorteo evaluado", 409);
     }
 
+    // Límite de seguridad: Impedir revertir sorteos de más de 7 días de antigüedad
+    const maxRevertAgeMs = 7 * 24 * 60 * 60 * 1000;
+    if (Date.now() - existing.scheduledAt.getTime() > maxRevertAgeMs) {
+      throw new AppError("No se puede revertir un sorteo con más de 7 días de antigüedad. Contacte a soporte técnico para realizar un ajuste contable.", 409);
+    }
+
     const reverted = await SorteoRepository.revertEvaluation(id);
 
     // Sincronizar AccountStatements después de revertir - SEGUNDO PLANO

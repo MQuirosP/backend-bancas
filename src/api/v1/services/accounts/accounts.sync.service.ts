@@ -468,6 +468,16 @@ export class AccountStatementSyncService {
     sorteoId: string,
     sorteoDate: Date // Date UTC que representa día calendario en CR
   ): Promise<void> {
+    const queueKey = `sync:sorteo:${sorteoId}`;
+    return KeyedTaskQueue.enqueue(queueKey, () =>
+      this._syncSorteoStatementsInternal(sorteoId, sorteoDate)
+    );
+  }
+
+  private static async _syncSorteoStatementsInternal(
+    sorteoId: string,
+    sorteoDate: Date
+  ): Promise<void> {
     const sorteoDateStrCR = crDateService.dateUTCToCRString(sorteoDate);
 
     logger.info({
@@ -508,6 +518,22 @@ export class AccountStatementSyncService {
         if (ticket.vendedorId) uniqueVendedores.add(ticket.vendedorId);
         if (ticket.ventanaId) uniqueVentanas.add(ticket.ventanaId);
         if (ticket.ventana?.bancaId) uniqueBancas.add(ticket.ventana.bancaId);
+      }
+
+      // Expandir todos los vendedores pertenecientes a las ventanas y bancas afectadas
+      if (uniqueVentanas.size > 0 || uniqueBancas.size > 0) {
+        const vendorsInStructures = await prisma.user.findMany({
+          where: {
+            role: "VENDEDOR",
+            isActive: true,
+            OR: [
+              ...(uniqueVentanas.size > 0 ? [{ ventanaId: { in: Array.from(uniqueVentanas) } }] : []),
+              ...(uniqueBancas.size > 0 ? [{ ventana: { bancaId: { in: Array.from(uniqueBancas) } } }] : [])
+            ]
+          },
+          select: { id: true }
+        });
+        for (const v of vendorsInStructures) uniqueVendedores.add(v.id);
       }
 
       const [year, month, day] = sorteoDateStrCR.split('-').map(Number);
@@ -776,78 +802,92 @@ export class AccountStatementSyncService {
 
     let currentAccumulated = Number(startStatement.remainingBalance);
 
-    // 2. Obtener todos los statements posteriores
-    const where: any = { date: { gt: startDate }, ...criteria };
-    const statementsToUpdate = await prisma.accountStatement.findMany({ 
-      where, 
-      orderBy: { date: "asc" },
-      select: { 
-        id: true,
-        date: true,
-        balance: true,
-        totalCollected: true,
-        totalPaid: true,
-        ticketCount: true,
-        accumulatedBalance: true,
-        remainingBalance: true
-      }
-    });
-
-    if (statementsToUpdate.length === 0) return;
-
-    logger.info({
-      layer: "service",
-      action: "PROPAGATE_BALANCE_CHANGE_STARTED",
-      payload: { dimension, entityId, startDateStr, count: statementsToUpdate.length, initialAccumulated: currentAccumulated }
-    });
+    // 2. Iterar día por día desde startDate + 1 día hasta hoy en CR
+    const todayCRStr = crDateService.dateUTCToCRString(new Date());
+    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+    const curDate = new Date(Date.UTC(startYear, startMonth - 1, startDay + 1, 0, 0, 0, 0));
+    const [endYear, endMonth, endDay] = todayCRStr.split('-').map(Number);
+    const endDate = new Date(Date.UTC(endYear, endMonth - 1, endDay, 0, 0, 0, 0));
 
     const { calculateIsSettled } = await import('./accounts.commissions');
 
-    // 3. Procesar cada día arrastrando el acumulado matemático
-    for (const stmt of statementsToUpdate) {
+    while (curDate <= endDate) {
+      const curDateStr = crDateService.postgresDateToCRString(curDate);
       try {
-        const stmtDateStr = crDateService.postgresDateToCRString(stmt.date);
-        
-        // Nuevo saldo arrastrado
-        const newAccumulated = parseFloat(currentAccumulated.toFixed(2));
-        
-        // Nuevo saldo final: arrastrado + balance del día + cobros - pagos
-        const newRemaining = parseFloat((newAccumulated + Number(stmt.balance) + Number(stmt.totalCollected) - Number(stmt.totalPaid)).toFixed(2));
-        
-        const newIsSettled = calculateIsSettled(
-          stmt.ticketCount, 
-          newAccumulated, 
-          Number(stmt.totalPaid), 
-          Number(stmt.totalCollected)
-        );
+        let stmt = await prisma.accountStatement.findFirst({
+          where: { date: curDate, ...criteria },
+          select: {
+            id: true,
+            date: true,
+            balance: true,
+            totalCollected: true,
+            totalPaid: true,
+            ticketCount: true,
+            accumulatedBalance: true,
+            remainingBalance: true
+          }
+        });
 
-        // Actualizar en base de datos si hay cambios
-        if (Math.abs(Number(stmt.remainingBalance) - newRemaining) > 0.01 || Math.abs(Number(stmt.accumulatedBalance) - newAccumulated) > 0.01) {
-          await prisma.accountStatement.update({
-            where: { id: stmt.id },
-            data: {
-              accumulatedBalance: newAccumulated,
-              remainingBalance: newRemaining,
-              isSettled: newIsSettled
+        // Si no existe statement para este día (día en cero), generarlo con syncCarryForwardStatement
+        if (!stmt) {
+          await this.syncCarryForwardStatement(curDateStr, dimension, entityId);
+          stmt = await prisma.accountStatement.findFirst({
+            where: { date: curDate, ...criteria },
+            select: {
+              id: true,
+              date: true,
+              balance: true,
+              totalCollected: true,
+              totalPaid: true,
+              ticketCount: true,
+              accumulatedBalance: true,
+              remainingBalance: true
             }
           });
         }
-        
-        // El saldo final de hoy es el arrastrado de mañana
-        currentAccumulated = newRemaining;
 
+        if (stmt) {
+          // Nuevo saldo arrastrado
+          const newAccumulated = parseFloat(currentAccumulated.toFixed(2));
+          // Nuevo saldo final: arrastrado + balance del día + cobros - pagos
+          const newRemaining = parseFloat((newAccumulated + Number(stmt.balance) + Number(stmt.totalCollected) - Number(stmt.totalPaid)).toFixed(2));
+
+          const newIsSettled = calculateIsSettled(
+            stmt.ticketCount,
+            newAccumulated,
+            Number(stmt.totalPaid),
+            Number(stmt.totalCollected)
+          );
+
+          // Actualizar en base de datos si hay cambios
+          if (Math.abs(Number(stmt.remainingBalance) - newRemaining) > 0.01 || Math.abs(Number(stmt.accumulatedBalance) - newAccumulated) > 0.01) {
+            await prisma.accountStatement.update({
+              where: { id: stmt.id },
+              data: {
+                accumulatedBalance: newAccumulated,
+                remainingBalance: newRemaining,
+                isSettled: newIsSettled
+              }
+            });
+          }
+
+          // El saldo final de hoy es el arrastrado de mañana
+          currentAccumulated = newRemaining;
+        }
       } catch (error) {
-        logger.error({ 
-          layer: "service", 
-          action: "PROPAGATE_BALANCE_CHANGE_DAY_ERROR", 
-          payload: { 
-            date: crDateService.postgresDateToCRString(stmt.date), 
-            dimension, 
-            entityId, 
-            error: (error as Error).message 
-          } 
+        logger.error({
+          layer: "service",
+          action: "PROPAGATE_BALANCE_CHANGE_DAY_ERROR",
+          payload: {
+            date: curDateStr,
+            dimension,
+            entityId,
+            error: (error as Error).message
+          }
         });
       }
+
+      curDate.setUTCDate(curDate.getUTCDate() + 1);
     }
   }
 
