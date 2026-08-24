@@ -538,6 +538,11 @@ const SorteoService = {
       throw new AppError("Solo se puede cerrar desde OPEN o EVALUATED", 409);
     }
 
+    const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
+    if (Date.now() - existing.scheduledAt.getTime() > maxAgeMs) {
+      throw new AppError("No se puede cerrar un sorteo con más de 7 días de antigüedad. Contacte a soporte técnico.", 409);
+    }
+
     //  NUEVA: Usar closeWithCascade() para marcar tickets también
     const { sorteo: s, ticketsAffected } = await SorteoRepository.closeWithCascade(id);
 
@@ -572,6 +577,11 @@ const SorteoService = {
   async evaluate(id: string, body: EvaluateSorteoDTO, userId: string, bancaId?: string, role?: Role) {
     // 1) Cargar sorteo y validar propiedad
     const existing = await this.validateSorteoOwnership(id, bancaId, role);
+
+    const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
+    if (Date.now() - existing.scheduledAt.getTime() > maxAgeMs) {
+      throw new AppError("No se puede evaluar un sorteo con más de 7 días de antigüedad. Contacte a soporte técnico.", 409);
+    }
 
     // 2) Ejecutar la validación SOLID a través del coordinador
     const { extraOutcomeCode } = await SorteoEvaluationCoordinator.validate(

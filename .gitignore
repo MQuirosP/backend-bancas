@@ -83,8 +83,9 @@ apply-*.sh
 src/scripts/*-backfill-*.ts
 src/scripts/*backfill*.ts
 
-# Scripts manuales (no versionar)
-scripts/
+# Scripts manuales (no versionar excepto la suite CLI de operaciones)
+scripts/*
+!scripts/CLI/
 tmp/
 
 # Respaldos y backups
