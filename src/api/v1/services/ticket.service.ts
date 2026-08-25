@@ -2058,15 +2058,13 @@ export const TicketService = {
           const hasExplicitDateRange = !!(params.fromDate || params.toDate);
 
           if (!hasSorteoId || hasExplicitDateRange) {
-            if (params.date || params.fromDate || params.toDate) {
-              const dateRange = resolveDateRange(
-                params.date || "today",
-                params.fromDate,
-                params.toDate,
-              );
-              dateFrom = dateRange.fromBusinessDate;
-              dateTo = dateRange.toBusinessDate;
-            }
+            const dateRange = resolveDateRange(
+              params.date || "today",
+              params.fromDate,
+              params.toDate,
+            );
+            dateFrom = dateRange.fromBusinessDate;
+            dateTo = dateRange.toBusinessDate;
           }
 
           // Fase 1: 2 queries independientes en paralelo con GROUPING SETS y Query específica de Jugada
