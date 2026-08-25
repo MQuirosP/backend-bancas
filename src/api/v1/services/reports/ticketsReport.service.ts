@@ -1300,7 +1300,7 @@ export const TicketsReportService = {
             t."ventanaId",
             COUNT(*)::int as total_tickets
           FROM "Ticket" t
-          WHERE t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+          WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${cancelledEntityFilter}
           GROUP BY t."ventanaId"
         )
@@ -1357,7 +1357,7 @@ export const TicketsReportService = {
             t."vendedorId",
             COUNT(*)::int as total_tickets
           FROM "Ticket" t
-          WHERE t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+          WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${cancelledEntityFilter}
           GROUP BY t."vendedorId"
         )
@@ -1413,7 +1413,7 @@ export const TicketsReportService = {
             t."loteriaId",
             COUNT(*)::int as total_tickets
           FROM "Ticket" t
-          WHERE t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+          WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${cancelledEntityFilter}
           GROUP BY t."loteriaId"
         )
@@ -1467,7 +1467,7 @@ export const TicketsReportService = {
             t."sorteoId",
             COUNT(*)::int as total_tickets
           FROM "Ticket" t
-          WHERE t."createdAt" BETWEEN ${dateRange.from}::timestamp AND ${dateRange.to}::timestamp
+          WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
             ${cancelledEntityFilter}
           GROUP BY t."sorteoId"
         )
