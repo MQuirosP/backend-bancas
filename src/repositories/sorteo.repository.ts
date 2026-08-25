@@ -471,6 +471,7 @@ const SorteoRepository = {
     status?: SorteoStatus;
     search?: string;
     isActive?: boolean;
+    includeDeleted?: boolean;
     dateFrom?: Date;
     dateTo?: Date;
     lastId?: string;
@@ -481,7 +482,7 @@ const SorteoRepository = {
     ventanaId?: string | null;
     bancaId?: string;
   }) {
-    const { loteriaId, page, pageSize, status, search, isActive, dateFrom, dateTo, lastId, lastScheduledAt, role, userId, ventanaId, bancaId } = params;
+    const { loteriaId, page, pageSize, status, search, isActive, includeDeleted, dateFrom, dateTo, lastId, lastScheduledAt, role, userId, ventanaId, bancaId } = params;
 
     logger.info({
       layer: "repository",
@@ -492,6 +493,7 @@ const SorteoRepository = {
         loteriaId,
         status,
         isActive,
+        includeDeleted,
         role,
         userId,
         ventanaId,
@@ -541,24 +543,25 @@ const SorteoRepository = {
 
     const skip = Math.max(0, (page - 1) * pageSize);
 
-    //  Optimización: Usar SQL raw con subconsultas para hasSales y ticketCount
-    // Evita N+1 queries y calcula ambos campos en una sola query
-    const whereConditions: Prisma.Sql[] = [
-      Prisma.sql`s."deletedAt" IS NULL`,
-    ];
-
+    const whereConditions: Prisma.Sql[] = [];
     if (loteriaId) {
       whereConditions.push(Prisma.sql`s."loteriaId" = CAST(${loteriaId} AS uuid)`);
     }
     if (status) {
-      //  Convertir enum a string literal para PostgreSQL
-      // Prisma.sql necesita el valor como string literal, no como enum TypeScript
-      // Usar Prisma.raw() para insertar el string literal directamente en SQL (escapar comillas simples)
       const statusStr = String(status);
       whereConditions.push(Prisma.sql`s."status" = ${Prisma.raw(`'${statusStr.replace(/'/g, "''")}'`)}`);
     }
-    if (typeof isActive === 'boolean') {
-      whereConditions.push(Prisma.sql`s."isActive" = ${isActive}`);
+
+    if (isActive === false && includeDeleted) {
+      // Cuando se piden inactivos e incluye eliminados: mostrar sorteos inactivos O eliminados
+      whereConditions.push(Prisma.sql`(s."isActive" = false OR s."deletedAt" IS NOT NULL)`);
+    } else {
+      if (!includeDeleted) {
+        whereConditions.push(Prisma.sql`s."deletedAt" IS NULL`);
+      }
+      if (typeof isActive === 'boolean') {
+        whereConditions.push(Prisma.sql`s."isActive" = ${isActive}`);
+      }
     }
     if (dateFrom) {
       whereConditions.push(Prisma.sql`s."scheduledAt" >= ${dateFrom} AT TIME ZONE 'UTC'`);

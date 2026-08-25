@@ -97,7 +97,18 @@ export const SorteoController = {
         : undefined;
     const search =
       typeof req.query.search === "string" ? req.query.search : undefined;
-    const isActive = typeof req.query.isActive !== "undefined" ? req.query.isActive === "true" || req.query.isActive === "1" || (req.query.isActive as any) === true : undefined;
+    let isActive: boolean | undefined = undefined;
+    const rawIsActive = req.query.isActive as any;
+    if (rawIsActive !== undefined && rawIsActive !== null && rawIsActive !== "" && rawIsActive !== "all") {
+      if (rawIsActive === "true" || rawIsActive === "1" || rawIsActive === true) {
+        isActive = true;
+      } else if (rawIsActive === "false" || rawIsActive === "0" || rawIsActive === false) {
+        isActive = false;
+      }
+    }
+    const rawIncludeDeleted = req.query.includeDeleted as any;
+    const includeDeleted = rawIncludeDeleted === "true" || rawIncludeDeleted === "1" || rawIncludeDeleted === true ? true : undefined;
+
     const date = typeof req.query.date === "string" ? req.query.date : undefined;
     const fromDate = typeof req.query.fromDate === "string" ? req.query.fromDate : undefined;
     const toDate = typeof req.query.toDate === "string" ? req.query.toDate : undefined;
@@ -110,6 +121,7 @@ export const SorteoController = {
         date,
         fromDate,
         toDate,
+        includeDeleted,
         message: "Parámetros de fecha recibidos del FE"
       }
     });
@@ -161,6 +173,7 @@ export const SorteoController = {
       status,
       search,
       isActive,
+      includeDeleted,
       dateFrom: dateFromResolved,
       dateTo: dateToResolved,
       groupBy,

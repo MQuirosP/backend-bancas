@@ -1380,12 +1380,9 @@ export const TicketService = {
         params.isExcluded === "true" || params.isExcluded === true;
 
       // 5. Construir Query de SQL Raw (Lean & Fast)
-      const sqlWhere: Prisma.Sql[] = [Prisma.sql`t."deletedAt" IS NULL`];
-
-      // Cuando isExcluded=true no filtramos por isActive ni status del ticket:
-      // Los tickets pueden quedar en cualquier estado después de la evaluación del sorteo.
-      // El criterio de filtrado es j."isExcluded" (a nivel de jugada) que es la fuente de verdad.
+      const sqlWhere: Prisma.Sql[] = [];
       if (!isExcludedRequest) {
+        sqlWhere.push(Prisma.sql`t."deletedAt" IS NULL`);
         sqlWhere.push(Prisma.sql`t."isActive" = true`);
       }
 

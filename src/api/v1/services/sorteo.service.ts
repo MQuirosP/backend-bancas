@@ -901,6 +901,7 @@ const SorteoService = {
     status?: SorteoStatus;
     search?: string;
     isActive?: boolean;
+    includeDeleted?: boolean;
     dateFrom?: Date;
     dateTo?: Date;
     groupBy?: "hour" | "loteria-hour";
@@ -920,7 +921,7 @@ const SorteoService = {
       const isVendedor = params.role === Role.VENDEDOR;
       const isAdminOrBanca = params.role === Role.ADMIN || params.role === Role.BANCA;
 
-      const cacheKey = `sorteos:list:v3:${params.loteriaId || 'all'}:${params.status || 'all'}:${params.role || 'all'}:${params.bancaId || 'all'}:${params.ventanaId || 'all'}:${params.userId || 'all'}:${p}:${ps}:${params.search || ''}:${params.isActive ?? 'all'}:${params.dateFrom?.getTime() || ''}:${params.dateTo?.getTime() || ''}`;
+      const cacheKey = `sorteos:list:v3:${params.loteriaId || 'all'}:${params.status || 'all'}:${params.role || 'all'}:${params.bancaId || 'all'}:${params.ventanaId || 'all'}:${params.userId || 'all'}:${p}:${ps}:${params.search || ''}:${params.isActive ?? 'all'}:${params.includeDeleted ? 'incDel' : 'noDel'}:${params.dateFrom?.getTime() || ''}:${params.dateTo?.getTime() || ''}`;
 
       const tags = ['sorteos'];
       if (params.userId) tags.push(`user:${params.userId}`);
@@ -937,6 +938,7 @@ const SorteoService = {
             status: params.status,
             search: params.search?.trim() || undefined,
             isActive: params.isActive,
+            includeDeleted: params.includeDeleted,
             dateFrom: params.dateFrom,
             dateTo: params.dateTo,
             lastId: params.lastId,

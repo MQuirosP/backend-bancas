@@ -44,9 +44,16 @@ export const ListSorteosQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
   loteriaId: z.uuid().optional(),
   status: z.enum(SorteoStatus).optional(),
-  search: z.string().trim().min(1).max(100).optional(),
-  isActive: z.preprocess((val) => val === undefined ? undefined : (val === 'true' || val === '1' || val === true), z.boolean().optional()),
-  // Filtros de fecha (patrón: date=today|yesterday|week|month|year|range)
+  isActive: z.preprocess((val) => {
+    if (val === undefined || val === null || val === '' || val === 'all') return undefined;
+    if (val === 'true' || val === '1' || val === true) return true;
+    if (val === 'false' || val === '0' || val === false) return false;
+    return undefined;
+  }, z.boolean().optional()),
+  includeDeleted: z.preprocess((val) => {
+    if (val === 'true' || val === '1' || val === true) return true;
+    return undefined;
+  }, z.boolean().optional()),
   date: z.enum(DateFilterOption).optional(),
   fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate debe ser YYYY-MM-DD").optional(),
   toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "toDate debe ser YYYY-MM-DD").optional(),
