@@ -35,82 +35,25 @@ function resolveBreakdowns(filters: { loteriaId?: string; ventanaId?: string; ve
 }
 
 async function getHybridBreakdown(
-  evaluatedSorteoIds: string[],
-  nonEvaluatedSorteoIds: string[],
   groupByField: 'sorteoId' | 'loteriaId' | 'ventanaId' | 'vendedorId',
   entityTable: 'Sorteo' | 'Loteria' | 'Ventana' | 'User',
   dailySalesFilters: Prisma.Sql,
-  numbersEntityFilters: Prisma.Sql,
   dateRange: DateRange
 ): Promise<any[]> {
-  const promises: Promise<any[]>[] = [];
-
-  // A. Query de DailyNumberSales para sorteos evaluados
-  if (evaluatedSorteoIds.length > 0) {
-    const q = Prisma.sql`
-      SELECT
-        db."${Prisma.raw(groupByField)}" as id,
-        e.name as name,
-        SUM(db."totalAmount")::double precision as total_amount,
-        SUM(db."ticketsCount")::integer as tickets_count
-      FROM "DailyNumberSales" db
-      INNER JOIN "${Prisma.raw(entityTable)}" e ON db."${Prisma.raw(groupByField)}" = e.id
-      WHERE db."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-        ${dailySalesFilters}
-      GROUP BY db."${Prisma.raw(groupByField)}", e.name
-    `;
-    promises.push(prisma.$queryRaw<any[]>(q));
-  } else {
-    promises.push(Promise.resolve([]));
-  }
-
-  // B. Query de Ticket para sorteos abiertos (SIN JOIN a Jugada)
-  if (nonEvaluatedSorteoIds.length > 0) {
-    const q = Prisma.sql`
-      SELECT
-        t."${Prisma.raw(groupByField)}" as id,
-        e.name as name,
-        SUM(t."totalAmount")::double precision as total_amount,
-        COUNT(t.id)::integer as tickets_count
-      FROM "Ticket" t
-      INNER JOIN "${Prisma.raw(entityTable)}" e ON t."${Prisma.raw(groupByField)}" = e.id
-      WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-        AND t."sorteoId" IN (${Prisma.join(nonEvaluatedSorteoIds.map(id => Prisma.sql`CAST(${id} AS uuid)`))})
-        AND t."deletedAt" IS NULL
-        AND t."isActive" = true
-        AND t.status::text IN (${TicketStatus.ACTIVE}, ${TicketStatus.EVALUATED}, ${TicketStatus.PAID}, ${TicketStatus.PAGADO})
-        ${numbersEntityFilters}
-      GROUP BY t."${Prisma.raw(groupByField)}", e.name
-    `;
-    promises.push(prisma.$queryRaw<any[]>(q));
-  } else {
-    promises.push(Promise.resolve([]));
-  }
-
-  const [evalRaw, nonEvalRaw] = await Promise.all(promises);
-
-  const mergedMap = new Map<string, { id: string; name: string; total_amount: number; tickets_count: number }>();
-  const addRows = (rows: any[]) => {
-    for (const r of rows) {
-      const id = r.id;
-      const name = r.name || '';
-      const total = parseFloat(r.total_amount?.toString() || '0');
-      const tickets = parseInt(r.tickets_count?.toString() || '0');
-
-      const existing = mergedMap.get(id);
-      if (existing) {
-        existing.total_amount += total;
-        existing.tickets_count += tickets;
-      } else {
-        mergedMap.set(id, { id, name, total_amount: total, tickets_count: tickets });
-      }
-    }
-  };
-
-  addRows(evalRaw);
-  addRows(nonEvalRaw);
-
-  return Array.from(mergedMap.values()).sort((a, b) => b.total_amount - a.total_amount);
+  const q = Prisma.sql`
+    SELECT
+      db."${Prisma.raw(groupByField)}" as id,
+      e.name as name,
+      SUM(db."totalAmount")::double precision as total_amount,
+      SUM(db."ticketsCount")::integer as tickets_count
+    FROM "DailyNumberSales" db
+    INNER JOIN "${Prisma.raw(entityTable)}" e ON db."${Prisma.raw(groupByField)}" = e.id
+    WHERE db."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+      ${dailySalesFilters}
+    GROUP BY db."${Prisma.raw(groupByField)}", e.name
+    ORDER BY total_amount DESC
+  `;
+  return await prisma.$queryRaw<any[]>(q);
 }
 
 interface WinnersPaymentsFilters {
@@ -835,22 +778,6 @@ export const TicketsReportService = {
       };
     }
 
-    const evaluatedSorteoIds = sorteos
-      .filter((s) => s.status === "EVALUATED")
-      .map((s) => s.id);
-    const nonEvaluatedSorteoIds = sorteos
-      .filter((s) => s.status !== "EVALUATED")
-      .map((s) => s.id);
-
-    // Filtros de entidad para queries de Jugada/Ticket
-    const numbersEntityFilters = Prisma.sql`
-      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
-      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid) AND j."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
-      ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
-    `;
-
     // Filtros de entidad para queries de DailyNumberSales
     const dailySalesFilters = Prisma.sql`
       ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND db."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
@@ -860,51 +787,19 @@ export const TicketsReportService = {
       ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND db.type = ${filters.betType}::"BetType"` : Prisma.empty}
     `;
 
-    // Consultar Numbers en paralelo para sorteos evaluados y abiertos
-    const numbersPromises: Promise<any[]>[] = [];
-
-    if (evaluatedSorteoIds.length > 0) {
-      const q = Prisma.sql`
-        SELECT
-          db.number,
-          SUM(db."totalAmount")::double precision as total_amount,
-          SUM(db."ticketsCount")::integer as tickets_count,
-          SUM(db."jugadasCount")::integer as jugadas_count
-        FROM "DailyNumberSales" db
-        WHERE db."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-          ${dailySalesFilters}
-        GROUP BY db.number
-      `;
-      numbersPromises.push(prisma.$queryRaw<any[]>(q));
-    } else {
-      numbersPromises.push(Promise.resolve([]));
-    }
-
-    if (nonEvaluatedSorteoIds.length > 0) {
-      const q = Prisma.sql`
-        SELECT
-          j.number,
-          SUM(j.amount)::double precision as total_amount,
-          COUNT(j."ticketId")::integer as tickets_count,
-          COUNT(*)::integer as jugadas_count
-        FROM "Jugada" j
-        INNER JOIN "Ticket" t ON j."ticketId" = t.id
-        WHERE t."sorteoId" IN (${Prisma.join(nonEvaluatedSorteoIds.map(id => Prisma.sql`CAST(${id} AS uuid)`))})
-          AND t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-          AND t."deletedAt" IS NULL
-          AND t."isActive" = true
-          AND t.status::text IN (${TicketStatus.ACTIVE}, ${TicketStatus.EVALUATED}, ${TicketStatus.PAID}, ${TicketStatus.PAGADO})
-          AND j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          ${numbersEntityFilters}
-        GROUP BY j.number
-      `;
-      numbersPromises.push(prisma.$queryRaw<any[]>(q));
-    } else {
-      numbersPromises.push(Promise.resolve([]));
-    }
-
-    const [evaluatedNumbersRaw, nonEvaluatedNumbersRaw] = await Promise.all(numbersPromises);
+    // Consultar números acumulados directamente desde DailyNumberSales (STREAM / TIEMPO REAL)
+    const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT
+        db.number,
+        SUM(db."totalAmount")::double precision as total_amount,
+        SUM(db."ticketsCount")::integer as tickets_count,
+        SUM(db."jugadasCount")::integer as jugadas_count
+      FROM "DailyNumberSales" db
+      WHERE db."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+        ${dailySalesFilters}
+      GROUP BY db.number
+      ORDER BY total_amount DESC
+    `);
 
     const numbersMap = new Map<string, {
       number: string;
@@ -914,82 +809,46 @@ export const TicketsReportService = {
       avg_amount: number;
     }>();
 
-    const addNumbers = (rows: any[]) => {
-      for (const r of rows) {
-        const num = r.number;
-        const total = parseFloat(r.total_amount?.toString() || '0');
-        const tickets = parseInt(r.tickets_count?.toString() || '0');
-        const jugadas = parseInt(r.jugadas_count?.toString() || '0');
+    for (const r of rows) {
+      const num = r.number;
+      const total = parseFloat(r.total_amount?.toString() || '0');
+      const tickets = parseInt(r.tickets_count?.toString() || '0');
+      const jugadas = parseInt(r.jugadas_count?.toString() || '0');
+      const avgAmount = jugadas > 0 ? total / jugadas : 0;
 
-        const existing = numbersMap.get(num);
-        if (existing) {
-          existing.total_amount += total;
-          existing.tickets_count += tickets;
-          existing.jugadas_count += jugadas;
-        } else {
-          numbersMap.set(num, {
-            number: num,
-            total_amount: total,
-            tickets_count: tickets,
-            jugadas_count: jugadas,
-            avg_amount: 0,
-          });
-        }
-      }
-    };
-
-    addNumbers(evaluatedNumbersRaw);
-    addNumbers(nonEvaluatedNumbersRaw);
-
-    const mergedNumbers = Array.from(numbersMap.values()).map(n => {
-      n.avg_amount = n.jugadas_count > 0 ? n.total_amount / n.jugadas_count : 0;
-      return n;
-    });
-
-    // Ordenar y limitar según top
-    mergedNumbers.sort((a, b) => b.total_amount - a.total_amount);
-    const topLimit = filters.top || 20;
-    const finalNumbersRaw = mergedNumbers.slice(0, topLimit);
-
-    // Calcular resumen de forma rápida desde Ticket (si betType es 'all') o sumando de mergedNumbers
-    let summaryTotalAmount = 0;
-    let summaryTotalTickets = 0;
-
-    if (filters.betType && filters.betType !== 'all') {
-      for (const n of mergedNumbers) {
-        summaryTotalAmount += n.total_amount;
-        summaryTotalTickets += n.tickets_count;
-      }
-    } else {
-      // 1. Obtener ventas totales y tiquetes totales directamente desde Ticket (Ultra-rápido)
-      const ticketStatsQuery = Prisma.sql`
-        SELECT
-          COALESCE(SUM(t."totalAmount"), 0)::FLOAT as total_amount,
-          COUNT(t.id)::INT as total_tickets
-        FROM "Ticket" t
-        WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-          AND t."status"::text IN (${TicketStatus.ACTIVE}, ${TicketStatus.EVALUATED}, ${TicketStatus.PAID}, ${TicketStatus.PAGADO})
-          AND t."isActive" = true
-          AND t."deletedAt" IS NULL
-          ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
-          ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-          ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
-          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
-      `;
-
-      const [ticketStats] = await prisma.$queryRaw<Array<{
-        total_amount: number;
-        total_tickets: number;
-      }>>(ticketStatsQuery);
-
-      summaryTotalAmount = ticketStats?.total_amount || 0;
-      summaryTotalTickets = ticketStats?.total_tickets || 0;
+      numbersMap.set(num, {
+        number: num,
+        total_amount: total,
+        tickets_count: tickets,
+        jugadas_count: jugadas,
+        avg_amount: avgAmount,
+      });
     }
 
+    const mergedNumbers = Array.from(numbersMap.values());
+    mergedNumbers.sort((a, b) => b.total_amount - a.total_amount);
+    const topLimit = filters.top || 10;
+    const finalNumbersRaw = mergedNumbers.slice(0, topLimit);
+
+    let summaryTotalAmount = 0;
+    let summaryTotalTickets = 0;
+    let summaryTotalJugadas = 0;
+
+    for (const n of mergedNumbers) {
+      summaryTotalAmount += n.total_amount;
+      summaryTotalTickets += n.tickets_count;
+      summaryTotalJugadas += n.jugadas_count;
+    }
+
+    const topNumberItem = finalNumbersRaw[0] || null;
+
     const summary = {
-      total_numbers_played: mergedNumbers.length,
-      total_amount: summaryTotalAmount,
-      total_tickets: summaryTotalTickets,
+      totalNumbersPlayed: mergedNumbers.length,
+      totalAmount: summaryTotalAmount,
+      totalTickets: summaryTotalTickets,
+      totalJugadas: summaryTotalJugadas,
+      topNumber: topNumberItem ? topNumberItem.number : null,
+      topNumberAmount: topNumberItem ? topNumberItem.total_amount : 0,
     };
 
     const DEFAULT_MULTIPLIER = 30;
@@ -1002,19 +861,13 @@ export const TicketsReportService = {
     if (filters.includeExposure) {
       const exposureQuery = Prisma.sql`
         SELECT
-          j.number,
-          SUM(j.amount) as total_amount,
-          AVG(j."finalMultiplierX") as avg_multiplier
-        FROM "Jugada" j
-        INNER JOIN "Ticket" t ON j."ticketId" = t.id
-        WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-          AND t."status"::text IN (${TicketStatus.ACTIVE}, ${TicketStatus.EVALUATED}, ${TicketStatus.PAID}, ${TicketStatus.PAGADO})
-          AND t."isActive" = true
-          AND t."deletedAt" IS NULL
-          AND j."deletedAt" IS NULL
-          AND j."isExcluded" = false
-          ${numbersEntityFilters}
-        GROUP BY j.number
+          db.number,
+          SUM(db."totalAmount") as total_amount,
+          80 as avg_multiplier
+        FROM "DailyNumberSales" db
+        WHERE db."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+          ${dailySalesFilters}
+        GROUP BY db.number
       `;
 
       const exposureData = await prisma.$queryRaw<Array<{
@@ -1165,12 +1018,9 @@ export const TicketsReportService = {
     let numBySorteo: any[] | undefined;
     if (nbk.includeSorteo) {
       const sorted = await getHybridBreakdown(
-        evaluatedSorteoIds,
-        nonEvaluatedSorteoIds,
         'sorteoId',
         'Sorteo',
         dailySalesFilters,
-        numbersEntityFilters,
         dateRange
       );
       numBySorteo = sorted.map(r => ({
@@ -1184,12 +1034,9 @@ export const TicketsReportService = {
     let numByLoteria: any[] | undefined;
     if (nbk.includeLoteria) {
       const sorted = await getHybridBreakdown(
-        evaluatedSorteoIds,
-        nonEvaluatedSorteoIds,
         'loteriaId',
         'Loteria',
         dailySalesFilters,
-        numbersEntityFilters,
         dateRange
       );
       numByLoteria = sorted.map(r => ({
@@ -1203,12 +1050,9 @@ export const TicketsReportService = {
     let numByVentana: any[] | undefined;
     if (nbk.includeVentana) {
       const sorted = await getHybridBreakdown(
-        evaluatedSorteoIds,
-        nonEvaluatedSorteoIds,
         'ventanaId',
         'Ventana',
         dailySalesFilters,
-        numbersEntityFilters,
         dateRange
       );
       numByVentana = sorted.map(r => ({
@@ -1222,12 +1066,9 @@ export const TicketsReportService = {
     let numByVendedor: any[] | undefined;
     if (nbk.includeVendedor) {
       const sorted = await getHybridBreakdown(
-        evaluatedSorteoIds,
-        nonEvaluatedSorteoIds,
         'vendedorId',
         'User',
         dailySalesFilters,
-        numbersEntityFilters,
         dateRange
       );
       numByVendedor = sorted.map(r => ({
@@ -1248,9 +1089,9 @@ export const TicketsReportService = {
         ...(previousPeriod && { previousPeriod }),
         ...(filters.includeWinners && { hotNumbers, coldNumbers }),
         summary: {
-          totalNumbersPlayed: summary.total_numbers_played,
-          totalAmount: summary.total_amount,
-          totalTickets: summary.total_tickets,
+          totalNumbersPlayed: summary.totalNumbersPlayed,
+          totalAmount: summary.totalAmount,
+          totalTickets: summary.totalTickets,
           topNumber: topNumber?.number || null,
           topNumberAmount: topNumber?.totalAmount || 0,
           ...(filters.includeExposure && {
