@@ -2212,65 +2212,46 @@ gs."hour24" ASC
           totalSubtotal: realMonthlyRemainingBalance !== null ? realMonthlyRemainingBalance : (numericPreviousMonthBalance + monthlyTotalRemainingBalance),
         };
       } else {
-        // ⚡ OPTIMIZACIÓN: Consulta directa CTE para tickets y jugadas mensuales
-        // Elimina el findMany preliminar y los 2 groupBys con arreglos gigantes IN ($1...$270)
-        const [monthlyFinancialTotals, monthlyJugadaCommissions] = await Promise.all([
-          prisma.$queryRaw<Array<{
-            total_sales: number;
-            total_commission: number;
-            total_prizes: number;
-            total_tickets: bigint;
-          }>>(Prisma.sql`
-            WITH sorteos_cte AS (
-              SELECT id FROM "Sorteo"
-              WHERE status = ${SorteoStatus.EVALUATED}::"SorteoStatus"
-                AND "scheduledAt" >= ${monthlyStartDate}::timestamp
-                AND "scheduledAt" <= ${monthlyEndDate}::timestamp
-                AND "deletedAt" IS NULL
-            )
-            SELECT 
-              COALESCE(SUM(t."totalAmount"), 0) as total_sales,
-              COALESCE(SUM(t."totalCommission"), 0) as total_commission,
-              COALESCE(SUM(CASE WHEN t."isWinner" = true THEN t."totalPayout" ELSE 0 END), 0) as total_prizes,
-              COUNT(t.id) as total_tickets
-            FROM "Ticket" t
-            JOIN sorteos_cte s ON s.id = t."sorteoId"
-            WHERE t."deletedAt" IS NULL
-              AND t."isActive" = true
-              ${vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
-          `),
-          prisma.$queryRaw<Array<{ commission_amount: number; type: string }>>(Prisma.sql`
-            WITH sorteos_cte AS (
-              SELECT id FROM "Sorteo"
-              WHERE status = ${SorteoStatus.EVALUATED}::"SorteoStatus"
-                AND "scheduledAt" >= ${monthlyStartDate}::timestamp
-                AND "scheduledAt" <= ${monthlyEndDate}::timestamp
-                AND "deletedAt" IS NULL
-            )
-            SELECT SUM(j."commissionAmount") as commission_amount, j.type
-            FROM "Jugada" j
-            JOIN "Ticket" t ON t.id = j."ticketId"
-            JOIN sorteos_cte s ON s.id = t."sorteoId"
-            WHERE j."deletedAt" IS NULL
-              ${vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
-              AND t."deletedAt" IS NULL
-              AND t."isActive" = true
-            GROUP BY j.type
-          `).then(res => res.map(row => ({
-            type: row.type,
-            _sum: { commissionAmount: Number(row.commission_amount) || 0 }
-          }))),
-        ]);
+        // ⚡ OPTIMIZACIÓN EXTREMA: Lectura O(1) desde ResumenCierreDiario precalculado
+        // Resuelve ventas, premios, comisiones totales y por tipo (Número/Reventado) en <1ms
+        const monthlyStartDateStr = crDateService.dateUTCToCRString(monthlyStartDate);
+        const monthlyEndDateStr = crDateService.dateUTCToCRString(monthlyEndDate);
 
-        const monthlyTotals = monthlyFinancialTotals[0] || {
+        const rcdTotals = await prisma.$queryRaw<Array<{
+          total_sales: number;
+          total_commission: number;
+          commission_by_number: number;
+          commission_by_reventado: number;
+          total_prizes: number;
+          total_tickets: bigint;
+        }>>(Prisma.sql`
+          SELECT 
+            COALESCE(SUM("totalVendida"), 0) as total_sales,
+            COALESCE(SUM("comisionVendedor"), 0) as total_commission,
+            COALESCE(SUM(CASE WHEN tipo = 'NUMERO' THEN "comisionVendedor" ELSE 0 END), 0) as commission_by_number,
+            COALESCE(SUM(CASE WHEN tipo = 'REVENTADO' THEN "comisionVendedor" ELSE 0 END), 0) as commission_by_reventado,
+            COALESCE(SUM(ganado), 0) as total_prizes,
+            COALESCE(SUM("ticketsCount"), 0) as total_tickets
+          FROM "ResumenCierreDiario"
+          WHERE "businessDate" >= ${monthlyStartDateStr}::date
+            AND "businessDate" <= ${monthlyEndDateStr}::date
+            ${vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
+            ${params.loteriaId ? Prisma.sql`AND "loteriaId" = CAST(${params.loteriaId} AS uuid)` : Prisma.empty}
+        `);
+
+        const monthlyTotals = rcdTotals[0] || {
           total_sales: 0,
           total_commission: 0,
+          commission_by_number: 0,
+          commission_by_reventado: 0,
           total_prizes: 0,
           total_tickets: BigInt(0),
         };
 
         const monthlyTotalSales = Number(monthlyTotals.total_sales) || 0;
         const monthlyTotalCommission = Number(monthlyTotals.total_commission) || 0;
+        const monthlyCommissionByNumber = Number(monthlyTotals.commission_by_number) || 0;
+        const monthlyCommissionByReventado = Number(monthlyTotals.commission_by_reventado) || 0;
         const monthlyTotalPrizes = Number(monthlyTotals.total_prizes) || 0;
         const monthlyTotalTickets = Number(monthlyTotals.total_tickets) || 0;
 
@@ -2284,12 +2265,6 @@ gs."hour24" ASC
             .filter((m: any) => m.type === "collection" && !m.isReversed && !m.id?.startsWith('previous-month-balance-'))
             .reduce((sum: number, m: any) => sum + m.amount, 0);
         }
-
-        //  C3.2: Leer comisiones por tipo desde groupBy (ya no carga filas individuales)
-        const monthlyCommissionByNumber = monthlyJugadaCommissions
-          .find((j) => j.type === "NUMERO")?._sum.commissionAmount || 0;
-        const monthlyCommissionByReventado = monthlyJugadaCommissions
-          .find((j) => j.type === "REVENTADO")?._sum.commissionAmount || 0;
 
         const monthlyTotalBalance = monthlyTotalSales - monthlyTotalPrizes - monthlyTotalCommission;
         const monthlyTotalRemainingBalance = monthlyTotalBalance - monthlyTotalCollected + monthlyTotalPaid;

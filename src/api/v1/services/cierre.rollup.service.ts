@@ -120,6 +120,7 @@ export class CierreRollupService {
                j.amount,
                j.payout,
                j."listeroCommissionAmount",
+               j."commissionAmount",
                j.id AS "jugadaId",
                rt.id AS "ticketId"
               FROM "Jugada" j
@@ -130,7 +131,7 @@ export class CierreRollupService {
            INSERT INTO "ResumenCierreDiario" (
               "id", "bancaId", "businessDate", "vendedorId", "ventanaId", 
               "loteriaId", "sorteoId", "tipo", "banda", "totalVendida", 
-              "ganado", "comisionTotal", "ticketsCount", "jugadasCount", 
+              "ganado", "comisionTotal", "comisionVendedor", "ticketsCount", "jugadasCount", 
               "createdAt", "updatedAt"
            )
            SELECT gen_random_uuid(),
@@ -145,6 +146,7 @@ export class CierreRollupService {
               sum(amount) AS "totalVendida",
               sum(COALESCE(payout, 0::double precision)) AS ganado,
               sum(COALESCE("listeroCommissionAmount", 0::double precision)) AS "comisionTotal",
+              sum(COALESCE("commissionAmount", 0::double precision)) AS "comisionVendedor",
               count(DISTINCT "ticketId")::integer AS "ticketsCount",
               count("jugadaId")::integer AS "jugadasCount",
               NOW(), NOW()
