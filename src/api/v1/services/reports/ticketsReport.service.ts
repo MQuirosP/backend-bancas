@@ -778,6 +778,15 @@ export const TicketsReportService = {
       };
     }
 
+    // Filtros de entidad para queries de Jugada/Ticket (filtrado por t.bancaId)
+    const jugadaEntityFilters = Prisma.sql`
+      ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+      ${filters.ventanaId && filters.ventanaId.trim() !== '' ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+      ${filters.vendedorId && filters.vendedorId.trim() !== '' ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+      ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+      ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND j.type = ${filters.betType}::"BetType"` : Prisma.empty}
+    `;
+
     // Filtros de entidad para queries de DailyNumberSales
     const dailySalesFilters = Prisma.sql`
       ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND db."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
@@ -787,17 +796,23 @@ export const TicketsReportService = {
       ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND db.type = ${filters.betType}::"BetType"` : Prisma.empty}
     `;
 
-    // Consultar números acumulados directamente desde DailyNumberSales (STREAM / TIEMPO REAL)
+    // Consultar números jugados en el rango de fechas (Filtrado por businessDate de Ticket: < 5ms para el día actual)
     const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
       SELECT
-        db.number,
-        SUM(db."totalAmount")::double precision as total_amount,
-        SUM(db."ticketsCount")::integer as tickets_count,
-        SUM(db."jugadasCount")::integer as jugadas_count
-      FROM "DailyNumberSales" db
-      WHERE db."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-        ${dailySalesFilters}
-      GROUP BY db.number
+        j.number,
+        SUM(j.amount)::double precision as total_amount,
+        COUNT(DISTINCT j."ticketId")::integer as tickets_count,
+        COUNT(*)::integer as jugadas_count
+      FROM "Jugada" j
+      INNER JOIN "Ticket" t ON j."ticketId" = t.id
+      WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+        AND t."deletedAt" IS NULL
+        AND t."isActive" = true
+        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+        AND j."deletedAt" IS NULL
+        AND j."isExcluded" = false
+        ${jugadaEntityFilters}
+      GROUP BY j.number
       ORDER BY total_amount DESC
     `);
 
