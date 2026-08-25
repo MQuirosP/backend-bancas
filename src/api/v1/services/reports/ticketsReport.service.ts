@@ -64,16 +64,15 @@ async function getHybridBreakdown(
     promises.push(Promise.resolve([]));
   }
 
-  // B. Query de Jugada/Ticket para sorteos abiertos
+  // B. Query de Ticket para sorteos abiertos (SIN JOIN a Jugada)
   if (nonEvaluatedSorteoIds.length > 0) {
     const q = Prisma.sql`
       SELECT
         t."${Prisma.raw(groupByField)}" as id,
         e.name as name,
-        SUM(j.amount)::double precision as total_amount,
-        COUNT(DISTINCT j."ticketId")::integer as tickets_count
+        SUM(t."totalAmount")::double precision as total_amount,
+        COUNT(t.id)::integer as tickets_count
       FROM "Ticket" t
-      INNER JOIN "Jugada" j ON j."ticketId" = t.id AND j."deletedAt" IS NULL
       INNER JOIN "${Prisma.raw(entityTable)}" e ON t."${Prisma.raw(groupByField)}" = e.id
       WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
         AND t."sorteoId" IN (${Prisma.join(nonEvaluatedSorteoIds.map(id => Prisma.sql`CAST(${id} AS uuid)`))})

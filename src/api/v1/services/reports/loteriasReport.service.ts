@@ -193,46 +193,60 @@ export const LoteriasReportService = {
     const fromDateStr = dateRange.fromString; // YYYY-MM-DD
     const toDateStr = dateRange.toString; // YYYY-MM-DD
 
-    // Query optimizada usando CTEs
-    // Usa businessDate (o createdAt convertido a CR) para filtrar por fecha de negocio
-    // Incluye tickets ACTIVE, EVALUATED y PAID (excluye CANCELLED)
-    // IMPORTANTE: Separar agregaciones de tickets y jugadas para evitar duplicación
+    // Query optimizada usando CTEs (Matriz Unificada: Ticket para OPEN, ResumenCierreDiario para EVALUATED, 0 JOINs a Jugada)
     const loteriasQuery = Prisma.sql`
-      WITH tickets_in_range AS (
+      WITH open_sales AS (
         SELECT 
-          t.id,
           t."loteriaId",
-          t."totalAmount",
-          t."totalPayout",
-          t."isWinner"
+          COUNT(t.id) as tickets_count,
+          COALESCE(SUM(t."totalAmount"), 0) as ventas_total,
+          COUNT(DISTINCT CASE WHEN t."isWinner" = true THEN t.id END) as winning_tickets_count,
+          COALESCE(SUM(t."totalPayout"), 0) as payout_total,
+          COALESCE(SUM(t."totalListeroCommission"), 0) as commission_listero,
+          COUNT(t.id) as jugadas_count
         FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
         WHERE t."deletedAt" IS NULL
           AND t."isActive" = true
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND s.status = 'OPEN'
           AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
           ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
-      ),
-      jugadas_count_per_loteria AS (
-        SELECT 
-          t."loteriaId",
-          COUNT(DISTINCT j.id) as jugadas_count
-        FROM tickets_in_range t
-        LEFT JOIN "Jugada" j ON j."ticketId" = t.id AND j."deletedAt" IS NULL
         GROUP BY t."loteriaId"
+      ),
+      evaluated_sales AS (
+        SELECT
+          rcd."loteriaId",
+          COALESCE(SUM(rcd."ticketsCount"), 0) as tickets_count,
+          COALESCE(SUM(rcd."totalVendida"), 0) as ventas_total,
+          0 as winning_tickets_count,
+          COALESCE(SUM(rcd."ganado"), 0) as payout_total,
+          COALESCE(SUM(rcd."comisionTotal"), 0) as commission_listero,
+          COALESCE(SUM(rcd."jugadasCount"), 0) as jugadas_count
+        FROM "ResumenCierreDiario" rcd
+        WHERE rcd."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND rcd."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND rcd."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+        GROUP BY rcd."loteriaId"
+      ),
+      combined_sales AS (
+        SELECT "loteriaId", tickets_count, ventas_total, winning_tickets_count, payout_total, commission_listero, jugadas_count FROM open_sales
+        UNION ALL
+        SELECT "loteriaId", tickets_count, ventas_total, winning_tickets_count, payout_total, commission_listero, jugadas_count FROM evaluated_sales
       ),
       loteria_stats AS (
         SELECT 
-          t."loteriaId",
-          COUNT(DISTINCT t.id) as tickets_count,
-          SUM(t."totalAmount") as ventas_total,
-          AVG(t."totalAmount") as avg_ticket_amount,
-          COUNT(DISTINCT CASE WHEN t."isWinner" THEN t.id END) as winning_tickets_count,
-          SUM(COALESCE(t."totalPayout", 0)) as payout_total,
-          COALESCE(jc.jugadas_count, 0) as jugadas_count
-        FROM tickets_in_range t
-        LEFT JOIN jugadas_count_per_loteria jc ON jc."loteriaId" = t."loteriaId"
-        GROUP BY t."loteriaId", jc.jugadas_count
+          "loteriaId",
+          SUM(tickets_count)::bigint as tickets_count,
+          SUM(ventas_total)::double precision as ventas_total,
+          CASE WHEN SUM(tickets_count) > 0 THEN SUM(ventas_total) / SUM(tickets_count) ELSE 0 END as avg_ticket_amount,
+          SUM(winning_tickets_count)::bigint as winning_tickets_count,
+          SUM(payout_total)::double precision as payout_total,
+          SUM(commission_listero)::double precision as commission_listero,
+          SUM(jugadas_count)::bigint as jugadas_count
+        FROM combined_sales
+        GROUP BY "loteriaId"
       )
       SELECT 
         ls.*,
@@ -267,26 +281,15 @@ export const LoteriasReportService = {
       avg_ticket_amount: number;
       winning_tickets_count: number;
       payout_total: number;
+      commission_listero: number;
       neto_sin_comision: number;
       margin_sin_comision: number;
       payout_ratio: number;
     }>>(loteriasQuery);
 
-    // Calcular comisiones de listero desde las políticas de comisión
-    // Convertir los strings CR (YYYY-MM-DD) a Date objects seguros usando Date.UTC
-    // para evitar cualquier desfase de zona horaria al comparar con businessDate (@db.Date)
-    const [fy, fm, fd] = dateRange.fromString.split('-').map(Number);
-    const [ty, tm, td] = dateRange.toString.split('-').map(Number);
-    const commissionByLoteria = await computeListeroCommissionByLoteria(
-      new Date(Date.UTC(fy, fm - 1, fd)),
-      new Date(Date.UTC(ty, tm - 1, td)),
-      filters.loteriaId,
-      filters.bancaId
-    );
-
-    // Aplicar comisiones de listero calculadas desde políticas
+    // Aplicar comisiones de listero pre-calculadas directamente desde la base de datos (0 scans a Jugada)
     const loteriasWithCommission = loterias.map(l => {
-      const commissionListero = commissionByLoteria.get(l.loteriaId) || 0;
+      const commissionListero = Number(l.commission_listero) || 0;
       const neto = parseFloat(l.neto_sin_comision.toString()) - commissionListero;
       const margin = parseFloat(l.ventas_total.toString()) > 0
         ? (neto / parseFloat(l.ventas_total.toString())) * 100

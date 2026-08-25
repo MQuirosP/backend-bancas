@@ -139,7 +139,7 @@ export async function runAcopioSalesRebuild(options?: {
   for (let i = 0; i < targetSorteosToProcess.length; i++) {
     const s = targetSorteosToProcess[i];
     renderProgressBar(i + 1, targetSorteosToProcess.length, `Procesando: ${s.name}`);
-    await DailyNumberSalesService.aggregateSorteoSales(s.id);
+    await DailyNumberSalesService.rebuildSorteoSalesManual(s.id);
   }
 
   await ActivityService.log({

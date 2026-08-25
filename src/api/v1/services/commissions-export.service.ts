@@ -251,7 +251,7 @@ export class CommissionsExportService {
           AND sle.multiplier_id = j."multiplierId"
         )`;
 
-    // Query para obtener breakdown
+    // Query para obtener breakdown (Matriz Unificada: Ticket para OPEN, ResumenCierreDiario para EVALUATED, 0 JOINs a Jugada)
     const result = await prisma.$queryRaw<
       Array<{
         business_date: Date;
@@ -268,33 +268,67 @@ export class CommissionsExportService {
         tickets_count: string;
       }>
     >`
-      SELECT
-        COALESCE(
-          t."businessDate",
-          DATE((t."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica'))
-        ) as business_date,
-        v.name as ventana_name,
-        u.name as vendedor_name,
-        l.name as loteria_name,
-        (s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')::time::text as sorteo_time,
-        lm.name as multiplier_name,
-        lm."valueX" as multiplier_value_x,
-        lm.kind as multiplier_kind,
-        SUM(j.amount) as total_sales,
-        SUM(j."commissionAmount") as commission_amount,
-        SUM(j."listeroCommissionAmount") as listero_commission_amount,
-        COUNT(DISTINCT t.id)::text as tickets_count
-      FROM "Ticket" t
-      INNER JOIN "Jugada" j ON j."ticketId" = t.id
-      INNER JOIN "Loteria" l ON l.id = t."loteriaId"
-      INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
-      LEFT JOIN "Ventana" v ON v.id = t."ventanaId"
-      LEFT JOIN "User" u ON u.id = t."vendedorId"
-      LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
-      ${whereClause}
-      ${exclusionJugadaFilter}
-      GROUP BY business_date, v.name, u.name, l.name, s."scheduledAt", lm.name, lm."valueX", lm.kind
-      ORDER BY business_date DESC, l.name ASC, s."scheduledAt" ASC
+      WITH open_sales AS (
+        SELECT
+          t."businessDate" as business_date,
+          v.name as ventana_name,
+          u.name as vendedor_name,
+          l.name as loteria_name,
+          (s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')::time::text as sorteo_time,
+          'Base' as multiplier_name,
+          80 as multiplier_value_x,
+          'NUMERO' as multiplier_kind,
+          SUM(t."totalAmount") as total_sales,
+          SUM(t."totalCommission") as commission_amount,
+          SUM(t."totalListeroCommission") as listero_commission_amount,
+          COUNT(t.id)::text as tickets_count
+        FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON s.id = t."sorteoId"
+        INNER JOIN "Loteria" l ON l.id = t."loteriaId"
+        LEFT JOIN "Ventana" v ON v.id = t."ventanaId"
+        LEFT JOIN "User" u ON u.id = t."vendedorId"
+        WHERE t."deletedAt" IS NULL
+          AND t."isActive" = true
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND s.status = 'OPEN'
+          AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          ${filters.bancaId ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+          ${filters.vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+        GROUP BY t."businessDate", v.name, u.name, l.name, s."scheduledAt"
+      ),
+      evaluated_sales AS (
+        SELECT
+          rcd."businessDate" as business_date,
+          v.name as ventana_name,
+          u.name as vendedor_name,
+          l.name as loteria_name,
+          (s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')::time::text as sorteo_time,
+          CASE 
+            WHEN rcd.tipo = 'REVENTADO' THEN 'REVENTADO'
+            ELSE 'Base'
+          END as multiplier_name,
+          rcd.banda as multiplier_value_x,
+          rcd.tipo::text as multiplier_kind,
+          SUM(rcd."totalVendida") as total_sales,
+          SUM(rcd."comisionVendedor") as commission_amount,
+          SUM(rcd."comisionTotal") as listero_commission_amount,
+          SUM(rcd."ticketsCount")::text as tickets_count
+        FROM "ResumenCierreDiario" rcd
+        INNER JOIN "Sorteo" s ON s.id = rcd."sorteoId"
+        INNER JOIN "Loteria" l ON l.id = rcd."loteriaId"
+        LEFT JOIN "Ventana" v ON v.id = rcd."ventanaId"
+        LEFT JOIN "User" u ON u.id = rcd."vendedorId"
+        WHERE rcd."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          ${filters.bancaId ? Prisma.sql`AND rcd."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+          ${filters.ventanaId ? Prisma.sql`AND rcd."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+          ${filters.vendedorId ? Prisma.sql`AND rcd."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+        GROUP BY rcd."businessDate", v.name, u.name, l.name, s."scheduledAt", rcd.tipo, rcd.banda
+      )
+      SELECT * FROM open_sales
+      UNION ALL
+      SELECT * FROM evaluated_sales
+      ORDER BY business_date DESC, loteria_name ASC, sorteo_time ASC
     `;
 
     // Transformar resultado

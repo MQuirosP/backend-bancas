@@ -389,7 +389,7 @@ export class OpsController {
       if (executeRebuild) {
         const targetSorteosToProcess = totalDiscrepancies > 0 ? sorteosWithDiscrepancies : sorteos;
         for (const s of targetSorteosToProcess) {
-          await DailyNumberSalesService.aggregateSorteoSales(s.id);
+          await DailyNumberSalesService.rebuildSorteoSalesManual(s.id);
         }
 
         await ActivityService.log({

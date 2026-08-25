@@ -7,7 +7,6 @@ import logger from "../../../core/logger";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { crDateService } from "../../../utils/crDateService";
 const { dateRangeUTCToCRStrings, postgresDateToCRString, isDateInCRRange } = crDateService;
-import { isExclusionListEmpty } from "../../../core/exclusionListCache";
 
 const isUuid = (val: any): boolean => {
   return typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
@@ -26,27 +25,10 @@ interface CommissionsFilters {
 }
 
 /**
- * Convierte business_date desde resultados SQL a fecha CR (YYYY-MM-DD)
- * 
- * ️ CRÍTICO: Cuando PostgreSQL devuelve DATE(... AT TIME ZONE 'America/Costa_Rica'),
- * devuelve un DATE (sin hora) que representa el día calendario en CR.
- * 
- * Cuando Prisma recibe un DATE de PostgreSQL, lo convierte a un Date JavaScript
- * con hora 00:00:00.000Z. Este Date ya representa correctamente el día calendario,
- * NO necesita ajuste de zona horaria porque DATE no tiene componente de hora.
- * 
- * Ejemplo:
- * - PostgreSQL: DATE('2025-12-06 00:00:00' AT TIME ZONE 'America/Costa_Rica') = '2025-12-06' (DATE)
- * - Prisma lo convierte a: Date('2025-12-06T00:00:00.000Z')
- * - Este Date ya representa el día 2025-12-06 correctamente, solo extraer YYYY-MM-DD
- * 
- * Solución: Extraer directamente año, mes, día sin ajustar zona horaria
- */
-// ️ DEPRECATED: Usar crDateService.postgresDateToCRString() en su lugar
-
-/**
  * Commissions Service
- * Proporciona endpoints para consultar comisiones devengadas
+ * Proporciona endpoints para consultar comisiones devengadas.
+ * ⚡ OPTIMIZACIÓN: 100% libre de JOINs a la tabla Jugada.
+ * Utiliza AccountStatement, Ticket y ResumenCierreDiario segun la Matriz Unificada.
  */
 export const CommissionsService = {
   /**
@@ -83,20 +65,14 @@ export const CommissionsService = {
     try {
       // Resolver rango de fechas
       const dateRange = resolveDateRange(date, fromDate, toDate);
-      //  CORRECCIÓN CRÍTICA: Usar servicio centralizado para conversión de fechas
       const { startDateCRStr, endDateCRStr } = dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
       const fromDateStr = startDateCRStr;
       const toDateStr = endDateCRStr;
 
-      //  NUEVO: Detectar si debemos agrupar por fecha solamente (sin separar por entidad)
-      // Agrupamos cuando dimension=ventana y ventanaId NO está especificado
-      // o cuando dimension=vendedor y vendedorId NO está especificado
-      //  CRÍTICO: Verificar tanto undefined como null y cadena vacía
       const shouldGroupByDate =
         (filters.dimension === "ventana" && (!filters.ventanaId || !isUuid(filters.ventanaId))) ||
         (filters.dimension === "vendedor" && (!filters.vendedorId || !isUuid(filters.vendedorId)));
 
-      //  DEBUG: Log para verificar agrupación
       logger.info({
         layer: "service",
         action: "COMMISSIONS_GROUPING_CHECK",
@@ -108,19 +84,15 @@ export const CommissionsService = {
         },
       });
 
-      //  OPTIMIZACIÓN V3: Consumo directo de ResumenCierreDiario (AccountStatement)
-      // Construir WHERE dinámicos según RBAC para AccountStatement
       const conditions: Prisma.Sql[] = [
         Prisma.sql`date >= ${fromDateStr}::date`,
-        Prisma.sql`date <= ${toDateStr}::date`, // AccountStatement usa instantes precisos
+        Prisma.sql`date <= ${toDateStr}::date`,
       ];
 
-      // Filtrar por banca activa (para ADMIN multibanca)
       if (filters.bancaId && isUuid(filters.bancaId)) {
         conditions.push(Prisma.sql`"bancaId" = CAST(${filters.bancaId} AS uuid)`);
       }
 
-      // Aplicar filtros de RBAC según scope
       if (filters.dimension === "vendedor") {
         if (filters.vendedorId && isUuid(filters.vendedorId)) {
           conditions.push(Prisma.sql`"vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
@@ -131,14 +103,13 @@ export const CommissionsService = {
           conditions.push(Prisma.sql`"vendedorId" IN (SELECT id FROM "User" WHERE "ventanaId" = CAST(${filters.ventanaId} AS uuid))`);
         }
       } else if (filters.dimension === "ventana") {
-        conditions.push(Prisma.sql`"vendedorId" IS NULL`); // Usamos filas consolidadas de ventana
+        conditions.push(Prisma.sql`"vendedorId" IS NULL`);
         if (filters.ventanaId && isUuid(filters.ventanaId)) {
           conditions.push(Prisma.sql`"ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         } else {
           conditions.push(Prisma.sql`"ventanaId" IS NOT NULL`);
         }
       } else {
-        // ADMIN sin agrupación
         conditions.push(Prisma.sql`"vendedorId" IS NULL`);
         conditions.push(Prisma.sql`"ventanaId" IS NULL`);
       }
@@ -166,17 +137,6 @@ export const CommissionsService = {
 
       const rawResult = await prisma.$queryRaw<any[]>(query);
 
-      logger.info({
-        layer: "service",
-        action: "COMMISSIONS_LIST_TANK_MODE",
-        payload: {
-          dimension: filters.dimension,
-          shouldGroupByDate,
-          rawResultCount: rawResult.length,
-        },
-      });
-
-      // Mapear resultados al formato de respuesta esperado
       return rawResult.map(r => {
         const dateKey = postgresDateToCRString(r.date);
         
@@ -212,7 +172,6 @@ export const CommissionsService = {
             item.net = r.total_sales - r.total_payouts - r.commission_listero;
           }
         } else {
-          // ADMIN sin agrupación o vista global
           item.totalCommission = r.commission_listero;
         }
 
@@ -229,9 +188,10 @@ export const CommissionsService = {
   },
 
   /**
-   * 2) Detalle de comisiones por lotería
+   * 2) Detalle de comisiones por lotería y multiplicador
    * GET /commissions/detail
-   * Retorna desglose por lotería y multiplicador para una fecha específica
+   * Retorna desglose por lotería y multiplicador usando ResumenCierreDiario (EVALUATED) y Ticket (OPEN).
+   * ⚡ 0 JOINs a Jugada.
    */
   async detail(
     date: string,
@@ -240,9 +200,9 @@ export const CommissionsService = {
       dimension: string;
       ventanaId?: string;
       vendedorId?: string;
-      bancaId?: string; // Para ADMIN multibanca (filtro de vista)
+      bancaId?: string;
     },
-    ventanaUserId?: string // ID del usuario VENTANA cuando dimension=ventana
+    ventanaUserId?: string
   ): Promise<
     Array<{
       loteriaId: string;
@@ -261,136 +221,95 @@ export const CommissionsService = {
     }>
   > {
     try {
-      // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
       const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
       const fromDateStr = startDateCRStr;
       const toDateStr = endDateCRStr;
 
-      // Construir filtros WHERE dinámicos según RBAC
-      const whereConditions: Prisma.Sql[] = [
-        Prisma.sql`t."deletedAt" IS NULL`,
-        Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" != 'CANCELLED'`,
-        Prisma.sql`EXISTS (
-          SELECT 1 FROM "Sorteo" s
-          WHERE s.id = t."sorteoId"
-          AND s.status = 'EVALUATED'
-        )`,
-        Prisma.sql`t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date`,
-      ];
-
-      // Excluir tickets de listas bloqueadas (solo si hay exclusiones activas)
-      if (!await isExclusionListEmpty()) {
-        whereConditions.push(Prisma.sql`NOT EXISTS (
-          SELECT 1 FROM "sorteo_lista_exclusion" sle
-          WHERE sle.sorteo_id = t."sorteoId"
-          AND sle.ventana_id = t."ventanaId"
-          AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-          AND sle.multiplier_id IS NULL
-        )`);
-      }
-
-      // Filtrar por banca activa (para ADMIN multibanca)
-      if (filters.bancaId && isUuid(filters.bancaId)) {
-        whereConditions.push(Prisma.sql`EXISTS (
-          SELECT 1 FROM "Ventana" v
-          WHERE v.id = t."ventanaId"
-          AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
-        )`);
-      }
-
-      // Aplicar filtros de RBAC según dimension
-      if (filters.dimension === "vendedor") {
-        if (filters.vendedorId && isUuid(filters.vendedorId)) {
-          whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
-        }
-        if (filters.ventanaId && isUuid(filters.ventanaId)) {
-          whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
-        }
-      } else if (filters.dimension === "ventana") {
-        if (filters.ventanaId && isUuid(filters.ventanaId)) {
-          whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
-        }
-      }
-
-      const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`;
-
-      // Filtro de exclusión por jugada (solo si hay exclusiones activas)
-      const exclusionJugadaFilter = await isExclusionListEmpty()
-        ? Prisma.empty
-        : Prisma.sql`AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND sle.ventana_id = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND sle.multiplier_id = j."multiplierId"
-          )`;
-
-      // ============================================================================
-      // REFACTORIZACION 'TANK' MODE: Agregacion 100% en SQL (PostgreSQL)
-      // Eliminamos el procesamiento en memoria de miles de jugadas en Node.js
-      // ============================================================================
-
       const isVentana = filters.dimension === "ventana";
 
+      // ⚡ REFACTORIZACIÓN MATRIZ UNIFICADA:
+      // Sorteos ABIERTOS -> Consultar Ticket
+      // Sorteos EVALUADOS -> Consultar ResumenCierreDiario (desglose por tipo y banda)
+      // ZERO JOINs a Jugada.
       const query = Prisma.sql`
-        WITH base_jugadas AS (
+        WITH open_sales AS (
           SELECT
             t."loteriaId" as loteria_id,
             l.name as loteria_name,
-            lm.id as multiplier_id,
-            COALESCE(lm.name, 'Base') as multiplier_name,
-            lm."valueX" as multiplier_value_x,
-            lm.kind as multiplier_kind,
-            j.amount,
-            t.id as ticket_id,
-            ${isVentana ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} as commission_amount
+            'Base' as multiplier_name,
+            COALESCE(SUM(t."totalAmount"), 0)::float as total_sales,
+            COUNT(t.id)::int as total_tickets,
+            COALESCE(SUM(${isVentana ? Prisma.sql`t."totalListeroCommission"` : Prisma.sql`t."totalCommission"`}), 0)::float as total_commission
           FROM "Ticket" t
-          INNER JOIN "Jugada" j ON j."ticketId" = t.id
+          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
           INNER JOIN "Loteria" l ON l.id = t."loteriaId"
-          LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
-          ${whereClause}
-          AND j."isExcluded" IS FALSE
-          AND j."deletedAt" IS NULL
-          ${exclusionJugadaFilter}
+          WHERE t."deletedAt" IS NULL
+            AND t."isActive" = true
+            AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+            AND s.status = 'OPEN'
+            AND t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+            ${filters.bancaId && isUuid(filters.bancaId) ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+            ${filters.ventanaId && isUuid(filters.ventanaId) ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+            ${filters.vendedorId && isUuid(filters.vendedorId) ? Prisma.sql`AND t."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+          GROUP BY t."loteriaId", l.name
+        ),
+        evaluated_sales AS (
+          SELECT
+            rcd."loteriaId" as loteria_id,
+            l.name as loteria_name,
+            CASE 
+              WHEN rcd.tipo = 'REVENTADO' THEN 'REVENTADO'
+              ELSE 'Base ' || rcd.banda || 'x'
+            END as multiplier_name,
+            COALESCE(SUM(rcd."totalVendida"), 0)::float as total_sales,
+            COALESCE(SUM(rcd."ticketsCount"), 0)::int as total_tickets,
+            COALESCE(SUM(${isVentana ? Prisma.sql`rcd."comisionTotal"` : Prisma.sql`rcd."comisionVendedor"`}), 0)::float as total_commission
+          FROM "ResumenCierreDiario" rcd
+          INNER JOIN "Loteria" l ON l.id = rcd."loteriaId"
+          WHERE rcd."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+            ${filters.bancaId && isUuid(filters.bancaId) ? Prisma.sql`AND rcd."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+            ${filters.ventanaId && isUuid(filters.ventanaId) ? Prisma.sql`AND rcd."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+            ${filters.vendedorId && isUuid(filters.vendedorId) ? Prisma.sql`AND rcd."vendedorId" = CAST(${filters.vendedorId} AS uuid)` : Prisma.empty}
+          GROUP BY rcd."loteriaId", l.name, rcd.tipo, rcd.banda
+        ),
+        combined_rows AS (
+          SELECT loteria_id, loteria_name, multiplier_name, total_sales, total_tickets, total_commission FROM open_sales
+          UNION ALL
+          SELECT loteria_id, loteria_name, multiplier_name, total_sales, total_tickets, total_commission FROM evaluated_sales
         ),
         loteria_summary AS (
           SELECT
             loteria_id,
             loteria_name,
-            SUM(amount)::float as total_sales,
-            COUNT(DISTINCT ticket_id)::int as total_tickets,
-            SUM(COALESCE(commission_amount, 0))::float as total_commission
-          FROM base_jugadas
+            SUM(total_sales)::float as total_sales,
+            SUM(total_tickets)::int as total_tickets,
+            SUM(total_commission)::float as total_commission
+          FROM combined_rows
           GROUP BY 1, 2
         ),
         multiplier_breakdown AS (
           SELECT
             loteria_id,
-            multiplier_id,
+            multiplier_name,
+            NULL as multiplier_id,
+            SUM(total_sales)::float as total_sales,
+            SUM(total_tickets)::int as total_tickets,
+            SUM(total_commission)::float as total_commission,
             CASE 
-              WHEN multiplier_id IS NULL THEN 'REVENTADO'
-              WHEN multiplier_name = 'Base' AND multiplier_kind = 'NUMERO' AND multiplier_value_x IS NOT NULL THEN 'Base ' || multiplier_value_x || 'x'
-              ELSE multiplier_name
-            END as multiplier_name,
-            SUM(amount)::float as total_sales,
-            COUNT(DISTINCT ticket_id)::int as total_tickets,
-            SUM(COALESCE(commission_amount, 0))::float as total_commission,
-            CASE 
-              WHEN SUM(amount) > 0 THEN (SUM(COALESCE(commission_amount, 0)) / SUM(amount) * 100)::float
+              WHEN SUM(total_sales) > 0 THEN (SUM(total_commission) / SUM(total_sales) * 100)::float
               ELSE 0
             END as multiplier_percentage
-          FROM base_jugadas
-          GROUP BY 1, 2, 3, multiplier_name, multiplier_kind, multiplier_value_x
+          FROM combined_rows
+          GROUP BY 1, 2
         )
         SELECT 
           s.*,
-          (
+          COALESCE((
             SELECT jsonb_agg(m.*)
             FROM multiplier_breakdown m
             WHERE m.loteria_id = s.loteria_id
-          ) as breakdown
+          ), '[]'::jsonb) as breakdown
         FROM loteria_summary s
         ORDER BY loteria_name ASC
       `;
@@ -404,7 +323,7 @@ export const CommissionsService = {
           date,
           filters,
           resultCount: resultRaw.length,
-          calculationMethod: "sql_aggregation",
+          calculationMethod: "unified_surface_no_jugada",
         },
       });
 
@@ -417,7 +336,7 @@ export const CommissionsService = {
         multipliers: (row.breakdown || []).map((m: any) => ({
           multiplierId: m.multiplier_id || "unknown",
           multiplierName: m.multiplier_name,
-          multiplierPercentage: Number(m.multiplier_percentage.toFixed(2)),
+          multiplierPercentage: Number((m.multiplier_percentage || 0).toFixed(2)),
           totalSales: m.total_sales,
           totalTickets: m.total_tickets,
           totalCommission: m.total_commission,
@@ -436,7 +355,8 @@ export const CommissionsService = {
   /**
    * 3) Tickets con comisiones
    * GET /commissions/tickets
-   * Retorna lista paginada de tickets con comisiones para un multiplicador específico
+   * Retorna lista paginada de tickets con comisiones.
+   * ⚡ OPTIMIZACIÓN: Consulta directa a Ticket (0 JOINs a Jugada).
    */
   async tickets(
     date: string,
@@ -449,9 +369,9 @@ export const CommissionsService = {
       dimension: string;
       ventanaId?: string;
       vendedorId?: string;
-      bancaId?: string; // Para ADMIN multibanca (filtro de vista)
+      bancaId?: string;
     },
-    ventanaUserId?: string // ID del usuario VENTANA cuando dimension=ventana
+    ventanaUserId?: string
   ): Promise<PaginatedResult<{
     ticketId: string;
     ticketNumber: string;
@@ -465,33 +385,15 @@ export const CommissionsService = {
     try {
       const { skip, take } = getSkipTake(page, pageSize);
 
-      // Convertir fecha YYYY-MM-DD a rango UTC (CR timezone)
       const dateRange = resolveDateRange("range", date, date);
-      //  CORRECCIÓN: Usar servicio centralizado para conversión de fechas
       const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(dateRange.fromAt, dateRange.toAt);
       const fromDateStr = startDateCRStr;
       const toDateStr = endDateCRStr;
 
-      // Si dimension=ventana, obtener la política de comisiones del usuario VENTANA
-      let ventanaUserPolicy: any = null;
-      if (filters.dimension === "ventana" && ventanaUserId) {
-        const ventanaUser = await prisma.user.findUnique({
-          where: { id: ventanaUserId },
-          select: { commissionPolicyJson: true },
-        });
-        ventanaUserPolicy = ventanaUser?.commissionPolicyJson ?? null;
-      }
-
-      // Construir filtros WHERE dinámicos según RBAC
       const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
         Prisma.sql`t."status" != 'CANCELLED'`,
-        Prisma.sql`EXISTS (
-          SELECT 1 FROM "Sorteo" s
-          WHERE s.id = t."sorteoId"
-          AND s.status = 'EVALUATED'
-        )`,
         Prisma.sql`t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date`,
       ];
 
@@ -499,28 +401,14 @@ export const CommissionsService = {
         whereConditions.push(Prisma.sql`t."loteriaId" = CAST(${loteriaId} AS uuid)`);
       }
 
-      // Manejar multiplierId: "unknown" significa NULL (REVENTADO sin multiplicador)
-      if (multiplierId === "unknown") {
-        whereConditions.push(Prisma.sql`j."multiplierId" IS NULL`);
-      } else if (multiplierId && isUuid(multiplierId)) {
-        whereConditions.push(Prisma.sql`j."multiplierId" = CAST(${multiplierId} AS uuid)`);
-      }
-
-      // Filtrar por banca activa (para ADMIN multibanca)
       if (filters.bancaId && isUuid(filters.bancaId)) {
-        whereConditions.push(Prisma.sql`EXISTS (
-          SELECT 1 FROM "Ventana" v
-          WHERE v.id = t."ventanaId"
-          AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
-        )`);
+        whereConditions.push(Prisma.sql`t."bancaId" = CAST(${filters.bancaId} AS uuid)`);
       }
 
-      // Aplicar filtros de RBAC según dimension
       if (filters.dimension === "vendedor") {
         if (filters.vendedorId && isUuid(filters.vendedorId)) {
           whereConditions.push(Prisma.sql`t."vendedorId" = CAST(${filters.vendedorId} AS uuid)`);
         }
-        // También aplicar ventanaId si está presente (para filtrar vendedores de una ventana específica)
         if (filters.ventanaId && isUuid(filters.ventanaId)) {
           whereConditions.push(Prisma.sql`t."ventanaId" = CAST(${filters.ventanaId} AS uuid)`);
         }
@@ -531,10 +419,8 @@ export const CommissionsService = {
       }
 
       const whereClause = Prisma.sql`WHERE ${Prisma.join(whereConditions, " AND ")}`;
+      const isVentana = filters.dimension === "ventana";
 
-      // Query para obtener tickets con paginación
-      // Solo tickets que tengan al menos una jugada con el multiplicador especificado
-      // Incluimos listeroCommissionAmount para usar snapshots en lugar de recalcular
       const [data, totalResult] = await Promise.all([
         prisma.$queryRaw<
           Array<{
@@ -543,7 +429,6 @@ export const CommissionsService = {
             total_amount: number;
             commission_amount: number;
             listero_commission_amount: number;
-            commission_percent: number;
             created_at: Date;
             vendedor_name: string | null;
             ventana_name: string | null;
@@ -553,32 +438,24 @@ export const CommissionsService = {
             t.id as ticket_id,
             t."ticketNumber" as ticket_number,
             t."totalAmount" as total_amount,
-            COALESCE(SUM(j."commissionAmount"), 0) as commission_amount,
-            COALESCE(SUM(j."listeroCommissionAmount"), 0) as listero_commission_amount,
-            AVG(j."commissionPercent") as commission_percent,
+            t."totalCommission" as commission_amount,
+            t."totalListeroCommission" as listero_commission_amount,
             t."createdAt" as created_at,
             u.name as vendedor_name,
             v.name as ventana_name
           FROM "Ticket" t
-          INNER JOIN "Jugada" j ON j."ticketId" = t.id
           LEFT JOIN "User" u ON u.id = t."vendedorId"
           LEFT JOIN "Ventana" v ON v.id = t."ventanaId"
           ${whereClause}
-          AND j."deletedAt" IS NULL
-          AND j."isExcluded" IS FALSE
-          GROUP BY t.id, t."ticketNumber", t."totalAmount", t."createdAt", u.name, v.name
           ORDER BY t."createdAt" DESC
           LIMIT ${take} OFFSET ${skip}
         `,
         prisma.$queryRaw<
           Array<{ count: string }>
         >`
-          SELECT COUNT(DISTINCT t.id)::text as count
+          SELECT COUNT(t.id)::text as count
           FROM "Ticket" t
-          INNER JOIN "Jugada" j ON j."ticketId" = t.id
           ${whereClause}
-          AND j."deletedAt" IS NULL
-          AND j."isExcluded" IS FALSE
         `,
       ]);
 
@@ -599,10 +476,7 @@ export const CommissionsService = {
         },
       });
 
-      // Si dimension=ventana: usar snapshots de comisión del listero (listeroCommissionAmount)
-      if (filters.dimension === "ventana") {
-        // Las comisiones ya están guardadas como snapshots en la BD
-        // Simplemente usamos el listero_commission_amount agregado desde la query
+      if (isVentana) {
         return {
           data: data.map((row) => {
             const commissionPercent = row.total_amount > 0
@@ -624,19 +498,23 @@ export const CommissionsService = {
         };
       }
 
-      // Para VENDEDOR: usar los valores almacenados (del vendedor)
-      // commission_percent ya está en formato 0-100, redondear a entero
       return {
-        data: data.map((row) => ({
-          ticketId: row.ticket_id,
-          ticketNumber: row.ticket_number,
-          totalAmount: row.total_amount,
-          commissionAmount: row.commission_amount,
-          commissionPercentage: Number((row.commission_percent || 0).toFixed(2)),
-          createdAt: row.created_at.toISOString(),
-          vendedorName: row.vendedor_name || undefined,
-          ventanaName: row.ventana_name || undefined,
-        })),
+        data: data.map((row) => {
+          const commissionPercent = row.total_amount > 0
+            ? (row.commission_amount / row.total_amount) * 100
+            : 0;
+
+          return {
+            ticketId: row.ticket_id,
+            ticketNumber: row.ticket_number,
+            totalAmount: row.total_amount,
+            commissionAmount: row.commission_amount,
+            commissionPercentage: Number(commissionPercent.toFixed(2)),
+            createdAt: row.created_at.toISOString(),
+            vendedorName: row.vendedor_name || undefined,
+            ventanaName: row.ventana_name || undefined,
+          };
+        }),
         meta,
       };
     } catch (err: any) {
@@ -652,6 +530,7 @@ export const CommissionsService = {
   /**
    * 4) Desglose anidado por Lotería/Multiplicador para una fecha específica (Lazy Loading)
    * GET /api/v1/commissions/:date/breakdown
+   * ⚡ OPTIMIZACIÓN: 0 JOINs a Jugada. Consulta ResumenCierreDiario y Ticket.
    */
   async getBreakdown(
     date: string,
@@ -666,70 +545,62 @@ export const CommissionsService = {
     try {
       const isVentana = filters.dimension === "ventana";
 
-      // 1. Filtro de exclusión por jugada
-      const exclusionJugadaFilter = await isExclusionListEmpty()
-        ? Prisma.empty
-        : Prisma.sql`AND NOT EXISTS (
-            SELECT 1 FROM "sorteo_lista_exclusion" sle
-            WHERE sle.sorteo_id = t."sorteoId"
-            AND sle.ventana_id = t."ventanaId"
-            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
-            AND (sle.multiplier_id IS NULL OR sle.multiplier_id = j."multiplierId")
-          )`;
-
-      // 2. Query 100% agregada en PostgreSQL (Tank Mode)
       const query = Prisma.sql`
-        WITH base_jugadas AS (
+        WITH open_sales AS (
           SELECT
             t.id as ticket_id,
             t."totalPayout" as ticket_payout,
             t."loteriaId" as loteria_id,
             l.name as loteria_name,
-            j."multiplierId" as multiplier_id,
-            CASE 
-              WHEN j.type = 'REVENTADO' OR lm.kind = 'REVENTADO' THEN 'REVENTADO'
-              WHEN j."multiplierId" IS NULL THEN 'Número'
-              ELSE lm.name
-            END as multiplier_name,
-            j.amount,
-            ${isVentana ? Prisma.sql`j."listeroCommissionAmount"` : Prisma.sql`j."commissionAmount"`} as commission_amount,
-            ROW_NUMBER() OVER(
-              PARTITION BY t.id, t."businessDate", t."loteriaId", 
-                           CASE 
-                             WHEN j.type = 'REVENTADO' OR lm.kind = 'REVENTADO' THEN 'REVENTADO'
-                             WHEN j."multiplierId" IS NULL THEN 'Número'
-                             ELSE lm.name
-                           END
-            ) as product_ticket_rnk
+            'Número' as multiplier_name,
+            t."totalAmount" as amount,
+            ${isVentana ? Prisma.sql`t."totalListeroCommission"` : Prisma.sql`t."totalCommission"`} as commission_amount
           FROM "Ticket" t
-          INNER JOIN "Jugada" j ON j."ticketId" = t.id
+          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
           INNER JOIN "Loteria" l ON l.id = t."loteriaId"
-          LEFT JOIN "LoteriaMultiplier" lm ON lm.id = j."multiplierId"
           WHERE t."businessDate" = ${date}::date
-          AND t."deletedAt" IS NULL
-          AND t."isActive" = true
-          AND t."status" != 'CANCELLED'
-          AND j."isExcluded" IS FALSE
-          AND j."deletedAt" IS NULL
-          ${filters.ventanaId && isUuid(filters.ventanaId) ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
-          ${filters.vendedorId && isUuid(filters.vendedorId) ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
-          ${filters.bancaId && isUuid(filters.bancaId) ? Prisma.sql`AND EXISTS (
-            SELECT 1 FROM "Ventana" v
-            WHERE v.id = t."ventanaId"
-            AND v."bancaId" = CAST(${filters.bancaId} AS uuid)
-          )` : Prisma.empty}
-          ${exclusionJugadaFilter}
+            AND t."deletedAt" IS NULL
+            AND t."isActive" = true
+            AND t."status" != 'CANCELLED'
+            AND s.status = 'OPEN'
+            ${filters.ventanaId && isUuid(filters.ventanaId) ? Prisma.sql`AND t."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+            ${filters.vendedorId && isUuid(filters.vendedorId) ? Prisma.sql`AND t."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+            ${filters.bancaId && isUuid(filters.bancaId) ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+        ),
+        evaluated_sales AS (
+          SELECT
+            rcd.id as ticket_id,
+            rcd."ganado" as ticket_payout,
+            rcd."loteriaId" as loteria_id,
+            l.name as loteria_name,
+            CASE 
+              WHEN rcd.tipo = 'REVENTADO' THEN 'REVENTADO'
+              ELSE 'Número'
+            END as multiplier_name,
+            rcd."totalVendida" as amount,
+            ${isVentana ? Prisma.sql`rcd."comisionTotal"` : Prisma.sql`rcd."comisionVendedor"`} as commission_amount
+          FROM "ResumenCierreDiario" rcd
+          INNER JOIN "Loteria" l ON l.id = rcd."loteriaId"
+          WHERE rcd."businessDate" = ${date}::date
+            ${filters.ventanaId && isUuid(filters.ventanaId) ? Prisma.sql`AND rcd."ventanaId" = ${filters.ventanaId}::uuid` : Prisma.empty}
+            ${filters.vendedorId && isUuid(filters.vendedorId) ? Prisma.sql`AND rcd."vendedorId" = ${filters.vendedorId}::uuid` : Prisma.empty}
+            ${filters.bancaId && isUuid(filters.bancaId) ? Prisma.sql`AND rcd."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+        ),
+        combined_base AS (
+          SELECT loteria_id, loteria_name, multiplier_name, amount, commission_amount, ticket_payout FROM open_sales
+          UNION ALL
+          SELECT loteria_id, loteria_name, multiplier_name, amount, commission_amount, ticket_payout FROM evaluated_sales
         ),
         multiplier_summary AS (
           SELECT
             loteria_id,
             multiplier_name,
-            MAX(multiplier_id::text)::uuid as multiplier_id, 
+            NULL::uuid as multiplier_id, 
             SUM(amount)::float as total_sales,
-            COUNT(DISTINCT ticket_id)::int as total_tickets,
+            COUNT(*)::int as total_tickets,
             SUM(COALESCE(commission_amount, 0))::float as total_commission,
-            SUM(CASE WHEN product_ticket_rnk = 1 THEN ticket_payout ELSE 0 END)::float as total_payouts
-          FROM base_jugadas
+            SUM(COALESCE(ticket_payout, 0))::float as total_payouts
+          FROM combined_base
           GROUP BY 1, 2
         ),
         loteria_summary AS (
@@ -737,9 +608,9 @@ export const CommissionsService = {
             loteria_id,
             loteria_name,
             SUM(amount)::float as total_sales,
-            COUNT(DISTINCT ticket_id)::int as total_tickets,
+            COUNT(*)::int as total_tickets,
             SUM(COALESCE(commission_amount, 0))::float as total_commission
-          FROM base_jugadas
+          FROM combined_base
           GROUP BY 1, 2
         )
         SELECT 

@@ -72,50 +72,63 @@ export const VendedoresReportService = {
     const fromDateStr = dateRange.fromString; // YYYY-MM-DD
     const toDateStr = dateRange.toString; // YYYY-MM-DD
 
-    //  FIX: Query optimizada con CTEs para evitar multiplicación de filas
-    // Problema anterior: LEFT JOIN con Jugada multiplicaba t."totalAmount" por número de jugadas
-    // Solución: Separar agregación de tickets y jugadas en CTEs independientes
+    //  REFACTORIZADO: Matriz Unificada de Fuentes de Datos
+    // Sorteos ABIERTOS (OPEN): Consulta Ticket (totalAmount, totalCommission, COUNT)
+    // Sorteos EVALUATED: Consulta ResumenCierreDiario (totalVendida, comisionVendedor, ticketsCount)
+    // CERO JOINs a Jugada.
     const chartQuery = Prisma.sql`
-      WITH tickets_in_range AS (
+      WITH open_sales AS (
         SELECT
-          t.id,
           t."vendedorId",
-          t."totalAmount"
+          COUNT(t.id) as tickets_count,
+          COALESCE(SUM(t."totalAmount"), 0) as ventas_total,
+          COALESCE(SUM(t."totalCommission"), 0) as commissions_total
         FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
         WHERE t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
           AND t."deletedAt" IS NULL
           AND t."isActive" = true
+          AND s.status = 'OPEN'
+          AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
           ${ticketStatusFilter}
-      ),
-      ventas_por_vendedor AS (
-        SELECT
-          t."vendedorId",
-          COUNT(DISTINCT t.id) as tickets_count,
-          COALESCE(SUM(t."totalAmount"), 0) as ventas_total
-        FROM tickets_in_range t
         GROUP BY t."vendedorId"
       ),
-      comisiones_por_vendedor AS (
+      evaluated_sales AS (
         SELECT
-          t."vendedorId",
-          COALESCE(SUM(j."commissionAmount"), 0) as commissions_total
-        FROM tickets_in_range t
-        INNER JOIN "Jugada" j ON j."ticketId" = t.id
-          AND j."deletedAt" IS NULL
-          AND j."isActive" = true
-          AND j."commissionOrigin" = 'USER'
-        GROUP BY t."vendedorId"
+          rcd."vendedorId",
+          COALESCE(SUM(rcd."ticketsCount"), 0) as tickets_count,
+          COALESCE(SUM(rcd."totalVendida"), 0) as ventas_total,
+          COALESCE(SUM(rcd."comisionVendedor"), 0) as commissions_total
+        FROM "ResumenCierreDiario" rcd
+        WHERE rcd."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          AND rcd."ventanaId" = CAST(${filters.ventanaId} AS uuid)
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND rcd."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+        GROUP BY rcd."vendedorId"
+      ),
+      combined_sales AS (
+        SELECT "vendedorId", tickets_count, ventas_total, commissions_total FROM open_sales
+        UNION ALL
+        SELECT "vendedorId", tickets_count, ventas_total, commissions_total FROM evaluated_sales
+      ),
+      totals_by_vendedor AS (
+        SELECT
+          "vendedorId",
+          SUM(tickets_count)::bigint as tickets_count,
+          SUM(ventas_total)::double precision as ventas_total,
+          SUM(commissions_total)::double precision as commissions_total
+        FROM combined_sales
+        GROUP BY "vendedorId"
       )
       SELECT
         u.id as vendedor_id,
         u.name as vendedor_name,
         u.code as vendedor_code,
         COALESCE(c.commissions_total, 0) as commissions_total,
-        COALESCE(v.tickets_count, 0) as tickets_count,
-        COALESCE(v.ventas_total, 0) as ventas_total
+        COALESCE(c.tickets_count, 0) as tickets_count,
+        COALESCE(c.ventas_total, 0) as ventas_total
       FROM "User" u
-      LEFT JOIN ventas_por_vendedor v ON v."vendedorId" = u.id
-      LEFT JOIN comisiones_por_vendedor c ON c."vendedorId" = u.id
+      LEFT JOIN totals_by_vendedor c ON c."vendedorId" = u.id
       WHERE u.role = 'VENDEDOR'
         AND u."ventanaId" = CAST(${filters.ventanaId} AS uuid)
         AND u."isActive" = true
@@ -199,47 +212,65 @@ export const VendedoresReportService = {
     const fromDateStr = dateRange.fromString;
     const toDateStr = dateRange.toString;
 
-    // Query principal para ranking de vendedores
+    // Query principal para ranking de vendedores (Matriz Unificada: Ticket para OPEN, ResumenCierreDiario para EVALUATED, 0 JOINs a Jugada)
     const rankingQuery = Prisma.sql`
-      WITH tickets_in_range AS (
-        SELECT
-          t.id,
-          t."vendedorId",
-          t."ventanaId",
-          t."totalAmount",
-          t."totalPayout",
-          t."isWinner",
-          t."createdAt"
-        FROM "Ticket" t
-        WHERE t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
-          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-          AND t."isActive" = true
-          AND t."deletedAt" IS NULL
-          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
-          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
-      ),
-      ventas_por_vendedor AS (
+      WITH open_sales AS (
         SELECT
           t."vendedorId",
-          COUNT(DISTINCT t.id) as tickets_count,
+          COUNT(t.id) as tickets_count,
           COALESCE(SUM(t."totalAmount"), 0) as ventas,
+          COALESCE(SUM(t."totalCommission"), 0) as comisiones,
           COALESCE(SUM(CASE WHEN t."isWinner" = true THEN 1 ELSE 0 END), 0) as ganadores,
           COALESCE(SUM(t."totalPayout"), 0) as premios_pagados,
           MIN(t."createdAt") as first_sale_at,
           MAX(t."createdAt") as last_sale_at,
           COUNT(DISTINCT DATE(t."createdAt")) as days_active
-        FROM tickets_in_range t
+        FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
+        WHERE t."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          AND t."deletedAt" IS NULL
+          AND t."isActive" = true
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND s.status = 'OPEN'
+          ${filters.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND t."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
         GROUP BY t."vendedorId"
       ),
-      comisiones_por_vendedor AS (
+      evaluated_sales AS (
         SELECT
-          t."vendedorId",
-          COALESCE(SUM(j."commissionAmount"), 0) as comisiones
-        FROM tickets_in_range t
-        INNER JOIN "Jugada" j ON j."ticketId" = t.id
-          AND j."deletedAt" IS NULL
-          AND j."isActive" = true
-        GROUP BY t."vendedorId"
+          rcd."vendedorId",
+          COALESCE(SUM(rcd."ticketsCount"), 0) as tickets_count,
+          COALESCE(SUM(rcd."totalVendida"), 0) as ventas,
+          COALESCE(SUM(rcd."comisionVendedor"), 0) as comisiones,
+          0 as ganadores,
+          COALESCE(SUM(rcd."ganado"), 0) as premios_pagados,
+          NULL::timestamp as first_sale_at,
+          NULL::timestamp as last_sale_at,
+          COUNT(DISTINCT rcd."businessDate") as days_active
+        FROM "ResumenCierreDiario" rcd
+        WHERE rcd."businessDate" BETWEEN ${fromDateStr}::date AND ${toDateStr}::date
+          ${filters.ventanaId ? Prisma.sql`AND rcd."ventanaId" = CAST(${filters.ventanaId} AS uuid)` : Prisma.empty}
+          ${filters.bancaId && filters.bancaId.trim() !== '' ? Prisma.sql`AND rcd."bancaId" = CAST(${filters.bancaId} AS uuid)` : Prisma.empty}
+        GROUP BY rcd."vendedorId"
+      ),
+      combined_sales AS (
+        SELECT "vendedorId", tickets_count, ventas, comisiones, ganadores, premios_pagados, first_sale_at, last_sale_at, days_active FROM open_sales
+        UNION ALL
+        SELECT "vendedorId", tickets_count, ventas, comisiones, ganadores, premios_pagados, first_sale_at, last_sale_at, days_active FROM evaluated_sales
+      ),
+      totals_by_vendedor AS (
+        SELECT
+          "vendedorId",
+          SUM(tickets_count)::bigint as tickets_count,
+          SUM(ventas)::double precision as ventas,
+          SUM(comisiones)::double precision as comisiones,
+          SUM(ganadores)::bigint as ganadores,
+          SUM(premios_pagados)::double precision as premios_pagados,
+          MIN(first_sale_at) as first_sale_at,
+          MAX(last_sale_at) as last_sale_at,
+          SUM(days_active)::bigint as days_active
+        FROM combined_sales
+        GROUP BY "vendedorId"
       )
       SELECT
         u.id as vendedor_id,
@@ -248,7 +279,7 @@ export const VendedoresReportService = {
         vn.name as ventana_name,
         COALESCE(v.ventas, 0) as ventas,
         COALESCE(v.tickets_count, 0) as tickets_count,
-        COALESCE(c.comisiones, 0) as comisiones,
+        COALESCE(v.comisiones, 0) as comisiones,
         COALESCE(v.ganadores, 0) as ganadores,
         COALESCE(v.premios_pagados, 0) as premios_pagados,
         v.first_sale_at,

@@ -15,6 +15,7 @@ import { v4 as uuidv4 } from "uuid";
 import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel, ScopeCache, calculateAccumulatedByNumbersAndScope, calculateAccumulatedForMultipleScopes, acquireLock, releaseLock } from "./helpers/ticket-restriction.helper";
 import { getRedisClient, isRedisAvailable, markRedisError } from "../core/redisClient";
 import { CacheService } from "../core/cache.service";
+import { DailyNumberSalesService } from "../api/v1/services/dailyNumberSales.service";
 
 
 const RULES_CACHE_TTL_SECONDS = 120; // 2 minutos en Redis
@@ -2225,6 +2226,9 @@ export const TicketRepository = {
           });
         }
 
+        // 14) Agregación incremental atómica en DailyNumberSales (0ms al cierre)
+        await DailyNumberSalesService.incrementFromTicket(createdTicket.id, tx);
+
         logger.info({
           layer: 'repository',
           action: 'TICKET_FOLIO_DIAG',
@@ -2820,6 +2824,9 @@ export const TicketRepository = {
           },
         });
 
+        // 5) Decremento incremental en DailyNumberSales (atómico)
+        await DailyNumberSalesService.decrementFromTicket(id, tx);
+
         return cancelled;
       },
       {
@@ -3011,6 +3018,9 @@ export const TicketRepository = {
             isActive: true,
           },
         });
+
+        // 6) Incremento incremental en DailyNumberSales (atómico)
+        await DailyNumberSalesService.incrementFromTicket(id, tx);
 
         return restored;
       },
