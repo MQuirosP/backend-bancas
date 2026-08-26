@@ -259,9 +259,7 @@ export async function calculateDayStatement(
                 totalPayout: true, //  CORRECCIÓN: Usar totalPayout del ticket (una vez por ticket, solo si tiene jugadas ganadoras)
             },
         }),
-        // Agregaciones de jugadas - TODAS las jugadas para comisiones
-        // IMPORTANTE: Para comisiones, incluir TODAS las jugadas (no solo ganadoras)
-        // Las comisiones se aplican a todas las jugadas, no solo a las ganadoras
+    // Agrega comisión del vendedor desde Jugada (commissionOrigin USER)
         prisma.jugada.aggregate({
             where: {
                 ticket: where,
@@ -272,81 +270,24 @@ export async function calculateDayStatement(
                 commissionAmount: true,
             },
         }),
-        //  NUEVO: Agregación de comisiones del listero desde snapshot
-        // Nota: Si la columna no existe aún (migración pendiente), usar fallback desde commissionOrigin
-        prisma.jugada.aggregate({
-            where: {
-                ticket: where,
-                deletedAt: null,
-            },
-            _sum: {
-                listeroCommissionAmount: true, //  Usar snapshot en lugar de calcular desde políticas
-            },
-        }).catch((error: any) => {
-            // Fallback si la columna no existe aún (migración pendiente)
-            if (error?.message?.includes('listeroCommissionAmount')) {
-                return { _sum: { listeroCommissionAmount: null } };
-            }
-            throw error;
+        //  Agrega comisión del listero directamente desde el snapshot en Ticket.
+        // Eliminada dependencia de Jugada.listeroCommissionAmount.
+        prisma.ticket.aggregate({
+            where,
+            _sum: { totalListeroCommission: true },
         }),
     ]);
 
     // Calcular totales básicos desde agregaciones
     const totalSales = ticketAgg._sum.totalAmount || 0;
-    //  CORRECCIÓN: totalPayouts debe ser la suma de totalPayout de tickets que tienen jugadas ganadoras
-    // NO debe sumar el payout de cada jugada individualmente porque un ticket puede tener múltiples jugadas ganadoras
-    // El campo totalPayout del ticket ya contiene la suma correcta de todos los payouts de las jugadas ganadoras de ese ticket
-    // IMPORTANTE: Solo sumar totalPayout de tickets que tienen al menos una jugada ganadora
+    //  CORRECCIÓN: totalPayouts debe ser la suma de totalPayout de tickets con jugadas ganadoras
     const totalPayouts = ticketAggWinners._sum.totalPayout || 0;
     const ticketCount = ticketAgg._count.id || 0;
     // FIX: Solo sumar comisiones del vendedor (commissionOrigin === "USER")
     const totalVendedorCommission = jugadaAggVendor._sum.commissionAmount || 0;
+    //  Comisión del listero desde snapshot en Ticket (sin fallback a Jugada)
+    const totalListeroCommission = Number(jugadaAggListero._sum.totalListeroCommission) || 0;
 
-    //  NUEVO: Usar snapshot de comisión del listero en lugar de calcular desde políticas
-    // Esto es mucho más rápido y preciso
-    // Fallback: Si el snapshot es 0 (tickets creados antes de los cambios), calcular desde commissionOrigin
-    let totalListeroCommission = jugadaAggListero?._sum?.listeroCommissionAmount || 0;
-
-    // Si el snapshot es 0, puede ser porque:
-    // 1. Realmente no hay comisión del listero
-    // 2. Los tickets fueron creados antes de los cambios (tienen listeroCommissionAmount: 0 por defecto)
-    // En el caso 2, necesitamos calcular desde commissionOrigin como fallback
-    //  OPTIMIZACIÓN: Usar agregación en lugar de findMany para mejor rendimiento
-    if (totalListeroCommission === 0 && ticketCount > 0) {
-        // Verificar si hay tickets con commissionOrigin VENTANA/BANCA que no tienen snapshot
-        // Esto indica que fueron creados antes de los cambios
-        //  OPTIMIZACIÓN: Usar agregación en lugar de findMany para evitar traer todas las jugadas
-        const fallbackAgg = await prisma.jugada.aggregate({
-            where: {
-                ticket: where,
-                deletedAt: null,
-                commissionOrigin: { in: ["VENTANA", "BANCA"] },
-                listeroCommissionAmount: 0, // Tickets antiguos tienen 0 por defecto
-            },
-            _sum: {
-                commissionAmount: true,
-            },
-            _count: {
-                id: true,
-            },
-        });
-
-        const fallbackTotal = fallbackAgg._sum.commissionAmount || 0;
-        if (fallbackTotal > 0) {
-            totalListeroCommission = fallbackTotal;
-            logger.warn({
-                layer: 'service',
-                action: 'LISTERO_COMMISSION_FALLBACK_FROM_ORIGIN',
-                payload: {
-                    fallbackTotal,
-                    jugadasCount: fallbackAgg._count.id || 0,
-                    note: 'Using commissionOrigin as fallback for old tickets',
-                },
-            });
-        }
-    }
-
-    // Si no hay tickets, retornar valores por defecto sin crear statement
     // FIX: No crear fechas nuevas cada vez para mantener consistencia
     if (ticketCount === 0) {
         //  CRÍTICO: Usar correctedVentanaId si fue corregido desde los tickets

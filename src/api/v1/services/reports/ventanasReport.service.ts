@@ -2,16 +2,16 @@
  * Servicio de reportes de ventanas (listeros)
  */
 
-import { Prisma, Role, BetType, TicketStatus, SorteoStatus } from '../../../../generated/prisma/client';
+import { Prisma, TicketStatus, SorteoStatus } from '../../../../generated/prisma/client';
 import prisma from '../../../../core/prismaClient';
 import { resolveDateRange, normalizePagination, calculatePreviousPeriod, calculateChangePercent } from '../../utils/reports.utils';
 import { DateToken, SortByVentanas, ReportMeta } from '../../types/reports.types';
 import { formatIsoLocal } from '../../../../utils/datetime';
-import { commissionResolver } from '../../../../services/commission/CommissionResolver';
+
 
 /**
- * Calcula comisiones de listero (ventana) desde las políticas de comisión
- * Similar a computeVentanaCommissionFromPolicies pero agrupado por ventana
+ * Calcula comisiones de listero (ventana) sumando el snapshot `totalListeroCommission`
+ * directamente desde la tabla Ticket. Sin dependencia de la tabla Jugada.
  */
 async function computeListeroCommissionByVentana(
   fromBusinessDate: Date,
@@ -19,161 +19,35 @@ async function computeListeroCommissionByVentana(
   ventanaId?: string,
   bancaId?: string
 ): Promise<Map<string, number>> {
-  // Obtener jugadas en el rango con businessDate del ticket (solo sorteos evaluados).
-  // CORRECCIÓN: el filtro de fecha se delega a la base de datos (WHERE en Prisma)
-  // para evitar traer millones de filas y filtrarlas en memoria.
-  const jugadasInRange = await prisma.jugada.findMany({
+  const groups = await prisma.ticket.groupBy({
+    by: ['ventanaId'],
     where: {
       deletedAt: null,
       isActive: true,
-      ticket: {
+      status: { in: [TicketStatus.EVALUATED, TicketStatus.PAID, TicketStatus.PAGADO] },
+      businessDate: {
+        gte: fromBusinessDate,
+        lte: toBusinessDate,
+      },
+      sorteo: {
+        status: SorteoStatus.EVALUATED,
         deletedAt: null,
-        isActive: true,
-        status: { in: [TicketStatus.EVALUATED, TicketStatus.PAID, TicketStatus.PAGADO] },
-        businessDate: {
-          gte: fromBusinessDate,
-          lte: toBusinessDate,
-        },
-        sorteo: {
-          status: SorteoStatus.EVALUATED,
-          deletedAt: null,
-        },
-        ...(ventanaId ? { ventanaId } : {}),
-        ...(bancaId ? { bancaId } : {}),
       },
+      ...(ventanaId ? { ventanaId } : {}),
+      ...(bancaId ? { bancaId } : {}),
     },
-    select: {
-      id: true,
-      amount: true,
-      type: true,
-      finalMultiplierX: true,
-      ticket: {
-        select: {
-          id: true,
-          ventanaId: true,
-          loteriaId: true,
-          ventana: {
-            select: {
-              commissionPolicyJson: true,
-              banca: {
-                select: {
-                  commissionPolicyJson: true,
-                },
-              },
-            },
-          },
-        },
-      },
-    },
+    _sum: { totalListeroCommission: true },
   });
 
-  if (jugadasInRange.length === 0) {
-    return new Map<string, number>();
-  }
-
-  // Obtener usuarios VENTANA por ventana
-  const ventanaIds = Array.from(
-    new Set(
-      jugadasInRange
-        .map((j) => j.ticket?.ventanaId)
-        .filter((id): id is string => typeof id === "string")
-    )
-  );
-
-  const ventanaUsers = ventanaIds.length
-    ? await prisma.user.findMany({
-        where: {
-          role: Role.VENTANA,
-          isActive: true,
-          deletedAt: null,
-          ventanaId: { in: ventanaIds },
-        },
-        select: {
-          id: true,
-          ventanaId: true,
-          commissionPolicyJson: true,
-          updatedAt: true,
-        },
-        orderBy: { updatedAt: "desc" },
-      })
-    : [];
-
-  const userPolicyByVentana = new Map<string, any>();
-  const ventanaUserIdByVentana = new Map<string, string>();
-  for (const user of ventanaUsers) {
-    if (!user.ventanaId) continue;
-    if (!userPolicyByVentana.has(user.ventanaId)) {
-      userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
-      ventanaUserIdByVentana.set(user.ventanaId, user.id);
-    }
-  }
-
-  // Calcular comisiones por ventana
   const commissionByVentana = new Map<string, number>();
-
-  for (const jugada of jugadasInRange) {
-    const ticket = jugada.ticket;
-    if (!ticket?.ventanaId) continue;
-
-    const userPolicyJson = userPolicyByVentana.get(ticket.ventanaId) ?? null;
-    const ventanaUserId = ventanaUserIdByVentana.get(ticket.ventanaId) ?? "";
-    const ventanaPolicy = (ticket.ventana?.commissionPolicyJson as any) ?? null;
-    const bancaPolicy = (ticket.ventana?.banca?.commissionPolicyJson as any) ?? null;
-
-    let ventanaAmount = 0;
-
-    if (userPolicyJson) {
-      try {
-        // Intentar calcular desde la política de USER del usuario VENTANA
-        const policy = commissionResolver.parsePolicy(userPolicyJson, "USER");
-        const resolution = commissionResolver.resolveFromPolicy(policy, {
-          userId: ventanaUserId,
-          loteriaId: ticket.loteriaId,
-          betType: jugada.type as BetType,
-          finalMultiplierX: jugada.finalMultiplierX ?? undefined,
-        });
-        ventanaAmount = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
-      } catch (err) {
-        // Si falla, usar políticas de VENTANA/BANCA
-        const fallback = commissionResolver.resolveVendedorCommission(
-          {
-            loteriaId: ticket.loteriaId,
-            betType: jugada.type as BetType,
-            finalMultiplierX: jugada.finalMultiplierX || 0,
-            amount: jugada.amount,
-          },
-          null,
-          ventanaPolicy,
-          bancaPolicy
-        );
-        ventanaAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
-      }
-    } else {
-      // Si no hay política de USER, usar políticas de VENTANA/BANCA
-      const fallback = commissionResolver.resolveVendedorCommission(
-        {
-          loteriaId: ticket.loteriaId,
-          betType: jugada.type as BetType,
-          finalMultiplierX: jugada.finalMultiplierX || 0,
-          amount: jugada.amount,
-        },
-        null,
-        ventanaPolicy,
-        bancaPolicy
-      );
-      ventanaAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
-    }
-
-    if (ventanaAmount > 0) {
-      commissionByVentana.set(
-        ticket.ventanaId,
-        (commissionByVentana.get(ticket.ventanaId) || 0) + ventanaAmount
-      );
+  for (const row of groups) {
+    if (row.ventanaId) {
+      commissionByVentana.set(row.ventanaId, Number(row._sum.totalListeroCommission) || 0);
     }
   }
-
   return commissionByVentana;
 }
+
 
 export const VentanasReportService = {
   /**

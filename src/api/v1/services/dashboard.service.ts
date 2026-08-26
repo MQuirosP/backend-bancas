@@ -1,9 +1,9 @@
-import { Prisma, Role, BetType } from "../../../generated/prisma/client";
+import { Prisma, Role } from "../../../generated/prisma/client";
 import { getCRLocalComponents } from '../../../utils/businessDate';
 import prisma from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import logger from "../../../core/logger";
-import { commissionResolver } from "../../../services/commission/CommissionResolver";
+
 import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts/accounts.balances";
 import { getMonthlyRemainingBalance, getMonthlyRemainingBalancesBatch } from "./accounts/accounts.service";
 import { resolveDateRange } from "../../../utils/dateRange";
@@ -445,152 +445,6 @@ function buildTicketWhereInput(
   return baseWhere;
 }
 
-async function computeVentanaCommissionFromPolicies(filters: DashboardFilters) {
-  const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
-  const ticketWhere = buildTicketWhereInput(filters, fromDateStr, toDateStr);
-
-  const jugadas = await prisma.jugada.findMany({
-    where: {
-      deletedAt: null,
-      ticket: ticketWhere,
-    },
-    select: {
-      amount: true,
-      type: true,
-      finalMultiplierX: true,
-      ticket: {
-        select: {
-          ventanaId: true,
-          loteriaId: true,
-          ventana: {
-            select: {
-              commissionPolicyJson: true,
-              banca: {
-                select: {
-                  commissionPolicyJson: true,
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-
-  if (jugadas.length === 0) {
-    return {
-      totalVentanaCommission: 0,
-      extrasByVentana: new Map<string, number>(),
-      extrasByLoteria: new Map<string, number>(),
-    };
-  }
-
-  const ventanaIds = Array.from(
-    new Set(
-      jugadas
-        .map((j) => j.ticket?.ventanaId)
-        .filter((id): id is string => typeof id === "string")
-    )
-  );
-
-  const ventanaUsers = ventanaIds.length
-    ? await prisma.user.findMany({
-      where: {
-        role: Role.VENTANA,
-        isActive: true,
-        deletedAt: null,
-        ventanaId: { in: ventanaIds },
-      },
-      select: {
-        id: true,
-        ventanaId: true,
-        commissionPolicyJson: true,
-        updatedAt: true,
-      },
-      orderBy: { updatedAt: "desc" },
-    })
-    : [];
-
-  const userPolicyByVentana = new Map<string, any>();
-  const ventanaUserIdByVentana = new Map<string, string>();
-  for (const user of ventanaUsers) {
-    if (!user.ventanaId) continue;
-    if (!userPolicyByVentana.has(user.ventanaId)) {
-      userPolicyByVentana.set(user.ventanaId, user.commissionPolicyJson ?? null);
-      ventanaUserIdByVentana.set(user.ventanaId, user.id);
-    }
-  }
-
-  const extrasByVentana = new Map<string, number>();
-  const extrasByLoteria = new Map<string, number>();
-  let totalVentanaCommission = 0;
-
-  for (const jugada of jugadas) {
-    const ticket = jugada.ticket;
-    if (!ticket?.ventanaId) continue;
-
-    const userPolicyJson = userPolicyByVentana.get(ticket.ventanaId) ?? null;
-    const ventanaUserId = ventanaUserIdByVentana.get(ticket.ventanaId) ?? "";
-    const ventanaPolicy = (ticket.ventana?.commissionPolicyJson as any) ?? null;
-    const bancaPolicy = (ticket.ventana?.banca?.commissionPolicyJson as any) ?? null;
-
-    let ventanaAmount = 0;
-
-    if (userPolicyJson) {
-      try {
-        const policy = commissionResolver.parsePolicy(userPolicyJson, "USER");
-        const resolution = commissionResolver.resolveFromPolicy(policy, {
-          userId: ventanaUserId,
-          loteriaId: ticket.loteriaId,
-          betType: jugada.type as BetType,
-          finalMultiplierX: jugada.finalMultiplierX ?? undefined,
-        });
-        ventanaAmount = parseFloat(((jugada.amount * resolution.percent) / 100).toFixed(2));
-      } catch (err) {
-        const fallback = commissionResolver.resolveVendedorCommission(
-          {
-            loteriaId: ticket.loteriaId,
-            betType: jugada.type as BetType,
-            finalMultiplierX: jugada.finalMultiplierX || 0,
-            amount: jugada.amount,
-          },
-          null,
-          ventanaPolicy,
-          bancaPolicy
-        );
-        ventanaAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
-      }
-    } else {
-      const fallback = commissionResolver.resolveVendedorCommission(
-        {
-          loteriaId: ticket.loteriaId,
-          betType: jugada.type as BetType,
-          finalMultiplierX: jugada.finalMultiplierX || 0,
-          amount: jugada.amount,
-        },
-        null,
-        ventanaPolicy,
-        bancaPolicy
-      );
-      ventanaAmount = parseFloat((fallback.commissionAmount || 0).toFixed(2));
-    }
-
-    if (ventanaAmount <= 0) continue;
-
-    totalVentanaCommission += ventanaAmount;
-    extrasByVentana.set(ticket.ventanaId, (extrasByVentana.get(ticket.ventanaId) || 0) + ventanaAmount);
-
-    if (ticket.loteriaId) {
-      extrasByLoteria.set(ticket.loteriaId, (extrasByLoteria.get(ticket.loteriaId) || 0) + ventanaAmount);
-    }
-  }
-
-  return {
-    totalVentanaCommission,
-    extrasByVentana,
-    extrasByLoteria,
-  };
-}
 
 export const DashboardService = {
   /**
