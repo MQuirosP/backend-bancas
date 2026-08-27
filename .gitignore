@@ -93,9 +93,11 @@ backups/
 **/backups/
 
 # Documentación generada automáticamente
-# Toda la carpeta docs/ contiene documentación de trabajo y no debe versionarse
-docs/
-**/docs/
+# Toda la carpeta docs/ contiene documentación de trabajo y no debe versionarse, excepto sql_legacy y RFCs
+docs/*
+!docs/sql_legacy/
+!docs/sql_legacy/**
+!docs/RFC-001-Migracion-JSONB.md
 .cursorrules
 
 # Archivos relacionados con problemas específicos (no versionar)

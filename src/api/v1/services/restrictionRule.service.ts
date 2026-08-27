@@ -937,7 +937,9 @@ export const RestrictionRuleService = {
               }
 
               const staticLimit = rule.maxTotal ?? Infinity;
-              const limit = Math.min(staticLimit, dynamicLimit);
+              const limit = (rule.salesPercentage != null && dynamicLimit !== Infinity)
+                ? dynamicLimit
+                : Math.min(staticLimit, dynamicLimit);
 
               const balances: Record<string, { remaining: number; limit: number; accumulated: number }> = {};
               for (const num of ruleNumbers) {

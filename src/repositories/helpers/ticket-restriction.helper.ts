@@ -773,6 +773,7 @@ export async function validateMaxTotalForNumbers(
       appliesToVendedor?: boolean | null; //  AHORA EXPLÍCITO
       id?: string;
       baseAmount?: number | null; //  NUEVO: crédito inicial que absorbe ventas sin consumir el límite
+      salesPercentage?: number | null;
     };
     sorteoId: string;
     vendedorId?: string | null;   //  NUEVO: Para appliesToVendedor=true
@@ -824,7 +825,7 @@ export async function validateMaxTotalForNumbers(
   // Calcular límite efectivo (considerar límite dinámico si existe)
   const staticMaxTotal = rule.maxTotal ?? Infinity;
   const effectiveMaxTotal = dynamicLimit != null
-    ? Math.min(staticMaxTotal, dynamicLimit)
+    ? (rule.salesPercentage != null ? dynamicLimit : Math.min(staticMaxTotal, dynamicLimit))
     : staticMaxTotal;
 
   //  OPTIMIZACIÓN: Calcular todos los acumulados en una sola query
