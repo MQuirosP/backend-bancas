@@ -28,6 +28,8 @@ import appRoutes from "./app.routes"
 import telemetryRoutes from "./telemetry.routes"
 import opsRoutes from "./ops.routes"
 
+import adminBackupRoutes from "./adminBackup.routes"
+
 const router = Router();
 
 // NOTA: bancaContextMiddleware se aplica en cada sub-router DESPUÉS de protect
@@ -49,6 +51,7 @@ router.use("/multipliers", multipliersRoutes);
 router.use("/diagnostics", diagnosticsRoutes);
 router.use("/ventas", ventaRoutes);
 router.use("/admin/dashboard", dashboardRoutes);
+router.use("/admin/backups", adminBackupRoutes);
 router.use("/activity-logs", activityLogRoutes);
 router.use("/cierres", cierreRoutes);
 router.use("/commissions", commissionsRoutes);

@@ -7,6 +7,7 @@ import { getPrismaDirect } from '../core/prismaClientDirect'
 import { startSorteosAutoJobs, stopSorteosAutoJobs } from '../jobs/sorteosAuto.job'
 import { startAccountStatementSettlementJob, stopAccountStatementSettlementJob } from '../jobs/accountStatementSettlement.job'
 import { startMonthlyClosingJob, stopMonthlyClosingJob } from '../jobs/monthlyClosing.job'
+import { startGoogleDriveBackupJob, stopGoogleDriveBackupJob } from '../jobs/backupDrive.job'
 import { initRedisClient, closeRedisClient } from '../core/redisClient'
 import { initCacheSubscriber } from '../core/cache.service'
 import { restrictionCacheV2 } from '../utils/restrictionCacheV2'
@@ -98,6 +99,18 @@ server.listen(config.port, 511, async () => {
     })
   }
 
+  // Iniciar job de respaldo automático a Google Drive (3:00 AM CR)
+  try {
+    startGoogleDriveBackupJob()
+  } catch (error: any) {
+    logger.error({
+      layer: 'server',
+      action: 'GOOGLE_DRIVE_BACKUP_JOB_START_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
   // Iniciar warming process de restriction cache V2
   try {
     restrictionCacheV2.startWarmingProcess()
@@ -138,6 +151,7 @@ const gracefulShutdown = async (signal: string) => {
   try { stopSorteosAutoJobs(); } catch (e) {}
   try { stopAccountStatementSettlementJob(); } catch (e) {}
   try { stopMonthlyClosingJob(); } catch (e) {}
+  try { stopGoogleDriveBackupJob(); } catch (e) {}
   try { restrictionCacheV2.stopWarmingProcess(); } catch (e) {}
   try { closeRedisClient(); } catch (e) {}
 
