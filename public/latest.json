@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.14",
-  "versionCode": 20,
-  "buildNumber": 20,
+  "versionName": "1.0.15",
+  "versionCode": 21,
+  "buildNumber": 21,
   "minSupportedVersion": "1.0.0",
   "forceUpdate": false,
-  "changelog": "Botón vista lista en crear ticket.",
-  "releasedAt": "2026-08-08T04:00:00Z",
+  "changelog": "Parche de seguridad. Resuelve problemas de validación en tiempo real.",
+  "releasedAt": "2026-08-27T23:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "b103d69cb2fce6d028c7f1efb4ead90352c315b4c763e5e752d9c59d67cc7b2c"
+      "sha256": "45e72af233e8cce554b913cc840fea1ef9317e5c36b3a67b90cbdd9040f480e9"
     },
     "arm64-v8a": {
-      "sha256": "b103d69cb2fce6d028c7f1efb4ead90352c315b4c763e5e752d9c59d67cc7b2c"
+      "sha256": "45e72af233e8cce554b913cc840fea1ef9317e5c36b3a67b90cbdd9040f480e9"
     }
   }
 }
