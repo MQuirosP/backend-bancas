@@ -117,6 +117,7 @@ verify-eval-fix.ts
 scratch/
 src/scripts/*
 !src/scripts/CLI/
+!src/scripts/backupToDrive.ts
 
 # Graphify output
 graphify-out/
