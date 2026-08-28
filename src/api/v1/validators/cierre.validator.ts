@@ -107,12 +107,4 @@ export function validateDateRange(from: string, to: string): void {
   if (toDate < fromDate) {
     throw new Error('La fecha "to" debe ser mayor o igual a "from"');
   }
-
-  const daysDiff = Math.ceil(
-    (toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24)
-  );
-
-  if (daysDiff > 90) {
-    throw new Error('El rango de fechas no puede exceder 90 días');
-  }
 }
