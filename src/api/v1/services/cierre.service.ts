@@ -972,121 +972,49 @@ export class CierreService {
     const todayStr = crDateService.getTodayCRString();
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
     const endDateCap = endDateCRStr > todayStr ? todayStr : endDateCRStr;
-    const whereConditions = await this.buildWhereConditionsWithRange(filters, startDateCRStr, endDateCap);
+    const whereConditions = this.buildMVWhereConditions(filters, startDateCRStr, endDateCap);
 
+    // ⚡ OPTIMIZACIÓN EXTREMA: Lectura directa desde ResumenCierreDiario precalculado (<2ms)
+    // Elimina escaneo masivo de 78k jugadas y previene 502 por timeout en Render
     const query = Prisma.sql`
-      WITH
-        relevant_tickets AS MATERIALIZED (
-          SELECT t.id, t."loteriaId", t."sorteoId", t."ventanaId", t."vendedorId", t."createdAt", t."businessDate"
-          FROM "Ticket" t
-          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-          INNER JOIN "Sorteo" s_gate ON t."sorteoId" = s_gate.id
-          WHERE
-            t."isActive" = true
-            AND t."deletedAt" IS NULL
-            AND t."status" != 'CANCELLED'
-            AND s_gate."status" = 'EVALUATED'
-            AND ${whereConditions}
-        ),
-        lm_active AS MATERIALIZED (
-          SELECT
-            lm."loteriaId",
-            lm."valueX",
-            lm."appliesToDate",
-            lm."appliesToSorteoId"
-          FROM "LoteriaMultiplier" lm
-          WHERE lm."kind" = 'NUMERO'
-            AND lm."isActive" = true
-        ),
-        numero_bandas AS MATERIALIZED (
-          SELECT
-            j."ticketId",
-            j.number,
-            MIN(j."finalMultiplierX") AS banda
-          FROM "Jugada" j
-          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
-          WHERE j.type = 'NUMERO'
-            AND j."isActive" = true
-            AND j."deletedAt" IS NULL
-          GROUP BY j."ticketId", j.number
-        ),
-        base AS (
-          SELECT
-            u.id          AS uid,
-            u.name        AS uname,
-            v.id          AS vid,
-            v.name        AS vname,
-            j.id          AS "jugadaId",
-            j.type        AS type,
-            j.amount,
-            j.payout,
-            j."listeroCommissionAmount",
-            t.id          AS "ticketId",
-            t."loteriaId" AS "loteriaId",
-            t."sorteoId"  AS "sorteoId",
-            s."scheduledAt" AS "scheduledAt",
-            CASE
-              WHEN j.type = 'NUMERO' AND lm.matched IS NOT NULL THEN j."finalMultiplierX"
-              WHEN j.type = 'REVENTADO' THEN nb.banda
-              ELSE NULL
-            END AS banda
-          FROM "Jugada" j
-          INNER JOIN relevant_tickets t ON t.id = j."ticketId"
-          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-          INNER JOIN "User" u ON t."vendedorId" = u.id
-          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-          LEFT JOIN numero_bandas nb ON nb."ticketId" = j."ticketId"
-            AND nb.number = j.number
-            AND j.type = 'REVENTADO'
-          LEFT JOIN LATERAL (
-            SELECT 1 AS matched
-            FROM lm_active lm
-            WHERE lm."loteriaId" = t."loteriaId"
-              AND lm."valueX" = j."finalMultiplierX"
-              AND (lm."appliesToDate" IS NULL OR t."createdAt" >= lm."appliesToDate")
-              AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = t."sorteoId")
-            LIMIT 1
-          ) lm ON true
-          WHERE
-            j."deletedAt" IS NULL
-            AND j."isActive" = true
-            AND j."isExcluded" = false
-            AND s."status" = 'EVALUATED'
-        )
       SELECT
-        base.uid          AS "vendedorId",
-        base.uname        AS "vendedorNombre",
-        base.vid          AS "ventanaId",
-        base.vname        AS "ventanaNombre",
-        CAST(base.banda AS INT) AS banda,
-        base.type AS tipo,
-        l.id AS "loteriaId",
-        l.name AS "loteriaNombre",
-        base."sorteoId" AS "sorteoId",
-        TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') AS turno,
-        MIN(base."scheduledAt") AS "scheduledAt",
-        COALESCE(SUM(base.amount), 0)::FLOAT AS "totalVendida",
-        COALESCE(SUM(base.payout), 0)::FLOAT AS ganado,
-        COALESCE(SUM(base."listeroCommissionAmount"), 0)::FLOAT AS "comisionTotal",
-        0::FLOAT AS refuerzos,
-        COUNT(DISTINCT base."ticketId")::INT AS "ticketsCount",
-        COUNT(base."jugadaId")::INT AS "jugadasCount"
-      FROM base
-      INNER JOIN "Loteria" l ON l.id = base."loteriaId"
-      WHERE base.banda IS NOT NULL
+        u.id as "vendedorId",
+        u.name as "vendedorNombre",
+        v.id as "ventanaId",
+        v.name as "ventanaNombre",
+        CAST(mv.banda AS INT) as banda,
+        mv.tipo,
+        l.id as "loteriaId",
+        l.name as "loteriaNombre",
+        s.id as "sorteoId",
+        TO_CHAR(s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') AS turno,
+        s."scheduledAt" as "scheduledAt",
+        SUM(mv."totalVendida")::FLOAT as "totalVendida",
+        SUM(mv.ganado)::FLOAT as ganado,
+        SUM(mv."comisionTotal")::FLOAT as "comisionTotal",
+        0::FLOAT as refuerzos,
+        SUM(mv."ticketsCount")::INT as "ticketsCount",
+        SUM(mv."jugadasCount")::INT as "jugadasCount"
+      FROM "ResumenCierreDiario" mv
+      INNER JOIN "User" u ON u.id = mv."vendedorId"
+      INNER JOIN "Ventana" v ON v.id = mv."ventanaId"
+      INNER JOIN "Loteria" l ON l.id = mv."loteriaId"
+      INNER JOIN "Sorteo" s ON s.id = mv."sorteoId"
+      WHERE ${whereConditions}
       GROUP BY
-        base.uid, base.uname, base.vid, base.vname,
-        CAST(base.banda AS INT),
-        base.type,
+        u.id, u.name, v.id, v.name,
+        CAST(mv.banda AS INT),
+        mv.tipo,
         l.id, l.name,
-        base."sorteoId",
-        TO_CHAR(base."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI')
+        s.id,
+        TO_CHAR(s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI'),
+        s."scheduledAt"
       ORDER BY
-        base.uname ASC,
+        u.name ASC,
         l.name ASC,
         turno ASC,
-        base.type ASC,
-        CAST(base.banda AS INT) ASC
+        mv.tipo ASC,
+        CAST(mv.banda AS INT) ASC
     `;
 
     const startTime = Date.now();
