@@ -135,21 +135,34 @@ export class GoogleDriveBackupService {
   }
 
   /**
-   * Ejecuta pg_dump usando DIRECT_URL (o DATABASE_URL limpia sin query params incompatibles)
+   * Ejecuta pg_dump asegurando conectividad IPv4 para Render (usando Session Pooler puerto 5432)
    */
   private static runPgDump(outputPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const rawUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
+      // Priorizar DATABASE_URL (que usa el host IPv4 pooler de Supabase) sobre DIRECT_URL (que es solo IPv6)
+      const rawUrl = process.env.DATABASE_URL || process.env.DIRECT_URL;
       if (!rawUrl) {
-        return reject(new Error("Ni DIRECT_URL ni DATABASE_URL están configuradas"));
+        return reject(new Error("Ni DATABASE_URL ni DIRECT_URL están configuradas"));
       }
 
       try {
         const parsedUrl = new URL(rawUrl);
-        // pg_dump requiere el puerto directo 5432 (Session) y no soporta params como pgbouncer o connection_limit
+
+        // Si la URL apunta al puerto de Transaction Pooler (6543), cambiar al puerto 5432 (Session Pooler)
         if (parsedUrl.port === "6543") {
           parsedUrl.port = "5432";
         }
+
+        // Si la URL apunta a db.ref.supabase.co (solo IPv6), cambiar al pooler IPv4
+        if (parsedUrl.hostname.startsWith("db.") && parsedUrl.hostname.endsWith(".supabase.co")) {
+          const projectRef = parsedUrl.hostname.split(".")[1];
+          parsedUrl.hostname = "aws-1-us-east-1.pooler.supabase.com";
+          if (!parsedUrl.username.includes(".")) {
+            parsedUrl.username = `postgres.${projectRef}`;
+          }
+        }
+
+        // Remover parámetros incompatibles como pgbouncer=true, connection_limit, etc.
         parsedUrl.search = "?sslmode=require";
 
         const cleanUrl = parsedUrl.toString();
