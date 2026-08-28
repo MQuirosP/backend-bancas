@@ -451,7 +451,7 @@ export const TicketRepository = {
       );
 
       const ticket = TicketResponseBuilder.build(txResult, data, userId, options);
-      TicketRedisAccumulator.incrementAsync(ticket, txResult.sorteoScheduledAt, options);
+      await TicketRedisAccumulator.increment(ticket, txResult.sorteoScheduledAt, options);
 
       return { ticket, warnings: txResult.warnings };
     } finally {
