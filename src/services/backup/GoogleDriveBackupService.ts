@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { exec } from "child_process";
 import logger from "../../core/logger";
+import { getRedisClient, isRedisAvailable } from "../../core/redisClient";
 
 export interface BackupResult {
   fileId: string;
@@ -10,6 +11,9 @@ export interface BackupResult {
   sizeBytes: number;
   uploadedAt: string;
 }
+
+const BACKUP_LOCK_KEY = "backup:google_drive:lock";
+const LOCK_TTL_SECONDS = 900; // 15 minutos máximo de bloqueo
 
 export class GoogleDriveBackupService {
   /**
@@ -67,8 +71,8 @@ export class GoogleDriveBackupService {
   }
 
   /**
-   * Sube un archivo a Google Drive mediante Multipart Streaming (Transfer-Encoding: chunked)
-   * EVITA OOM (RAM < 1 MB) y funciona con scope drive.file de Google Drive API.
+   * Sube un archivo a Google Drive mediante Chunked Multipart Streaming
+   * EVITA OOM (RAM < 1 MB) y funciona con el scope estándar de Google Drive API.
    */
   private static async uploadToDriveStream(
     filePath: string,
@@ -121,10 +125,8 @@ export class GoogleDriveBackupService {
 
       req.on("error", reject);
 
-      // Escribir cabecera multipart
       req.write(header);
 
-      // Transmitir el archivo chunk por chunk desde el disco (RAM < 1 MB)
       const fileStream = fs.createReadStream(filePath);
       fileStream.on("data", (chunk) => {
         req.write(chunk);
@@ -142,11 +144,10 @@ export class GoogleDriveBackupService {
   }
 
   /**
-   * Ejecuta pg_dump con compresión veloz (-Z 1) para uso mínimo de CPU en Render (0.5 CPU limit)
+   * Ejecuta pg_dump con prioridad de CPU baja (nice -n 19 en Linux) y compresión veloz (-Z 1)
    */
   private static runPgDump(outputPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      // Priorizar DATABASE_URL (que usa el host IPv4 pooler de Supabase) sobre DIRECT_URL (que es solo IPv6)
       const rawUrl = process.env.DATABASE_URL || process.env.DIRECT_URL;
       if (!rawUrl) {
         return reject(new Error("Ni DATABASE_URL ni DIRECT_URL están configuradas"));
@@ -155,12 +156,10 @@ export class GoogleDriveBackupService {
       try {
         const parsedUrl = new URL(rawUrl);
 
-        // Si la URL apunta al puerto de Transaction Pooler (6543), cambiar al puerto 5432 (Session Pooler)
         if (parsedUrl.port === "6543") {
           parsedUrl.port = "5432";
         }
 
-        // Si la URL apunta a db.ref.supabase.co (solo IPv6), cambiar al pooler IPv4
         if (parsedUrl.hostname.startsWith("db.") && parsedUrl.hostname.endsWith(".supabase.co")) {
           const projectRef = parsedUrl.hostname.split(".")[1];
           parsedUrl.hostname = "aws-1-us-east-1.pooler.supabase.com";
@@ -169,12 +168,12 @@ export class GoogleDriveBackupService {
           }
         }
 
-        // Remover parámetros incompatibles como pgbouncer=true, connection_limit, etc.
         parsedUrl.search = "?sslmode=require";
 
         const cleanUrl = parsedUrl.toString();
-        // Usar -Z 1 (Compresión ultra veloz nivel 1) para reducir consumo de CPU de 100% a <15%
-        const cmd = `pg_dump -Fc -Z 1 "${cleanUrl}" -f "${outputPath}"`;
+        const baseCmd = `pg_dump -Fc -Z 1 "${cleanUrl}" -f "${outputPath}"`;
+        // 🔥 En Linux/Render asignar prioridad mínima de CPU ('nice -n 19') para no impactar el tráfico web
+        const cmd = process.platform === "win32" ? baseCmd : `nice -n 19 ${baseCmd}`;
 
         exec(cmd, (error, _stdout, stderr) => {
           if (error) {
@@ -194,14 +193,55 @@ export class GoogleDriveBackupService {
   }
 
   /**
-   * Ejecuta el proceso completo de respaldo a Google Drive usando Chunked Multipart Streaming
+   * Adquiere un cerrojo distribuido en Redis (Redlock) para evitar ejecuciones concurrentes en instancias autoscaladas
+   */
+  private static async acquireLock(): Promise<boolean> {
+    if (!isRedisAvailable()) return true; // Si Redis no está disponible, proceder con precaución
+    const redis = getRedisClient();
+    if (!redis) return true;
+
+    try {
+      // SET key value EX 900 NX
+      const result = await redis.set(BACKUP_LOCK_KEY, "locked", "EX", LOCK_TTL_SECONDS, "NX");
+      return result === "OK";
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Libera el cerrojo distribuido en Redis
+   */
+  private static async releaseLock(): Promise<void> {
+    if (!isRedisAvailable()) return;
+    const redis = getRedisClient();
+    if (!redis) return;
+
+    try {
+      await redis.del(BACKUP_LOCK_KEY);
+    } catch {
+      // Ignorar error al liberar lock
+    }
+  }
+
+  /**
+   * Ejecuta el proceso completo de respaldo a Google Drive con cerrojo distribuido en Redis
    */
   public static async executeBackup(): Promise<BackupResult> {
+    const lockAcquired = await this.acquireLock();
+    if (!lockAcquired) {
+      logger.warn({
+        layer: "service",
+        action: "GOOGLE_DRIVE_BACKUP_LOCK_SKIPPED",
+        payload: { message: "Un respaldo a Google Drive ya está en curso en otra instancia. Omitiendo." },
+      });
+      throw new Error("Un respaldo de base de datos ya está en ejecución en otra instancia.");
+    }
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const fileName = `supabase_prod_${timestamp}.dump`;
     const tempPath = path.join(process.cwd(), "tmp", fileName);
 
-    // Asegurar directorio temporal
     const tmpDir = path.dirname(tempPath);
     if (!fs.existsSync(tmpDir)) {
       fs.mkdirSync(tmpDir, { recursive: true });
@@ -222,7 +262,6 @@ export class GoogleDriveBackupService {
         payload: { fileName, sizeMB: (stats.size / 1024 / 1024).toFixed(2) },
       });
 
-      // Subida por Chunked Multipart Streaming ➔ Consumo de RAM < 1 MB
       const driveFile = await this.uploadToDriveStream(tempPath, fileName);
 
       logger.info({
@@ -245,6 +284,7 @@ export class GoogleDriveBackupService {
           // Ignorar error al eliminar temporal
         }
       }
+      await this.releaseLock();
     }
   }
 }
