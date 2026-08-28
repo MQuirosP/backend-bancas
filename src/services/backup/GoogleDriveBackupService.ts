@@ -67,11 +67,12 @@ export class GoogleDriveBackupService {
   }
 
   /**
-   * Sube un buffer a la carpeta de Google Drive indicada en process.env.GOOGLE_DRIVE_FOLDER_ID
+   * Sube un archivo a Google Drive usando Resumable Upload (Streams)
+   * EVITA OOM (Out Of Memory) al no cargar el dump (500+ MB) en memoria RAM.
    */
-  private static async uploadToDrive(
+  private static async uploadToDriveStream(
+    filePath: string,
     fileName: string,
-    fileBuffer: Buffer,
     mimeType: string = "application/octet-stream"
   ): Promise<{ id: string; name: string }> {
     const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
@@ -79,48 +80,67 @@ export class GoogleDriveBackupService {
       throw new Error("Falta la variable de entorno GOOGLE_DRIVE_FOLDER_ID");
     }
 
+    const stats = fs.statSync(filePath);
+    const fileSize = stats.size;
     const accessToken = await this.getAccessToken();
-    const boundary = "------WebKitFormBoundary" + Math.random().toString(36).substring(2);
 
+    // Paso 1: Iniciar sesión de Resumable Upload con los metadatos JSON
     const metadata = JSON.stringify({
       name: fileName,
       parents: [folderId],
     });
 
-    const delimiter = "\r\n--" + boundary + "\r\n";
-    const closeDelimiter = "\r\n--" + boundary + "--";
-
-    let body = "";
-    body += delimiter + "Content-Type: application/json; charset=UTF-8\r\n\r\n" + metadata;
-    body += delimiter + `Content-Type: ${mimeType}\r\n\r\n`;
-
-    const payload = Buffer.concat([
-      Buffer.from(body, "utf8"),
-      fileBuffer,
-      Buffer.from(closeDelimiter, "utf8"),
-    ]);
-
-    return new Promise((resolve, reject) => {
+    const sessionUrl = await new Promise<string>((resolve, reject) => {
       const req = https.request(
-        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
         {
           method: "POST",
           headers: {
             Authorization: `Bearer ${accessToken}`,
-            "Content-Type": `multipart/related; boundary=${boundary}`,
-            "Content-Length": payload.length,
+            "Content-Type": "application/json; charset=UTF-8",
+            "X-Upload-Content-Type": mimeType,
+            "X-Upload-Content-Length": fileSize.toString(),
           },
         },
         (res) => {
-          let resBody = "";
-          res.on("data", (chunk) => (resBody += chunk));
+          if (res.statusCode === 200 && res.headers.location) {
+            resolve(res.headers.location);
+          } else {
+            let resBody = "";
+            res.on("data", (chunk) => (resBody += chunk));
+            res.on("end", () => {
+              reject(new Error(`Error iniciando subida resumable (${res.statusCode}): ${resBody}`));
+            });
+          }
+        }
+      );
+
+      req.on("error", reject);
+      req.write(metadata);
+      req.end();
+    });
+
+    // Paso 2: Pipe streaming del archivo directamente desde disco hacia la sesión de Google Drive
+    return new Promise((resolve, reject) => {
+      const uploadReq = https.request(
+        sessionUrl,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Length": fileSize.toString(),
+            "Content-Type": mimeType,
+          },
+        },
+        (res) => {
+          let body = "";
+          res.on("data", (chunk) => (body += chunk));
           res.on("end", () => {
             try {
-              const result = JSON.parse(resBody);
+              const result = JSON.parse(body);
               if (result.id) {
                 resolve(result);
               } else {
-                reject(new Error("Error al subir a Google Drive: " + resBody));
+                reject(new Error(`Error en subida de archivo (${res.statusCode}): ${body}`));
               }
             } catch (e) {
               reject(e);
@@ -128,9 +148,12 @@ export class GoogleDriveBackupService {
           });
         }
       );
-      req.on("error", reject);
-      req.write(payload);
-      req.end();
+
+      uploadReq.on("error", reject);
+
+      const fileStream = fs.createReadStream(filePath);
+      fileStream.on("error", reject);
+      fileStream.pipe(uploadReq);
     });
   }
 
@@ -186,7 +209,7 @@ export class GoogleDriveBackupService {
   }
 
   /**
-   * Ejecuta el proceso completo de respaldo a Google Drive
+   * Ejecuta el proceso completo de respaldo a Google Drive usando Streams para RAM cero extra
    */
   public static async executeBackup(): Promise<BackupResult> {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -214,8 +237,8 @@ export class GoogleDriveBackupService {
         payload: { fileName, sizeMB: (stats.size / 1024 / 1024).toFixed(2) },
       });
 
-      const fileBuffer = fs.readFileSync(tempPath);
-      const driveFile = await this.uploadToDrive(fileName, fileBuffer);
+      // Subida por Streams (Resumable Upload) ➔ Consumo de RAM < 10 MB
+      const driveFile = await this.uploadToDriveStream(tempPath, fileName);
 
       logger.info({
         layer: "service",
