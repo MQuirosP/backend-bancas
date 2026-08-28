@@ -135,30 +135,40 @@ export class GoogleDriveBackupService {
   }
 
   /**
-   * Ejecuta pg_dump y genera un archivo de respaldo en formato comprimido (.dump)
+   * Ejecuta pg_dump usando DIRECT_URL (o DATABASE_URL limpia sin query params incompatibles)
    */
   private static runPgDump(outputPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const dbUrl = process.env.DATABASE_URL;
-      if (!dbUrl) {
-        return reject(new Error("DATABASE_URL no está definida"));
+      const rawUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
+      if (!rawUrl) {
+        return reject(new Error("Ni DIRECT_URL ni DATABASE_URL están configuradas"));
       }
 
-      // Eliminar parámetros query para evitar problemas de compatibilidad en pg_dump
-      const cleanUrl = dbUrl.replace(/\?.*$/, "");
-      const cmd = `pg_dump -Fc "${cleanUrl}?sslmode=require" -f "${outputPath}"`;
-
-      exec(cmd, (error, _stdout, stderr) => {
-        if (error) {
-          logger.error({
-            layer: "service",
-            action: "PG_DUMP_ERROR",
-            meta: { stderr, error: error.message },
-          });
-          return reject(error);
+      try {
+        const parsedUrl = new URL(rawUrl);
+        // pg_dump requiere el puerto directo 5432 (Session) y no soporta params como pgbouncer o connection_limit
+        if (parsedUrl.port === "6543") {
+          parsedUrl.port = "5432";
         }
-        resolve();
-      });
+        parsedUrl.search = "?sslmode=require";
+
+        const cleanUrl = parsedUrl.toString();
+        const cmd = `pg_dump -Fc "${cleanUrl}" -f "${outputPath}"`;
+
+        exec(cmd, (error, _stdout, stderr) => {
+          if (error) {
+            logger.error({
+              layer: "service",
+              action: "PG_DUMP_ERROR",
+              meta: { stderr, error: error.message },
+            });
+            return reject(error);
+          }
+          resolve();
+        });
+      } catch (err: any) {
+        reject(err);
+      }
     });
   }
 
