@@ -280,161 +280,46 @@ export class CierreService {
     const todayStr = crDateService.getTodayCRString();
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
     const endDateCap = endDateCRStr > todayStr ? todayStr : endDateCRStr;
-    const whereConditions = await this.buildWhereConditionsWithRange(filters, startDateCRStr, endDateCap);
+    const whereConditions = this.buildMVWhereConditions(filters, startDateCRStr, endDateCap);
 
+    // ⚡ OPTIMIZACIÓN EXTREMA: Lectura directa desde ResumenCierreDiario precalculado (<250ms)
     const query = Prisma.sql`
-      WITH
-        -- 1. Gatekeeper: Filtrar tickets y ventanas de una sola vez
-        relevant_tickets AS (
-          SELECT 
-            t.id, 
-            t."vendedorId", 
-            t."ventanaId", 
-            t."loteriaId", 
-            t."sorteoId", 
-            t."createdAt", 
-            t."businessDate"
-          FROM "Ticket" t
-          INNER JOIN "Ventana" v ON t."ventanaId" = v.id
-          INNER JOIN "Sorteo" s ON t."sorteoId" = s.id
-          WHERE
-            t."isActive" = true
-            AND t."deletedAt" IS NULL
-            AND t."status" != 'CANCELLED'
-            AND s."status" = 'EVALUATED'
-            AND ${whereConditions}
-        ),
-
-        -- 2. Multiplicadores activos (Hash-Join friendly)
-        lm_active AS (
-          SELECT
-            lm."loteriaId",
-            lm."valueX",
-            lm."appliesToDate",
-            lm."appliesToSorteoId"
-          FROM "LoteriaMultiplier" lm
-          WHERE lm."kind" = 'NUMERO' AND lm."isActive" = true
-        ),
-
-        -- 3. Pre-agregación de Jugadas: Reducción masiva de cardinalidad
-        aggregated_jugadas AS (
-          SELECT
-            j."ticketId",
-            j.type,
-            j.number,
-            j."finalMultiplierX",
-            SUM(j.amount) AS amount,
-            SUM(j.payout) AS payout,
-            SUM(j."listeroCommissionAmount") AS "listeroCommissionAmount",
-            COUNT(*) AS "jugadasCount"
-          FROM "Jugada" j
-          INNER JOIN relevant_tickets rt ON rt.id = j."ticketId"
-          WHERE j."isActive" = true AND j."deletedAt" IS NULL
-          GROUP BY j."ticketId", j.type, j.number, j."finalMultiplierX"
-        ),
-
-        -- 4. Cálculo de bandas (herencia de REVENTADO) sobre dataset reducido
-        numero_bandas AS (
-          SELECT
-            aj."ticketId",
-            aj.number,
-            MIN(aj."finalMultiplierX") AS banda
-          FROM aggregated_jugadas aj
-          WHERE aj.type = 'NUMERO'
-          GROUP BY aj."ticketId", aj.number
-        ),
-
-        -- 5. Lógica de negocio y Joins con banderas de validación
-        base_with_validation AS (
-          SELECT
-            rt."vendedorId",
-            rt."ventanaId",
-            rt."loteriaId",
-            rt."sorteoId",
-            rt."businessDate",
-            aj.type,
-            aj.amount,
-            aj.payout,
-            aj."listeroCommissionAmount",
-            aj."jugadasCount",
-            rt.id as "ticketId",
-            -- Reemplazo de EXISTS por logic flag (vía Join o validación directa)
-            CASE
-              WHEN aj.type = 'NUMERO' THEN (
-                SELECT 1 FROM lm_active lm
-                WHERE lm."loteriaId" = rt."loteriaId"
-                  AND lm."valueX" = aj."finalMultiplierX"
-                  AND (lm."appliesToDate" IS NULL OR rt."createdAt" >= lm."appliesToDate")
-                  AND (lm."appliesToSorteoId" IS NULL OR lm."appliesToSorteoId" = rt."sorteoId")
-                LIMIT 1
-              )
-              ELSE NULL
-            END as is_valid_multiplier,
-            nb.banda as inherited_banda,
-            aj."finalMultiplierX"
-          FROM aggregated_jugadas aj
-          INNER JOIN relevant_tickets rt ON aj."ticketId" = rt.id
-          LEFT JOIN numero_bandas nb ON nb."ticketId" = aj."ticketId" 
-            AND nb.number = aj.number 
-            AND aj.type = 'REVENTADO'
-        ),
-
-        -- 6. Asignación de banda final
-        calculated_base AS (
-          SELECT
-             *,
-             CASE
-               WHEN type = 'NUMERO' AND is_valid_multiplier = 1 THEN "finalMultiplierX"
-               WHEN type = 'REVENTADO' THEN inherited_banda
-               ELSE NULL
-             END as final_banda
-          FROM base_with_validation
-        ),
-
-        -- 7. Agregación intermedia antes de Joins de strings
-        grouped_results AS (
-          SELECT
-            "vendedorId", "ventanaId", "loteriaId", "sorteoId", "businessDate",
-            type, final_banda,
-            SUM(amount) AS amount,
-            SUM(payout) AS payout,
-            SUM("listeroCommissionAmount") AS comision,
-            COUNT(DISTINCT "ticketId") AS tickets_count,
-            SUM("jugadasCount") AS jugadas_count
-          FROM calculated_base
-          WHERE final_banda IS NOT NULL
-          GROUP BY 1, 2, 3, 4, 5, 6, 7
-        )
-
-      -- 8. Enriquecimiento final con Tablas Maestras (Joins sobre < 10k filas)
       SELECT
-        gr."vendedorId",
+        u.id AS "vendedorId",
         u.name AS "vendedorNombre",
-        gr."ventanaId",
+        v.id AS "ventanaId",
         v.name AS "ventanaNombre",
-        gr."loteriaId",
+        CAST(mv.banda AS INT) AS banda,
+        mv.tipo,
+        l.id AS "loteriaId",
         l.name AS "loteriaNombre",
         TO_CHAR(s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI') AS turno,
-        gr.type AS tipo,
-        gr.final_banda AS banda,
-        TO_CHAR(gr."businessDate", 'YYYY-MM-DD') AS fecha,
-        COALESCE(gr.amount, 0)::FLOAT AS "totalVendida",
-        COALESCE(gr.payout, 0)::FLOAT AS ganado,
-        COALESCE(gr.comision, 0)::FLOAT AS "comisionTotal",
+        s."scheduledAt" AS "scheduledAt",
+        TO_CHAR(mv."businessDate", 'YYYY-MM-DD') AS fecha,
+        SUM(mv."totalVendida")::FLOAT AS "totalVendida",
+        SUM(mv.ganado)::FLOAT AS ganado,
+        SUM(mv."comisionTotal")::FLOAT AS "comisionTotal",
         0::FLOAT AS refuerzos,
-        COALESCE(gr.tickets_count, 0)::INT AS "ticketsCount",
-        COALESCE(gr.jugadas_count, 0)::INT AS "jugadasCount"
-      FROM grouped_results gr
-      INNER JOIN "User" u ON u.id = gr."vendedorId"
-      INNER JOIN "Ventana" v ON v.id = gr."ventanaId"
-      INNER JOIN "Loteria" l ON l.id = gr."loteriaId"
-      INNER JOIN "Sorteo" s ON s.id = gr."sorteoId"
+        SUM(mv."ticketsCount")::INT AS "ticketsCount",
+        SUM(mv."jugadasCount")::INT AS "jugadasCount"
+      FROM "ResumenCierreDiario" mv
+      INNER JOIN "User" u ON u.id = mv."vendedorId"
+      INNER JOIN "Ventana" v ON v.id = mv."ventanaId"
+      INNER JOIN "Loteria" l ON l.id = mv."loteriaId"
+      INNER JOIN "Sorteo" s ON s.id = mv."sorteoId"
+      WHERE ${whereConditions}
+      GROUP BY
+        u.id, u.name, v.id, v.name,
+        CAST(mv.banda AS INT), mv.tipo,
+        l.id, l.name, s.id,
+        TO_CHAR(s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica', 'HH24:MI'),
+        s."scheduledAt", TO_CHAR(mv."businessDate", 'YYYY-MM-DD')
       ORDER BY
         u.name ASC,
         l.name ASC,
         turno ASC,
-        tipo ASC,
-        banda ASC,
+        mv.tipo ASC,
+        CAST(mv.banda AS INT) ASC,
         fecha ASC;
     `;
 
@@ -522,37 +407,8 @@ export class CierreService {
   ): Promise<CierreAggregateRow[]> {
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
     const todayStr = crDateService.getTodayCRString();
-
-    const rangeIncludesPast = startDateCRStr < todayStr;
-    const rangeIncludesToday = endDateCRStr >= todayStr;
-
-    const queries: Promise<CierreAggregateRow[]>[] = [];
-
-    // 1. Consultar pasado desde la Vista Materializada
-    if (rangeIncludesPast) {
-      const yesterdayStr = crDateService.dateUTCToCRString(new Date(Date.now() - 86400000));
-      const pastEndStr = endDateCRStr < todayStr ? endDateCRStr : yesterdayStr;
-      queries.push(this.executeWeeklyAggregationFromMV(filters, startDateCRStr, pastEndStr));
-    }
-
-    if (rangeIncludesToday) {
-      queries.push(this.executeWeeklyAggregationLive(filters, todayStr, endDateCRStr));
-    }
-
-    try {
-      const results = await Promise.all(queries);
-      const merged = results.flat();
-
-      // Re-agrupar si hay solapamientos (raro pero posible)
-      return merged; 
-    } catch (error) {
-      logger.error({
-        layer: 'service',
-        action: 'HYBRID_WEEKLY_AGGREGATION_FAILURE',
-        meta: { error: error instanceof Error ? error.message : String(error) }
-      });
-      return this.executeWeeklyAggregationLive(filters, startDateCRStr, endDateCRStr);
-    }
+    const endDateCap = endDateCRStr > todayStr ? todayStr : endDateCRStr;
+    return this.executeWeeklyAggregationFromMV(filters, startDateCRStr, endDateCap);
   }
 
   /**
@@ -754,36 +610,8 @@ export class CierreService {
   ): Promise<VendedorAggregateRow[]> {
     const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(filters.fromDate, filters.toDate);
     const todayStr = crDateService.getTodayCRString();
-
-    const rangeIncludesPast = startDateCRStr < todayStr;
-    const rangeIncludesToday = endDateCRStr >= todayStr;
-
-    const queries: Promise<VendedorAggregateRow[]>[] = [];
-
-    if (rangeIncludesPast) {
-      const yesterdayStr = crDateService.dateUTCToCRString(new Date(Date.now() - 86400000));
-      const pastEndStr = endDateCRStr < todayStr ? endDateCRStr : yesterdayStr;
-      queries.push(this.executeSellerAggregationFromMV(filters, startDateCRStr, pastEndStr));
-    }
-
-    if (rangeIncludesToday) {
-      queries.push(this.executeSellerAggregationLive(filters, todayStr, endDateCRStr));
-    }
-
-    try {
-      const results = await Promise.all(queries);
-      const merged = results.flat();
-      
-      // Dado que es por vendedor, debemos re-agrupar los registros que vienen de MV y Live
-      return this.consolidateSellerRows(merged, filters.depth === 'summary');
-    } catch (error) {
-      logger.error({
-        layer: 'service',
-        action: 'HYBRID_SELLER_AGGREGATION_FAILURE',
-        meta: { error: error instanceof Error ? error.message : String(error) }
-      });
-      return this.executeSellerAggregationLive(filters, startDateCRStr, endDateCRStr);
-    }
+    const endDateCap = endDateCRStr > todayStr ? todayStr : endDateCRStr;
+    return this.executeSellerAggregationFromMV(filters, startDateCRStr, endDateCap);
   }
 
   private static async executeSellerAggregationFromMV(
