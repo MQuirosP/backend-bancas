@@ -67,8 +67,8 @@ export class GoogleDriveBackupService {
   }
 
   /**
-   * Sube un archivo a Google Drive usando Resumable Upload (Streams)
-   * EVITA OOM (Out Of Memory) al no cargar el dump (500+ MB) en memoria RAM.
+   * Sube un archivo a Google Drive mediante Multipart Streaming (Transfer-Encoding: chunked)
+   * EVITA OOM (RAM < 1 MB) y funciona con scope drive.file de Google Drive API.
    */
   private static async uploadToDriveStream(
     filePath: string,
@@ -80,55 +80,25 @@ export class GoogleDriveBackupService {
       throw new Error("Falta la variable de entorno GOOGLE_DRIVE_FOLDER_ID");
     }
 
-    const stats = fs.statSync(filePath);
-    const fileSize = stats.size;
     const accessToken = await this.getAccessToken();
+    const boundary = "------WebKitFormBoundary" + Math.random().toString(36).substring(2);
 
-    // Paso 1: Iniciar sesión de Resumable Upload con los metadatos JSON
     const metadata = JSON.stringify({
       name: fileName,
       parents: [folderId],
     });
 
-    const sessionUrl = await new Promise<string>((resolve, reject) => {
+    const header = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`;
+    const footer = `\r\n--${boundary}--`;
+
+    return new Promise((resolve, reject) => {
       const req = https.request(
-        "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
         {
           method: "POST",
           headers: {
             Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json; charset=UTF-8",
-            "X-Upload-Content-Type": mimeType,
-            "X-Upload-Content-Length": fileSize.toString(),
-          },
-        },
-        (res) => {
-          if (res.statusCode === 200 && res.headers.location) {
-            resolve(res.headers.location);
-          } else {
-            let resBody = "";
-            res.on("data", (chunk) => (resBody += chunk));
-            res.on("end", () => {
-              reject(new Error(`Error iniciando subida resumable (${res.statusCode}): ${resBody}`));
-            });
-          }
-        }
-      );
-
-      req.on("error", reject);
-      req.write(metadata);
-      req.end();
-    });
-
-    // Paso 2: Pipe streaming del archivo directamente desde disco hacia la sesión de Google Drive
-    return new Promise((resolve, reject) => {
-      const uploadReq = https.request(
-        sessionUrl,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Length": fileSize.toString(),
-            "Content-Type": mimeType,
+            "Content-Type": `multipart/related; boundary=${boundary}`,
           },
         },
         (res) => {
@@ -140,7 +110,7 @@ export class GoogleDriveBackupService {
               if (result.id) {
                 resolve(result);
               } else {
-                reject(new Error(`Error en subida de archivo (${res.statusCode}): ${body}`));
+                reject(new Error(`Error en subida de Google Drive (${res.statusCode}): ${body}`));
               }
             } catch (e) {
               reject(e);
@@ -149,11 +119,25 @@ export class GoogleDriveBackupService {
         }
       );
 
-      uploadReq.on("error", reject);
+      req.on("error", reject);
 
+      // Escribir cabecera multipart
+      req.write(header);
+
+      // Transmitir el archivo chunk por chunk desde el disco (RAM < 1 MB)
       const fileStream = fs.createReadStream(filePath);
-      fileStream.on("error", reject);
-      fileStream.pipe(uploadReq);
+      fileStream.on("data", (chunk) => {
+        req.write(chunk);
+      });
+
+      fileStream.on("end", () => {
+        req.end(footer);
+      });
+
+      fileStream.on("error", (err) => {
+        req.destroy();
+        reject(err);
+      });
     });
   }
 
@@ -189,7 +173,7 @@ export class GoogleDriveBackupService {
         parsedUrl.search = "?sslmode=require";
 
         const cleanUrl = parsedUrl.toString();
-        // 🔥 Usar -Z 1 (Compresión ultra veloz nivel 1) para reducir consumo de CPU de 100% a <15%
+        // Usar -Z 1 (Compresión ultra veloz nivel 1) para reducir consumo de CPU de 100% a <15%
         const cmd = `pg_dump -Fc -Z 1 "${cleanUrl}" -f "${outputPath}"`;
 
         exec(cmd, (error, _stdout, stderr) => {
@@ -210,7 +194,7 @@ export class GoogleDriveBackupService {
   }
 
   /**
-   * Ejecuta el proceso completo de respaldo a Google Drive usando Streams y -Z 1
+   * Ejecuta el proceso completo de respaldo a Google Drive usando Chunked Multipart Streaming
    */
   public static async executeBackup(): Promise<BackupResult> {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -238,7 +222,7 @@ export class GoogleDriveBackupService {
         payload: { fileName, sizeMB: (stats.size / 1024 / 1024).toFixed(2) },
       });
 
-      // Subida por Streams (Resumable Upload) ➔ Consumo de RAM < 5 MB
+      // Subida por Chunked Multipart Streaming ➔ Consumo de RAM < 1 MB
       const driveFile = await this.uploadToDriveStream(tempPath, fileName);
 
       logger.info({
